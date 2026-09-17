@@ -51,6 +51,13 @@ la branche PIN que si ni le keystore ni le coffre n'ont repondu ; une session qu
 device key path)`, la ligne qui est DANS ce `else` : ces 410 000 iterations n'ont jamais ete dans ses
 580 ms. L'instrument l'a dit a sa premiere lecture, au lieu qu'un correctif soit construit dessus.
 
+**Et sa deuxieme execution est le premier demarrage a froid Android jamais mesure.** Un APK bati
+depuis cet arbre, installe sur le Mi 9T, deverrouille avec un vrai PIN : la branche PIN est donc
+prouvee de bout en bout, sur le materiel ou elle est la plus lente. Les deux derivations y coutent
+**259 ms ensemble** - reelles, et 12,5 % du temps mesure. Un seul span en fait **1621,9 ms, soit
+78 %** : `mls-init-and-storage`, qui n'a aucune structure interne. Le suspect a change de place, et
+c'est l'instrument qui l'a deplace deux fois plutot qu'un correctif ecrit contre une intuition.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu

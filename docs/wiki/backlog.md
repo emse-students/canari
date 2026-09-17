@@ -1041,6 +1041,59 @@ the typecheck alone.
 **WHAT IS OWED IS ONE BOOT ON THE USER'S OWN BROWSER**, which is now one console command rather than
 a HAR export. Until then no number in this entry's arithmetic has moved.
 
+#### THE SECOND RUN IS THE FIRST ANDROID COLD START EVER MEASURED, AND IT MOVED THE SUSPECT (Mi 9T, 2026-09-17)
+
+**The PIN branch is now proven end to end, on the hardware where it is slowest.** The local run
+above never entered it, so the PIN spans stood on unit tests alone. This one entered it: a debug APK
+built from `99b4ae343` with a clean tree, installed on the Mi 9T over `adb reverse tcp:8081` against
+the LOCAL estate, unlocked with a real PIN. Every span the branch declares fired, in order, with no
+gap left unattributed.
+
+| | offset | duration |
+| --- | ---: | ---: |
+| document TTFB / `domContentLoaded` / `load` | - | 0 / 740.4 / 740.8 |
+| `login-start` | 3669.5 | - |
+| `access-token` | 3696.6 | 0.4 |
+| `pin-salt-fetch` | 3705.6 | 77.1 |
+| `pin-verifier-pbkdf2` (100 000 it.) | 3782.7 | 114 |
+| `resolve-device-id` | 3896.7 | 6.1 |
+| `pin-check-request` | 3902.8 | 35.6 |
+| `device-key-pbkdf2` (310 000 it.) | 3938.6 | 145 |
+| `tab-leadership` (leader) | 4083.9 | 0.2 |
+| `gateway-handshake-started` | 4084.2 | - |
+| **`mls-init-and-storage`** | 4086.1 | **1621.9** |
+| `revocation-gate` (not asked) | 5708 | 0 |
+| `auth-token-final` | 5733 | 0.3 |
+| **`MLS ready`** | **5736.9** | - |
+
+**THE INTERVAL FROM `load` TO `login-start` IS THE HARNESS TYPING A PIN AND IS NOT APP TIME.** 740.8
+to 3669.5 is 2.9 seconds and 51% of the wall clock, and it would be the largest line in this entry if
+anyone read it as one. It is not: the app was sitting on the PIN screen waiting for input, and the
+rig spent `2152ms` of it switching the keypad to manual and typing. **A human takes longer, not
+shorter.** Nothing in that interval is work the app is doing, and no total including it may be quoted
+as a cold start - which is exactly why the summary prints BOTH anchors rather than one.
+
+**What is app time is the 2067.4 ms after `login-start`**, and one span is 1621.9 of it:
+
+- **`mls-init-and-storage` is 78% of the measured boot, and it is ONE span with no internal
+  structure.** On the loopback desktop run it was 159 ms; here it is ten times that. Whatever the
+  target is, this block alone is over it. **It is now the whole question**, and decomposing it -
+  WASM instantiation against storage open against the first decrypt - is what the next iteration of
+  the instrument owes. Nothing else on this list is worth touching first.
+- **The two PBKDF2 derivations cost 259 ms together** - 114 + 145, on a 2019 midrange phone, on the
+  branch that actually runs them. That is 12.5% of the measured boot and 4.5% of the wall clock.
+  **Real, and not the story.** The hypothesis is now refuted twice: once by a boot that skipped the
+  branch, once by a boot that took it on the slowest hardware available.
+- **`ttfbMs` is 0 because there is no document request.** Tauri serves the frontend from inside the
+  APK, so the origin round trip that dominates the web reading does not exist here. This run
+  measures the client and nothing else, which is precisely what makes the 1621.9 unambiguous.
+
+**WHAT THIS RUN DOES NOT SETTLE.** It is not the user's browser and it is not the vault branch: a
+returning phone session skips the whole PIN block and enters `mls-init-and-storage` ~400 ms earlier,
+and it is against a LOCAL estate whose state is a fraction of production's 7.6 MB. **What transfers
+is the ONE ratio** - a block that is 78% of post-login time on real hardware is the target regardless
+of whose estate it reads.
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
@@ -1098,7 +1151,10 @@ a full refetch of 1.33 MB over 173 requests lands within 34 ms of a warm boot**:
 nearly worthless here because the edge already answers every chunk.
 
 **WHAT IS OWED IS ONE WARM EXPORT ON A BUILD CARRYING #760 AND #764**, and until it exists the
-964 ms arithmetic stays a prediction.
+964 ms arithmetic stays a prediction. **THAT BUILD NOW EXISTS**: `v0.18.11` was tagged
+2026-09-17T13:37:25Z, and both merged before it - #760 as `ee4af0670`, #764 on 2026-09-16T18:35:24Z.
+So nothing blocks the reading any more; it is one `window.__canariBootBench.get()` on the user's own
+browser, and the prediction stops being one the moment it is taken.
 
 #### The second block WAS 162 ms and is SHIPPED; what it leaves behind is one corrected claim
 
