@@ -2304,6 +2304,8 @@
   "calendar_subtitle": "Calendrier mensuel - cliquez sur un jour pour voir les événements.",
   "calendar_subtitle_schedule": "Les événements du mois, jour par jour.",
   "calendar_deposit_button": "Déposer un événement",
+  "calendar_event_pending_notice": "Cet événement est en attente de validation : il n'est pas encore confirmé.",
+  "calendar_event_pending_title": "{title} - en attente de validation",
   "calendar_moderate_label": "Modérer les événements en attente",
   "calendar_moderate_open": "Ouvrir la file",
   "calendar_prev_month": "Mois précédent",

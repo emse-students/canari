@@ -300,7 +300,7 @@
                       ? `outline:1.5px dashed ${fg};outline-offset:-2px;`
                       : ''}"
                     title={ev.status === 'pending'
-                      ? `${ev.title} - en attente de validation`
+                      ? m.calendar_event_pending_title({ title: ev.title })
                       : `${ev.title} - ${ev.associationName}`}
                   >
                     <!-- Day number on the first slot, IN ITS OWN ROW rather than pinned to the

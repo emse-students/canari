@@ -1470,18 +1470,6 @@ Each of these started as a REPORT, not a diagnosis. What is written under it is 
 whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
 one.
 
-### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
-
-Verbatim: *"Pas de difference entre un evenement propose et un evenement valide dans la vue planning
-liste (en mode calendrier il y a des pointilles)."*
-
-**The distinction already has a vocabulary in this product** - the calendar mode draws a pending
-event with a dashed border - so this is a rendering gap in one view rather than a design question,
-and the answer should reuse that vocabulary rather than invent a second one. It is the same
-pending/validated split `GET /associations/:id/events` filters on for a caller it cannot identify.
-
-**Not investigated**: which component draws the list row, and whether it even receives the flag.
-
 ### P2 - a photo arrives IN the notification and the app then shows the words "Photo" where the image should be (user, 2026-09-17)
 
 Verbatim: *"La photo s'affiche dans la notification, mais quand j'ouvre j'ai juste '📷 Photo'

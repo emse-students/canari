@@ -194,6 +194,30 @@ Le signalement disait aussi *"et peut-etre /communautes"* : non. Cet ecran ne re
 l'overlay n'est monte que par `MainChatPage`. Si le meme aspect y est vu un jour, c'est un autre
 element, et le chercher ici ferait perdre le temps que cette phrase existe pour economiser.
 
+### Fixed - un evenement propose se lisait comme un evenement valide partout sauf dans la grille
+
+Signale par l'utilisateur : *"Pas de difference entre un evenement propose et un evenement valide
+dans la vue planning liste (en mode calendrier il y a des pointilles)."*
+
+La grille mensuelle dessine un evenement en attente de validation attenue et en pointilles depuis
+qu'elle existe. Les trois autres surfaces qui affichent le meme evenement - la liste planning
+(la seule vue du telephone), le panneau du jour a cote de la grille, et la modale de detail que
+toutes ouvrent - n'en disaient rien. Le drapeau etait pourtant deja la : les quatre composants
+recoivent le meme `AssociationCalendarFeedEvent`, et un seul lisait son `status`.
+
+Les trois vues parlent maintenant le vocabulaire de la grille, chacune sur sa propre forme : la
+pastille de la liste et la barre d'accent du panneau du jour deviennent un contour en pointilles au
+lieu d'un aplat, la ligne est attenuee, et la modale - qui a la place de le dire en toutes lettres,
+et qui est l'ecran ou l'on decide si l'on vient - porte une phrase encadree en pointilles. La
+distinction n'est jamais portee par la couleur ou la forme seules : chaque ligne porte aussi un
+`title` qui le dit en mots, tire de la meme cle Paraglide. Au passage, la grille cessait de garder
+une phrase francaise brute dans son markup : `title` y etait une litterale, c'est desormais
+`calendar_event_pending_title` comme partout ailleurs.
+
+**Ce que cela ne dit toujours pas** : qui doit valider, ni quand. C'est une question sur le flux de
+moderation et non sur le rendu, et personne ne l'a posee - elle est notee ici plutot que mise en file,
+parce qu'une file ou l'on range les questions que nul ne se pose cesse d'etre lisible.
+
 ## [0.18.10] - 2026-09-17
 
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
