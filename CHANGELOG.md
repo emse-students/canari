@@ -92,6 +92,26 @@ Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,
 CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
 et c'est la premiere fois qu'on peut le dire avec un nombre.
 
+### Fixed - retirer quelqu'un d'un groupe ou d'une association ne demandait rien
+
+Signale par l'utilisateur le 2026-09-17 : *« le bouton pour retirer les gens des groupes est trop
+sensible (ya pas d'interface "voulez vous vraiment nanana") »*. Deux commandes de suppression
+partaient au premier appui, sans dialogue et sans annulation possible, la liste se reecrivant sous le
+doigt sans rien nommer de ce qui venait de disparaitre.
+
+**Le geste n'est pas annulable, et c'est ce qui lui vaut un dialogue.** Retirer un membre d'un groupe
+est un commit MLS : l'epoque avance, l'appareil retire ne dechiffre plus rien de ce qui suit, et le
+faire revenir demande un nouveau Welcome. Un appui de trop ne se repare pas, il se rejoue.
+
+**La garde est au POINT DE PASSAGE, pas sur le bouton.** `handleRemoveMember` dans
+`useConversations.svelte.ts` est le seul chemin par lequel la commande MLS part, quel que soit le
+panneau qui l'appelle ; un `showConfirm` pose sur le bouton du panneau aurait laisse passer le
+prochain appelant. Cote association, `EditMembersTab` est de meme le seul endroit qui appelle
+`removeMember`.
+
+Les deux autres suppressions de membre - l'exclusion d'une communaute et le retrait d'un acces a un
+canal - demandaient deja. Ces deux-la n'avaient simplement jamais ete alignees dessus.
+
 ### Security - le garde de `social-service` ne se repliait pas sur un controle plus faible, il se repliait sur AUCUN
 
 Trois services portent ce garde. Deux echouent fermes quand `INTERNAL_SHARED_SECRET` manque en
