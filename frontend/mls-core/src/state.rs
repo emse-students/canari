@@ -380,24 +380,18 @@ impl MlsManager {
             .collect())
     }
 
-    /// Visits every storage entry this build can PROVE is the key package its own key names.
+    /// Visits every storage entry under a `KeyPackage` key that this build can DECODE, proof not
+    /// yet taken.
     ///
-    /// ONE COPY, for the same reason [`storage_label`] is one copy, and with more at stake. Two
-    /// callers ask different questions of the same rows - [`Self::prune_key_packages_expired_at`]
-    /// DELETES from this set and [`Self::key_package_census_at`] DESCRIBES it - and a proof written
-    /// twice is those two disagreeing about what a key package is, with the delete on the wrong
-    /// side of the disagreement. The census exists to decide what may be reclaimed; it must be
-    /// counting the exact rows the prune can reach, or its numbers argue for a delete that lands
-    /// somewhere else.
+    /// ONE COPY OF THE DECODE, one copy of the proof ([`Self::key_names_bundle`]), and they are
+    /// separate because the two callers do not need them in the same proportion. Both still see
+    /// the same rows and apply the same proof to anything they act on - that invariant is the
+    /// point and is asserted in the tests - but a caller that will only ever act on a HANDFUL of
+    /// these rows should not pay a per-row cryptographic proof for all of them.
     ///
-    /// The proof itself is unchanged and is described where it was written: the prefix and the
-    /// decode both LOOK like discrimination and neither is, because serde ignores unknown fields,
-    /// so the stored key must be shown to contain the recomputed hash reference. The key is
-    /// `label || json(hash_ref) || version` by construction, which makes the containment exact.
-    ///
-    /// @returns how many entries under a `KeyPackage` key could NOT be proven - never visited,
+    /// @returns how many entries under a `KeyPackage` key could not be DECODED - never visited,
     ///          never deleted, and counted so a reader sees that this build did not understand them
-    fn for_each_proven_key_package<F>(
+    fn for_each_key_package_bundle<F>(
         &self,
         values: &HashMap<Vec<u8>, Vec<u8>>,
         mut visit: F,
@@ -414,21 +408,58 @@ impl MlsManager {
                 undecodable += 1;
                 continue;
             };
-            let Ok(hash_ref) = bundle.key_package().hash_ref(self.provider.crypto()) else {
-                undecodable += 1;
-                continue;
-            };
-            let Ok(named) = serde_json::to_vec(&hash_ref) else {
-                undecodable += 1;
-                continue;
-            };
-            if !k.windows(named.len()).any(|w| w == named.as_slice()) {
-                undecodable += 1;
-                continue;
-            }
             visit(k, &bundle);
         }
         undecodable
+    }
+
+    /// Whether this stored key really names the bundle it holds - THE proof, in one place.
+    ///
+    /// The prefix and the decode both LOOK like discrimination and neither is, because serde
+    /// ignores unknown fields, so the stored key must be shown to contain the RECOMPUTED hash
+    /// reference. The key is `label || json(hash_ref) || version` by construction, which makes the
+    /// containment exact.
+    ///
+    /// It costs a `hash_ref` over the key package plus a serialisation, which is why the callers
+    /// choose WHEN to take it rather than having it taken for them: at a thousand-package pool this
+    /// proof is most of the walk ([backlog](../../docs/wiki/backlog.md)).
+    fn key_names_bundle(&self, k: &[u8], bundle: &KeyPackageBundle) -> bool {
+        let Ok(hash_ref) = bundle.key_package().hash_ref(self.provider.crypto()) else {
+            return false;
+        };
+        let Ok(named) = serde_json::to_vec(&hash_ref) else {
+            return false;
+        };
+        k.windows(named.len()).any(|w| w == named.as_slice())
+    }
+
+    /// Visits every storage entry this build can PROVE is the key package its own key names.
+    ///
+    /// [`Self::key_package_census_at`] describes EVERY row, so it takes the proof on every row and
+    /// this wrapper is what that reads like. [`Self::prune_key_packages_expired_at`] deletes a
+    /// subset, so it walks with [`Self::for_each_key_package_bundle`] and proves only what it is
+    /// about to delete - the same proof, on strictly fewer rows, never on a row it acts on without.
+    ///
+    /// @returns how many entries under a `KeyPackage` key could not be decoded OR could not be
+    ///          proven - never visited, and counted so a reader sees this build did not understand
+    ///          them
+    fn for_each_proven_key_package<F>(
+        &self,
+        values: &HashMap<Vec<u8>, Vec<u8>>,
+        mut visit: F,
+    ) -> usize
+    where
+        F: FnMut(&[u8], &KeyPackageBundle),
+    {
+        let mut unproven = 0usize;
+        let undecodable = self.for_each_key_package_bundle(values, |k, bundle| {
+            if self.key_names_bundle(k, bundle) {
+                visit(k, bundle);
+            } else {
+                unproven += 1;
+            }
+        });
+        undecodable + unproven
     }
 
     /// [`KeyPackageCensus`] for this keystore, at the instant given.
@@ -941,12 +972,30 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
 
         // THE ENTRY MUST PROVE IT IS THE KEY PACKAGE ITS OWN KEY NAMES, AND NOT MERELY DECODE -
-        // see `for_each_proven_key_package`, which owns that proof so the census cannot describe a
-        // different set of rows from the one this deletes.
+        // `key_names_bundle` owns that proof, and nothing is deleted without it.
+        //
+        // **THE PROOF IS TAKEN ON THE DOOMED ROWS AND ON NOTHING ELSE, AND THAT IS THE WHOLE COST
+        // OF THIS PASS.** It recomputes a hash reference over the key package and serialises it,
+        // per row; the expiry test needs the decoded lifetime and nothing more. On the ordinary
+        // load - a device with a large pool and nothing to reclaim - the old order proved a
+        // thousand rows to delete none of them, which measured 11.49 ms at a pool of 1000
+        // (criterion, OXYGEN, 2026-09-17) on the awaited path of the first screen.
+        //
+        // The set this deletes is unchanged: expired AND proven, exactly the rows the census
+        // counts as expired. What changed is that a row nothing will touch is no longer asked to
+        // prove itself - which is why `unproven` below is reported apart from `undecodable`, since
+        // it is now a count over CANDIDATES rather than over the whole pool. A column is only
+        // evidence for the question it was written to answer.
         let mut doomed: Vec<Vec<u8>> = Vec::new();
-        let undecodable = self.for_each_proven_key_package(&values, |k, bundle| {
-            if bundle.key_package().life_time().not_after() < now_secs {
+        let mut unproven = 0usize;
+        let undecodable = self.for_each_key_package_bundle(&values, |k, bundle| {
+            if bundle.key_package().life_time().not_after() >= now_secs {
+                return;
+            }
+            if self.key_names_bundle(k, bundle) {
                 doomed.push(k.to_vec());
+            } else {
+                unproven += 1;
             }
         });
 
@@ -956,11 +1005,13 @@ impl MlsManager {
         let pruned = doomed.len();
         drop(values);
 
-        if pruned > 0 || undecodable > 0 {
+        if pruned > 0 || undecodable > 0 || unproven > 0 {
             log::info!(
-                "prune_expired_key_packages: removed {} expired bundle(s), left {} undecodable",
+                "prune_expired_key_packages: removed {} expired bundle(s), left {} undecodable \
+                 and {} expired entr(ies) whose key does not name them",
                 pruned,
-                undecodable
+                undecodable,
+                unproven
             );
         }
         if pruned > 0 {
