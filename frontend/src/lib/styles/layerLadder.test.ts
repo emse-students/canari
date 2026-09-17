@@ -15,6 +15,17 @@
  * competing only with its own siblings inside one component and invisible to everything else.
  * Naming those would imply they can be compared with a modal, which they cannot. Above it, an
  * element is claiming a place in the window, and that is a claim against every other layer.
+ *
+ * AND THE FLOOR HAS A KNOWN COST, MEASURED 2026-09-17 - IT IS RECORDED HERE RATHER THAN PAID FOR.
+ * `MessagingSyncOverlay` is a full-cover panel that blocks the whole chat while messaging is
+ * unusable, so it competes with that page's banners and composer - a window-scale claim by any
+ * reading. It carried a raw `z-50`, which is BELOW the floor, so nothing here ever looked at it; it
+ * now takes `--z-page-blocking`. The floor is not raised in response, because magnitude is not the
+ * discriminator: the tree holds genuinely local `z-20`/`z-30`/`z-40` values that a higher floor
+ * would sweep in, and a gate that accuses the innocent is one people learn to silence. **What is
+ * missing is a discriminator for "covers everything behind it", not a bigger number** - and until
+ * somebody finds one that does not also match a decorative `absolute inset-0 z-0` inside a calendar
+ * cell, this class of layer is found by reading, which is how this one was found.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

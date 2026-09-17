@@ -221,6 +221,11 @@
   /* In a page, over that page's own content. */
   --z-page-sticky: 35; /* a sticky date pill inside a scroller */
   --z-page-overlay: 40; /* the chat's own banner stack, the composer footer */
+  /* A page that is not usable yet, covering its OWN content and every overlay above - the
+     "Connexion en cours" / catch-up panel. One rung over `--z-page-overlay` because it has to hide
+     the banners and the composer too: the same sentence as the sheet's, met inside a page. It is
+     a leftover of the 2026-09-09 sweep, which counted a raw 50 here and did not reach it. */
+  --z-page-blocking: 41;
 
   --z-nav-drawer-scrim: 42;
   --z-nav-drawer: 44;

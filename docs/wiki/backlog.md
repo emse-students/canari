@@ -1456,14 +1456,28 @@ pending/validated split `GET /associations/:id/events` filters on for a caller i
 
 **Not investigated**: which component draws the list row, and whether it even receives the flag.
 
-### P3 - the "Connexion en cours" panel is transparent and the page shows through it (user, 2026-09-17)
+### P3 - the "Connexion en cours" panel showed the page through it - FIXED 2026-09-17, UNSHIPPED (user)
 
 Verbatim: *"Panneau 'Connexion en cours' transparent par dessus /chat (et peut-etre /communautes),
 on voit a travers c'est moche."*
 
-The string is `chat_connecting_label` (*"Connexion en cours..."*, `messages/fr.json:1115`). **Not
-investigated**: which overlay renders it, whether a backdrop token is missing or the element is
-simply never painted over, and whether `/communautes` shares the component or has its own.
+**ONE COMPONENT, `MessagingSyncOverlay`, AND TWO DEFECTS IN THE SAME ATTRIBUTE.** It is the only
+element in the tree that appended an opacity modifier to an arbitrary `bg-[color-mix(...)]`, and the
+first guess - that Tailwind silently emits nothing for that shape - was REFUTED by compiling it:
+the rule is emitted, correctly, as `color-mix(in oklab, <the blend> 95%, transparent)`. **The panel
+was 5% see-through exactly as written**, which over a conversation is enough to ghost the whole
+thread through a surface whose entire job is to say the thread cannot be used yet. It is opaque now.
+
+It also carried a raw `z-50`. The ladder's rule is *"a new layer takes an existing rung or adds one
+here - never a number at the call site"*, and this one is a full-cover panel competing with its
+page's banners and composer, so it takes a rung: `--z-page-blocking`, one over `--z-page-overlay`.
+**The gate did not catch it and was right not to**: its floor is 60, deliberately, because below
+that a z-index is local to one component. Why the floor is not raised in response is written at the
+top of `layerLadder.test.ts`, where it belongs.
+
+`/communautes` was the user's own "peut-etre" and does not share this component - the overlay is
+rendered by `MainChatPage` alone. If the same look is ever reported there, it is a different
+element.
 
 ### P2 - a photo arrives IN the notification and the app then shows the words "Photo" where the image should be (user, 2026-09-17)
 

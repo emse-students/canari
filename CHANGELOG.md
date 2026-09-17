@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le panneau « Connexion en cours » laissait voir la conversation qu'il bloque
+
+Signale par l'utilisateur : *"Panneau 'Connexion en cours' transparent par dessus /chat, on voit a
+travers c'est moche."* Le panneau portait un modificateur d'opacite de 95 % sur son fond. La premiere
+hypothese - Tailwind n'emettrait rien pour cette forme - est fausse, verifiee en compilant la classe :
+la regle est bien produite. Le panneau etait donc transparent a 5 % exactement comme ecrit, ce qui
+suffit a faire apparaitre toute une conversation en filigrane derriere une surface dont le seul role
+est de dire que cette conversation n'est pas utilisable. Il est opaque.
+
+Il portait aussi un `z-50` brut, alors que l'echelle des couches dit qu'une nouvelle couche prend un
+barreau ou en ajoute un, jamais un nombre au point d'appel. C'est un plein-ecran qui doit couvrir les
+bandeaux et le composeur de sa page : il prend `--z-page-blocking`, un cran au-dessus de
+`--z-page-overlay`. La garde ne l'avait pas vu parce que son plancher est 60, volontairement - ce que
+cela coute est desormais ecrit dans la garde elle-meme.
+
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
 
 nginx transmet a l'amont tout en-tete que personne n'a ecrase, donc le bloc serveur vide les noms
