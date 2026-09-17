@@ -95,7 +95,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-72 scripts.
+73 scripts.
 
 | script | what it is |
 |---|---|
@@ -157,6 +157,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/mut.mjs` | MUT-1..21 - message mutation (edit, delete, react, pin) on both transports. |
 | `archive/notif.mjs` | NOTIF-1b / NOTIF-4 / NOTIF-4b / NOTIF-9 / NOTIF-10 / NOTIF-11 - the notification surface, one |
 | `archive/notif14.mjs` | NOTIF-14 - the TITLE names its conversation: a DM says WHO, a salon says WHERE. |
+| `archive/notif15.mjs` | NOTIF-15: a reaction to YOUR OWN message notifies you, on the reactions channel, and no other |
 | `archive/notif16.mjs` | NOTIF-16 - a mention is filed on `canari_mentions` and a plain message on `canari_messages`. |
 | `archive/notif17b.mjs` | NOTIF-17b - a first message into a conversation this device has NO RECORD OF, arriving as a PUSH. |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
@@ -257,4 +258,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-196 scripts in total.
+197 scripts in total.

@@ -84,13 +84,24 @@ export const RESOLVE = `(function (sel) {
       var r = e.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     });
-    // INNERMOST wins, and length alone does not decide it. A scroll container holding a single
-    // button has exactly the same innerText as the button, so sorting by length leaves the
-    // container first (it precedes its child in DOM order) - and its centre is empty space far
-    // below the button. Cost a silent no-op click on the channel list. So: drop any hit that
-    // contains another hit, then prefer the shortest label among what is left.
-    var innermost = hits.filter(function (e) {
-      return !hits.some(function (o) { return o !== e && e.contains(o); });
+    // CLICKABILITY IS TESTED BEFORE "INNERMOST", NOT AFTER, AND A 1x1 SPAN IS WHY.
+    //
+    // An element nobody can press cannot be the innermost thing a person meant to press - but it
+    // was still allowed to ELIMINATE the ancestor that could be pressed, and screen-reader labels
+    // are exactly that shape. Measured on A1 2026-09-17, a text= lookup for Discussions on /posts:
+    // six hits, and the innermost was a 1x1 sr-only SPAN at (272,897) whose centre hit-tests to an
+    // svg outside it. It passed the width test, knocked out the 109x48 bottom-nav anchor that
+    // CONTAINS it, then failed the clickable test at the end - so the resolver returned null and
+    // ensureChat died with "no stable element", which reads as a phone with no navigation. It is
+    // the same class as the 0x0 rail this function was already written against, one pixel larger.
+    //
+    // Filtering first preserves both rules it is built on and costs nothing: a scroll container's
+    // centre is empty space, so it is dropped here instead of by the old trailing filter, and the
+    // avatar whose centre belongs to a nav link is dropped before it can outrank the row that
+    // visibly says the name.
+    var clickable = hits.filter(clickableAtOwnCentre);
+    var innermost = clickable.filter(function (e) {
+      return !clickable.some(function (o) { return o !== e && e.contains(o); });
     });
 
     // VISIBLE TEXT BEATS A LABEL. Sorting by innerText length alone hands victory to whatever has
@@ -104,12 +115,10 @@ export const RESOLVE = `(function (sel) {
     var pool = textual.length ? textual : innermost;
     pool.sort(function (a, b) { return (a.innerText || '').length - (b.innerText || '').length; });
 
-    // The avatar above resolved to a rect whose centre hit-tested to the "Communautes" nav link, so
-    // the click navigated away and the check failed somewhere else entirely, blaming the app.
-    // Anything whose centre belongs to another subtree is unusable: reject it here rather than let a
-    // caller click into the void. Returning null makes the caller fail loudly, which is the point -
-    // a wrong click is worse than no click.
-    return pool.filter(clickableAtOwnCentre)[0] || null;
+    // Every candidate here is already clickable at its own centre - see the filter above, which is
+    // where that test moved to. Returning null when nothing qualifies makes the caller fail loudly,
+    // which is the point: a wrong click is worse than no click.
+    return pool[0] || null;
   }
 
   // ONE MATCH IS UNAMBIGUOUS AND STAYS UNTOUCHED - this must not start hiding a selector that

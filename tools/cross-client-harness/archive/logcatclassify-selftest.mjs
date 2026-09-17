@@ -37,6 +37,12 @@ const CASES = [
   [line('D', 'CanariFCM', 'decryptProto: success type=text -> "MARKER"'), 'explained'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
+  // THE REACTION ARM'S OWN SUCCESS LINE, which left NOTIF-15 `PASS-DIRTY` over the very thing the
+  // row was measuring. Only the `D` site is claimed: its `W` sibling - "reaction push without
+  // groupId - dropped, nothing to attach it to" - is a push that reached the device and was thrown
+  // away, a real loss, and it must keep surfacing. The pair below pins both halves of that split.
+  [line('D', 'CanariFCM', 'reaction: group=0000abcd actor=0000ef01 emoji=❤️'), 'explained'],
+  [line('W', 'CanariFCM', 'reaction push without groupId - dropped, nothing to attach it to'), 'notable'],
   // Both shapes of "a silent frame shows nothing": the skip, which is the ordinary path while
   // calls are off and says so once per process, and the calls-enabled path that decrypts and
   // still shows nothing. The old wording claimed a state write that the read-only push path
