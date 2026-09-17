@@ -384,6 +384,13 @@ export interface PostNotification {
   postId: string;
   actorId: string;
   actorName: string;
+  /**
+   * Set only for `type === 'association_post'`. `actorId` on this row is the publishing MEMBER,
+   * not the association - see the backend `PostNotification` entity's own docblock for why - so
+   * the association's identity/logo has nowhere else to come from for rendering an avatar.
+   */
+  associationId?: string | null;
+  associationLogoUrl?: string | null;
   text: string;
   read: boolean;
   createdAt: string;

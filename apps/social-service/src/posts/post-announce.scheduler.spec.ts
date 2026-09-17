@@ -51,13 +51,25 @@ describe('PostAnnounceScheduler', () => {
 
   /** Answers the three tables the sweeper reads, by what the SQL is asking for. */
   const tables =
-    (opts: { audience?: string[]; followers?: string[]; associationName?: string | null }) =>
+    (opts: {
+      audience?: string[];
+      followers?: string[];
+      associationName?: string | null;
+      associationLogoUrl?: string | null;
+    }) =>
     (sql: string) => {
       if (sql.includes('FROM users')) return (opts.audience ?? []).map((id) => ({ id }));
       if (sql.includes('user_follows'))
         return (opts.followers ?? []).map((followerUserId) => ({ followerUserId }));
       if (sql.includes('associations'))
-        return opts.associationName === null ? [] : [{ name: opts.associationName ?? 'BDE' }];
+        return opts.associationName === null
+          ? []
+          : [
+              {
+                name: opts.associationName ?? 'BDE',
+                logoUrl: opts.associationLogoUrl ?? null,
+              },
+            ];
       return [];
     };
 
@@ -108,7 +120,10 @@ describe('PostAnnounceScheduler', () => {
 
   it('tells the whole feed audience about an association post, under the association name', async () => {
     const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'Soiree' };
-    await scheduler([post], tables({ audience: ['u1', 'u2', 'a1'] })).announcePosts();
+    await scheduler(
+      [post],
+      tables({ audience: ['u1', 'u2', 'a1'], associationLogoUrl: '/api/media/public/logo1' })
+    ).announcePosts();
 
     expect(batches).toHaveLength(1);
     expect(batches[0]).toMatchObject({
@@ -118,10 +133,20 @@ describe('PostAnnounceScheduler', () => {
       // shown is the association's - the reader follows the association, not the officer.
       actorId: 'a1',
       actorName: 'BDE',
+      // The association's OWN identity, distinct from `actorId` above - what fixed the
+      // notification showing the publishing member's photo instead of the association's logo.
+      associationId: 'asso1',
+      associationLogoUrl: '/api/media/public/logo1',
       text: 'Soiree',
       pushData: { postId: 'p1' },
     });
     expect(batches[0].recipientIds).toEqual(['u1', 'u2', 'a1']);
+  });
+
+  it('passes a null logo through rather than a placeholder, for an association with none yet', async () => {
+    const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'Soiree' };
+    await scheduler([post], tables({ audience: ['u1'] })).announcePosts();
+    expect(batches[0]).toMatchObject({ associationId: 'asso1', associationLogoUrl: null });
   });
 
   it('tells only the followers about a personal post', async () => {

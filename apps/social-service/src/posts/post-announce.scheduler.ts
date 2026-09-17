@@ -106,10 +106,11 @@ export class PostAnnounceScheduler {
    */
   private async announceAssociationPost(post: Post): Promise<number> {
     const rows: unknown = await this.postRepo.manager.query(
-      `SELECT name FROM associations WHERE id = $1`,
+      `SELECT name, "logoUrl" FROM associations WHERE id = $1`,
       [post.associationId]
     );
-    const name = Array.isArray(rows) && rows.length > 0 ? String(rows[0].name ?? '') : '';
+    const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    const name = row ? String(row.name ?? '') : '';
     if (!name) {
       // Not a fallback into a generic sentence: an association with no name is a broken row, and
       // announcing it as "quelqu'un" would hide that. The post stays stamped and nobody is told.
@@ -122,6 +123,10 @@ export class PostAnnounceScheduler {
       postId: post.id,
       actorId: post.authorId,
       actorName: name,
+      // The association's OWN identity, not `actorId` above (the publishing member) - see
+      // `PostNotification`'s docblock for why the row needs both.
+      associationId: post.associationId,
+      associationLogoUrl: row?.logoUrl ?? null,
       text: previewOf(post.markdown ?? ''),
       pushData: { postId: post.id },
     });
