@@ -13,7 +13,7 @@
   } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
-  import Modal from '../shared/Modal.svelte';
+  import SidePanel from '../shared/SidePanel.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import Avatar from '../shared/Avatar.svelte';
@@ -54,13 +54,13 @@
   }
 
   interface Props {
-    /** Whether the modal is visible. */
+    /** Whether the panel is showing. */
     open: boolean;
     /** List of all available community workspaces. */
     workspaces: ChannelWorkspace[];
     /** ID of the workspace currently being administered. */
     selectedWorkspaceId: string;
-    /** Callback to close the modal. */
+    /** Callback to close the panel. */
     onClose: () => void;
     /** Callback to update the avatar image of the selected workspace. */
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
@@ -480,7 +480,7 @@
     return `${expiry} - ${uses}`;
   });
 
-  /** Confirms then leaves/removes the selected community, closing the modal on success. */
+  /** Confirms then leaves/removes the selected community, closing the panel on success. */
   async function leaveCommunity() {
     if (
       !(await showConfirm(
@@ -557,14 +557,14 @@
     } catch (e) {
       Log.d('communityAdmin.saveHistoryVisibility failed', e);
       // Classified by the server's CODE, never by its sentence - the same contract every other
-      // community refusal in this modal is read through.
+      // community refusal in this panel is read through.
       historyVisibilityError = describeCommunityRefusal(refusalCode(e)) ?? m.common_save_error();
     } finally {
       historyVisibilitySaving = false;
     }
   }
 
-  // The selected community's rule, re-read whenever the modal opens on another one. Sourced from
+  // The selected community's rule, re-read whenever the panel opens on another one. Sourced from
   // the sidebar entry, which the server's broadcast keeps current on every member's device.
   $effect(() => {
     const declared = selectedWorkspace?.historyVisibility;
@@ -591,35 +591,40 @@
 </script>
 
 <!--
-  THE ROLES TAB IS WIDER THAN THE OTHERS, because it is the only one holding a table. At
-  `max-w-4xl` the 256px tab rail left the grid under 600px and its own horizontal scrollbar was
-  doing the work - a matrix you have to drag sideways to read is a matrix nobody audits. The other
-  tabs are forms and read worse when stretched, so the width follows the tab rather than the modal
-  being widened for all of them.
--->
-<Modal
-  {open}
-  {onClose}
-  title={m.chat_community_settings_title()}
-  maxWidth={activeTab === 'roles' ? 'max-w-6xl' : 'max-w-4xl'}
->
-  <div class="border-cn-border/40 flex min-h-0 flex-col border-t md:flex-row">
-    <!-- Sidebar tabs -->
-    <div
-      class="bg-cn-surface border-cn-border/40 flex w-full flex-row gap-1 overflow-x-auto border-b p-2 md:w-64 md:shrink-0 md:flex-col md:space-y-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-4"
-    >
-      <h3
-        class="text-text-muted mb-2 hidden px-2 text-xs font-bold tracking-wider uppercase md:block"
-      >
-        {selectedWorkspace ? selectedWorkspace.name : m.chat_community_fallback_name()}
-      </h3>
+  ONE COLUMN, A TAB STRIP, AND ONE DANGER ZONE - the move `ChannelSettingsPanel` already made.
 
+  The user reported this screen from a phone: *"Les parametres de communaute sur mobile ne sont pas
+  du tout ergonomiques, beaucoup de texte, elements caches, modal... Au lieu de ca, on pourrait
+  avoir quelque chose de similaire aux parametres des conversations."* Measured on the Mi 9T
+  (#794), it was a 404x869 card floating in a 436x945 screen, with a `role="dialog"` and a
+  backdrop; the conversation settings it was asked to resemble are a full-bleed side panel with
+  neither. So it renders into that same shell rather than into a wider modal.
+
+  THE 256px RAIL IS DELETED, NOT HIDDEN. A 28rem panel has one column, so the horizontal strip this
+  file already drew for phones is the only layout there can be - keeping the `md:flex-row` form
+  behind a query would leave markup no viewport could ever satisfy, which is the reasoning the
+  channel settings wrote down when they made the same cut.
+
+  AND THE DANGER ZONE IS ONE COPY. It was two: `md:block` in the rail and `md:hidden` at the foot of
+  the content, the same two buttons written twice so that each layout had its own. One layout needs
+  one copy, at the foot, where it is reachable from every tab.
+
+  The roles tab stops buying extra window as well. It asked for `max-w-6xl` because
+  `PermissionGrid` reserved 496px before measuring a label; those floors are now what its content
+  needs, which is what makes a one-column panel possible at all.
+-->
+<SidePanel {open} {onClose} title={m.chat_community_settings_title()}>
+  <div class="flex h-full min-h-0 flex-col">
+    <!-- Tab strip -->
+    <div
+      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 dark:border-white/10"
+    >
       <button
         onclick={() => (activeTab = 'overview')}
-        class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'overview'
-          ? 'bg-cn-yellow/15 text-cn-dark'
-          : 'text-text-main hover:bg-cn-bg'}"
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
+          : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Settings size={18} />
         {m.chat_community_overview_tab()}
@@ -627,10 +632,10 @@
       {#if canManage}
         <button
           onclick={() => (activeTab = 'roles')}
-          class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
+          class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
           'roles'
-            ? 'bg-cn-yellow/15 text-cn-dark'
-            : 'text-text-main hover:bg-cn-bg'}"
+            ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
+            : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
         >
           <Shield size={18} />
           {m.chat_community_roles_tab()}
@@ -638,37 +643,18 @@
       {/if}
       <button
         onclick={() => (activeTab = 'members')}
-        class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'members'
-          ? 'bg-cn-yellow/15 text-cn-dark'
-          : 'text-text-main hover:bg-cn-bg'}"
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
+          : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Users size={18} />
         {m.common_members_label()}
       </button>
-
-      <div class="mt-auto hidden space-y-2 pt-4 md:block">
-        <button
-          class="text-red-err hover:bg-red-err/10 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors"
-          onclick={leaveCommunity}
-        >
-          <LogOut size={18} />
-          {m.chat_community_leave_button()}
-        </button>
-        {#if canManage}
-          <button
-            class="text-red-err hover:bg-red-err/10 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors"
-            onclick={deleteCommunity}
-          >
-            <Trash2 size={18} />
-            {m.chat_community_delete_button()}
-          </button>
-        {/if}
-      </div>
     </div>
 
-    <!-- Main content -->
-    <div class="bg-cn-bg min-h-75 flex-1 overflow-y-auto p-6">
+    <!-- Tab content. `p-4` is the budget `permissionGridWidth.test.ts` measures the matrix against. -->
+    <div class="bg-cn-bg min-h-0 flex-1 overflow-y-auto p-4">
       {#if activeTab === 'overview'}
         <div class="max-w-2xl space-y-6">
           <h2 class="text-text-main text-xl font-bold">{m.chat_community_overview_tab()}</h2>
@@ -811,7 +797,7 @@
             </div>
             {#if canManage}
               <div class="border-cn-border bg-cn-bg space-y-2.5 border-b px-4 py-3">
-                <div class="grid grid-cols-1 gap-2.5 md:grid-cols-[1fr_auto_auto]">
+                <div class="grid grid-cols-1 gap-2.5 @md:grid-cols-[1fr_auto_auto]">
                   <!-- Members of this community are already here; inviting them again is not an action. -->
                   <UserAutocomplete
                     value={inviteUserId}
@@ -1000,8 +986,8 @@
         </div>
       {/if}
 
-      <!-- Destructive action reachable on mobile (desktop keeps it in the sidebar). -->
-      <div class="border-cn-border/40 mt-8 space-y-2 border-t pt-4 md:hidden">
+      <!-- THE ONE COPY. It used to be two, one per layout; there is one layout now. -->
+      <div class="border-cn-border/40 mt-8 space-y-2 border-t pt-4">
         <button
           class="text-red-err bg-red-err/10 hover:bg-red-err/20 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
           onclick={leaveCommunity}
@@ -1021,4 +1007,4 @@
       </div>
     </div>
   </div>
-</Modal>
+</SidePanel>

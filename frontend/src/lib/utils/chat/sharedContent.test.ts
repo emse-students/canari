@@ -50,6 +50,29 @@ describe('aggregateSharedContent', () => {
     ]);
   });
 
+  /*
+   * THE WHOLE POINT OF THE FLAG IS THAT THESE TWO MESSAGES ARE OTHERWISE IDENTICAL. Same envelope
+   * kind, same media type, same mime type, same size - so a test that gave them different bytes
+   * would pass against a predicate that read the bytes, which is the fallback this change exists to
+   * avoid. The only difference between them is what the sender declared.
+   */
+  it('drops a recorded voice note from the panel and keeps an imported audio file', () => {
+    const recorded = { ...mediaRef('audio', 'vocal1'), voiceNote: true };
+    const imported = mediaRef('audio', 'chanson1');
+    const messages = [
+      msg('m1', 1, serializeEnvelope(mkMediaEnvelope(recorded))),
+      msg('m2', 2, serializeEnvelope(mkMediaEnvelope(imported))),
+    ];
+    const { media, files } = aggregateSharedContent(messages);
+    expect(files.map((f) => f.media.mediaId)).toEqual(['chanson1']);
+    expect(media).toHaveLength(0);
+  });
+
+  it('keeps an audio message that predates the flag, because absent is unknown and not imported', () => {
+    const messages = [msg('m1', 1, serializeEnvelope(mkMediaEnvelope(mediaRef('audio', 'vieux'))))];
+    expect(aggregateSharedContent(messages).files.map((f) => f.media.mediaId)).toEqual(['vieux']);
+  });
+
   it('skips deleted messages', () => {
     const messages = [
       msg('m1', 1, serializeEnvelope(mkMediaEnvelope(mediaRef('image', 'x'))), true),

@@ -388,6 +388,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       fileName: media.fileName,
       width: media.width,
       height: media.height,
+      ...(media.voiceNote ? { voiceNote: true } : {}),
     };
     const proto = encodeAppMessage({
       ...mkMedia({
@@ -398,6 +399,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         mimeType: media.mimeType,
         size: media.size,
         fileName: media.fileName ?? '',
+        voiceNote: media.voiceNote ?? false,
         caption: media.caption,
         ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
       }),

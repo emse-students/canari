@@ -54,6 +54,9 @@ function makeEncryptedStorage(): IStorage & {
       }
     }),
     updateMessage: vi.fn().mockResolvedValue(undefined),
+    // Not modelled, like the other reads on this stub: a PIN change re-encrypts rows it gets from
+    // `getAllEncryptedRows`, and never looks one up by id.
+    getMessage: vi.fn().mockResolvedValue(null),
     getMessages: vi.fn(),
     getMessagesPage: vi.fn(),
     deleteOldMessages: vi.fn().mockResolvedValue(0),

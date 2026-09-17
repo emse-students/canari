@@ -11,6 +11,213 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
+
+Le correctif de `focusTrap` a laisse une question ouverte plus large que lui : un noeud porte existe
+dans son parent d'ecriture pendant UN effet, et tout ce qui lit une position dans cette fenetre lit
+une position sur le point de cesser d'etre vraie. `.focus()` avait ete balaye et ne tenait qu'un
+site. Une MESURE n'est pas un `.focus()`, et n'avait pas ete balayee.
+
+Elle l'est. La population est close - les consommateurs de `$lib/actions/portal`, treize composants.
+Cinq lisent une position ; quatre lisent un noeud qui ne bouge pas (une ancre de declenchement, un
+`textarea`, un focus sur un bouton qui reste en place). Le cinquieme est
+`MessageMobileActions`, et c'est le cas exact : `overlay` y est
+`sheet.parentElement`, c'est-a-dire le `<div use:portal>` lui-meme, et son
+`getBoundingClientRect().bottom` alimente le nombre qui decide de combien soulever le fil pour que
+la feuille ne couvre pas le message sur lequel elle agit.
+
+**Le compilateur dit que la mesure est mise en file la premiere** - `$.user_effect` est emis avant
+`$.action(div, portal)`, et les effets s'executent dans l'ordre de creation. C'est un argument, pas
+une mesure : l'effet sort tot tant que `sheetEl` est nul, et le `bind:this` du bloc `{#if}` n'ecrit
+qu'a une passe suivante. **Mesure : la lecture arrive APRES le deplacement**, toutes les lectures de
+l'overlay ayant `body` pour parent. Le site est donc correct aujourd'hui.
+
+Correct par un enchainement, pas par une regle - donc il est tenu. Le test enregistre le PARENT a
+l'instant de chaque lecture, ce qui n'a besoin d'aucune geometrie, et il refuse d'etre creux : il
+echoue aussi si l'effet ne mesure jamais l'overlay, une garde que rien n'atteint etant une absence
+qui ressemble a une garde. Verifie par mutation - sans `use:portal`, il tombe en nommant le defaut :
+*"the overlay's rect was read 1 time(s) before the portal moved it"*.
+
+**Ce que le balayage ne couvre pas** est ecrit dans le test : il lit chaque composant qui porte, donc
+il verrait une lecture faite par un AUTRE composant sur un noeud porte uniquement si celui-ci passait
+par la meme reference - ce qu'aucun des treize ne fait, les references etant toutes locales.
+
+### Changed - les parametres de communaute sont un panneau, plus une modale
+
+Signale depuis un telephone : *"Les parametres de communaute sur mobile ne sont pas du tout
+ergonomiques, beaucoup de texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque
+chose de similaire aux parametres des conversations."* Les trois mots etaient litteraux, et
+l'ecran nomme comme cible est ce qui rend la demande mesurable plutot que subjective.
+
+Mesure sur le Mi 9T a 436 x 945, meme compte et meme build, les deux ecrans ouverts l'un apres
+l'autre : les parametres de CONVERSATION sont un panneau plein cadre sans `role="dialog"` ; ceux de
+COMMUNAUTE etaient une modale de 404 x 869 flottant dans 436 x 945. **155 px, 16% du telephone,
+payes en scrim et en gouttiere** pour un panneau qui couvrait deja 92% de l'ecran dans les deux
+directions. Deux tiers des reglages etaient derriere une bande d'onglets a l'interieur de cette
+modale, « Quitter » et « Supprimer » sous son propre cadre de defilement, et 23% de prose en plus
+dans un cadre 155 px plus court.
+
+Ils rendent desormais dans la meme coquille. Ce qui a demande du travail n'est pas la coquille mais
+ce qu'elle portait : `.conversation-side-panel` melait un TIROIR et une COLONNE, et la seconde
+moitie n'a de sens que dans une rangee qui a une place pour elle. La page de chat en a une, la
+barre laterale non - prendre la classe entiere aurait laisse le panneau tomber en flux normal a
+1280 px, ce qui n'est pas une forme. Le tiroir est donc `.side-panel`, la colonne
+`.side-panel-column`, et le choix appartient a l'HOTE, seul a savoir. Tout le reste - le scrim,
+Echap, l'en-tete, le bouton de fermeture, l'unique contexte de conteneur - est partage au lieu
+d'etre recopie une quatrieme fois.
+
+Le rail de 256 px est supprime, pas masque : un panneau de 28rem a une colonne, donc la bande
+horizontale que le fichier dessinait deja pour les telephones est la seule mise en page possible -
+c'est le raisonnement que `ChannelSettingsPanel` avait ecrit en faisant la meme coupe. Et la zone
+dangereuse repasse a UN exemplaire : elle etait ecrite deux fois, une par mise en page, `md:block`
+dans le rail et `md:hidden` au pied du contenu. Une seule mise en page en demande un seul.
+
+Mesure en sortie sur cette copie de travail, aux trois echelons : 436 px plein cadre a `top: 0`,
+448 px encastres et arrondis a partir de 768 px, et la colonne de chat toujours `static` a 320 px a
+1400 px - ou le panneau de la barre laterale reste, lui, un tiroir. Cette derniere lecture a trouve
+un defaut au passage : la borne haute de l'echelon du milieu faisait retomber un panneau sans
+colonne sur la regle de base a 1280 px, donc il passait d'un tiroir arrondi encastre a un tiroir
+carre plein cadre en un pixel de fenetre. La borne n'avait de raison d'etre que pour tenir les
+encarts hors de la colonne, et un encart sur une boite `static` ne fait rien.
+
+Une deuxieme lecture a trouve la moitie manquante de la meme phrase : **un tiroir doit SORTIR de la
+page, une colonne doit y RESTER**. `.page-scroll-wrap` porte `will-change: transform` pour le geste
+de balayage entre onglets, ce qui en fait a la fois un contexte d'empilement et le bloc conteneur de
+tout `position: fixed` ecrit dedans - un panneau ecrit dans une page est donc positionne contre
+`<main>`, entre l'en-tete et la barre du bas, et peint sous les deux quel que soit son echelon. Rien
+ne l'avait montre parce que les panneaux de conversation s'ouvrent sur un ecran qui masque
+`MobileHeader` et `BottomNav` : la zone de contenu y EST la fenetre. Ceux de communaute s'ouvrent
+depuis la LISTE, ou les deux sont affiches - et leur pied, qui est desormais l'endroit de « Quitter »
+et « Supprimer », passait sous la barre du bas. La modale remplacee n'avait jamais eu le probleme
+parce qu'une modale est portee vers `body`. Mesure A/B dans Chrome sur la geometrie de cet ecran,
+fenetre de 958 x 944 : dans un conteneur encastre a `top: 120` sur 734 px de haut, un enfant
+`fixed inset-0` mesure **120 / 734 - la boite du CONTENEUR** s'il porte `will-change: transform`, et
+**0 / 944 - la fenetre** dans le meme conteneur sans cette declaration. 210 px de fenetre
+inatteignables, soit exactement l'en-tete plus la barre du bas. Le tiroir est maintenant porte lui
+aussi ; la colonne ne l'est
+pas, et pas par concession : a `xl` elle est un FRERE en flex des autres cartes, et un noeud deplace
+dans `<body>` n'a plus de rangee a rejoindre. Le meme booleen decide les deux, et un test monte la
+coquille dans une page pour lire ou le noeud atterrit, dans les deux sens.
+
+### Fixed - ouvrir une modale renvoyait la page en haut, partout dans l'application
+
+Signale par l'utilisateur sur telephone : *"Cliquer sur evenement sur mobile (type liste) renvoie
+vers le haut de la page aussi, c'est bizarre"*. Rien dans cet ecran n'en etait la cause : toutes les
+modales de l'application le faisaient, depuis n'importe quelle position de defilement.
+
+Trois faits se composent, et aucun n'est faux isolement. `.page-scroll-wrap` porte
+`will-change: transform` pour le geste de balayage entre onglets, ce qui en fait le bloc conteneur
+de tout `position: fixed` a l'interieur - un fond de modale ecrit `fixed inset-0` dans une page est
+donc place a l'origine de ce CONTENEUR DE DEFILEMENT, pres du haut de son contenu, et pas face au
+viewport. Ensuite, un portail deplace le noeud un effet APRES sa creation, et l'action de l'enfant
+s'execute d'abord : Svelte 5 emet `$.action(<panneau>, focusTrap)` avant
+`$.action(<fond>, portal)` - verifie en compilant cette forme exacte. Enfin, `focus()` fait defiler
+ses ancetres pour reveler l'element.
+
+Le piege se referme la : `focusTrap` demandait au navigateur de reveler un bouton situe au
+decalage zero d'une page defilee ailleurs. Mesure dans Chrome sur cette geometrie : conteneur a
+1500 px, **0 px** apres `focus()`, **1500 px** apres `focus({ preventScroll: true })`.
+
+Le correctif est `preventScroll`, et pas une inversion des deux actions : une trappe a focus n'a
+aucune raison de faire defiler quoi que ce soit a l'ouverture, puisqu'elle entre dans une surface
+qui couvre deja le viewport. Dit ainsi, cela tient quel que soit l'ordre des effets. Les deux
+rebouclages de Tab du meme fichier gardent le defilement du navigateur, pour la raison inverse, et
+`focusTrap.test.ts` fixe les deux moities.
+### Fixed - un 500 d'Apple a coute la mise en production de `v0.18.10`
+
+La soumission App Store est morte sur `POST /v1/reviewSubmissionItems -> 500 An unexpected error
+occurred on the server side`. Apple ne repondait pas a notre requete : il disait n'avoir pas su
+en avoir une opinion. Le binaire etait sur TestFlight, la version creee, les notes ecrites - et
+comme le deploiement de production depend du SUCCES des deux bras magasin, le web n'est pas parti
+non plus. `release-shipped.sh` l'a dit franchement plutot que de se declarer livre, ce pour quoi il
+existe depuis que `v0.16.2` et `v0.16.3` ont menti pendant cinq jours.
+
+`v0.16.1` etait deja mort ainsi, un appel plus tot dans la meme chaine, et la reponse d'alors fut de
+rejouer les methodes idempotentes. Restait un trou exactement entre les deux moitiees de cette
+reponse : un POST n'est jamais rejoue, et la garde « demander d'abord ce qui existe » avait deja
+tourne - correctement - AVANT l'ecriture. Personne ne couvrait la fenetre entre la question et la
+reponse.
+
+Le verbe n'a jamais ete la vraie propriete. Ce qui rend une repetition sure, c'est qu'APPLE REFUSE
+LE DOUBLON : `reviewSubmissionItems` est unique par (soumission, version) et un second ajout est
+refuse par un 409 - une reponse, dont le contenu est justement la post-condition voulue. Alors que
+`reviewSubmissions` ne porte aucune contrainte : un second POST reussit, et l'app se retrouve avec
+deux soumissions ouvertes. La declaration est donc portee par l'APPEL, seul endroit qui sache quelle
+ressource il ecrit, au lieu d'etre deduite d'un verbe qui ne sait pas les distinguer.
+
+Et le 409 n'est pas cru sur parole : « already added » est de la prose, et une affirmation n'est pas
+une preuve. La liste des items est la question directe, et elle est posee avant que le refus compte
+comme un succes ; si la version n'y est pas, l'erreur d'origine repart intacte. Un 409 pour une
+AUTRE raison ne doit jamais etre blanchi en soumission verte - c'est la classe de panne que ce
+fichier a deja payee deux fois. Pour pouvoir distinguer les deux sans lire la prose d'Apple, un
+refus porte desormais son statut comme un fait (`ApiError`) plutot qu'a l'interieur de son message.
+
+### Fixed - les vocaux ne s'affichent plus dans le panneau "Medias, liens et fichiers"
+
+Demande par l'utilisateur : *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une
+discussion. +1 s'il est possible de mettre les fichiers audios qui ont ete importes pour les
+differencier des audios enregistres directement dans la conversation."*
+
+**Les deux moities sont la meme question, et la seconde decide la premiere.** Une fois le message
+arrive, un vocal et un `.m4a` importe sont les memes octets avec le meme type MIME : rien ne les
+separe a la lecture, sauf le nom `vocal_<horodatage>` que le micro choisit - une distinction portee
+par une chaine de caracteres, que `ChatComposer.isAudioFile` refuse deja de lire pour cette raison
+precise.
+
+C'est donc l'emetteur qui le declare, au seul endroit de l'application ou le geste est connu :
+`sendVoiceNote` marque le fichier, et la declaration voyage jusqu'au bout - dans l'enveloppe
+(`MediaRef.voiceNote`), sur le fil (`MediaMsg.voice_note`, champ 11) et dans la file d'attente
+(`OutboxMediaPayload`), qui re-encode le proto bien apres la fermeture du composer. Le `kind` reste
+audio des deux cotes : ceci dit comment l'audio a ete PRODUIT, pas ce qu'il est.
+
+Un message anterieur ne dit rien, et **ne rien dire n'est pas dire "importe"** : protobuf decode un
+booleen absent en `false`, alors les deux decodeurs jettent le `false` au lieu de l'ecrire. Un vocal
+envoye avant aujourd'hui garde exactement le comportement qu'il a toujours eu, plutot que de
+disparaitre retroactivement sur une supposition.
+
+### Fixed - le panneau « Connexion en cours » laissait voir la conversation qu'il bloque
+
+Signale par l'utilisateur : *"Panneau 'Connexion en cours' transparent par dessus /chat, on voit a
+travers c'est moche."* Le panneau portait un modificateur d'opacite de 95 % sur son fond. La premiere
+hypothese - Tailwind n'emettrait rien pour cette forme - est fausse, verifiee en compilant la classe :
+la regle est bien produite. Le panneau etait donc transparent a 5 % exactement comme ecrit, ce qui
+suffit a faire apparaitre toute une conversation en filigrane derriere une surface dont le seul role
+est de dire que cette conversation n'est pas utilisable. Il est opaque.
+
+Il portait aussi un `z-50` brut, alors que l'echelle des couches dit qu'une nouvelle couche prend un
+barreau ou en ajoute un, jamais un nombre au point d'appel. C'est un plein-ecran qui doit couvrir les
+bandeaux et le composeur de sa page : il prend `--z-page-blocking`, un cran au-dessus de
+`--z-page-overlay`. La garde ne l'avait pas vu parce que son plancher est 60, volontairement - ce que
+cela coute est desormais ecrit dans la garde elle-meme.
+
+Le signalement disait aussi *"et peut-etre /communautes"* : non. Cet ecran ne rend pas ce composant -
+l'overlay n'est monte que par `MainChatPage`. Si le meme aspect y est vu un jour, c'est un autre
+element, et le chercher ici ferait perdre le temps que cette phrase existe pour economiser.
+
+### Fixed - un evenement propose se lisait comme un evenement valide partout sauf dans la grille
+
+Signale par l'utilisateur : *"Pas de difference entre un evenement propose et un evenement valide
+dans la vue planning liste (en mode calendrier il y a des pointilles)."*
+
+La grille mensuelle dessine un evenement en attente de validation attenue et en pointilles depuis
+qu'elle existe. Les trois autres surfaces qui affichent le meme evenement - la liste planning
+(la seule vue du telephone), le panneau du jour a cote de la grille, et la modale de detail que
+toutes ouvrent - n'en disaient rien. Le drapeau etait pourtant deja la : les quatre composants
+recoivent le meme `AssociationCalendarFeedEvent`, et un seul lisait son `status`.
+
+Les trois vues parlent maintenant le vocabulaire de la grille, chacune sur sa propre forme : la
+pastille de la liste et la barre d'accent du panneau du jour deviennent un contour en pointilles au
+lieu d'un aplat, la ligne est attenuee, et la modale - qui a la place de le dire en toutes lettres,
+et qui est l'ecran ou l'on decide si l'on vient - porte une phrase encadree en pointilles. La
+distinction n'est jamais portee par la couleur ou la forme seules : chaque ligne porte aussi un
+`title` qui le dit en mots, tire de la meme cle Paraglide. Au passage, la grille cessait de garder
+une phrase francaise brute dans son markup : `title` y etait une litterale, c'est desormais
+`calendar_event_pending_title` comme partout ailleurs.
+
+**Ce que cela ne dit toujours pas** : qui doit valider, ni quand. C'est une question sur le flux de
+moderation et non sur le rendu, et personne ne l'a posee - elle est notee ici plutot que mise en file,
+parce qu'une file ou l'on range les questions que nul ne se pose cesse d'etre lisible.
+
 ### Fixed - une photo redevenait le mot « Photo » au redemarrage, et plus rien ne pouvait la reparer
 
 Signale par l'utilisateur : la photo s'affiche dans la notification, on ouvre la conversation, et il
@@ -39,6 +246,8 @@ Au passage, la question de l'utilisateur sur les deux libelles a une reponse uti
 une chaine de NOTIFICATION construite en natif, « [Media] » est l'etiquette de l'app pour une
 enveloppe qu'elle resume volontairement. Ils ne disent pas la meme chose sous deux orthographes -
 voir « 📷 Photo » dans une bulle est la signature d'une ligne issue d'un push jamais remplacee.
+
+## [0.18.10] - 2026-09-17
 
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
 

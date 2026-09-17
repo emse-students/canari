@@ -69,15 +69,27 @@
         {@const accent = eventAccentColor(ev)}
         {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
         {@const owners = eventOwnersLabel(ev, ownAssociationId)}
+        {@const pending = ev.status === 'pending'}
         <li>
+          <!--
+            THE SAME SENTENCE THE GRID DRAWS, BECAUSE THIS IS THE SCREEN RIGHT AFTER IT. A reader
+            taps a day in the month grid, where a proposed event is dimmed and dashed, and lands
+            here - which said nothing about it until 2026-09-17. `status` was on the event the whole
+            time; this view simply never read it. The accent bar takes the dashes because it is this
+            row's coloured thing, and the title attribute says it in words so the distinction is
+            never carried by colour or shape alone.
+          -->
           <button
             type="button"
-            class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
+            class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3 text-left transition-colors {pending
+              ? 'opacity-50'
+              : ''}"
+            title={pending ? m.calendar_event_pending_title({ title: ev.title }) : null}
             onclick={() => onEventClick(ev)}
           >
             <span
               class="h-9 w-1 shrink-0 rounded-full"
-              style="background:{accent};"
+              style={pending ? `border:1.5px dashed ${accent};` : `background:${accent};`}
               aria-hidden="true"
             ></span>
             {#if logoSrc && owners}

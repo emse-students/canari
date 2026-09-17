@@ -113,6 +113,8 @@ export interface OutboxMediaPayload {
   caption?: string;
   width?: number;
   height?: number;
+  /** Recorded by the composer rather than picked from disk - see `MediaRef.voiceNote`. */
+  voiceNote?: boolean;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.

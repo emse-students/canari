@@ -99,15 +99,35 @@
             {#each group.events as event (event.id)}
               {@const logoSrc = associationLogoSrc(event.associationLogoUrl)}
               {@const owners = eventOwnersLabel(event, ownAssociationId)}
+              {@const pending = event.status === 'pending'}
               <li>
+                <!--
+                  A PROPOSED EVENT READS AS PROPOSED HERE TOO, IN THE GRID'S OWN VOCABULARY. The
+                  month grid has drawn one dimmed and dashed since it existed; this list showed it
+                  identical to a validated one, and the user reported exactly that - *"Pas de
+                  difference entre un evenement propose et un evenement valide dans la vue planning
+                  liste (en mode calendrier il y a des pointilles)"*. The flag was here all along:
+                  both views take the same `AssociationCalendarFeedEvent`, and only one read it.
+
+                  The grid dims the coloured BLOCK and dashes its outline. A row's coloured thing is
+                  the dot, so the dot becomes a ring drawn in the same dashes rather than a filled
+                  disc - the same sentence in the shape this view has. And it is never carried by
+                  colour or shape alone: the title attribute says it in words, from the one message
+                  both views now use.
+                -->
                 <button
                   type="button"
-                  class="hover:bg-cn-bg flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors"
+                  class="hover:bg-cn-bg flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors {pending
+                    ? 'opacity-50'
+                    : ''}"
+                  title={pending ? m.calendar_event_pending_title({ title: event.title }) : null}
                   onclick={() => onEventClick(event)}
                 >
                   <span
                     class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
-                    style="background:{eventAccentColor(event)};"
+                    style={pending
+                      ? `border:1.5px dashed ${eventAccentColor(event)};`
+                      : `background:${eventAccentColor(event)};`}
                     aria-hidden="true"
                   ></span>
                   <span class="min-w-0 flex-1">
