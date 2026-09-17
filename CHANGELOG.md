@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
+
+Le correctif de `focusTrap` a laisse une question ouverte plus large que lui : un noeud porte existe
+dans son parent d'ecriture pendant UN effet, et tout ce qui lit une position dans cette fenetre lit
+une position sur le point de cesser d'etre vraie. `.focus()` avait ete balaye et ne tenait qu'un
+site. Une MESURE n'est pas un `.focus()`, et n'avait pas ete balayee.
+
+Elle l'est. La population est close - les consommateurs de `$lib/actions/portal`, treize composants.
+Cinq lisent une position ; quatre lisent un noeud qui ne bouge pas (une ancre de declenchement, un
+`textarea`, un focus sur un bouton qui reste en place). Le cinquieme est
+`MessageMobileActions`, et c'est le cas exact : `overlay` y est
+`sheet.parentElement`, c'est-a-dire le `<div use:portal>` lui-meme, et son
+`getBoundingClientRect().bottom` alimente le nombre qui decide de combien soulever le fil pour que
+la feuille ne couvre pas le message sur lequel elle agit.
+
+**Le compilateur dit que la mesure est mise en file la premiere** - `$.user_effect` est emis avant
+`$.action(div, portal)`, et les effets s'executent dans l'ordre de creation. C'est un argument, pas
+une mesure : l'effet sort tot tant que `sheetEl` est nul, et le `bind:this` du bloc `{#if}` n'ecrit
+qu'a une passe suivante. **Mesure : la lecture arrive APRES le deplacement**, toutes les lectures de
+l'overlay ayant `body` pour parent. Le site est donc correct aujourd'hui.
+
+Correct par un enchainement, pas par une regle - donc il est tenu. Le test enregistre le PARENT a
+l'instant de chaque lecture, ce qui n'a besoin d'aucune geometrie, et il refuse d'etre creux : il
+echoue aussi si l'effet ne mesure jamais l'overlay, une garde que rien n'atteint etant une absence
+qui ressemble a une garde. Verifie par mutation - sans `use:portal`, il tombe en nommant le defaut :
+*"the overlay's rect was read 1 time(s) before the portal moved it"*.
+
+**Ce que le balayage ne couvre pas** est ecrit dans le test : il lit chaque composant qui porte, donc
+il verrait une lecture faite par un AUTRE composant sur un noeud porte uniquement si celui-ci passait
+par la meme reference - ce qu'aucun des treize ne fait, les references etant toutes locales.
+
 ### Changed - les parametres de communaute sont un panneau, plus une modale
 
 Signale depuis un telephone : *"Les parametres de communaute sur mobile ne sont pas du tout
