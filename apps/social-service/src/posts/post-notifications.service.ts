@@ -165,6 +165,10 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
+    /** Set for `type === 'association_post'`: the association itself, not `actorId` (the member
+     *  who published) - see `PostNotification`'s own docblock for why they must differ. */
+    associationId?: string;
+    associationLogoUrl?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
   }): Promise<number> {
@@ -179,6 +183,8 @@ export class PostNotificationsService {
           type: data.type,
           postId: data.postId,
           actorId: data.actorId,
+          associationId: data.associationId ?? null,
+          associationLogoUrl: data.associationLogoUrl ?? null,
           text: data.text,
           actorName,
         })

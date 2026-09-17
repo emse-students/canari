@@ -22,6 +22,19 @@ export class PostNotification {
   @Column({ nullable: true })
   actorName: string;
 
+  /**
+   * Set only for `type === 'association_post'`. `actorId` on this row is the PUBLISHING MEMBER,
+   * not the association - see `PostAnnounceScheduler.announceAssociationPost`'s own docblock for
+   * why - so the association's own identity has nowhere else to live on this row.
+   */
+  @Column({ nullable: true })
+  associationId: string | null;
+
+  /** Denormalized alongside `actorName`, same staleness tradeoff: a later logo change does not
+   *  retroactively rewrite an old notification's picture. */
+  @Column({ nullable: true })
+  associationLogoUrl: string | null;
+
   @Column()
   text: string;
 

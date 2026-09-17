@@ -10,6 +10,7 @@
     CalendarCog,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { reactionTypeToEmoji } from '$lib/posts/reactions';
   import { formatRelative } from '$lib/utils/time';
   import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
@@ -138,7 +139,11 @@
     drawing an outline.
   -->
   <span class="relative shrink-0 {avatarBox}">
-    <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
+    {#if notif.type === 'association_post' && notif.associationId}
+      <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
+    {:else}
+      <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
+    {/if}
     <span
       class="ring-cn-surface absolute -right-0.5 -bottom-0.5 flex items-center justify-center rounded-full ring-2 {badgeBox} {badgeClass}"
       aria-hidden="true"

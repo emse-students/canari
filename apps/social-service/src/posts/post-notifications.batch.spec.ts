@@ -98,6 +98,40 @@ describe('PostNotificationsService.createNotifications', () => {
     expect(pushes.map((p) => p.userId)).toEqual(['a', 'b']);
   });
 
+  it('stamps the association identity on every row when given one, defaults to null otherwise', async () => {
+    // The fix for a notification showing the PUBLISHING MEMBER's photo instead of the
+    // association's logo: `actorId` stays the member (so the exclusion above still works), and
+    // the association's own id/logo ride along as separate columns.
+    await service().createNotifications({
+      recipientIds: ['a', 'b'],
+      type: 'association_post',
+      postId: 'p1',
+      actorId: 'member1',
+      actorName: 'BDE',
+      text: 'Soiree',
+      associationId: 'asso1',
+      associationLogoUrl: '/api/media/public/logo1',
+    });
+
+    expect(saved).toHaveLength(2);
+    for (const row of saved as { associationId: string; associationLogoUrl: string }[]) {
+      expect(row.associationId).toBe('asso1');
+      expect(row.associationLogoUrl).toBe('/api/media/public/logo1');
+    }
+
+    saved.length = 0;
+    await service().createNotifications({
+      recipientIds: ['a'],
+      type: 'event_proposed',
+      postId: 'assoc-1',
+      actorId: 'x',
+      text: 'Soiree BDE',
+      actorName: 'Claire',
+    });
+    expect((saved[0] as { associationId: string | null }).associationId).toBeNull();
+    expect((saved[0] as { associationLogoUrl: string | null }).associationLogoUrl).toBeNull();
+  });
+
   it('does nothing at all, and no lookup, when the list is empty after filtering', async () => {
     const written = await service().createNotifications({
       recipientIds: ['solo'],

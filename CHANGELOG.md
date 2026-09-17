@@ -138,6 +138,22 @@ ligne dans `run_all` et la condition du job. La recette dure quelques secondes ;
 LIT donne « tout », et une liste qui a eu tort quatre fois est la forme du defaut plutot qu'une
 defense contre lui.
 
+### Fixed - la notification d'un post d'association affichait la photo de la personne qui a publie, pas le logo de l'association
+
+Signale par l'utilisateur (2026-09-17). `actorId` sur une notification `association_post` est
+volontairement le membre qui a publie, jamais l'association elle-meme -
+`PostNotificationsService.createNotifications` exclut l'acteur de ses propres destinataires, et
+cette exclusion a besoin du membre, pas de l'association qu'il representait. Mais rien sur la ligne
+ne portait l'identite de l'association pour autant : `NotificationRow.svelte` dessinait donc
+toujours un avatar utilisateur a partir de `actorId`, quel que soit le type de la notification.
+
+`associationId` et `associationLogoUrl` sont desormais portes par la notification elle-meme, au
+moment de sa creation - meme compromis deja accepte pour `actorName` (une notification ancienne
+garde le logo d'alors si l'association change le sien depuis). `NotificationRow` bascule sur
+`AssociationAvatar` des que ces deux champs sont presents, et continue de dessiner l'avatar de
+l'acteur dans tous les autres cas - y compris une notification `association_post` plus ancienne
+qui n'a pas encore `associationId` (retro-compatibilite, pas de migration de donnees historiques).
+
 ### Fixed - la garde qui verifie que chaque route refuse un visiteur anonyme ne voyait pas `/api/presence`, la route pour laquelle elle avait ete ecrite
 
 `auth-request-coverage.test.mjs` existe depuis le 2026-09-11 parce que `/api/presence` repondait a
