@@ -1167,6 +1167,39 @@ for the file to EXIST, not for it to be rewritten with bytes it already holds. A
 someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
 established it, and it must not be assumed.**
 
+#### A COLD LOAD IS THE PRUNE - 89% OF IT - SO THE NEXT COLD-START QUESTION IS QUEUE ITEM 5 (OXYGEN, 2026-09-17)
+
+The entry below ends by saying the next question is inside Rust. `load_phases` answers WHERE inside:
+it benches `from_reader::<PersistedState>` - the one thing a load does over every BYTE - against the
+full `load_or_create` on the same bytes, so the pair subtracts.
+
+| pool | full load | prune | CBOR decode | remainder |
+| --- | --- | --- | --- | --- |
+| 50 | 738.7 us | 500.2 us (**67.7%**) | 44.7 us (6.1%) | 193.8 us |
+| 500 | 5.581 ms | 5.008 ms (**89.7%**) | 0.295 ms (5.3%) | 0.278 ms |
+| 1000 | 11.374 ms | 10.082 ms (**88.6%**) | 0.562 ms (4.9%) | 0.730 ms |
+
+*(release, 5 groups, 20 samples, logger `Off` - both O(pool) diagnostics left this path in #822/#824.)*
+
+**THE SNAPSHOT DECODE IS 5%, AND THE REMAINDER IS FIXED.** WP-ANR-1's `byte_compat` had already paid
+that debt down. What the prune does not account for is ~200-700 us independent of the pool: the
+identity deserialise, the storage map move and one `MlsGroup::load` per group. **The group count is
+not the problem**, and the snapshot's SIZE is only a problem through what it is made of.
+
+**COMPOSED WITH #824's FINDING** - 88% of the prune is `serde_json::from_slice::<KeyPackageBundle>` -
+this says **~78% of a cold load is JSON deserialised to read expiry dates**. A thousand bundles opened
+to read a thousand dates.
+
+**SO THIS IS A DEPENDENCY, NOT A NEW LEAD.** Skipping that decode needs an index, the index is a field
+in the state blob's header, and the header WRITER cannot move until the reader is the floor
+(`minClientVersion`) - queue item 5. The cold-start target and the corruption-classification item are
+the same piece of work seen from two ends, and until now only one of them knew it.
+
+**WHAT THIS BENCH STILL DOES NOT MEASURE, stated rather than extrapolated away**: its largest fixture
+is a QUARTER of the 7.8 MB `TauriMlsService` records for the handset, and it starts from plaintext
+already in memory - neither the file read nor `load_with_key`'s ChaCha pass is in it. The 1644.4 ms
+the phone reports for `mls-load-state` includes both, and nothing here has separated them.
+
 #### THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (OXYGEN, 2026-09-17)
 
 The entry above ends by saying the next question is inside Rust. `mls-core` had **no load benchmark
