@@ -345,6 +345,61 @@ fn bench_load_passes(c: &mut Criterion) {
     group.finish();
 }
 
+/// WHERE A COLD LOAD ACTUALLY SPENDS ITSELF - the CBOR decode measured APART from the rest.
+///
+/// The boot report says `mls-load-state` is **1644.4 ms on a Mi 9T, 82.7 % of everything after
+/// `login-start`**, and every bench here measured the whole of `load_or_create` without ever saying
+/// which of its parts that was. Two O(pool) passes have since been removed from that path, and they
+/// were worth ~12 ms at a 1000-package pool - three orders of magnitude short of explaining it. So
+/// the remaining suspect is the one thing the function does over EVERY byte rather than over every
+/// bundle: `from_reader::<PersistedState>`.
+///
+/// It is benched against the SAME bytes the full load is given, so the pair subtracts: `decode` is
+/// the CBOR walk alone, `full` is that plus the identity deserialise, the storage move, one
+/// `MlsGroup::load` per group and the prune. Anything the difference cannot account for is not in
+/// this function at all, and the next place to look is the file read and the ChaCha pass that
+/// precede it in `load_with_key`.
+///
+/// **THE POOL SWEEP IS THE POINT.** A device's snapshot is mostly key package bundles - 1 936 bytes
+/// each - so the pool IS the byte count, and `Throughput::Bytes` prints the two together. The
+/// largest pool here is still a QUARTER of the 7.8 MB `TauriMlsService` records for the handset, and
+/// that gap is stated rather than extrapolated away: no fixture in this repository has ever been
+/// built at the size the measurement everybody quotes was taken at.
+fn bench_load_phases(c: &mut Criterion) {
+    install_logger();
+    // OFF for the whole group: the two diagnostics that made a logged load differ are gone from
+    // `load_or_create`, and what is left is the work itself. Measuring it at info would only
+    // re-introduce the harness's own formatting into the subject.
+    log::set_max_level(log::LevelFilter::Off);
+    let mut group = c.benchmark_group("load_phases");
+    group.sample_size(20);
+
+    for pool in LOAD_KEY_PACKAGE_POOLS {
+        let fixture = build_persistence_fixture(LOAD_GROUP_COUNT, pool);
+        let plain = fixture.manager.save_state().expect("snapshot the fixture");
+        group.throughput(Throughput::Bytes(plain.len() as u64));
+
+        group.bench_with_input(BenchmarkId::new("decode", pool), &plain, |b, bytes| {
+            b.iter(|| {
+                let state: mls_core::PersistedState =
+                    ciborium::de::from_reader(bytes.as_slice()).expect("decode the snapshot");
+                black_box(state);
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("full", pool), &plain, |b, bytes| {
+            b.iter(|| {
+                let manager =
+                    MlsManager::load_or_create("bench-user", "bench-device", Some(bytes.clone()))
+                        .expect("cold load should succeed");
+                black_box(manager);
+            });
+        });
+    }
+    group.finish();
+    log::set_max_level(log::LevelFilter::Info);
+}
+
 criterion_group!(
     benches,
     bench_save_state_cold_rebuild,
@@ -354,6 +409,7 @@ criterion_group!(
     bench_process_incoming,
     bench_process_incoming_batch,
     bench_load_or_create,
-    bench_load_passes
+    bench_load_passes,
+    bench_load_phases
 );
 criterion_main!(benches);
