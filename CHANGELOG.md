@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.10] - 2026-09-17
+
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
 
 nginx transmet a l'amont tout en-tete que personne n'a ecrase, donc le bloc serveur vide les noms
