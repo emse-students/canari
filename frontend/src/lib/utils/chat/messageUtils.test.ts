@@ -214,7 +214,7 @@ describe('the voice-note declaration crosses the wire', () => {
       messageId: 'm1',
       sentAt: 1,
     });
-    const built = appMsgToEnvelope(decodeAppMessage(bytes));
+    const built = appMsgToEnvelope(decodeAppMessage(bytes)!);
     const env = parseEnvelope(built!.content);
     return env.kind === 'media' ? env.media : null;
   }
