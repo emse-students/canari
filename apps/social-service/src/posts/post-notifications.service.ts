@@ -17,7 +17,9 @@ import {
   eventPendingContent,
   associationPostContent,
   followedPostContent,
+  publicMediaIconId,
   type PushContent,
+  type PushIcon,
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 
@@ -33,7 +35,7 @@ export class PostNotificationsService {
   ) {}
 
   /**
-   * Maps a notification type to WHAT its push says, for callers that do not build their own.
+   * Maps a notification type to WHAT its push says - and, since 2026-09-17, what it SHOWS.
    * Callers with more context (reaction emoji, comment preview) send their own and pass
    * `skipPush: true` to `createNotification` instead of relying on this.
    *
@@ -41,22 +43,27 @@ export class PostNotificationsService {
    * hardcoded "Nouvelle notification", which is a sentence no table can translate and no reader
    * learns anything from - and it hid the fact that a type had been added without a push.
    */
-  private pushContent(type: string, actorName: string, text: string): PushContent | null {
+  private pushContent(
+    type: string,
+    actorName: string,
+    text: string,
+    icon?: PushIcon
+  ): PushContent | null {
     switch (type) {
       case 'mention':
-        return mentionContent(actorName, text);
+        return mentionContent(actorName, text, icon);
       case 'reply':
-        return replyContent(actorName, text);
+        return replyContent(actorName, text, icon);
       case 'reaction':
-        return reactionContent(actorName, text);
+        return reactionContent(actorName, text, icon);
       case 'comment':
-        return commentContent(actorName, text);
+        return commentContent(actorName, text, icon);
       // The two publication notices. `actorName` is the ASSOCIATION for the first and the author
       // for the second; `text` is the opening of the post either way, never a composed sentence.
       case 'association_post':
-        return associationPostContent(actorName, text);
+        return associationPostContent(actorName, text, icon);
       case 'followed_post':
-        return followedPostContent(actorName, text);
+        return followedPostContent(actorName, text, icon);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -133,7 +140,12 @@ export class PostNotificationsService {
     if (skipPush) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
-    const content = this.pushContent(data.type, actorName, data.text);
+    // THE PICTURE IS THE ACTOR'S, because every type reaching this method is one person acting on
+    // something of yours. The batch method below is the one that also has an association to show.
+    const content = this.pushContent(data.type, actorName, data.text, {
+      kind: 'user',
+      userId: data.actorId,
+    });
     if (!content) {
       this.logger.warn(
         `[NOTIFY] no push content for type=${data.type} - the in-app notification was written, ` +
@@ -191,7 +203,16 @@ export class PostNotificationsService {
       )
     );
 
-    const content = this.pushContent(data.type, actorName, data.text);
+    // THE LOGO WHEN THE PUBLISHER IS AN ASSOCIATION, THE PERSON OTHERWISE - the same split the
+    // notifications page makes, and for the same reason: `actorId` on an `association_post` row is
+    // the member who pressed publish, so keying the picture off it shows a face where the reader
+    // expects a logo. An association with no logo, or one whose `logoUrl` is not a public-media
+    // path, falls back to the actor rather than to nothing.
+    const logoId = publicMediaIconId(data.associationLogoUrl);
+    const icon: PushIcon = logoId
+      ? { kind: 'publicMedia', mediaId: logoId }
+      : { kind: 'user', userId: data.actorId };
+    const content = this.pushContent(data.type, actorName, data.text, icon);
     if (!content) {
       this.logger.warn(
         `[NOTIFY] no push content for type=${data.type} - ${recipients.length} in-app ` +
