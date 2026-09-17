@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un 500 d'Apple a coute la mise en production de `v0.18.10`
+
+La soumission App Store est morte sur `POST /v1/reviewSubmissionItems -> 500 An unexpected error
+occurred on the server side`. Apple ne repondait pas a notre requete : il disait n'avoir pas su
+en avoir une opinion. Le binaire etait sur TestFlight, la version creee, les notes ecrites - et
+comme le deploiement de production depend du SUCCES des deux bras magasin, le web n'est pas parti
+non plus. `release-shipped.sh` l'a dit franchement plutot que de se declarer livre, ce pour quoi il
+existe depuis que `v0.16.2` et `v0.16.3` ont menti pendant cinq jours.
+
+`v0.16.1` etait deja mort ainsi, un appel plus tot dans la meme chaine, et la reponse d'alors fut de
+rejouer les methodes idempotentes. Restait un trou exactement entre les deux moitiees de cette
+reponse : un POST n'est jamais rejoue, et la garde « demander d'abord ce qui existe » avait deja
+tourne - correctement - AVANT l'ecriture. Personne ne couvrait la fenetre entre la question et la
+reponse.
+
+Le verbe n'a jamais ete la vraie propriete. Ce qui rend une repetition sure, c'est qu'APPLE REFUSE
+LE DOUBLON : `reviewSubmissionItems` est unique par (soumission, version) et un second ajout est
+refuse par un 409 - une reponse, dont le contenu est justement la post-condition voulue. Alors que
+`reviewSubmissions` ne porte aucune contrainte : un second POST reussit, et l'app se retrouve avec
+deux soumissions ouvertes. La declaration est donc portee par l'APPEL, seul endroit qui sache quelle
+ressource il ecrit, au lieu d'etre deduite d'un verbe qui ne sait pas les distinguer.
+
+Et le 409 n'est pas cru sur parole : « already added » est de la prose, et une affirmation n'est pas
+une preuve. La liste des items est la question directe, et elle est posee avant que le refus compte
+comme un succes ; si la version n'y est pas, l'erreur d'origine repart intacte. Un 409 pour une
+AUTRE raison ne doit jamais etre blanchi en soumission verte - c'est la classe de panne que ce
+fichier a deja payee deux fois. Pour pouvoir distinguer les deux sans lire la prose d'Apple, un
+refus porte desormais son statut comme un fait (`ApiError`) plutot qu'a l'interieur de son message.
+
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
 
 nginx transmet a l'amont tout en-tete que personne n'a ecrase, donc le bloc serveur vide les noms
