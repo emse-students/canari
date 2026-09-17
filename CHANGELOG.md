@@ -35,6 +35,47 @@ proprietaire d'une ligne voit son propre champ brut, pas seulement un admin). Co
 presence d'`authorId` sur la reponse - jamais `post.anonymous` seul - decide desormais quelle des
 deux presentations dessiner.
 
+### Added - le chargement a froid de l'etat MLS n'avait aucun banc, et la moitie de son cout est deux lignes de log
+
+Le dernier releve met `mls-load-state` a **1644 ms, 82,7 % de tout ce qui suit `login-start`** : un
+seul `invoke('initialiser_mls')`, pour cinq groupes. Le releve se termine en disant que la question
+suivante est dans Rust. Elle y etait, et rien ne pouvait y repondre : **tous les bancs de
+`mls_perf.rs` mesuraient l'ECRITURE**. Le chemin qui tourne une fois par demarrage a froid, sur le
+chemin critique du premier ecran, n'en avait aucun.
+
+`load_or_create_cold` et `load_per_pool_passes` le mesurent. La dimension balayee est le POOL de key
+packages et non le nombre de groupes, parce que les passes par chargement parcourent des key
+packages et que l'accumulation est deja connue pour n'etre bornee par rien.
+
+**UN BANC SANS LOGGER MESURE UNE AUTRE FONCTION QUE CELLE QUE FAIT TOURNER UN TELEPHONE**, et c'est
+la le resultat, pas une note de bas de page. `log::info!` se compile en `if niveau_actif { ... }` :
+sans logger installe, `log::max_level()` vaut `Off` et **ses arguments ne sont jamais evalues**. Or
+deux des arguments de `load_or_create` sont `state_composition_summary()` et
+`key_package_census_summary()`, et le second `serde_json`-deserialise chaque bundle stocke, recalcule
+son `hash_ref` et fait une recherche de sous-chaine sur sa cle. Un appareil installe
+`tauri-plugin-log` au niveau info et paie tout cela ; chaque test et chaque banc de ce depot y etait
+aveugle. Les bancs installent maintenant un logger qui jette tout, et font tourner chaque chargement
+DEUX fois - l'ecart est un nombre dans la sortie, plus une affirmation dans un commentaire.
+
+Criterion, 20 echantillons, OXYGEN, 5 groupes, release :
+
+| pool de key packages | chargement, logger a INFO | chargement, logger OFF | ce que coutent les deux lignes |
+| --- | --- | --- | --- |
+| 50 | 1,416 ms | 0,829 ms | +0,59 ms (**+71 %**) |
+| 500 | 12,17 ms | 6,25 ms | +5,9 ms (**+95 %**) |
+| 1000 | 24,52 ms | 12,91 ms | +11,6 ms (**+90 %**) |
+
+Les trois passes mesurees a part, meme machine, pool de 1000 : la purge des key packages expires
+**11,49 ms**, le recensement **11,61 ms**, le resume de composition **0,209 ms**. Un chargement a
+froid a ce pool, c'est donc environ 1 ms de decodage, 11,5 ms de purge et 11,6 ms d'un diagnostic que
+personne n'a lu. Les trois sont en O(pool) et aucun n'est necessaire avant le premier ecran.
+
+**Ce que cela ne regle pas, et c'est dit ici pour que personne ne le cite autrement** : cela
+n'explique pas les 1644 ms. OXYGEN n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
+c'est la FORME - le cout est lineaire en un pool que rien ne recupere, et la moitie environ est du
+travail que le chargement n'a pas besoin de faire - et un premier nombre reproductible que n'importe
+qui peut refaire tourner.
+
 ### Added - une notification sociale arrivait sans aucune image, sur les deux plateformes
 
 Signale par l'utilisateur le 2026-09-17 : un post d'une association arrivait sur le telephone comme
