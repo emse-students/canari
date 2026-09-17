@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - six autotests CI lisaient tout l'arbre derriere un filtre de chemins de huit motifs
+
+`ci.yml` ne lancait `test-ci-scripts` que si le changement touchait `.github/scripts/`,
+`tools/app-store/`, `tools/store-divergence/`, une poignee de chemins `infrastructure/`, quatre
+workflows, `scripts/bump-app-version.sh`, un `.md` ou le `Makefile`. Cette liste a grossi au fil de
+quatre incidents, chacun etant un test DERIVE passe au vert sur le commit meme qui le cassait - et
+le bloc de commentaires qui l'entoure raconte les quatre.
+
+**Aucun neuvieme motif ne pouvait etre juste.** `no-nul-in-source`, `control-characters`,
+`executable-bit` et `shellcheck-scope` enumerent chacun `git ls-files` et affirment quelque chose sur
+chaque fichier qu'il nomme ; `undeclared-duplicates` parcourt `frontend/src` ET `apps` ;
+`wiki-links` parcourt tous les `.md`. Six scanners dont l'entree est l'arbre entier, derriere un
+filtre : un scanner qui ne tourne pas sur le commit pour lequel il existe.
+
+Le filtre est supprime, pas etendu - la sortie `run-scripts`, sa branche dans le job `changes`, sa
+ligne dans `run_all` et la condition du job. La recette dure quelques secondes ; demander ce qu'elle
+LIT donne « tout », et une liste qui a eu tort quatre fois est la forme du defaut plutot qu'une
+defense contre lui.
+
 ### Fixed - la garde qui verifie que chaque route refuse un visiteur anonyme ne voyait pas `/api/presence`, la route pour laquelle elle avait ete ecrite
 
 `auth-request-coverage.test.mjs` existe depuis le 2026-09-11 parce que `/api/presence` repondait a
