@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
+
+nginx transmet a l'amont tout en-tete que personne n'a ecrase, donc le bloc serveur vide les noms
+que les services LISENT pour decider qui appelle. Il vidait `X-User-Id` et `X-Global-Admin`
+correctement, vidait `X-Logged-In` - l'orthographe de la sous-requete, un nom qu'aucun service n'a
+jamais lu - et ne mentionnait pas `X-Internal-Token`, celui par lequel un service en croit un autre
+quand `INTERNAL_SHARED_SECRET` est pose. `X-User-Logged-In`, que lit `HeaderAuthGuard`, n'etait donc
+jamais neutralise.
+
+Rien n'etait exploitable, et la raison n'est pas ce bloc : nginx n'herite un jeu de
+`proxy_set_header` que dans une location qui n'en declare aucun, et les 24 locations qui relaient
+declarent le leur - enumerees, pas supposees. Ces lignes n'atteignaient donc rien. Elles sont le
+filet de la PROCHAINE location ajoutee sans le sien, ce qui est l'erreur facile et exactement le
+moment ou un filet troue se decouvre.
+
+Les quatre noms sont vides depuis, et `auth-request-coverage.test.mjs` l'affirme - comme il affirme
+desormais que les quinze locations sous `auth_request` posent ET transmettent les quatre valeurs
+d'identite. C'etait la premiere etape declaree avant de fusionner les trois gardes "cet appelant
+est-il connecte", puisqu'elles lisent deux discriminateurs differents qui ne peuvent s'accorder que
+si l'edge les pose ensemble.
+
 ### Added - poster anonymement, et l'action de moderation qui retire l'anonymat
 
 Demande de l'utilisateur (2026-09-17) : un interrupteur "Anonyme" dans le composeur de post,

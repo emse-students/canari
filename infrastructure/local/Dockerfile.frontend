@@ -66,9 +66,23 @@ RUN printf 'server {\n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     resolver 127.0.0.11 valid=10s ipv6=off;\n\
+    # A CLIENT MAY SEND ANY HEADER IT LIKES, AND nginx FORWARDS THE ONES NOBODY OVERRODE.\n\
+    # These four names are what the services READ to decide who is calling, so they are\n\
+    # emptied here and re-set from the auth sub-request in each guarded location. The list\n\
+    # must be the app-facing spelling, not the sub-request's: `auth_request_set` reads\n\
+    # `X-Logged-In` off /internal/auth/verify and forwards it as `X-User-Logged-In`, and\n\
+    # until 2026-09-17 this block cleared the FORMER - a name no service has ever read -\n\
+    # while leaving the latter untouched. `X-Internal-Token` was not here at all.\n\
+    #\n\
+    # NOTHING WAS EXPLOITABLE, AND THE REASON IS NOT THIS BLOCK. nginx inherits a\n\
+    # proxy_set_header set only into a location that declares NONE of its own, and all 24\n\
+    # proxying locations declare theirs - so these lines currently reach nothing. They are\n\
+    # the net for the NEXT location somebody adds, which is exactly when a half-empty net\n\
+    # is discovered. `auth-request-coverage.test.mjs` asserts the four names are all here.\n\
     proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-Logged-In "false";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     \n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\

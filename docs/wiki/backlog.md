@@ -1565,11 +1565,33 @@ in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
 
 **TWO DISCRIMINATORS, AND THE MERGE MUST NOT PICK ONE BY ACCIDENT.** A non-empty `x-user-id` and
 `x-user-logged-in === 'true'` come from the same `auth_request_set` pair and should never disagree -
-but nothing asserts that they cannot, and one shared guard reading only one of them would silently
-change what the other two services refuse. **The first step is therefore a test that the edge sets
-both or neither**; the merge is the second, and doing it in that order is the difference between a
-factorisation and a behaviour change nobody meant. The Rust copy is not part of it: there is no guard
-layer in Axum here, and the handler is where the check belongs.
+but nothing asserted that they cannot, and one shared guard reading only one of them would silently
+change what the other two services refuse.
+
+**THE FIRST STEP IS DONE (2026-09-17) AND THE MERGE IS UNBLOCKED.**
+`auth-request-coverage.test.mjs` now derives from the nginx config that **all four identity values
+are set and forwarded by every one of the fifteen `auth_request` locations** - `$user_id`/`X-User-Id`,
+`$user_logged_in`/`X-User-Logged-In`, `$global_admin`/`X-Global-Admin`,
+`$internal_token`/`X-Internal-Token`. A location that read half an identity, or read one and dropped
+it, now names itself. Fifteen out of fifteen were already uniform, which is exactly when an invariant
+is cheap to write down. **So a single guard may now read either discriminator**, and the Rust copy is
+still not part of it: there is no guard layer in Axum here, and the handler is where the check
+belongs.
+
+**AND WRITING IT DOWN FOUND SOMETHING NOBODY WAS LOOKING FOR.** The server-level block that empties
+the identity headers a CLIENT might send - nginx forwards any header nobody overrode - cleared
+`X-User-Id` and `X-Global-Admin` correctly, cleared **`X-Logged-In`**, which is the sub-request's
+spelling and a name no service has ever read, and did not mention `X-Internal-Token` at all. The
+app-facing name `X-User-Logged-In` was therefore never neutralised, and `X-Internal-Token` is what a
+service with `INTERNAL_SHARED_SECRET` trusts another service by.
+
+**NOTHING WAS EXPLOITABLE, AND THE REASON IS NOT THAT BLOCK.** nginx inherits a `proxy_set_header`
+set only into a location declaring NONE of its own, and all 24 proxying locations declare theirs -
+enumerated, not assumed - so those lines reached nothing. They are the net for the NEXT location
+somebody adds without one, which is the easy mistake and precisely when a half-empty net is
+discovered. All four names are cleared since 2026-09-17, and the gate asserts it: dropping one
+reports *"the server-level block never clears `X-Internal-Token`, so a location that declares no
+`proxy_set_header` of its own forwards whatever the CLIENT sent under that name"*.
 
 **Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
 an ARBITRARY user id - rather than only people they share a conversation with - is a separate and

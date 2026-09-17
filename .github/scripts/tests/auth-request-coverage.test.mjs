@@ -146,7 +146,30 @@ const IN_BODY_AUTH = [
   'verifyPreviewTicket',
 ];
 
-/** The nginx locations carrying `auth_request`, and the upstream each proxies to. */
+/**
+ * The four values the sub-request answers with, and the header each is forwarded as.
+ *
+ * THIS IS THE PRECONDITION FOR ONE SHARED GUARD, AND IT IS WHY THERE ARE STILL THREE.
+ * `NginxAuthGuard` (core-service, social-service) refuses on an empty `x-user-id`;
+ * `HeaderAuthGuard` (chat-delivery-service) refuses on `x-user-logged-in !== 'true'`. Two
+ * discriminators for one rule, and they agree only because every `auth_request` location copies the
+ * SAME four values out of the sub-request and forwards all four. A location that set `$user_id` and
+ * forgot `X-User-Logged-In` would pass every core-service route and refuse every chat-delivery one,
+ * with nothing in either service able to say why - and `X-Internal-Token` missing is a service with
+ * `INTERNAL_SHARED_SECRET` set refusing everybody, which reads as an outage rather than as a config.
+ *
+ * All fifteen locations are uniform (measured 2026-09-17), which is exactly when to write it down:
+ * an invariant asserted while it holds costs one list, and asserted after it breaks costs a day.
+ */
+const IDENTITY = [
+  ['$user_id', 'X-User-Id'],
+  ['$user_logged_in', 'X-User-Logged-In'],
+  ['$global_admin', 'X-Global-Admin'],
+  ['$internal_token', 'X-Internal-Token'],
+];
+
+/** The nginx locations carrying `auth_request`, the upstream each proxies to, and what each
+ *  forwards of the caller's identity. */
 function authRequestLocations() {
   const raw = readFileSync(NGINX, 'utf8');
   // The file is a Dockerfile heredoc: every config line ends with a literal `\n\`.
@@ -156,7 +179,14 @@ function authRequestLocations() {
   for (const line of lines) {
     const loc = line.match(/^\s*location\s+(?:=\s+)?(\/\S*)\s*\{/);
     if (loc) {
-      current = { path: loc[1], authRequest: false, upstream: null, rewriteTo: null };
+      current = {
+        path: loc[1],
+        authRequest: false,
+        upstream: null,
+        rewriteTo: null,
+        sets: new Set(),
+        forwards: new Set(),
+      };
       continue;
     }
     if (!current) continue;
@@ -167,6 +197,10 @@ function authRequestLocations() {
     // path. Reading the path alone reported call-service as serving nothing under `/api/call`.
     const rw = line.match(/^\s*rewrite\s+\^(\S+?)\(\.\*\)\s+(\/\S*?)\$1\s+break;/);
     if (rw) current.rewriteTo = rw[2];
+    const set = line.match(/^\s*auth_request_set\s+(\$\w+)\s/);
+    if (set) current.sets.add(set[1]);
+    const fwd = line.match(/^\s*proxy_set_header\s+(X-[A-Za-z-]+)\s/);
+    if (fwd) current.forwards.add(fwd[1]);
     if (/^\s*\}/.test(line)) {
       if (current.authRequest) out.push(current);
       current = null;
@@ -541,6 +575,48 @@ for (const entry of PUBLIC_BY_INTENT) {
       ? `PUBLIC_BY_INTENT names "${entry.route}", which no controller declares any more - delete the entry rather than leaving a reason for a route nobody serves`
       : `PUBLIC_BY_INTENT names "${entry.route}", which is now authorized or sits behind no auth_request location - the declaration buys nothing and must be deleted`
   );
+}
+
+// A CLIENT MAY SEND ANY HEADER IT LIKES, SO EVERY IDENTITY NAME IS EMPTIED AT SERVER LEVEL.
+// nginx forwards a request header nobody overrode, and it inherits a `proxy_set_header` set only
+// into a location that declares NONE of its own - so the server-level block is the net for a
+// location that forgets to declare its own, which is the easy mistake and the one nobody notices.
+// It must use the APP-FACING spelling: `auth_request_set` reads `X-Logged-In` off the sub-request
+// and forwards it as `X-User-Logged-In`, and clearing the former protects nothing. Measured
+// 2026-09-17: two of the four names were covered, and no location inherited, so the gap was inert -
+// which is the only reason it was a latent trap rather than a bypass.
+{
+  const conf = readFileSync(NGINX, 'utf8');
+  const serverLevel = conf.slice(0, conf.search(/^\s*location\s/m));
+  for (const [, header] of IDENTITY) {
+    const cleared = new RegExp(
+      `proxy_set_header\\s+${header}\\s+"(?:|false)"`,
+      'i'
+    ).test(serverLevel);
+    if (!cleared) {
+      failures.push(
+        `the server-level block never clears ${header}, so a location that declares no ` +
+          `proxy_set_header of its own forwards whatever the CLIENT sent under that name`
+      );
+    }
+  }
+}
+
+// THE IDENTITY A SERVICE RECEIVES MUST NOT DEPEND ON WHICH LOCATION IT CAME THROUGH. See IDENTITY
+// above: three guards read two different discriminators out of these headers, and they can only be
+// collapsed into one once nothing may set half of them.
+for (const loc of locations) {
+  for (const [variable, header] of IDENTITY) {
+    if (!loc.sets.has(variable)) {
+      failures.push(
+        `nginx location "${loc.path}" carries auth_request and never does \`auth_request_set ${variable}\` - the upstream is handed half an identity, and which half decides whether it refuses`
+      );
+    } else if (!loc.forwards.has(header)) {
+      failures.push(
+        `nginx location "${loc.path}" sets ${variable} from the sub-request and never forwards it as ${header} - a value read and dropped is the same as one never read`
+      );
+    }
+  }
 }
 
 // An `auth_request` location whose upstream serves nothing under it guards nothing, and reads in
