@@ -13,6 +13,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- le rapport de couverture des tests frontend (`bun run test:coverage`) exclut desormais le code
+  genere : les 2669 fonctions de messages Paraglide, les bindings protobuf/wasm-bindgen, et les
+  mocks de test - rien de tout ca n'a de logique propre a couvrir. Le pourcentage global passe de
+  44,76 % a 57,58 %, une mesure plus juste du code de l'application plutot que dilue par du code
+  qui n'est jamais directement teste. Verifie : ce changement ne modifie PAS la duree d'execution
+  (~2 min, inchangee sur deux mesures) - le fournisseur de couverture v8 instrumente au niveau du
+  processus, `coverage.exclude` ne filtre que ce qui apparait dans le rapport final.
 - une reaction a un de vos messages arrive sur son propre canal Android, `canari_reactions`, au lieu
   du canal des messages. Elle se coupe donc separement, elle ne sonne plus comme un message, et - les
   identifiants de notification etant stables PAR CONVERSATION - elle n'ecrase plus la notification
