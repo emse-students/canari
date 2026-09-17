@@ -11,7 +11,6 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Changed - le snapshot MLS entier traversait le pont IPC en tableau de nombres JSON pour quatre appelants qui le jetaient
 
 `sauvegarder_mls_et_persister` chiffre l'etat et ecrit `mls.bin` - puis rendait les octets. Tauri
@@ -42,7 +41,7 @@ Le cout evite, mesure sur OXYGEN (desktop, release), pour un blob de 7,8 Mo : **
 `serde_json` cote Rust, 27,8 Mo transportes, **220 ms** de `JSON.parse` + `Uint8Array.from` cote JS,
 soit **~315 ms hors copie de transport**. C'est un PLANCHER de machine de bureau ; le chiffre du
 telephone viendra du span `mls-save-state`, qui mesurait 2712,1 ms.
-=======
+
 ### Changed - le recensement des key packages quittait le premier ecran natif, ou il coutait la moitie d'un chargement a froid
 
 Le banc ajoute la veille dit ceci, sur OXYGEN, 5 groupes, release, 20 echantillons : un chargement a
@@ -73,7 +72,6 @@ ce chargement etait du travail qu'il n'avait pas besoin de faire. **Il en reste 
 `prune_expired_key_packages`, 11,49 ms au meme pool, tourne toujours sur le chemin attendu. Elle
 n'est pas deplacee ici parce que c'est de la MAINTENANCE et non un diagnostic - la sortir demande un
 declencheur, et ce depot interdit qu'un declencheur soit une horloge.
->>>>>>> origin/main
 
 ### Changed - la purge des key packages ne fait plus prouver mille lignes pour en supprimer zero, et la mesure a refute l'hypothese qui l'argumentait
 
