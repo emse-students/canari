@@ -40,6 +40,8 @@ AUTRE raison ne doit jamais etre blanchi en soumission verte - c'est la classe d
 fichier a deja payee deux fois. Pour pouvoir distinguer les deux sans lire la prose d'Apple, un
 refus porte desormais son statut comme un fait (`ApiError`) plutot qu'a l'interieur de son message.
 
+## [0.18.10] - 2026-09-17
+
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
 
 nginx transmet a l'amont tout en-tete que personne n'a ecrase, donc le bloc serveur vide les noms
