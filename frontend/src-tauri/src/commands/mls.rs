@@ -184,30 +184,6 @@ pub(crate) async fn recuperer_cle_session_mls(
     Ok(cached.map(|key| base64::engine::general_purpose::STANDARD.encode(key)))
 }
 
-#[tauri::command]
-pub(crate) async fn sauvegarder_mls(
-    device_key_b64: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
-    let manager_state = state.mls_manager.clone();
-    let device_key_state = state.device_key.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let lock = manager_state
-            .lock()
-            .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-        let encrypted = manager
-            .save_encrypted_with_key(&key)
-            .map_err(|e| e.to_string())?;
-        Ok::<Vec<u8>, String>(encrypted)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// Encrypts the live MLS state, writes `mls.bin`, and returns THE NUMBER OF BYTES WRITTEN.
 ///
 /// IT RETURNS A LENGTH AND NOT THE BLOB, AND THAT IS THE WHOLE POINT OF THIS DOCBLOCK. This command

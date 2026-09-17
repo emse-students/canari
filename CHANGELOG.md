@@ -28,6 +28,9 @@ Mi 9T, mesure le 2026-08-14, « presque tout en marshalling du snapshot en `numb
 de ce jour-la a supprime la **seconde ecriture** et laisse le marshalling, parce qu'il n'a jamais
 touche a ce que la commande renvoie.
 
+- `sauvegarder_mls` - la variante qui chiffre SANS ecrire - est **supprimee** : elle etait
+  enregistree dans l'`invoke_handler` et appelee par personne, et elle rendait le blob entier de la
+  meme facon. Une commande exposee que rien n'appelle est une surface, pas une option ;
 - la commande renvoie desormais un **nombre d'octets ecrits** ;
 - cote natif, `saveState` devient `persistState(deviceKeyB64): Promise<number>` ;
 - `saveState` **quitte `IMlsService` et `BaseMlsService`** : la seule persistance partagee est
