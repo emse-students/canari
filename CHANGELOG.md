@@ -40,6 +40,30 @@ c'est-a-dire un index porte par l'etat, et l'ecriture de l'en-tete du blob est b
 (file d'attente, item 5). Ce qui est gagne ici est reel et mesure ; ce qui reste est nomme avec sa
 condition bloquante dans le backlog, pour que personne ne recommence par le meme bout.
 
+### Fixed - la creation d'un post repondait au createur qu'il n'avait aucun droit dessus
+
+Le controleur lit `x-global-admin` pour AUTORISER une publication au nom d'une association -
+`canPostAs(..., { isGlobalAdmin })` est la seule facon dont un administrateur de la plateforme y
+arrive sans etre membre - puis passait le resultat a `createPost`... avec `isGlobalAdmin` cable en
+dur a `false`. La reponse etait donc estampillee pour un lecteur dont le serveur venait de decider
+qu'il n'etait pas celui qu'il avait laisse ecrire : `canManage: false`, `canPin: false`, sur le post
+que ce lecteur venait de creer. **Une seule requete, une seule identite, deux reponses.** Tous les
+autres chemins qui rendent un post - le fil, `getById`, la mise a jour - passaient le vrai drapeau.
+
+Signale par l'utilisateur le 2026-09-17, qui a nomme la cause dans la question : *"J'ai cree un post
+mais je ne pouvais pas le supprimer (je suis admin ?)"*.
+
+**CE QUE CE CORRECTIF NE FERME PAS, ET IL FAUT LE LIRE AVANT DE CLORE LE RAPPORT.** Le client
+JETTE la reponse de creation : `CreatePostForm` fait `await createPost(payload)` sans lire le
+resultat, puis `onPostCreated()` recharge le fil. Ce qui est corrige ici est donc une incoherence
+serveur reelle et testee, pas necessairement l'ecran que l'utilisateur a vu - et les autres
+hypotheses restent ouvertes dans le backlog, avec ce qui a deja ete elimine par lecture : le fil,
+la page d'un post, le menu et la couche client passent tous `canManage` sans le perdre.
+
+Huit tests dans un fichier neuf, en deux moities parce que le defaut vivait dans la couture :
+le service doit honorer le drapeau qu'on lui donne, le controleur doit lui donner celui qu'il a deja
+utilise a la porte.
+
 ### Added - le chargement a froid de l'etat MLS n'avait aucun banc, et la moitie de son cout est deux lignes de log
 
 Le dernier releve met `mls-load-state` a **1644 ms, 82,7 % de tout ce qui suit `login-start`** : un
