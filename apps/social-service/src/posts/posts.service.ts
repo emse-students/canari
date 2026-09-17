@@ -290,8 +290,17 @@ export class PostsService {
   /**
    * Creates a new post. Normalises polls (assigns UUIDs, default values),
    * saves to DB, invalidates the Redis list cache, and returns the public-shaped entity.
+   *
+   * `isGlobalAdmin` IS A PARAMETER BECAUSE IT WAS A HARDCODED `false`, AND THAT WAS THE DEFECT.
+   * The controller consults it to ALLOW the write - `canPostAs(..., { isGlobalAdmin })` is how a
+   * platform admin publishes in an association's name at all - and then this method stamped the
+   * response for a reader it had decided was not one. A global admin therefore received their own
+   * brand-new post with `canManage: false`: no pencil, no bin, on the card they had just made,
+   * until something refetched the feed through a path that DID pass the flag. One request, one
+   * identity, answered two ways. Reported by the user on 2026-09-17, who guessed the cause in the
+   * asking: *"J'ai cree un post mais je ne pouvais pas le supprimer (je suis admin ?)"*.
    */
-  async createPost(data: any) {
+  async createPost(data: any, isGlobalAdmin: boolean) {
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
         data.associationId,
@@ -357,10 +366,11 @@ export class PostsService {
     }
 
     // The response goes back to the publisher, so it is stamped for them - an association post is
-    // resolved through the flag like any other, never assumed from authorship.
+    // resolved through the flag like any other, never assumed from authorship, and a platform
+    // admin is one here for the same reason they were one at the gate that let the write through.
     return this.toPublicPostFromEntity(
       entity,
-      await this.viewerContext([entity], authorId || undefined, false)
+      await this.viewerContext([entity], authorId || undefined, isGlobalAdmin)
     );
   }
 

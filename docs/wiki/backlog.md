@@ -1867,6 +1867,37 @@ chore, and it must not be started as if it were the latter.
 `📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the
 PERSISTENCE; this one owns the strings themselves. Neither closes the other.
 
+### P2 - a post its own publisher could not delete, and ONE of the two ways that could happen is fixed (user, 2026-09-17)
+
+Verbatim: *"J'ai cree un post mais je ne pouvais pas le supprimer (je suis admin ?)"*, answered
+since with *"Aucune corbeille dans le menu"*, published **au nom d'une asso**, **sur prod**. The bin
+is drawn by `PostActionsMenu` under `{#if canManage}` and by nothing else, so the row that reached
+the screen carried `canManage: false`.
+
+**WHAT IS FIXED, AND IT IS A REAL DEFECT WHATEVER ELSE IS TRUE**: `PostsController.createPost`
+reads `x-global-admin` to ALLOW a post in an association's name - `canPostAs(..., { isGlobalAdmin })`
+is the only route for a platform admin who holds no membership - and then called
+`service.createPost` with `isGlobalAdmin` hardcoded `false`. The response was stamped for a reader
+the server had just decided was not the one it let write: `canManage: false`, `canPin: false`, on the
+publisher's own brand-new post. One request, one identity, two answers. Every other path that returns
+a post - the feed, `getById`, the update - passed the real flag.
+
+**AND WHY THAT MAY NOT BE THE SCREEN THE USER SAW**: `CreatePostForm` does `await createPost(payload)`
+and **discards the result**, then calls `onPostCreated()`, which refetches the feed through the path
+that was always correct. So the fixed inconsistency is currently invisible to this client.
+
+**WHAT HAS BEEN ELIMINATED BY READING, so nobody re-reads it:** the feed path passes
+`isAdmin: xGlobalAdmin === 'true'` and stamps every row through `shapeListRow`; `getById` passes its
+own flag; the feed cache is keyed per reader (`...:${viewerUserId ?? 'anon'}:...`), so no reader is
+served another's capabilities; `PostCard` reads `localPost.canManage === true` straight from the
+response and no client mapper strips it; and `viewerIsPublisher` resolves an association post through
+`POST_AS_ASSO` for creation and for management alike, so the two gates cannot disagree by design.
+
+**WHAT WOULD SETTLE IT, AND IT IS ONE OBSERVATION**: the post's URL, or `canManage` as served for
+that row - whether the publisher held `POST_AS_ASSO` on that association at that moment, or reached
+the composer through the global-admin route alone. Until then this entry is a fixed inconsistency
+plus an open report, and must not be written up as the user's defect closed.
+
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
