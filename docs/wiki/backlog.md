@@ -1324,6 +1324,78 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ---
 
+## Reported by the USER on 2026-09-17 - five items, verbatim, none of them investigated yet
+
+Each of these is a REPORT, not a diagnosis. What is written under it is the report and whatever one
+lookup already settles; anything further is owed by whoever takes the item, and a hypothesis is
+marked as one.
+
+### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
+
+Verbatim: *"Pas de difference entre un evenement propose et un evenement valide dans la vue planning
+liste (en mode calendrier il y a des pointilles)."*
+
+**The distinction already has a vocabulary in this product** - the calendar mode draws a pending
+event with a dashed border - so this is a rendering gap in one view rather than a design question,
+and the answer should reuse that vocabulary rather than invent a second one. It is the same
+pending/validated split `GET /associations/:id/events` filters on for a caller it cannot identify.
+
+**Not investigated**: which component draws the list row, and whether it even receives the flag.
+
+### P3 - the "Connexion en cours" panel is transparent and the page shows through it (user, 2026-09-17)
+
+Verbatim: *"Panneau 'Connexion en cours' transparent par dessus /chat (et peut-etre /communautes),
+on voit a travers c'est moche."*
+
+The string is `chat_connecting_label` (*"Connexion en cours..."*, `messages/fr.json:1115`). **Not
+investigated**: which overlay renders it, whether a backdrop token is missing or the element is
+simply never painted over, and whether `/communautes` shares the component or has its own.
+
+### P2 - a photo arrives IN the notification and the app then shows the words "Photo" where the image should be (user, 2026-09-17)
+
+Verbatim: *"La photo s'affiche dans la notification, mais quand j'ouvre j'ai juste '📷 Photo'
+(consommation du message ?). D'ailleurs, quelle difference entre '📷 Photo' et '[Media]' ?"*
+
+**THE ANSWER TO THE SECOND HALF IS THAT THEY ARE TWO DIFFERENT SURFACES WITH TWO DIFFERENT
+VOCABULARIES.** `📷 Photo` / `🎥 Video` is built by the NATIVE notification builder from
+the decrypted `mediaKind`, as the text preview for the kinds that get no thumbnail - images and GIFs
+under 2 MB show the real decrypted picture instead ([chat-delivery](services/chat-delivery.md)).
+`[Media]` is `chat_preview_media` (`messages/fr.json:2698`), the WEB conversation-list preview, and
+it says the same four words for every kind at once. Neither is derived from the other, and one of
+the two is wrong.
+
+**SO THE FIRST HALF IS A REAL FINDING RATHER THAN A COSMETIC ONE: `📷 Photo` IS A NOTIFICATION
+STRING AND HAS NO BUSINESS INSIDE THE APP.** Seeing it where the image belongs means something wrote
+the notification's PREVIEW where the message goes. **Hypothesis, not evidence**: the FCM cache path
+(`mergeFcmMessagesIntoConversations`) is the one place that turns a push payload into a conversation
+row, and the P1 two sections down already records that a cold device takes the HISTORY path instead.
+Whoever takes this reads the push payload and the resulting row before touching either.
+
+### P3 - voice notes appear in a discussion's "Medias" tab, and an imported audio file cannot be told from a recorded one (user, 2026-09-17)
+
+Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une discussion. +1 s'il est
+possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
+enregistres directement dans la conversation."*
+
+Two claims, and **the second is the harder one and decides the first.** By the time it arrives, a
+voice note and an imported `.m4a` are the same bytes with the same mime type - no inspection
+separates them. So what separates them has to be DECLARED BY THE SENDER, on the message, at the
+moment the composer knows which gesture produced it. That is the standing rule about carrying the
+discriminator to where the decision is already known; a heuristic on the file would be the fallback
+this repository forbids.
+
+### P3 - the community settings screen on mobile is a wall of text, hidden elements and modals, where the conversation settings are not (user, 2026-09-17)
+
+Verbatim: *"Les parametres de communaute sur mobile ne sont pas du tout ergonomiques, beaucoup de
+texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque chose de similaire aux
+parametres des conversations. Tu peux le mesurer sur le Mi9T directement si tu veux."*
+
+**The user named the target, which is what makes this actionable rather than a taste question**: the
+CONVERSATION settings screen is the shape to copy. Measurable on the Mi 9T directly, and the measure
+comes before the redesign - what is hidden, how many taps, how much of it is a modal that a screen
+that size cannot hold.
+
+---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
 ### P2 - a reaction to YOUR OWN message must notify by push, and today no reaction notifies at all (decided by the user 2026-09-10)
