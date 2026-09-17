@@ -11,40 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Changed - le chargement a froid EST la purge : 89 % d'un cold load, et la piste suivante est un item deja bloque
+### Changed - le chargement a froid EST la purge, a 89 %
 
-`mls-core` savait combien coutait un chargement a froid et pas de quoi ce cout etait fait. Le banc
-`load_phases` mesure desormais le decodage CBOR de tout l'instantane a part du chargement complet,
-sur les MEMES octets, si bien que la paire se soustrait.
-
-**Et la reponse renverse l'ordre des suspects.** (OXYGEN, release, 5 groupes, 20 echantillons,
-logger a `Off` - les deux diagnostics O(pool) ont quitte ce chemin avec #822 et #824.)
-
-| pool | chargement complet | purge | decodage CBOR | reste |
-| --- | --- | --- | --- | --- |
-| 50 | 738,7 us | 500,2 us (**67,7 %**) | 44,7 us (6,1 %) | 193,8 us |
-| 500 | 5,581 ms | 5,008 ms (**89,7 %**) | 0,295 ms (5,3 %) | 0,278 ms |
-| 1000 | 11,374 ms | 10,082 ms (**88,6 %**) | 0,562 ms (4,9 %) | 0,730 ms |
-
-Le decodage CBOR de l'instantane entier - la seule chose que la fonction fait sur CHAQUE octet - est
-**5 %**. Le `byte_compat` de WP-ANR-1 avait deja paye cette dette. Le reste non explique par la purge
-est un cout FIXE d'environ 200 a 700 us : l'identite, le deplacement de la table de stockage et un
-`MlsGroup::load` par groupe. Autrement dit le nombre de GROUPES n'est pas le probleme, et la taille
-de l'instantane ne l'est que par ce qu'elle contient.
-
-**Composee avec ce que #824 a etabli** - 88 % de la purge est le `serde_json::from_slice::<KeyPackageBundle>`
-de chaque bundle - cela donne : **environ 78 % d'un chargement a froid est du JSON deserialise pour
-lire des dates d'expiration.** Mille bundles ouverts pour mille dates.
-
-**Ce que cela change dans la file d'attente : la question suivante du demarrage n'est plus « dans
-Rust », elle est l'item 5.** Eviter ce decodage demande un index porte par l'etat, l'index est un
-champ de l'en-tete du blob, et l'ecriture de cet en-tete attend que le lecteur soit le plancher
-(`minClientVersion`). Ce n'est pas une nouvelle piste a instruire, c'est une dependance qui vient
-d'etre nommee avec un chiffre.
-
-**Ce que le banc ne mesure toujours pas, et c'est dit plutot qu'extrapole** : son plus gros gabarit
-reste un QUART des 7,8 Mo que `TauriMlsService` releve sur le telephone, et il part d'octets deja
-dechiffres en memoire - ni la lecture du fichier ni la passe ChaCha de `load_with_key` n'y sont.
+Le banc `load_phases` mesure le decodage CBOR de l'instantane a part du chargement complet, sur les
+memes octets. A un pool de 1000 : la purge est **88,6 %** du chargement, le decodage de tout
+l'instantane **4,9 %**, et le reste un cout FIXE de 200 a 700 us - donc le nombre de groupes n'est pas
+le probleme. Compose avec #824, cela donne **~78 % d'un chargement a froid en JSON deserialise pour
+lire des dates d'expiration**, et la piste suivante du demarrage n'est pas une nouvelle piste : c'est
+l'item 5 de la file. Tableau complet, ce que le banc ne mesure pas, et la dependance :
+[backlog](docs/wiki/backlog.md).
 
 ### Changed - anonyme devient une identite de publication, ouverte a tout le monde ; un moderateur (et l'auteur) voient toujours qui a publie
 
