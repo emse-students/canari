@@ -80,6 +80,18 @@ litteral a disparu et `indexOf` a rendu -1. Deux l'ont dit. Le troisieme compara
 le debut. L'ancre est desormais resolue **une fois**, gardee par un seul `toBeGreaterThan(-1)` : une
 ancre partagee ne peut pas pourrir dans un test et tenir dans un autre.
 
+**Et la mesure a tue cette hypothese-la aussi.** `mls-list-groups` et `mls-save-state` demarrent au
+MEME instant : l'appel attendu finit en **42,8 ms** pendant que l'ecriture non attendue tourne
+**2712,1 ms** a cote. Le natif ne les serialise pas. Troisieme hypothese refutee par cet instrument,
+et celle-ci avait ete ecrite AVANT la mesure pour qu'elle puisse l'etre.
+
+Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,5 ms** contre
+**1688,5 ms** pour `mls-init` - la concurrence de la paire ne valait rien, un facteur 675 - et
+`mls-load-state` fait **1644,4 ms**, soit 97,4 % de `mls-init` et **82,7 % de tout ce qui suit
+`login-start`**. C'est `invoke('initialiser_mls')` : le dechiffrement natif de l'instantane, pour
+CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
+et c'est la premiere fois qu'on peut le dire avec un nombre.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu

@@ -1127,6 +1127,46 @@ instead of bracketing an `await`, so **a write still running at `MLS ready` is r
 than closed at a moment it never reached**. A span with no end is the honest answer there, and the
 summary omits it rather than ranking a duration it does not have.
 
+#### AND THE RUN KILLED THAT HYPOTHESIS TOO, WHILE NAMING THE REAL BLOCK EXACTLY (Mi 9T, 2026-09-17)
+
+Second APK, built from the decomposition commit with a clean tree, same phone, same PIN branch,
+same local estate. `groups: 5`.
+
+| span | offset | duration | share of the 1988.1 ms after `login-start` |
+| --- | ---: | ---: | ---: |
+| `mls-init-and-storage` (the pair) | 3450.2 | 1689.2 | 85.0% |
+| `mls-init` | 3450.8 | 1688.5 | 84.9% |
+| **`mls-load-state`** | 3451.3 | **1644.4** | **82.7%** |
+| `mls-list-groups` | 5095.9 | 42.8 | 2.2% |
+| `storage-open` | 3450.8 | **2.5** | 0.1% |
+| `mls-save-state` (NOT awaited) | 5095.9 | 2712.1 | - it ENDS at 7808, long after `MLS ready` at 5144.4 |
+
+**THE HYPOTHESIS IS REFUTED, AND IT IS THE THIRD THIS INSTRUMENT HAS KILLED.** `mls-list-groups` and
+`mls-save-state` start at the SAME instant, 5095.9. The awaited call finished in **42.8 ms while the
+unawaited write ran for 2712.1 ms beside it**. The native side does NOT serialise the two, so the
+boot never queued behind that write and the suspicion written down above is wrong. It was recorded
+BEFORE the run precisely so it could be killed by one rather than quietly become an explanation.
+
+**THE PAIR'S CONCURRENCY BUYS NOTHING, MEASURABLY.** `storage-open` is **2.5 ms** against
+`mls-init`'s 1688.5. `Promise.allSettled` was hiding a 675x asymmetry: the pair's number was always
+the MLS half, and no arrangement of those two can matter.
+
+**SO THE WHOLE COLD START IS ONE NATIVE CALL.** `mls-load-state` is 97.4% of `mls-init` and 82.7% of
+everything after `login-start` - it is `loadStateWithKey` -> `invoke('initialiser_mls')`, the native
+decrypt and deserialisation of the snapshot. Everything else inside `_initImpl` together is 44 ms.
+**The next question is inside Rust, not inside TypeScript**, and it is the first time this entry has
+been able to say that with a number. For FIVE groups.
+
+**ONE THING THE RUN FOUND THAT NOBODY WAS LOOKING FOR**, and it is not on the boot's critical path:
+`mls-save-state` costs **2712.1 ms** and starts immediately after init, so the phone spends 2.7 s
+writing the snapshot while the catch-up sync runs. `saveState`'s docblock already records 2.0 s of a
+3.7 s measurement for writing that file twice. **The question this raises and does NOT answer: when
+init has just LOADED a snapshot and changed nothing, what does re-writing it buy?** The stated reason
+is that the FCM service must be able to decrypt before any message is processed - which is a reason
+for the file to EXIST, not for it to be rewritten with bytes it already holds. Answering that needs
+someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
+established it, and it must not be assumed.**
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
