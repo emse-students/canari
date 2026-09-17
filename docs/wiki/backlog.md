@@ -51,6 +51,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
+| the community settings read as a panel on the phone they were reported from | HARDWARE, Mi 9T, and it is a LOOK rather than a number: the three geometries are already measured in a browser against this tree (436 px full-bleed, 768-plus inset and rounded, and the chat column still `static` at 320 px at 1400 px), so what a phone adds is whether the tab strip, the one danger zone and the permission matrix READ at 436 px with a thumb. **The Mi 9T carries the USER'S OWN account behind an encryption PIN that is theirs**, so this waits on a build the user opens themselves or on the phone being free - it is not a run the harness may take ([device-verification](device-verification.md)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -1522,47 +1523,6 @@ separates them. So what separates them has to be DECLARED BY THE SENDER, on the 
 moment the composer knows which gesture produced it. That is the standing rule about carrying the
 discriminator to where the decision is already known; a heuristic on the file would be the fallback
 this repository forbids.
-
-### P3 - MEASURED 2026-09-17, REDESIGN OPEN - community settings are a modal where the conversation settings are a panel (user, 2026-09-17)
-
-Verbatim: *"Les parametres de communaute sur mobile ne sont pas du tout ergonomiques, beaucoup de
-texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque chose de similaire aux
-parametres des conversations. Tu peux le mesurer sur le Mi9T directement si tu veux."*
-
-**The user named the target, which is what makes this actionable rather than a taste question**: the
-CONVERSATION settings screen is the shape to copy.
-
-**MEASURED at 436 x 945** - the Mi 9T's own CSS pixels, not 393, because that is the screen the
-report was written on ([device-verification](device-verification.md)). Same account, same estate,
-same build, the two screens opened one after the other:
-
-| | conversation settings (the named target) | community settings (reported) |
-| --- | --- | --- |
-| shape | full-bleed side panel, no `role="dialog"` | **a modal**, 404 x 869 floating in 436 x 945 |
-| frame a finger can actually read | **945** - the whole screen | **790**; 155 px, 16% of the phone, spent on the float |
-| content vs that frame | 945 - **1.00 screen**, nothing scrolls | 895 - **1.13 screens** |
-| settings hidden behind a tab | **none** | **three** (Vue d'ensemble / Roles & permissions / Membres) |
-| characters of prose | 545 | **670**, +23% in a frame 155 px shorter |
-| tap targets under 44 px | 7 | 8 |
-| "Quitter" / "Supprimer" | on screen | **below the modal's own scroll frame** |
-
-So all three words in the report are literal. *modal*: `SidebarCommunityAdminModal` is a `<Modal>`
-covering 92% of the screen in each direction - which is a panel that also dims, floats and clips,
-paying a scrim and a gutter for nothing a phone wants. *elements caches*: two thirds of the settings
-sit behind a tab strip INSIDE that modal, and the two destructive actions sit below its scroll frame.
-*beaucoup de texte*: 23% more prose than the screen it is compared with, in 16% less room.
-
-**What the redesign is**: the phone gets the shape `ConversationSidePanel` already has - full-bleed,
-no scrim, the screen's whole height - keeping the tab strip, which is what makes three sections
-legible once the frame stops costing 155 px. `ConversationMediaPanel` is the worked example of a
-horizontal strip inside such a panel.
-
-**Measured in a browser, NOT on the phone, and that is a standing constraint rather than a
-shortcut.** The Mi 9T currently carries the USER'S OWN account, whose encryption PIN is theirs alone
-and which gates every screen behind the chat; the harness path (`run.mjs --preflight A1`) expects the
-test account instead. Re-provisioning that phone would destroy a real session, so anything on it that
-is not purely structural is owed to the user. A LAYOUT question needs none of that: the client is a
-WebView, and the width and height above are the device's own.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one

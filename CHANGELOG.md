@@ -11,6 +11,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - les parametres de communaute sont un panneau, plus une modale
+
+Signale depuis un telephone : *"Les parametres de communaute sur mobile ne sont pas du tout
+ergonomiques, beaucoup de texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque
+chose de similaire aux parametres des conversations."* Les trois mots etaient litteraux, et
+l'ecran nomme comme cible est ce qui rend la demande mesurable plutot que subjective.
+
+Mesure sur le Mi 9T a 436 x 945, meme compte et meme build, les deux ecrans ouverts l'un apres
+l'autre : les parametres de CONVERSATION sont un panneau plein cadre sans `role="dialog"` ; ceux de
+COMMUNAUTE etaient une modale de 404 x 869 flottant dans 436 x 945. **155 px, 16% du telephone,
+payes en scrim et en gouttiere** pour un panneau qui couvrait deja 92% de l'ecran dans les deux
+directions. Deux tiers des reglages etaient derriere une bande d'onglets a l'interieur de cette
+modale, « Quitter » et « Supprimer » sous son propre cadre de defilement, et 23% de prose en plus
+dans un cadre 155 px plus court.
+
+Ils rendent desormais dans la meme coquille. Ce qui a demande du travail n'est pas la coquille mais
+ce qu'elle portait : `.conversation-side-panel` melait un TIROIR et une COLONNE, et la seconde
+moitie n'a de sens que dans une rangee qui a une place pour elle. La page de chat en a une, la
+barre laterale non - prendre la classe entiere aurait laisse le panneau tomber en flux normal a
+1280 px, ce qui n'est pas une forme. Le tiroir est donc `.side-panel`, la colonne
+`.side-panel-column`, et le choix appartient a l'HOTE, seul a savoir. Tout le reste - le scrim,
+Echap, l'en-tete, le bouton de fermeture, l'unique contexte de conteneur - est partage au lieu
+d'etre recopie une quatrieme fois.
+
+Le rail de 256 px est supprime, pas masque : un panneau de 28rem a une colonne, donc la bande
+horizontale que le fichier dessinait deja pour les telephones est la seule mise en page possible -
+c'est le raisonnement que `ChannelSettingsPanel` avait ecrit en faisant la meme coupe. Et la zone
+dangereuse repasse a UN exemplaire : elle etait ecrite deux fois, une par mise en page, `md:block`
+dans le rail et `md:hidden` au pied du contenu. Une seule mise en page en demande un seul.
+
+Mesure en sortie sur cette copie de travail, aux trois echelons : 436 px plein cadre a `top: 0`,
+448 px encastres et arrondis a partir de 768 px, et la colonne de chat toujours `static` a 320 px a
+1400 px - ou le panneau de la barre laterale reste, lui, un tiroir. Cette derniere lecture a trouve
+un defaut au passage : la borne haute de l'echelon du milieu faisait retomber un panneau sans
+colonne sur la regle de base a 1280 px, donc il passait d'un tiroir arrondi encastre a un tiroir
+carre plein cadre en un pixel de fenetre. La borne n'avait de raison d'etre que pour tenir les
+encarts hors de la colonne, et un encart sur une boite `static` ne fait rien.
+
 ### Fixed - un 500 d'Apple a coute la mise en production de `v0.18.10`
 
 La soumission App Store est morte sur `POST /v1/reviewSubmissionItems -> 500 An unexpected error
