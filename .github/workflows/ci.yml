@@ -81,7 +81,6 @@ jobs:
       ts-matrix: ${{ steps.matrix.outputs.ts }}
       run-frontend: ${{ steps.matrix.outputs.frontend }}
       run-harness: ${{ steps.matrix.outputs.harness }}
-      run-scripts: ${{ steps.matrix.outputs.scripts }}
       run-android: ${{ steps.matrix.outputs.android }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
     steps:
@@ -112,7 +111,6 @@ jobs:
             echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
             echo "frontend=true"     >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
-            echo "scripts=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
           }
@@ -295,91 +293,6 @@ jobs:
             echo "harness=true" >> "$GITHUB_OUTPUT"
           else
             echo "harness=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- CI script self-tests --
-          # `.github/scripts/` decides which Dependabot pull requests merge unattended, so its own
-          # sources are the whole trigger. Note it is NOT reached by the `ci.yml` short-circuit at
-          # the top of this step: a change to a script is not a change to this workflow.
-          #
-          # AND ITS OWN SOURCES ARE NOT THE WHOLE TRIGGER ANY MORE, because one of those self-tests
-          # is DERIVED. `tests/ceiling.test.sh` reads `docker-compose.prod.yml` and demands the
-          # auto-merge ceiling name every third-party image mounting a named volume - so the pull
-          # request that ADDS a stateful service is the one case the assertion exists for, and it was
-          # the one case that did not run it. The compose file is part of the input, so it is part of
-          # the trigger; the `Makefile` is here because it decides WHICH self-tests run at all
-          # (`test-ci-scripts` executed only one of the two until 2026-09-01).
-          # `tests/compose-wiring.test.sh` is derived the same way and reads BOTH deployed compose
-          # files, so the dev one joins the trigger: the whole reason that test exists is that a
-          # compose file was wrong for four months with nothing reading it. **And since 2026-09-02 it
-          # reads a THIRD file, `infrastructure/local/docker-compose.yml`, deriving from
-          # `docker-compose.prod.yml` every environment key the local estate is owed - 17 were
-          # missing, three of them the `AUTHENTIK_*` trio, so no local login could complete. That
-          # file is an input, so `local/` is in the pattern below; it was not, for one commit, which
-          # is the exact shape this comment warns about.
-          #
-          # `scripts/bump-app-version.sh` IS AN INPUT AND DOES NOT LIVE UNDER `.github/` AT ALL.
-          # `tests/bump-version.test.sh` runs that script in a sandbox and reads the manifests back,
-          # so the commit that must run it is a change to the script - the one file the first
-          # pattern here would never match.
-          #
-          # EVERY `.md` FILE IN THE REPOSITORY IS AN INPUT, because of `tests/wiki-links.test.mjs`.
-          # It walks all of them and asserts that every intra-repository link resolves - the file
-          # AND the heading anchor. The commit that breaks such a link is a heading RENAME, which
-          # touches only the target page, so any narrower pattern would pass on exactly the commit
-          # that breaks it. That is the same shape as the two entries below and the one above, and
-          # it is the reason this list keeps growing rather than being tidied into a prefix.
-          #
-          # THE FOUR RELEASE WORKFLOWS ARE INPUTS, and they are the least obvious entries here.
-          # `tests/deploy-env.test.sh` derives the expected key set of a deployed environment FROM
-          # `deploy.yml`'s own
-          # `upsert_env_var` calls - so the change that must run it is a key added THERE and not to
-          # `infrastructure/deploy/env-manifest.tsv`. A derived test whose source sits outside its
-          # own trigger is a test that passes on the very commit that breaks it. `.env.example` joins
-          # for the same reason: it is the template every rendered .env is built from.
-          #
-          # `release.yml`, `android.yml` and `ios.yml` are there because `tests/release-chain.test.sh`
-          # READS ALL FOUR: it asserts the release still has the shape the three human gestures
-          # require - one entry point, the gates before the bump, the bump before every arm, and no
-          # arm resolving `main` for itself. Every defect that chain has actually had was a wiring
-          # defect rather than a bug in a script, so the files themselves are the test's subject.
-          # `bump-staging.test.sh` reads `release.yml` too, for how the bump stages its commit.
-          #
-          # AND `tools/app-store/` IS AN INPUT, for the same reason `scripts/bump-app-version.sh` is:
-          # its self-test lives beside it rather than under `.github/`, and the release preflight
-          # calls `submit.mjs --check-notes` as its fifth gate. So the commit that must run it is a
-          # change to the submission script - which the first pattern here would never match.
-          #
-          # SO IS `tools/store-divergence/`, and so are the THREE estate workflows. This list named
-          # `deploy.yml` until 2026-09-07 - a file that no longer exists - and named none of the
-          # three that replaced it, so a change to the PRODUCTION ESTATE would not have run the
-          # suite that guards it. A pattern is only evidence for the tree it was written against.
-          # AND `apps/` IS AN INPUT, WHICH IT WAS NOT UNTIL 2026-09-17 - the sharpest instance of
-          # the trap this whole comment block keeps describing.
-          # `tests/auth-request-coverage.test.mjs` exists to FAIL on a route added behind an
-          # `auth_request` location with no guard and no declared reason. Its subjects are
-          # `apps/*/src/**/*.controller.ts` and the two Axum routers, and not one of them matched a
-          # pattern here - so the commit that adds an unguarded route, the only commit that gate was
-          # ever written for, did not run it. `tests/compose-wiring.test.sh` has the same shape: it
-          # derives its NestJS service list from `apps/*/package.json` declaring `@nestjs/core`, so
-          # a NEW SERVICE was the one change it could not see either.
-          #
-          # The pattern is narrowed to what those tests actually READ rather than to `^apps/`, so an
-          # ordinary service change does not drag this suite in - a trigger wider than the inputs
-          # goes unread for the opposite reason, and both failures end as a green that means
-          # nothing.
-          if has '^\.github/scripts/' \
-            || has '^apps/[^/]+/(package\.json|src/.*\.(controller\.ts|rs))$' \
-            || has '^tools/app-store/' \
-            || has '^tools/store-divergence/' \
-            || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \
-            || has '^\.github/workflows/(release|build|serve-dev|serve-prod|android|ios|scheduled)\.yml$' \
-            || has '^scripts/bump-app-version\.sh$' \
-            || has '\.md$' \
-            || has '^Makefile'; then
-            echo "scripts=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
 
   # =================================================================================================
@@ -910,10 +823,21 @@ jobs:
   # nobody watching. Its staleness predicate decides whether a green-but-older check suite is still
   # evidence, and the half of it that matters - a truncated compare, an unreadable payload - never
   # occurs on a good day, so nothing but a test will ever exercise it.
+  #
+  # THIS JOB HAS NO PATH FILTER, AND THAT IS THE DERIVED ANSWER RATHER THAN A GIVING-UP.
+  # It had one until 2026-09-17: an eight-pattern list grown over four incidents, each added after a
+  # DERIVED self-test passed on the very commit that broke it. The list was wrong again, and this
+  # time no pattern could have been right - **SIX of these self-tests take the whole tracked tree as
+  # their input.** `no-nul-in-source`, `control-characters`, `executable-bit` and `shellcheck-scope`
+  # each enumerate `git ls-files` and assert something about every file it names;
+  # `undeclared-duplicates` walks `frontend/src` AND `apps`; `wiki-links` walks every `.md`. A filter
+  # in front of a whole-tree scanner is a scanner that does not run on the commit it exists for, and
+  # a list that has been wrong four times is the shape of the defect rather than a defence against
+  # it.
+  #
+  # The recipe is seconds long, so ask what it READS and let the answer stand: everything.
   test-ci-scripts:
     name: Test CI Scripts (self-tests)
-    needs: [changes]
-    if: ${{ needs.changes.outputs.run-scripts == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
