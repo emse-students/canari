@@ -1167,7 +1167,7 @@ for the file to EXIST, not for it to be rewritten with bytes it already holds. A
 someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
 established it, and it must not be assumed.**
 
-##### WHAT THE 2712.1 MS IS MADE OF - READ 2026-09-17, AND ONE THIRD OF THE QUESTION IS NOW ANSWERED
+##### THE 2712.1 MS: THE MARSHALLING IS GONE, THE RE-SERIALISATION AND THE WRITE ARE NOT (2026-09-17)
 
 The three facts the entry above says must not be assumed, established by reading the two sides:
 
