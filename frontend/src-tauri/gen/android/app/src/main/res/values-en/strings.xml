@@ -11,6 +11,8 @@
     <string name="notif_channel_calls_desc">Incoming calls (ringtone)</string>
     <string name="notif_channel_mentions_name">Canari mentions</string>
     <string name="notif_channel_mentions_desc">Messages that mention you (@)</string>
+    <string name="notif_channel_reactions_name">Reactions to your messages</string>
+    <string name="notif_channel_reactions_desc">When somebody reacts to a message you wrote</string>
 
     <string name="notif_sync_blocked_title">Canari - Sync pending</string>
     <string name="notif_sync_blocked_body">Open the app to receive your encrypted messages.</string>

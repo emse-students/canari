@@ -274,7 +274,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
 17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
     PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
-    message must notify by push and NOTIF-15 asserts the opposite** ([backlog](docs/wiki/backlog.md)).
+    message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
 18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
 

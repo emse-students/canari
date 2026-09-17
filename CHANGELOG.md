@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- une reaction a un de vos messages arrive sur son propre canal Android, `canari_reactions`, au lieu
+  du canal des messages. Elle se coupe donc separement, elle ne sonne plus comme un message, et - les
+  identifiants de notification etant stables PAR CONVERSATION - elle n'ecrase plus la notification
+  d'un message non lu de cette meme conversation, ni ne compte dans le badge du lanceur.
+
 ### Fixed - six autotests CI lisaient tout l'arbre derriere un filtre de chemins de huit motifs
 
 `ci.yml` ne lancait `test-ci-scripts` que si le changement touchait `.github/scripts/`,

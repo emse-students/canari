@@ -109,6 +109,59 @@ describe('notifications posted from the WebView (anti-régression)', () => {
     expect(onCreate).toContain('createNotificationChannels()');
   });
 
+  it('chaque canal déclaré dans le Kotlin est créé par ensureChannels', () => {
+    // THE TEST ABOVE COVERS THE TWO CHANNELS THE WEBVIEW POSTS TO, AND THE SERVICE DECLARES MORE.
+    // `NotificationManagerCompat` drops a notification whose channel does not exist, silently and
+    // with no log, so a constant that `ensureChannels` forgets is a notification class that never
+    // arrives - and nothing about it is visible short of a phone. Derived from the Kotlin rather
+    // than listed here: a list would be a third copy, and it would be the copy that goes stale.
+    const declared = [...fcmServiceKt.matchAll(/const val (CHANNEL_[A-Z_]+)\s*=\s*"([^"]+)"/g)].map(
+      ([, constant, id]) => ({ constant, id })
+    );
+    // An empty scan is not coverage. Five channels existed when this was written; the floor says
+    // the regex still matches the source rather than silently asserting nothing.
+    expect(
+      declared.length,
+      'aucune const CHANNEL_* trouvée: le Kotlin a changé de forme et ce test ne voit plus rien'
+    ).toBeGreaterThanOrEqual(5);
+
+    const notCreated = declared.filter(
+      ({ constant }) => !applicationKt.includes(`CanariFirebaseMessagingService.${constant}`)
+    );
+    expect(
+      notCreated.map((c) => c.constant),
+      'ensureChannels ne crée pas ces canaux: toute notif les nommant serait jetée sans un mot'
+    ).toEqual([]);
+  });
+
+  it('chaque canal créé porte un nom et une description, dans les deux langues', () => {
+    // Both are read by the user: Android lists the name as a heading and the description as the
+    // line under it, in the app's notification settings. A missing string does not crash - it
+    // renders the resource name, or an empty heading, on the screen where somebody goes to turn
+    // this channel off.
+    const ids = [...applicationKt.matchAll(/R\.string\.(notif_channel_[a-z_]+)_name/g)].map(
+      ([, base]) => base
+    );
+    expect(
+      ids.length,
+      'aucun R.string.notif_channel_*_name dans ensureChannels'
+    ).toBeGreaterThanOrEqual(5);
+
+    const strings = {
+      fr: readFileSync(resolve(ANDROID_MAIN, 'res/values/strings.xml'), 'utf8'),
+      en: readFileSync(resolve(ANDROID_MAIN, 'res/values-en/strings.xml'), 'utf8'),
+    };
+    const missing: string[] = [];
+    for (const base of ids) {
+      for (const suffix of ['name', 'desc']) {
+        for (const [lang, xml] of Object.entries(strings)) {
+          if (!xml.includes(`name="${base}_${suffix}"`)) missing.push(`${lang}:${base}_${suffix}`);
+        }
+      }
+    }
+    expect(missing, 'chaînes de canal manquantes').toEqual([]);
+  });
+
   it('aucun appel à sendNotification ne contourne le helper', () => {
     const composable = readFileSync(
       resolve(here, '../composables/useNotifications.svelte.ts'),

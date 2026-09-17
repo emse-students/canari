@@ -92,6 +92,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
         const val CHANNEL_MENTIONS = "canari_mentions"
 
+        /**
+         * Normal-priority channel: somebody reacted to a message YOU wrote (sound, no vibration,
+         * no DND bypass).
+         *
+         * IT EXISTS SO THE READER CAN SILENCE A REACTION WITHOUT SILENCING A MESSAGE. Until
+         * 2026-09-17 a reaction was posted on [CHANNEL_MESSAGES]: it rang like a message, could not
+         * be muted apart from one, and - because that channel's notification id is stable PER
+         * CONVERSATION - it OVERWROTE an unread message notification from the same conversation.
+         * The reaction also counted toward the launcher badge's unread-conversation total, which
+         * counts [CHANNEL_MESSAGES] and [CHANNEL_MENTIONS] only, so it is no longer counted either.
+         *
+         * IMPORTANCE_DEFAULT rather than HIGH is the whole judgement: the user asked to be
+         * notified, so it must be heard, and a heads-up popping over what they are doing for an
+         * emoji is not what they asked for. No vibration for the same reason.
+         */
+        const val CHANNEL_REACTIONS = "canari_reactions"
+
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
 
@@ -265,10 +282,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val channelId =
                         if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
                     // Only touch message notifications (leave social/forms alone; the mentions
-                    // channel is a message tier so it clears on open too). Ring notifications
-                    // are also cleared: once the app is open the in-app CallOverlay rings.
+                    // and reactions channels are message tiers so they clear on open too). Ring
+                    // notifications are also cleared: once the app is open the in-app CallOverlay
+                    // rings.
                     if (channelId == null || channelId == CHANNEL_MESSAGES ||
-                        channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS
+                        channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
+                        channelId == CHANNEL_REACTIONS
                     ) {
                         manager.cancel(sbn.id)
                     }
@@ -474,6 +493,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * Returns a stable, unique notification ID for [groupId], persisted in
          * SharedPreferences. Avoids groupId.hashCode() collisions between conversations.
          */
+        /**
+         * The [getStableNotifId] key for a conversation's REACTION notification.
+         *
+         * A separate key is what keeps a reaction from overwriting an unread message notification:
+         * ids are stable per conversation, so without a namespace both would resolve to the same
+         * int and `notify()` would replace one with the other. Stable within the namespace on
+         * purpose - a second reaction in the same conversation updates the first rather than
+         * stacking, which is what the message path does too.
+         */
+        internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
+
         internal fun getStableNotifId(context: Context, groupId: String): Int =
             synchronized(NOTIF_ID_LOCK) {
                 val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
@@ -501,6 +531,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(notifId)
             Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
+
+            // A reaction to one of your messages in THIS conversation stops being news the moment
+            // the conversation is read, and it lives under its own id since 2026-09-17 - so it
+            // needs cancelling explicitly. `getInt` rather than [getStableNotifId]: never mint an
+            // id here, exactly as the message half above does not.
+            val reactionId = prefs.getInt(reactionNotifKey(groupId), -1)
+            if (reactionId != -1) {
+                manager.cancel(reactionId)
+                Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${groupId.take(8)} id=$reactionId")
+            }
 
             // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
             // drop the summary when no message notification remains.
@@ -3080,8 +3120,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val isGroup = groupName.isNotEmpty() && groupName != senderName
 
-        // Stable ID per conversation: notify() with the same ID updates the existing notification
-        val notifId = if (groupId.isNotEmpty()) getStableNotifId(this, groupId) else 0
+        // Stable ID per conversation: notify() with the same ID updates the existing notification.
+        // A reaction takes its own namespace so it updates the previous REACTION rather than the
+        // conversation's unread message - see [reactionNotifKey].
+        val notifKey = if (channel == CHANNEL_REACTIONS) reactionNotifKey(groupId) else groupId
+        val notifId = if (groupId.isNotEmpty()) getStableNotifId(this, notifKey) else 0
 
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -3148,14 +3191,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             manager.cancel(notifId)
         }
 
+        val isReactionNotif = channel == CHANNEL_REACTIONS
+
         val notifBuilder = NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(style)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // Below API 26 there are no channels and this is the whole of the importance, so it
+            // has to say what the channel says: DEFAULT for a reaction, HIGH for a message.
+            .setPriority(
+                if (isReactionNotif) NotificationCompat.PRIORITY_DEFAULT
+                else NotificationCompat.PRIORITY_HIGH
+            )
             .setContentIntent(pendingIntent)
             .setLargeIcon(largeIcon)
-            .setGroup(GROUP_KEY_MESSAGES)
+
+        // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
+        // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
+        // - so a reaction arriving alone would be a grouped notification whose summary has just
+        // been cancelled, a shape OEM shells render inconsistently. It is also not a message, which
+        // is the whole reason it left [CHANNEL_MESSAGES].
+        if (!isReactionNotif) notifBuilder.setGroup(GROUP_KEY_MESSAGES)
 
         // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
         // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
@@ -3353,7 +3409,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
             largeIcon = largeIcon,
             groupId = groupId,
-            channel = CHANNEL_MESSAGES,
+            channel = CHANNEL_REACTIONS,
             quickActions = false,
         )
     }

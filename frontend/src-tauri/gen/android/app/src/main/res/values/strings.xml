@@ -14,6 +14,8 @@
     <string name="notif_channel_calls_desc">Appels entrants (sonnerie)</string>
     <string name="notif_channel_mentions_name">Mentions Canari</string>
     <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
+    <string name="notif_channel_reactions_name">Réactions à vos messages</string>
+    <string name="notif_channel_reactions_desc">Quand quelqu\'un réagit à un message que vous avez écrit</string>
 
     <!-- Background sync (MlsBackgroundWorker): the first pair says the sync gave up and needs the
          app opened, the second is the ongoing notification while it runs. -->

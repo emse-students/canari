@@ -1478,33 +1478,39 @@ that size cannot hold.
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
-### P2 - a reaction to YOUR OWN message must notify by push, and today no reaction notifies at all (decided by the user 2026-09-10)
+### P2 - a reaction to your own message notifies on its OWN channel since 2026-09-17, and what this entry said before that was wrong
 
-Every other reaction stays silent, which is what today's design already does and does deliberately:
-`frontend/src/lib/mls-client/frameDelivery.ts` classifies a reaction as a `mutation`,
-`{ silent: true, durable: true }`, carrying the reason *"It must not notify, and it must survive"*,
-and the server states the same rule from its side. Both are right about the case they name - a busy
-salon where people react constantly would be unusable. **The case neither distinguishes is a
-reaction to something YOU wrote**, which is the only reaction a person is plausibly waiting for, and
-which Messenger and Slack both notify.
+**THIS ENTRY CLAIMED, FROM 2026-09-10 TO 2026-09-17, THAT NO REACTION NOTIFIED AT ALL. IT DID, AND
+IT HAD SINCE 2026-05-17.** The claim was derived from the MLS frame class and stopped there:
+`frameDelivery.ts` classifies a reaction as a `mutation`, `{ silent: true, durable: true }`, with
+*"It must not notify, and it must survive"* written on it, and the server states the same rule from
+its side. All of that is true, and **none of it is the notification path**. A reaction notifies
+through a SEPARATE side channel that exists for exactly this: `addReaction` posts
+`/api/mls/notify-reaction` with the target's id, the emoji and the actor - never the message - and
+`messaging.controller.ts` pushes to the author alone, refusing when actor and author are the same
+user. `a60f76a4c` shipped it on 2026-05-17, four months before this entry said it did not exist.
 
-**IT IS NOT BLOCKED ON THE SERVER HOLDING CIPHERTEXT, WHICH IS THE OBVIOUS WRONG ANSWER.** The
-server cannot classify a frame and does not need to: the class is DECLARED BY THE SENDER, exactly as
-`durable` is, and the reacting client already knows whose message it reacted to. So a fifth
-`DELIVERY` class - silent for everyone except the author of the target - is expressible with no
-plaintext leaving the device. That is the standing rule about carrying the discriminator to where
-the decision is made.
+**THE USER SAID SO AND WAS RIGHT**, in the words that found it: *"Ce n'est pas deja cable dans
+'canari-messages' ?"* - and it was, literally that channel. **The lesson is the entry's own shape:
+it read ONE mechanism, found it silent, and wrote a claim about the whole behaviour.** A frame class
+answers what the MLS transport does with a frame. Whether a person's phone rings is answered by the
+push path, and the two are separate by design because the server cannot read a frame.
 
-**NOTIF-15 IS UNBLOCKED, AND ITS EXPECTATION INVERTS.** It could not be run while the design
-notified on no reaction at all, because it would have failed against something doing exactly what it
-said. It now asserts a notification for a reaction to the recipient's own message AND the silence of
-every other reaction in the same run.
+**WHAT WAS ACTUALLY WRONG WAS THE CHANNEL, AND THE USER CHOSE ITS REPLACEMENT ON 2026-09-17**:
+*"Okay, nouveau canal."* `canari_reactions`, `IMPORTANCE_DEFAULT`, sound, no vibration, no DND
+bypass - heard, because being notified is the point, and not a heads-up over whatever the reader is
+doing, because it is an emoji. It replaces `canari_messages`, which was wrong three ways: it rang
+exactly like a message, it could not be silenced without silencing messages, and - because a
+notification id is stable PER CONVERSATION - **a reaction OVERWROTE an unread message notification
+from the same conversation**, while counting toward the launcher badge's unread total. Nobody had
+filed either of those two; they were found by reading the path the entry had never read.
 
-**ONE SUB-QUESTION IS STILL OPEN AND MUST NOT BE GUESSED: which Android channel.** `canari_social`
-exists for reactions and comments on POSTS but sits at `IMPORTANCE_DEFAULT` and silent, which would
-contradict "you are notified"; `canari_messages` rings like a message, which may be too loud for a
-reaction. A reaction that notifies is also a notification the reader cannot mute separately unless
-it gets a channel of its own. One line to the user settles it.
+**WHAT IS LEFT HERE IS THE VERIFICATION, ON HARDWARE.** `notificationChannels.test.ts` now derives
+from the Kotlin that every declared channel is created and named in both locales - which is what
+makes a forgotten channel fail in CI rather than on a phone, since `NotificationManagerCompat` drops
+a notification whose channel does not exist without a word. What no test here can see is whether the
+thing sounds right: **NOTIF-15 on a real handset, reading that a reaction to the recipient's own
+message arrives on `canari_reactions` and that every other reaction stays silent.**
 
 ### P3 - THE RULE "IS THIS CALLER SIGNED IN" IS WRITTEN THREE TIMES, AND WHAT HELD THE COLLAPSE BACK IS NOW SHIPPED (2026-09-17)
 
