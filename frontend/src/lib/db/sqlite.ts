@@ -473,17 +473,26 @@ export class SqliteStorage implements IStorage {
    * thousand - which is what makes this usable on every mutation.
    */
   async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
+    const msg = await this.getMessage(id, deviceKeyB64);
+    // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
+    // would turn an undecryptable message into a truncated one. `getMessage` reports both that
+    // and an absent row as `null`, and neither is a reason to write.
+    if (!msg) return;
+    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
+  }
+
+  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
+  async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
     const rows: any[] = await this.db.select('SELECT * FROM messages WHERE id = $1', [id]);
-    if (rows.length === 0) return;
+    if (rows.length === 0) return null;
     const row = rows[0];
-    let msg: StoredMessage;
     try {
       const payload = (await decryptData(
         base64ToUint8(row.cipher_text),
         base64ToUint8(row.iv),
         deviceKeyB64
       )) as Record<string, unknown>;
-      msg = fromMessagePayload(
+      return fromMessagePayload(
         {
           id: row.id,
           conversationId: row.conversation_id,
@@ -492,12 +501,9 @@ export class SqliteStorage implements IStorage {
         payload
       );
     } catch {
-      // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
-      // would turn an undecryptable message into a truncated one.
-      console.warn('Failed to decrypt SQLite row for update', id);
-      return;
+      console.warn('Failed to decrypt SQLite row', id);
+      return null;
     }
-    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */

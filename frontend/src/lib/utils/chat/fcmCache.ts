@@ -8,10 +8,20 @@
  *
  * Full messages coming from the MLS pipeline replace the FCM previews via
  * shouldUpgradeMessage() in useMessaging (merged when the JSON envelope arrives).
+ *
+ * **AND THE REPLACEMENT ONLY EVER GOES ONE WAY, WHICH UNTIL 2026-09-17 IT DID NOT.** The native
+ * side writes a cache entry for EVERY frame it decrypts, with no foreground check - only the
+ * notification itself is suppressed while the app is open. So a message received by a RUNNING app,
+ * rendered from its real envelope and acknowledged to the server, still left an entry on disk; the
+ * next boot drained it and `saveMessage` (a `put` on the primary key) wrote the notification's
+ * caption straight over the envelope. Nothing could repair it afterwards, because an acknowledged
+ * message is deleted from the server queue and is never delivered again - a photo became the words
+ * "Photo", for good. The injection therefore asks what it would be replacing.
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -136,6 +146,18 @@ export async function consumeFcmCache(
       isFcmPreview: true,
     };
     try {
+      // A PUSH PREVIEW MAY CREATE A ROW AND MAY REPLACE ANOTHER PREVIEW - NEVER AN ENVELOPE.
+      // `isEnvelopeContent` is the same predicate `shouldUpgradeMessage` uses to decide an upgrade
+      // is worth making; asked here it decides the write is not. The row is left exactly as it is,
+      // and it is NOT reported as injected: the in-memory merge that follows would otherwise be
+      // handed a caption to draw over a message already on screen.
+      const existing = await storage.getMessage(entry.messageId, deviceKeyB64);
+      if (existing && isEnvelopeContent(existing.content)) {
+        appendLog(
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already a full envelope, preview dropped`
+        );
+        continue;
+      }
       // The message has an FK to conversations(id). If the group was just joined in the
       // background, its conversation row does not exist yet -> saveMessage fails
       // (SQLITE_CONSTRAINT_FOREIGNKEY, code 787) and the preview is lost. So first insert a

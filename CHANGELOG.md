@@ -218,6 +218,35 @@ une phrase francaise brute dans son markup : `title` y etait une litterale, c'es
 moderation et non sur le rendu, et personne ne l'a posee - elle est notee ici plutot que mise en file,
 parce qu'une file ou l'on range les questions que nul ne se pose cesse d'etre lisible.
 
+### Fixed - une photo redevenait le mot « Photo » au redemarrage, et plus rien ne pouvait la reparer
+
+Signale par l'utilisateur : la photo s'affiche dans la notification, on ouvre la conversation, et il
+n'y a que « 📷 Photo » a la place de l'image. Son hypothese - le push aurait consomme le message -
+est fausse, et sur trois points independants : le dechiffrement en arriere-plan n'ecrit jamais
+`mls.bin`, le chemin push n'acquitte jamais la file du serveur, et le predicat de remplacement aurait
+accepte l'enveloppe. Le contenu n'etait pas perdu a l'aller. Il etait ecrase au retour.
+
+Le service natif ecrit une entree de cache pour CHAQUE trame qu'il dechiffre : seule la notification
+est supprimee quand l'app est au premier plan, pas l'ecriture. Un message recu par une app OUVERTE
+etait donc affiche depuis sa vraie enveloppe, acquitte - ce qui supprime la copie en file cote
+serveur - et laissait quand meme une entree sur le disque. Au demarrage suivant, l'injection la
+relisait et `saveMessage`, qui est un `put` sur la cle primaire, ecrivait la legende de la
+notification par-dessus l'enveloppe. Plus rien ne pouvait corriger : un message acquitte n'est jamais
+redistribue.
+
+Il ne fallait ni course ni timing particulier. « la photo est arrivee pendant que l'app etait
+ouverte, et l'app a redemarre depuis » suffisait.
+
+L'injection demande desormais ce qu'elle remplacerait, avec le predicat qui servait deja a decider
+l'inverse (`isEnvelopeContent`) : un apercu de push peut creer une ligne et peut en remplacer un
+autre, jamais une enveloppe. Le `getMessage` que cela reclamait etait deja ecrit deux fois, en clair
+dans le corps des deux `updateMessage` - il est sorti la, et les deux implementations le partagent.
+
+Au passage, la question de l'utilisateur sur les deux libelles a une reponse utile : « 📷 Photo » est
+une chaine de NOTIFICATION construite en natif, « [Media] » est l'etiquette de l'app pour une
+enveloppe qu'elle resume volontairement. Ils ne disent pas la meme chose sous deux orthographes -
+voir « 📷 Photo » dans une bulle est la signature d'une ligne issue d'un push jamais remplacee.
+
 ## [0.18.10] - 2026-09-17
 
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre

@@ -507,6 +507,16 @@ export class IndexedDbStorage implements IStorage {
    * thousand - which is what makes this usable on every mutation.
    */
   async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
+    const msg = await this.getMessage(id, deviceKeyB64);
+    // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
+    // would turn an undecryptable message into a truncated one. `getMessage` reports both that
+    // and an absent row as `null`, and neither is a reason to write.
+    if (!msg) return;
+    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
+  }
+
+  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
+  async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
     const db = this.ensureDb();
     const existing: any = await new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readonly');
@@ -514,24 +524,20 @@ export class IndexedDbStorage implements IStorage {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    if (!existing) return;
-    let msg: StoredMessage;
+    if (!existing) return null;
     try {
       const payload = (await decryptData(existing.cipherText, existing.iv, deviceKeyB64)) as Record<
         string,
         unknown
       >;
-      msg = fromMessagePayload(
+      return fromMessagePayload(
         { id: existing.id, conversationId: existing.conversationId, timestamp: existing.timestamp },
         payload
       );
     } catch {
-      // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
-      // would turn an undecryptable message into a truncated one.
-      console.warn('Failed to decrypt message for update', id);
-      return;
+      console.warn('Failed to decrypt message', id);
+      return null;
     }
-    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
   }
 
   /** Decrypt and return all messages for `conversationId`, sorted oldest-first. Rows that fail decryption (wrong key or corruption) are silently skipped. */
