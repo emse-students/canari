@@ -33,6 +33,7 @@ import {
 } from '$lib/utils/hex';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
+import { beginBootSpan, endBootSpan } from '$lib/mls-client/bootBenchmark';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 
 /**
@@ -743,9 +744,14 @@ export class WebMlsService extends BaseMlsService {
     // the pin-check.
     await this.resolveDeviceId(userId);
 
+    // Same span name as `TauriMlsService`, and for the reason written there: a browser report and
+    // an Android report have to answer the same question with the same word to be comparable.
+    beginBootSpan('mls-load-state');
     try {
       await this.loadStateWithKey(deviceKeyB64, state);
+      endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
+      endBootSpan('mls-load-state', { recovered: true });
       // If init fails AND a saved state existed, the state is to blame
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.

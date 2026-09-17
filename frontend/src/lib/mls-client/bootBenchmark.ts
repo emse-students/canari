@@ -139,6 +139,34 @@ export function endBootSpan(name: string, meta?: Record<string, number | string 
 }
 
 /**
+ * Times a promise as a span, and returns it unchanged.
+ *
+ * THE CALLER MUST NOT BE FORCED TO `await` SOMETHING IT DELIBERATELY DOES NOT AWAIT. Two of the
+ * three things this measures run CONCURRENTLY - the MLS init and the storage open are handed to one
+ * `Promise.allSettled`, and the native state write is started and never awaited at all. Wrapping the
+ * promise rather than bracketing an `await` is what lets those keep their shape: a span closes when
+ * its work settles, whenever that is, and a fire-and-forget write that outlives `MLS ready` is
+ * reported as still open instead of being silently attributed to the boot.
+ *
+ * A rejection closes the span too, with `{ rejected: true }`, and is re-thrown untouched: a step
+ * that failed still took the time it took, and a report that omitted it would make a failed boot
+ * look faster than a working one.
+ */
+export function timeBootSpan<T>(name: string, promise: Promise<T>): Promise<T> {
+  beginBootSpan(name);
+  return promise.then(
+    (value) => {
+      endBootSpan(name);
+      return value;
+    },
+    (error: unknown) => {
+      endBootSpan(name, { rejected: true });
+      throw error;
+    }
+  );
+}
+
+/**
  * Closes the boot measurement at `MLS ready`. Spans still open at this point keep `endMs: null` -
  * they really had not finished, and closing them here would report a wait that never happened.
  */

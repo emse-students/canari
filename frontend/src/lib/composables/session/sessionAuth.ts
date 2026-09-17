@@ -81,6 +81,7 @@ import {
   markBoot,
   beginBootSpan,
   endBootSpan,
+  timeBootSpan,
   finishBootBench,
   installBootBenchDevTools,
 } from '$lib/mls-client/bootBenchmark';
@@ -726,20 +727,28 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       ? null
       : startGatewayHandshake({ mlsService, log: cb.log });
 
+    // THE PAIR KEEPS ITS CLOCK AND EACH HALF GAINS ONE, because the pair's clock cannot answer the
+    // question the pair's cost raises. On the Mi 9T this block was 1621.9 ms - 78% of everything
+    // after `login-start` - and `allSettled` means that number is the SLOWER of two concurrent
+    // things, with nothing saying which. Three spans, not one: the two halves overlap by
+    // construction, which is what this bench was built to report rather than flatten.
     beginBootSpan('mls-init-and-storage');
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
-      mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
-        // `!!bytes` WOULD NOW BE WRONG ON MOBILE: the bytes were deliberately not loaded, and a
-        // saved state read as absent is a FRESH START, which rotates the device identity. The
-        // question is whether a state exists, and `mlsStateResult` is what answers it.
-        noFreshStart: !!mlsStateResult,
-        // Says which of the two things an absent `state` means here - see the lookup above.
-        stateOnDisk: mlsStateResult?.source === 'native',
-        // Only the PIN paths can carry it, and only a snapshot older than the v0.11.0 envelope
-        // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
-        legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
-      }),
-      getStorage(ctx.getUserId()),
+      timeBootSpan(
+        'mls-init',
+        mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
+          // `!!bytes` WOULD NOW BE WRONG ON MOBILE: the bytes were deliberately not loaded, and a
+          // saved state read as absent is a FRESH START, which rotates the device identity. The
+          // question is whether a state exists, and `mlsStateResult` is what answers it.
+          noFreshStart: !!mlsStateResult,
+          // Says which of the two things an absent `state` means here - see the lookup above.
+          stateOnDisk: mlsStateResult?.source === 'native',
+          // Only the PIN paths can carry it, and only a snapshot older than the v0.11.0 envelope
+          // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
+          legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
+        })
+      ),
+      timeBootSpan('storage-open', getStorage(ctx.getUserId())),
     ]);
     // THE GATE, AND IT IS READ BEFORE THE INIT VERDICT ON PURPOSE. A device that is both revoked
     // and carrying an unopenable state has exactly one correct answer, and it is not "enter the PIN

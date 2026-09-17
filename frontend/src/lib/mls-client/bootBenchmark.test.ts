@@ -7,6 +7,7 @@ import {
   getBootReport,
   markBoot,
   resetBootBench,
+  timeBootSpan,
 } from './bootBenchmark';
 
 /**
@@ -127,5 +128,50 @@ describe('bootBenchmark', () => {
 
     expect(before.spans[0].endMs).toBeNull();
     expect(getBootReport().spans[0].endMs).not.toBeNull();
+  });
+
+  it('times a promise without changing what the caller receives', async () => {
+    const value = await timeBootSpan('work', Promise.resolve('the caller sees this'));
+
+    expect(value).toBe('the caller sees this');
+    const [span] = getBootReport().spans;
+    expect(span.name).toBe('work');
+    expect(span.durationMs).not.toBeNull();
+  });
+
+  it('closes the span on a rejection and re-throws the original error', async () => {
+    const boom = new Error('init failed');
+
+    await expect(timeBootSpan('failing', Promise.reject(boom))).rejects.toBe(boom);
+
+    const [span] = getBootReport().spans;
+    expect(span.durationMs).not.toBeNull();
+    expect(span.meta).toEqual({ rejected: true });
+  });
+
+  it('leaves a span OPEN when its promise is still running at MLS ready', async () => {
+    // THE FIRE-AND-FORGET WRITE IS THE REASON THIS SHAPE EXISTS. `TauriMlsService` starts the
+    // snapshot write and never awaits it, so a report that closed it at `MLS ready` would claim a
+    // duration the boot never waited for. Open is the honest answer.
+    let release: (() => void) | undefined;
+    const never = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    void timeBootSpan('write', never);
+    finishBootBench();
+
+    const report = getBootReport();
+    expect(report.spans.find((s) => s.name === 'write')?.endMs).toBeNull();
+    expect(formatBootBenchSummary(report)).not.toContain('write');
+
+    release?.();
+    await never;
+  });
+
+  it('records nothing for work started after the boot is over', async () => {
+    finishBootBench();
+    await timeBootSpan('late', Promise.resolve(1));
+
+    expect(getBootReport().spans).toHaveLength(0);
   });
 });

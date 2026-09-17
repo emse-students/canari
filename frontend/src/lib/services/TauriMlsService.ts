@@ -18,6 +18,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
+import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
@@ -485,9 +486,19 @@ export class TauriMlsService extends BaseMlsService {
     // is idempotent: a no-op when login already resolved it before the pin-check.
     await this.resolveDeviceId(userId);
 
+    // THE NAME IS THE SAME ON BOTH PLATFORMS ON PURPOSE. `WebMlsService` brackets its own decrypt
+    // with `mls-load-state` too, so an Android report and a browser report answer the same question
+    // with the same word - which is the only way the two can be compared at all, and the phone is
+    // where this block was measured at 1621.9 ms with nothing inside it named.
+    beginBootSpan('mls-load-state');
     try {
       await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk);
+      endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
+      // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
+      // this one is a decrypt that failed and handed the rest of its time to a recovery, and a
+      // report that merged them would show a fresh-start boot as a slow load.
+      endBootSpan('mls-load-state', { recovered: true });
       // If init fails AND a saved state existed, the state is to blame
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
@@ -550,7 +561,15 @@ export class TauriMlsService extends BaseMlsService {
 
     // Write mls.bin immediately after init so the FCM service can decrypt
     // even if no message has been processed yet (saveState not yet called).
-    const savePromise = this.saveState(deviceKeyB64).catch(() => {});
+    //
+    // IT IS TIMED THOUGH NOTHING AWAITS IT, AND THAT IS THE POINT. This writes the whole snapshot -
+    // `saveState`'s own docblock records 2.0 s of a 3.7 s phone measurement for writing it twice -
+    // and it is started here while `lister_groupes` below IS awaited. If the native side serialises
+    // these calls, the awaited one queues behind this write and the boot pays for it without any
+    // line saying so. A span that is still open at `MLS ready` reports exactly that.
+    const savePromise = timeBootSpan('mls-save-state', this.saveState(deviceKeyB64)).catch(
+      () => {}
+    );
 
     // Save session context for Android push notifications (no-op on desktop).
     // Must run AFTER saveState writes mls.bin (C3: race condition fix).
@@ -578,11 +597,15 @@ export class TauriMlsService extends BaseMlsService {
       );
     }
 
-    // Populate the local groups cache from Rust after init.
+    // Populate the local groups cache from Rust after init. AWAITED, so it is on the boot's
+    // critical path in a way the write above is not - which is the whole reason both carry a clock.
+    beginBootSpan('mls-list-groups');
     try {
       const groups = await invoke<string[]>('lister_groupes');
+      endBootSpan('mls-list-groups', { groups: groups.length });
       this._knownGroups = new Set(groups);
     } catch {
+      endBootSpan('mls-list-groups', { failed: true });
       // Non-blocking: cache stays empty, GroupAlreadyExists fallback will handle it.
     }
   }

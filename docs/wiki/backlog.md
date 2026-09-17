@@ -51,7 +51,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
-| the community settings read as a panel on the phone they were reported from | HARDWARE, Mi 9T, and it is a LOOK rather than a number: the three geometries are already measured in a browser against this tree (436 px full-bleed, 768-plus inset and rounded, and the chat column still `static` at 320 px at 1400 px), so what a phone adds is whether the tab strip, the one danger zone and the permission matrix READ at 436 px with a thumb. **AND ONE THING THE BROWSER MEASUREMENTS PREDATE**: since #802 the drawer is PORTALLED to `<body>`, because `.page-scroll-wrap` carries `will-change: transform` and was the containing block its `position: fixed` resolved against - measured A/B in a real browser at 958 x 944, the same child reporting `top: 120` / 734 px tall inside the wrapper and `0` / 944 without it, which is 210 px of window, exactly the header plus the bottom bar. So the LOOK must confirm the panel's FOOT - leave and delete - clears the bottom navigation rather than hiding behind it, which is the half a phone can show and the browser A/B only implies. **The Mi 9T carries the USER'S OWN account behind an encryption PIN that is theirs**, so this waits on a build the user opens themselves or on the phone being free - it is not a run the harness may take ([device-verification](device-verification.md)) |
+| the community settings read as a panel on the phone they were reported from | **ANSWERED ON THE Mi 9T, 2026-09-17, AND THE ROW'S OWN BLOCKER WAS FALSE.** It said this waited on the phone being free because it *"carries the USER'S OWN account behind an encryption PIN that is theirs"*. The user corrected that on 2026-09-17 - the handset holds test accounts only - and `identity.mjs` then read `A1 expected owner / shows owner / acts as owner`, so the run was the rig's to take all along. **A row may not park a check behind a premise nobody re-measures.** Read off a debug APK built from this tree at **436 x 945 CSS px, the device's own width**, no override. **The portal from #802 holds on hardware**: `panel.parentElement === document.body`, the drawer paints full-bleed `0 -> 945` OVER the bottom bar rather than inside `<main>`, and the foot - `Quitter la communaute` ending at 713, `Supprimer la communaute` at 759 - clears the bar's top edge at **873 by 114 px**. That is the half the browser A/B only implied, and it passes. The permission matrix is a `<table>` 519 px wide inside its own `overflow-x-auto` card of 371, which is the correct shape: **`document.documentElement.scrollWidth` is 436, equal to the viewport, so the PAGE never scrolls sideways.** **TWO OBSERVATIONS, NEITHER A FAILURE, BOTH P3**: the tab strip is `overflow-x: auto` at 483 px against 436, so the third tab renders truncated mid-word (`Memb`) on first paint with no affordance - three tabs at the app's primary phone width is where a wrap or tighter padding would fit; and the two danger-zone buttons are 38 px tall where the close button is 44. The tabs also carry **no `role="tab"` and no `role="tablist"`** - they are plain buttons, so nothing announces the strip as a tab set. The A/B that justified the portal is not repeated here: `SidePanel.svelte`'s docblock owns it ([device-verification](device-verification.md)). |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -960,7 +960,7 @@ state to decrypt. **So the edge Cache Rule beside this entry is worth at most ~8
 quoted as the cold-start fix; what dominates is the 580 ms of session and MLS work after the first
 word.**
 
-#### THE 43% IS THE ONE BLOCK WITH NO CLOCK IN IT, AND THAT IS NOW FIXED (`bootBenchmark.ts`, 2026-09-17)
+#### WHAT IS LEFT OF THE 43% IS THE ONE SPAN INSIDE IT, AND IT IS 78% ON A PHONE (`bootBenchmark.ts`, 2026-09-17)
 
 **Every number in the table above was read by a human off a HAR and a console export.** That is how
 the 580 ms is known to be 43%, and it is also why nothing is known about what is INSIDE it: the five
@@ -1093,6 +1093,39 @@ returning phone session skips the whole PIN block and enters `mls-init-and-stora
 and it is against a LOCAL estate whose state is a fraction of production's 7.6 MB. **What transfers
 is the ONE ratio** - a block that is 78% of post-login time on real hardware is the target regardless
 of whose estate it reads.
+
+#### THE 1621.9 MS NOW HAS FIVE CLOCKS IN IT, AND ONE OF THEM IS THERE TO TEST A SUSPICION (2026-09-17)
+
+**The span measured a `Promise.allSettled` of two concurrent things, so its number is the SLOWER of
+the two and nothing said which.** That is the same defect as the one this whole entry started from,
+one level down: a clock whose reading cannot answer the question its own size raises. The pair keeps
+its clock - it is the honest wall time of the block - and each half gains one:
+
+| span | what it brackets | why it is separate |
+| --- | --- | --- |
+| `mls-init` | `mlsService.init(...)` | half of the `allSettled` |
+| `storage-open` | `getStorage(userId)` | the other half, concurrent with it |
+| `mls-load-state` | the decrypt inside `_initImpl`, BOTH platforms | the suspect: it opens the snapshot |
+| `mls-save-state` | the native snapshot write | **started and never awaited** |
+| `mls-list-groups` | `invoke('lister_groupes')` | **awaited**, so it IS on the critical path |
+
+**`mls-load-state` CARRIES THE SAME NAME ON BOTH PLATFORMS DELIBERATELY.** `WebMlsService` and
+`TauriMlsService` bracket their own decrypt with it, so an Android report and a browser report answer
+the same question with the same word. The user's boot is a browser one and the measured boot is a
+phone one; without a shared name the two readings cannot be set beside each other at all.
+
+**THE LAST TWO ROWS EXIST TO TEST ONE SUSPICION, AND IT IS WRITTEN DOWN BEFORE THE RUN RATHER THAN
+AFTER IT.** `_initImpl` starts the snapshot write without awaiting it, then awaits `lister_groupes`
+immediately after. `saveState`'s own docblock records **2.0 s of a 3.7 s phone measurement** for
+writing that snapshot twice. **If the native side serialises invokes, the awaited call queues behind
+the unawaited write and the boot pays for a write nobody asked it to wait for** - and no line
+anywhere would say so. That is a HYPOTHESIS. It is exactly the shape of the PBKDF2 one, which this
+same instrument refuted twice, so it is recorded as a prediction the next run may kill.
+
+`timeBootSpan` is what makes the unawaited half measurable without awaiting it: it wraps the promise
+instead of bracketing an `await`, so **a write still running at `MLS ready` is reported OPEN rather
+than closed at a moment it never reached**. A span with no end is the honest answer there, and the
+summary omits it rather than ranking a duration it does not have.
 
 Two things the export settles in passing, both measured rather than argued:
 

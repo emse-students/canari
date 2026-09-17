@@ -58,6 +58,28 @@ prouvee de bout en bout, sur le materiel ou elle est la plus lente. Les deux der
 78 %** : `mls-init-and-storage`, qui n'a aucune structure interne. Le suspect a change de place, et
 c'est l'instrument qui l'a deplace deux fois plutot qu'un correctif ecrit contre une intuition.
 
+**Et ce span a desormais cinq horloges dedans.** Il mesurait un `Promise.allSettled` de deux choses
+concurrentes : son nombre etait donc la PLUS LENTE des deux, sans que rien ne dise laquelle - le meme
+defaut que celui d'ou part cette entree, un etage plus bas. La paire garde son horloge, et chaque
+moitie en gagne une : `mls-init`, `storage-open`, puis `mls-load-state` a l'interieur, **sous le meme
+nom sur les deux plateformes** pour qu'une lecture Android et une lecture navigateur repondent a la
+meme question avec le meme mot.
+
+Deux spans de plus existent pour tester une suspicion, ecrite avant la mesure et non apres :
+`_initImpl` lance l'ecriture de l'instantane **sans l'attendre**, puis attend `lister_groupes` juste
+apres. Si le cote natif serialise ses invokes, l'appel attendu fait la queue derriere une ecriture
+que personne n'a demande d'attendre. C'est une HYPOTHESE, de la meme forme que celle du PBKDF2 que ce
+meme instrument a refutee deux fois. `timeBootSpan` enveloppe la promesse au lieu d'encadrer un
+`await`, donc une ecriture encore en cours a `MLS ready` est rapportee **ouverte** plutot que fermee
+a un instant qu'elle n'a jamais atteint.
+
+Au passage, un test de `offlineUnlock.test.ts` passait **sans rien affirmer**. Trois tests
+re-derivaient chacun l'ancre de la porte de revocation ; quand le banc a mis un span autour, le
+litteral a disparu et `indexOf` a rendu -1. Deux l'ont dit. Le troisieme comparait `wipe > gate` avec
+`gate === -1`, ce qui est vrai de n'importe quelle position - `indexOf(aiguille, -1)` cherche depuis
+le debut. L'ancre est desormais resolue **une fois**, gardee par un seul `toBeGreaterThan(-1)` : une
+ancre partagee ne peut pas pourrir dans un test et tenir dans un autre.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
