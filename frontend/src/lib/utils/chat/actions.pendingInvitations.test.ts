@@ -34,7 +34,6 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     registerMember: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     sendCommit: vi.fn().mockResolvedValue(undefined),
-    saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
     ...overrides,
   } as unknown as IMlsService;
 }

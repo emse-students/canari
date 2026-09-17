@@ -21,6 +21,17 @@ lire des dates d'expiration**, et la piste suivante du demarrage n'est pas une n
 l'item 5 de la file. Tableau complet, ce que le banc ne mesure pas, et la dependance :
 [backlog](docs/wiki/backlog.md).
 
+### Changed - le snapshot MLS entier traversait le pont IPC en tableau de nombres JSON pour quatre appelants qui le jetaient
+
+`sauvegarder_mls_et_persister` chiffrait l'etat, ecrivait `mls.bin` **et** rendait les octets ; Tauri
+serialise un `Vec<u8>` de retour en JSON, soit un entier decimal par octet - **27,8 Mo de JSON pour
+un instantane de 7,8 Mo**, a chaque checkpoint et une fois de plus devant le premier ecran, alors que
+les quatre appels natifs jetaient le resultat. Le type de retour venait du web, ou les octets SONT la
+persistance, et il etait declare sur `IMlsService` : il n'y est plus, et `sauvegarder_mls` - la
+variante sans ecriture, enregistree et appelee par personne - est supprimee. Le cout evite, les deux
+moities mesurees et ce que la question ouverte du demarrage devient :
+[backlog](docs/wiki/backlog.md).
+
 ### Changed - anonyme devient une identite de publication, ouverte a tout le monde ; un moderateur (et l'auteur) voient toujours qui a publie
 
 Demande de l'utilisateur (2026-09-17), en deux temps sur la fonctionnalite livree plus tot dans la

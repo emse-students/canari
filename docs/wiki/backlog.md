@@ -1200,6 +1200,41 @@ is a QUARTER of the 7.8 MB `TauriMlsService` records for the handset, and it sta
 already in memory - neither the file read nor `load_with_key`'s ChaCha pass is in it. The 1644.4 ms
 the phone reports for `mls-load-state` includes both, and nothing here has separated them.
 
+##### THE 2712.1 MS: THE MARSHALLING IS GONE, THE RE-SERIALISATION AND THE WRITE ARE NOT (2026-09-17)
+
+The three facts the entry above says must not be assumed, established by reading the two sides:
+
+1. **`initialiser_mls` itself performs no save.** It resolves the at-rest key, calls
+   `MlsManager::load_with_key` and stores the manager in `AppState`. The only write on that path is
+   the one-shot `migrate_legacy_state_blob` for a pre-v0.11.0 blob.
+2. **`load_or_create` DOES mutate what it opens, sometimes**: it runs `prune_expired_key_packages`
+   once per native load, and that calls `mark_state_dirty()` when it deletes anything. So a
+   post-init write is not always writing bytes the file already holds - but nothing tells the
+   TypeScript side which case it is in, and the save is issued unconditionally.
+3. **Independently of 2, the snapshot cache is constructed DIRTY on every load**
+   (`state_snapshot: RefCell::new(StateSnapshotCache::new_dirty())`), deliberately and with a
+   comment: seeding it from the bytes just read would hand a legacy `mls.bin` straight back to the
+   first `save_state` and keep the old encoding for ever. So the first save after a load ALWAYS
+   re-serialises the whole state, whether or not anything changed. That is a real trade, and the
+   2712.1 ms is the first measurement of what it costs.
+
+**AND A THIRD COST WAS FOUND THAT IS NEITHER OF THOSE, AND IS PURE WASTE**: the command returned the
+whole encrypted snapshot to JavaScript, which Tauri serialises as a JSON array of one number per
+byte - 27.8 MB of JSON for a 7.8 MB blob - for four native call sites that all discarded it. Shipped;
+see the CHANGELOG entry. Measured on OXYGEN (desktop, release, a FLOOR for a handset): 95 ms of
+`serde_json` encoding plus 220 ms of `JSON.parse` + `Uint8Array.from`, ~315 ms excluding the transport
+copy itself.
+
+**WHAT IS STILL OPEN, NOW STATED PRECISELY.** The serialise and the disk write remain. Skipping the
+post-init write on a clean restore is gated on facts 2 and 3: the native side KNOWS whether the load
+mutated anything (the prune returns a count) and it is the only place that knows, so the discriminator
+has to be carried to TypeScript rather than guessed there - the rule this repository keeps about
+never learning by failing what a fact could have told you. Fact 3 is the harder half: skipping the
+write does not weaken the format migration's determinism (the snapshot stays dirty and the next real
+save still rebuilds it), but it does make the moment the migrated bytes reach DISK depend on what the
+user does next, which is exactly what that comment was written to prevent. **That is a decision about
+migration policy, not an optimisation, and it should be taken as one.**
+
 #### THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (OXYGEN, 2026-09-17)
 
 The entry above ends by saying the next question is inside Rust. `mls-core` had **no load benchmark

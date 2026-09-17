@@ -2527,10 +2527,17 @@ export abstract class BaseMlsService implements IMlsService {
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   /**
-   * Writes the current state to this platform's durable store. Split from {@link saveState} because
-   * Tauri's already lands on disk while Web still has to hand the bytes to IndexedDB, and no caller
-   * - {@link rotateDeviceIdentity}, the checkpoint persister, the structural checkpoint - may have
-   * to know which. See `IMlsService.persistCheckpoint` for what the duplicate cost.
+   * Writes the current state to this platform's durable store, and it is THE ONLY persistence this
+   * class knows about. Tauri's write already lands on disk (`TauriMlsService.persistState`, which
+   * returns a byte count) while Web still has to hand the bytes to IndexedDB
+   * (`WebMlsService.saveState`, which returns them) - and no caller - {@link rotateDeviceIdentity},
+   * the checkpoint persister, the structural checkpoint - may have to know which.
+   *
+   * THOSE TWO METHODS ARE DELIBERATELY NOT A SHARED ABSTRACT ANY MORE. One shared signature meant
+   * one shared return type, web's `Uint8Array`, which native satisfied by marshalling a 7.8 MB
+   * snapshot across the IPC bridge as a JSON array of one number per byte for four call sites that
+   * all threw it away. A contract that forces a platform to produce something no caller of that
+   * platform wants is not an abstraction, and this seam - a write, returning nothing - is.
    */
   protected abstract writeCheckpoint(deviceKeyB64: string): Promise<void>;
 
@@ -2639,7 +2646,6 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   protected abstract changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void>;
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
   abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
