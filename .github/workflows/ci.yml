@@ -354,7 +354,22 @@ jobs:
           # `deploy.yml` until 2026-09-07 - a file that no longer exists - and named none of the
           # three that replaced it, so a change to the PRODUCTION ESTATE would not have run the
           # suite that guards it. A pattern is only evidence for the tree it was written against.
+          # AND `apps/` IS AN INPUT, WHICH IT WAS NOT UNTIL 2026-09-17 - the sharpest instance of
+          # the trap this whole comment block keeps describing.
+          # `tests/auth-request-coverage.test.mjs` exists to FAIL on a route added behind an
+          # `auth_request` location with no guard and no declared reason. Its subjects are
+          # `apps/*/src/**/*.controller.ts` and the two Axum routers, and not one of them matched a
+          # pattern here - so the commit that adds an unguarded route, the only commit that gate was
+          # ever written for, did not run it. `tests/compose-wiring.test.sh` has the same shape: it
+          # derives its NestJS service list from `apps/*/package.json` declaring `@nestjs/core`, so
+          # a NEW SERVICE was the one change it could not see either.
+          #
+          # The pattern is narrowed to what those tests actually READ rather than to `^apps/`, so an
+          # ordinary service change does not drag this suite in - a trigger wider than the inputs
+          # goes unread for the opposite reason, and both failures end as a green that means
+          # nothing.
           if has '^\.github/scripts/' \
+            || has '^apps/[^/]+/(package\.json|src/.*\.(controller\.ts|rs))$' \
             || has '^tools/app-store/' \
             || has '^tools/store-divergence/' \
             || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \

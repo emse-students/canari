@@ -237,30 +237,50 @@ production. Authorization is not always a decorator, though - several routes cal
 `assertInternalSecret()`, `assertCanManageAssociation()` or `verifyPushSecretAuth()` as their first
 statement, and **counting decorators counts decorators.**
 
+**On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
+the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set
+(`is_authenticated`, `x-global-admin`), and both WebSocket upgrades decode the `canari_ws_token` JWT,
+which nginx never sees and `auth_request` therefore cannot have checked.
+
 `.github/scripts/tests/auth-request-coverage.test.mjs`, run by `make test-ci-scripts`, is what keeps
 this true without anybody re-reading it. It parses the `auth_request` locations out of the
 Dockerfile heredoc (following a `rewrite` where there is one), maps each to its upstream, scans
 every `*.controller.ts` for route decorators, class and method `@UseGuards`, and the in-body idioms,
-parses `.route(...)` out of both Rust routers, and fails on three things:
+reads each Axum router's `.route(...)` table and the body of the handler each one names, and fails
+on four things:
 
-1. a route behind an `auth_request` location with no authorization and no declaration;
+1. a route behind an `auth_request` location with no authorization and no declaration - **on either
+   side, NestJS or Axum**;
 2. a `PUBLIC_BY_INTENT` declaration that no longer does any work - the route is gone, or has since
    been guarded, or sits behind no such location. **A reason nobody needs reads exactly like a
    reason somebody does**, which is how a list of deliberate exceptions becomes a list of stale
    ones;
-3. an `auth_request` location whose upstream serves nothing under it - `/api/groups` was exactly
+3. a declared service that yields NO routes, which is what an unchecked service looks like from the
+   inside;
+4. an `auth_request` location whose upstream serves nothing under it - `/api/groups` was exactly
    that, guarding a service that had never had a route there.
 
 Every exception is declared in that file WITH ITS REASON, so adding a public route is a sentence
 somebody has to write rather than a decorator somebody forgot.
 
-**Two traps the scanner had to be taught, both of which made it call an open route closed.** It read
-the handler body as a fixed 60 lines, which swept into the routes below and credited
-`GET /posts/health` with an idiom belonging to somebody else; and it matched route decorators
-QUOTED IN COMMENTS, inventing three routes that no service serves while truncating the real handlers
-above them. The same family as crediting `verify-session` with a check called `verifySession` - the
-method's own name. A scanner that over-credits is worse than no scanner, because it reports a
-finished audit.
+**Three traps the scanner had to be taught, all of which made it call an open route closed.** It
+read the handler body as a fixed 60 lines, which swept into the routes below and credited
+`GET /posts/health` with an idiom belonging to somebody else; it matched route decorators QUOTED IN
+COMMENTS, inventing three routes that no service serves while truncating the real handlers above
+them; and on the Rust side it would have read `chat-gateway`'s `#[cfg(test)] mod tests`, which builds
+a second router carrying `/api/presence` with a closure answering `"ok"` as a CORS fixture - a
+phantom route with no handler to look at. The same family as crediting `verify-session` with a check
+called `verifySession` - the method's own name. A scanner that over-credits is worse than no scanner,
+because it reports a finished audit.
+
+**AND IT DID NOT REACH THE RUST SIDE AT ALL UNTIL 2026-09-17**, six days after it was written for a
+Rust route. Three locations proxy to `chat-gateway` and one to `call-service`; the authorization loop
+skipped every upstream with no NestJS directory, and `call-service` was worse than skipped - it was
+DECLARED a NestJS service, so the walk found no `*.controller.ts`, returned an empty list, and
+`/api/call` read as covered while being held against nothing. All four routes were in fact
+authorized; none of them was asserted. **A gate that cannot see a tree reports the same green as one
+that has checked it**, which is why a declared service yielding no routes is now a failure by
+name.
 
 ### An `<img src>` cannot carry a Bearer, and that is a design constraint, not an exemption
 

@@ -11,6 +11,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la garde qui verifie que chaque route refuse un visiteur anonyme ne voyait pas `/api/presence`, la route pour laquelle elle avait ete ecrite
+
+`auth-request-coverage.test.mjs` existe depuis le 2026-09-11 parce que `/api/presence` repondait a
+n'importe qui : quinze blocs `location /api/*` portent `auth_request /internal/auth/verify`, et ce
+sous-appel repond **200 a un visiteur deconnecte** aussi, donc il identifie et ne refuse jamais. La
+garde tient chaque route derriere un de ces blocs a une autorisation ou a une raison ecrite.
+
+**Elle ne regardait aucun des deux crates Rust.** Trois `location` pointent vers `chat-gateway` et un
+vers `call-service` : la boucle d'autorisation passait son chemin des qu'un upstream n'avait pas de
+repertoire NestJS. Pire, `call-service` etait **declare service NestJS** - le parcours n'y a trouve
+aucun `*.controller.ts`, a renvoye une liste vide, et `/api/call` se lisait comme couvert tout en
+n'etant confronte a rien. Quatre routes concernees - `/api/ws`, `/api/presence`,
+`/api/admin/presence` et la socket d'appel - **toutes les quatre autorisees, aucune asserted**. Six
+jours durant, la route qui a motive la garde etait a cote et non dedans.
+
+La garde lit desormais la table `.route(...)` de chaque routeur Axum et **le corps de la fonction que
+chaque route nomme** : il n'y a pas de couche de garde en Axum ici, donc l'autorisation est un appel
+que le handler fait lui-meme (`is_authenticated`, `x-global-admin`, le JWT `canari_ws_token` que
+nginx ne voit pas). Le module `#[cfg(test)]` de `chat-gateway` est coupe avant lecture : il construit
+un second routeur portant `/api/presence` avec une fermeture qui repond `"ok"`, fixture CORS et non
+routage. Une route dont le handler ne peut pas etre lu **echoue** au lieu de disparaitre de
+l'ensemble verifie.
+
+**Et la garde ne tournait pas sur le commit qui compte.** Ses sujets sont
+`apps/*/src/**/*.controller.ts` et les deux routeurs Axum ; le filtre de chemins de `ci.yml` ne
+nommait que le heredoc nginx, donc **le commit qui ajoute une route non gardee - le seul pour lequel
+la garde existe - ne la declenchait pas**. `compose-wiring.test.sh` avait la meme faille : il derive
+sa liste de services NestJS de `apps/*/package.json`, et un NOUVEAU service etait le seul changement
+qu'il ne pouvait pas voir. Le filtre nomme desormais ces entrees, et elles seules.
+
+**Et un service declare qui ne produit aucune route echoue maintenant, nommement.** Une carte de
+couverture n'est une couverture que si chaque entree travaille : c'est l'assertion que
+`serverProse.test.ts` fait sur chaque arbre qu'il parcourt, et celle qui aurait nomme ce trou le jour
+ou il a ete creuse.
+
 ### Changed - plus aucune exception ne parle a la place du code : 194 sites, il en reste un
 
 Le recensement ouvert le 2026-09-09 - *"218 endroits affichent la prose anglaise du serveur a un

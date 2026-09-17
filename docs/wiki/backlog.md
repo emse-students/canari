@@ -1354,38 +1354,36 @@ contradict "you are notified"; `canari_messages` rings like a message, which may
 reaction. A reaction that notifies is also a notification the reader cannot mute separately unless
 it gets a channel of its own. One line to the user settles it.
 
-### P2 - THE RULE "IS THIS CALLER SIGNED IN" HAS THREE INDEPENDENT IMPLEMENTATIONS AND NOTHING ASSERTS THAT EVERY ROUTE CARRIES ONE (measured 2026-09-15)
+### P3 - THE RULE "IS THIS CALLER SIGNED IN" IS WRITTEN THREE TIMES, AND WHAT HELD THE COLLAPSE BACK IS NOW SHIPPED (2026-09-17)
 
-`/api/presence` answered anybody who could name a user id until 2026-09-10, and the reason it
-survived is the reason this entry exists rather than a fix: **the edge looked like the gate.**
-Fifteen `location /api/*` blocks in `infrastructure/local/Dockerfile.frontend` carry `auth_request
-/internal/auth/verify` (count re-derived 2026-09-15; a wiki sentence said sixteen), and that
-sub-request answers **200 for a logged-OUT caller** carrying `x-logged-in: false`, which nginx
-treats as permission granted. It says WHO you are, never WHETHER you may pass. So the whole
-enforcement is in the handler, and a handler that forgets is invisible.
+**The assertion this entry was waiting for exists.** `auth-request-coverage.test.mjs` already held
+every NestJS route behind an `auth_request` location to a guard, an in-body idiom or a declared
+reason; since 2026-09-17 it reads the two Axum routers and the body of each handler they name, so
+`/api/presence` - the route the gate was written FOR, and which sat beside it rather than inside it
+for six days - is covered. The hold this entry carried is therefore lifted: it said the three copies
+must not be merged while collapsing them was the easy half and the smell was the only thing pointing
+at the missing assertion. The assertion is what points now.
 
-**Three copies of the same rule, under two different discriminators:**
+**What is left is the collapse, and it is three files.**
 
 | Where | Refuses on | Internal-token HMAC |
 | --- | --- | --- |
 | `core-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | own copy, exported as `verifyInternalToken` |
 | `social-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | **second copy**, imports nothing |
 | `chat-delivery-service/src/guards/header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **third copy**, inline |
-| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, no guard layer at all |
+| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
 
-`verifyInternalToken` is exported and imported by **nobody** outside its own file. Two names for
-one guard is why a reader auditing "does everything have `NginxAuthGuard`" gets thirteen false
-positives in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
+`verifyInternalToken` is exported and imported by **nobody** outside its own file. Two names for one
+guard is why a reader auditing "does everything have `NginxAuthGuard`" gets thirteen false positives
+in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
 
-**WHAT IS ACTUALLY OPEN, AND IT IS A TEST RATHER THAN A REVIEW** (user: *"Je prefere blinder de
-test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*). A
-one-off audit answers today and rots tomorrow; the next route added is the next `/api/presence`.
-What closes this is an assertion that **every route reachable through an `auth_request` location
-refuses an unauthenticated caller**, derived from the routing table rather than from a list
-somebody maintains - the shape `chat-gateway/src/main.rs`'s own route tests already use, and the
-shape `serverProse.test.ts` uses to count a tree. Until it exists, the three copies should NOT be
-merged: collapsing them is the easy half and would remove the smell that is currently the only
-thing pointing at the missing assertion.
+**TWO DISCRIMINATORS, AND THE MERGE MUST NOT PICK ONE BY ACCIDENT.** A non-empty `x-user-id` and
+`x-user-logged-in === 'true'` come from the same `auth_request_set` pair and should never disagree -
+but nothing asserts that they cannot, and one shared guard reading only one of them would silently
+change what the other two services refuse. **The first step is therefore a test that the edge sets
+both or neither**; the merge is the second, and doing it in that order is the difference between a
+factorisation and a behaviour change nobody meant. The Rust copy is not part of it: there is no guard
+layer in Axum here, and the handler is where the check belongs.
 
 **Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
 an ARBITRARY user id - rather than only people they share a conversation with - is a separate and
