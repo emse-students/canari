@@ -1482,15 +1482,6 @@ pending/validated split `GET /associations/:id/events` filters on for a caller i
 
 **Not investigated**: which component draws the list row, and whether it even receives the flag.
 
-### P3 - the "Connexion en cours" panel is transparent and the page shows through it (user, 2026-09-17)
-
-Verbatim: *"Panneau 'Connexion en cours' transparent par dessus /chat (et peut-etre /communautes),
-on voit a travers c'est moche."*
-
-The string is `chat_connecting_label` (*"Connexion en cours..."*, `messages/fr.json:1115`). **Not
-investigated**: which overlay renders it, whether a backdrop token is missing or the element is
-simply never painted over, and whether `/communautes` shares the component or has its own.
-
 ### P2 - a photo arrives IN the notification and the app then shows the words "Photo" where the image should be (user, 2026-09-17)
 
 Verbatim: *"La photo s'affiche dans la notification, mais quand j'ouvre j'ai juste '📷 Photo'

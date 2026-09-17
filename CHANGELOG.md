@@ -175,6 +175,25 @@ booleen absent en `false`, alors les deux decodeurs jettent le `false` au lieu d
 envoye avant aujourd'hui garde exactement le comportement qu'il a toujours eu, plutot que de
 disparaitre retroactivement sur une supposition.
 
+### Fixed - le panneau « Connexion en cours » laissait voir la conversation qu'il bloque
+
+Signale par l'utilisateur : *"Panneau 'Connexion en cours' transparent par dessus /chat, on voit a
+travers c'est moche."* Le panneau portait un modificateur d'opacite de 95 % sur son fond. La premiere
+hypothese - Tailwind n'emettrait rien pour cette forme - est fausse, verifiee en compilant la classe :
+la regle est bien produite. Le panneau etait donc transparent a 5 % exactement comme ecrit, ce qui
+suffit a faire apparaitre toute une conversation en filigrane derriere une surface dont le seul role
+est de dire que cette conversation n'est pas utilisable. Il est opaque.
+
+Il portait aussi un `z-50` brut, alors que l'echelle des couches dit qu'une nouvelle couche prend un
+barreau ou en ajoute un, jamais un nombre au point d'appel. C'est un plein-ecran qui doit couvrir les
+bandeaux et le composeur de sa page : il prend `--z-page-blocking`, un cran au-dessus de
+`--z-page-overlay`. La garde ne l'avait pas vu parce que son plancher est 60, volontairement - ce que
+cela coute est desormais ecrit dans la garde elle-meme.
+
+Le signalement disait aussi *"et peut-etre /communautes"* : non. Cet ecran ne rend pas ce composant -
+l'overlay n'est monte que par `MainChatPage`. Si le meme aspect y est vu un jour, c'est un autre
+element, et le chercher ici ferait perdre le temps que cette phrase existe pour economiser.
+
 ## [0.18.10] - 2026-09-17
 
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre
