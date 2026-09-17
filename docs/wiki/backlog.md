@@ -1465,25 +1465,32 @@ The string is `chat_connecting_label` (*"Connexion en cours..."*, `messages/fr.j
 investigated**: which overlay renders it, whether a backdrop token is missing or the element is
 simply never painted over, and whether `/communautes` shares the component or has its own.
 
-### P2 - a photo arrives IN the notification and the app then shows the words "Photo" where the image should be (user, 2026-09-17)
+### P2 - a photo became the word "Photo" at the next restart - FIXED 2026-09-17, UNSHIPPED (user)
 
 Verbatim: *"La photo s'affiche dans la notification, mais quand j'ouvre j'ai juste '📷 Photo'
 (consommation du message ?). D'ailleurs, quelle difference entre '📷 Photo' et '[Media]' ?"*
 
-**THE ANSWER TO THE SECOND HALF IS THAT THEY ARE TWO DIFFERENT SURFACES WITH TWO DIFFERENT
-VOCABULARIES.** `📷 Photo` / `🎥 Video` is built by the NATIVE notification builder from
-the decrypted `mediaKind`, as the text preview for the kinds that get no thumbnail - images and GIFs
-under 2 MB show the real decrypted picture instead ([chat-delivery](services/chat-delivery.md)).
-`[Media]` is `chat_preview_media` (`messages/fr.json:2698`), the WEB conversation-list preview, and
-it says the same four words for every kind at once. Neither is derived from the other, and one of
-the two is wrong.
+**THE CAUSE, THE FIX AND THE THREE REFUTATIONS ARE WRITTEN DOWN ELSEWHERE AND ARE NOT RESTATED HERE**
+- story in `CHANGELOG.md`, mechanism in [mob](frontend/mobile.md#fcm-message-cache), the two rules it
+taught in [durable-rules](durable-rules.md). In one line: the push cache could arrive SECOND and
+`put` the notification's caption over the envelope, unrepairably. The user's "consommation du
+message ?" is refuted on three independent grounds recorded on that wiki page; **do not re-open it.**
 
-**SO THE FIRST HALF IS A REAL FINDING RATHER THAN A COSMETIC ONE: `📷 Photo` IS A NOTIFICATION
-STRING AND HAS NO BUSINESS INSIDE THE APP.** Seeing it where the image belongs means something wrote
-the notification's PREVIEW where the message goes. **Hypothesis, not evidence**: the FCM cache path
-(`mergeFcmMessagesIntoConversations`) is the one place that turns a push payload into a conversation
-row, and the P1 two sections down already records that a cold device takes the HISTORY path instead.
-Whoever takes this reads the push payload and the resulting row before touching either.
+**WHAT IS LEFT IS TWO THINGS.**
+
+- **It ships with the next release.** `fcmCache.test.ts` covers the three arrival orders and was
+  confirmed to accuse the defect by mutation, but every native claim here is verified by COMPILING,
+  which proves nothing about running.
+- **ONE LOOK AT A REAL HANDSET CLOSES IT, AND NOTHING ELSE WILL.** Send a photo to the Mi 9T with the
+  app OPEN, confirm the picture draws, force-stop the app, reopen it: the picture must still be
+  there. That is the whole reproduction, it takes a minute, and it is the only evidence that the
+  native writer and the TypeScript reader agree in the field.
+
+**The second half of the question is answered and is worth keeping as a diagnostic:** `📷 Photo`
+is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`, never Paraglide), `[Media]`
+is the app's own label for an envelope it deliberately summarises (a conversation-list line, a reply
+quote). **So `📷 Photo` inside a bubble always means a push row that was never upgraded** - if
+it is ever seen again, that is where to look, and it is a different bug from this one.
 
 ### P3 - voice notes appear in a discussion's "Medias" tab, and an imported audio file cannot be told from a recorded one (user, 2026-09-17)
 

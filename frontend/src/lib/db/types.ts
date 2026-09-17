@@ -361,6 +361,18 @@ export interface IStorage {
    * cached history-state key is per-conversation.
    */
   deleteMessage(id: string, conversationId: string): Promise<void>;
+  /**
+   * Decrypt and return ONE message by its id, or `null` when the row is absent or undecryptable.
+   *
+   * A keyed lookup, so it costs the same in a conversation of ten messages and one of ten thousand.
+   * It exists because a write sometimes has to know what it would be replacing - the FCM cache
+   * injection may create a row and may replace another push preview, but must never replace a full
+   * envelope with one. **That decision cannot live inside the write's own transaction**: an
+   * IndexedDB transaction closes on the first `await` of a non-IDB promise, and reading a row means
+   * awaiting WebCrypto. So the read is a separate step here, exactly as in `updateMessage`, and a
+   * caller that needs the pair to be indivisible must run where nothing else writes.
+   */
+  getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
