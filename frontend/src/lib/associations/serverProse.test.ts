@@ -159,7 +159,7 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/routes/auth/callback/+page.svelte');
     expect(files).toContain('src/routes/directory/+page.svelte');
     expect(files).toContain('src/routes/admin/moderation/+page.svelte');
-    expect(files).toContain('src/lib/components/sidebar/SidebarCommunityAdminModal.svelte');
+    expect(files).toContain('src/lib/components/sidebar/SidebarCommunityAdminPanel.svelte');
     expect(files).toContain('src/lib/composables/useMessaging.svelte.ts');
     expect(files).toContain('src/lib/composables/session/sessionAuth.ts');
     expect(files).toContain('src/lib/utils/chat/groupCreation.ts');

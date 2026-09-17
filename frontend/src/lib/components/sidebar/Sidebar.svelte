@@ -12,7 +12,7 @@
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
-  import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
+  import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import {
     conversationMatchesQuery,
@@ -155,7 +155,7 @@
 
   let showNewChatModal = $state(false);
   let showNewChannelModal = $state(false);
-  let showCommunityAdminModal = $state(false);
+  let showCommunityAdminPanel = $state(false);
   let showNewCommunityModal = $state(false);
   let activeTab = $state<'contact' | 'group'>('contact');
   let activeSidebarTab = $derived(
@@ -330,8 +330,8 @@
     channelName = '';
   }
 
-  function closeCommunityAdminModal() {
-    showCommunityAdminModal = false;
+  function closeCommunityAdminPanel() {
+    showCommunityAdminPanel = false;
   }
 
   function handleAddContact() {
@@ -485,7 +485,7 @@
             <button
               class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-surface rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {
-                showCommunityAdminModal = true;
+                showCommunityAdminPanel = true;
               }}
               title={m.sidebar_community_settings_title()}
               aria-label={m.sidebar_community_settings_title()}
@@ -701,11 +701,11 @@
   onSubmitChannel={handleCreateChannel}
 />
 
-<SidebarCommunityAdminModal
-  open={showCommunityAdminModal}
+<SidebarCommunityAdminPanel
+  open={showCommunityAdminPanel}
   workspaces={channelWorkspaces}
   selectedWorkspaceId={selectedCommunityWorkspaceId}
-  onClose={closeCommunityAdminModal}
+  onClose={closeCommunityAdminPanel}
   {onUpdateWorkspaceImage}
   {onLeaveWorkspace}
   {onDeleteWorkspace}

@@ -67,6 +67,18 @@ Two decisions are worth knowing because their failure mode is silence:
 - **An unrecognised build or version state is a refusal, not a wait.** Apple adds states; a
   classifier that treats anything unknown as "keep polling" holds a macOS runner until the job times
   out and explains nothing.
+- **A 5xx is retried, and which calls may be is decided by the resource rather than the verb.** A
+  status code is an answer; `500 An unexpected error occurred on the server side` is Apple saying it
+  never reached one, so repeating the request is not a fallback path - nothing different happens. The
+  subtle half is WHICH requests may repeat. GET and PATCH always may. Of the two POSTs in the
+  submission chain, `reviewSubmissionItems` may - Apple enforces uniqueness on (submission, version)
+  and refuses a second one with a 409 whose content is the postcondition we wanted - and
+  `reviewSubmissions` may NOT, because a second create simply succeeds and leaves the app with two
+  open submissions. So the call site declares `appleRefusesDuplicate`, and that 409 is then
+  **verified against the items list** rather than taken on Apple's word: a 409 for another reason
+  must not become a green submission. `ApiError` carries the status as a fact so none of this is
+  decided by matching Apple's prose. `v0.16.1` and `v0.18.10` each cost a production deploy to the
+  two halves of this, one call apart in the same chain.
 
 ## Tests
 

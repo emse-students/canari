@@ -437,6 +437,25 @@ the dev deploy writes: `identical` or dev `ahead` both mean the code went throug
 pre-release at that commit first. A detector was written first and deleted unshipped - the same
 measurement, as a refusal instead of a report.
 
+**A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
+WHICH GATE REFUSES DEPENDS ON WHICH COMMIT YOU TAG.** Measured 2026-09-17 during `v0.18.10`: the
+pre-release was cut at `14d77ab3`, the bump pushed `2e42ddac`, the dev deploy marked `dev-deployed`
+at **that bump commit** (`serve-dev` is handed `needs.bump.outputs.sha`, not the tag's) - and then an
+unrelated pull request merged, moving `main` one commit further. Neither commit could carry the
+stable:
+
+| Tag the stable at | Refused by | Because |
+| --- | --- | --- |
+| the commit dev served (`2e42ddac`) | **gate 2** | `main` no longer points at it |
+| `main`'s new head | **gate 4** | dev is `behind` by the merged commit, so production would be ahead of dev |
+
+CLAUDE.md's one-line warning names gate 2, which is the first of those two; the second is the one you
+actually meet if you follow the instinct to tag the newest commit. **The fix is neither a bypass nor
+a revert: cut a second pre-release at the new head, let it move the marker, then cut the stable.**
+That is gate 4 working exactly as specified - the extra pre-release is the documented price, paid in
+minutes - and it is worth knowing before a release rather than during one, because both refusals
+arrive AFTER the tag exists.
+
 **THERE IS NO BYPASS INPUT, deliberately.** A skip flag is a fallback path, and reaching one means
 the primary path failed - so the fix belongs there. The emergency path is unchanged and is not in
 software: a human with admin rights acting by other means, written into `CHANGELOG.md` when taken.
