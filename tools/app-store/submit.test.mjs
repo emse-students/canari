@@ -27,6 +27,7 @@ import {
   readWhatsNew,
   mintToken,
   shouldRetry,
+  ApiError,
   exitFor,
   SlotHeldError,
   EXIT_SLOT_HELD,
@@ -393,10 +394,73 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
   // THE HALF THAT MATTERS MOST. A 500 on a POST leaves us unable to say whether the thing was
   // created; retrying would quietly make a SECOND review submission. Those calls are protected
   // instead by asking what exists before creating anything.
-  eq('a POST is NEVER retried, whatever the status', shouldRetry('POST', 500), false);
+  eq('a POST is NEVER retried by default, whatever the status', shouldRetry('POST', 500), false);
   eq('nor when it got no response at all', shouldRetry('POST', 0), false);
 
   eq('the method is read case-insensitively', shouldRetry('patch', 503), true);
+
+  // AND THE GAP BETWEEN THOSE TWO HALVES, WHICH COST `v0.18.10`. `POST /v1/reviewSubmissionItems`
+  // -> 500: not retried because it is a POST, and the "ask what exists first" guard had already
+  // run and answered no - correctly, BEFORE the write. Neither half covers the window between the
+  // question and the answer. What makes a repeat safe is not the verb but whether APPLE REFUSES
+  // THE DUPLICATE, which it does here (unique on submission+version) and does not for
+  // `reviewSubmissions` (a second create simply succeeds, leaving two open submissions).
+  eq('a POST whose duplicate Apple refuses IS retried on a 500', shouldRetry('POST', 500, true), true);
+  eq('and on a 503', shouldRetry('POST', 503, true), true);
+  eq(
+    'and when it got no response at all - not knowing is what the refusal makes survivable',
+    shouldRetry('POST', 0, true),
+    true
+  );
+
+  // The declaration widens WHICH METHODS may repeat. It must not widen which STATUSES are worth
+  // repeating, or it becomes a way to retry an answer.
+  eq('a 409 on such a POST is Apple ANSWERING, and is not retried', shouldRetry('POST', 409, true), false);
+  eq('nor is a 401', shouldRetry('POST', 401, true), false);
+  eq('nor a 422', shouldRetry('POST', 422, true), false);
+}
+
+{
+  process.stdout.write('\na refusal carries its status as a fact, not inside its prose\n');
+
+  // *Never branch on an error MESSAGE.* The duplicate-tolerant path has to tell a 409 from every
+  // other refusal, and matching Apple's wording would be a distinction carried in a string - the
+  // distinction exactly one call site makes and the next one gets wrong.
+  const err = new ApiError({
+    method: 'POST',
+    path: '/v1/reviewSubmissionItems',
+    status: 409,
+    detail: 'appStoreVersion with id 1 was already added to this reviewSubmission',
+    attempts: 2,
+  });
+  eq('the status is readable without parsing anything', err.status, 409);
+  eq('it is still an Error', err instanceof Error, true);
+  eq('and identifiable as ours', err instanceof ApiError, true);
+  eq('the message names the request', err.message.includes('POST /v1/reviewSubmissionItems'), true);
+
+  // "500 once" and "500 four times a minute apart" are different findings, and only one is worth
+  // reporting to Apple - so the count stays in the message.
+  eq('and how many attempts it took to give up', err.message.includes('after 2 attempts'), true);
+  const once = new ApiError({
+    method: 'GET',
+    path: '/v1/apps',
+    status: 500,
+    detail: 'x',
+    attempts: 1,
+  });
+  eq('a single attempt says nothing about attempts', once.message.includes('attempts'), false);
+
+  // A request that never reached Apple has no status; `0` is the spelling `shouldRetry` uses, and
+  // a message reading "-> 0" would be read as a status code that does not exist.
+  const silent = new ApiError({
+    method: 'GET',
+    path: '/v1/apps',
+    status: 0,
+    detail: 'ECONNRESET',
+    attempts: 4,
+  });
+  eq('no response at all is status 0', silent.status, 0);
+  eq('and says so in words', silent.message.includes('no response'), true);
 }
 
 {

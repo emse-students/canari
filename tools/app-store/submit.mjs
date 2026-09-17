@@ -195,15 +195,37 @@ const API_RETRY_BASE_MS = 4000;
  * already protected differently - the code asks what exists before creating anything - so the two
  * halves cover each other.
  *
+ * AND THEN `v0.18.10` FOUND THE GAP BETWEEN THOSE TWO HALVES. It died on `POST
+ * /v1/reviewSubmissionItems -> 500`, one call further on than `v0.16.1`: the POST was not retried
+ * because it is a POST, and the "ask first" half had already run and answered *no* - correctly,
+ * before the write. Neither half covers the window AFTER the question and BEFORE the answer, so the
+ * job went red, the production estate is gated on it, and the web did not ship.
+ *
+ * THE METHOD WAS NEVER THE REAL PROPERTY, AND THE TWO POSTs DIFFER. What makes a repeat safe is
+ * whether APPLE REFUSES THE DUPLICATE. `reviewSubmissionItems` is unique on (submission, version)
+ * and a second create is refused with `409 ... was already added to this reviewSubmission` - an
+ * ANSWER, and one whose content is the postcondition we wanted. `reviewSubmissions` carries no such
+ * constraint: a second create SUCCEEDS and the app quietly has two open submissions. So the flag is
+ * declared per CALL, by the site that knows which resource it is writing, rather than inferred from
+ * a verb that cannot tell them apart.
+ *
+ * `status === 0` IS RETRIED UNDER THE FLAG TOO, and that is the point rather than an oversight: a
+ * request that got no response is exactly the case where we cannot know whether it landed, and a
+ * refused duplicate is what makes not knowing survivable.
+ *
  * NOT A FALLBACK PATH. Nothing different happens on a retry; the same request is made again,
  * because the first one never reached a decision.
  *
  * @param {string} method
  * @param {number} status HTTP status, or 0 for a request that never got a response at all.
+ * @param {boolean} [appleRefusesDuplicate] The call site declaring that Apple enforces uniqueness
+ *   on the resource being created, so a repeat is refused with an answer rather than duplicated.
  * @returns {boolean}
  */
-export function shouldRetry(method, status) {
-  if (!IDEMPOTENT_METHODS.has(method.toUpperCase())) return false;
+export function shouldRetry(method, status, appleRefusesDuplicate = false) {
+  const verb = method.toUpperCase();
+  const repeatable = IDEMPOTENT_METHODS.has(verb) || (verb === 'POST' && appleRefusesDuplicate);
+  if (!repeatable) return false;
   // A throw from `fetch` - DNS, a reset connection, a TLS failure - carries no status at all.
   if (status === 0) return true;
   return RETRYABLE_STATUS.has(status);
@@ -469,8 +491,37 @@ export function readWhatsNew({ file, version }) {
 // The API
 // -------------------------------------------------------------------------------------------------
 
-/** @type {(token: string) => (method: string, path: string, body?: unknown) => Promise<any>} */
-const client = (token) => async (method, path, body) => {
+/**
+ * A REFUSAL FROM APPLE, CLASSIFIED AT THE THROW.
+ *
+ * *Never branch on an error MESSAGE.* A caller that needs to tell "Apple refused this duplicate"
+ * from "Apple refused this request" was, until this existed, obliged to match Apple's prose out of
+ * an `Error.message` - a distinction carried in a string, which is the distinction exactly one call
+ * site makes and the next one gets wrong. The status is the fact, so it is carried as one.
+ *
+ * `status` is `0` for a request that never got a response at all, the same spelling `shouldRetry`
+ * uses, so the two agree about what "Apple did not answer" means.
+ */
+export class ApiError extends Error {
+  /** @param {{method: string, path: string, status: number, detail: string, attempts: number}} it */
+  constructor({ method, path, status, detail, attempts }) {
+    const tried = attempts > 1 ? ` after ${attempts} attempts` : '';
+    super(`${method} ${path} -> ${status || 'no response'}${tried} ${detail}`);
+    this.name = 'ApiError';
+    this.method = method;
+    this.path = path;
+    this.status = status;
+    this.detail = detail;
+    this.attempts = attempts;
+  }
+}
+
+/**
+ * @type {(token: string) => (method: string, path: string, body?: unknown,
+ *   opts?: {appleRefusesDuplicate?: boolean}) => Promise<any>}
+ */
+const client = (token) => async (method, path, body, opts = {}) => {
+  const { appleRefusesDuplicate = false } = opts;
   for (let attempt = 1; ; attempt++) {
     /** @type {Response} */
     let res;
@@ -485,13 +536,13 @@ const client = (token) => async (method, path, body) => {
       });
     } catch (e) {
       // No response at all. `status: 0` is how the policy above spells that.
-      if (attempt < API_ATTEMPTS && shouldRetry(method, 0)) {
+      if (attempt < API_ATTEMPTS && shouldRetry(method, 0, appleRefusesDuplicate)) {
         const wait = API_RETRY_BASE_MS * attempt;
         log(`  ${method} ${path} did not reach Apple (${e}) - retrying in ${wait / 1000}s`);
         await sleep(wait);
         continue;
       }
-      throw new Error(`${method} ${path} -> no response after ${attempt} attempt(s): ${e}`);
+      throw new ApiError({ method, path, status: 0, detail: String(e), attempts: attempt });
     }
 
     if (res.status === 204) return null;
@@ -509,7 +560,7 @@ const client = (token) => async (method, path, body) => {
     const detail =
       json?.errors?.map((e) => `${e.title}: ${e.detail ?? ''}`).join(' | ') ?? text.slice(0, 400);
 
-    if (attempt < API_ATTEMPTS && shouldRetry(method, res.status)) {
+    if (attempt < API_ATTEMPTS && shouldRetry(method, res.status, appleRefusesDuplicate)) {
       const wait = API_RETRY_BASE_MS * attempt;
       log(
         `  ${method} ${path} -> ${res.status} (Apple did not answer) - attempt ${attempt} of ` +
@@ -521,13 +572,68 @@ const client = (token) => async (method, path, body) => {
 
     // The attempt count is part of the message: "500 once" and "500 four times, a minute apart"
     // are different findings, and only one of them is worth reporting to Apple.
-    const tried = attempt > 1 ? ` after ${attempt} attempts` : '';
-    throw new Error(`${method} ${path} -> ${res.status}${tried} ${detail}`);
+    throw new ApiError({ method, path, status: res.status, detail, attempts: attempt });
   }
 };
 
 const log = (msg) => process.stdout.write(`${msg}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * PUT THE VERSION IN THE SUBMISSION, AND SURVIVE NOT KNOWING WHETHER THE LAST ATTEMPT DID.
+ *
+ * THE CASE. `v0.18.10` got `POST /v1/reviewSubmissionItems -> 500 An unexpected error occurred on
+ * the server side` - Apple failing to answer, one call further along the chain than `v0.16.1`'s.
+ * The build was in TestFlight, the version created, the notes written; the job went red on the
+ * server's own fault, and because the production estate is a SUCCESS dependency on the store arms,
+ * the web did not ship either. A release lost to a 500 that said nothing about our request.
+ *
+ * WHY THE RETRY IS SAFE HERE AND NOT ON THE SUBMISSION ITSELF, in one sentence: Apple enforces
+ * uniqueness on (submission, version) and refuses a second item with a 409, so the worst a repeat
+ * can do is be TOLD the work is already done - where a repeated `POST /v1/reviewSubmissions` would
+ * quietly leave the app with two open submissions. That is what `appleRefusesDuplicate` declares,
+ * and it is declared here because this is the only place that knows which resource is being written.
+ *
+ * AND THE 409 IS NOT TAKEN ON ITS WORD. Apple saying "already added" is prose, and *a claim is not
+ * evidence*: the items list is the direct question, and it is asked before the refusal is allowed to
+ * count as success. If the list does not in fact carry the version, the original error is rethrown
+ * untouched - a 409 for some OTHER reason must never be laundered into a green submission, which is
+ * the exact failure class this file has already paid for twice.
+ *
+ * @param {(m: string, p: string, b?: unknown, o?: {appleRefusesDuplicate?: boolean}) => Promise<any>} api
+ * @param {string} submissionId
+ * @param {string} versionId
+ */
+async function addVersionToSubmission(api, submissionId, versionId) {
+  try {
+    await api(
+      'POST',
+      '/v1/reviewSubmissionItems',
+      {
+        data: {
+          type: 'reviewSubmissionItems',
+          relationships: {
+            reviewSubmission: { data: { type: 'reviewSubmissions', id: submissionId } },
+            appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } },
+          },
+        },
+      },
+      { appleRefusesDuplicate: true }
+    );
+    log('  added the version to the submission');
+    return;
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status !== 409) throw e;
+    log(`  the add was refused as a duplicate - asking the submission what it actually holds`);
+    const after = await api(
+      'GET',
+      `/v1/reviewSubmissions/${submissionId}/items?include=appStoreVersion&limit=50`
+    );
+    const listed = versionIsAlreadySubmissionItem({ items: after?.data, versionId });
+    if (!listed.already) throw e;
+    log(`  the version is in the submission - ${listed.how}`);
+  }
+}
 
 async function main() {
   const need = (name) => {
@@ -771,16 +877,7 @@ async function main() {
   if (seen.already) {
     log(`  the version is already an item of this submission - ${seen.how}`);
   } else {
-    await api('POST', '/v1/reviewSubmissionItems', {
-      data: {
-        type: 'reviewSubmissionItems',
-        relationships: {
-          reviewSubmission: { data: { type: 'reviewSubmissions', id: submission.id } },
-          appStoreVersion: { data: { type: 'appStoreVersions', id: version.id } },
-        },
-      },
-    });
-    log('  added the version to the submission');
+    await addVersionToSubmission(api, submission.id, version.id);
   }
 
   await api('PATCH', `/v1/reviewSubmissions/${submission.id}`, {

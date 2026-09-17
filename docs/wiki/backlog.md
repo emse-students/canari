@@ -51,6 +51,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
+| the community settings read as a panel on the phone they were reported from | HARDWARE, Mi 9T, and it is a LOOK rather than a number: the three geometries are already measured in a browser against this tree (436 px full-bleed, 768-plus inset and rounded, and the chat column still `static` at 320 px at 1400 px), so what a phone adds is whether the tab strip, the one danger zone and the permission matrix READ at 436 px with a thumb. **The Mi 9T carries the USER'S OWN account behind an encryption PIN that is theirs**, so this waits on a build the user opens themselves or on the phone being free - it is not a run the harness may take ([device-verification](device-verification.md)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -974,6 +975,31 @@ Two things the export settles in passing, both measured rather than argued:
   parse, zstd decode, the inline bootstrap or Firefox scheduling is NOT known - the export cannot
   separate them and neither may a later reader.
 
+  **BUT ONE READING WOULD SETTLE THE LARGEST OF THOSE CAUSES, AND IT COSTS NOTHING TO TAKE.** The
+  header is the only early declaration, so the whole question is WHEN the browser acted on it.
+  Compare the first `/_app/immutable/` request against the DOCUMENT'S TWO TIMESTAMPS, not against
+  one of them:
+
+  | the first module request tracks | what it means |
+  | --- | --- |
+  | the document's response **start** (its TTFB) | the `Link:` header was honoured; the 122 ms is parse, decode or scheduling, and is small |
+  | the document's response **end** | the header did NOTHING in this engine, and the graph is discovered by EXECUTING the inline bootstrap at the end of `<body>` |
+
+  The measurement already in hand says the gap is counted from the END, which is the second row -
+  but it was read as "the header is working" on a different argument (the last module byte lands
+  after the app's first word, at +627 against +600), and **that argument is about the header being
+  USEFUL, never about when it fired**. The two are not the same claim and only one of them was
+  measured. This is the same shape as the 56-60% that inverted: a fact about one mechanism read as
+  a fact about the product.
+
+  **IF IT IS THE SECOND ROW, THE FIX IS NOT A TUNING.** `<link rel="modulepreload">` TAGS in the
+  head are discovered by the parser in every engine, where an HTTP `Link:` header is honoured only
+  by engines that implement header-driven module preloading - MDN's page for `modulepreload` does
+  not document the header form at all, checked 2026-09-17. **Do not build it before the reading**:
+  emitting the tags means post-processing the response SvelteKit already built, which costs the
+  streaming render, and paying that for an engine that never needed it would be the third
+  Chrome-shaped decision in this entry.
+
 #### WHAT THIS EXPORT COULD NOT MEASURE, AND WHY, SO NOBODY RE-READS IT AS THE ANSWER
 
 **Neither of the two fixes below was in the build.** `v0.18.9` was tagged 2026-09-16T17:18:37Z;
@@ -1438,11 +1464,11 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ---
 
-## Reported by the USER on 2026-09-17 - five items, verbatim, none of them investigated yet
+## Reported by the USER on 2026-09-17 - six items, verbatim
 
-Each of these is a REPORT, not a diagnosis. What is written under it is the report and whatever one
-lookup already settles; anything further is owed by whoever takes the item, and a hypothesis is
-marked as one.
+Each of these started as a REPORT, not a diagnosis. What is written under it is the report and
+whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
+one.
 
 ### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
 
@@ -1485,7 +1511,7 @@ the notification's PREVIEW where the message goes. **Hypothesis, not evidence**:
 row, and the P1 two sections down already records that a cold device takes the HISTORY path instead.
 Whoever takes this reads the push payload and the resulting row before touching either.
 
-### P3 - FIXED, UNSHIPPED - voice notes were listed with the files people deliberately sent (user, 2026-09-17)
+### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
 
 Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une discussion. +1 s'il est
 possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
@@ -1504,20 +1530,28 @@ decoders. **Absent is UNKNOWN and not "imported"**, so a `false` is dropped rath
 message from before this change keeps the behaviour it has always had. The mechanism is in
 [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell).
 
-**What is NOT closed by this**: the native notification still builds its preview from `mediaKind`
-alone, so a voice note arriving on a locked phone is announced as an audio FILE. The field it would
-need is now on the wire and nothing reads it yet.
+**WHAT IS LEFT, AND IT IS NOT WHERE THIS ENTRY FIRST SAID IT WAS.** A voice note arriving on a
+locked phone is still announced as an audio FILE - the field is on the wire and nothing reads it.
+But the sentence is not built by `mediaKind` in `CanariFirebaseMessagingService.kt`: there,
+`mediaKind` reaches exactly ONE decision, `if (decrypted.mediaKind != "image") return null`, which
+is the THUMBNAIL, and the service has no kind-to-sentence mapping at all. Its notification body is
+whatever `decrypted.text` holds, and that string arrives already rendered from Rust.
 
-### P3 - the community settings screen on mobile is a wall of text, hidden elements and modals, where the conversation settings are not (user, 2026-09-17)
+**The four sentences live in `frontend/src-tauri/src/mobile/proto_fields.rs:259-264`**, in the push
+scanner, chosen from `kind_str` - the proto's `MediaKind` varint - whenever the media carries no
+caption. `MEDIA_KIND_AUDIO` yields `🎤 Audio` for a recording and for an import alike, and field 11
+sits unread two lines above. **Whoever takes this reads `kind_str`, not the Kotlin.**
 
-Verbatim: *"Les parametres de communaute sur mobile ne sont pas du tout ergonomiques, beaucoup de
-texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque chose de similaire aux
-parametres des conversations. Tu peux le mesurer sur le Mi9T directement si tu veux."*
+**A SECOND DEFECT AT THE SAME FOUR LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
+strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe`. Every
+other sentence this notification can show is read through `appLocaleContext(this)` and `R.string.*`;
+these four bypass Paraglide and the Android resources both, so an English-locale device is told
+`📎 Pièce jointe`. It is the same edit, and doing one without the other means touching these four
+lines twice.
 
-**The user named the target, which is what makes this actionable rather than a taste question**: the
-CONVERSATION settings screen is the shape to copy. Measurable on the Mi 9T directly, and the measure
-comes before the redesign - what is hidden, how many taps, how much of it is a modal that a screen
-that size cannot hold.
+**They are also the strings `fix/une-photo-ne-redevient-pas-le-mot-photo` is about** - the same
+`📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the
+PERSISTENCE; this one owns the strings themselves. Neither closes the other.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
@@ -1566,18 +1600,31 @@ for six days - is covered. The hold this entry carried is therefore lifted: it s
 must not be merged while collapsing them was the easy half and the smell was the only thing pointing
 at the missing assertion. The assertion is what points now.
 
-**What is left is the collapse, and it is three files.**
+**WHAT IS LEFT IS NOT A COLLAPSE, AND CALLING IT ONE WAS THE MISTAKE IN THIS ENTRY.** Read side by
+side 2026-09-17, the three files are not three copies of one guard that drifted in spelling. They are
+**three different policies**, and only the HMAC block inside them is genuinely duplicated:
 
-| Where | Refuses on | Internal-token HMAC |
-| --- | --- | --- |
-| `core-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | own copy, exported as `verifyInternalToken` |
-| `social-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | **second copy**, imports nothing |
-| `chat-delivery-service/src/guards/header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **third copy**, inline |
-| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
+| Where | Refuses on | If `INTERNAL_SHARED_SECRET` is absent | Other paths |
+| --- | --- | --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | **401 in production**, allowed otherwise | none |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | falls through to a static `NGINX_AUTH_SECRET`, and allows the request when that is unset too | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **401 in production**, allowed otherwise | logs a denial, `/push/` routes only |
+| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | n/a | none - Rust, and it stays where it is |
 
-`verifyInternalToken` is exported and imported by **nobody** outside its own file. Two names for one
-guard is why a reader auditing "does everything have `NginxAuthGuard`" gets thirteen false positives
-in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
+**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Two of
+the rows above are what this repository calls a fallback, and the rule says a fallback is a signal
+and never a path: `social-service` accepts a request in production when neither secret is configured,
+where its two siblings refuse, and it carries an unverified-JWT branch gated only on `NODE_ENV` not
+being `production`. Picking any one of the three as "the" shared guard silently changes what the
+other two services refuse - which is the exact accident the previous paragraph warns about, one level
+up from the discriminator it was written about. **Whoever takes this decides, in writing and before
+touching a file, which refusals are intended**; the shared HMAC verification can be lifted out
+first and on its own, because that half really is three identical copies.
+
+`verifyInternalToken` is exported from `core-service` and imported by **nobody** outside its own
+file. Two names for one CONCEPT is also why a reader auditing "does everything have
+`NginxAuthGuard`" gets thirteen false positives in `chat-delivery-service`, all of which do carry
+`HeaderAuthGuard` per method.
 
 **TWO DISCRIMINATORS, AND THE MERGE MUST NOT PICK ONE BY ACCIDENT.** A non-empty `x-user-id` and
 `x-user-logged-in === 'true'` come from the same `auth_request_set` pair and should never disagree -
