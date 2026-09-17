@@ -1,6 +1,7 @@
 <script lang="ts">
   import { X } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
+  import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
   import type { Snippet } from 'svelte';
 
@@ -28,6 +29,31 @@
   }
 
   let { open, title, onClose, column = false, actions, children }: Props = $props();
+
+  /**
+   * A DRAWER HAS TO LEAVE THE PAGE; A COLUMN HAS TO STAY IN IT. Same sentence, both halves.
+   *
+   * `.page-scroll-wrap` carries `will-change: transform` for the swipe-between-tabs gesture, which
+   * makes it BOTH a stacking context and the containing block for every `position: fixed` inside it
+   * - `app.css` says so where the layer ladder is declared, and ends with the rule this follows:
+   * anything that must escape a page entirely has to be PORTALLED to the body. A panel written in a
+   * page is therefore laid out against `<main>`, between the header and the bottom bar, and is
+   * painted under both of them however high its rung is, because its rung is only compared with its
+   * siblings inside that wrapper.
+   *
+   * IT WAS INVISIBLE UNTIL A PANEL OPENED FROM THE SIDEBAR. The conversation panels live on a screen
+   * that hides `MobileHeader` and `BottomNav` (`isMobileConvoOpen`), so there the content area IS the
+   * viewport and the containing block coincides with it. The community settings open from the
+   * conversation LIST, where both are on screen - so their foot, which is where the leave and delete
+   * buttons now are, sat under the bottom bar. The `Modal` they replaced never had the problem
+   * because `Modal` portals.
+   *
+   * The column must NOT portal, and not as a concession: at `xl` it is a flex SIBLING of the chat
+   * cards, and a node moved to `<body>` has no row left to join.
+   */
+  function escapesThePage(node: HTMLElement) {
+    return column ? undefined : portal(node);
+  }
 </script>
 
 <!--
@@ -80,11 +106,13 @@
     class="fixed inset-0 z-(--z-side-panel-scrim) bg-black/40 {column ? 'xl:hidden' : ''}"
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
+    use:escapesThePage
     transition:fade={{ duration: 180 }}
   ></button>
 
   <aside
     class="side-panel bg-cn-surface flex flex-col {column ? 'side-panel-column' : ''}"
+    use:escapesThePage
     transition:fly={{ x: 320, duration: 220 }}
   >
     <div
