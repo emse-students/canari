@@ -52,7 +52,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
 | the community settings read as a panel on the phone they were reported from | **ANSWERED ON THE Mi 9T, 2026-09-17, AND THE ROW'S OWN BLOCKER WAS FALSE.** It said this waited on the phone being free because it *"carries the USER'S OWN account behind an encryption PIN that is theirs"*. The user corrected that on 2026-09-17 - the handset holds test accounts only - and `identity.mjs` then read `A1 expected owner / shows owner / acts as owner`, so the run was the rig's to take all along. **A row may not park a check behind a premise nobody re-measures.** Read off a debug APK built from this tree at **436 x 945 CSS px, the device's own width**, no override. **The portal from #802 holds on hardware**: `panel.parentElement === document.body`, the drawer paints full-bleed `0 -> 945` OVER the bottom bar rather than inside `<main>`, and the foot - `Quitter la communaute` ending at 713, `Supprimer la communaute` at 759 - clears the bar's top edge at **873 by 114 px**. That is the half the browser A/B only implied, and it passes. The permission matrix is a `<table>` 519 px wide inside its own `overflow-x-auto` card of 371, which is the correct shape: **`document.documentElement.scrollWidth` is 436, equal to the viewport, so the PAGE never scrolls sideways.** **TWO OBSERVATIONS, NEITHER A FAILURE, BOTH P3**: the tab strip is `overflow-x: auto` at 483 px against 436, so the third tab renders truncated mid-word (`Memb`) on first paint with no affordance - three tabs at the app's primary phone width is where a wrap or tighter padding would fit; and the two danger-zone buttons are 38 px tall where the close button is 44. The tabs also carry **no `role="tab"` and no `role="tablist"`** - they are plain buttons, so nothing announces the strip as a tab set. The A/B that justified the portal is not repeated here: `SidePanel.svelte`'s docblock owns it ([device-verification](device-verification.md)). |
-| the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
+| a withheld product releases itself when an association's payments become ready | **NOTHING IS OWED BY THE USER HERE, AND THE ROW ASKED FOR A CLICK NOBODY WANTS TAKEN.** It said the BDE's 170 EUR tier needed ticking **En vente**; the user's answer on 2026-09-17 is that the tier is deliberately not on sale (*"Le BDE c'est normal que la Cotisation ne soit pas active"*). A false entry in the one table reserved for what only a human can do is the worst kind - a table nobody can drain is worse than the task it lists - so that half is struck rather than reworded. The MECHANISM behind it was never about the BDE and still holds: `activationWithheld` releases a product when payments BECOME ready, no event ever fires for an account that onboarded long ago, and a per-tier on-sale switch exists for exactly that reason. **Four associations have no payment account at all**, their products are correctly withheld, and what closes this is the next association to finish onboarding - whose products must go on sale with nobody touching them, which is an OBSERVATION and not a click |
 
 ---
 
@@ -1817,19 +1817,42 @@ side 2026-09-17, the three files are not three copies of one guard that drifted 
 | Where | Refuses on | If `INTERNAL_SHARED_SECRET` is absent | Other paths |
 | --- | --- | --- | --- |
 | `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | **401 in production**, allowed otherwise | none |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | falls through to a static `NGINX_AUTH_SECRET`, and allows the request when that is unset too | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | **401 in production since 2026-09-17** - it was the only one of the three that did not | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **401 in production**, allowed otherwise | logs a denial, `/push/` routes only |
 | `chat-gateway/src/presence.rs:34` | empty `x-user-id` | n/a | none - Rust, and it stays where it is |
 
-**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Two of
-the rows above are what this repository calls a fallback, and the rule says a fallback is a signal
-and never a path: `social-service` accepts a request in production when neither secret is configured,
-where its two siblings refuse, and it carries an unverified-JWT branch gated only on `NODE_ENV` not
-being `production`. Picking any one of the three as "the" shared guard silently changes what the
-other two services refuse - which is the exact accident the previous paragraph warns about, one level
-up from the discriminator it was written about. **Whoever takes this decides, in writing and before
-touching a file, which refusals are intended**; the shared HMAC verification can be lifted out
-first and on its own, because that half really is three identical copies.
+**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Picking
+any one of the three as "the" shared guard silently changes what the other two services refuse -
+which is the exact accident the previous paragraph warns about, one level up from the discriminator
+it was written about. **Whoever takes this decides, in writing and before touching a file, which
+refusals are intended**; the shared HMAC verification can be lifted out first and on its own, because
+that half really is three identical copies.
+
+#### ONE OF THE TWO DIVERGENCES IS SETTLED, AND IT WAS WORSE THAN THIS ENTRY SAID (2026-09-17)
+
+This entry described `social-service` as falling through to a static `NGINX_AUTH_SECRET`. **Nothing
+anywhere sets that variable** - not a compose file, not an env template, not the nginx config, and
+not the production container, which reports `INTERNAL_SHARED_SECRET` and `NODE_ENV` and no third
+name. So the `if` guarding it never fired, the `else` branch did nothing whatever, and control
+reached `if (userId) return true`. **The fallback was not a weaker check; it was no check**, and with
+the real secret absent a bare `X-User-Id` header was accepted as proof of its own authenticity.
+
+Latent rather than active - all three services carry the secret in production - and fixed rather than
+recorded, because what held it shut was the presence of a variable and not the code. The guard now
+fails closed like its two siblings and the dead branch is deleted. **It also had no test, which is
+how it stayed the outlier**; it has thirteen, written around what it must REFUSE, and verified by
+mutation: replayed against the previous guard, exactly two fail, with `Received function did not
+throw`.
+
+**WHAT IS LEFT OF THE DIVERGENCE IS THE UNVERIFIED-JWT BRANCH, AND IT IS A QUESTION, NOT AN
+OVERSIGHT.** It is unreachable on every deployed estate - dev PINS `NODE_ENV: production` where
+production merely defaults to it - so it runs only on a developer's own machine. **But it is not dead
+code there**: `frontend/vite.config.js` sends `/channels` straight to `social-service:3014`, outside
+nginx, because nginx has no location for it. That request carries a bearer token and no `X-User-Id`,
+which is precisely the branch. Deleting it therefore breaks `bun run dev`, and the honest fix is to
+give the local nginx a `/channels` location and point the proxy at it - closing the routing gap the
+fallback was papering over. **Put to the user 2026-09-17 and awaiting their answer**, because it
+changes their local loop.
 
 `verifyInternalToken` is exported from `core-service` and imported by **nobody** outside its own
 file. Two names for one CONCEPT is also why a reader auditing "does everything have

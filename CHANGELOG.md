@@ -92,6 +92,37 @@ Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,
 CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
 et c'est la premiere fois qu'on peut le dire avec un nombre.
 
+### Security - le garde de `social-service` ne se repliait pas sur un controle plus faible, il se repliait sur AUCUN
+
+Trois services portent ce garde. Deux echouent fermes quand `INTERNAL_SHARED_SECRET` manque en
+production : ils refusent tout. `social-service` etait le troisieme, et il partait ailleurs - vers une
+branche de repli lisant `NGINX_AUTH_SECRET`.
+
+**Rien ne pose cette variable.** Ni un fichier compose, ni un gabarit d'environnement, ni la
+configuration nginx, ni le conteneur de production - mesure le 2026-09-17, qui ne declare que
+`INTERNAL_SHARED_SECRET` et `NODE_ENV`. Son `if` ne se declenchait donc jamais, la branche `else` ne
+faisait rien du tout, et le controle atteignait `if (userId) return true`. Autrement dit : **avec le
+vrai secret absent, n'importe quelle requete portant un en-tete `X-User-Id` etait acceptee sur la foi
+de cet en-tete seul.** Un repli qui a pourri en porte ouverte.
+
+**Ce n'etait pas actif** : les trois services portent le secret en production aujourd'hui, le defaut
+etait donc latent. Il est neanmoins corrige plutot que note, parce que ce qui le tenait ferme n'etait
+pas le code mais la presence d'une variable.
+
+Le garde echoue desormais ferme comme ses deux freres, et la branche morte est supprimee au lieu
+d'etre reparee - un repli est un signal, jamais un chemin.
+
+**Et il n'avait aucun test, ce qui est exactement pourquoi il est reste le seul des trois a ne pas
+echouer ferme.** Il en a treize, ecrits autour de ce qu'il doit REFUSER : secret absent, jeton absent,
+jeton signe pour un autre utilisateur, jeton signe avec un autre secret, jeton vieux de deux minutes.
+**Verifie par mutation** - rejoues contre le garde d'avant, exactement deux tombent, et le message est
+`Received function did not throw`.
+
+Le chemin de developpement qui decode un JWT sans verifier sa signature n'est pas touche ici : il est
+inatteignable sur toute estate deployee (dev EPINGLE `NODE_ENV: production`), mais il sert
+`bun run dev`, ou `/channels` va droit sur social-service hors nginx. Ce qu'il advient de lui est une
+question ouverte, posee a l'utilisateur.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
@@ -962,7 +993,6 @@ la chaine, et l'affirmation remonte a la documentation elle-meme, pas a une lect
 plutot qu'attenuee. La correction tient sur la reponse servie, que n'importe qui relit en une
 requete.
 
-
 ### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux
 
 Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : l'avis
@@ -1238,7 +1268,6 @@ ligne.
 
 4 443 tests frontend sur 367 fichiers, `bun run check` 0 erreur sur 8 351 fichiers.
 
-
 ### Fixed - sur telephone, Entree envoyait le message plutot que de passer a la ligne
 
 Signale par l'utilisateur (2026-09-16) : sur telephone, une nouvelle ligne devait se comporter
@@ -1443,7 +1472,6 @@ par defaut (`cf-cache-status: DYNAMIC`, la ou un `.js` repond `HIT`), donc le mo
 traverse depuis le serveur a chaque fois qu'un navigateur ne l'a pas deja. Il faut une regle de
 cache dans le tableau de bord Cloudflare ; c'est note dans le backlog.
 
-
 ## [0.18.4] - 2026-09-15
 
 ### Fixed - une invitation deja honoree revenait a chaque synchronisation, indefiniment
@@ -1530,7 +1558,6 @@ silencieuse et ne programme rien ; `pageshow` le leve et, si la socket n'est plu
 reconnexion - c'est le cas du retour par le cache avant/arriere, ou le document revient avec une
 socket reellement perdue et ou personne d'autre ne le remarquerait. Une vraie navigation, elle,
 emporte tout le client.
-
 
 ### Fixed - deux regles CSS invalides sur chaque page, fabriquees a partir des fichiers de test
 
@@ -1645,7 +1672,6 @@ La conversation passe alors en `pending` plutot que `removed`, ce qui corrige un
 meme cause : `requestReAdd` retourne immediatement sur `lifecycle === 'removed'`, donc ecrire cet
 etat pendant une readmission **condamnait le groupe** si le Welcome n'arrivait jamais - la reparation
 ne pouvait plus etre redemandee.
-
 
 ### Added - un selecteur d'emoji rejoint le composeur, sur ordinateur
 
@@ -2278,7 +2304,6 @@ prediction du runner avait ete retournee. Une execution repondant `noAccentFound
 ligne. Elle est fermee, deux fois : `SEARCH5-...Reunion` est trouve par `...reunion` comme par
 `...REUNION`, `1/1` des deux cotes, propre.
 
-
 ### Changed - stripe 22.3.2 -> 22.6.2, et la version d'API franchie avec
 
 La montee du SDK et le literal de `stripe-api-version.ts` sont COUPLES par construction : les types
@@ -2689,7 +2714,6 @@ rangee qui revient a la ligne est honnete a tous les comptes, ne demande aucun e
 aucun seuil. Un message portant quarante reactions differentes est grand, et etre grand est la
 verite a son sujet.
 
-
 ### Fixed - sur telephone, la page des notifications n'etait atteignable par aucun lien
 
 La cloche de l'en-tete mobile ouvrait un panneau de 320 pixels colle au bord droit, qui flottait
@@ -2708,7 +2732,6 @@ il n'existait que sur telephone - l'ordinateur, lui, a toujours ouvert la page. 
 devenue un lien vers cette page, et garde ce que l'en-tete doit vraiment : le compte de non-lus et
 le rafraichissement qui le tient juste. Cent quatorze lignes deviennent trente-quatre, trois textes
 traduits et une variante d'affichage que plus personne ne demandait disparaissent avec.
-
 
 ### Fixed - le panneau d'emojis se refermait au premier doigt posé dessus
 
@@ -2797,7 +2820,6 @@ calendar was at its least readable on the device most people open it on.
 It now uses the same list, decided by the same predicate, and returns to the grid when the phone is
 turned sideways. Nothing changes on a computer.
 
-
 ### Fixed - anybody signed in could change the poster on anybody's event
 
 The two endpoints behind an event's poster - the upload and the removal - checked only that the
@@ -2829,7 +2851,6 @@ changing it mid-form repopulates the list underneath.
 The poster's state and its two endpoints are now one implementation instead of one screen's private
 code, and a failed form lookup is logged on both screens rather than leaving an empty picker with no
 explanation anywhere.
-
 
 ### Fixed - an identifier in the admin pages was cut short with no way to read it
 
@@ -2866,7 +2887,6 @@ A row in an agenda list now names **every** association running the event - "Cor
 than the first one only, so it agrees with the cell above it, which has always painted one band per
 association. The only name suppressed is the one the page already carries in its own title: an event
 an association runs alone, on its own page.
-
 
 ### Fixed - your own name was cut short at the top of your profile
 
@@ -3014,7 +3034,6 @@ the conversation's method would have deleted the key channel outright, taking ev
 with it. The mark is also cleared the moment the channel catches up on its own, which is what
 happens in the ordinary case.
 
-
 ### Fixed - a device could sit in a conversation's member list for ever, receiving nothing
 
 When you are invited to a conversation on a new device, the server writes you a seat straight away
@@ -3065,7 +3084,6 @@ groups did not.
 Now every member fixes it on their next connection, using the same comparison communities use: the
 list of people entitled to read the conversation against the list of places in it. Anything with no
 one behind it is removed. Nothing is announced twice - the person leaving already said so.
-
 
 ### Fixed - a conversation that failed to be created left a permanent, empty trace of itself
 
@@ -3198,7 +3216,6 @@ All seven now share one implementation, so every modal in the app closes on Esca
 beside it, keeps clear of the home indicator, sits at a named layer rather than a number somebody
 picked, and is attached to the page itself rather than to whatever happens to be around it.
 
-
 ### Fixed - an association with no colour of its own wore two different ones
 
 An association that has never picked a colour is given one, derived from something stable so that it
@@ -3215,7 +3232,6 @@ now one derivation and the twelve others call it.
 It is keyed on the ID, because a name changes the day a club renames itself - and on that day the
 old code gave it a new colour, silently, on half the screens only. A colour saved as an empty string
 is also treated as "not chosen" now; it used to be treated as a colour, which drew nothing at all.
-
 
 ### Fixed - an association's page was cut off on a phone, and five pages were each their own width
 
@@ -3237,7 +3253,6 @@ page is eight lines that hand the work to a shared component, and that is where 
 check that runs before every release now looks for the shape rather than the address, so a page
 cannot invent a width again.
 
-
 ### Changed - a partnership card wears the partner's own colour
 
 A wall of partnerships all carried the same stripe - the club's colour, repeated eight times - which
@@ -3250,7 +3265,6 @@ something that is absent. So white, black, grey and transparent are all refused 
 being nudged into something usable: a card whose logo has no colour of its own keeps the club's,
 exactly as before. The colour that is found is also brightened or darkened into the range the rest of
 the app uses, so it stays visible in both the light and the dark theme.
-
 
 ### Fixed - the GIF picker opened inside a post card instead of over the page
 
@@ -3266,7 +3280,6 @@ opened from the chat composer, where nothing above it moves, was always fine.
 It is now rendered outside the card entirely, so it covers the window wherever it is opened from. The
 card keeps its lift. The dark shade behind the picker is gone as well - a click outside it still
 closes it.
-
 
 ### Fixed - a conversation nobody could repair stayed shut after the person who could came back
 
@@ -3284,7 +3297,6 @@ which only builds from September onwards and is not required of anyone.
 The moment a member comes back, every conversation recorded as unrepairable is asked again. The
 cadence that keeps it to one attempt a minute is untouched, so a flaky connection on the other side
 cannot turn this into a storm.
-
 
 ### Fixed - a test that could never fail, because it was looking for something no file contains
 
@@ -3305,7 +3317,6 @@ repository rather than a list, including files not yet added, and a sweep of all
 up and repaired: one test that was passing vacuously, one that had quietly lost a third of what it
 looked for, and six places where working code was written in bytes nobody could read.
 
-
 ### Changed - the association and promo-list cards show the whole name, and wear the association's colour
 
 The wall of cards on "Associations" and on "Listes" cut every name off at one line, mid-word, with no
@@ -3322,7 +3333,6 @@ the bottom of a row instead of floating at different heights.
 The two pages drew this card five times between them, and every copy had the same two faults. There
 is now one card, so the next change to it is one change.
 
-
 ### Fixed - the reaction bar ran off the side of the window on a short message
 
 Hovering a message offers six quick reactions, in a pill that opens next to it. The pill has a fixed
@@ -3337,7 +3347,6 @@ does now, against the same edge and with the same preference: the pill still ope
 wherever it fits, and only swings to the other side when it genuinely does not.
 
 The overflow menu behind the `...` is the same pill in a different shape and was fixed with it.
-
 
 ### Fixed - being removed from a conversation is recorded once, and it survives the reload
 
@@ -3365,7 +3374,6 @@ and one line names HOW the client found out. That last part is not decoration - 
 the client learnt it by failing, having written and encrypted a message to discover what a frame it
 had already received said plainly. Those two are worded so that no rule written to forgive the
 normal case can ever quietly forgive them.
-
 
 ### Fixed - a device waiting to be let back in was forgotten by the queue built to remember it
 
@@ -3737,7 +3745,6 @@ door can be silent by omission - which is exactly how `kickStaleUser` came to be
 `invitations.controller.kick-marker.spec.ts` follow the column one layer down and pin the answer
 each door gives. Both run red against the previous controllers.
 
-
 ### Fixed - a device that processed its Welcome in the foreground was `active` and unreachable
 
 `dm_device_group_memberships` is the truth about who is in a group; `group:members:{groupId}` is the
@@ -3778,7 +3785,6 @@ row is written - a refusal after it would leave a memberless group for someone e
 `messaging.one-active-writer.spec.ts` pins the writer's own behaviour and each door's delegation -
 16 cases, six of them run red against the previous controllers, including all three `createGroup`
 defects.
-
 
 ### Changed - "Cotisations et achats" moved from Settings to the profile
 
@@ -3903,7 +3909,6 @@ So both controls took the reader from something to nothing, and neither was the 
 that is a click on the day itself, in the grid above, which is where the reader already is. The
 prop, both buttons and the two message keys are gone.
 
-
 ### Fixed - a lost gateway routing set repopulated itself silently at two of the three doors that rebuild it
 
 `group:members:<id>` is a Redis set the gateway routes on; `device_group_memberships` is what
@@ -3998,7 +4003,6 @@ Nothing pinned the ordering that does hold the invariant, so `BaseMlsService.sen
 asserts the ledger write lands BEFORE the POST - falsified by moving it after, which is the
 direction that under-counts a failed POST and re-issues a spent generation.
 
-
 ### Removed - two MLS entry points nothing called, one of which could only destroy a conversation
 
 `forceCreateGroup` and `dropGroup` were each a complete vertical stack - a TS interface declaration,
@@ -4054,7 +4058,6 @@ reaches the accounts already affected. The `pushToken` field is dropped when the
 the auth bearer token despite its name, and a merge writer that kept it would leave the previous
 account's credential in a file describing the new one. The swallowed `.catch(() => {})` on the
 post-init push-context write now accuses.
-
 
 ### Changed - the dead ends were written from the code; now they have populations
 
@@ -4433,7 +4436,6 @@ dialog centre 640, card centre 685 (48 from the gutter, less 3 for the scroll co
 The gutter now reads the same `isLoginPage` the sidebar does. Whether a bar is drawn and whether
 room is kept for it were two independent statements about one fact, and nothing compared them.
 
-
 ## [0.17.2] - 2026-09-11
 
 ### Fixed - no web client published a key package, and the type that would have said so was written by hand
@@ -4806,7 +4808,6 @@ What this does **not** decide is whether someone logged in should be able to ask
 person rather than only people they already share a conversation with. That is a genuine
 question, a larger change, and it is written down rather than quietly settled here.
 
-
 ### Security - the remaining fourteen areas were checked, and eight more answered anybody
 
 The two entries below each closed one hole and said the same thing about the rest: the
@@ -4959,7 +4960,6 @@ launchable, derived from the project itself rather than a list somebody maintain
 check turned up three more places where the same defect had been quietly worked around - the
 build file marked the files launchable again on every single run, which had been hiding it.
 
-
 ### Changed - the width of a page stopped depending on which page it was
 
 Moving between two tabs of Canari moved the text under the reader, and the user said so plainly:
@@ -5013,7 +5013,6 @@ its own. The two extra copies are gone, and a test now fails if one comes back.
 The free-amount products let you type what you want to pay. The field could not shrink below about
 170px - the intrinsic width a number input carries - so once tiles stopped being 388px wide, the
 currency beside it was cut in half by the edge of the card.
-
 
 ### Fixed - a form accepted answers to questions it never asked
 
@@ -5127,7 +5126,6 @@ it looked like it did:
 One of them also restored a rule this project holds everywhere else: a failure that is turned into
 a value now says so in the log, instead of disappearing.
 
-
 ### Added - the phone app's Rust dependencies get updated again
 
 Internal. The dependency robot has been unable to update the code that builds the mobile app since
@@ -5146,7 +5144,6 @@ keeps up to date and closes once the work is done. **The first run found 194 pen
 The job does not turn the build red for being behind, because being slightly behind is normal and a
 warning that is always on is a warning nobody reads. It goes red only if the check itself could not
 be carried out - which covers the four ways "nothing to report" can really mean "nobody looked".
-
 
 ### Added - the Android tests that had never run, and proof that they ran
 
@@ -5167,7 +5164,6 @@ fails and explains why.
 
 Placing it on every change rather than at release time was a measurement, not a preference: a cold
 run takes thirty-one seconds.
-
 
 ### Fixed - a peer could have written a line of Canari's own log
 
@@ -5190,7 +5186,6 @@ Unicode control-character class that the scanner cannot read through, so the two
 protected were still being reported and no future fix would have cleared them. The check now does
 the newline pass separately and first. The behaviour is identical, and a test pins that against
 the old version rather than asserting it in prose.
-
 
 ### Fixed - the CodeQL check had been red on every pull request for eight days, and that hid a real alert
 
@@ -5241,7 +5236,6 @@ alert's usual remedy is to strip comments repeatedly until nothing changes, and 
 not nest - `<!-- a <!-- b --> c -->` ends at the first `-->`, so a second pass would have deleted
 markup the file really has. The stripper scans instead, which is the same behaviour written so a
 reader can see it, verified byte-for-byte identical on all 236 files it runs over.
-
 
 ### Changed - every icon button is the same size as the one beside it
 
@@ -5456,7 +5450,6 @@ keeps its parenthesis, being seconds.
 A new check holds the translation files to all three rules, so the twenty-seventh fails instead of
 shipping.
 
-
 ## [0.16.6] - 2026-09-09
 
 ### Changed - "Nouvelle discussion" opens on the people you already talk to
@@ -5656,7 +5649,6 @@ builds a fresh recording with nothing in common with the one still flushing behi
 Fifteen tests drive real pointer events at the real button, including a deferred-stop recorder that
 a component conflating those two halves would fail.
 
-
 ### Changed - every z-index that can meet another one now has a name, and a test keeps it that way
 
 There were **nineteen distinct z-index values in the tree and no scale** (counted 2026-09-09): 0, 1,
@@ -5692,7 +5684,6 @@ and the containing block for every `position: fixed` inside it. Measured on `/ch
 whole page sits at rung 10 of the root context, so a sheet asking for 110 was really asking for
 110-of-10. Anything that must escape a page entirely has to be portalled to the body.
 
-
 ### Added - the agenda is a schedule list on a phone, not a seven-column grid
 
 *"sur mobile, on devrait avoir la liste des evenements sous forme de planning au lieu de la
@@ -5715,7 +5706,6 @@ The two views share one module rather than two copies of "does this multi-day ev
 day" - the rule that makes a three-day event appear on all three of its days, which is what the
 reader is actually asking. Twelve tests, including a month with 31 days and an event ending one
 minute past midnight.
-
 
 ### Added - a proposed event now tells the calendar managers, and the four answers stopped being English
 
@@ -5754,7 +5744,6 @@ server. A refusal keeps its reason, which is the one thing a reader cannot recon
 answer. A calendar manager goes to the queue where they can act, a proposer goes to the agenda where
 the answer is already applied.
 
-
 ### Fixed - a page title painted straight over its own action buttons on a phone, on every page with two of them
 
 Reported as *"L'en-tete de la page associations est moche + chevauchements"*, and it is exactly
@@ -5771,7 +5760,6 @@ that - a single unbreakable word must wrap rather than escape its box, whatever 
 
 The header is also 10px SHORTER than before despite stacking, because the subtitle now fits on one
 line instead of four.
-
 
 ### Fixed - the reaction picker ran off the right of a phone, with two reactions behind a scroll nobody announced
 
@@ -5791,7 +5779,6 @@ pointer and a screen reader both reach it. It is anchored to the actions ROW rat
 button inside it, so the eight share whatever width the card has and the bar can never be wider than
 the thing it belongs to. Measured after: **313px wide inside a 393px screen, 0px hidden, all eight
 visible**, tiles 36 x 44px.
-
 
 ### Fixed - an estate with no avatar provider answered 502 to every face, uncached, for ever
 
@@ -5820,7 +5807,6 @@ principle and this attempt failed. The startup warning no longer claims avatars 
 "unavailable" either, and says instead what a reader needs - that this estate has no provider, that
 clients will draw initials, and that the line appears once because the condition cannot change.
 
-
 ### Fixed - one tap on the composer chevron un-folded the edge controls for the rest of the message
 
 The composer folds paperclip / poll / GIF / microphone away once a message is being written and puts
@@ -5836,7 +5822,6 @@ is still two taps (chevron, then button) and neither is a keystroke, so nothing 
 
 Pinned by six tests that drive the real contenteditable rather than calling the handler - two of
 them fail against the previous behaviour, which is the only reason the other four are worth keeping.
-
 
 ### Fixed - a top-anchored modal drew square corners in a 16px moat, and its two size utilities were dead
 
@@ -6035,7 +6020,6 @@ A second pass took the per-message hover, the scrollbars and the two conversatio
   measured one point of separation, and a new elevation token was added and applied to them before the
   arithmetic gave the real cause away (0.6 x 31 = 18.6). The token stayed, for the message popovers that
   genuinely need it; the drawers went back to the ordinary surface.
-
 
 ### Changed - eight content widths across 34 pages became one, and four pages stopped drawing their own logo
 
@@ -6429,7 +6413,6 @@ fingerprint inside the envelope's own framing, which changes the WRITE format: a
 a header reads it as a nonce and reports this very failure, newly caused by a downgrade. So it is
 read-first, write-later, across two releases, and this is the first of them.
 
-
 ### Fixed - a notification tap opened the app on nothing, because the landing gave up 174 ms too early
 
 Reported from production: a first message from someone you have no conversation with notifies and
@@ -6501,7 +6484,6 @@ keeping.
 
 The decision moved next to the budget it reasons about, as `uninlinedProtoIsWorthReporting`, so it
 is testable and carries its counts.
-
 
 ### Fixed - whether a mention reached you through your own Do-Not-Disturb depended on which transport carried it
 
@@ -6862,7 +6844,6 @@ Both are what CORRUPT-7 is written to find - *drop an object store from the web 
 mid-session* - and neither needed the row to be found: every swallowed branch logs, because in a
 best-effort path that is all a loss leaves.
 
-
 ### Fixed - the device-key vault reported an altered blob and an ordinary storage clear with the same silence, and left a malformed one to fail again on every load
 
 `loadDeviceKey` had two silent branches. A blob with no `iv:` separator returned null without
@@ -6884,7 +6865,6 @@ malformed, wrap key gone (explicitly *NOT evidence of tampering*), and a blob th
 under a wrap key that IS present - which accuses, with everything ordinary already excluded.
 
 Five tests, none of which existed: this module had no test file at all.
-
 
 ### Fixed - a web device whose MLS state had been written short could not log in at all, where the same damage on the phone re-enrols cleanly
 
@@ -6911,7 +6891,6 @@ It also answers CORRUPT-4 - *zero-length MLS state, treated as absent, clean re-
 has been `pending` on the board since the phase was designed, and which has no runner. The unit is
 pinned by a test that was written failing first; the end-to-end row is still owed.
 
-
 ### Added - the campaign tool now detects an intermittent row, which it had described and never checked for eleven days
 
 ```rows.mjs``` graded every row on its newest verdict. That is right when a row's answer is a fact about
@@ -6929,7 +6908,6 @@ Twenty-eight groups, eighteen of them deciding a cell the board shows today, and
 which. The principle was written into `docs/wiki/testing-methodology.md` on 2026-08-26, naming
 COMM-18 as the example - an older PASS is not evidence against a newer FAIL, it is evidence the
 defect is intermittent - and nothing had ever asserted it.
-
 
 ### Fixed - a campaign check reported "the repair never fired" on every run, healed or not, because it matched three strings the app had stopped printing
 
@@ -6951,7 +6929,6 @@ the answer while dropping every `[HISTORY_RECONCILE]` line, so a `PARTIAL` row c
 tell *nobody asked* from *the ask was answered badly*. It is the second time a verdict here has been
 computed over one projection of the evidence and displayed over another; the first cost a whole
 diagnosis in August and is recorded in the same file as harness fault #31.
-
 
 ### Fixed - a reload could drop the fifty key packages a device had just published, and nothing anywhere said so
 
@@ -7072,7 +7049,6 @@ so a capture taken at the checkpoint contains what a capture taken earlier did a
 It also gains the bookkeeping this path never had, `persistCheckpoint` bracketing the write with
 `snapshotEmitted` / `commitPersisted`, so the generations it makes durable are credited instead of
 being burnt again on the next load.
-
 
 ### Fixed - two decrypt paths spent a ratchet generation and told no ledger, so the archive replay called a message it had already read a permanent loss
 
@@ -8964,7 +8940,6 @@ told their correct PIN was wrong, account-wide.
   Commit and push belong in a separate invocation from the branch creation, once the branch is
   confirmed.
 
-
 ### Security
 
 - **An advisory GitHub had raised was invisible to every gate in this repository.**
@@ -9389,7 +9364,6 @@ told their correct PIN was wrong, account-wide.
   rather than remembered. `allow_merge_commit` and `allow_rebase_merge` are also on, which is why
   `--squash` is passed explicitly.
 
-
 ## [0.16.0] - 2026-09-03
 
 ### Changed
@@ -9540,7 +9514,6 @@ told their correct PIN was wrong, account-wide.
   hand dispatch it is `main` at dispatch time. Right almost always, and the notes gate reads a FILE
   out of the working tree, so almost always is not enough: a dispatch minutes after a merge would
   have judged the release notes of a commit it was not releasing.
-
 
 ## [0.15.0] - 2026-09-03
 
@@ -11582,7 +11555,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   a zero meaning "silent" and a zero meaning "unread" must never produce the same row. There is no
   fallback to the weaker predicate, deliberately.
 
-
 - **The harness recorded a `415` as dirt and nothing in the record could say which request it was.**
   HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on `Failed to load resource: the server
   responded with a status of 415`, and no `badHttp` or `knownBadHttp` entry named it - so the method,
@@ -11623,7 +11595,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   line that accuses now fires on an accusation. The reconciliation was already once per replay; the
   file's own comment ("a page can hold forty such frames and they are all one difference") had said
   so since it was written, and only the log disagreed.
-
 
 - **Blocking a person did nothing at all on the server, and it took opening a conversation down with
   it.** `UsersModule` declared `TypeOrmModule.forFeature([User, UserBlock])`, and the root DataSource
@@ -12734,7 +12705,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   directory, with no way to see which one fired. Every JavaScript install, test, build and lint
   target now runs one installer, `bun install --frozen-lockfile`.
 
-
 - **One bun version, named in one file, instead of three scattered across the workflows.** Nothing in
   this repo declared which bun it wanted - no `engines`, no `packageManager`, no `.bun-version` - and
   the workflows had drifted to three answers: `1.2.18` in the five release pipelines, `1.4.0` in
@@ -12755,7 +12725,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   packages, no changes). The full measurement, and why it also drops the plan to migrate the five
   repos to Renovate, is in
   [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#8-the-package-manager-and-the-version-four-repos-never-declared).
-
 
 - **The pricing grid reads at any number of columns, and a cell is its own availability control.**
   The columns were sized by whichever header happened to be longest and had no minimum at all, so
@@ -13121,7 +13090,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   clean the row would have traded a detector for a cell. COMM-24 is recorded `PASS-DIRTY` with its
   dirt named, and the selftest now ASSERTS that the shape stays unexplained, so a later pass to
   "finish the job" fails loudly instead of quietly succeeding.
-
 
 - **A notification avatar is no longer decoded at whatever resolution its owner uploaded.** Google
   Play's release analysis flagged `BitmapFactory` without subsampling in
@@ -13802,7 +13770,6 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   reaches by passing `null` from inside a session. It now says what it is about to do before doing
   it, naming the caller, the sessions it is behind, and what to change. A hang's last line is now a
   line that explains it.
-
 
 - **A member removed from a group asked to be re-added, and its outbox retried an encrypt that could
   never succeed.** The Remove commit NAMES the device it evicts, and applying it produced nothing: the
