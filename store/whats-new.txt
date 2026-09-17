@@ -1,11 +1,13 @@
-version: 0.18.9
+version: 0.18.10
 
-Corrections d'affichage et de notifications.
+Demarrage plus rapide, et des erreurs enfin lisibles.
 
-Un avis de groupe (ajout, depart) pouvait arriver comme un message de « Utilisateur », avec sonnerie et notification: il redevient un avis, en silence.
+La connexion au serveur de discussion ne fait plus la queue derriere le dechiffrement local.
 
-Un ajout de membres pouvait s'afficher plusieurs fois de suite, a l'identique.
+Les messages d'erreur ne montrent plus la phrase technique d'une exception: chaque refus est dit en francais.
 
-Retour arriere apres un saut de ligne (Maj+Entree) ne supprimait pas la ligne, et en effacait parfois deux.
+Un fichier trop volumineux le dit avant l'envoi.
 
-Les photos de profil modifiees sur MiGallery se mettent enfin a jour.
+Une carte de « mes associations » affiche votre role au lieu d'un « 0 membres » faux.
+
+Le depart d'un membre s'affiche au moment ou il arrive.
