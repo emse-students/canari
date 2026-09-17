@@ -17,7 +17,12 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import { chat_system_removed_from_group } from '$lib/paraglide/messages';
+import {
+  chat_group_remove_member_confirm,
+  chat_system_removed_from_group,
+  common_remove_label,
+} from '$lib/paraglide/messages';
+import { showConfirm } from '$lib/stores/confirm.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
@@ -1352,11 +1357,34 @@ export function useConversations() {
     );
   }
 
-  /** Removes a member from the currently selected group via an MLS commit, broadcasts the removal, and refreshes the member list. */
+  /**
+   * Removes a member from the currently selected group via an MLS commit, broadcasts the removal,
+   * and refreshes the member list.
+   *
+   * IT ASKS FIRST, AND THE CONFIRMATION IS HERE RATHER THAN IN THE PANEL. Reported by the user
+   * 2026-09-17 (*"le bouton pour retirer les gens des groupes est trop sensible"*): the control is a
+   * 16 px `UserMinus` icon in a member row, and one press committed the removal. Its two siblings -
+   * the community kick and the channel-access removal - both already open a `danger` dialog, so this
+   * was the odd one out rather than a decision.
+   *
+   * THE GESTURE IS NOT UNDOABLE, WHICH IS WHAT EARNS THE DIALOG. This is an MLS commit: the epoch
+   * advances, the removed device cannot decrypt anything after it, and bringing the person back
+   * needs a fresh Welcome rather than a click that puts the row back. A confirmation on a reversible
+   * action is friction; on this one it is the only chance to notice.
+   *
+   * It guards the CHOKE POINT and not the button. `ChatGroupPanel` takes `onRemoveMember` as a
+   * prop, so a second caller would be one more unguarded path - asking here means every caller
+   * inherits it, which is the same reason the deletion paths do it at their own call site.
+   */
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
+    const confirmed = await showConfirm(chat_group_remove_member_confirm(), {
+      danger: true,
+      confirmLabel: common_remove_label(),
+    });
+    if (!confirmed) return;
     try {
       await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),

@@ -158,6 +158,43 @@ export async function parkConversation(cx) {
 }
 
 /**
+ * Takes a client out of whatever conversation it is in, ON EITHER LAYOUT.
+ *
+ * ## Why a push row cannot do without this
+ *
+ * **ANOTHER DEVICE OF THE SAME ACCOUNT, LEFT INSIDE THE CONVERSATION, CANCELS THE NOTIFICATION THE
+ * ROW IS WAITING FOR.** Not a race and not a rig artefact - it is the product working: a read
+ * receipt is a silent push, and `CanariFirebaseMessagingService` reads `senderId == myUserId` on the
+ * CLEARTEXT fields and calls `cancelConversationNotification`, deliberately before the decrypt
+ * ladder so that a killed, behind phone still dismisses. Measured on the first NOTIF-15 run,
+ * 2026-09-17: the phone BUILT the notification (`showNotification: notifId=1001`, 17:02:32.107) and
+ * removed it 80 ms later (`FCM silent from self`, 17:02:32.187), taking the reaction notification
+ * with it. A poll on any sane interval sees nothing and reports a phone that was never told - the
+ * exact shape of the four verdicts `fcmlink.mjs` was written after.
+ *
+ * So the owner's browsers are parked BEFORE the phone is killed, and the park is a PRECONDITION of
+ * the verdict rather than a tidy-up - `READ-3` already treats its own park that way.
+ *
+ * ## Why it is not just `parkConversation`
+ *
+ * `parkConversation` addresses the back control, which only the MOBILE layout has: a desktop browser
+ * keeps the list beside the conversation and offers nothing to press, so it correctly returns "this
+ * layout offers no back control" and leaves the tab exactly where it was. That is the right answer
+ * to the question it asks and the wrong outcome here. A browser leaves by going somewhere else, and
+ * `/dashboard` is chosen because it is the furthest route from chat that every account can reach.
+ *
+ * @returns {Promise<string>} what `parkConversation` returns, or `routed away` / a reason it could
+ *   not - and callers should treat anything but a leaving answer as an unmet precondition.
+ */
+export async function leaveConversation(cx) {
+  const parked = await parkConversation(cx);
+  if (!parked.startsWith('a conversation is open and this layout')) return parked;
+  await goto(cx, '/dashboard');
+  const gone = await until(cx, `${PANE_STATE} === 'nothing'`, 10000).catch(() => null);
+  return gone === null ? 'routed to /dashboard and a conversation pane is STILL open' : 'routed away';
+}
+
+/**
  * The pane's text WITHOUT the composer's - the composer is inside the pane.
  *
  * Without the subtraction, text sitting in the composer reads back as a delivered message: a send
@@ -2191,6 +2228,43 @@ export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) 
     await pressBubbleControl(cx, textMatch, MORE_ACTIONS, timeoutMs);
   }
   return pressBubbleControl(cx, textMatch, label, timeoutMs);
+}
+
+/**
+ * THE SIX THE QUICK STRIP OFFERS, AND NOTHING ELSE REACHES THEM IN ONE PRESS.
+ *
+ * `Réagir` does not open the emoji keyboard: it opens a six-button strip, and a seventh button
+ * ("Plus de réactions") is what opens the full `<emoji-picker>`. Measured on the running app rather
+ * than read off the component, because the first attempt here looked for `<emoji-picker>` straight
+ * after pressing `Réagir` and found NO SUCH ELEMENT - the picker is not mounted until that seventh
+ * button is pressed. A gesture written against the component's source would have driven a shadow
+ * root that is not on the page.
+ *
+ * Declared, not discovered per call, for the reason `QUICK_BAR_ACTIONS` is declared: reaching for
+ * an emoji and falling back to the full picker when it is missing would PASS on a build that had
+ * lost the strip entirely.
+ */
+export const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '👍', '😡'];
+
+/**
+ * Reacts to ONE message with one of the strip's six emoji.
+ *
+ * Two presses on the SAME row, both scoped to that row by {@link pressBubbleControl} - which is the
+ * whole point of not doing this with a document-wide selector. Every message carries its own
+ * toolbar in the DOM, so `[aria-label="Réagir avec ❤️"]` resolves to the FIRST one on the page and
+ * silently reacts to the oldest message in the history; that is the identical trap `MSG-3` fell
+ * into with `text=Répondre`, and it is why this is a gesture here rather than two lines in a runner.
+ *
+ * @param {object} cx a connected client
+ * @param {string} textMatch text identifying the target bubble - a marker, never an account name
+ * @param {string} [emoji] one of {@link QUICK_REACTIONS}
+ */
+export async function reactToBubble(cx, textMatch, emoji = '❤️') {
+  if (!QUICK_REACTIONS.includes(emoji)) {
+    throw new Error(`"${emoji}" is not on the quick strip - one of ${QUICK_REACTIONS.join(' ')}`);
+  }
+  await pressBubbleControl(cx, textMatch, 'Réagir', 5000);
+  return pressBubbleControl(cx, textMatch, `Réagir avec ${emoji}`, 5000);
 }
 
 /** One press on one control of a hovered bubble's toolbar - the strip's or the open menu's. */
