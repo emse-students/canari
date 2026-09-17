@@ -79,6 +79,22 @@
 >
   {#if event}
     <div class="space-y-4 text-sm">
+      <!--
+        A PROPOSED EVENT SAYS SO HERE FIRST, BECAUSE THIS IS WHERE A READER DECIDES WHETHER TO COME.
+        The month grid has always dimmed and dashed one; this modal is what the grid OPENS, and it
+        said nothing at all until 2026-09-17 - so an event nobody has validated read exactly like a
+        confirmed one at the moment it mattered most. The dashes are the same vocabulary the two row
+        views use, and unlike them this surface has room to say it in a sentence rather than a
+        tooltip.
+      -->
+      {#if event.status === 'pending'}
+        <p
+          class="border-cn-border text-text-muted rounded-xl border border-dashed px-3 py-2 text-xs"
+        >
+          {m.calendar_event_pending_notice()}
+        </p>
+      {/if}
+
       {#if identityLinks.length > 0}
         <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
           {#each identityLinks as link, i (link.associationId)}

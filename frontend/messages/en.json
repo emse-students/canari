@@ -2280,6 +2280,8 @@
   "calendar_subtitle": "Monthly view - click a day to see its events.",
   "calendar_subtitle_schedule": "This month's events, day by day.",
   "calendar_deposit_button": "Submit an event",
+  "calendar_event_pending_notice": "This event is awaiting validation: it is not confirmed yet.",
+  "calendar_event_pending_title": "{title} - awaiting validation",
   "calendar_moderate_label": "Moderate pending events",
   "calendar_moderate_open": "Open the queue",
   "calendar_prev_month": "Previous month",

@@ -1444,17 +1444,24 @@ Each of these is a REPORT, not a diagnosis. What is written under it is the repo
 lookup already settles; anything further is owed by whoever takes the item, and a hypothesis is
 marked as one.
 
-### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
+### P3 - FIXED, UNSHIPPED - a PROPOSED event read as a VALIDATED one everywhere except the grid (user, 2026-09-17)
 
 Verbatim: *"Pas de difference entre un evenement propose et un evenement valide dans la vue planning
 liste (en mode calendrier il y a des pointilles)."*
 
-**The distinction already has a vocabulary in this product** - the calendar mode draws a pending
-event with a dashed border - so this is a rendering gap in one view rather than a design question,
-and the answer should reuse that vocabulary rather than invent a second one. It is the same
-pending/validated split `GET /associations/:id/events` filters on for a caller it cannot identify.
+**The gap was wider than the report.** `MonthCalendarGridRich` was the ONLY one of four surfaces
+reading `status`; `CalendarScheduleList` (the phone's only view), `CalendarDayEventsPanel` (the rail
+beside the grid) and `CalendarEventDetailModal` (what all three OPEN) each take the same
+`AssociationCalendarFeedEvent` and each ignored the flag. The modal is the worst of the three, being
+the screen on which a reader decides whether to come.
 
-**Not investigated**: which component draws the list row, and whether it even receives the flag.
+All three now speak the grid's vocabulary in their own shape - a dashed ring instead of a filled dot
+or bar, the row dimmed - and none of them carries the distinction by colour or shape alone: each row
+gains a `title` saying it in words, from `calendar_event_pending_title`, the one message the grid now
+uses too (its `title` had been a raw French literal in markup).
+
+**What is NOT closed by this**: nothing tells a reader WHO is expected to validate it, or when. That
+is a question about the moderation flow, not about rendering, and no one has asked it.
 
 ### P3 - the "Connexion en cours" panel is transparent and the page shows through it (user, 2026-09-17)
 
