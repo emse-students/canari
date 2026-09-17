@@ -1438,11 +1438,30 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ---
 
-## Reported by the USER on 2026-09-17 - five items, verbatim, none of them investigated yet
+## Reported by the USER on 2026-09-17 - six items, verbatim
 
-Each of these is a REPORT, not a diagnosis. What is written under it is the report and whatever one
-lookup already settles; anything further is owed by whoever takes the item, and a hypothesis is
-marked as one.
+Each of these started as a REPORT, not a diagnosis. What is written under it is the report and
+whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
+one.
+
+### P2 - FIXED, UNSHIPPED - opening ANY modal threw the page back to the top (user, 2026-09-17)
+
+Verbatim: *"Cliquer sur evenement sur mobile (type liste) renvoie vers le haut de la page aussi,
+c'est bizarre"*.
+
+**The screen in the report had nothing to do with it.** `openDetail` sets two fields and nothing
+else; the cause is in `focusTrap`, and it applied to every modal in the application - `Modal`,
+`ModalOverlay` and `FullScreenViewer` all portal and all trap focus. Three facts compose: a
+`fixed` backdrop written inside `.page-scroll-wrap` is laid out at that SCROLLER's origin because
+`will-change: transform` makes it the containing block; a portal moves the node one effect after
+creation and the CHILD's action runs first; and `focus()` scrolls ancestors to reveal its target.
+Measured in Chrome on that geometry: scroller at 1500px, 0px after `focus()`, 1500px after
+`focus({ preventScroll: true })`. The full account is in
+[architecture](frontend/architecture.md#a-portalled-overlay-is-inside-the-page-for-one-effect-and-focusing-it-there-scrolls-the-page-away).
+
+**What this does NOT close**: the same "one effect in the wrong parent" window is open to anything
+else that measures or scrolls to a to-be-portalled node. Nothing enumerates those call sites - the
+sweep of `.focus()` done here found only this one, and a measurement is not a `.focus()`.
 
 ### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
 

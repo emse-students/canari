@@ -257,6 +257,44 @@ what is true. What a disclosure *does* owe is **Escape**, closing and returning 
 the outside-click backdrop only serves a pointer, and a keyboard user who opened a portalled panel
 has nothing near their focus to get back to.
 
+### A portalled overlay is inside the page for one effect, and focusing it there scrolls the page away
+
+**A modal opened from a scrolled page threw that page back to the top** - every modal in the app, on
+every platform, until 2026-09-17. The report was about one screen (*"Cliquer sur evenement sur mobile
+(type liste) renvoie vers le haut de la page"*), and nothing in that screen was involved. Three
+independent facts compose into it, and none of them is wrong on its own:
+
+1. **`.page-scroll-wrap` carries `will-change: transform`** for the swipe-between-tabs gesture, which
+   makes it the containing block for every `position: fixed` descendant - the fact the layer ladder
+   in `app.css` already documents, for a different consequence. A backdrop written `fixed inset-0`
+   inside a page is therefore laid out at that SCROLLER's origin, near the top of its content, and
+   not against the viewport.
+2. **A portal moves the node one effect AFTER it is created, and the child's action runs first.**
+   Svelte 5 emits `$.action(<panel>, focusTrap)` before `$.action(<backdrop>, portal)` for
+   `<div use:portal><div use:focusTrap>` - measured by compiling that exact shape, not assumed. So
+   there is one effect in which the overlay genuinely is a descendant of the page scroller.
+3. **`HTMLElement.focus()` scrolls its ancestors to reveal the element**, which is its whole point
+   everywhere else.
+
+Together, `focusTrap` asks the browser to reveal a control sitting at scroll offset zero of a page
+scrolled anywhere else. The browser obliges, the portal then moves the overlay to the body, and the
+page stays where it was left: at the top. Measured in Chrome on that geometry - scroller at 1500px,
+**0px** after `focus()`, **1500px** after `focus({ preventScroll: true })`.
+
+**The fix is `preventScroll`, and deliberately not a reordering of the two actions.** A focus trap has
+no reason to scroll anything at the moment it opens: the container it focuses into is an overlay that
+already covers the viewport, and its first control is at the top of a panel nobody has scrolled yet.
+Stated that way it holds whatever order the two effects run in, where swapping the actions would be
+an implicit dependency on how one version of Svelte emits them. The two Tab wrap-arounds in the same
+file keep the browser's scrolling, for the opposite reason: they reveal a control inside a panel the
+person may well have scrolled, and `preventDefault` has just cancelled the scroll sequential
+navigation would have done. `focusTrap.test.ts` pins both halves.
+
+**The general shape, worth carrying past this file:** an action attached to a node that another
+action is about to MOVE runs against a position that is about to stop being true. Anything it does
+that depends on where the node is - measuring it, scrolling to it, reading its containing block -
+reads the wrong answer, and reads it silently.
+
 ### An API helper that ends in `res.json()` throws on a void response
 
 A `DELETE` or a void `POST` answers `204`, or `200` with an empty body - and `res.json()` on an
