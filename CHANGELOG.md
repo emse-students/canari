@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la purge des key packages ne fait plus prouver mille lignes pour en supprimer zero, et la mesure a refute l'hypothese qui l'argumentait
+
+`prune_expired_key_packages` tourne sur le chemin attendu de chaque demarrage a froid et coutait
+**11,39 ms a un pool de 1000** (criterion, OXYGEN, 5 groupes, release). Elle partageait une passe
+avec le recensement, qui PROUVE chaque ligne - un `hash_ref` recalcule sur le key package plus une
+serialisation, par bundle - alors que le test d'expiration n'a besoin que de la duree de vie decodee.
+Sur un appareil qui n'a rien a recuperer, c'est-a-dire le cas ordinaire, mille preuves etaient prises
+pour ne rien supprimer.
+
+La preuve est maintenant prise sur les lignes condamnees et sur aucune autre. **L'ensemble supprime
+est inchange** - expire ET prouve, exactement ce que le recensement compte comme expire - et c'est
+desormais un test qui le dit (`the_prune_deletes_exactly_what_the_census_calls_expired`) plutot
+qu'une fonction partagee qui le garantissait par construction.
+
+**ET LE CHIFFRE A REFUTE LA RAISON D'ETRE DU CHANGEMENT, CE QUI EST LE RESULTAT LE PLUS UTILE ICI :**
+
+| pool | avant | apres | ecart |
+| --- | --- | --- | --- |
+| 50 | 0,560 ms | 0,495 ms | **-11,5 %** |
+| 500 | 5,61 ms | 5,05 ms | **-11,2 %** |
+| 1000 | 11,39 ms | 10,08 ms | **-12,1 %** |
+
+La preuve cryptographique n'etait donc que **12 %** de la passe. Les 88 % restants sont le
+`serde_json::from_slice::<KeyPackageBundle>` de chaque bundle stocke - le DECODAGE, pas la preuve.
+Rendre cette passe vraiment bon marche demande de ne plus decoder mille bundles pour lire mille dates,
+c'est-a-dire un index porte par l'etat, et l'ecriture de l'en-tete du blob est bloquee par ailleurs
+(file d'attente, item 5). Ce qui est gagne ici est reel et mesure ; ce qui reste est nomme avec sa
+condition bloquante dans le backlog, pour que personne ne recommence par le meme bout.
+
 ### Fixed - la creation d'un post repondait au createur qu'il n'avait aucun droit dessus
 
 Le controleur lit `x-global-admin` pour AUTORISER une publication au nom d'une association -
