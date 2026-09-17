@@ -1571,18 +1571,31 @@ for six days - is covered. The hold this entry carried is therefore lifted: it s
 must not be merged while collapsing them was the easy half and the smell was the only thing pointing
 at the missing assertion. The assertion is what points now.
 
-**What is left is the collapse, and it is three files.**
+**WHAT IS LEFT IS NOT A COLLAPSE, AND CALLING IT ONE WAS THE MISTAKE IN THIS ENTRY.** Read side by
+side 2026-09-17, the three files are not three copies of one guard that drifted in spelling. They are
+**three different policies**, and only the HMAC block inside them is genuinely duplicated:
 
-| Where | Refuses on | Internal-token HMAC |
-| --- | --- | --- |
-| `core-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | own copy, exported as `verifyInternalToken` |
-| `social-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | **second copy**, imports nothing |
-| `chat-delivery-service/src/guards/header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **third copy**, inline |
-| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
+| Where | Refuses on | If `INTERNAL_SHARED_SECRET` is absent | Other paths |
+| --- | --- | --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | **401 in production**, allowed otherwise | none |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | falls through to a static `NGINX_AUTH_SECRET`, and allows the request when that is unset too | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **401 in production**, allowed otherwise | logs a denial, `/push/` routes only |
+| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | n/a | none - Rust, and it stays where it is |
 
-`verifyInternalToken` is exported and imported by **nobody** outside its own file. Two names for one
-guard is why a reader auditing "does everything have `NginxAuthGuard`" gets thirteen false positives
-in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
+**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Two of
+the rows above are what this repository calls a fallback, and the rule says a fallback is a signal
+and never a path: `social-service` accepts a request in production when neither secret is configured,
+where its two siblings refuse, and it carries an unverified-JWT branch gated only on `NODE_ENV` not
+being `production`. Picking any one of the three as "the" shared guard silently changes what the
+other two services refuse - which is the exact accident the previous paragraph warns about, one level
+up from the discriminator it was written about. **Whoever takes this decides, in writing and before
+touching a file, which refusals are intended**; the shared HMAC verification can be lifted out
+first and on its own, because that half really is three identical copies.
+
+`verifyInternalToken` is exported from `core-service` and imported by **nobody** outside its own
+file. Two names for one CONCEPT is also why a reader auditing "does everything have
+`NginxAuthGuard`" gets thirteen false positives in `chat-delivery-service`, all of which do carry
+`HeaderAuthGuard` per method.
 
 **TWO DISCRIMINATORS, AND THE MERGE MUST NOT PICK ONE BY ACCIDENT.** A non-empty `x-user-id` and
 `x-user-logged-in === 'true'` come from the same `auth_request_set` pair and should never disagree -
