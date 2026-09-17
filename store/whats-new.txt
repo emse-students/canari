@@ -1,15 +1,15 @@
-version: 0.18.10
+version: 0.18.11
 
-Poster anonymement, et un demarrage plus rapide.
+Vos photos et vos vocaux restent ce qu'ils sont.
 
-Un interrupteur « Anonyme » dans le composeur publie un post sans votre nom.
+Une photo recue quand l'application etait ouverte reste une photo apres un redemarrage.
 
-La connexion au chat ne fait plus la queue derriere le dechiffrement local.
+Un vocal ne s'affiche plus parmi les fichiers partages.
 
-Une reaction a votre message notifie sur son propre canal, plus discret.
+Un evenement propose se lit comme propose dans la liste, pas seulement dans le calendrier.
 
-Les messages d'erreur sont dits en francais, sans jargon technique.
+Le panneau « Connexion en cours » ne laisse plus voir la conversation.
 
-Un fichier trop volumineux le dit avant l'envoi.
+Ouvrir un panneau ne renvoie plus la page tout en haut.
 
-Une carte de « mes associations » affiche votre role au lieu d'un « 0 membres » faux.
+Les parametres d'une communaute prennent tout l'ecran.
