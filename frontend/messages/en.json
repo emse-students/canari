@@ -2424,6 +2424,7 @@
   "notif_mention_text": "mentioned you",
   "notif_reply_text": "replied to your comment",
   "notif_comment_text": "commented:",
+  "notif_post_text": "posted:",
   "notif_filter_all": "All",
   "notif_filter_unread": "Unread",
   "notif_group_new": "New",
