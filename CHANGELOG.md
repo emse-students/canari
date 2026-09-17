@@ -68,6 +68,30 @@ pas, et pas par concession : a `xl` elle est un FRERE en flex des autres cartes,
 dans `<body>` n'a plus de rangee a rejoindre. Le meme booleen decide les deux, et un test monte la
 coquille dans une page pour lire ou le noeud atterrit, dans les deux sens.
 
+### Fixed - ouvrir une modale renvoyait la page en haut, partout dans l'application
+
+Signale par l'utilisateur sur telephone : *"Cliquer sur evenement sur mobile (type liste) renvoie
+vers le haut de la page aussi, c'est bizarre"*. Rien dans cet ecran n'en etait la cause : toutes les
+modales de l'application le faisaient, depuis n'importe quelle position de defilement.
+
+Trois faits se composent, et aucun n'est faux isolement. `.page-scroll-wrap` porte
+`will-change: transform` pour le geste de balayage entre onglets, ce qui en fait le bloc conteneur
+de tout `position: fixed` a l'interieur - un fond de modale ecrit `fixed inset-0` dans une page est
+donc place a l'origine de ce CONTENEUR DE DEFILEMENT, pres du haut de son contenu, et pas face au
+viewport. Ensuite, un portail deplace le noeud un effet APRES sa creation, et l'action de l'enfant
+s'execute d'abord : Svelte 5 emet `$.action(<panneau>, focusTrap)` avant
+`$.action(<fond>, portal)` - verifie en compilant cette forme exacte. Enfin, `focus()` fait defiler
+ses ancetres pour reveler l'element.
+
+Le piege se referme la : `focusTrap` demandait au navigateur de reveler un bouton situe au
+decalage zero d'une page defilee ailleurs. Mesure dans Chrome sur cette geometrie : conteneur a
+1500 px, **0 px** apres `focus()`, **1500 px** apres `focus({ preventScroll: true })`.
+
+Le correctif est `preventScroll`, et pas une inversion des deux actions : une trappe a focus n'a
+aucune raison de faire defiler quoi que ce soit a l'ouverture, puisqu'elle entre dans une surface
+qui couvre deja le viewport. Dit ainsi, cela tient quel que soit l'ordre des effets. Les deux
+rebouclages de Tab du meme fichier gardent le defilement du navigateur, pour la raison inverse, et
+`focusTrap.test.ts` fixe les deux moities.
 ### Fixed - un 500 d'Apple a coute la mise en production de `v0.18.10`
 
 La soumission App Store est morte sur `POST /v1/reviewSubmissionItems -> 500 An unexpected error
