@@ -51,7 +51,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
-| the community settings read as a panel on the phone they were reported from | HARDWARE, Mi 9T, and it is a LOOK rather than a number: the three geometries are already measured in a browser against this tree (436 px full-bleed, 768-plus inset and rounded, and the chat column still `static` at 320 px at 1400 px), so what a phone adds is whether the tab strip, the one danger zone and the permission matrix READ at 436 px with a thumb. **AND ONE THING THE BROWSER MEASUREMENTS PREDATE**: since #802 the drawer is PORTALLED to `<body>`, because `.page-scroll-wrap` carries `will-change: transform` and was the containing block its `position: fixed` resolved against - measured A/B in a real browser at 958 x 944, the same child reporting `top: 120` / 734 px tall inside the wrapper and `0` / 944 without it, which is 210 px of window, exactly the header plus the bottom bar. So the LOOK must confirm the panel's FOOT - leave and delete - clears the bottom navigation rather than hiding behind it, which is the half a phone can show and the browser A/B only implies. **The Mi 9T carries the USER'S OWN account behind an encryption PIN that is theirs**, so this waits on a build the user opens themselves or on the phone being free - it is not a run the harness may take ([device-verification](device-verification.md)) |
+| the community settings read as a panel on the phone they were reported from | **ANSWERED ON THE Mi 9T, 2026-09-17, AND THE ROW'S OWN BLOCKER WAS FALSE.** It said this waited on the phone being free because it *"carries the USER'S OWN account behind an encryption PIN that is theirs"*. The user corrected that on 2026-09-17 - the handset holds test accounts only - and `identity.mjs` then read `A1 expected owner / shows owner / acts as owner`, so the run was the rig's to take all along. **A row may not park a check behind a premise nobody re-measures.** Read off a debug APK built from this tree at **436 x 945 CSS px, the device's own width**, no override. **The portal from #802 holds on hardware**: `panel.parentElement === document.body`, the drawer paints full-bleed `0 -> 945` OVER the bottom bar rather than inside `<main>`, and the foot - `Quitter la communaute` ending at 713, `Supprimer la communaute` at 759 - clears the bar's top edge at **873 by 114 px**. That is the half the browser A/B only implied, and it passes. The permission matrix is a `<table>` 519 px wide inside its own `overflow-x-auto` card of 371, which is the correct shape: **`document.documentElement.scrollWidth` is 436, equal to the viewport, so the PAGE never scrolls sideways.** **TWO OBSERVATIONS, NEITHER A FAILURE, BOTH P3**: the tab strip is `overflow-x: auto` at 483 px against 436, so the third tab renders truncated mid-word (`Memb`) on first paint with no affordance - three tabs at the app's primary phone width is where a wrap or tighter padding would fit; and the two danger-zone buttons are 38 px tall where the close button is 44. The tabs also carry **no `role="tab"` and no `role="tablist"`** - they are plain buttons, so nothing announces the strip as a tab set. The A/B that justified the portal is not repeated here: `SidePanel.svelte`'s docblock owns it ([device-verification](device-verification.md)). |
 | a withheld product releases itself when an association's payments become ready | **NOTHING IS OWED BY THE USER HERE, AND THE ROW ASKED FOR A CLICK NOBODY WANTS TAKEN.** It said the BDE's 170 EUR tier needed ticking **En vente**; the user's answer on 2026-09-17 is that the tier is deliberately not on sale (*"Le BDE c'est normal que la Cotisation ne soit pas active"*). A false entry in the one table reserved for what only a human can do is the worst kind - a table nobody can drain is worse than the task it lists - so that half is struck rather than reworded. The MECHANISM behind it was never about the BDE and still holds: `activationWithheld` releases a product when payments BECOME ready, no event ever fires for an account that onboarded long ago, and a per-tier on-sale switch exists for exactly that reason. **Four associations have no payment account at all**, their products are correctly withheld, and what closes this is the next association to finish onboarding - whose products must go on sale with nobody touching them, which is an OBSERVATION and not a click |
 
 ---
@@ -960,6 +960,213 @@ state to decrypt. **So the edge Cache Rule beside this entry is worth at most ~8
 quoted as the cold-start fix; what dominates is the 580 ms of session and MLS work after the first
 word.**
 
+#### WHAT IS LEFT OF THE 43% IS THE ONE SPAN INSIDE IT, AND IT IS 78% ON A PHONE (`bootBenchmark.ts`, 2026-09-17)
+
+**Every number in the table above was read by a human off a HAR and a console export.** That is how
+the 580 ms is known to be 43%, and it is also why nothing is known about what is INSIDE it: the five
+rows are the five boundaries an export happens to expose, not a decomposition of the work.
+
+**The bench that exists measures the wrong side of the boundary.** `beginStartupCatchupBench()` is
+called in `sessionAuth.ts` on the line immediately BEFORE `[INIT] MLS ready`, so it times the sync
+that follows and never the init that precedes it. The largest block of the cold start was the only
+one with no instrument, and the instrument sat one line past its end.
+
+`frontend/src/lib/mls-client/bootBenchmark.ts` covers it, and it is a SECOND module rather than a
+third `kind` on the catch-up bench because all three of its properties are the opposite of that
+one's, and a column is only evidence for the question it was written to answer:
+
+| | catch-up bench | boot bench |
+| --- | --- | --- |
+| what it measures | durations, from `Date.now()` | OFFSETS from `performance.timeOrigin` |
+| concurrent steps | one active phase; a new one closes the last | named spans that may overlap |
+| what it counts | messages, conversations, acks | nothing - none of it is evidence here |
+
+**The offsets are the point.** A duration-only report has to be read against a HAR by hand, on a
+second clock, which is precisely the operation that turned a 94 ms round trip into a "56-60% of cold
+start" claim that was really 7%. Anchored at navigation start, a bench line and a HAR line are the
+same number. The report also carries the document's own `PerformanceNavigationTiming` - TTFB, body,
+`domContentLoaded` - so **it answers the WHOLE table above on its own, and a HAR is no longer owed
+for it.**
+
+**The overlap matters and is not a detail.** The gateway handshake is started ~200 ms before it is
+awaited and the revocation answer is deliberately held across the local decrypt, both on purpose and
+both recorded in this entry. A single-active-phase model would have closed those spans early and
+reported the concurrency this entry PAID for as if it were sequence.
+
+**IT RECORDS ON EVERY BOOT AND LOGS ONLY WHEN ASKED.** A flag that needs a reload cannot capture a
+cold start: by the time anyone wants the measurement, the boot in question is over. So
+`window.__canariBootBench.get()` answers on any build, with no flag and no reload -
+`localStorage.setItem('canari_boot_bench', '1')` only adds one summary line per boot on top.
+
+#### ITS FIRST RUN REFUTED THE FIRST THING IT WAS BUILT TO TEST (local estate, 2026-09-17)
+
+**The hypothesis was the two PBKDF2 derivations, and it is wrong for this boot and for the user's.**
+The PIN login path runs two sequential PBKDF2-SHA256 derivations on the same PIN and the same server
+salt - `computePinVerifier` at 100 000 iterations before the PIN check, `deriveDeviceKeyB64` at
+310 000 after it - and 410 000 iterations of SHA-256 in front of a boot is exactly the shape that
+looks like an answer. **It is not on the path being measured.** `loginImpl` takes the PIN branch only
+when neither a keystore nor a device-key vault answered; a returning session takes the `else`, and
+the whole PIN block - salt fetch, both derivations, the PIN-check round trip - is skipped.
+
+**And the user's boot is that same branch.** Their export prints `Initialising MLS (vault device key
+path)`, which is the log line inside that `else`. So the 410 000 iterations were never in their
+580 ms, and the instrument said so on its first run rather than after a change was built on them.
+**This is what the section above was written to avoid, and it worked at the first opportunity.**
+
+The first report, read off the scratch browser against the LOCAL estate:
+
+| | offset | duration |
+| --- | ---: | ---: |
+| document TTFB / `domContentLoaded` / `load` | - | 5.2 / 85.8 / 101.6 |
+| `login-start` | 147.4 | - |
+| `access-token` | 158.8 | 9.0 |
+| `resolve-device-id` | 221.1 | 0.1 |
+| `tab-leadership` (leader) | 221.2 | 7.8 |
+| `gateway-handshake-started` | 229.1 | - |
+| **`mls-init-and-storage`** | 229.5 | **159.1** |
+| `revocation-gate` (asked) | 388.6 | 45.7 |
+| `auth-token-final` | 434.8 | 0.2 |
+| **`MLS ready`** | **435.1** | - |
+
+**NOT ONE OF THESE NUMBERS IS THE USER'S AND NONE MAY BE QUOTED AS A COLD START.** It is a local
+estate on a loopback with a small state: the TTFB is 5 ms where theirs is 94, and `mls-init` here
+decrypts a fraction of their 7.6 MB. **What transfers is WHICH SPANS EXIST**, and that is the whole
+refutation - a branch that does not run costs nothing regardless of whose machine it is on.
+
+**What the run does prove about the instrument**: the offsets, the navigation entry, the overlap and
+the `window.__canariBootBench` reader all work on a real browser and a real boot. **The PIN spans are
+NOT proven end to end** - this boot never entered that branch, so they stand on the unit tests and
+the typecheck alone.
+
+**WHAT IS OWED IS ONE BOOT ON THE USER'S OWN BROWSER**, which is now one console command rather than
+a HAR export. Until then no number in this entry's arithmetic has moved.
+
+#### THE SECOND RUN IS THE FIRST ANDROID COLD START EVER MEASURED, AND IT MOVED THE SUSPECT (Mi 9T, 2026-09-17)
+
+**The PIN branch is now proven end to end, on the hardware where it is slowest.** The local run
+above never entered it, so the PIN spans stood on unit tests alone. This one entered it: a debug APK
+built from `99b4ae343` with a clean tree, installed on the Mi 9T over `adb reverse tcp:8081` against
+the LOCAL estate, unlocked with a real PIN. Every span the branch declares fired, in order, with no
+gap left unattributed.
+
+| | offset | duration |
+| --- | ---: | ---: |
+| document TTFB / `domContentLoaded` / `load` | - | 0 / 740.4 / 740.8 |
+| `login-start` | 3669.5 | - |
+| `access-token` | 3696.6 | 0.4 |
+| `pin-salt-fetch` | 3705.6 | 77.1 |
+| `pin-verifier-pbkdf2` (100 000 it.) | 3782.7 | 114 |
+| `resolve-device-id` | 3896.7 | 6.1 |
+| `pin-check-request` | 3902.8 | 35.6 |
+| `device-key-pbkdf2` (310 000 it.) | 3938.6 | 145 |
+| `tab-leadership` (leader) | 4083.9 | 0.2 |
+| `gateway-handshake-started` | 4084.2 | - |
+| **`mls-init-and-storage`** | 4086.1 | **1621.9** |
+| `revocation-gate` (not asked) | 5708 | 0 |
+| `auth-token-final` | 5733 | 0.3 |
+| **`MLS ready`** | **5736.9** | - |
+
+**THE INTERVAL FROM `load` TO `login-start` IS THE HARNESS TYPING A PIN AND IS NOT APP TIME.** 740.8
+to 3669.5 is 2.9 seconds and 51% of the wall clock, and it would be the largest line in this entry if
+anyone read it as one. It is not: the app was sitting on the PIN screen waiting for input, and the
+rig spent `2152ms` of it switching the keypad to manual and typing. **A human takes longer, not
+shorter.** Nothing in that interval is work the app is doing, and no total including it may be quoted
+as a cold start - which is exactly why the summary prints BOTH anchors rather than one.
+
+**What is app time is the 2067.4 ms after `login-start`**, and one span is 1621.9 of it:
+
+- **`mls-init-and-storage` is 78% of the measured boot, and it is ONE span with no internal
+  structure.** On the loopback desktop run it was 159 ms; here it is ten times that. Whatever the
+  target is, this block alone is over it. **It is now the whole question**, and decomposing it -
+  WASM instantiation against storage open against the first decrypt - is what the next iteration of
+  the instrument owes. Nothing else on this list is worth touching first.
+- **The two PBKDF2 derivations cost 259 ms together** - 114 + 145, on a 2019 midrange phone, on the
+  branch that actually runs them. That is 12.5% of the measured boot and 4.5% of the wall clock.
+  **Real, and not the story.** The hypothesis is now refuted twice: once by a boot that skipped the
+  branch, once by a boot that took it on the slowest hardware available.
+- **`ttfbMs` is 0 because there is no document request.** Tauri serves the frontend from inside the
+  APK, so the origin round trip that dominates the web reading does not exist here. This run
+  measures the client and nothing else, which is precisely what makes the 1621.9 unambiguous.
+
+**WHAT THIS RUN DOES NOT SETTLE.** It is not the user's browser and it is not the vault branch: a
+returning phone session skips the whole PIN block and enters `mls-init-and-storage` ~400 ms earlier,
+and it is against a LOCAL estate whose state is a fraction of production's 7.6 MB. **What transfers
+is the ONE ratio** - a block that is 78% of post-login time on real hardware is the target regardless
+of whose estate it reads.
+
+#### THE 1621.9 MS NOW HAS FIVE CLOCKS IN IT, AND ONE OF THEM IS THERE TO TEST A SUSPICION (2026-09-17)
+
+**The span measured a `Promise.allSettled` of two concurrent things, so its number is the SLOWER of
+the two and nothing said which.** That is the same defect as the one this whole entry started from,
+one level down: a clock whose reading cannot answer the question its own size raises. The pair keeps
+its clock - it is the honest wall time of the block - and each half gains one:
+
+| span | what it brackets | why it is separate |
+| --- | --- | --- |
+| `mls-init` | `mlsService.init(...)` | half of the `allSettled` |
+| `storage-open` | `getStorage(userId)` | the other half, concurrent with it |
+| `mls-load-state` | the decrypt inside `_initImpl`, BOTH platforms | the suspect: it opens the snapshot |
+| `mls-save-state` | the native snapshot write | **started and never awaited** |
+| `mls-list-groups` | `invoke('lister_groupes')` | **awaited**, so it IS on the critical path |
+
+**`mls-load-state` CARRIES THE SAME NAME ON BOTH PLATFORMS DELIBERATELY.** `WebMlsService` and
+`TauriMlsService` bracket their own decrypt with it, so an Android report and a browser report answer
+the same question with the same word. The user's boot is a browser one and the measured boot is a
+phone one; without a shared name the two readings cannot be set beside each other at all.
+
+**THE LAST TWO ROWS EXIST TO TEST ONE SUSPICION, AND IT IS WRITTEN DOWN BEFORE THE RUN RATHER THAN
+AFTER IT.** `_initImpl` starts the snapshot write without awaiting it, then awaits `lister_groupes`
+immediately after. `saveState`'s own docblock records **2.0 s of a 3.7 s phone measurement** for
+writing that snapshot twice. **If the native side serialises invokes, the awaited call queues behind
+the unawaited write and the boot pays for a write nobody asked it to wait for** - and no line
+anywhere would say so. That is a HYPOTHESIS. It is exactly the shape of the PBKDF2 one, which this
+same instrument refuted twice, so it is recorded as a prediction the next run may kill.
+
+`timeBootSpan` is what makes the unawaited half measurable without awaiting it: it wraps the promise
+instead of bracketing an `await`, so **a write still running at `MLS ready` is reported OPEN rather
+than closed at a moment it never reached**. A span with no end is the honest answer there, and the
+summary omits it rather than ranking a duration it does not have.
+
+#### AND THE RUN KILLED THAT HYPOTHESIS TOO, WHILE NAMING THE REAL BLOCK EXACTLY (Mi 9T, 2026-09-17)
+
+Second APK, built from the decomposition commit with a clean tree, same phone, same PIN branch,
+same local estate. `groups: 5`.
+
+| span | offset | duration | share of the 1988.1 ms after `login-start` |
+| --- | ---: | ---: | ---: |
+| `mls-init-and-storage` (the pair) | 3450.2 | 1689.2 | 85.0% |
+| `mls-init` | 3450.8 | 1688.5 | 84.9% |
+| **`mls-load-state`** | 3451.3 | **1644.4** | **82.7%** |
+| `mls-list-groups` | 5095.9 | 42.8 | 2.2% |
+| `storage-open` | 3450.8 | **2.5** | 0.1% |
+| `mls-save-state` (NOT awaited) | 5095.9 | 2712.1 | - it ENDS at 7808, long after `MLS ready` at 5144.4 |
+
+**THE HYPOTHESIS IS REFUTED, AND IT IS THE THIRD THIS INSTRUMENT HAS KILLED.** `mls-list-groups` and
+`mls-save-state` start at the SAME instant, 5095.9. The awaited call finished in **42.8 ms while the
+unawaited write ran for 2712.1 ms beside it**. The native side does NOT serialise the two, so the
+boot never queued behind that write and the suspicion written down above is wrong. It was recorded
+BEFORE the run precisely so it could be killed by one rather than quietly become an explanation.
+
+**THE PAIR'S CONCURRENCY BUYS NOTHING, MEASURABLY.** `storage-open` is **2.5 ms** against
+`mls-init`'s 1688.5. `Promise.allSettled` was hiding a 675x asymmetry: the pair's number was always
+the MLS half, and no arrangement of those two can matter.
+
+**SO THE WHOLE COLD START IS ONE NATIVE CALL.** `mls-load-state` is 97.4% of `mls-init` and 82.7% of
+everything after `login-start` - it is `loadStateWithKey` -> `invoke('initialiser_mls')`, the native
+decrypt and deserialisation of the snapshot. Everything else inside `_initImpl` together is 44 ms.
+**The next question is inside Rust, not inside TypeScript**, and it is the first time this entry has
+been able to say that with a number. For FIVE groups.
+
+**ONE THING THE RUN FOUND THAT NOBODY WAS LOOKING FOR**, and it is not on the boot's critical path:
+`mls-save-state` costs **2712.1 ms** and starts immediately after init, so the phone spends 2.7 s
+writing the snapshot while the catch-up sync runs. `saveState`'s docblock already records 2.0 s of a
+3.7 s measurement for writing that file twice. **The question this raises and does NOT answer: when
+init has just LOADED a snapshot and changed nothing, what does re-writing it buy?** The stated reason
+is that the FCM service must be able to decrypt before any message is processed - which is a reason
+for the file to EXIST, not for it to be rewritten with bytes it already holds. Answering that needs
+someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
+established it, and it must not be assumed.**
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
@@ -1017,7 +1224,10 @@ a full refetch of 1.33 MB over 173 requests lands within 34 ms of a warm boot**:
 nearly worthless here because the edge already answers every chunk.
 
 **WHAT IS OWED IS ONE WARM EXPORT ON A BUILD CARRYING #760 AND #764**, and until it exists the
-964 ms arithmetic stays a prediction.
+964 ms arithmetic stays a prediction. **THAT BUILD NOW EXISTS**: `v0.18.11` was tagged
+2026-09-17T13:37:25Z, and both merged before it - #760 as `ee4af0670`, #764 on 2026-09-16T18:35:24Z.
+So nothing blocks the reading any more; it is one `window.__canariBootBench.get()` on the user's own
+browser, and the prediction stops being one the moment it is taken.
 
 #### The second block WAS 162 ms and is SHIPPED; what it leaves behind is one corrected claim
 
@@ -1500,10 +1710,17 @@ message ?" is refuted on three independent grounds recorded on that wiki page; *
 - **It ships with the next release.** `fcmCache.test.ts` covers the three arrival orders and was
   confirmed to accuse the defect by mutation, but every native claim here is verified by COMPILING,
   which proves nothing about running.
-- **ONE LOOK AT A REAL HANDSET CLOSES IT, AND NOTHING ELSE WILL.** Send a photo to the Mi 9T with the
-  app OPEN, confirm the picture draws, force-stop the app, reopen it: the picture must still be
-  there. That is the whole reproduction, it takes a minute, and it is the only evidence that the
-  native writer and the TypeScript reader agree in the field.
+- **RUN ON THE Mi 9T, 2026-09-17: PASS.** The reproduction was the whole of it - a photo sent from
+  the peer with the app OPEN, the picture confirmed drawn, `am force-stop fr.emse.canari` (`pidof`
+  empty, so it really stopped), a cold relaunch through the PIN, and the picture read again.
+  **It is still there, and it is still a picture.** Measured rather than eyeballed, on a debug APK
+  built from this tree: the bubble holds an `<img>` with `complete: true` and a `naturalWidth` of 32,
+  which is the fixture's true size, so the bytes decoded rather than merely being requested; the blob
+  URL DIFFERS between the two readings, which is the decrypt happening again from local storage
+  rather than a live object surviving in memory. `document.body.innerText` matches no
+  `📷 Photo` anywhere on screen - the defect's own signature, absent.
+  **This is the evidence that the native writer and the TypeScript reader agree in the field**, and
+  nothing short of a handset could have produced it.
 
 **The second half of the question is answered and is worth keeping as a diagnostic:** `📷 Photo`
 is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`, never Paraglide), `[Media]`
@@ -1542,12 +1759,36 @@ scanner, chosen from `kind_str` - the proto's `MediaKind` varint - whenever the 
 caption. `MEDIA_KIND_AUDIO` yields `🎤 Audio` for a recording and for an import alike, and field 11
 sits unread two lines above. **Whoever takes this reads `kind_str`, not the Kotlin.**
 
-**A SECOND DEFECT AT THE SAME FOUR LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
-strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe`. Every
-other sentence this notification can show is read through `appLocaleContext(this)` and `R.string.*`;
-these four bypass Paraglide and the Android resources both, so an English-locale device is told
-`📎 Pièce jointe`. It is the same edit, and doing one without the other means touching these four
-lines twice.
+**A SECOND DEFECT AT THE SAME LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
+strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` - so an
+English-locale device is told `📎 Pièce jointe`.
+
+**AND THE COUNT IN THIS ENTRY WAS WRONG UNTIL 2026-09-17: IT IS NOT FOUR STRINGS, IT IS SIXTEEN, AND
+THE CLAIM THAT EVERY OTHER SENTENCE IS LOCALISED IS FALSE.** The same file builds all of them, in
+four places, none of them through Paraglide or `R.string.*`:
+
+| builder | sentences |
+| --- | ---: |
+| `format_system_event_text` - renamed, image changed, member added (2 forms), removed, left, deleted, and the two rename forms | **9** |
+| the reaction arm - `a réagi {emoji}` | **1** |
+| the media arm - the four above | **4** |
+| the call arm - `📹 Appel vidéo entrant`, `📞 Appel entrant` | **2** |
+
+`format_system_event_text`'s own doc comment says *"Builds a short French notification body"*, so this
+is deliberate rather than an oversight - which is exactly why it needed counting instead of
+believing. **One of the sixteen is worse than untranslated**: the fallback arm renders
+`événement de groupe ({event})`, printing a raw protocol event name to a user. The comment beside it
+already records that the arm is a trap rather than live noise, and that its silence list drifted once
+(`read_watermark` replaced `read_receipt` on 2026-08-12 and was never added).
+
+**THE SIZE OF THIS WORK IS THEREFORE NOT "FOUR LINES", AND WHOEVER TAKES IT SHOULD KNOW THAT BEFORE
+STARTING.** The honest fix is not sixteen translations in Rust: it is to stop building a SENTENCE in
+the scanner at all and hand the KIND across, which the JSON already carries as `mediaKind`, letting
+the Kotlin side pick a localised string it already knows how to pick. **That is a cross-language
+change with one consequence this entry cannot settle on its own**: `decrypted.text` is what the FCM
+cache persists and reads back as a message body, so emitting an empty text changes what the cache
+stores - the same seam the photo fix above is about. It is one design decision, not a translation
+chore, and it must not be started as if it were the latter.
 
 **They are also the strings `fix/une-photo-ne-redevient-pas-le-mot-photo` is about** - the same
 `📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the

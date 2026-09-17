@@ -118,6 +118,59 @@ an order between two statements inside a function that takes a live MLS client, 
 device key and a gateway, so there is no seam to observe it through short of running a whole
 session. A crude test that can fail is worth more than an elegant one that does not exist.
 
+### What happens BEFORE those phases, and the bench that reads it
+
+`catchupBenchmark` begins on the line immediately before `[INIT] MLS ready`, so the phases above are
+everything AFTER that point. Everything before it - the whole of `loginImpl` - had no clock at all
+until 2026-09-17, and on the user's own export it was the most expensive block of the boot.
+`mls-client/bootBenchmark.ts` covers it, and the two abut on one line with no gap and no overlap:
+`finishBootBench()` is called immediately before `beginStartupCatchupBench()`.
+
+**IT IS A SECOND MODULE RATHER THAN A THIRD `kind` ON THE FIRST, for three reasons that are each the
+inverse of the catch-up bench's:**
+
+| | `catchupBenchmark` | `bootBenchmark` |
+| --- | --- | --- |
+| unit | durations, from `Date.now()` | **offsets from `performance.timeOrigin`** |
+| concurrency | one active phase; a new one closes the last | **named spans that may OVERLAP** |
+| counters | messages, conversations, acks | none - none is evidence for this question |
+
+The offsets are the point: anchored to the navigation, a bench line and a HAR line are the same
+number, and the report carries the document's `PerformanceNavigationTiming` too, so it answers
+without a HAR at all. The overlap is not an artifact either - the gateway handshake starts ~200 ms
+before it is awaited and the revocation answer is held across the local decrypt, two concurrencies
+this module reports rather than flattens.
+
+**IT RECORDS ON EVERY BOOT AND LOGS ONLY WHEN ASKED.** A flag needing a reload cannot capture a cold
+start: by the time anyone wants the measurement, that boot is over. `window.__canariBootBench.get()`
+answers on any build with no flag and no reload; `localStorage.setItem('canari_boot_bench', '1')`
+only adds one summary line per boot on top. `.summary()` prints TWO totals - from navigation and from
+`login-start` - because `loginImpl` also runs when someone types a PIN into a tab open for half an
+hour, and guessing a threshold past which a boot "is not really one" would be a clock deciding the
+meaning of its own measurement.
+
+**THE SPANS, AND WHERE EACH IS DECLARED.** `sessionAuth.ts` owns the login sequence; the two MLS
+services own what is inside `init`, under the SAME NAME on both platforms so an Android reading and a
+browser reading can be set beside each other:
+
+| span | where | note |
+| --- | --- | --- |
+| `access-token`, `pin-salt-fetch`, `pin-verifier-pbkdf2`, `resolve-device-id`, `pin-check-request`, `device-key-pbkdf2` | `sessionAuth.ts` | the PIN branch; a returning session skips all of it |
+| `tab-leadership`, `revocation-gate`, `auth-token-final` | `sessionAuth.ts` | each carries `meta` saying which way it went |
+| `mls-init-and-storage` | `sessionAuth.ts` | the `allSettled` PAIR - its wall time |
+| `mls-init`, `storage-open` | `sessionAuth.ts` | the two concurrent halves of that pair |
+| `mls-load-state` | `TauriMlsService`, `WebMlsService` | the decrypt; `meta.recovered` says whether it fell into recovery |
+| `mls-save-state`, `mls-list-groups` | `TauriMlsService` | the first is NOT awaited, the second IS |
+
+`timeBootSpan(name, promise)` wraps a promise instead of bracketing an `await`, which is what lets
+the unawaited snapshot write be measured without being awaited: a span still open at `MLS ready`
+keeps `endMs: null` and is omitted from the ranked summary, because a write that outlived the boot
+did not cost the boot its whole duration and reporting one would be a number nobody waited for.
+
+**`bootBenchmark.test.ts` asserts SHAPE AND NEVER A WALL CLOCK** - which spans exist, which stay
+open, what the summary ranks and omits, and that a report already read cannot be rewritten by a span
+closing afterwards.
+
 ## Routes
 
 | Route | Description |

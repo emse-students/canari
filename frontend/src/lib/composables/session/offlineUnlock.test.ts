@@ -288,12 +288,30 @@ describe('the revocation answer is held across the decrypt, never dropped', () =
     expect(heldRevocation).toContain('mlsService.init(ctx.getUserId(), deviceKeyB64');
   });
 
-  it('gates on the answer before anything reads the init verdict', () => {
-    const gate = loginImplBody.indexOf(
-      'if (revocationAnswer !== null && (await revocationAnswer))'
+  /**
+   * WHERE THE ANSWER IS ACTUALLY READ, resolved ONCE for the three tests below.
+   *
+   * It used to be re-derived in each of them, from the literal
+   * `if (revocationAnswer !== null && (await revocationAnswer))`, and that cost a test. When the
+   * boot bench put a span around the gate, the condition moved into a `const` and the literal
+   * vanished - so `indexOf` returned -1 in all three. Two of them said so. The third compared
+   * `wipe > gate` with `gate === -1`, which is true of any position at all, and **passed while
+   * asserting nothing**: `indexOf(needle, -1)` searches from the start.
+   *
+   * So the anchor is resolved here, where a single `toBeGreaterThan(-1)` guards every use of it. A
+   * shared anchor cannot rot in one test and hold in another, and no test below can be satisfied by
+   * a `-1` it never looked at.
+   */
+  const gate = (() => {
+    const at = loginImplBody.indexOf(
+      'const revoked = revocationAnswer !== null && (await revocationAnswer);'
     );
+    expect(at).toBeGreaterThan(-1);
+    return at;
+  })();
+
+  it('gates on the answer before anything reads the init verdict', () => {
     const verdict = loginImplBody.indexOf("if (mlsInitSettled.status === 'rejected')");
-    expect(gate).toBeGreaterThan(-1);
     expect(verdict).toBeGreaterThan(-1);
     // A device that is both revoked and carrying an unopenable state must be wiped, not parked in
     // a PIN-recovery modal it can never complete.
@@ -301,10 +319,6 @@ describe('the revocation answer is held across the decrypt, never dropped', () =
   });
 
   it('gates before the session, the binding and the push registration', () => {
-    const gate = loginImplBody.indexOf(
-      'if (revocationAnswer !== null && (await revocationAnswer))'
-    );
-    expect(gate).toBeGreaterThan(-1);
     // Everything a revoked device must not do on the server's behalf lives after the gate. These
     // are the three that talk to it.
     for (const after of [
@@ -317,9 +331,6 @@ describe('the revocation answer is held across the decrypt, never dropped', () =
   });
 
   it('wipes on a true answer, exactly as the awaited version did', () => {
-    const gate = loginImplBody.indexOf(
-      'if (revocationAnswer !== null && (await revocationAnswer))'
-    );
     const wipe = loginImplBody.indexOf('await wipeRevokedDevice(ctx, cb);', gate);
     expect(wipe).toBeGreaterThan(gate);
     expect(loginImplBody.indexOf("throw new LoginFailure('device_revoked'", wipe)).toBeGreaterThan(
