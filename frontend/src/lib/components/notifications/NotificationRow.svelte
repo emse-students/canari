@@ -8,6 +8,7 @@
     CalendarCheck,
     CalendarX,
     CalendarCog,
+    Newspaper,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -88,6 +89,24 @@
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
 
   /**
+   * THE TWO PUBLICATION NOTICES, which spent their life reading "a commente :".
+   *
+   * Reported by the user on 2026-09-17: an association's post said the association had COMMENTED on
+   * something. Three things were wrong at once and all three came from the same place - the generic
+   * `{:else}` that ends this chain is the COMMENT branch, so any type it does not name inherits the
+   * comment sentence, the comment glyph and the comment colour. The push already said "a publie"
+   * (`notif_social_association_post_title` in `strings.xml`), so the phone and the page disagreed
+   * about the same row, which is exactly what the `EVENT_TYPES` docblock above predicted would
+   * happen again.
+   *
+   * ONE SENTENCE FOR BOTH, because the native tables use one for both: `actorName` is the
+   * association for the first and the author for the second, and "a publie" is true either way.
+   * The AVATAR is what separates them, and that is decided further down from `associationId`.
+   */
+  const POST_TYPES = ['association_post', 'followed_post'] as const;
+  const isPostNotif = $derived((POST_TYPES as readonly string[]).includes(notif.type));
+
+  /**
    * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
    * the title. Split here so the title can stay italic and the reason can read as prose.
    */
@@ -117,7 +136,9 @@
                 ? 'bg-amber-500 text-cn-ink'
                 : isEventNotif
                   ? 'bg-sky-600 text-white'
-                  : 'bg-green-600 text-white'
+                  : isPostNotif
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -168,6 +189,8 @@
         <CalendarCog size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_pending'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if isPostNotif}
+        <Newspaper size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -206,6 +229,9 @@
                   ? m.notif_event_pending_text()
                   : m.notif_event_deleted_text()}
         <span class="italic">{eventTitle}</span>{#if eventReason}&#32;&#8212; {eventReason}{/if}
+      {:else if isPostNotif}
+        {m.notif_post_text()}
+        <span class="italic">{bodyText}</span>
       {:else}
         {m.notif_comment_text()}
         <span class="italic">{bodyText}</span>

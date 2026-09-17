@@ -35,6 +35,49 @@ proprietaire d'une ligne voit son propre champ brut, pas seulement un admin). Co
 presence d'`authorId` sur la reponse - jamais `post.anonymous` seul - decide desormais quelle des
 deux presentations dessiner.
 
+### Added - une notification sociale arrivait sans aucune image, sur les deux plateformes
+
+Signale par l'utilisateur le 2026-09-17 : un post d'une association arrivait sur le telephone comme
+une ligne de texte gris, alors qu'un MESSAGE d'un de ses membres arrivait avec sa photo. Ce n'etait
+pas un oubli de reglage : le chemin social n'avait **aucune** image. `showSimpleNotification` (Kotlin)
+construisait une petite icone et un `BigTextStyle`, et rien d'autre ; cote iOS, la branche
+`social` / `form_reminder` de l'extension ecrivait la phrase et ne joignait jamais de piece. Les deux
+chemins qui, eux, montraient un visage - le message et la reaction - passaient par `fetchAvatar` +
+`largeIcon` / `attachImage`, donc le mecanisme existait des deux cotes et le push social ne le
+reclamait pas.
+
+**Le push porte desormais un IDENTIFIANT, jamais une URL, et c'est tout l'argument de securite.** Un
+payload est compose ici mais arrive par un transport que personne ne possede, et un champ qui nomme
+un EMPLACEMENT laisserait quiconque en ecrit un pointer un service de fond - le service FCM Android
+ou l'extension iOS, tous deux executes avant le moindre code applicatif - vers n'importe quel hote,
+avec l'identite reseau du telephone. Un identifiant ne peut que se concatener dans une route que
+l'appareil connait deja. D'ou deux champs disjoints et non interchangeables, parce que les deux
+routes n'ont pas la meme authentification :
+
+- `iconUserId` -> `/api/mls/push/avatar/<id>`, authentifie par le `PushSecret` ;
+- `iconMediaId` -> `/api/media/public/<id>`, non authentifie, exactement ce qu'un `<img>` d'une page
+  deconnectee demande deja.
+
+`publicMediaIconId()` LIT la colonne `logoUrl` au lieu de lui faire confiance : seule la forme exacte
+`/api/media/public/<id>` rend un identifiant, et tout le reste - une URL absolue ailleurs, une
+traversee, une colonne vide - ne rend RIEN plutot qu'une supposition. La notification dessine alors
+les initiales, ce qu'elle faisait pour tous les push jusqu'ici. Le natif refait la meme verification
+de son cote : les deux moities sont necessaires, celle du telephone est celle qui tient si un payload
+est un jour compose ailleurs.
+
+Un rappel de formulaire n'a pas d'acteur, donc il ne porte ni l'un ni l'autre champ et **reste sans
+image** : une pastille d'initiale y mettrait une lettre la ou personne n'a de nom. Un champ vide
+aurait ete une cle presente avec une valeur fausse, que chaque lecteur natif aurait du penser a
+tester ; absent veut dire absent.
+
+Au passage, le bloc HTTP -> bitmap est factorise des deux cotes plutot que duplique : `cachedRemoteIcon`
+(Kotlin) et `cachedRemoteFile` (Swift) portent le cache fichier de 24 h, le decodage borne et le
+recadrage, et `fetchAvatar` en devient un appelant comme le logo. Cote Swift, la requete est passee en
+fermeture pour qu'un cache TOUCHE ne paie pas la lecture du `PushSecret` dans le Keychain, ordre que
+l'ancienne version prenait soin de respecter. Et la branche sociale Android prend maintenant un
+`runWithWakeLock`, comme la reaction juste au-dessus, parce qu'elle fait desormais du reseau et que
+`onMessageReceived` doit rendre la main.
+
 ### Added - le plus gros bloc du demarrage avait 43 % du cout et aucune horloge
 
 Le dernier export de l'utilisateur donne cinq blocs pour un demarrage a froid de 1342 ms, et le plus
@@ -115,6 +158,30 @@ Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,
 `login-start`**. C'est `invoke('initialiser_mls')` : le dechiffrement natif de l'instantane, pour
 CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
 et c'est la premiere fois qu'on peut le dire avec un nombre.
+
+### Fixed - une publication d'association disait que l'association avait COMMENTE
+
+Signale par l'utilisateur le 2026-09-17, capture a l'appui : *« BDA - Bureau des Arts a commente :
+[Scene ouverte lundi 28/09] »*. L'association n'avait commente nulle part, elle avait publie.
+
+**Trois choses etaient fausses en meme temps, et toutes les trois viennent du meme endroit.** La
+chaine de `{:else if}` de `NotificationRow` se termine par la branche COMMENTAIRE, donc tout type
+qu'elle ne nomme pas herite de la phrase du commentaire, de son glyphe et de sa couleur. Les deux
+avis de publication - `association_post` et `followed_post` - n'y ont jamais ete nommes.
+
+**Et la notification poussee, elle, disait « a publie ».** `notif_social_association_post_title` dans
+`strings.xml` est correct depuis que les phrases ont quitte le serveur, ce que l'utilisateur avait
+d'ailleurs remarque tout seul. Le telephone et la page divergeaient donc sur la meme ligne.
+
+C'est exactement ce que le commentaire de `EVENT_TYPES` juste au-dessus annonçait : ces cinq types-la
+avaient passe leur vie dans le meme `{:else}` a imprimer une phrase anglaise composee par le serveur.
+`POST_TYPES` est la liste explicite qui manquait, et les tests portent sur la PHRASE et non sur la
+branche - le defaut etait invisible a une verification de type : la ligne s'affichait, l'avatar etait
+le bon depuis #781, seul le verbe etait faux.
+
+Une seule phrase pour les deux types, parce que les tables natives n'en ont qu'une : `actorName` est
+l'association pour le premier et l'auteur pour le second, et « a publie » est vrai des deux cotes.
+C'est l'AVATAR qui les separe, et il est decide ailleurs, a partir de `associationId`.
 
 ### Fixed - une publication supprimee restait a l'ecran, et seulement pour les gens connectes
 
