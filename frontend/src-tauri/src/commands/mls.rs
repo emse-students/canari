@@ -458,6 +458,30 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
     Ok(manager.get_known_groups())
 }
 
+/// WHAT THE `KeyPackage` LABEL IN THE COMPOSITION LINE IS MADE OF - the breakdown a COUNT cannot give.
+///
+/// Expired debt, superseded fallbacks and a revoked pool stack into one number and are reclaimed by
+/// three different mechanisms, so a count names no remedy. This is the native twin of
+/// `WasmMlsClient::key_package_census`, and the two are called from the SAME line of `sessionAuth`.
+///
+/// **IT IS A COMMAND RATHER THAN A LINE IN `initialiser_mls`, AND THAT IS THE WHOLE POINT.** It used
+/// to be a `log::info!` inside `load_or_create`, which put an O(pool) walk that deserialises every
+/// stored bundle in front of the first screen: 24.5 ms against 12.9 ms at a 1000-package pool,
+/// measured on OXYGEN 2026-09-17 - half of a cold load. Web already called its own census after
+/// `MLS ready` for exactly that reason. Now both do.
+///
+/// Returns the line rather than logging it, so the ONE place that decides where a diagnostic is
+/// printed stays the caller - the same shape as the wasm side.
+#[tauri::command]
+pub(crate) fn recenser_key_packages(state: tauri::State<AppState>) -> Result<String, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.key_package_census_summary())
+}
+
 /// Whether this device is still a member of the group (false once a Remove commit naming it was
 /// applied). See `MlsManager::is_group_active`: the fact that makes an eviction knowable at the
 /// commit rather than at the refused send.

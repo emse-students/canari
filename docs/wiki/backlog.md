@@ -1429,6 +1429,33 @@ removes. The handshake itself took 124 ms there against 182 here, and that diffe
 network on the day rather than a change - **read the ORDER, not the duration, to tell whether this
 fix is present.**
 
+#### HALF OF A COLD LOAD LEFT THE CRITICAL PATH; THE OTHER HALF IS MAINTENANCE AND NEEDS A TRIGGER (2026-09-17)
+
+The criterion benches added the same day say a cold `load_or_create` costs **24.5 ms with a logger
+installed and 12.9 ms without**, at a 1000-key-package pool, 5 groups, on OXYGEN. The gap is the
+argument of a `log::info!`: `key_package_census_summary()`, which deserialises every stored bundle,
+recomputes its `hash_ref` and scans its key. A phone runs `tauri-plugin-log` at info and pays it, on
+the awaited path of `initialiser_mls`, in front of the first screen.
+
+**THAT HALF IS SHIPPED OUT OF THE LOAD.** The census is now the `recenser_key_packages` command,
+called from the line of `sessionAuth` that already called the web one after `MLS ready` - and the
+`!isTauriRuntime()` guard on that line, which looked like it spared native an O(n) diagnostic and in
+fact only stopped native doing it at the right moment, is gone with it. The composition line stays
+in the load: 0.209 ms at the same pool.
+
+**THE OTHER HALF IS `prune_expired_key_packages`, 11.49 ms at that pool, AND IT IS STILL THERE.** It
+is not a diagnostic, it is maintenance: what it deletes must be deleted, and nothing else deletes it.
+Moving it therefore needs a TRIGGER, and this repository forbids the obvious one - *idempotence comes
+from durable state, termination from a proof, never from a clock*. **The blocking condition, written
+so nobody ships a timer instead:** name a durable fact that says "this pool has been pruned since it
+last changed", carried in the state blob rather than inferred, and prune when that fact is absent.
+Until such a fact exists this pass stays where it is, because a pool that silently stops being pruned
+is item 2 of the queue getting worse, and item 2 is a P1.
+
+**NONE OF THIS EXPLAINS THE 1644 ms.** OXYGEN is not a Mi 9T and a fixture pool is not a field pool.
+What is established is the SHAPE - the cost is linear in a pool nothing reclaims - plus a
+reproducible first number.
+
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 

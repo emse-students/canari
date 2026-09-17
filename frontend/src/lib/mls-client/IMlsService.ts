@@ -1025,6 +1025,19 @@ export interface IMlsService {
   sendTyping(groupId: string, isTyping: boolean): void;
 
   /**
+   * Logs what the `KeyPackage` label in the load-time composition line is made of, once per session.
+   *
+   * ON THE INTERFACE BECAUSE BOTH PLATFORMS OWE IT, which is the fix rather than a tidy-up: it was
+   * an optional method reached through a cast and guarded by `!isTauriRuntime()`, and native's
+   * "equivalent" was a log line INSIDE the awaited load - half the cost of a cold start at a large
+   * pool. A capability every implementation has is a method on the interface; an optional one is a
+   * capability nothing makes anybody provide.
+   *
+   * Never awaited and never throws: the caller has nothing to decide on the result.
+   */
+  logKeyPackageCensus(): void;
+
+  /**
    * Removes network event listeners (`visibilitychange`, `online`) and clears
    * all internal timers. Must be called before the instance is discarded (e.g.
    * on logout + device wipe) to prevent orphaned handlers keeping a stale

@@ -462,6 +462,25 @@ export class TauriMlsService extends BaseMlsService {
     await invoke('store_device_identity', { userId, deviceId });
   }
 
+  /**
+   * Logs what the `KeyPackage` label in the load-time composition line is made of.
+   *
+   * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
+   * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
+   * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
+   * bundles do not belong in front of the connected badge; native was doing exactly that.
+   *
+   * Best-effort by design, like the web one: a diagnostic that can break a session is worse than no
+   * diagnostic, and the caller has nothing to decide on the result.
+   */
+  logKeyPackageCensus(): void {
+    invoke<string>('recenser_key_packages')
+      .then((census) => console.log(`[MLS] key package census - ${census}`))
+      .catch((e: unknown) => console.warn(`[MLS] key package census unavailable: ${String(e)}`));
+  }
+
   /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
   protected async _initImpl(
     userId: string,
