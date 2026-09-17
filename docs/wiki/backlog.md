@@ -937,6 +937,62 @@ is worth the work, and the bundle is worth it only for a FIRST visit.**
 the 534 ms is Firefox, the user's line, `/posts`, and a session. The proportions are what transfers -
 one reload of the user's own browser with these five fields read out would settle the absolute.
 
+#### THE PROPORTIONS DID NOT TRANSFER: 56-60% BECOMES 7% (user's Firefox + HAR, 2026-09-17)
+
+**The reload above asked for the absolute and got it, and it refutes the paragraph above it.** A
+console export and a HAR of the same boot, taken by the user on their own line at 09:23 on
+2026-09-17 against `0.18.9`, `/posts`, 386 requests. Every figure below is the HAR's own clock.
+
+| block | ms | share of the 1342 ms boot |
+| --- | ---: | ---: |
+| the document (TTFB 94, connection reused, 6 569 B zstd) | **94** | **7%** |
+| document's last byte -> the FIRST module request | 122 | 9% |
+| 173 modules, 1 333 140 B, all `cf-cache-status: HIT` -> the application's first word | 384 | 29% |
+| first word -> `MLS ready` | 580 | 43% |
+| `MLS ready` -> `[WS] Connected to Chat Gateway` | 162 | 12% |
+
+**THE ORIGIN ROUND TRIP IS 94 ms OF 1342, NOT 56-60% OF ANYTHING.** The Chrome probe measured 130 ms
+of TTFB against a 323 ms block and read that as the dominant term; on the user's line the same round
+trip is 94 ms against 1342 and is the SMALLEST of the five. The Chrome reading was not wrong about
+Chrome - it was answering a different question, on a different route, with no session and no MLS
+state to decrypt. **So the edge Cache Rule beside this entry is worth at most ~80 ms and must not be
+quoted as the cold-start fix; what dominates is the 580 ms of session and MLS work after the first
+word.**
+
+Two things the export settles in passing, both measured rather than argued:
+
+- **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
+  chunks, median 16 ms, slowest 42 ms, 56 in flight at the peak, `cf-cache-status: HIT` on all 173,
+  and the last module byte lands at +627 ms - AFTER the application's first word at +600. The
+  `Link: rel=modulepreload` header is doing its job: the document body carries ZERO
+  `rel="modulepreload"` tags (10 `<link>` tags, none of them preload), so that 10 461-byte header is
+  the only early declaration there is, and what it buys is exactly the multiplexed burst above
+  rather than a level-by-level discovery. `preloadableAsset`'s docblock says so and this is the
+  reading behind it.
+- **122 ms elapse between the document's last byte and the first module request**, which nothing had
+  ever measured and which no entry here explains. It is 9% of the boot, and whether it is HTML
+  parse, zstd decode, the inline bootstrap or Firefox scheduling is NOT known - the export cannot
+  separate them and neither may a later reader.
+
+#### WHAT THIS EXPORT COULD NOT MEASURE, AND WHY, SO NOBODY RE-READS IT AS THE ANSWER
+
+**Neither of the two fixes below was in the build.** `v0.18.9` was tagged 2026-09-16T17:18:37Z;
+`perf(session): tenir la reponse de revocation pendant le dechiffrement local` (#760) merged at
+17:41:58Z and `perf(session): la poignee de main du socket ne fait plus la queue derriere l'etat
+MLS` (#764) at 18:35:23Z. `git tag --contains` answers nothing for either. **A build is identified
+by what it CONTAINS, never by the fact that it is the latest one** - the tag was cut 23 minutes
+before the first of the two landed, and asking for the export against it was the error.
+
+**And the capture had the browser cache disabled**, so every one of the 241 immutable chunks was
+refetched: the request headers carry `Pragma: no-cache`. That makes `1342 ms` a NO-CACHE boot, not
+comparable to the `1308 ms` warm boot of `0.18.8` above - the only honest comparison between the two
+builds is that no boot change separates them, and the two numbers agree. **It is worth one line that
+a full refetch of 1.33 MB over 173 requests lands within 34 ms of a warm boot**: the disk cache is
+nearly worthless here because the edge already answers every chunk.
+
+**WHAT IS OWED IS ONE WARM EXPORT ON A BUILD CARRYING #760 AND #764**, and until it exists the
+964 ms arithmetic stays a prediction.
+
 #### The second block WAS 162 ms and is SHIPPED; what it leaves behind is one corrected claim
 
 The gap between `Initialising MLS (vault device key path)` (856 ms) and `Loading encrypted state
@@ -957,6 +1013,11 @@ re-derive is what this file has already been burnt by once.
 **WHAT IS STILL OWED IS THE READING.** 162 ms is a Firefox measurement on the user's own line, and
 this workstation cannot reproduce that browser. One reload export of a build carrying the change
 says whether the gap is gone.
+
+**THE 2026-09-17 EXPORT IS NOT THAT READING, AND IT IS THE CONTROL INSTEAD.** `v0.18.9` was tagged
+23 minutes before #760 merged, so what it measures is the UNCHANGED code: `Initialising MLS (vault
+device key path)` at +917, `Loading encrypted state with device key` at +1085 - **168 ms**, against
+the 162 recorded here. The block reproduces. That is worth having, and it is not the answer.
 
 **AND THE KEY-PACKAGE LEAK NOW HAS A PRICE IN BYTES.** The same boot prints its own composition:
 
@@ -1007,8 +1068,14 @@ nobody re-measured costs more than 15 ms is worth saving.
 **AND THE MEASUREMENT IS OWED AGAIN.** The table above is `0.18.8`. Nothing here has been re-read on
 a build carrying either this change or the 162 ms revocation change, and the arithmetic
 (1308 - 182 - 162 = 964) is a PREDICTION, not a result - the two savings may overlap, since both
-were waiting on the network. **One reload export on the shipped build settles it**, and until it
-exists no line anywhere may quote a cold start under a second as measured.
+were waiting on the network. **One reload export on a build that CONTAINS both settles it**, and
+until it exists no line anywhere may quote a cold start under a second as measured.
+
+**`v0.18.9` IS NOT THAT BUILD AND THE 2026-09-17 EXPORT CONFIRMS IT FROM THE INSIDE**: `[WS] Opening
+connection` prints at +1218, still AFTER `MLS ready` at +1180, which is precisely the queueing #764
+removes. The handshake itself took 124 ms there against 182 here, and that difference is the
+network on the day rather than a change - **read the ORDER, not the duration, to tell whether this
+fix is present.**
 
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
@@ -1055,21 +1122,34 @@ What is open is the SHAPE, and the cost of each:
   stamp `window`, traverse away, `history.back()`, read the stamp back.
 - **Edge caching with a short `s-maxage`, or with a purge on deploy.** This is the one that moves the
   number: the document would be served from the user's own PoP instead of proxied to France, and the
-  `frontend-ssr` container leaves the critical path of every navigation. **Its blocking condition is
-  a Cloudflare Cache Rule** - HTML is not edge-cached by default whatever the origin says - and the
-  2026-09-16 Cloudflare authorization was for ONE specific rule and is spent, so this needs the user.
+  `frontend-ssr` container leaves the critical path of every navigation. Its blocking condition was
+  a Cloudflare Cache Rule - HTML is not edge-cached by default whatever the origin says - and **the
+  user created it on 2026-09-17**: zone `canari-emse.fr`, everything outside `/api/` and
+  `/internal/` made eligible, **Edge TTL "use cache-control if present, bypass if not"** so the
+  tunable stays in this repository rather than in a console, Browser TTL respecting origin. The
+  repository half is therefore the whole of it: `location @ssr` says `Cache-Control: no-store`
+  today, which that rule reads as "bypass", so **nothing is cached until a commit here says
+  otherwise and the rule alone changes nothing.** `CLOUDFLARE_CACHE_PURGE_TOKEN` (Zone:Cache Purge,
+  this zone only) is a repository secret since the same day, so the deploy can purge.
   The staleness it introduces is a DEPLOY question, not a privacy one: the two risks are a shell
-  naming last build's chunks, and an Open Graph head describing a renamed event for the TTL.
+  naming last build's chunks, and an Open Graph head describing a renamed event for the TTL. **The
+  first is not a risk to accept but the reason the purge exists**: a new frontend image does not
+  contain the previous build's chunks, so a stale shell is a blank page rather than an old one.
 
 **NOTHING HERE IS A LEAK.** An unauthenticated fetch already receives this document; caching changes
 how fresh it is, never who may read it. Recorded because "the shell is per-user" is the first thing a
 later reader will assume, and it is false.
 
-**AND IT IS NOW THE BIGGEST SINGLE TERM BEFORE THE APP SPEAKS, WHICH IT WAS ONLY SUSPECTED OF BEING
-WHEN THIS WAS FILED.** The navigation split in the cold-start entry above puts TTFB at 90-130 ms of a
-162-323 ms pre-first-word block - **56-60% of it** - against 29-74 ms for the whole module graph on a
-warm cache. The second shape above is therefore the one worth the user's gesture, and its saving is
-most of an origin round trip on EVERY navigation, not only on a boot.
+**IT WAS CALLED THE BIGGEST SINGLE TERM BEFORE THE APP SPEAKS, AND THE USER'S OWN BROWSER SAYS IT IS
+THE SMALLEST OF FIVE.** That claim rested on the Chrome navigation split - TTFB 90-130 ms of a
+162-323 ms pre-first-word block, **56-60% of it**. The 2026-09-17 export measured the same round trip
+on the user's line at **94 ms of a 1342 ms boot - 7%**, and the cold-start entry above carries the
+five-block table. Chrome was not wrong about Chrome; it was answering for `/login`, with no session
+and no MLS state, where the 580 ms that dominate the user's boot do not exist at all.
+
+**SO THIS ENTRY IS STILL WORTH SHIPPING AND ITS CEILING IS ~80 ms, WHICH IS WHAT MUST BE QUOTED.**
+It removes `frontend-ssr` from the critical path of EVERY navigation rather than only of a boot,
+which is the honest reason to do it - not a cold start under a second, which it cannot buy.
 
 ---
 ### P2 - THE NETWORK FOR THE JAVASCRIPT IS SOLVED; 1.62 MB OF IT STILL HAS TO BE PARSED BEFORE ANYTHING RUNS (measured on production 2026-09-16)

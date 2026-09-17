@@ -909,6 +909,25 @@ the moment the paragraph is drafted, never "cleaned up later". Two corollaries w
 An opaque uuid is not an identity and may be written down - it is how a later session finds the same
 group again. A `name` column, a display name and a screenshot caption are identities and may not.
 
+### A PROPORTION MEASURED IN ANOTHER BROWSER, ON ANOTHER ROUTE, WITHOUT THE SESSION IS A SHAPE - AND A SHAPE CAN INVERT
+
+A cold-start block was split three times in Chrome on this workstation, on `/login`, with no session
+and no MLS state, and the reading was recorded honestly: **TTFB is 56-60% of the pre-first-word
+block**, with the caveat written beside it that *"the proportions are what transfers"*. They did not.
+The user's own Firefox, on `/posts`, with a session, put the same origin round trip at **94 ms of a
+1342 ms boot - 7%, the smallest of five blocks** - because the route that matters spends 580 ms
+decrypting MLS state that `/login` does not have at all.
+
+**THE CAVEAT WAS WRITTEN AND IT WAS STILL NOT ENOUGH**, which is what makes this a rule rather than
+an anecdote. A proportion is a ratio, and a ratio moves when EITHER term moves; the denominator here
+was a different page in a different lifecycle. What the substitute measurement may be believed for
+is the ABSOLUTE it shares with the target - 94 ms of network is 94 ms of network - and never for its
+share of a total the substitute does not have. **So an entry that would be prioritised by a
+proportion waits for that proportion to be read on the real surface**, and in the meantime it is
+argued for on what it absolutely saves. The edge-cache entry survived this correction on exactly
+that basis: it removes an origin round trip from EVERY navigation, which is true either way; it
+does not buy a cold start under a second, which is what the Chrome share had implied.
+
 ### AN OPEN ITEM WHOSE SUBSTANCE HAS NEVER BEEN IN THE REPOSITORY IS NOT AN OPEN ITEM
 
 `CLAUDE.md` says the repository is the only reference and that nothing may exist solely in a chat
@@ -1251,6 +1270,8 @@ either** - the table is on
 - **A GUARD THAT SAYS "SOMEONE IS WORKING" MUST BE WRITTEN BY THE WORK, NOT BY A DEADLINE THE WORK CAN OUTLIVE.** Three MLS engines share one `mls.bin` on Android and each does *load, modify, write*; only the WRITE was protected, and by a 30 s deadline refreshed by a 10 s JS heartbeat that pauses on `hidden`. The checkpoint it guards serialises and encrypts the whole state BEFORE the call that refreshes the deadline - **48 s on a Mi 9T with an 8 MB blob** - so backgrounding the app during one left ~18 s in which a background engine saw no foreground and wrote back the blob it had loaded before the mint, deleting fifty private keys whose public halves had just been published. The window is a function of the guarded operation's cost, so no margin is the right margin: `ForegroundCritical` is non-zero exactly while the operation runs, entered before the MINT rather than before the write, because the state exists in that engine from the mint onwards and is durable only after the write. **Ask of any guard: is it asserted by the thing it protects, or predicted?** And the stuck-true it replaces is answered by RAII, not by shortening anything - `Drop` runs on return, on `?` and on unwind. The remaining lost-update - a background engine writing back a blob that changed since it loaded, whatever the foreground is doing - is a compare-and-swap and is NOT done. [backlog](backlog.md)
 
 ## Release and CI -> [cicd](cicd.md)
+
+- **A BUILD IS WHAT IT CONTAINS, AND "THE LATEST TAG" IS NOT AN ANSWER.** A measurement was asked for on `v0.18.9` because it was the shipped version; the two performance fixes it was meant to measure merged 23 and 77 MINUTES AFTER that tag was cut, so the export could only ever have shown the unchanged code. The gap between a tag and the merges that follow it is the ordinary working rhythm of this repository - a release is cut, and the queue keeps draining behind it - so the window is NOT unusual and the mistake is always available. **`git tag --contains <sha>` answers in one command and nothing else does**: a version number, a changelog entry and a deploy that went green all say the build exists, and none of them says what is in it. The same reasoning is why a measurement must name the commit it was taken on and not only the version - see the cold-start entry in [backlog](backlog.md), where the export became a CONTROL for the unfixed code rather than a waste, but only because the build could be identified afterwards.
 
 - **A CONFLICTING PULL REQUEST GETS NO `pull_request` RUN AT ALL, AND AN ABSENT CHECK LOOKS EXACTLY LIKE A PENDING ONE.** GitHub computes a `pull_request` event against the MERGE ref; when the branch conflicts with the base it cannot build one, so `CI` is never *queued* - not queued-and-red, simply never created. `arm-auto-merge` still runs, because it is `pull_request_target` and evaluates against the base, so the checks list shows one green row and looks like a run in flight. PR #525 sat like that through two waits and a close/reopen: the branch had been cut from a stale local `main`, one commit behind, and both PRs wrote to the same `## [Unreleased]` CHANGELOG anchor. **`gh run list` returning nothing is a fact, not a delay** - settle it with `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then `git fetch origin main && git rebase origin/main` and `git push --force-with-lease`. **The cheap half is the prevention: cut every branch from a freshly fetched `main`**, because `CHANGELOG.md`'s `[Unreleased]` heading is an anchor every fix touches, so two PRs opened the same day conflict by construction. Same class as a required check that is skipped rather than failed: a gate nobody opened and a gate that passed are indistinguishable from the outside, and only one of them is safe. [cicd](cicd.md)
 
