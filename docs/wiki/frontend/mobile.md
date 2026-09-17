@@ -902,6 +902,32 @@ draw. Both call sites route through it, which is why neither carries a copy. **T
 keeps its own 96 px**: that number is a three-platform contract, pinned by `initialsFallback.test.ts`
 against the two Apple copies, and it is not the avatar branch's business.
 
+**A SOCIAL push names its picture with an ID, and the two ids are not interchangeable.** Until
+2026-09-17 the social branch had no image at all on either platform - `showSimpleNotification` built
+a small icon and a line of text, the iOS extension wrote the sentence and attached nothing - so a
+post from an association arrived grey while a message from one of its officers arrived with a face
+on it. The payload now carries at most one of two fields, and **never a URL**: a field naming a
+LOCATION would let whoever composes a push point a background service (the FCM service, the NSE -
+both running before any app code) at any host, with the device's own network identity. An id can
+only be concatenated into a route the device already knows:
+
+| field | route | authentication |
+| --- | --- | --- |
+| `iconUserId` | `/api/mls/push/avatar/<id>` | `PushSecret` |
+| `iconMediaId` | `/api/media/public/<id>` | none - what a signed-out `<img>` fetches |
+
+Which one to call therefore has to SURVIVE THE WIRE rather than be guessed at from the shape of a
+string, which is why `fetchPublicMediaIcon` / `fetchPublicMedia` are separate functions rather than a
+flag on the avatar fetch. `publicMediaIconId` (server) reads the stored `logoUrl` instead of trusting
+it - only the exact public-media shape yields an id - and the natives sanitise again, because that is
+the half that holds if a payload is ever composed somewhere else. **A push naming no picture draws
+none**, which is the form reminder's case: it has no actor, and an initials disc would put a letter
+where nobody's name is. The HTTP-to-bitmap block is shared with the avatar path (`cachedRemoteIcon`
+in Kotlin, `cachedRemoteFile` in Swift); on Swift the request is a CLOSURE so that a cache hit does
+not pay for the Keychain read the avatar URL needs, which is the ordering the original was careful
+about. The Android social branch runs under `runWithWakeLock` for the same reason the reaction branch
+does - it now performs network I/O, and `onMessageReceived` must return.
+
 Two decisions inside it are easy to get wrong:
 
 - **the disc is the LAST resort, below the media thumbnail.** iOS renders only the first attachment,

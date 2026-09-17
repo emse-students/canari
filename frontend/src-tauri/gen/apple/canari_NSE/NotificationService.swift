@@ -113,6 +113,7 @@ class NotificationService: UNNotificationServiceExtension {
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       applyServerContent(userInfo: userInfo, content: content)
+      attachSocialIcon(userInfo: userInfo, content: content)
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
@@ -246,6 +247,46 @@ class NotificationService: UNNotificationServiceExtension {
       attachInitials(content: content, name: actorName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
+  }
+
+  /// The picture on a SOCIAL push: an association's logo, or a person's photo.
+  ///
+  /// A social notification used to carry no image at all, so a post from an association arrived as
+  /// a line of text while a MESSAGE from one of its officers arrived with their face on it -
+  /// reported by the user on 2026-09-17. The reaction and message paths already did this; this is
+  /// the third caller of the same two helpers, not a new mechanism.
+  ///
+  /// **THE PAYLOAD CARRIES AN ID AND NEVER A LOCATION.** `iconMediaId` is concatenated into the one
+  /// public-media route this extension already knows and `iconUserId` goes through the
+  /// authenticated avatar proxy, so a push can point this process at exactly two routes on its own
+  /// origin and nowhere else. The server enforces the same at the other end (`publicMediaIconId`);
+  /// both halves are needed, and this is the one that holds wherever a payload is composed.
+  ///
+  /// Does nothing when the push names no picture, which is the FORM REMINDER's case: it has no
+  /// actor, and an initials disc would put a letter where nobody's name is.
+  private func attachSocialIcon(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    let mediaId = Self.nonEmpty(Self.string(userInfo["iconMediaId"]))
+    let userId = Self.nonEmpty(Self.string(userInfo["iconUserId"]))
+    if mediaId == nil && userId == nil { return }
+    guard let ctx = loadPushContext() else { return }
+
+    var fileUrl: URL?
+    if let mediaId = mediaId {
+      fileUrl = fetchPublicMedia(ctx: ctx, mediaId: mediaId)
+    } else if let userId = userId {
+      fileUrl = fetchAvatar(ctx: ctx, userId: userId)
+    }
+    if let fileUrl = fileUrl, attachImage(content: content, fileUrl: fileUrl, identifier: "avatar") {
+      return
+    }
+    // A named picture that could not be fetched still falls back to initials, as the message path
+    // does: the push said whose it was, so the notification can say so too.
+    if let name = Self.nonEmpty(Self.string(userInfo["actorName"])) {
+      attachInitials(content: content, name: name)
+    }
   }
 
   /// A notification string from the EXTENSION's own `Localizable.strings`, in the app's language.
@@ -1017,9 +1058,45 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Fetches the sender avatar, caching it in the container. Returns a local file URL.
   private func fetchAvatar(ctx: PushContext, userId: String) -> URL? {
+    return cachedRemoteFile(name: "avatar_\(Self.sanitizeFilename(userId)).jpg") {
+      guard let secret = self.loadPushSecret() else { return nil }
+      let user = Self.encode(userId)
+      let req = Self.encode(ctx.userId)
+      let dev = Self.encode(ctx.deviceId)
+      return (
+        "\(ctx.baseUrl)/api/mls/push/avatar/\(user)?requesterId=\(req)&deviceId=\(dev)", secret
+      )
+    }
+  }
+
+  /// Downloads a PUBLIC media object - an association logo - for a notification attachment.
+  ///
+  /// Unauthenticated on purpose: `/api/media/public/:id` is the route an `<img>` on a signed-out
+  /// page already uses, so this extension has no credential to present and needs none. That is why
+  /// it is a SEPARATE function from `fetchAvatar` rather than a flag on it: which of the two routes
+  /// to call is decided by the payload's own field, never guessed from the shape of a string.
+  private func fetchPublicMedia(ctx: PushContext, mediaId: String) -> URL? {
+    let safe = Self.sanitizeFilename(mediaId)
+    return cachedRemoteFile(name: "assologo_\(safe).jpg") {
+      ("\(ctx.baseUrl)/api/media/public/\(safe)", nil)
+    }
+  }
+
+  /// ONE PATH FROM A URL TO A NOTIFICATION IMAGE: the 24h app-group cache, then the fetch.
+  ///
+  /// Extracted from `fetchAvatar` when the association logo became a second caller. `request` is a
+  /// closure rather than two parameters so that a cache HIT costs nothing it does not need - the
+  /// avatar route reads the PushSecret out of the Keychain to build its URL, and paying for that
+  /// on a hit is what the original ordering was careful to avoid.
+  ///
+  /// - Parameter request: the URL to fetch and the PushSecret to present, or nil for a public
+  ///   route. Returning nil abandons the fetch: the credential is missing, not the file.
+  private func cachedRemoteFile(
+    name: String,
+    request: () -> (urlStr: String, secret: String?)?
+  ) -> URL? {
     guard let dir = Self.appGroupDir() else { return nil }
-    let safe = Self.sanitizeFilename(userId)
-    let cacheUrl = dir.appendingPathComponent("avatar_\(safe).jpg")
+    let cacheUrl = dir.appendingPathComponent(name)
 
     if let attrs = try? FileManager.default.attributesOfItem(atPath: cacheUrl.path),
       let modified = attrs[.modificationDate] as? Date,
@@ -1028,13 +1105,8 @@ class NotificationService: UNNotificationServiceExtension {
       return cacheUrl
     }
 
-    guard let secret = loadPushSecret() else { return nil }
-    let user = Self.encode(userId)
-    let req = Self.encode(ctx.userId)
-    let dev = Self.encode(ctx.deviceId)
-    let urlStr =
-      "\(ctx.baseUrl)/api/mls/push/avatar/\(user)?requesterId=\(req)&deviceId=\(dev)"
-    guard let (data, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil),
+    guard let (urlStr, secret) = request(),
+      let (data, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil),
       status == 200,
       (try? data.write(to: cacheUrl, options: .atomic)) != nil
     else { return nil }
@@ -1118,13 +1190,19 @@ class NotificationService: UNNotificationServiceExtension {
     return url
   }
 
-  /// Blocking HTTP request with a bearer PushSecret and a short timeout (the extension
-  /// has a hard ~30s budget). Returns (body, status) or nil on transport error.
-  private func syncRequest(method: String, urlStr: String, secret: String, body: Data?) -> (Data, Int)? {
+  /// Blocking HTTP request with a short timeout (the extension has a hard ~30s budget).
+  /// Returns (body, status) or nil on transport error.
+  ///
+  /// `secret` is optional because one route needs none: `/api/media/public/:id` is what a
+  /// signed-out browser fetches. A nil sends NO `Authorization` header rather than an empty one -
+  /// a header the proxy would then have to reason about.
+  private func syncRequest(method: String, urlStr: String, secret: String?, body: Data?) -> (Data, Int)? {
     guard let url = URL(string: urlStr) else { return nil }
     var req = URLRequest(url: url)
     req.httpMethod = method
-    req.setValue("PushSecret \(secret)", forHTTPHeaderField: "Authorization")
+    if let secret = secret {
+      req.setValue("PushSecret \(secret)", forHTTPHeaderField: "Authorization")
+    }
     if let body = body {
       req.httpBody = body
       req.setValue("application/json", forHTTPHeaderField: "Content-Type")

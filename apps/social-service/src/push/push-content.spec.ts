@@ -14,6 +14,7 @@ import {
   associationPostContent,
   followedPostContent,
   previewOf,
+  publicMediaIconId,
   pushContentData,
   type PushContent,
 } from './push-content';
@@ -115,6 +116,68 @@ describe('previewOf', () => {
     // which is the one layer that knows the reader's language.
     expect(previewOf('')).toBe('');
     expect(previewOf('   ')).toBe('');
+  });
+});
+
+/**
+ * THE PICTURE IS NAMED BY AN ID, AND THAT IS WHAT MAKES IT SAFE TO PUT IN A PUSH.
+ *
+ * A push payload is composed here but arrives over a transport nobody owns, and a field naming a
+ * LOCATION would let whoever writes one point a background service - the Android FCM service or the
+ * iOS extension, both running before any app code - at any host, with the device's own network
+ * identity. An id can only be concatenated into a route the device already knows. So what is pinned
+ * here is not that the picture is right, it is that nothing but an id can ever leave.
+ */
+describe('publicMediaIconId', () => {
+  it('reads the id out of the public-media path every association logo has', () => {
+    expect(publicMediaIconId('/api/media/public/7f1e0a44-1111-2222-3333-444455556666')).toBe(
+      '7f1e0a44-1111-2222-3333-444455556666'
+    );
+  });
+
+  it('refuses a URL to somewhere else, however plausible its tail looks', () => {
+    // The whole point: a stored column is read, not trusted.
+    expect(publicMediaIconId('https://example.invalid/api/media/public/abc')).toBeNull();
+    expect(publicMediaIconId('//example.invalid/api/media/public/abc')).toBeNull();
+  });
+
+  it('refuses a traversal, a query and anything else that is not just an id', () => {
+    expect(publicMediaIconId('/api/media/public/../../etc/passwd')).toBeNull();
+    expect(publicMediaIconId('/api/media/public/abc?redirect=https://example.invalid')).toBeNull();
+    expect(publicMediaIconId('/api/media/abc')).toBeNull();
+  });
+
+  it('gives nothing rather than a guess when there is no logo at all', () => {
+    // An association with no logo draws initials, which is what every push did until now.
+    expect(publicMediaIconId(null)).toBeNull();
+    expect(publicMediaIconId(undefined)).toBeNull();
+    expect(publicMediaIconId('')).toBeNull();
+  });
+});
+
+describe('the icon in the payload', () => {
+  it('names a person through the authenticated avatar route', () => {
+    const data = pushContentData(
+      commentContent('Claire', 'nice post', { kind: 'user', userId: 'u-1' })
+    );
+    expect(data.iconUserId).toBe('u-1');
+    expect(data.iconMediaId).toBeUndefined();
+  });
+
+  it('names an association logo through the public-media route', () => {
+    const data = pushContentData(
+      associationPostContent('BDA', 'Scene ouverte', { kind: 'publicMedia', mediaId: 'm-9' })
+    );
+    expect(data.iconMediaId).toBe('m-9');
+    expect(data.iconUserId).toBeUndefined();
+  });
+
+  it('emits NEITHER key when the push has no picture', () => {
+    // A form reminder has no actor. An empty string would be a present key with a falsy value, and
+    // every native reader would then have to remember to test for it.
+    const data = pushContentData(formOpenContent());
+    expect('iconUserId' in data).toBe(false);
+    expect('iconMediaId' in data).toBe(false);
   });
 });
 
