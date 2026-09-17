@@ -92,6 +92,33 @@ Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,
 CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
 et c'est la premiere fois qu'on peut le dire avec un nombre.
 
+### Fixed - une publication supprimee restait a l'ecran, et seulement pour les gens connectes
+
+Trouve en instruisant un signalement de l'utilisateur sur une publication qu'il ne pouvait pas
+supprimer. Le defaut trouve n'est pas celui-la, mais il en porte exactement le symptome.
+
+La cle du cache de fil porte le LECTEUR, le filtre de promo, le filtre de formation, la taille de
+page et le decalage. `PostsService.invalidateListCache` effaçait huit cles LITTERALES - `all` et
+`associations`, quatre tailles de page, decalage 0 - et **toutes les huit nommaient le lecteur
+ANONYME**. La cle d'un lecteur connecte contient son propre identifiant : aucune creation, aucune
+suppression, aucune epingle, aucun masquage de moderation n'y a jamais touche. Sa page continuait a
+servir la reponse precedente jusqu'a expiration du TTL de 30 secondes - une publication qui ne s'en
+va pas, et une publication qui n'apparait pas.
+
+**Le defaut etait invisible a toute verification deconnectee.** Le balayage MARCHAIT, sur le seul
+lecteur dont personne ne prend l'identite pour tester. Et le meme cache avait deja son balayage
+complet ailleurs : `AssociationsService` passait `posts:list:v2:*` au SCAN depuis toujours pour un
+changement de nom ou de logo. **Le service qui ECRIT les publications couvrait moins de son propre
+cache que celui qui s'y contente de renommer des choses.**
+
+`post-list-cache.ts` est desormais le seul endroit qui connait le prefixe, et les deux services
+passent par lui. C'est un module feuille plutot qu'une methode publique parce que `PostsService`
+depend deja d'`AssociationsService` : l'arete inverse serait un cycle. `v2` ne bouge pas - la FORME
+mise en cache n'a pas change, seulement qui pense a la jeter.
+
+Les tests portent sur les CLES qui restent apres le balayage, pas sur l'appel : l'ancienne
+implementation aurait passe n'importe quelle verification du genre « essaie-t-il d'invalider ».
+
 ### Fixed - retirer quelqu'un d'un groupe ou d'une association ne demandait rien
 
 Signale par l'utilisateur le 2026-09-17 : *« le bouton pour retirer les gens des groupes est trop
