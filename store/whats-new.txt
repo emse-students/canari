@@ -1,8 +1,10 @@
 version: 0.18.10
 
-Demarrage plus rapide, notifications plus justes.
+Poster anonymement, et un demarrage plus rapide.
 
-La connexion au serveur de discussion ne fait plus la queue derriere le dechiffrement local.
+Un interrupteur « Anonyme » dans le composeur publie un post sans votre nom.
+
+La connexion au chat ne fait plus la queue derriere le dechiffrement local.
 
 Une reaction a votre message notifie sur son propre canal, plus discret.
 
@@ -11,5 +13,3 @@ Les messages d'erreur sont dits en francais, sans jargon technique.
 Un fichier trop volumineux le dit avant l'envoi.
 
 Une carte de « mes associations » affiche votre role au lieu d'un « 0 membres » faux.
-
-Le depart d'un membre s'affiche au moment ou il arrive.

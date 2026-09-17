@@ -249,7 +249,22 @@ jobs:
           fi
 
           # ── Frontend ──
-          if has '^frontend/src/' || has '^frontend/static/' || \
+          #
+          # `frontend/src-tauri/` IS IN THIS LIST BECAUSE THE FRONTEND SUITE READS IT, not because
+          # it is under `frontend/`. Twenty-odd vitest files in `frontend/src/lib/mobile/` and
+          # `frontend/src/lib/services/` open the Kotlin, the Swift, the `.mm` bridges, the Rust
+          # commands, `tauri.conf.json` and the Android resources, and assert things about them -
+          # that every declared notification channel is created, that the push payload's fields
+          # agree on both platforms, that the manifest still registers the FCM service. Until
+          # 2026-09-17 this filter named `^frontend/src/` only, so a commit touching ONLY the
+          # native tree ran the Android Gradle job and NONE of the tests written to guard that
+          # tree - the derived-test failure this repository has now met five times. The `android`
+          # filter below is correct and is not a substitute: it runs the JVM ladder suite, not
+          # these.
+          #
+          # Ask what the gate READS. These read `frontend/` whole, so the trigger is `frontend/`
+          # whole, minus nothing that is not separately covered.
+          if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
              has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
