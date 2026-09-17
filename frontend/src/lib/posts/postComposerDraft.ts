@@ -12,6 +12,7 @@ export interface PostComposerDraft {
   scheduledAt: string;
   selectedAssociationId: string;
   selectedLinkedCalendarEventId: string;
+  anonymous: boolean;
 }
 
 export const POST_COMPOSER_DRAFT_KEY = 'canari_post_composer_draft';
@@ -59,6 +60,9 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
               : '',
+          // Absent on a draft saved before this field existed - defaults to false, same as a
+          // fresh composer.
+          anonymous: !!parsed.anonymous,
         };
       }
     } catch {
@@ -92,6 +96,7 @@ export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {
     scheduledAt: '',
     selectedAssociationId: '',
     selectedLinkedCalendarEventId: '',
+    anonymous: false,
   };
 }
 

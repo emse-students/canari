@@ -60,6 +60,15 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   hiddenByModeration: boolean;
 
+  /**
+   * Fixed at creation, mutually exclusive with `associationId` (enforced server-side in
+   * `PostsController.createPost`, never trusted from the client). Strips `authorId` from every
+   * reader except a content moderator or platform admin - see `PostsService.viewerCapabilities`.
+   * Cleared only by a moderator (`PostsService.clearAnonymousFlag`), never by the author via edit.
+   */
+  @Column({ type: 'boolean', default: false })
+  anonymous: boolean;
+
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 

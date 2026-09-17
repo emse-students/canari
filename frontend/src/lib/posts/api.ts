@@ -80,6 +80,8 @@ export interface PostEntity {
   canPin?: boolean;
   /** The flag: any logged-in reader who is not the post's own publisher. */
   canReport?: boolean;
+  /** Clears `anonymous`, revealing the author again: same tier as `canPin`. */
+  canUnmaskAnonymous?: boolean;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
@@ -95,6 +97,13 @@ export interface PostEntity {
   associationId?: string;
   /** Present for association posts; use instead of author fields. */
   association?: PostAssociationAuthor;
+  /**
+   * Fixed at creation, mutually exclusive with `association`. Strips `authorId` (and the name
+   * fields above) from every reader except a content moderator or platform admin - see
+   * `canUnmaskAnonymous`. Always present regardless of viewer, so the client can render the
+   * generic icon even when it never received an `authorId` to draw a real avatar from.
+   */
+  anonymous?: boolean;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -170,6 +179,8 @@ export interface CreatePostPayload {
   }>;
   attachedFormId?: string;
   associationId?: string;
+  /** Mutually exclusive with `associationId` - the server ignores this whenever both are set. */
+  anonymous?: boolean;
   linkedCalendarEventId?: string;
 }
 
@@ -335,6 +346,11 @@ export async function pinPost(postId: string): Promise<{ ok: boolean; pinned: bo
 
 export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
   return request(`/api/posts/${postId}/unpin`, { method: 'PATCH' });
+}
+
+/** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
+export async function unmaskPost(postId: string): Promise<{ ok: boolean }> {
+  return request(`/api/posts/${postId}/unmask`, { method: 'PATCH' });
 }
 
 /** A post hidden by moderation, with its pending report count. Admin only. */

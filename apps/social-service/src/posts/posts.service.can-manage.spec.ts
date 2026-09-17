@@ -264,4 +264,82 @@ describe('PostsService post management rights', () => {
       ).resolves.toMatchObject({ canManage: true, canPin: true });
     });
   });
+
+  /**
+   * Anonymous posts (user request, 2026-09-17): a regular reader never gets `authorId` on an
+   * anonymous post, a content moderator/platform admin does, and only that same tier may clear the
+   * flag - `canUnmaskAnonymous` is drawn from the exact same predicate as `canPin`.
+   */
+  describe('anonymous posts', () => {
+    const anonPost = {
+      id: 'p3',
+      authorId: 'someone',
+      associationId: null,
+      anonymous: true,
+      markdown: 'Secret',
+      hiddenByModeration: false,
+      scheduledAt: null,
+    } as unknown as Partial<Post>;
+
+    it('strips authorId from a regular reader, but never the anonymous flag itself', async () => {
+      const { service } = makeService(anonPost, {});
+      const shaped = await service.getById('p3', { viewerId: 'reader' });
+      expect(shaped).not.toHaveProperty('authorId');
+      expect(shaped).toMatchObject({ anonymous: true });
+    });
+
+    it('strips authorId from an anonymous reader with no viewerId at all', async () => {
+      const { service } = makeService(anonPost, {});
+      await expect(service.getById('p3')).resolves.not.toHaveProperty('authorId');
+    });
+
+    it('keeps authorId for a content moderator', async () => {
+      const { service } = makeService(anonPost, {}, ['bde']);
+      await expect(service.getById('p3', { viewerId: 'bde' })).resolves.toMatchObject({
+        authorId: 'someone',
+      });
+    });
+
+    it('keeps authorId for a platform admin', async () => {
+      const { service } = makeService(anonPost, {});
+      await expect(
+        service.getById('p3', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ authorId: 'someone' });
+    });
+
+    it('keeps authorId on a NON-anonymous personal post for everyone, unaffected by this feature', async () => {
+      const { service } = makeService(personalPost, {});
+      await expect(service.getById('p2', { viewerId: 'reader' })).resolves.toMatchObject({
+        authorId: 'someone',
+      });
+    });
+
+    it('grants canUnmaskAnonymous to a content moderator on an anonymous post', async () => {
+      const { service } = makeService(anonPost, {}, ['bde']);
+      await expect(service.getById('p3', { viewerId: 'bde' })).resolves.toMatchObject({
+        canUnmaskAnonymous: true,
+      });
+    });
+
+    it('grants canUnmaskAnonymous to a platform admin on an anonymous post', async () => {
+      const { service } = makeService(anonPost, {});
+      await expect(
+        service.getById('p3', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canUnmaskAnonymous: true });
+    });
+
+    it("withholds canUnmaskAnonymous from the post's own author", async () => {
+      const { service } = makeService(anonPost, {});
+      await expect(service.getById('p3', { viewerId: 'someone' })).resolves.toMatchObject({
+        canUnmaskAnonymous: false,
+      });
+    });
+
+    it('withholds canUnmaskAnonymous on a post that is not anonymous, even for a moderator', async () => {
+      const { service } = makeService(personalPost, {}, ['bde']);
+      await expect(service.getById('p2', { viewerId: 'bde' })).resolves.toMatchObject({
+        canUnmaskAnonymous: false,
+      });
+    });
+  });
 });
