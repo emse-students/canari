@@ -91,18 +91,31 @@
 {#if permissions.length === 0}
   <p class="text-text-muted text-sm italic">{m.chat_permission_grid_empty()}</p>
 {:else}
+  <!--
+    THE FLOORS ARE WHAT THE CONTENT NEEDS, NOT WHAT A WIDE WINDOW COULD AFFORD.
+
+    A table column grows to its content on its own, so a `min-width` here can only ever ADD width -
+    it protects nothing. The two floors were 13rem for the label column and 6rem per role, which
+    with three roles reserved 496px before a single label was measured. That is what made the only
+    screen rendering this grid ask for `max-w-6xl`, and a panel cannot ask for that.
+
+    They are now 9rem and 4rem: wider than the longest label and wider than the 32px cell button
+    plus its role pill, and nothing more. Three roles fit a 28rem panel with room to spare; a
+    community that defines enough custom roles to overflow it still gets the scrollbar below, which
+    is then reporting a real shortage of room rather than an unspent reservation.
+  -->
   <div class="overflow-x-auto">
     <table class="w-full border-collapse text-xs" cellspacing="0">
       <thead>
         <tr>
           <th
-            class="text-text-muted bg-cn-surface text-2xs sticky left-0 min-w-52 border-b border-black/5 px-3 py-2.5 text-left font-bold tracking-wider uppercase dark:border-white/10"
+            class="text-text-muted bg-cn-surface text-2xs sticky left-0 min-w-36 border-b border-black/5 px-3 py-2.5 text-left font-bold tracking-wider uppercase dark:border-white/10"
           >
             {m.chat_permission_grid_column_header()}
           </th>
           {#each sortedRoles as role (role.id)}
             <th
-              class="text-text-muted text-2xs min-w-24 border-b border-black/5 px-3 py-2.5 text-center font-bold tracking-wider uppercase dark:border-white/10"
+              class="text-text-muted text-2xs min-w-16 border-b border-black/5 px-3 py-2.5 text-center font-bold tracking-wider uppercase dark:border-white/10"
             >
               <span
                 class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 {role.priority >=
@@ -170,7 +183,7 @@
     </table>
   </div>
 
-  <!-- Légende -->
+  <!-- What a cell's three states mean. -->
   <div class="text-text-muted text-2xs flex flex-wrap items-center gap-4 pt-3 font-medium">
     <span class="inline-flex items-center gap-1.5">
       <Check size={12} strokeWidth={3} class="text-emerald-500" />
