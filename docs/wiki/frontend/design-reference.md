@@ -759,6 +759,17 @@ illegal state stopped being reachable rather than being guarded against.
   `.side-panel-column`, which a host adds because only a host knows. Measured on the working tree
   at the three rungs: 436 px full-bleed, 448 px inset and rounded from 768 px up, and 320 px
   `static` at 1400 px for the chat panel only.
+- **A drawer is PORTALLED and a column is not - the same boolean decides both.**
+  `.page-scroll-wrap` carries `will-change: transform`, so it is the containing block for every
+  `position: fixed` written inside a page: a drawer left in place is laid out against `<main>`,
+  between the header and the bottom bar, and painted under both however high its rung is. The
+  conversation panels hid it, because their screen hides `MobileHeader` and `BottomNav` and the
+  content area IS the viewport there; the community settings, opened from the conversation list,
+  had their foot under the bottom bar. Measured A/B in Chrome, window 958 x 944: a `fixed inset-0`
+  child of a wrapper inset to `top: 120` / 734 px tall measures **120 / 734** with
+  `will-change: transform` and **0 / 944** without it - 210 px of window unreachable, exactly the
+  header plus the bottom bar. A column must NOT portal - at `xl` it is a flex sibling of the chat
+  cards, and a node moved to `<body>` has no row left to join.
 - **The back gesture is one entry.** `openSidePanel` unwinds the previous panel's history entry before
   pushing its own - stacking them would make one visible panel need two back presses, the second of
   which closes something that was never on screen.
@@ -1993,7 +2004,7 @@ proportional to the window:
 | Window | Panel | Why |
 | --- | --- | --- |
 | < 1280 px | `width: 100%`, `max-width: 28rem` | drawer, capped at 448 px |
-| >= 1280 px | `width: 20rem` | column beside the thread, 320 px |
+| >= 1280 px | `width: 20rem` | column beside the thread, 320 px - `.side-panel-column` only |
 
 So **the panel is at its NARROWEST on the widest screens**, and any `sm:`/`md:` variant written
 inside it reads a box it is not in, in the wrong direction. `ChatGroupPanel` had four: `sm:flex-row`
@@ -2018,7 +2029,7 @@ it survived.
 
 ### The fix is one arming point, and a container question
 
-The panel body declares `@container` once, in `ConversationSidePanel`; its children spell widths
+The panel body declares `@container` once, in `SidePanel`; its children spell widths
 `@md:` (28 rem - exactly the drawer's `max-width`, so a side-by-side form exists in the full drawer
 and nowhere narrower). The input takes `min-w-0`, which makes the overflow unrepresentable rather
 than merely unlikely - a translation that lengthens the button cannot bring it back.
