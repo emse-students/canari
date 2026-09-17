@@ -92,6 +92,30 @@ Ce que la lecture nomme a la place est sans ambiguite : `storage-open` fait **2,
 CINQ groupes. Tout le reste de `_initImpl` fait 44 ms ensemble. La prochaine question est dans Rust,
 et c'est la premiere fois qu'on peut le dire avec un nombre.
 
+### Fixed - une publication d'association disait que l'association avait COMMENTE
+
+Signale par l'utilisateur le 2026-09-17, capture a l'appui : *« BDA - Bureau des Arts a commente :
+[Scene ouverte lundi 28/09] »*. L'association n'avait commente nulle part, elle avait publie.
+
+**Trois choses etaient fausses en meme temps, et toutes les trois viennent du meme endroit.** La
+chaine de `{:else if}` de `NotificationRow` se termine par la branche COMMENTAIRE, donc tout type
+qu'elle ne nomme pas herite de la phrase du commentaire, de son glyphe et de sa couleur. Les deux
+avis de publication - `association_post` et `followed_post` - n'y ont jamais ete nommes.
+
+**Et la notification poussee, elle, disait « a publie ».** `notif_social_association_post_title` dans
+`strings.xml` est correct depuis que les phrases ont quitte le serveur, ce que l'utilisateur avait
+d'ailleurs remarque tout seul. Le telephone et la page divergeaient donc sur la meme ligne.
+
+C'est exactement ce que le commentaire de `EVENT_TYPES` juste au-dessus annonçait : ces cinq types-la
+avaient passe leur vie dans le meme `{:else}` a imprimer une phrase anglaise composee par le serveur.
+`POST_TYPES` est la liste explicite qui manquait, et les tests portent sur la PHRASE et non sur la
+branche - le defaut etait invisible a une verification de type : la ligne s'affichait, l'avatar etait
+le bon depuis #781, seul le verbe etait faux.
+
+Une seule phrase pour les deux types, parce que les tables natives n'en ont qu'une : `actorName` est
+l'association pour le premier et l'auteur pour le second, et « a publie » est vrai des deux cotes.
+C'est l'AVATAR qui les separe, et il est decide ailleurs, a partir de `associationId`.
+
 ### Security - le garde de `social-service` ne se repliait pas sur un controle plus faible, il se repliait sur AUCUN
 
 Trois services portent ce garde. Deux echouent fermes quand `INTERNAL_SHARED_SECRET` manque en

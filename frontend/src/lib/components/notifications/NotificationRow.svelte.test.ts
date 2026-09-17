@@ -116,3 +116,44 @@ describe('NotificationRow avatar', () => {
     expect(target.querySelector('[aria-label^="Logo de"]')).toBeNull();
   });
 });
+
+/**
+ * AND THE SENTENCE UNDER THAT AVATAR SAID THE ASSOCIATION HAD COMMENTED.
+ *
+ * Reported by the user on 2026-09-17, one screenshot: "BDA - Bureau des Arts a commente : [Scene
+ * ouverte lundi 28/09]". The chain of `{:else if}` in the row ends in the COMMENT branch, so the
+ * two publication types - which it never named - inherited the comment sentence. The push for the
+ * same row already said "a publie", so the phone and the page disagreed about one notification.
+ *
+ * These assert the SENTENCE rather than the branch, because the defect was invisible to a check on
+ * the type: the row rendered, the avatar was right after #781, and only the verb was wrong.
+ */
+describe('NotificationRow sentence', () => {
+  const postRow = (type: string): PostNotification => ({
+    id: `n-${type}`,
+    type,
+    postId: 'p9',
+    actorId: 'member-1',
+    actorName: 'BDA',
+    text: 'Scene ouverte lundi',
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  it('says an association PUBLISHED, never that it commented', () => {
+    const text = renderRow(postRow('association_post')).textContent ?? '';
+    expect(text).toContain('a publié');
+    expect(text).not.toContain('a commenté');
+  });
+
+  it('says a followed person PUBLISHED, never that they commented', () => {
+    const text = renderRow(postRow('followed_post')).textContent ?? '';
+    expect(text).toContain('a publié');
+    expect(text).not.toContain('a commenté');
+  });
+
+  it('still says commented for an actual comment', () => {
+    const text = renderRow(postRow('comment')).textContent ?? '';
+    expect(text).toContain('a commenté');
+  });
+});

@@ -2447,6 +2447,7 @@
   "notif_mention_text": "vous a mentionné",
   "notif_reply_text": "a répondu à votre commentaire",
   "notif_comment_text": "a commenté :",
+  "notif_post_text": "a publié :",
   "notif_filter_all": "Tout",
   "notif_filter_unread": "Non lu",
   "notif_group_new": "Nouveau",
