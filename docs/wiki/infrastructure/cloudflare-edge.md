@@ -187,15 +187,65 @@ Two traps cost three attempts at the form. **`http.request.full_uri` carries sch
 **the wildcard operator matches the WHOLE path**, so `/_app/immutable/` without a trailing `*`
 matches that exact path and nothing under it.
 
-One command settles whether it still holds, and the rule is correctly bounded only if an HTML route
-still answers `DYNAMIC`:
+One command settles whether it still holds. **Its old companion clause - "and an HTML route still
+answers `DYNAMIC`" - was retired on 2026-09-17**, when HTML deliberately became cacheable; the
+section below replaces it with the reading that now bounds the rule.
 
 ```sh
 curl -sSo /dev/null -D - -H 'Accept-Encoding: br'   https://canari-emse.fr/_app/immutable/assets/mls_wasm_bg.*.wasm | grep -i cf-cache-status
 ```
 
-Measured after deployment: `MISS` on the first request, `HIT` on the second, while `/` and `/posts`
-stayed `DYNAMIC`.
+Measured after deployment: `MISS` on the first request, `HIT` on the second.
+
+### THE SHELL IS CACHED AT THE EDGE AND NOWHERE ELSE, AND THE DEPLOY SAYS WHEN IT EXPIRED
+
+A second Cache Rule, created by the user on 2026-09-17, makes everything outside `/api/` and
+`/internal/` eligible with **Edge TTL "use cache-control if present, bypass if not"**. That phrasing
+is the whole design: the tunable stays in this repository, in
+`infrastructure/local/Dockerfile.frontend`, rather than in a console nobody diffs.
+
+**BYPASS AND DYNAMIC ARE NOT THE SAME ANSWER, AND THE DIFFERENCE IS HOW YOU CHECK THIS RULE WITHOUT
+READING IT.** Neither token in this project may read a ruleset - both answer `Authentication error`
+on `/rulesets/phases/http_request_cache_settings/entrypoint` - so the rule's presence is established
+from the outside instead:
+
+```sh
+curl -sSI https://canari-emse.fr/ | grep -i cf-cache-status
+```
+
+`DYNAMIC` would mean Cloudflare judged the response **ineligible**, and therefore that no rule covers
+it. `BYPASS` means Cloudflare judged it **eligible and the origin declined**, which only the rule can
+produce. On 2026-09-17, before the origin changed, `/` answered `BYPASS` twice.
+
+**THE ORIGIN NOW SAYS `public, max-age=0, s-maxage=60`.** The two halves answer two different
+questions, and the asymmetry between them is the reason there are two:
+
+| | who may hold the shell | can it be told to forget |
+| --- | --- | --- |
+| `s-maxage=60` | Cloudflare | **yes** - `serve-prod.yml` purges the zone after the health check |
+| `max-age=0` | the browser | **no**, ever |
+
+That matters because a shell which outlives its build names content-hashed chunks the next image does
+not contain: it is a **blank** page, not an old one. At the edge that is recoverable; on a disk it is
+not, which is the whole of `max-age=0`.
+
+**60 SECONDS IS THE SMALLER OF TWO NUMBERS THAT AGREE.** It is the freshness budget `serverSeo.ts`
+had already set itself for these same bytes, and it is the ceiling on how long a stale shell could
+break the site if the purge failed to run. There is no `stale-while-revalidate` for exactly that
+reason.
+
+**THE PURGE DERIVES ITS ZONE FROM THE TOKEN.** `CLOUDFLARE_CACHE_PURGE_TOKEN` carries `#zone:read`
+beside `#cache_purge:edit`, so the step asks the token which zone it is rather than keeping a second
+secret that could silently disagree with the first. It asserts the match unique and anchored on the
+zone NAME - there is no `result[0]`, because **`jq` is not installed on the self-hosted runner** - and
+it fails the job, loudly, on a missing token, a zone count other than one, or a refusal. It quotes
+Cloudflare's `"message"` fields only: the success body carries the account id and the name servers,
+and this repository is public.
+
+**`dev.canari-emse.fr` IS ON THIS ZONE AND IS NOT PURGED.** `purge_everything` is zone-wide, so a dev
+deploy purging would flush production's cache on every alpha. Dev's exposure is up to 60 s of blank
+page after a deploy, bounded by `s-maxage` and by nothing else - the same bound that protects
+production when the purge fails.
 
 ## The daemon on the origin, and the token it carries
 

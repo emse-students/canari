@@ -844,6 +844,79 @@ jobs:
 
           echo "✅ Health checks completed"
 
+      # THE EDGE HOLDS THE PREVIOUS BUILD'S SHELL, AND THAT SHELL NAMES CHUNKS THIS IMAGE DOES NOT
+      # CONTAIN. Since 2026-09-17 nginx offers the SSR page to a shared cache
+      # (`max-age=0, s-maxage=60`), which takes the origin round trip - 94 ms of every navigation,
+      # measured in the user's own browser - off the critical path. The price is that a deploy has
+      # to say when the thing it cached stopped being true, and a stale shell is a BLANK page rather
+      # than an old one: its script tags name hashes that 404.
+      #
+      # IT RUNS AFTER THE HEALTH CHECK, and that ordering is the whole point. Purging before the new
+      # containers answer would re-cache the OLD build from the still-running old one, which is
+      # precisely the state this step exists to end.
+      #
+      # `purge_everything` RATHER THAN A URL LIST, because the cacheable set is every path the SPA
+      # has a route for - including per-post and per-association URLs that are generated and not
+      # enumerable - and purge-by-prefix is an Enterprise feature. Everything content-hashed is new
+      # in this image anyway, so what the sweep really costs is one re-fetch of the unchanged
+      # assets, once per PoP.
+      #
+      # THE ZONE IS DERIVED FROM THE TOKEN, not configured beside it. The token is scoped to one
+      # zone and carries `#zone:read`, so asking it which zone it is removes a second secret that
+      # could silently disagree with the first. The match is anchored on the zone NAME and asserted
+      # unique: there is no positional read of the JSON here, because `jq` is NOT installed on this
+      # self-hosted runner and reading `result[0]` would be a guess either way.
+      #
+      # IT FAILS THE JOB, DELIBERATELY. The site is already serving by this point, so a red run here
+      # does not mean production is down - it means the deploy stopped short of saying so, and some
+      # visitors got a blank page until the TTL expired. That window is bounded by `s-maxage=60` and
+      # by nothing else, which is exactly why a missing token must not be discovered a week later.
+      - name: Purge the edge cache
+        env:
+          CLOUDFLARE_CACHE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_PURGE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CLOUDFLARE_CACHE_PURGE_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_CACHE_PURGE_TOKEN is not set. nginx offers the SSR shell to the edge with s-maxage=60, so without this purge the previous build's shell - naming chunks this image does not contain - is served as a blank page for up to a minute."
+            exit 1
+          fi
+
+          ZONE_MATCH='"id":"[0-9a-f]\{32\}","name":"canari-emse.fr"'
+
+          zones="$(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_CACHE_PURGE_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/zones?name=canari-emse.fr")"
+
+          # `|| true` because an expired token is the likeliest failure here and grep finding
+          # nothing exits 1, which under `pipefail` would kill this step BEFORE the message that
+          # explains it - measured, exit 1 and not one line of output.
+          matches="$(printf '%s' "$zones" | grep -o "$ZONE_MATCH" | wc -l || true)"
+          if [ "$matches" -ne 1 ]; then
+            # Cloudflare's own words, and ONLY those: the success body carries the account id and
+            # the name servers, which have no business in a public repository's CI log.
+            detail="$(printf '%s' "$zones" | grep -o '"message":"[^"]*"' | head -3 | tr '\n' ' ' || true)"
+            echo "::error::expected exactly one canari-emse.fr zone readable by this token, found ${matches}. ${detail:-Refusing to guess which zone to purge.}"
+            exit 1
+          fi
+
+          zone="$(printf '%s' "$zones" | grep -o "$ZONE_MATCH" | sed 's/"id":"//; s/","name.*//')"
+
+          purged="$(curl -sS -X POST \
+            -H "Authorization: Bearer ${CLOUDFLARE_CACHE_PURGE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}' \
+            "https://api.cloudflare.com/client/v4/zones/${zone}/purge_cache")"
+
+          case "$purged" in
+            *'"success":true'*)
+              echo "🧹 edge cache purged for v${{ inputs.version }}"
+              ;;
+            *)
+              echo "::error::Cloudflare refused the purge: ${purged}"
+              exit 1
+              ;;
+          esac
+
       # WHICH COMMIT PRODUCTION IS SERVING, recorded by the thing that made it true. `prod-deployed`
       # was this tag's old name and the change detector's INPUT; the detector reads the previous
       # release now (user's decision, 2026-09-03), so the name changed with the job to stop the next

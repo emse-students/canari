@@ -132,6 +132,12 @@ that `frontend/src/hooks.server.ts` can write the page's Open Graph tags into th
 is sent. Nothing else can: an unfurler or a crawler never runs the client, so before this every
 shared Canari link previewed as the bare `app.html`.
 
+**The shell is offered to a SHARED cache and to no other** - `Cache-Control: public, max-age=0,
+s-maxage=60` since 2026-09-17, because a purge can reach Cloudflare and can never reach a browser's
+disk. Why those terms, what purges the zone and what `dev` gets instead are on
+[cloudflare-edge](cloudflare-edge.md#the-shell-is-cached-at-the-edge-and-nowhere-else-and-the-deploy-says-when-it-expired);
+the assertions that keep them honest are in `.github/scripts/tests/static-headers.test.mjs`.
+
 Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
 
 - **`proxy_buffer_size 32k`** in `@ssr`. SvelteKit answers every page with a `Link:` header listing

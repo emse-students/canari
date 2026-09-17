@@ -132,6 +132,33 @@ for (const block of locations) {
     );
   }
 
+  // A SHARED CACHE CAN BE PURGED AND A BROWSER CACHE CANNOT, so anything a deploy
+  // invalidates may be offered to the edge and never to a disk. The SSR shell names
+  // content-hashed chunks that the NEXT image does not contain, so a shell outliving its
+  // build is a blank page - recoverable at the edge, where `serve-prod.yml` purges the
+  // zone, and not recoverable at all in a browser that was told to keep it.
+  const shared = block.body.match(/add_header\s+Cache-Control\s+"([^"]*s-maxage[^"]*)"/);
+  if (shared && !/(^|[\s,])max-age=0([\s,]|$)/.test(shared[1])) {
+    failures.push(
+      `location ${block.name} offers a shared cache ${shared[1]} without max-age=0. A purge ` +
+        `reaches Cloudflare and never a user's disk, so a browser TTL on something a deploy ` +
+        `invalidates is a blank page nobody can fix.`
+    );
+  }
+
+  // THE DEGRADED PAGE IS THE ONE ANSWER THAT MUST NEVER OUTLIVE ITS CAUSE. @app_shell is
+  // served when frontend-ssr is down, and nginx answers it 200 so Cloudflare does not
+  // replace the body. A 200 is cacheable, so any TTL here would pin the whole site in
+  // degraded mode for that long AFTER the outage ended - the site would look broken
+  // because it once was.
+  if (/add_header\s+X-Canari-Degraded/.test(block.body) && !noStore) {
+    failures.push(
+      `location ${block.name} announces X-Canari-Degraded without no-store. It answers 200 so ` +
+        `a cache will keep it, and the site would stay degraded for the TTL after the outage ` +
+        `that caused it was over.`
+    );
+  }
+
   for (const { needle, name } of SECURITY) {
     if (!block.body.includes(needle)) {
       failures.push(
