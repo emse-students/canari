@@ -297,6 +297,27 @@ class CanariApplication : Application() {
                     }
                 )
             }
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_REACTIONS) == null) {
+                // Heard but not intrusive: IMPORTANCE_DEFAULT makes a sound and shows in the shade
+                // without a heads-up, and there is no vibration and no bypassDnd. A reaction is
+                // something you want to know about, not something that should interrupt you - which
+                // is the entire reason it left CHANNEL_MESSAGES.
+                val audioAttrs = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build()
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_REACTIONS,
+                        res.getString(R.string.notif_channel_reactions_name),
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = res.getString(R.string.notif_channel_reactions_desc)
+                        enableVibration(false)
+                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                    }
+                )
+            }
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MENTIONS) == null) {
                 val audioAttrs = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)

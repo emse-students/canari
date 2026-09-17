@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- une reaction a un de vos messages arrive sur son propre canal Android, `canari_reactions`, au lieu
+  du canal des messages. Elle se coupe donc separement, elle ne sonne plus comme un message, et - les
+  identifiants de notification etant stables PAR CONVERSATION - elle n'ecrase plus la notification
+  d'un message non lu de cette meme conversation, ni ne compte dans le badge du lanceur.
+
 ### Added - poster anonymement, et l'action de moderation qui retire l'anonymat
 
 Demande de l'utilisateur (2026-09-17) : un interrupteur "Anonyme" dans le composeur de post,
