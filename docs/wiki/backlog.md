@@ -1831,6 +1831,225 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ---
 
+## Reported by the USER on 2026-09-18 - eleven items, verbatim
+
+Same contract as the 2026-09-17 section below: what is written under each item is the REPORT and
+whatever has since settled it. A hypothesis is marked as one, and nothing here is a diagnosis until
+it names the line it read.
+
+**NO IDENTITY FROM THE CAPTURES ENTERS THIS FILE.** The reports came with screenshots of real
+conversations between real students; the peers' names, their faces and their message text are
+evidence that stays in the chat. Counts, shapes and widget behaviour are all a defect needs.
+
+### G1 - P2 - the same chat message is notified TWICE, and the two notifications are not the same builder
+
+Verbatim: *"Certaines notifications arrivent deux fois (je ne sais plus dans quelle configuration,
+app ouverte, fermee, background ?)."*
+
+The capture settles more than the sentence does: **the two rows are visibly different
+constructions.** The first has a title, a body, no avatar and no action; the second has the avatar
+and both `Repondre` / `Marquer comme lu` actions. So this is not one builder posting twice under two
+ids - it is TWO builders, and the shapes say which two: a rich `MessagingStyle` notification the app
+posts itself, beside a plain one drawn from somewhere else.
+
+**THE HYPOTHESIS ABOVE WAS REFUTED THE SAME DAY, AND THE REFUTATION IS THE USEFUL PART.** The
+payload is data-only: `messaging.service.ts:608-633` sends `{ token, data, android: { priority,
+ttl } }` and nothing else, and the ONE place in the monorepo that sets a top-level `notification`
+plus an `android.notification` is `push.controller.ts:828-840`, the admin-guarded
+`mls/push/broadcast-test` route, whose `type: 'push_test'` the Kotlin service does not even handle.
+**Android's own tray never drew anything.** Both notifications are ours.
+
+**THE DIAGNOSIS: TWO BUILDERS, TWO TRIGGERS, TWO ID NAMESPACES, AND NEITHER KNOWS THE OTHER EXISTS.**
+
+| | the plain one | the rich one |
+| --- | --- | --- |
+| built by | `useNotifications.svelte.ts:674`, `tauri-plugin-notification` | `CanariFirebaseMessagingService.kt:3296` |
+| triggered by | the WebSocket frame, via `notifyInbound` (`useMessaging.svelte.ts:429`) | the FCM data push, via `onMessageReceived` |
+| id | `stableNotifId(conversationId)`, a hash | `getStableNotifId`, a counter from 1000 |
+| channel | `canari_messages` | `canari_messages` |
+| style | `BigTextStyle`, no avatar, no action | `MessagingStyle`, avatar, `Repondre` + `Marquer comme lu` |
+| suppressed when | the reader can SEE the arrival | `MainActivity.isInForeground` |
+
+**The two suppression predicates are disjoint: a backgrounded app satisfies neither.** The ids
+cannot collide, so neither can replace the other. The doubling therefore needs both triggers to
+fire, which is exactly what `scheduleDeferredPush` (`messaging.service.ts:676-697`) arranges when a
+WS frame is not ACKed within 10 s - the phone then gets the frame AND the push. **That also answers
+the "in which configuration" the report could not:** backgrounded, with the socket alive and slow to
+ACK, never foreground.
+
+**AND THE ANSWER IS NOT TO ADD A THIRD PREDICATE.** The comment at `useMessaging.svelte.ts:367-383`
+records that native mobile USED to return early here, on the premise that *"the background push
+handler posts its own, so the user would get two"* - and that the early return was deleted because
+the premise fails whenever there is no push, which is the ordinary backgrounded case, and a phone in
+a pocket never notified. Both versions of that guard are a guess about what the OTHER builder did.
+
+**THE USER HAS ALREADY NAMED THE DESIGN** (2026-09-18): *"pourquoi a-t-on encore des
+plain-notifications alors que les rich notifications sont super"*. So: on Android there is ONE
+builder, the Kotlin `MessagingStyle` one, and the WebSocket frame becomes a second TRIGGER for it
+rather than a second builder - same builder, same `getStableNotifId(groupId)` namespace, so whichever
+trigger arrives second REPLACES the first instead of stacking beside it, and the avatar and the two
+actions are there either way. The plain path stays exactly where it is the only thing that exists:
+the web.
+
+That is a native command plus one branch in `sendSystemNotification`, not a predicate.
+
+
+### G2 - P2 - a DISMISSED notification comes back when the app is launched, sometimes titled with a slug
+
+Verbatim: *"Il me semble meme qu'une notification que j'ai ignoree se raffiche au lancement de
+l'app, avec parfois des bugs comme le fait qu'on aie le slug au lieu du prenom."*
+
+Two facts in one sentence and they are probably the same path: something re-posts notifications for
+unread messages at launch, and that path titles them from a field the push path does not use - which
+is why the slug appears there and nowhere else. **A dismissal is a decision, and replaying over it
+is the defect independently of the title.**
+
+**BOTH HALVES ARE NOW READ, AND THEY ARE NOT THE SAME PATH AFTER ALL.**
+
+*The replay.* `MainActivity.onResume` (`MainActivity.kt:183-192`) cancels every message notification
+the Kotlin side posted, and the WebView then re-posts from the startup catch-up drain:
+`endBulkMessageIngest` -> `batchAddMessages` -> `notifyInbound` (`useMessaging.svelte.ts:851-861`).
+Three things let it through. `notifyInbound` has **no staleness guard** where the receive TONE one
+line above it has one (`isStaleInboundMessage`, `messageUtils.ts:120`), so a message redelivered
+hours later notifies as if it were new. `canSeeArrival` is false for most of a launch
+(`arrivalVisibility.ts:46-60`), so every conversation in the catch-up qualifies. And the push path
+**never ACKs the queued row** - there is no `/ack` in the Kotlin service, only
+`fcm_message_cache.ndjson` - so the server redelivers over the socket at the next connect, and the
+de-dup that would have caught it depends on an ordering that is not guaranteed
+(`sessionAuth.ts:1146` opens the gateway before `:1190` consumes the FCM cache).
+
+*The slug.* A different chain entirely. `notifyInbound` titles with
+`getUserDisplayNameSync(senderId, convo.name)`, and on a cold start that cache is EMPTY
+(`displayName.ts:174` returns the fallback), so the title becomes `convo.name` - which for a DM is
+the MLS group name `me::peer`, lowercased to a handle. **The slug is what a DM conversation is
+NAMED**, and `resolveConversationListPresentation` exists precisely so that name never reaches a
+screen. The notification path does not use it. Same family as G4.
+
+Worth recording because it cuts the other way too: the server's `formatDisplayName`
+(`display-name.ts:12`) prefers `displayName` over first+last, while the client's
+`formatProfileDisplayName` (`displayName.ts:92`) prefers first+last over `displayName`. **Two
+opposite precedences for one question**, which is why the push and the local notification can title
+the same person differently.
+
+### G3 - P2 - a brand-new conversation claims no device can serve its history, when there is no history
+
+Verbatim: *"Le fait que quelqu'un m'envoie un message alors que nous n'avons pas de conversation
+avant m'envoie bien une notif et je peux bien cliquer dessus, mais alors il peut etre marque le
+message 'Aucun appareil n'est connecte pour...'"*
+
+A first contact has nothing older than its first message. The banner answers a question nobody
+asked, and it is the first thing the user sees of a new correspondent. Whatever decides to solicit
+history must first decide whether there is any to ask for.
+
+### G4 - P2 - a first-contact conversation shows NO profile photo until the app is restarted
+
+Verbatim: *"et pas de photo de profil en haut avant rechargement de l'app."*
+
+**CANDIDATE READ, AND IT IS SHARED WITH G5.** Two sites resolve a conversation's presentation
+through `resolveConversationListPresentation` and then throw its answer away for the one field that
+picks the avatar widget:
+
+- `MainChatPage.svelte:168` - `isGroup: (c.conversationType ?? 'group') === 'group'`
+- `ChatArea.svelte:443` - `const convType = c.conversationType ?? 'group';`
+
+`?? 'group'` turns *the record does not say* into *it is a group*, and the group branch draws
+`GroupAvatar`, which has no user to fetch a photo for. A restart repairs it because the startup
+sweep at `conversations.ts:916` rewrites the record with its real type. **The resolved answer is
+computed one line above both of these and discarded.**
+
+A second, independent candidate sits on the same widget: both sites prefer `c.contactName` over
+`pres.contactId`, and for a DM `contactName` can hold the canonical `userId::peerId` key rather than
+a user id - which `Avatar` would spend on `GET /api/users/<key>/avatar` and get a 404 for. **Neither
+candidate is confirmed until a row in that state has been observed.**
+
+### G5 - P3 - the initials placeholder is a rounded SQUARE where the photo is a CIRCLE
+
+Verbatim: *"Elles est d'ailleurs carree au lieu de ronde pour les personnes."*
+
+Visible in one capture with no other context needed: in a single list, every row that has a photo is
+a circle and every row that falls back to initials is a `rounded-2xl` box. `Avatar.svelte` defaults
+to `shape='circle'` and draws its own initials round, so **the square ones are not `Avatar` at
+all** - they are `GroupAvatar`, whose default is `shape='soft'`. Which makes this the same defect as
+G4 seen from the other side: the widget is wrong, not the radius.
+
+Worth stating because it is the cheap half: once the type is read rather than defaulted, the shape
+and the missing photo go together, and there is no CSS change to make.
+
+### G6 - P2 - BACK after opening a notification has no list and no home behind it
+
+Verbatim: *"quand je fais retour arriere apres avoir clique sur une notification, j'aimerais arriver
+a la liste des discussions, et retour arriere encore une fois devrait m'emmener aux posts (accueil).
+J'imagine que c'est une question d'historique. Et les posts sont l'accueil donc dans le pire des
+cas, le fallback pour tout retour arriere."*
+
+This is a REQUIREMENT, not only a defect, and the last sentence is the part to build against:
+**posts are the home, so they are the terminal answer of any back that has nothing behind it.** A
+deep link that opens a conversation must therefore SEED the stack it did not come through, rather
+than arriving with an empty one.
+
+### G7 - P3 - messages and reactions pass behind the composer
+
+Verbatim: *"le fait que l'on puisse avoir des messages ou reactions derriere la barre de saisie est
+moche. Il faudrait peut-etre limiter l'affichage comme le fait messenger (en mettant un fond a un
+rectangle contenant la partie basse de l'app de la meme couleur que le fond pour delimiter comme
+peut le faire Messenger ?)."*
+
+The user has already named the fix he wants: an opaque band behind the composer, so the thread ends
+at it instead of sliding under it.
+
+### G8 - P2 - adding a reaction pushes the thread DOWN, and can push the reaction itself under the composer
+
+Verbatim: *"mettre une reaction devrait faire monter la discussion, pas la descendre (actuellement,
+mettre une reaction fait descendre tout ce qui est en dessous, et va meme jusqu'a mettre une
+reaction sous le dernier message (donc sous la barre de saisie). Tu peux t'inspirer de Messenger."*
+
+A reaction adds height to a row. With the viewport anchored at the TOP of the scroll box, every row
+below it moves down and the bottom of the thread leaves the screen - on the last message the
+reaction lands under the composer, which is how G7 and G8 compound. **Anchoring at the bottom is the
+fix, and it is a property on the scroll container rather than a scroll call** - a scroll call is a
+clock in disguise and would fight the user's own scrolling.
+
+### G9 - P2 - in a group, nothing says WHO reacted with what
+
+Verbatim: *"on me dit qu'il n'y a pas de moyen de voir qui a mis quelle reaction dans les groupes."*
+
+Reported to the user by a third party, so the configuration is second-hand. In a DM the answer is
+forced (there are two people); in a group the pill is a count with no roster behind it. **The data
+may already be there** - a reaction carries its sender - in which case this is a disclosure, not a
+wire change. That is the first thing to check, because it decides whether this is an afternoon or a
+protocol change.
+
+### G10 - P3 - voice notes are listed in the FILES tab, as `vocal_<epoch>.m4a`
+
+Verbatim: *"ne pas faire apparaitre les vocaux dans les fichiers."*
+
+**THIS IS THE SECOND HALF OF A REPORT ALREADY ON FILE.** The user asked on 2026-09-16 that voice
+notes not appear under `Medias`; the capture shows the `Fichiers` tab listing them instead, under
+their generated `vocal_<epoch>.m4a` name. So the requirement is not "move them from one tab to the
+other" - **a voice note belongs to the conversation and to NEITHER tab**, and any fix that only
+teaches the media grid to skip them moves the defect one tab across.
+
+The same capture carries the OTHER half of that 2026-09-16 request, still open: *"+1 s'il est
+possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
+enregistres directement dans la conversation."* An IMPORTED audio file is a file and belongs in that
+tab; a RECORDING does not. The generated name is evidence that the two are not distinguished
+anywhere the panel can read.
+
+### G11 - P3 - a post's reactor panel runs off the screen and then ignores the scroll
+
+Verbatim: *"pour les posts, meme si on peut voir qui a reagit en appuyant longtemps dessus, ca sort
+de l'ecran et si on scrolle, le panneau ne disparait pas (et ne suit pas le scroll)"*
+
+Three separate faults in one widget, and the two captures separate them cleanly. The panel is
+anchored to the reaction pill at the card's RIGHT edge and is clipped by the viewport, so the name
+it exists to show is the part cut off. It is positioned in VIEWPORT coordinates, so a scroll moves
+the card out from under it and leaves it hovering over an unrelated post - the second capture is the
+same panel over a different card. And nothing dismisses it on scroll.
+
+**The disclosure itself works here, which is what makes it the reference for G9**: posts already
+answer *who reacted with what*, by long press. Whatever the chat gains should be the same gesture
+and, where it can be, the same component - so this one is worth repairing rather than duplicating.
+
 ## Reported by the USER on 2026-09-17 - six items, verbatim
 
 Each of these started as a REPORT, not a diagnosis. What is written under it is the report and

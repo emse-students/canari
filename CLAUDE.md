@@ -254,9 +254,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - THE ROUTE SWEEP IS DONE AND WHAT IT COULD NOT REACH IS WHAT IS LEFT**: REAL
-    HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
-    **server prose CLOSED, 194 sites to ONE** - `serverProse.test.ts` owns `src` whole, that one is its allowlist ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
+10. **UX/RENDERING - THE ROUTE SWEEP IS DONE; WHAT IS OPEN IS REAL HARDWARE (all of it Chrome with
+    an override), the channel list's width, and ELEVEN USER REPORTS OF 2026-09-18 (`G1`-`G11`):
+    doubled push, a replayed dismissal, a DM drawn as a group, back with no home behind it** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
 11. **COLD START - TARGET UNDER 1 s (user); `v0.18.5`'s 13 s is DEAD.** Three hypotheses refuted,
     two O(pool) passes and one IPC marshalling of the whole snapshot shipped; **82.7% of post-login
     is ONE native call and the next question is INSIDE Rust** ([backlog](docs/wiki/backlog.md)).
