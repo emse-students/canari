@@ -15,6 +15,7 @@
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
 
   interface Props {
     asso: Association;
@@ -68,7 +69,24 @@
     }
   }
 
+  /**
+   * Drops a member from the association, AFTER ASKING.
+   *
+   * The second of the two unguarded removals the user reported on 2026-09-17. The row's control is
+   * an icon button with `asso_member_remove_title` as its only warning, and a press took the member
+   * out and rewrote the list underneath it - no dialog, no undo, and nothing on screen naming what
+   * had just gone. The community kick and the channel-access removal were already asking; these two
+   * were simply never brought along.
+   */
   async function handleRemoveMember(targetId: string) {
+    if (
+      !(await showConfirm(m.asso_member_remove_confirm(), {
+        danger: true,
+        confirmLabel: m.common_remove_label(),
+      }))
+    ) {
+      return;
+    }
     try {
       await removeMember(asso.id, targetId);
       members = members.filter((m) => m.userId !== targetId);
