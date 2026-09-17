@@ -27,45 +27,47 @@ export class NginxAuthGuard implements CanActivate {
     }
 
     if (process.env.NODE_ENV === 'production') {
+      // FAIL CLOSED, as `core-service` and `chat-delivery-service` already do. This service was the
+      // one that did not, and what it fell back to was not a weaker check but NO check: the branch
+      // below used to read `NGINX_AUTH_SECRET`, a variable NOTHING sets - not a compose file, not an
+      // env template, not the nginx config, and not the production container (measured 2026-09-17,
+      // which reports `INTERNAL_SHARED_SECRET` and `NODE_ENV` and no third name). So its `if` never
+      // fired, the else-branch did nothing at all, and control reached `if (userId) return true` -
+      // meaning that with the real secret absent, any request carrying an `X-User-Id` header was
+      // accepted on the strength of that header alone. It is deleted rather than repaired: a
+      // fallback is a signal and never a path, and this one had already decayed into an open door.
       const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
-      if (internalSecret && userId) {
-        // HMAC token validation: proves the request came through nginx with a valid JWT.
-        const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
-        if (!token) {
-          throw new UnauthorizedException('Missing X-Internal-Token header');
-        }
-        const epochMinute = Math.floor(Date.now() / 60000);
-        const valid = [epochMinute, epochMinute - 1].some((min) => {
-          const expected = createHmac('sha256', internalSecret)
-            .update(`${userId}:${min}`)
-            .digest('hex');
-          try {
-            return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
-          } catch {
-            return false;
-          }
-        });
-        if (!valid) {
-          throw new UnauthorizedException('Invalid X-Internal-Token');
-        }
-      } else {
-        // Fallback: static NGINX_AUTH_SECRET (legacy).
-        const expectedNginxSecret = process.env.NGINX_AUTH_SECRET?.trim();
-        if (expectedNginxSecret) {
-          const nginxSecret = request.headers['x-nginx-auth'] as string | undefined;
-          if (!nginxSecret || nginxSecret !== expectedNginxSecret) {
-            throw new UnauthorizedException(
-              'Unauthorized request: Nginx header missing or invalid.'
-            );
-          }
-        }
+      if (!internalSecret) {
+        throw new UnauthorizedException(
+          'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
+        );
       }
-      if (userId) {
-        return true;
+      if (!userId) {
+        throw new UnauthorizedException(
+          'Missing X-User-Id header - ensure the request passes through nginx auth.'
+        );
       }
-      throw new UnauthorizedException(
-        'Missing X-User-Id header - ensure the request passes through nginx auth.'
-      );
+
+      // HMAC token validation: proves the request came through nginx with a valid JWT.
+      const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
+      if (!token) {
+        throw new UnauthorizedException('Missing X-Internal-Token header');
+      }
+      const epochMinute = Math.floor(Date.now() / 60000);
+      const valid = [epochMinute, epochMinute - 1].some((min) => {
+        const expected = createHmac('sha256', internalSecret)
+          .update(`${userId}:${min}`)
+          .digest('hex');
+        try {
+          return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
+        } catch {
+          return false;
+        }
+      });
+      if (!valid) {
+        throw new UnauthorizedException('Invalid X-Internal-Token');
+      }
+      return true;
     }
 
     // Dev fallback: nginx is not present, extract userId from JWT.
