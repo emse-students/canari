@@ -1470,24 +1470,25 @@ Each of these started as a REPORT, not a diagnosis. What is written under it is 
 whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
 one.
 
-### P2 - FIXED, UNSHIPPED - opening ANY modal threw the page back to the top (user, 2026-09-17)
+### P3 - nothing enumerates what else READS a node during the one effect before its portal moves it (2026-09-17)
 
-Verbatim: *"Cliquer sur evenement sur mobile (type liste) renvoie vers le haut de la page aussi,
-c'est bizarre"*.
-
-**The screen in the report had nothing to do with it.** `openDetail` sets two fields and nothing
-else; the cause is in `focusTrap`, and it applied to every modal in the application - `Modal`,
-`ModalOverlay` and `FullScreenViewer` all portal and all trap focus. Three facts compose: a
-`fixed` backdrop written inside `.page-scroll-wrap` is laid out at that SCROLLER's origin because
-`will-change: transform` makes it the containing block; a portal moves the node one effect after
-creation and the CHILD's action runs first; and `focus()` scrolls ancestors to reveal its target.
-Measured in Chrome on that geometry: scroller at 1500px, 0px after `focus()`, 1500px after
-`focus({ preventScroll: true })`. The full account is in
+**The known instance is fixed and its story is elsewhere** - `focusTrap` scrolled the page away when
+any modal opened, `CHANGELOG.md` carries the account, and the rule is in
+[durable-rules](durable-rules.md) beside the one about `will-change: transform` making a stacking
+context and a containing block silently. The mechanism is in
 [architecture](frontend/architecture.md#a-portalled-overlay-is-inside-the-page-for-one-effect-and-focusing-it-there-scrolls-the-page-away).
 
-**What this does NOT close**: the same "one effect in the wrong parent" window is open to anything
-else that measures or scrolls to a to-be-portalled node. Nothing enumerates those call sites - the
-sweep of `.focus()` done here found only this one, and a measurement is not a `.focus()`.
+**What is open is the POPULATION, not that defect.** A portalled node exists in its written parent
+for one effect, and the child's action runs first, so anything reading a position in that window
+reads a position about to stop being true. `.focus()` was swept and held exactly one site. A
+MEASUREMENT is not a `.focus()` and was not swept: `getBoundingClientRect`, `offsetTop`,
+`scrollIntoView` and `offsetParent` on a node under a `use:portal` sibling would all answer about
+`.page-scroll-wrap` rather than the window, and would answer plausibly, which is why nothing would
+report it.
+
+**Not investigated**: whether such a call site exists. The cheap version is a sweep of those four
+names inside components that portal, which is a closed list - `$lib/actions/portal`'s consumers.
+What it cannot be is a runtime guard: the reading is legal, and only its TIMING is wrong.
 
 ### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
 
