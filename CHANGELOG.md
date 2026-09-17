@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.11] - 2026-09-17
+
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
 
 Le correctif de `focusTrap` a laisse une question ouverte plus large que lui : un noeud porte existe
