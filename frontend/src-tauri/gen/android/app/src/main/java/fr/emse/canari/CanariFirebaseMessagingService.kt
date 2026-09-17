@@ -1459,7 +1459,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
             Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
-            showSimpleNotification(title, body, deepLink, channel)
+            // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
+            // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
+            // network, and `onMessageReceived` must return promptly or Android stops delivering to
+            // this process. The WakeLock is what [handleReactionNotification] already takes for the
+            // same reason, one line below.
+            runWithWakeLock("fcm_social") {
+                showSimpleNotification(title, body, deepLink, channel, socialLargeIcon(data))
+            }
             return
         }
 
@@ -2879,32 +2886,95 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * The cache avoids the HTTP request when the app is in the background and
      * the network is slow or PushSecretKeystore.retrieve() is unstable.
      */
-    private fun fetchAvatar(userId: String): Bitmap? {
+    private fun fetchAvatar(userId: String): Bitmap? =
+        cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId)) {
+            val ctx    = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
+            val secret = retrievePushSecret(this) ?: return@cachedRemoteIcon null
+            ("${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
+                "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
+        }
+
+    /**
+     * The picture on a SOCIAL push: an association's logo, or a person's photo.
+     *
+     * A social notification used to carry no image at all - `showSimpleNotification` built a small
+     * icon and a line of text, so a post from an association arrived grey while a MESSAGE from one
+     * of its officers arrived with their face on it. Reported by the user on 2026-09-17.
+     *
+     * **THE PAYLOAD CARRIES AN ID AND NEVER A LOCATION.** `iconMediaId` is concatenated into the one
+     * public-media route this app already knows, and `iconUserId` goes through the authenticated
+     * avatar proxy - so a push can point this service at exactly two routes on its own origin and
+     * nowhere else. The server enforces the same thing at the other end (`publicMediaIconId`), and
+     * both halves are needed: this one is what holds if a payload is ever composed somewhere else.
+     *
+     * Returns null when the push names no picture, which is the FORM REMINDER's case - it has no
+     * actor, and inventing an initials disc for it would put a letter where nobody's name is.
+     */
+    private fun socialLargeIcon(data: Map<String, String>): Bitmap? {
+        val mediaId = data["iconMediaId"] ?: ""
+        val userId  = data["iconUserId"] ?: ""
+        if (mediaId.isEmpty() && userId.isEmpty()) return null
+        val fetched = if (mediaId.isNotEmpty()) fetchPublicMediaIcon(mediaId) else fetchAvatar(userId)
+        // A named picture that could not be fetched still falls back to initials, exactly as the
+        // message path does: the push said whose it was, so the notification can say so too.
+        val label = data["actorName"].orEmpty().ifEmpty { getString(R.string.app_name) }
+        return fetched ?: generateInitialsBitmap(label)
+    }
+
+    /**
+     * Downloads a PUBLIC media object - an association logo - for a notification icon.
+     *
+     * Unauthenticated on purpose: `/api/media/public/:id` is the route an `<img>` on a signed-out
+     * page already uses, so a background service has no credential to present and needs none. That
+     * is also why it is a SEPARATE function from [fetchAvatar] rather than a flag on it: which of
+     * the two routes to call is decided by the payload's own field, never guessed from a string.
+     */
+    private fun fetchPublicMediaIcon(mediaId: String): Bitmap? {
+        val safe = mediaId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64)
+        return cachedRemoteIcon("fetchPublicMediaIcon", safe, File(filesDir, "assologo_$safe.jpg")) {
+            val ctx = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
+            "${ctx.baseUrl}/api/media/public/$safe" to null
+        }
+    }
+
+    /**
+     * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
+     *
+     * Extracted from [fetchAvatar] when the association logo became a second caller. The cache
+     * matters more than it looks: this runs in the FCM service process, where the app may be dead,
+     * the Keystore may be slow to answer and the network may be a cell radio waking up - and an
+     * icon that arrives after the notification is posted arrives never.
+     *
+     * @param label the caller's name, so a log line says which fetch it describes.
+     * @param subject what is being fetched, truncated in logs - a user id or a media id.
+     * @param request the URL to fetch and the `Authorization` header to send with it, or null for a
+     *   route that takes none - sending an empty one would be a header the proxy has to reason
+     *   about. It is a LAMBDA rather than two parameters so that a cache HIT pays for neither: the
+     *   avatar URL needs the push context and the Keystore to be built at all, and the comment this
+     *   replaced said in as many words that a fresh cache entry must cost neither.
+     */
+    private fun cachedRemoteIcon(
+        label: String,
+        subject: String,
+        cacheFile: File,
+        request: () -> Pair<String, String?>?,
+    ): Bitmap? {
         val target = notificationIconSizePx
-        // 1. Read the file cache if recent (< 24h) - no need for the Keystore or the network
-        val cacheFile = avatarCacheFile(userId)
         val now = System.currentTimeMillis()
         if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
             decodeSampled(target) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
-                Log.d(TAG, "fetchAvatar: from cache for ${userId.take(8)}")
+                Log.d(TAG, "$label: from cache for ${subject.take(8)}")
                 return circleCrop(bmp, target)
             }
         }
-
-        // 2. HTTP fetch (app in foreground or cache expired)
-        val ctx    = MlsContextLoader.loadPushContext(this) ?: return null
-        val secret = retrievePushSecret(this) ?: return null
+        val (url, authorization) = request() ?: return null
         return try {
-            val url = URL(
-                "${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
-                "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
-                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
-            )
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
                 requestMethod  = "GET"
-                setRequestProperty("Authorization", "PushSecret $secret")
+                authorization?.let { setRequestProperty("Authorization", it) }
                 instanceFollowRedirects = true
             }
             try {
@@ -2914,9 +2984,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // Save to cache for the next notifications
                     try {
                         cacheFile.writeBytes(bytes)
-                        Log.d(TAG, "fetchAvatar: avatar cached for ${userId.take(8)}")
+                        Log.d(TAG, "$label: cached for ${subject.take(8)}")
                     } catch (e: Exception) {
-                        Log.w(TAG, "fetchAvatar: unable to save the cache: ${e.message}")
+                        Log.w(TAG, "$label: unable to save the cache: ${e.message}")
                     }
                     decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
                         ?.let { circleCrop(it, target) }
@@ -2928,9 +2998,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // logged at debug level alongside the ordinary misses, which is how it went
                     // unnoticed until a user remarked the picture was missing (WP-DIRECTBOOT-1).
                     if (code == 401 || code == 403) {
-                        Log.e(TAG, "fetchAvatar: HTTP $code - push secret REJECTED, background auth is broken in this process")
+                        Log.e(TAG, "$label: HTTP $code - push secret REJECTED, background auth is broken in this process")
                     } else {
-                        Log.d(TAG, "fetchAvatar: HTTP $code for $userId -> initials fallback")
+                        Log.d(TAG, "$label: HTTP $code for $subject -> initials fallback")
                     }
                     null
                 }
@@ -2938,7 +3008,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.d(TAG, "fetchAvatar: ${e.message} -> initials fallback")
+            Log.d(TAG, "$label: ${e.message} -> initials fallback")
             null
         }
     }
@@ -3233,8 +3303,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Shows a simple notification (social or form) without MLS decryption.
      * The channel is chosen according to the notification type.
+     *
+     * @param largeIcon the association's logo or the actor's photo, already cropped to a circle by
+     *   [cachedRemoteIcon]. Null leaves the notification as it always was - a small icon and a line
+     *   of text - which is what a form reminder, having no actor, should stay.
      */
-    private fun showSimpleNotification(title: String, body: String, deepLink: String, channel: String) {
+    private fun showSimpleNotification(
+        title: String,
+        body: String,
+        deepLink: String,
+        channel: String,
+        largeIcon: Bitmap? = null,
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
         val notifId     = notificationIdCounter.incrementAndGet()
@@ -3255,7 +3335,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
+            .apply { largeIcon?.let { setLargeIcon(it) } }
             .build()
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
         manager.notify(notifId, notification)
     }
 

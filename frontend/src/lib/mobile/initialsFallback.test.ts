@@ -65,11 +65,14 @@ describe('the initials disc, across the three notification implementations', () 
   });
 
   it('falls back on every path that can show a face', () => {
-    // Three paths per platform: a message, a reaction, a salon message. A fourth path added
-    // without a fallback is the regression this counts - iOS showed nothing on all three.
-    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(4); // 3 calls + the definition
-    expect(swift.match(/attachInitials\(/g)).toHaveLength(4); // 3 calls + the definition
-    // The ObjC trunk serves the message AND the salon paths, so it has two call sites, not three.
+    // Four paths per platform: a message, a reaction, a salon message, and since 2026-09-17 a
+    // SOCIAL push - which had no picture at all until then. A fifth path added without a fallback
+    // is the regression this counts - iOS showed nothing on the first three.
+    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(5); // 4 calls + the definition
+    expect(swift.match(/attachInitials\(/g)).toHaveLength(5); // 4 calls + the definition
+    // The ObjC trunk is the IN-APP path and serves the message AND the salon paths, so it has two
+    // call sites, not three - and no social one: a social push in the foreground is a banner the
+    // app draws itself, not a notification this file composes.
     expect(objc.match(/CanariInitialsImagePath\(/g)).toHaveLength(3); // 2 calls + the definition
   });
 

@@ -36,6 +36,46 @@ export type PushContentKey =
   | 'event_pending';
 
 /**
+ * WHERE THE NOTIFICATION'S PICTURE COMES FROM - never a URL, always an id.
+ *
+ * A social push used to carry no picture at all: `showSimpleNotification` on Android built a
+ * notification with a small icon and nothing else, so a post from an association arrived as a line
+ * of grey text while a MESSAGE from the same association's officer arrived with their face on it.
+ * Reported by the user on 2026-09-17, who asked for the association's logo in both the notifications
+ * tab (shipped in #781) and the notification itself (this).
+ *
+ * **IT IS AN ID AND NEVER A PATH OR A URL, AND THAT IS THE WHOLE SAFETY ARGUMENT.** A push payload
+ * is composed server-side but arrives over a transport nobody here owns, and a field naming a
+ * location would let whoever can write one point a background service at any host - a fetch made
+ * with the device's own network identity, before any app code runs. An id can only ever be
+ * concatenated into the one route the device already knows: `/api/mls/push/avatar/<id>` for a
+ * person, `/api/media/public/<id>` for a public object. A malformed id fetches nothing and the
+ * notification falls back to initials.
+ *
+ * The two kinds are NOT interchangeable and must not be collapsed into one field: the user route is
+ * PushSecret-authenticated and the public-media route is not, so which one to call is a decision
+ * that has to survive the wire rather than be guessed at from the shape of a string.
+ */
+export type PushIcon =
+  /** A person: fetched through the PushSecret-authenticated avatar proxy. */
+  | { kind: 'user'; userId: string }
+  /** A public media object - an association logo: fetched unauthenticated, as a browser would. */
+  | { kind: 'publicMedia'; mediaId: string };
+
+/**
+ * The media id inside an association's `logoUrl`, or `null` when it does not name one.
+ *
+ * `logoUrl` is a stored string, so it is read rather than trusted: only the exact public-media shape
+ * yields an id, and anything else - an absolute URL to somewhere else, an empty column, a legacy
+ * path - produces NO icon instead of a guess. The notification then draws initials, which is what it
+ * did for every push until now.
+ */
+export function publicMediaIconId(logoUrl: string | null | undefined): string | null {
+  const match = /^\/api\/media\/public\/([A-Za-z0-9_-]{1,64})$/.exec((logoUrl ?? '').trim());
+  return match ? match[1] : null;
+}
+
+/**
  * One push's content, as data rather than prose.
  *
  * `legacyTitle` / `legacyBody` are the sentences as they read today, sent ALONGSIDE the key for
@@ -58,6 +98,8 @@ export type PushContent = {
   arg: string;
   legacyTitle: string;
   legacyBody: string;
+  /** The picture to draw, when this push has one. See `PushIcon`. */
+  icon?: PushIcon;
 };
 
 /**
@@ -84,9 +126,10 @@ export function previewOf(text: string): string {
 }
 
 /** Someone mentioned the recipient. */
-export function mentionContent(actorName: string, preview: string): PushContent {
+export function mentionContent(actorName: string, preview: string, icon?: PushIcon): PushContent {
   return {
     key: 'social_mention',
+    icon,
     actorName,
     arg: preview,
     legacyTitle: `${actorName} vous a mentionné`,
@@ -95,9 +138,10 @@ export function mentionContent(actorName: string, preview: string): PushContent 
 }
 
 /** Someone replied to the recipient's comment. */
-export function replyContent(actorName: string, preview: string): PushContent {
+export function replyContent(actorName: string, preview: string, icon?: PushIcon): PushContent {
   return {
     key: 'social_reply',
+    icon,
     actorName,
     arg: preview,
     legacyTitle: `${actorName} a répondu`,
@@ -106,9 +150,10 @@ export function replyContent(actorName: string, preview: string): PushContent {
 }
 
 /** Someone commented on the recipient's post. */
-export function commentContent(actorName: string, preview: string): PushContent {
+export function commentContent(actorName: string, preview: string, icon?: PushIcon): PushContent {
   return {
     key: 'social_comment',
+    icon,
     actorName,
     arg: preview,
     legacyTitle: `${actorName} a commenté`,
@@ -122,9 +167,10 @@ export function commentContent(actorName: string, preview: string): PushContent 
  * The only key whose TITLE names no actor, so the actor travels in the body instead - which is why
  * the native side composes title and body per key rather than from one shared shape.
  */
-export function reactionContent(actorName: string, reaction: string): PushContent {
+export function reactionContent(actorName: string, reaction: string, icon?: PushIcon): PushContent {
   return {
     key: 'social_reaction',
+    icon,
     actorName,
     arg: reaction,
     legacyTitle: 'Nouvelle réaction',
@@ -162,6 +208,11 @@ export function pushContentData(content: PushContent): Record<string, string> {
     contentKey: content.key,
     actorName: content.actorName,
     contentArg: content.arg,
+    // ONE FIELD PER KIND, and neither is emitted when there is no picture: an empty string in an
+    // FCM data payload is a present key with a falsy value, which every native reader then has to
+    // remember to test for. Absent means absent.
+    ...(content.icon?.kind === 'user' ? { iconUserId: content.icon.userId } : {}),
+    ...(content.icon?.kind === 'publicMedia' ? { iconMediaId: content.icon.mediaId } : {}),
   };
 }
 
@@ -256,9 +307,14 @@ export function eventPendingContent(actorName: string, eventTitle: string): Push
  * the association; which of its officers typed the post is not information they asked for, and
  * `post.authorId` is still what the notification row records for the deep link.
  */
-export function associationPostContent(associationName: string, preview: string): PushContent {
+export function associationPostContent(
+  associationName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
   return {
     key: 'social_association_post',
+    icon,
     actorName: associationName,
     arg: preview,
     legacyTitle: `${associationName} a publié`,
@@ -267,9 +323,14 @@ export function associationPostContent(associationName: string, preview: string)
 }
 
 /** Someone the recipient follows published. */
-export function followedPostContent(actorName: string, preview: string): PushContent {
+export function followedPostContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
   return {
     key: 'social_followed_post',
+    icon,
     actorName,
     arg: preview,
     legacyTitle: `${actorName} a publié`,

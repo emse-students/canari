@@ -11,6 +11,49 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - une notification sociale arrivait sans aucune image, sur les deux plateformes
+
+Signale par l'utilisateur le 2026-09-17 : un post d'une association arrivait sur le telephone comme
+une ligne de texte gris, alors qu'un MESSAGE d'un de ses membres arrivait avec sa photo. Ce n'etait
+pas un oubli de reglage : le chemin social n'avait **aucune** image. `showSimpleNotification` (Kotlin)
+construisait une petite icone et un `BigTextStyle`, et rien d'autre ; cote iOS, la branche
+`social` / `form_reminder` de l'extension ecrivait la phrase et ne joignait jamais de piece. Les deux
+chemins qui, eux, montraient un visage - le message et la reaction - passaient par `fetchAvatar` +
+`largeIcon` / `attachImage`, donc le mecanisme existait des deux cotes et le push social ne le
+reclamait pas.
+
+**Le push porte desormais un IDENTIFIANT, jamais une URL, et c'est tout l'argument de securite.** Un
+payload est compose ici mais arrive par un transport que personne ne possede, et un champ qui nomme
+un EMPLACEMENT laisserait quiconque en ecrit un pointer un service de fond - le service FCM Android
+ou l'extension iOS, tous deux executes avant le moindre code applicatif - vers n'importe quel hote,
+avec l'identite reseau du telephone. Un identifiant ne peut que se concatener dans une route que
+l'appareil connait deja. D'ou deux champs disjoints et non interchangeables, parce que les deux
+routes n'ont pas la meme authentification :
+
+- `iconUserId` -> `/api/mls/push/avatar/<id>`, authentifie par le `PushSecret` ;
+- `iconMediaId` -> `/api/media/public/<id>`, non authentifie, exactement ce qu'un `<img>` d'une page
+  deconnectee demande deja.
+
+`publicMediaIconId()` LIT la colonne `logoUrl` au lieu de lui faire confiance : seule la forme exacte
+`/api/media/public/<id>` rend un identifiant, et tout le reste - une URL absolue ailleurs, une
+traversee, une colonne vide - ne rend RIEN plutot qu'une supposition. La notification dessine alors
+les initiales, ce qu'elle faisait pour tous les push jusqu'ici. Le natif refait la meme verification
+de son cote : les deux moities sont necessaires, celle du telephone est celle qui tient si un payload
+est un jour compose ailleurs.
+
+Un rappel de formulaire n'a pas d'acteur, donc il ne porte ni l'un ni l'autre champ et **reste sans
+image** : une pastille d'initiale y mettrait une lettre la ou personne n'a de nom. Un champ vide
+aurait ete une cle presente avec une valeur fausse, que chaque lecteur natif aurait du penser a
+tester ; absent veut dire absent.
+
+Au passage, le bloc HTTP -> bitmap est factorise des deux cotes plutot que duplique : `cachedRemoteIcon`
+(Kotlin) et `cachedRemoteFile` (Swift) portent le cache fichier de 24 h, le decodage borne et le
+recadrage, et `fetchAvatar` en devient un appelant comme le logo. Cote Swift, la requete est passee en
+fermeture pour qu'un cache TOUCHE ne paie pas la lecture du `PushSecret` dans le Keychain, ordre que
+l'ancienne version prenait soin de respecter. Et la branche sociale Android prend maintenant un
+`runWithWakeLock`, comme la reaction juste au-dessus, parce qu'elle fait desormais du reseau et que
+`onMessageReceived` doit rendre la main.
+
 ### Added - le plus gros bloc du demarrage avait 43 % du cout et aucune horloge
 
 Le dernier export de l'utilisateur donne cinq blocs pour un demarrage a froid de 1342 ms, et le plus
