@@ -159,7 +159,6 @@
   "chat_modal_channel_name_label": "Channel name",
   "chat_modal_channel_name_placeholder": "ex: General",
   "chat_modal_create_channel_button": "Create channel",
-  "chat_community_fallback_name": "Community",
   "chat_community_change_image_title": "Change image",
   "chat_community_select_image_error": "Please select an image.",
   "chat_community_upload_error": "Upload failed.",

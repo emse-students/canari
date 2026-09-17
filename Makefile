@@ -372,10 +372,22 @@ test-ci-scripts: lint-ci-scripts
 # and no target here invoked Gradle, so its five assertions had never executed anywhere; the gate
 # that fixed THAT put the suite behind the `:app` module, which no runner can configure, so it was
 # skipped or refused every time until the suite moved to its own Kotlin/JVM project.
-# THE COLD-START INSTRUMENTS ARE LINTED HERE TOO, and they are the second thing in `tools/` that
-# `bun run lint` cannot reach. They run on HARDWARE and so have no self-test - but they are the only
-# record of how the launch is measured, and an instrument that had stopped parsing would be found
-# with a phone in hand, at the worst possible moment. Linting is the half that CAN run without one.
+# EVERYTHING UNDER `tools/` IS LINTED HERE, BECAUSE `bun run lint` IS SCOPED TO `frontend/` AND
+# REACHES NONE OF IT. The second line is a DIRECTORY, not a list of directories, and that is the
+# whole point: this gate named `cross-client-harness` and `cold-start` and nothing else, so the six
+# other directories under `tools/` were linted by nothing at all - among them `app-store`, which is
+# what submits to the App Store and inside which a release has now twice been lost, and
+# `play-vitals`, the only thing that reads what Google Play sees. Measured 2026-09-17 when the gap
+# was found: ONE warning across all six, which is what makes this a line rather than a cleanup -
+# and exactly the size the harness entry was at before it drifted to 38.
+# *An allowlist's failure mode is an ABSENCE, and an absence is invisible to every review*, so the
+# set is DERIVED - lint the tree, exclude the one directory that has its own config, and the next
+# tool anybody adds is covered by having been added. A typed list passes on the day somebody writes
+# the ninth directory, which is precisely how the six got here.
+# The cold-start instruments are in there and worth naming: they run on HARDWARE and so have no
+# self-test, but they are the only record of how the launch is measured, and an instrument that had
+# stopped parsing would be found with a phone in hand, at the worst possible moment. Linting is the
+# half that CAN run without one.
 # (A `#` at column 0 ENDS a recipe, which is why this paragraph is here and not beside its line:
 # put inside, it truncated the gate and `gate-selftest.mjs` correctly reported an empty one.)
 # It needs a JDK and NOTHING ELSE - no Android SDK, no ANDROID_HOME, no tauri toolchain. It stays
@@ -388,7 +400,7 @@ test-android:
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
 	@bunx oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings tools/cross-client-harness
-	@bunx oxlint -c .oxlintrc.json --deny-warnings tools/cold-start
+	@bunx oxlint -c .oxlintrc.json --deny-warnings --ignore-pattern 'tools/cross-client-harness/**' tools
 	@bun tools/cross-client-harness/inventory.mjs --check
 	@bun tools/cross-client-harness/archive/rawcheck.mjs
 	@bun tools/cross-client-harness/archive/classify-selftest.mjs

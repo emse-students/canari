@@ -68,6 +68,17 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
     }
 
     if (env.kind === 'media') {
+      // A VOICE NOTE IS NOT SHARED CONTENT (user, 2026-09-17: *"Les vocaux ne doivent pas
+      // s'afficher dans l'onglet 'Medias' d'une discussion"*). It is a turn in the conversation,
+      // like the sentence it replaces, and listing it beside the files people deliberately sent
+      // each other buries them under it.
+      //
+      // An IMPORTED audio file stays, deliberately and by the same request (*"+1 s'il est possible
+      // de mettre les fichiers audios qui ont ete importes pour les differencier des audios
+      // enregistres"*) - it is a file someone chose to send. The two are the same bytes with the
+      // same mime type, so only the sender's own declaration separates them; a message that
+      // predates the flag says nothing, and keeps the behaviour it has always had.
+      if (env.media.voiceNote) continue;
       const item: SharedMediaItem = {
         messageId: m.id,
         senderId: m.senderId,

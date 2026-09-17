@@ -399,6 +399,34 @@ type MessageEnvelope =
 `appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
 MessageEnvelope).
 
+### A voice note declares itself, because nothing downstream can tell
+
+**A recording and an imported `.m4a` are the same bytes with the same mime type.** By the time a
+message is read there is no inspection that separates them, and the only remaining difference is the
+`vocal_<timestamp>` file name the recorder happens to choose - a distinction carried in prose, which
+the next file manager breaks and which `ChatComposer.isAudioFile` already refuses to read for exactly
+that reason.
+
+So the sender declares it, at the ONE point in the application where the gesture is known:
+`sendVoiceNote` stamps `voiceNote: true` on the staged file, and it travels the whole way -
+`MediaRef.voiceNote` in the envelope, `MediaMsg.voice_note` (field 11) on the wire, and
+`OutboxMediaPayload.voiceNote` through the queue for the MLS path, which re-encodes the proto long
+after the composer is gone. `kind` stays `MEDIA_KIND_AUDIO` either way: this says how the audio was
+PRODUCED, not what it is, and the two are orthogonal.
+
+**Absent is UNKNOWN, never "imported".** protobuf decodes a missing `bool` as `false`, so both
+decoders drop a `false` rather than write it into the envelope - a message from before 2026-09-17
+says nothing about its provenance, and must keep the behaviour it has always had. That is the whole
+reason the field is written as `...(x ? { voiceNote: true } : {})` in four places instead of a plain
+assignment.
+
+**What it decides today** is the shared-content panel: `aggregateSharedContent` drops a declared
+recording and keeps everything else (user, 2026-09-17: *"Les vocaux ne doivent pas s'afficher dans
+l'onglet 'Medias' d'une discussion. +1 s'il est possible de mettre les fichiers audios qui ont ete
+importes pour les differencier des audios enregistres directement dans la conversation."*). A voice
+note is a turn in the conversation, like the sentence it replaces; a file someone picked from disk
+is something they chose to send, and it stays under Fichiers where it was.
+
 ### A system event is executed, never displayed
 
 **`appMsgToEnvelope` returns `null` for a `system` AppMessage, and that null is load-bearing.** Every
@@ -725,7 +753,7 @@ just vanished.
 `ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public
 channel is readable by every member of the community and keeps no per-member access, so there is
 nothing there to give up: the server answers `400`, and leaving is a community-level action
-(`SidebarCommunityAdminModal` -> `leaveCurrentWorkspace`). Hiding the button is convenience; the
+(`SidebarCommunityAdminPanel` -> `leaveCurrentWorkspace`). Hiding the button is convenience; the
 refusal is the gate. The scope rule behind it, and the defect that made it necessary, are on
 [social-service](../../services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17).
 
