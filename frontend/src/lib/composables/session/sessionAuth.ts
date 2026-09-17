@@ -851,29 +851,27 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     cb.log('[INIT] MLS ready - syncing messages in background.');
     cb.onMlsReady?.();
 
-    // WHAT THE KEY PACKAGE COUNT IS MADE OF, ONCE PER SESSION, AND ONLY ON WEB.
+    // WHAT THE KEY PACKAGE COUNT IS MADE OF, ONCE PER SESSION, ON BOTH PLATFORMS.
     //
-    // Native prints this from `load_or_create`; web could not, because the breakdown reads a clock
-    // and `mls-core` must not read one on wasm. So the platform that produced the measurement
-    // everybody reasons from - two production console exports on 2026-09-16, twelve minutes apart on
-    // one profile, 933 -> 983 -> 1013 key packages with nothing reclaimed - could report the count
-    // and not which of three reclaims applies. The browser passes its own clock instead.
+    // The composition line printed at load prints a COUNT, and a count names no remedy: expired
+    // debt, superseded fallbacks and a revoked pool stack into one number and are reclaimed by three
+    // different mechanisms. This is the breakdown - two production console exports on 2026-09-16,
+    // twelve minutes apart on one profile, read 933 -> 983 -> 1013 with nothing reclaimed, and could
+    // say how many and not which.
+    //
+    // **THIS LINE USED TO BE GUARDED BY `!isTauriRuntime()`, AND THE GUARD WAS THE DEFECT.** Native
+    // was not without a census: it printed one from INSIDE `load_or_create`, on the awaited path of
+    // `initialiser_mls`, in front of the first screen - the one place this call site's own comment
+    // said it must not be. Measured on OXYGEN 2026-09-17, 5 groups, a 1000-package pool: a cold load
+    // costs 24.5 ms with that diagnostic and 12.9 ms without, so HALF of it was this. The native
+    // census is now `recenser_key_packages`, called from here like the web one.
     //
     // HERE RATHER THAN IN `init()`: it deserialises every stored bundle, and a thousand of those do
-    // not belong in front of the connected badge.
-    //
-    // WHAT THIS COMMENT USED TO CLAIM IS FALSE, AND THE USER'S OWN EXPORT SAYS SO. It said the badge
-    // was up and the catch-up already running by this line, so the cost was off the path. Measured
-    // 2026-09-16, second boot: this line prints at +1108 ms and `[WS] Connected to Chat Gateway`
-    // at +1308 ms - the socket is TWO HUNDRED MILLISECONDS AWAY, and everything here is in front of
-    // it. The census costs 15 ms of that (1033 bundles), which is why it is still here rather than
-    // rescheduled: 1% of the boot does not justify machinery, and a claim nobody re-measured is
-    // worth more to remove than 15 ms is to save. What the same export DID find is the 182 ms the
-    // socket handshake spends waiting for a state it never reads - `docs/wiki/backlog.md`.
-    if (!isTauriRuntime()) {
-      const withCensus = mlsService as { logKeyPackageCensus?: () => void };
-      withCensus.logKeyPackageCensus?.();
-    }
+    // not belong in front of the connected badge. The socket is still ~200 ms away at this line
+    // (measured 2026-09-16), so this is not free either - it is 15 ms on web for 1033 bundles, 1% of
+    // the boot, which does not justify machinery. What it is NOT any more is on the critical path of
+    // a native cold start.
+    mlsService.logKeyPackageCensus();
 
     // Fire-and-forget: saveDeviceKey is independent of conversation loading.
     // The device key is always saved — on Tauri it feeds push_context.json for
