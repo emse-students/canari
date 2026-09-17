@@ -255,6 +255,18 @@ message MediaMsg {
   string    caption   = 8; // optional text caption shown alongside the media
   uint32    width     = 9; // display width in px (post-compression), for layout
   uint32    height    = 10; // display height in px, for layout
+  // Recorded by the composer's microphone rather than picked from disk.
+  //
+  // DECLARED BY THE SENDER, because nothing downstream can tell: a voice note and an imported
+  // `.m4a` are the same bytes with the same mime type, and the recorder's `vocal_<ts>` file name is
+  // a distinction carried in prose that the next file manager breaks. `kind` stays
+  // MEDIA_KIND_AUDIO either way - this says how the audio was produced, not what it is, and the two
+  // are orthogonal on purpose.
+  //
+  // Absent on every message written before 2026-09-17, which reads as `false`: an old voice note is
+  // indistinguishable from an old import, and guessing between them is exactly what this field
+  // exists to stop.
+  bool      voice_note = 11;
 }
 
 // ── System / group-management events ────────────────────────────────────

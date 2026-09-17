@@ -25,7 +25,8 @@
  *   "iv":       string,          // hex-encoded 12-byte IV
  *   "mimeType": string,
  *   "size":     number,          // original (plaintext) file size in bytes
- *   "fileName": string | undefined
+ *   "fileName": string | undefined,
+ *   "voiceNote": true | undefined  // recorded here, not picked from disk
  * }
  *
  * Messages that do NOT match this shape are treated as plain text (backward compat).
@@ -53,6 +54,19 @@ export interface MediaRef {
   width?: number;
   /** Display height in px (after compression), used to reserve layout before decrypt. */
   height?: number;
+  /**
+   * Recorded by the composer's microphone rather than picked from disk.
+   *
+   * **DECLARED BY THE SENDER, BECAUSE NOTHING DOWNSTREAM CAN TELL.** A voice note and an imported
+   * `.m4a` are the same bytes with the same mime type; the recorder's `vocal_<ts>` file name is a
+   * distinction carried in prose, and `isAudioFile` in `ChatComposer` already refuses to read it
+   * for exactly that reason. `type` stays `'audio'` either way - this says how the audio was
+   * produced, not what it is.
+   *
+   * Absent on every message sent before 2026-09-17, and absent is NOT "imported": it is unknown,
+   * and those messages keep the behaviour they have always had.
+   */
+  voiceNote?: boolean;
 }
 
 export interface ImageDimensions {
@@ -71,6 +85,8 @@ export interface PendingMediaFile {
   file: File;
   width?: number;
   height?: number;
+  /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
+  voiceNote?: boolean;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */

@@ -999,6 +999,7 @@ export function useMessaging() {
                 size: mediaRef.size,
                 fileName: mediaRef.fileName ?? '',
                 caption: captionForFile,
+                voiceNote: entry.voiceNote ?? false,
                 ...(mediaRef.width && mediaRef.height
                   ? { width: mediaRef.width, height: mediaRef.height }
                   : {}),
@@ -1024,6 +1025,7 @@ export function useMessaging() {
                   fileName: entry.file.name,
                   width: entry.width,
                   height: entry.height,
+                  ...(entry.voiceNote ? { voiceNote: true } : {}),
                 },
                 captionForFile
               )
@@ -1047,6 +1049,7 @@ export function useMessaging() {
                 width: entry.width,
                 height: entry.height,
                 caption: captionForFile,
+                ...(entry.voiceNote ? { voiceNote: true } : {}),
                 fileBytes,
               },
               status: 'pending',
@@ -1189,7 +1192,11 @@ export function useMessaging() {
     const ready = await prepareMediaFiles([file], ctx);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
-    await handleSendChat(ctx, '', { files: ready });
+    // THIS IS THE ONLY PLACE IN THE APPLICATION THAT KNOWS. Past it, a recording and an imported
+    // audio file are the same bytes with the same mime type, and the only thing left to read is a
+    // file name the recorder chose - which is a distinction carried in prose. So the gesture is
+    // declared here and travels with the message; see `MediaRef.voiceNote`.
+    await handleSendChat(ctx, '', { files: ready.map((f) => ({ ...f, voiceNote: true })) });
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
