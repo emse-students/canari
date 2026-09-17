@@ -974,6 +974,31 @@ Two things the export settles in passing, both measured rather than argued:
   parse, zstd decode, the inline bootstrap or Firefox scheduling is NOT known - the export cannot
   separate them and neither may a later reader.
 
+  **BUT ONE READING WOULD SETTLE THE LARGEST OF THOSE CAUSES, AND IT COSTS NOTHING TO TAKE.** The
+  header is the only early declaration, so the whole question is WHEN the browser acted on it.
+  Compare the first `/_app/immutable/` request against the DOCUMENT'S TWO TIMESTAMPS, not against
+  one of them:
+
+  | the first module request tracks | what it means |
+  | --- | --- |
+  | the document's response **start** (its TTFB) | the `Link:` header was honoured; the 122 ms is parse, decode or scheduling, and is small |
+  | the document's response **end** | the header did NOTHING in this engine, and the graph is discovered by EXECUTING the inline bootstrap at the end of `<body>` |
+
+  The measurement already in hand says the gap is counted from the END, which is the second row -
+  but it was read as "the header is working" on a different argument (the last module byte lands
+  after the app's first word, at +627 against +600), and **that argument is about the header being
+  USEFUL, never about when it fired**. The two are not the same claim and only one of them was
+  measured. This is the same shape as the 56-60% that inverted: a fact about one mechanism read as
+  a fact about the product.
+
+  **IF IT IS THE SECOND ROW, THE FIX IS NOT A TUNING.** `<link rel="modulepreload">` TAGS in the
+  head are discovered by the parser in every engine, where an HTTP `Link:` header is honoured only
+  by engines that implement header-driven module preloading - MDN's page for `modulepreload` does
+  not document the header form at all, checked 2026-09-17. **Do not build it before the reading**:
+  emitting the tags means post-processing the response SvelteKit already built, which costs the
+  streaming render, and paying that for an engine that never needed it would be the third
+  Chrome-shaped decision in this entry.
+
 #### WHAT THIS EXPORT COULD NOT MEASURE, AND WHY, SO NOBODY RE-READS IT AS THE ANSWER
 
 **Neither of the two fixes below was in the build.** `v0.18.9` was tagged 2026-09-16T17:18:37Z;
