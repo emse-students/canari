@@ -1470,26 +1470,6 @@ Each of these started as a REPORT, not a diagnosis. What is written under it is 
 whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
 one.
 
-### P3 - nothing enumerates what else READS a node during the one effect before its portal moves it (2026-09-17)
-
-**The known instance is fixed and its story is elsewhere** - `focusTrap` scrolled the page away when
-any modal opened, `CHANGELOG.md` carries the account, and the rule is in
-[durable-rules](durable-rules.md) beside the one about `will-change: transform` making a stacking
-context and a containing block silently. The mechanism is in
-[architecture](frontend/architecture.md#a-portalled-overlay-is-inside-the-page-for-one-effect-and-focusing-it-there-scrolls-the-page-away).
-
-**What is open is the POPULATION, not that defect.** A portalled node exists in its written parent
-for one effect, and the child's action runs first, so anything reading a position in that window
-reads a position about to stop being true. `.focus()` was swept and held exactly one site. A
-MEASUREMENT is not a `.focus()` and was not swept: `getBoundingClientRect`, `offsetTop`,
-`scrollIntoView` and `offsetParent` on a node under a `use:portal` sibling would all answer about
-`.page-scroll-wrap` rather than the window, and would answer plausibly, which is why nothing would
-report it.
-
-**Not investigated**: whether such a call site exists. The cheap version is a sweep of those four
-names inside components that portal, which is a closed list - `$lib/actions/portal`'s consumers.
-What it cannot be is a runtime guard: the reading is legal, and only its TIMING is wrong.
-
 ### P3 - the planning LIST view does not tell a PROPOSED event from a VALIDATED one, and the calendar view does (user, 2026-09-17)
 
 Verbatim: *"Pas de difference entre un evenement propose et un evenement valide dans la vue planning
