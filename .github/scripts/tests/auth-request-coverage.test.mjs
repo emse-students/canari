@@ -2,7 +2,7 @@
 /**
  * `auth_request` IDENTIFIES A CALLER. IT REFUSES NOBODY. THIS IS THE GATE THAT SAYS SO.
  *
- * Sixteen `location` blocks in `infrastructure/local/Dockerfile.frontend` carry
+ * Fifteen `location` blocks in `infrastructure/local/Dockerfile.frontend` carry
  * `auth_request /internal/auth/verify`. That sub-request goes to `/api/auth/verify`, which answers
  * **200 for a logged-out caller too**, carrying `x-logged-in: false` so signed-out pages can
  * render. nginx treats any 2xx as permission granted. So the edge check decorates; the only thing
@@ -20,6 +20,20 @@
  *
  * It is deliberately STATIC. A probe proves one endpoint on one estate at one moment; this proves
  * the shape of every route on every service, in CI, before a deploy exists.
+ *
+ * **IT COVERS THE RUST CRATES SINCE 2026-09-17, AND UNTIL THAT DAY IT DID NOT COVER `/api/presence`
+ * - THE ROUTE IT WAS WRITTEN FOR.** Three of the fifteen locations proxy to `chat-gateway` and one
+ * to `call-service`, Axum crates with no controller layer at all, and the authorization loop below
+ * skipped every upstream it could not find a NestJS directory for. Worse, `call-service` was
+ * DECLARED a NestJS service: `nestRoutes` walked the crate, found no `*.controller.ts`, returned an
+ * empty list, and the location read as covered while being held against nothing. Four routes -
+ * `/api/ws`, `/api/presence`, `/api/admin/presence` and the call socket - all four authorized, none
+ * of them asserted. The next Axum route added would have been the next `/api/presence`, which is
+ * the one thing this file exists to make impossible.
+ *
+ * So the Rust half is read from the router the crate actually builds, and **a declared service that
+ * yields NO routes fails by name**. A coverage map is only coverage if every entry is doing work;
+ * an entry that has quietly stopped matching anything reads exactly like one that still does.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -223,9 +237,171 @@ function nestRoutes(dir) {
   return routes;
 }
 
-/** Every route the Rust gateway registers, from its own router. */
-function axumRoutes(mainRs) {
-  return [...readFileSync(mainRs, 'utf8').matchAll(/\.route\("([^"]+)"/g)].map((m) => m[1]);
+// -- The Rust crates ----------------------------------------------------------------------------
+
+/**
+ * In-handler authorization idioms on the Rust side.
+ *
+ * There is no guard LAYER on either Axum router - no `.layer(...)` anywhere that could refuse a
+ * caller - so authorization is a call the handler makes itself, and the only honest way to assert
+ * it is to name those calls. The Nest half has the same list for the same reason (`IN_BODY_AUTH`),
+ * and neither is a list of route names: it is a list of ways to say no.
+ */
+const RUST_AUTH = [
+  // `presence.rs` - nginx's `x-user-id` arrives EMPTY for a caller the auth sub-request did not
+  // recognise, so a blank value is what an anonymous caller looks like.
+  'is_authenticated',
+  // `get_admin_presence` - the same header contract, one claim further along.
+  'x-global-admin',
+  // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`
+  // therefore cannot have checked.
+  'decode::<Claims>',
+];
+
+/**
+ * A Rust source twice over: comments blanked, and comments AND string interiors blanked.
+ *
+ * Both copies are the SAME LENGTH as the input, so an index found in one addresses the other.
+ * `skeleton` is what braces and parentheses are counted in - `format!("{}:{}", ..)` closes a
+ * handler body eight lines early otherwise - and `codeOnly` is what idioms are matched in, because
+ * one of the idioms IS a string literal (`"x-global-admin"`).
+ *
+ * NEITHER MAY BE MATCHED IN A COMMENT, which is the same trap as `isCommentLine` above one language
+ * over: the docblock on `get_presence` says "REQUIRES AN AUTHENTICATED CALLER" in prose, and a
+ * handler credited by its own comment is a handler nothing has checked.
+ */
+function maskRust(src) {
+  const code = src.split('');
+  const skel = src.split('');
+  const hide = (arr, from, to) => {
+    for (let k = from; k < to; k++) if (arr[k] !== '\n') arr[k] = ' ';
+  };
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const nl = src.indexOf('\n', i);
+      const end = nl < 0 ? src.length : nl;
+      hide(code, i, end);
+      hide(skel, i, end);
+      i = end;
+    } else if (two === '/*') {
+      // Rust block comments NEST, so a `/*` inside one is not the end of anything.
+      let depth = 1;
+      let j = i + 2;
+      while (j < src.length && depth > 0) {
+        if (src.slice(j, j + 2) === '/*') {
+          depth++;
+          j += 2;
+        } else if (src.slice(j, j + 2) === '*/') {
+          depth--;
+          j += 2;
+        } else {
+          j++;
+        }
+      }
+      hide(code, i, j);
+      hide(skel, i, j);
+      i = j;
+    } else if (/^r#*"/.test(src.slice(i, i + 12)) && !/[A-Za-z0-9_]/.test(src[i - 1] ?? ' ')) {
+      const hashes = /^r(#*)"/.exec(src.slice(i, i + 12))[1];
+      const close = `"${hashes}`;
+      const at = src.indexOf(close, i + hashes.length + 2);
+      const end = at < 0 ? src.length : at + close.length;
+      hide(skel, i, end);
+      i = end;
+    } else if (src[i] === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== '"') j += src[j] === '\\' ? 2 : 1;
+      hide(skel, i + 1, j);
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+  return { codeOnly: code.join(''), skeleton: skel.join('') };
+}
+
+/** `[start, end)` of the balanced run beginning at the opening delimiter at `from`, or `null`. */
+function balanced(skeleton, from, open, close) {
+  let depth = 0;
+  for (let i = from; i < skeleton.length; i++) {
+    if (skeleton[i] === open) depth++;
+    else if (skeleton[i] === close && --depth === 0) return [from, i + 1];
+  }
+  return null;
+}
+
+/**
+ * `[start, end)` of a crate's `#[cfg(test)]` module, or `null`.
+ *
+ * THE TEST MODULE IS NOT THE ROUTER. `chat-gateway/src/main.rs` builds a second, minimal router
+ * inside it carrying `/api/presence` with a closure answering `"ok"` - a CORS fixture, and the only
+ * `.route(` in this repository with no handler function behind it. Read as production routing it is
+ * a phantom that no service serves, reported either as an unguarded route or as a handler that
+ * cannot be found; both accusations are false, and a gate that cries wolf is one nobody reads.
+ */
+function testModuleSpan(skeleton) {
+  const at = skeleton.indexOf('#[cfg(test)]');
+  if (at < 0) return null;
+  const open = skeleton.indexOf('{', at);
+  if (open < 0) return null;
+  return [at, (balanced(skeleton, open, '{', '}') ?? [0, skeleton.length])[1]];
+}
+
+/** Every `.rs` file in a crate. */
+function rustFiles(dir) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...rustFiles(p));
+    else if (name.endsWith('.rs')) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Every route an Axum router registers, as `{ route, handler }` - `route` spelt `VERB /path`,
+ * exactly as `PUBLIC_BY_INTENT` spells a Nest one.
+ *
+ * The path is the one the CRATE registers, never the one nginx publishes: `call-service` serves
+ * `/ws` and the edge rewrites `/api/call(.*)` onto it, so the location's own `rewrite` is what
+ * relates the two. A route table renamed to match the edge would be answering from the wrong end.
+ *
+ * A `.route(` whose handler this cannot read yields `{ handler: null }` rather than nothing, so an
+ * unparseable router FAILS instead of quietly shrinking the set being asserted.
+ */
+function axumRoutes(crateDir) {
+  const { codeOnly, skeleton } = maskRust(readFileSync(join(crateDir, 'main.rs'), 'utf8'));
+  const tests = testModuleSpan(skeleton);
+  const out = [];
+  for (const m of skeleton.matchAll(/\.route\(/g)) {
+    if (tests && m.index >= tests[0] && m.index < tests[1]) continue;
+    const span = balanced(skeleton, m.index + '.route'.length, '(', ')');
+    if (!span) continue;
+    const args = codeOnly.slice(span[0], span[1]);
+    const path = args.match(/^\(\s*"([^"]+)"/)?.[1];
+    if (!path) continue;
+    const calls = [
+      ...args.matchAll(/\b(get|post|put|patch|delete|head|options|any)\s*\(\s*([A-Za-z_]\w*)/g),
+    ];
+    if (calls.length === 0) out.push({ route: `? ${path}`, handler: null });
+    for (const c of calls) out.push({ route: `${c[1].toUpperCase()} ${path}`, handler: c[2] });
+  }
+  return out;
+}
+
+/** The body of a Rust function with its comments blanked, or `null` if the crate declares none. */
+function rustFnBody(crateDir, name) {
+  for (const file of rustFiles(crateDir)) {
+    const { codeOnly, skeleton } = maskRust(readFileSync(file, 'utf8'));
+    const sig = new RegExp(`\\bfn\\s+${name}\\s*\\(`).exec(skeleton);
+    if (!sig) continue;
+    const open = skeleton.indexOf('{', sig.index);
+    const span = open < 0 ? null : balanced(skeleton, open, '{', '}');
+    if (span) return codeOnly.slice(span[0], span[1]);
+  }
+  return null;
 }
 
 // ── The assertions ───────────────────────────────────────────────────────────────────────────────
@@ -239,12 +415,17 @@ if (locations.length < 10) {
   );
 }
 
-/** Nest services, and the `/api` prefix nginx strips before proxying. */
+/** NestJS services, and the `/api` prefix nginx strips before proxying. */
 const NEST = {
   'chat-delivery-service': join(REPO, 'apps', 'chat-delivery-service', 'src'),
   'core-service': join(REPO, 'apps', 'core-service', 'src'),
   'media-service': join(REPO, 'apps', 'media-service', 'src'),
   'social-service': join(REPO, 'apps', 'social-service', 'src'),
+};
+
+/** The Axum crates. `call-service` was in the map above until 2026-09-17 and has no controller. */
+const RUST = {
+  'chat-gateway': join(REPO, 'apps', 'chat-gateway', 'src'),
   'call-service': join(REPO, 'apps', 'call-service', 'src'),
 };
 
@@ -253,6 +434,28 @@ for (const [service, dir] of Object.entries(NEST)) {
   for (const r of nestRoutes(dir)) {
     if (!allRoutes.has(r.route)) allRoutes.set(r.route, []);
     allRoutes.get(r.route).push({ ...r, service });
+  }
+}
+
+const rustRoutes = new Map(Object.entries(RUST).map(([s, dir]) => [s, axumRoutes(dir)]));
+
+// A DECLARED SERVICE THAT YIELDS NO ROUTES IS NOT A COVERED SERVICE, and it reads as one. See the
+// head of this file: `call-service` sat in NEST for six days contributing an empty list, so
+// `/api/call` was held against nothing at all. Same assertion `serverProse.test.ts` makes about
+// every tree it claims to walk, for the same reason - a floor on the TOTAL cannot see it.
+const perService = (s) => [...allRoutes.values()].flat().filter((h) => h.service === s).length;
+for (const service of Object.keys(NEST)) {
+  if (perService(service) === 0) {
+    failures.push(
+      `NEST declares "${service}" and no *.controller.ts under it yielded a route - either it is not a NestJS service (move it to RUST) or the scan is broken; an empty list is not coverage`
+    );
+  }
+}
+for (const [service, routes] of rustRoutes) {
+  if (routes.length === 0) {
+    failures.push(
+      `RUST declares "${service}" and its main.rs registered no route - either the router moved out of main.rs or the parser is broken; an empty list is not coverage`
+    );
   }
 }
 
@@ -281,6 +484,51 @@ for (const loc of locations) {
   }
 }
 
+// THE RUST HALF. Axum has no guard layer here, so the handler's own body is the whole of the
+// enforcement - and `/api/presence`, the route that opened this file, lives on this side.
+let rustChecked = 0;
+let rustAuthorized = 0;
+for (const loc of locations) {
+  const dir = RUST[loc.upstream];
+  if (!dir) continue;
+  // What the upstream is ASKED for is not the location path: `/api/call(.*)` arrives as `/ws$1`.
+  const prefix = (loc.rewriteTo ?? loc.path).replace(/\/$/, '');
+  for (const r of rustRoutes.get(loc.upstream)) {
+    const path = r.route.split(' ')[1];
+    if (!(path === prefix || path.startsWith(`${prefix}/`))) continue;
+    rustChecked++;
+    if (r.handler === null) {
+      failures.push(
+        `${loc.upstream} registers "${path}" behind nginx location "${loc.path}" with a handler this gate cannot read - name the function instead of inlining a closure, so its authorization can be asserted`
+      );
+      continue;
+    }
+    const body = rustFnBody(dir, r.handler);
+    if (body === null) {
+      failures.push(
+        `${loc.upstream} routes "${path}" to \`${r.handler}\`, which no .rs file in apps/${loc.upstream}/src declares - the parser and the crate disagree, which is a failure of this gate rather than a pass`
+      );
+      continue;
+    }
+    if (RUST_AUTH.some((idiom) => body.includes(idiom))) {
+      rustAuthorized++;
+      continue;
+    }
+    if (declared.has(r.route)) {
+      matchedDeclarations.add(r.route);
+      continue;
+    }
+    failures.push(
+      `${r.route} sits behind nginx location "${loc.path}" (auth_request) with NO authorization and NO declaration - apps/${loc.upstream}/src, fn ${r.handler}`
+    );
+  }
+}
+
+const everyKnownRoute = new Set([
+  ...allRoutes.keys(),
+  ...[...rustRoutes.values()].flat().map((r) => r.route),
+]);
+
 // EVERY DECLARATION MUST STILL BE DOING WORK, and "the route still exists" is not that test.
 // Checking existence alone let three entries survive the day their routes were guarded: the loop
 // above skips an authorized route before it ever consults the list, so a declaration that has
@@ -289,7 +537,7 @@ for (const loc of locations) {
 for (const entry of PUBLIC_BY_INTENT) {
   if (matchedDeclarations.has(entry.route)) continue;
   failures.push(
-    !allRoutes.has(entry.route)
+    !everyKnownRoute.has(entry.route)
       ? `PUBLIC_BY_INTENT names "${entry.route}", which no controller declares any more - delete the entry rather than leaving a reason for a route nobody serves`
       : `PUBLIC_BY_INTENT names "${entry.route}", which is now authorized or sits behind no auth_request location - the declaration buys nothing and must be deleted`
   );
@@ -297,14 +545,13 @@ for (const entry of PUBLIC_BY_INTENT) {
 
 // An `auth_request` location whose upstream serves nothing under it guards nothing, and reads in
 // the config as though it does. `/api/groups` was exactly that until 2026-09-10.
-const AXUM = {
-  'chat-gateway': axumRoutes(join(REPO, 'apps', 'chat-gateway', 'src', 'main.rs')),
-  'call-service': axumRoutes(join(REPO, 'apps', 'call-service', 'src', 'main.rs')),
-};
 for (const loc of locations) {
   const prefix = (loc.rewriteTo ?? loc.path).replace(/\/$/, '');
-  const served = AXUM[loc.upstream]
-    ? AXUM[loc.upstream].some((r) => r === prefix || r.startsWith(`${prefix}/`))
+  const served = rustRoutes.has(loc.upstream)
+    ? rustRoutes.get(loc.upstream).some((r) => {
+        const path = r.route.split(' ')[1];
+        return path === prefix || path.startsWith(`${prefix}/`);
+      })
     : [...allRoutes.keys()].some((route) => {
         const path = `/api${route.split(' ')[1]}`;
         return path === prefix || path.startsWith(`${prefix}/`);
@@ -322,7 +569,9 @@ const guarded = [...allRoutes.values()].flat().filter((r) => r.authorized).lengt
 const total = [...allRoutes.values()].flat().length;
 
 if (failures.length > 0) {
-  console.error(`FAIL: ${failures.length} route(s) behind auth_request answer anybody:\n`);
+  console.error(
+    `FAIL: ${failures.length} problem(s) - a route behind auth_request answers anybody, or this gate cannot see whether one does:\n`
+  );
   for (const f of failures) console.error(`  ${f}`);
   console.error(
     `\n\`auth_request\` answers 200 for a logged-out caller, so it identifies and never refuses.` +
@@ -334,5 +583,6 @@ if (failures.length > 0) {
 
 console.log(
   `OK: ${locations.length} auth_request locations, ${guarded}/${total} controller routes authorized, ` +
+    `${rustAuthorized}/${rustChecked} Axum routes behind one authorized, ` +
     `${matchedDeclarations.size} declared public by intent.`
 );
