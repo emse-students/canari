@@ -257,9 +257,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - THE ROUTE SWEEP IS DONE AND WHAT IT COULD NOT REACH IS WHAT IS LEFT**: REAL
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
     **server prose CLOSED, 194 sites to ONE** - `serverProse.test.ts` owns `src` whole, that one is its allowlist ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
-11. **COLD START - TARGET UNDER 1 s (user); `v0.18.5`'s 13 s is DEAD.** The 43% block that had NO
-    clock has five, and on Android **82.7% of post-login is ONE native call**, `initialiser_mls`,
-    for 5 groups. THREE hypotheses refuted BY THE BENCH ([backlog](docs/wiki/backlog.md)).
+11. **COLD START - TARGET UNDER 1 s (user); `v0.18.5`'s 13 s is DEAD.** THREE hypotheses refuted by
+    the boot bench; **82.7% of post-login is ONE native call**, `initialiser_mls`, and HALF a cold
+    load is two diagnostic log lines no unlogged bench sees ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

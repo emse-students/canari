@@ -35,6 +35,71 @@ proprietaire d'une ligne voit son propre champ brut, pas seulement un admin). Co
 presence d'`authorId` sur la reponse - jamais `post.anonymous` seul - decide desormais quelle des
 deux presentations dessiner.
 
+### Fixed - la creation d'un post repondait au createur qu'il n'avait aucun droit dessus
+
+Le controleur lit `x-global-admin` pour AUTORISER une publication au nom d'une association -
+`canPostAs(..., { isGlobalAdmin })` est la seule facon dont un administrateur de la plateforme y
+arrive sans etre membre - puis passait le resultat a `createPost`... avec `isGlobalAdmin` cable en
+dur a `false`. La reponse etait donc estampillee pour un lecteur dont le serveur venait de decider
+qu'il n'etait pas celui qu'il avait laisse ecrire : `canManage: false`, `canPin: false`, sur le post
+que ce lecteur venait de creer. **Une seule requete, une seule identite, deux reponses.** Tous les
+autres chemins qui rendent un post - le fil, `getById`, la mise a jour - passaient le vrai drapeau.
+
+Signale par l'utilisateur le 2026-09-17, qui a nomme la cause dans la question : *"J'ai cree un post
+mais je ne pouvais pas le supprimer (je suis admin ?)"*.
+
+**CE QUE CE CORRECTIF NE FERME PAS, ET IL FAUT LE LIRE AVANT DE CLORE LE RAPPORT.** Le client
+JETTE la reponse de creation : `CreatePostForm` fait `await createPost(payload)` sans lire le
+resultat, puis `onPostCreated()` recharge le fil. Ce qui est corrige ici est donc une incoherence
+serveur reelle et testee, pas necessairement l'ecran que l'utilisateur a vu - et les autres
+hypotheses restent ouvertes dans le backlog, avec ce qui a deja ete elimine par lecture : le fil,
+la page d'un post, le menu et la couche client passent tous `canManage` sans le perdre.
+
+Huit tests dans un fichier neuf, en deux moities parce que le defaut vivait dans la couture :
+le service doit honorer le drapeau qu'on lui donne, le controleur doit lui donner celui qu'il a deja
+utilise a la porte.
+
+### Added - le chargement a froid de l'etat MLS n'avait aucun banc, et la moitie de son cout est deux lignes de log
+
+Le dernier releve met `mls-load-state` a **1644 ms, 82,7 % de tout ce qui suit `login-start`** : un
+seul `invoke('initialiser_mls')`, pour cinq groupes. Le releve se termine en disant que la question
+suivante est dans Rust. Elle y etait, et rien ne pouvait y repondre : **tous les bancs de
+`mls_perf.rs` mesuraient l'ECRITURE**. Le chemin qui tourne une fois par demarrage a froid, sur le
+chemin critique du premier ecran, n'en avait aucun.
+
+`load_or_create_cold` et `load_per_pool_passes` le mesurent. La dimension balayee est le POOL de key
+packages et non le nombre de groupes, parce que les passes par chargement parcourent des key
+packages et que l'accumulation est deja connue pour n'etre bornee par rien.
+
+**UN BANC SANS LOGGER MESURE UNE AUTRE FONCTION QUE CELLE QUE FAIT TOURNER UN TELEPHONE**, et c'est
+la le resultat, pas une note de bas de page. `log::info!` se compile en `if niveau_actif { ... }` :
+sans logger installe, `log::max_level()` vaut `Off` et **ses arguments ne sont jamais evalues**. Or
+deux des arguments de `load_or_create` sont `state_composition_summary()` et
+`key_package_census_summary()`, et le second `serde_json`-deserialise chaque bundle stocke, recalcule
+son `hash_ref` et fait une recherche de sous-chaine sur sa cle. Un appareil installe
+`tauri-plugin-log` au niveau info et paie tout cela ; chaque test et chaque banc de ce depot y etait
+aveugle. Les bancs installent maintenant un logger qui jette tout, et font tourner chaque chargement
+DEUX fois - l'ecart est un nombre dans la sortie, plus une affirmation dans un commentaire.
+
+Criterion, 20 echantillons, OXYGEN, 5 groupes, release :
+
+| pool de key packages | chargement, logger a INFO | chargement, logger OFF | ce que coutent les deux lignes |
+| --- | --- | --- | --- |
+| 50 | 1,416 ms | 0,829 ms | +0,59 ms (**+71 %**) |
+| 500 | 12,17 ms | 6,25 ms | +5,9 ms (**+95 %**) |
+| 1000 | 24,52 ms | 12,91 ms | +11,6 ms (**+90 %**) |
+
+Les trois passes mesurees a part, meme machine, pool de 1000 : la purge des key packages expires
+**11,49 ms**, le recensement **11,61 ms**, le resume de composition **0,209 ms**. Un chargement a
+froid a ce pool, c'est donc environ 1 ms de decodage, 11,5 ms de purge et 11,6 ms d'un diagnostic que
+personne n'a lu. Les trois sont en O(pool) et aucun n'est necessaire avant le premier ecran.
+
+**Ce que cela ne regle pas, et c'est dit ici pour que personne ne le cite autrement** : cela
+n'explique pas les 1644 ms. OXYGEN n'est pas un Mi 9T et son pool est une fixture. Ce qui est etabli,
+c'est la FORME - le cout est lineaire en un pool que rien ne recupere, et la moitie environ est du
+travail que le chargement n'a pas besoin de faire - et un premier nombre reproductible que n'importe
+qui peut refaire tourner.
+
 ### Added - une notification sociale arrivait sans aucune image, sur les deux plateformes
 
 Signale par l'utilisateur le 2026-09-17 : un post d'une association arrivait sur le telephone comme

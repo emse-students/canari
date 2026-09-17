@@ -16,10 +16,52 @@ use mls_core::MlsManager;
 use std::hint::black_box;
 use support::{build_decrypt_fixture, build_persistence_fixture};
 
+/// A LOGGER THAT DISCARDS EVERYTHING, INSTALLED SO THE BENCHES MEASURE WHAT A DEVICE PAYS.
+///
+/// `log::info!` expands to `if level_enabled { ... }`, so with no logger installed `log::max_level()`
+/// is `Off` and **its ARGUMENTS are never evaluated**. Two of `load_or_create`'s arguments are
+/// `state_composition_summary()` and `key_package_census_summary()`, and the second DESERIALISES
+/// every stored key package bundle. A bench run without a logger therefore measures a load that
+/// skips them, while a phone - which installs `tauri-plugin-log` at info - pays for both.
+///
+/// Measured on OXYGEN at a 1000-package pool: **8.2 ms with no logger, 14.9 ms with one**. A bench
+/// blind to 45 % of the thing it measures would have reported this path as cheap, which is exactly
+/// what the first version of these benches did.
+///
+/// It discards rather than prints because the ARGUMENT EVALUATION is the cost under test; formatting
+/// and writing to a terminal is the harness's own noise, and would be measured as the subject's.
+struct DiscardingLogger;
+impl log::Log for DiscardingLogger {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, _: &log::Record) {}
+    fn flush(&self) {}
+}
+static DISCARDING_LOGGER: DiscardingLogger = DiscardingLogger;
+
+/// Installs [`DiscardingLogger`] once. `set_logger` is global and one-shot; `set_max_level` is not,
+/// so the level is what the benches below move to compare a logged load against an unlogged one.
+fn install_logger() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::set_logger(&DISCARDING_LOGGER).expect("no other logger in a bench process");
+    });
+}
+
 const BENCH_KEY: [u8; 32] = [42u8; 32];
 const GROUP_COUNTS: [usize; 3] = [5, 20, 50];
 const KEY_PACKAGE_POOL: usize = 50;
 const DECRYPT_BATCH_SIZES: [usize; 3] = [1, 100, 1000];
+/// The key-package pools the LOAD benches sweep.
+///
+/// 50 is the pool the app intends to hold. 1000 is the shape a production device actually reached -
+/// 933 -> 983 -> 1013 read twelve minutes apart on one browser profile on 2026-09-16, with nothing
+/// reclaimed. A load bench that only ever sees 50 would report that this path is free and would have
+/// said so on every device where it is not.
+const LOAD_KEY_PACKAGE_POOLS: [usize; 3] = [50, 500, 1000];
+/// The group count a load bench holds fixed: what the user's own device carries.
+const LOAD_GROUP_COUNT: usize = 5;
 
 fn bench_save_state_cold_rebuild(c: &mut Criterion) {
     let mut group = c.benchmark_group("save_state_plain_cbor_cold_rebuild");
@@ -192,6 +234,117 @@ fn bench_process_incoming_batch(c: &mut Criterion) {
     group.finish();
 }
 
+/// WHAT A COLD LOAD COSTS, AND HOW IT GROWS WITH A POOL NOTHING RECLAIMS.
+///
+/// The user's own boot report on 2026-09-17 put `mls-load-state` at **1644 ms, 82.7 % of everything
+/// after `login-start`** - one `invoke('initialiser_mls')` for five groups - and nothing in this
+/// crate could say which part of it. Every bench here measured SAVING; the path that runs once per
+/// cold start, on the critical path of the first screen, had none.
+///
+/// The pool is the swept dimension rather than the group count because the two O(n) passes below
+/// walk key packages, not groups, and because the accumulation is the thing already known to be
+/// unbounded.
+fn bench_load_or_create(c: &mut Criterion) {
+    install_logger();
+    let mut group = c.benchmark_group("load_or_create_cold");
+    group.sample_size(20);
+
+    for pool in LOAD_KEY_PACKAGE_POOLS {
+        let fixture = build_persistence_fixture(LOAD_GROUP_COUNT, pool);
+        let plain = fixture.manager.save_state().expect("snapshot the fixture");
+        group.throughput(Throughput::Bytes(plain.len() as u64));
+
+        // INFO, because that is the level a device runs at. See `DiscardingLogger`.
+        log::set_max_level(log::LevelFilter::Info);
+        group.bench_with_input(
+            BenchmarkId::new("kp", format!("{pool}_groups_{LOAD_GROUP_COUNT}")),
+            &plain,
+            |b, bytes| {
+                b.iter(|| {
+                    let manager = MlsManager::load_or_create(
+                        "bench-user",
+                        "bench-device",
+                        Some(bytes.clone()),
+                    )
+                    .expect("cold load should succeed");
+                    black_box(manager);
+                });
+            },
+        );
+
+        // THE SAME LOAD WITH THE DIAGNOSTICS SILENCED, so the gap is a number in the bench output
+        // rather than a claim in a comment. Anything this pair separates is what the two per-load
+        // `log::info!` arguments cost, and nothing else changes between them.
+        log::set_max_level(log::LevelFilter::Off);
+        group.bench_with_input(
+            BenchmarkId::new("kp_unlogged", format!("{pool}_groups_{LOAD_GROUP_COUNT}")),
+            &plain,
+            |b, bytes| {
+                b.iter(|| {
+                    let manager = MlsManager::load_or_create(
+                        "bench-user",
+                        "bench-device",
+                        Some(bytes.clone()),
+                    )
+                    .expect("cold load should succeed");
+                    black_box(manager);
+                });
+            },
+        );
+        log::set_max_level(log::LevelFilter::Info);
+    }
+    group.finish();
+}
+
+/// THE TWO PASSES A LOAD MAKES OVER EVERY STORED BUNDLE, MEASURED APART FROM IT.
+///
+/// `load_or_create` does three O(pool) walks on a native target that a reader would not guess from
+/// its signature: it prunes expired key packages, it prints a composition summary, and it prints a
+/// census that DESERIALISES every bundle. All three are diagnostics or maintenance, all three sit on
+/// the cold-start critical path, and the comment on the census already says in as many words that
+/// "the web start-up is not where an O(n) diagnostic belongs" - while leaving it on the native one.
+///
+/// Whether that is worth anything is a question about NUMBERS, and this is what produces them. The
+/// point is the RATIO to the bench above: a pass that is 2 % of a load is a diagnostic worth keeping
+/// and one that is 40 % is the answer to the user's cold-start target.
+fn bench_load_passes(c: &mut Criterion) {
+    install_logger();
+    let mut group = c.benchmark_group("load_per_pool_passes");
+    group.sample_size(20);
+
+    for pool in LOAD_KEY_PACKAGE_POOLS {
+        let fixture = build_persistence_fixture(LOAD_GROUP_COUNT, pool);
+
+        group.bench_with_input(
+            BenchmarkId::new("prune_expired", pool),
+            &fixture.manager,
+            |b, manager| {
+                // Nothing is expired in a fixture minted seconds ago, so this measures the WALK -
+                // which is what a load pays on every start, since a device with nothing to reclaim
+                // is the ordinary case and the expensive one is strictly worse.
+                b.iter(|| black_box(manager.prune_expired_key_packages().expect("prune")));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("census", pool),
+            &fixture.manager,
+            |b, manager| {
+                b.iter(|| black_box(manager.key_package_census_summary()));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("composition", pool),
+            &fixture.manager,
+            |b, manager| {
+                b.iter(|| black_box(manager.state_composition_summary()));
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_save_state_cold_rebuild,
@@ -199,6 +352,8 @@ criterion_group!(
     bench_save_encrypted,
     bench_send_message,
     bench_process_incoming,
-    bench_process_incoming_batch
+    bench_process_incoming_batch,
+    bench_load_or_create,
+    bench_load_passes
 );
 criterion_main!(benches);
