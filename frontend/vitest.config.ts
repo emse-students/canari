@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     environment: 'happy-dom',
+    // The locale is global and some files move it; this gives every file the same starting
+    // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
+    setupFiles: ['./src/test/locale.ts'],
     globals: true,
     include: ['src/**/*.{test,spec}.ts'],
     coverage: {

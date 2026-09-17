@@ -1068,11 +1068,14 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
    own floating panels. IT WENT ON 2026-09-14 (user: *"tu peux d'ailleurs enlever - sur tout
    support"*), so the row now matches the reference exactly: nothing behind it but the field's own
    pill. The radius survives because the drag-over state still paints inside it. */
-/* THE CONVERSATION SIDE PANEL, in its DRAWER form - the shape below `xl`, where there is no width
-   for a second column. The desktop form is in the 1280px block below, which turns the fixed box
-   back into an ordinary flex sibling. Written base-first, so a viewport matching no query still
-   gets a usable panel rather than an unpositioned one. */
-.conversation-side-panel {
+/* THE SIDE PANEL, in its DRAWER form - the shape below `xl`, where there is no width for a second
+   column. THIS HALF IS EVERY PANEL'S, and it is separable from the desktop half for one reason:
+   the 1280px block below turns the fixed box into an ordinary flex SIBLING, which only means
+   anything inside a row that has a place for it. The chat page has one; a panel opened from the
+   sidebar covers the whole app and has none, so it keeps the drawer at every width and takes
+   `.side-panel` alone. Written base-first, so a viewport matching no query still gets a usable
+   panel rather than an unpositioned one. */
+.side-panel {
   position: fixed;
   top: 0;
   right: 0;
@@ -1660,18 +1663,27 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════
-   THE CONVERSATION SIDE PANEL - one shell, two shapes, and the order of these three blocks IS the
-   mechanism. `Membres`, `Medias, liens et fichiers` and `Parametres du canal` all render into it.
+   THE SIDE PANEL - one shell, two shapes, and the order of these three blocks IS the mechanism.
+   `Membres`, `Medias, liens et fichiers` and `Parametres du canal` render into it from the chat
+   page, and `Parametres de la communaute` from the sidebar - the last one WITHOUT the column
+   modifier, so the 1280px block leaves it a drawer.
 
    They are written base -> 768 -> 1280 and kept TOGETHER, after the card-grid block above. Split
    across the file they were wrong: the 1280 rule sat BEFORE the 768 one, so at 1400px the drawer's
    own margin - which offsets it below the top bar - won on source order and pushed the column down
    by a whole bar. A breakpoint ladder only reads correctly when it is contiguous and ascending.
    ═══════════════════════════════════════════════════════════════════════════════════════════════ */
-@media (min-width: 768px) and (max-width: 1279.98px) {
-  /* Still a drawer here, and it takes the shell's drawer geometry - below the top bar, on the
-     gutter grid, rounded - exactly as the navigation rail's drawer does. */
-  .conversation-side-panel {
+@media (min-width: 768px) {
+  /* A drawer with the shell's geometry - below the top bar, on the gutter grid, rounded - exactly
+     as the navigation rail's drawer does. Unmodified, so a sidebar panel keeps this shape at EVERY
+     width above 768px, which is the reason there is no upper bound here any more. There used to be
+     one, stopping at 1279.98px, back when the only panel became a column at 1280px and the insets
+     had to be kept off it. They no longer have to be: a column is `position: static`, and an inset
+     on a static box does nothing. With the bound, a sidebar panel - which never becomes a column -
+     fell back to the BASE rule at 1280px and snapped from a rounded inset drawer to a square
+     full-height one, measured on the dev server 2026-09-17. The 1280px block below still wins for
+     the column, because these three blocks are contiguous and ascending. */
+  .side-panel {
     top: calc(env(safe-area-inset-top) + var(--app-top-bar-height) + 0.75rem);
     bottom: 0.75rem;
     right: 0.75rem;
@@ -1680,9 +1692,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 @media (min-width: 1280px) {
-  /* A COLUMN, NOT AN OVERLAY. Everything `position: fixed` implied is undone by hand: dropping to
-     `static` alone would leave the insets and the z-index behind. */
-  .conversation-side-panel {
+  /* A COLUMN, NOT AN OVERLAY - and ONLY for a panel that has a row to join, which is what the
+     separate class name says. Everything `position: fixed` implied is undone by hand: dropping to
+     `static` alone would leave the insets and the z-index behind. A panel without this modifier
+     keeps the drawer above, which is the whole point of the two being separable. */
+  .side-panel-column {
     position: static;
     z-index: auto;
     width: 20rem;

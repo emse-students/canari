@@ -746,11 +746,30 @@ illegal state stopped being reachable rather than being guarded against.
 - **One instance, not two.** A desktop card and a mobile drawer as separate `{#if}` branches would
   mount `children` twice - two copies of the media panel, two decrypt passes, two of every request its
   content makes. The chrome is the only thing that differs, so the media query moves the chrome:
-  `.conversation-side-panel` is `position: fixed` at the base and `position: static` from 1280px up.
+  `.side-panel` is `position: fixed` at the base, and `.side-panel-column` makes it
+  `position: static` from 1280px up.
 - **The three CSS blocks are contiguous and ascending**, and that ordering is the mechanism. Written
   apart they were wrong: the 1280px rule sat *before* the 768px one, so at 1400px the drawer's own
   top-bar offset won on source order and pushed the column down by a whole bar.
 - **Escape, the scrim, the header and the close button are declared once**, in the shell.
+- **The shell is shared, and the COLUMN is the opt-in.** Since 2026-09-17 the community settings
+  render into it too, from the sidebar - a fourth shape for the same idea until then. What they
+  could not take is `position: static`, which needs a row with a place for it; the sidebar covers
+  the whole app and has none. So the drawer is `.side-panel`, every panel's, and the column is
+  `.side-panel-column`, which a host adds because only a host knows. Measured on the working tree
+  at the three rungs: 436 px full-bleed, 448 px inset and rounded from 768 px up, and 320 px
+  `static` at 1400 px for the chat panel only.
+- **A drawer is PORTALLED and a column is not - the same boolean decides both.**
+  `.page-scroll-wrap` carries `will-change: transform`, so it is the containing block for every
+  `position: fixed` written inside a page: a drawer left in place is laid out against `<main>`,
+  between the header and the bottom bar, and painted under both however high its rung is. The
+  conversation panels hid it, because their screen hides `MobileHeader` and `BottomNav` and the
+  content area IS the viewport there; the community settings, opened from the conversation list,
+  had their foot under the bottom bar. Measured A/B in Chrome, window 958 x 944: a `fixed inset-0`
+  child of a wrapper inset to `top: 120` / 734 px tall measures **120 / 734** with
+  `will-change: transform` and **0 / 944** without it - 210 px of window unreachable, exactly the
+  header plus the bottom bar. A column must NOT portal - at `xl` it is a flex sibling of the chat
+  cards, and a node moved to `<body>` has no row left to join.
 - **The back gesture is one entry.** `openSidePanel` unwinds the previous panel's history entry before
   pushing its own - stacking them would make one visible panel need two back presses, the second of
   which closes something that was never on screen.
@@ -1979,13 +1998,13 @@ screenshot showed the amber check button of the rename row cut off at the panel'
 
 ### The quantity nothing was measuring
 
-`.conversation-side-panel` ([app.css](../../../frontend/src/app.css)) has two shapes and neither is
+`.side-panel` ([app.css](../../../frontend/src/app.css)) has two shapes and neither is
 proportional to the window:
 
 | Window | Panel | Why |
 | --- | --- | --- |
 | < 1280 px | `width: 100%`, `max-width: 28rem` | drawer, capped at 448 px |
-| >= 1280 px | `width: 20rem` | column beside the thread, 320 px |
+| >= 1280 px | `width: 20rem` | column beside the thread, 320 px - `.side-panel-column` only |
 
 So **the panel is at its NARROWEST on the widest screens**, and any `sm:`/`md:` variant written
 inside it reads a box it is not in, in the wrong direction. `ChatGroupPanel` had four: `sm:flex-row`
@@ -2010,7 +2029,7 @@ it survived.
 
 ### The fix is one arming point, and a container question
 
-The panel body declares `@container` once, in `ConversationSidePanel`; its children spell widths
+The panel body declares `@container` once, in `SidePanel`; its children spell widths
 `@md:` (28 rem - exactly the drawer's `max-width`, so a side-by-side form exists in the full drawer
 and nowhere narrower). The input takes `min-w-0`, which makes the overflow unrepresentable rather
 than merely unlikely - a translation that lengthens the button cannot bring it back.

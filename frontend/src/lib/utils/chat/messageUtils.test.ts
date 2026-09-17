@@ -1,4 +1,11 @@
-import { encodeAppMessage, decodeAppMessage, mkText, mkSystem } from '$lib/proto/codec';
+import {
+  encodeAppMessage,
+  decodeAppMessage,
+  mkText,
+  mkSystem,
+  mkMedia,
+  MediaKind,
+} from '$lib/proto/codec';
 import { parseEnvelope } from '$lib/envelope';
 import {
   appMessageSentAtMs,
@@ -181,5 +188,44 @@ describe('isStaleInboundMessage', () => {
   it('returns false for recent messages', () => {
     const now = Date.now();
     expect(isStaleInboundMessage(new Date(now - 1000), now)).toBe(false);
+  });
+});
+
+/*
+ * A VOICE NOTE AND AN IMPORTED AUDIO FILE ARE THE SAME BYTES, so the only thing separating them is
+ * what the sender declared - and protobuf is where that declaration is most easily lost, because an
+ * absent `bool` decodes as `false` and `false` is not the same statement as "said nothing".
+ */
+describe('the voice-note declaration crosses the wire', () => {
+  const media = {
+    kind: MediaKind.MEDIA_KIND_AUDIO,
+    mediaId: 'aud1',
+    key: new Uint8Array(32),
+    iv: new Uint8Array(12),
+    mimeType: 'audio/webm',
+    size: 12,
+    fileName: 'vocal_1.webm',
+  };
+
+  /** proto -> bytes -> proto -> envelope, the whole path a channel message takes. */
+  function roundTrip(voiceNote: boolean) {
+    const bytes = encodeAppMessage({
+      ...mkMedia({ ...media, voiceNote }),
+      messageId: 'm1',
+      sentAt: 1,
+    });
+    const built = appMsgToEnvelope(decodeAppMessage(bytes)!);
+    const env = parseEnvelope(built!.content);
+    return env.kind === 'media' ? env.media : null;
+  }
+
+  it('keeps a recording declared', () => {
+    expect(roundTrip(true)?.voiceNote).toBe(true);
+  });
+
+  it('leaves everything else UNDECLARED rather than declaring it imported', () => {
+    // `undefined`, not `false`: the sender said nothing, and a message written before the field
+    // existed must read the same as one whose sender picked the file from disk.
+    expect(roundTrip(false)?.voiceNote).toBeUndefined();
   });
 });
