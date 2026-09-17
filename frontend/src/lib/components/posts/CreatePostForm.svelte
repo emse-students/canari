@@ -14,6 +14,7 @@
     CircleAlert,
     Building2,
     User,
+    VenetianMask,
     ChevronDown,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
@@ -24,6 +25,7 @@
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { getForms, type Form } from '$lib/forms/api';
   import {
+    ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
     clearPostComposerDraft,
     emptyPostComposerDraft,
@@ -46,7 +48,6 @@
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -87,25 +88,24 @@
 
   // --- Association identity ---
   let myAssociations = $state<Association[]>([]);
+  /**
+   * One field for THREE kinds of identity: `''` (personal profile), `ANONYMOUS_POST_IDENTITY`
+   * (anonymous), or a real association's UUID. They were a select plus a separate toggle - user
+   * request, 2026-09-17, to fold "Anonyme" into the same "who is publishing" choice instead, and
+   * to make that choice available to every user rather than only association admins.
+   */
   let selectedAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
-  /** Mutually exclusive with `selectedAssociationId`: an association post already anonymizes its
-   *  author for everyone, so the two identities never combine. */
-  let anonymous = $state(false);
 
   /** Associations the user may post as (admin/owner). Global admins can post as any. */
   let postAsAssociations = $derived(
     isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
   );
 
-  // Picking an association while "Anonyme" is on would be silently overridden by the server
-  // anyway (see `PostsController.createPost`) - cleared here too so the UI never shows a state
-  // the publish will not honor.
-  $effect(() => {
-    if (selectedAssociationId) anonymous = false;
-  });
+  const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
+  const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
 
   // --- UI state ---
   let publishing = $state(false);
@@ -130,7 +130,6 @@
       scheduledAt,
       selectedAssociationId,
       selectedLinkedCalendarEventId,
-      anonymous,
     };
   }
 
@@ -146,7 +145,6 @@
     scheduledAt = draft.scheduledAt;
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
-    anonymous = draft.anonymous;
   }
 
   function persistComposerDraft() {
@@ -192,7 +190,7 @@
     const assoId = selectedAssociationId;
     selectedLinkedCalendarEventId = '';
     linkableCalendarEvents = [];
-    if (!assoId) return;
+    if (!assoId || assoId === ANONYMOUS_POST_IDENTITY) return;
     loadingLinkableEvents = true;
     listLinkableValidatedCalendarEvents(assoId)
       .then((rows) => {
@@ -342,8 +340,8 @@
         payload.attachedFormId = selectedFormId;
       }
 
-      if (selectedAssociationId) payload.associationId = selectedAssociationId;
-      if (anonymous) payload.anonymous = true;
+      if (isAssociationSelected) payload.associationId = selectedAssociationId;
+      else if (isAnonymousSelected) payload.anonymous = true;
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -365,7 +363,6 @@
       scheduledAt = '';
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
-      anonymous = false;
       onPostCreated();
     } catch (err) {
       Log.d('publishPost failed', err);
@@ -390,88 +387,87 @@
   </div>
 
   <div class="p-4 sm:p-5">
-    <!-- Sélecteurs d'Association (Affichés uniquement si l'utilisateur gère une asso) -->
-    {#if postAsAssociations.length > 0}
-      <div class="mb-5 grid gap-4 sm:grid-cols-2">
-        <!-- Publier en tant que -->
-        <div>
-          <label
-            for="post-association-select"
-            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
+    <!-- Publier en tant que : toujours visible, accessible a tout le monde (l'option "Anonyme"
+         ne requiert aucun droit d'admin d'association, contrairement aux options d'association). -->
+    <div class="mb-5 grid gap-4 sm:grid-cols-2">
+      <div>
+        <label
+          for="post-association-select"
+          class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
+        >
+          {m.post_create_post_as_label()}
+        </label>
+        <div class="group relative">
+          <span
+            class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 transition-colors group-focus-within:text-amber-500"
+            aria-hidden="true"
           >
-            {m.post_create_post_as_label()}
-          </label>
-          <div class="group relative">
-            <span
-              class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 transition-colors group-focus-within:text-amber-500"
-              aria-hidden="true"
+            {#if isAssociationSelected}<Building2
+                size={16}
+                strokeWidth={2.5}
+              />{:else if isAnonymousSelected}<VenetianMask
+                size={16}
+                strokeWidth={2.5}
+              />{:else}<User size={16} strokeWidth={2.5} />{/if}
+          </span>
+          <select
+            id="post-association-select"
+            bind:value={selectedAssociationId}
+            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+          >
+            <option value="" class="bg-white font-medium dark:bg-zinc-900"
+              >{m.post_create_personal_profile_label()}</option
             >
-              {#if selectedAssociationId}<Building2 size={16} strokeWidth={2.5} />{:else}<User
-                  size={16}
-                  strokeWidth={2.5}
-                />{/if}
-            </span>
-            <select
-              id="post-association-select"
-              bind:value={selectedAssociationId}
-              class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+            <option value={ANONYMOUS_POST_IDENTITY} class="bg-white font-medium dark:bg-zinc-900"
+              >{m.post_create_anonymous_label()}</option
             >
-              <option value="" class="bg-white font-medium dark:bg-zinc-900"
-                >{m.post_create_personal_profile_label()}</option
-              >
-              <AssociationOptions
-                associations={postAsAssociations}
-                optionClass="bg-white font-medium dark:bg-zinc-900"
-              />
-            </select>
-            <div
-              class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
-            >
-              <ChevronDown size={16} strokeWidth={2.5} />
-            </div>
+            <AssociationOptions
+              associations={postAsAssociations}
+              optionClass="bg-white font-medium dark:bg-zinc-900"
+            />
+          </select>
+          <div
+            class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
+          >
+            <ChevronDown size={16} strokeWidth={2.5} />
           </div>
         </div>
-
-        {#if selectedAssociationId}
-          <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
-            <label
-              for="post-linked-calendar-event"
-              class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
-            >
-              <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
-              {m.post_create_link_event_label()}
-            </label>
-            <select
-              id="post-linked-calendar-event"
-              bind:value={selectedLinkedCalendarEventId}
-              disabled={loadingLinkableEvents}
-              class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-            >
-              <option value="" class="bg-white font-medium dark:bg-zinc-900">
-                {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
-              </option>
-              {#each linkableCalendarEvents as ev (ev.id)}
-                <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-                  {formatLinkableEventLabel(ev)}
-                </option>
-              {/each}
-            </select>
-            <p class="text-text-muted text-2xs mt-1.5 ml-1">
-              {m.post_create_validated_events_hint()}
-            </p>
-          </div>
+        {#if isAnonymousSelected}
+          <p class="text-text-muted text-2xs mt-1.5 ml-1" transition:fade={{ duration: 200 }}>
+            {m.post_create_anonymous_hint()}
+          </p>
         {/if}
       </div>
-    {/if}
 
-    <!-- Anonyme: visible a tout le monde, independant du droit de publier au nom d'une asso -->
-    <div class="mb-5">
-      <Toggle
-        bind:checked={anonymous}
-        label={m.post_create_anonymous_label()}
-        hint={m.post_create_anonymous_hint()}
-        disabled={!!selectedAssociationId}
-      />
+      {#if isAssociationSelected}
+        <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
+          <label
+            for="post-linked-calendar-event"
+            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
+          >
+            <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+            {m.post_create_link_event_label()}
+          </label>
+          <select
+            id="post-linked-calendar-event"
+            bind:value={selectedLinkedCalendarEventId}
+            disabled={loadingLinkableEvents}
+            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+          >
+            <option value="" class="bg-white font-medium dark:bg-zinc-900">
+              {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
+            </option>
+            {#each linkableCalendarEvents as ev (ev.id)}
+              <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
+                {formatLinkableEventLabel(ev)}
+              </option>
+            {/each}
+          </select>
+          <p class="text-text-muted text-2xs mt-1.5 ml-1">
+            {m.post_create_validated_events_hint()}
+          </p>
+        </div>
+      {/if}
     </div>
 
     <!-- Bannière Brouillon Restauré -->

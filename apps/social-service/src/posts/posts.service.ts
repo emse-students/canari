@@ -208,11 +208,23 @@ export class PostsService {
   }
 
   /**
-   * Whether THIS viewer must have `authorId` withheld on a post marked `anonymous` - never the
-   * post's own publisher's business, since only a moderator/admin may see past the flag.
+   * Whether THIS viewer must have `authorId` withheld on a post marked `anonymous`.
+   *
+   * A moderator, a platform admin, and the post's OWN author all see past the flag (a user
+   * request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
+   * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
+   * son post"*) - same shape as `listMembers`'s `permissions` vs `isAdmin` (the row's own owner
+   * gets the raw field too, not just an admin). `anonymous` itself is never stripped for anyone,
+   * so the client can still show it was published anonymously to whichever of these three receives
+   * the real `authorId`.
    */
-  private mustHideAnonymousAuthor(post: { anonymous?: boolean }, viewer: PostViewerContext) {
-    return !!post.anonymous && !(viewer.isGlobalAdmin || viewer.isModerator);
+  private mustHideAnonymousAuthor(
+    post: { anonymous?: boolean; authorId?: string | null },
+    viewer: PostViewerContext
+  ) {
+    if (!post.anonymous) return false;
+    if (viewer.isGlobalAdmin || viewer.isModerator) return false;
+    return !viewer.viewerId || viewer.viewerId !== post.authorId;
   }
 
   /** Strip publisher identity and attach association display for API responses. */

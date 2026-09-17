@@ -1,10 +1,13 @@
 /**
- * AN ANONYMOUS POST NEVER RESOLVES AN AVATAR FROM AN ID, EVEN WHEN THE VIEWER IS AN ADMIN WHO
- * RECEIVED `authorId` ON THE PAYLOAD.
+ * A REGULAR READER GETS THE FULLY HIDDEN TREATMENT; A MODERATOR, PLATFORM ADMIN, OR THE POST'S OWN
+ * AUTHOR SEES THE REAL IDENTITY PLUS A BADGE.
  *
- * `post.anonymous` is the only signal the header may act on - checking `post.authorId` first
- * would draw a real avatar for a moderator viewing an anonymous post, which is exactly the leak
- * the flag exists to prevent. `AnonymousAvatar` never fetches anything, so this is a synchronous,
+ * User request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
+ * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
+ * son post"*. The server (`PostsService.mustHideAnonymousAuthor`) only omits `authorId` for a
+ * regular reader - a moderator/admin/self-viewer's payload keeps it - so `PostHeader` branches on
+ * `post.authorId` being present, never on `post.anonymous` alone, to decide which treatment to
+ * draw. `Avatar`/`AnonymousAvatar` never fetch anything relevant here, so this is a synchronous,
  * network-free check.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -54,21 +57,23 @@ function renderHeader(post: PostEntity) {
 }
 
 describe('PostHeader anonymous post', () => {
-  it('shows the generic icon and "Anonyme", never a profile link, for a regular reader', () => {
+  it('shows the generic icon and "Anonyme", never a profile link, for a regular reader (no authorId)', () => {
     const target = renderHeader(basePost({ anonymous: true }));
 
     expect(target.textContent).toContain('Anonyme');
     expect(target.querySelector('a[href^="/profile/"]')).toBeNull();
   });
 
-  it('still shows the generic icon even when the viewer is an admin who received authorId', () => {
-    // The exact case the flag exists for: an admin's payload keeps `authorId` (for moderation
-    // purposes), but the avatar drawn must not depend on that field being present.
-    const target = renderHeader(basePost({ anonymous: true, authorId: 'real-author-id' }));
+  it('shows the REAL name/avatar plus an "Anonyme" badge when authorId is present (moderator, admin, or the author viewing their own post)', () => {
+    const target = renderHeader(
+      basePost({ anonymous: true, authorId: 'real-author-id', authorFirstName: 'Marie' })
+    );
 
+    expect(target.textContent).toContain('Marie');
+    expect(target.querySelector('a[href^="/profile/real-author-id"]')).not.toBeNull();
+    // The badge, not the fully-hidden label - both currently read "Anonyme", so this checks the
+    // profile link is real rather than asserting text absence.
     expect(target.textContent).toContain('Anonyme');
-    expect(target.querySelector('a[href^="/profile/"]')).toBeNull();
-    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
   });
 
   it('renders a normal profile link and avatar for a non-anonymous personal post', () => {
