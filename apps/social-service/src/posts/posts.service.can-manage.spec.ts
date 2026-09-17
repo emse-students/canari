@@ -314,6 +314,16 @@ describe('PostsService post management rights', () => {
       });
     });
 
+    it("keeps authorId for the post's own author - a moderator is not the only one who may know it was them", async () => {
+      // User request, 2026-09-17: "pareil pour le posteur lui-meme quand il voit son post" -
+      // the author sees their own real name/avatar too, not the generic anonymous treatment.
+      const { service } = makeService(anonPost, {});
+      await expect(service.getById('p3', { viewerId: 'someone' })).resolves.toMatchObject({
+        authorId: 'someone',
+        anonymous: true,
+      });
+    });
+
     it('grants canUnmaskAnonymous to a content moderator on an anonymous post', async () => {
       const { service } = makeService(anonPost, {}, ['bde']);
       await expect(service.getById('p3', { viewerId: 'bde' })).resolves.toMatchObject({

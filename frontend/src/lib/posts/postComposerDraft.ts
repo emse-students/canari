@@ -1,3 +1,10 @@
+/**
+ * Sentinel value of `selectedAssociationId`/`PostComposerDraft.selectedAssociationId` meaning "post
+ * anonymously" - one more entry in the same "which identity publishes this" choice as a real
+ * association's UUID, never a value a real association id can equal.
+ */
+export const ANONYMOUS_POST_IDENTITY = '__anonymous__';
+
 /** Full composer state saved while creating a post (images are not persisted). */
 export interface PostComposerDraft {
   version: 1;
@@ -12,7 +19,6 @@ export interface PostComposerDraft {
   scheduledAt: string;
   selectedAssociationId: string;
   selectedLinkedCalendarEventId: string;
-  anonymous: boolean;
 }
 
 export const POST_COMPOSER_DRAFT_KEY = 'canari_post_composer_draft';
@@ -40,6 +46,13 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
     try {
       const parsed = JSON.parse(raw) as PostComposerDraft & Record<string, unknown>;
       if (parsed?.version === 1) {
+        let selectedAssociationId =
+          typeof parsed.selectedAssociationId === 'string' ? parsed.selectedAssociationId : '';
+        // A draft saved before "Anonyme" became an identity option (2026-09-17) carried its own
+        // boolean instead - fold it into the same field so an old draft still restores correctly.
+        if (!selectedAssociationId && parsed.anonymous === true) {
+          selectedAssociationId = ANONYMOUS_POST_IDENTITY;
+        }
         return {
           version: 1,
           markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
@@ -54,15 +67,11 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
           includeForm: !!parsed.includeForm,
           selectedFormId: typeof parsed.selectedFormId === 'string' ? parsed.selectedFormId : '',
           scheduledAt: typeof parsed.scheduledAt === 'string' ? parsed.scheduledAt : '',
-          selectedAssociationId:
-            typeof parsed.selectedAssociationId === 'string' ? parsed.selectedAssociationId : '',
+          selectedAssociationId,
           selectedLinkedCalendarEventId:
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
               : '',
-          // Absent on a draft saved before this field existed - defaults to false, same as a
-          // fresh composer.
-          anonymous: !!parsed.anonymous,
         };
       }
     } catch {
@@ -96,7 +105,6 @@ export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {
     scheduledAt: '',
     selectedAssociationId: '',
     selectedLinkedCalendarEventId: '',
-    anonymous: false,
   };
 }
 

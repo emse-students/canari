@@ -3,7 +3,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
-  import { Clock } from '@lucide/svelte';
+  import { Clock, VenetianMask } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -16,10 +16,21 @@
 
   let { post }: Props = $props();
 
-  /** Returns the display name for the post author: association name for association posts, "Anonyme" for an anonymous post, "firstName lastName" / displayName / userId otherwise. */
+  /**
+   * `post.anonymous` alone is not enough to decide the identity branch: a moderator, a platform
+   * admin, and the post's own author all receive `authorId` on an anonymous post (server-side,
+   * `PostsService.mustHideAnonymousAuthor`) - a user request, 2026-09-17, that these three see the
+   * real name/avatar too, not the generic treatment a regular reader gets. Only a regular reader
+   * (no `authorId` on the payload) falls into the fully-hidden branch below.
+   */
+  const identityHidden = $derived(!!post.anonymous && !post.authorId);
+  /** True whenever the reader can see WHO published an anonymous post - drives the badge alone. */
+  const anonymousBadge = $derived(!!post.anonymous && !!post.authorId);
+
+  /** Returns the display name for the post author: association name for association posts, "Anonyme" when the identity is hidden, "firstName lastName" / displayName / userId otherwise. */
   function getPostAuthorName(): string {
     if (post.association) return post.association.name;
-    if (post.anonymous) return m.post_anonymous_label();
+    if (identityHidden) return m.post_anonymous_label();
     const first = post.authorFirstName?.trim();
     const last = post.authorLastName?.trim();
     if (first && last) return `${first} ${last}`;
@@ -55,7 +66,7 @@
         shape="circle"
       />
     </a>
-  {:else if post.anonymous}
+  {:else if identityHidden}
     <span class="shrink-0">
       <AnonymousAvatar size="md" shape="circle" />
     </span>
@@ -78,7 +89,7 @@
         >
           {post.association.name}
         </a>
-      {:else if post.anonymous}
+      {:else if identityHidden}
         <span class="text-text-main text-sm font-bold">{m.post_anonymous_label()}</span>
       {:else}
         <a
@@ -92,6 +103,12 @@
     <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">
       <Clock size={12} strokeWidth={2.5} />
       <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
+      {#if anonymousBadge}
+        <span class="inline-flex items-center gap-1" title={m.post_anonymous_badge_hint()}>
+          <VenetianMask size={12} strokeWidth={2.5} />
+          {m.post_anonymous_label()}
+        </span>
+      {/if}
     </div>
   </div>
 </div>

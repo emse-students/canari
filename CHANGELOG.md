@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - anonyme devient une identite de publication, ouverte a tout le monde ; un moderateur (et l'auteur) voient toujours qui a publie
+
+Demande de l'utilisateur (2026-09-17), en deux temps sur la fonctionnalite livree plus tot dans la
+journee :
+
+**L'interrupteur "Anonyme" disparait au profit d'une option dans la liste "Publier en tant que".**
+Ce selecteur, jusque-la reserve aux admins d'association, devient visible pour tout le monde : le
+choix est desormais "Profil personnel", "Anonyme" ou une association geree, trois identites
+mutuellement exclusives dans le meme controle plutot qu'un select et un interrupteur separes qui
+pouvaient se contredire. Un brouillon enregistre avant ce changement (avec l'ancien booleen) se
+restaure toujours correctement - l'ancien champ est simplement replie dans le meme champ.
+
+**Un moderateur de contenu, un admin plateforme, et l'auteur lui-meme voient desormais le vrai nom
+et le vrai avatar sur un post anonyme - jamais l'icone generique - avec un badge signalant que le
+post a ete publie en anonyme.** Avant ce changement, `PostHeader` masquait l'identite des qu'un
+post etait marque `anonymous`, meme pour un lecteur qui avait recu `authorId` dans le payload
+(destine a la moderation, pas a l'affichage) : un moderateur ne pouvait donc jamais savoir QUI avait
+publie un post anonyme, seulement QUE le post existait. Cote serveur,
+`PostsService.mustHideAnonymousAuthor` epargnait deja `authorId` a un moderateur/admin - elle
+epargne desormais aussi l'auteur du post lui-meme, sur le meme principe que `listMembers` (le
+proprietaire d'une ligne voit son propre champ brut, pas seulement un admin). Cote client, la
+presence d'`authorId` sur la reponse - jamais `post.anonymous` seul - decide desormais quelle des
+deux presentations dessiner.
+
 ### Changed - le recensement des key packages quittait le premier ecran natif, ou il coutait la moitie d'un chargement a froid
 
 Le banc ajoute la veille dit ceci, sur OXYGEN, 5 groupes, release, 20 echantillons : un chargement a
