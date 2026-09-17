@@ -1710,10 +1710,17 @@ message ?" is refuted on three independent grounds recorded on that wiki page; *
 - **It ships with the next release.** `fcmCache.test.ts` covers the three arrival orders and was
   confirmed to accuse the defect by mutation, but every native claim here is verified by COMPILING,
   which proves nothing about running.
-- **ONE LOOK AT A REAL HANDSET CLOSES IT, AND NOTHING ELSE WILL.** Send a photo to the Mi 9T with the
-  app OPEN, confirm the picture draws, force-stop the app, reopen it: the picture must still be
-  there. That is the whole reproduction, it takes a minute, and it is the only evidence that the
-  native writer and the TypeScript reader agree in the field.
+- **RUN ON THE Mi 9T, 2026-09-17: PASS.** The reproduction was the whole of it - a photo sent from
+  the peer with the app OPEN, the picture confirmed drawn, `am force-stop fr.emse.canari` (`pidof`
+  empty, so it really stopped), a cold relaunch through the PIN, and the picture read again.
+  **It is still there, and it is still a picture.** Measured rather than eyeballed, on a debug APK
+  built from this tree: the bubble holds an `<img>` with `complete: true` and a `naturalWidth` of 32,
+  which is the fixture's true size, so the bytes decoded rather than merely being requested; the blob
+  URL DIFFERS between the two readings, which is the decrypt happening again from local storage
+  rather than a live object surviving in memory. `document.body.innerText` matches no
+  `📷 Photo` anywhere on screen - the defect's own signature, absent.
+  **This is the evidence that the native writer and the TypeScript reader agree in the field**, and
+  nothing short of a handset could have produced it.
 
 **The second half of the question is answered and is worth keeping as a diagnostic:** `📷 Photo`
 is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`, never Paraglide), `[Media]`
@@ -1752,12 +1759,36 @@ scanner, chosen from `kind_str` - the proto's `MediaKind` varint - whenever the 
 caption. `MEDIA_KIND_AUDIO` yields `🎤 Audio` for a recording and for an import alike, and field 11
 sits unread two lines above. **Whoever takes this reads `kind_str`, not the Kotlin.**
 
-**A SECOND DEFECT AT THE SAME FOUR LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
-strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe`. Every
-other sentence this notification can show is read through `appLocaleContext(this)` and `R.string.*`;
-these four bypass Paraglide and the Android resources both, so an English-locale device is told
-`📎 Pièce jointe`. It is the same edit, and doing one without the other means touching these four
-lines twice.
+**A SECOND DEFECT AT THE SAME LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
+strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` - so an
+English-locale device is told `📎 Pièce jointe`.
+
+**AND THE COUNT IN THIS ENTRY WAS WRONG UNTIL 2026-09-17: IT IS NOT FOUR STRINGS, IT IS SIXTEEN, AND
+THE CLAIM THAT EVERY OTHER SENTENCE IS LOCALISED IS FALSE.** The same file builds all of them, in
+four places, none of them through Paraglide or `R.string.*`:
+
+| builder | sentences |
+| --- | ---: |
+| `format_system_event_text` - renamed, image changed, member added (2 forms), removed, left, deleted, and the two rename forms | **9** |
+| the reaction arm - `a réagi {emoji}` | **1** |
+| the media arm - the four above | **4** |
+| the call arm - `📹 Appel vidéo entrant`, `📞 Appel entrant` | **2** |
+
+`format_system_event_text`'s own doc comment says *"Builds a short French notification body"*, so this
+is deliberate rather than an oversight - which is exactly why it needed counting instead of
+believing. **One of the sixteen is worse than untranslated**: the fallback arm renders
+`événement de groupe ({event})`, printing a raw protocol event name to a user. The comment beside it
+already records that the arm is a trap rather than live noise, and that its silence list drifted once
+(`read_watermark` replaced `read_receipt` on 2026-08-12 and was never added).
+
+**THE SIZE OF THIS WORK IS THEREFORE NOT "FOUR LINES", AND WHOEVER TAKES IT SHOULD KNOW THAT BEFORE
+STARTING.** The honest fix is not sixteen translations in Rust: it is to stop building a SENTENCE in
+the scanner at all and hand the KIND across, which the JSON already carries as `mediaKind`, letting
+the Kotlin side pick a localised string it already knows how to pick. **That is a cross-language
+change with one consequence this entry cannot settle on its own**: `decrypted.text` is what the FCM
+cache persists and reads back as a message body, so emitting an empty text changes what the cache
+stores - the same seam the photo fix above is about. It is one design decision, not a translation
+chore, and it must not be started as if it were the latter.
 
 **They are also the strings `fix/une-photo-ne-redevient-pas-le-mot-photo` is about** - the same
 `📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the
