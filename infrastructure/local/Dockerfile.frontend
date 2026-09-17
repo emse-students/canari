@@ -193,18 +193,35 @@ RUN printf 'server {\n\
     proxy_buffer_size 32k;\n\
     proxy_buffers 8 32k;\n\
     proxy_busy_buffers_size 64k;\n\
-    # THE PAGE IS THE THING THAT MUST NOT BE CACHED, and until 2026-09-16 nothing\n\
-    # said so: the no-store written for it sat in `location /`, which only ever\n\
-    # answers for a file on disk. Measured that day, an HTML navigation carried no\n\
-    # Cache-Control at all. adapter-node sets none of its own on an SSR response, so\n\
-    # this is the only declaration and there is no second header to reconcile.\n\
+    # THE PAGE MAY BE CACHED WHERE A PURGE CAN REACH IT, AND NOWHERE ELSE. That is the\n\
+    # whole of `max-age=0, s-maxage=60`, and the two halves answer two different\n\
+    # questions. A deploy replaces this shell with one naming different content-hashed\n\
+    # chunks, and the old chunks are NOT in the new image - so a shell that outlives its\n\
+    # build is a BLANK page, not an old one. A shared cache can be told to forget:\n\
+    # `serve-prod.yml` purges the zone once the new containers answer. A browser cache\n\
+    # cannot be told anything at all, which is why the browser's own TTL stays 0.\n\
+    #\n\
+    # 60 SECONDS IS THE SMALLER OF TWO NUMBERS THAT AGREE. It is the freshness budget\n\
+    # `serverSeo.ts` already set itself for the same bytes ("an edited post should not\n\
+    # keep previewing its old title for long"), and it is the ceiling on how long a\n\
+    # stale shell could break the site if the purge ever failed to run. There is\n\
+    # deliberately no `stale-while-revalidate`: it would buy hit-rate this site does not\n\
+    # need and extend exactly that window.\n\
+    #\n\
+    # Until 2026-09-17 this said `no-store`, which was right when it was written: the\n\
+    # no-store meant for the page had been sitting in `location /`, which only ever\n\
+    # answers for a file on disk, and an HTML navigation carried no Cache-Control at\n\
+    # all. Putting it here fixed that. What it could not know is that the origin round\n\
+    # trip it made unconditional is 94 ms of every navigation, measured in the user's\n\
+    # own browser. adapter-node sets no Cache-Control of its own on an SSR response, so\n\
+    # this is still the only declaration and there is no second header to reconcile.\n\
     #\n\
     # The three security headers are repeated because nginx drops the whole\n\
     # server-level add_header set from a location that declares one of its own. This\n\
     # block declared none, which is how HTML kept CSP, nosniff and X-Frame-Options by\n\
     # inheritance; adding Cache-Control here would have stripped all three from every\n\
     # navigation on the site.\n\
-    add_header Cache-Control "no-store" always;\n\
+    add_header Cache-Control "public, max-age=0, s-maxage=60" always;\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\

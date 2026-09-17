@@ -32,6 +32,38 @@ moderateur le recoit dans le payload - et dessine une icone generique a la place
 unique, sans action inverse : un auteur qui n'a pas choisi l'anonymat a la creation n'a pas de
 chemin retour vers lui plus tard.
 
+### Changed - la page est desormais servie depuis le point de presence de l'utilisateur, et le deploiement dit quand elle a cesse d'etre vraie
+
+Chaque navigation traversait la France jusqu'a `frontend-ssr` pour recuperer le squelette HTML :
+94 ms mesures dans le navigateur de l'utilisateur le 2026-09-17, sur chaque page, pour un document
+qui ne depend que du chemin demande. Il ne varie pas par utilisateur - il n'existe aucun
+`+page.server.ts` ni `+layout.server.ts` dans l'arbre, `ssr = false` donc aucun composant ne rend
+cote serveur, et `hooks.server.ts` ne lit que `event.url.pathname` : ni cookie, ni en-tete.
+
+`location @ssr` passe donc de `Cache-Control: no-store` a `public, max-age=0, s-maxage=60`, et les
+deux moities repondent a deux questions differentes. **Une purge atteint un cache partage, jamais le
+disque de quelqu'un** : un squelette qui survit a son build nomme des fragments que l'image suivante
+ne contient pas, donc c'est une page BLANCHE et pas une page ancienne. A l'edge c'est rattrapable -
+`serve-prod.yml` purge la zone une fois les nouveaux conteneurs en reponse - dans un navigateur ce
+ne l'est pas, d'ou `max-age=0`.
+
+60 secondes est le plus petit de deux nombres qui concordent : c'est le budget de fraicheur que
+`serverSeo.ts` s'etait deja donne pour ces memes octets, et c'est le plafond du temps pendant lequel
+un squelette perime pourrait casser le site si la purge echouait. Pas de `stale-while-revalidate`,
+qui achete un taux de succes dont ce site n'a pas besoin en allongeant exactement cette fenetre.
+
+L'etape de purge derive sa zone DU jeton plutot que d'un second secret qui pourrait le contredire,
+verifie que la correspondance est unique et ancree sur le nom de la zone - `jq` n'est pas installe
+sur le runner self-heberge, verifie sur la machine - et fait echouer le job en citant les seuls
+champs `"message"` de Cloudflare, le corps de succes portant l'identifiant de compte et les serveurs
+de noms. `dev.canari-emse.fr` partage la zone et n'est deliberement pas purge, sans quoi chaque
+alpha viderait le cache de la production.
+
+Deux assertions nouvelles dans `static-headers.test.mjs`, prouvees par mutation : un bloc qui offre
+un `s-maxage` doit aussi dire `max-age=0`, et `@app_shell` - la page degradee, servie en 200 parce
+que Cloudflare remplace le corps d'un 5xx - doit rester `no-store`, sans quoi le site resterait
+affiche comme casse pendant toute la duree du TTL apres la fin de la panne.
+
 ### Fixed - les tests jest des quatre services NestJS epuisaient plus de 6 Go de RAM sur un poste a beaucoup de coeurs
 
 Signale par l'utilisateur (2026-09-17) : `bun run test` interrompu faute de RAM. Cause reelle :

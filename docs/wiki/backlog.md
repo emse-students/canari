@@ -1101,11 +1101,15 @@ there, and the handle reads `event.url.pathname` and nothing else - no cookie, n
 Two fetches of `/chat` differ in exactly four lines, all of them Cloudflare's own injected
 `__CF$cv$params`; the origin's bytes are identical.
 
-**SO `no-store` IS STRICTER THAN THE PAGE REQUIRES - BUT IT IS NOT WRONG, AND IT IS FIVE HOURS OLD.**
-It was added deliberately on 2026-09-16 (`Dockerfile.frontend`, `location @ssr`) after measuring that
-an HTML navigation carried no `Cache-Control` at all, and it is doing a real job: the shell names
-hashed assets, so a cached shell after a deploy loads the previous build's JavaScript. **Do not
-simply delete it.**
+**SO `no-store` WAS STRICTER THAN THE PAGE REQUIRED - AND IT WAS NOT WRONG, WHICH IS WHY IT WAS
+REPLACED RATHER THAN DELETED (2026-09-17).** It was added deliberately the day before
+(`Dockerfile.frontend`, `location @ssr`) after measuring that an HTML navigation carried no
+`Cache-Control` at all, and the job it was doing is real: the shell names hashed assets, so a cached
+shell after a deploy loads the previous build's JavaScript - or rather fails to, since those chunks
+are not in the new image at all. **That job is now done by a purge and a 60 s ceiling instead of by
+refusing every cache**, which is the bullet below. The instruction the earlier text gave - *do not
+simply delete it* - still holds for anyone reading this: `no-store` did not go away, it was paid
+off.
 
 What is open is the SHAPE, and the cost of each:
 
@@ -1120,21 +1124,51 @@ What is open is the SHAPE, and the cost of each:
   production serves today. So this line buys the 6 KB and nothing more, and a later reader reaching
   for it on the bfcache argument should re-measure before believing it. The probe is three steps:
   stamp `window`, traverse away, `history.back()`, read the stamp back.
-- **Edge caching with a short `s-maxage`, or with a purge on deploy.** This is the one that moves the
-  number: the document would be served from the user's own PoP instead of proxied to France, and the
-  `frontend-ssr` container leaves the critical path of every navigation. Its blocking condition was
-  a Cloudflare Cache Rule - HTML is not edge-cached by default whatever the origin says - and **the
-  user created it on 2026-09-17**: zone `canari-emse.fr`, everything outside `/api/` and
-  `/internal/` made eligible, **Edge TTL "use cache-control if present, bypass if not"** so the
-  tunable stays in this repository rather than in a console, Browser TTL respecting origin. The
-  repository half is therefore the whole of it: `location @ssr` says `Cache-Control: no-store`
-  today, which that rule reads as "bypass", so **nothing is cached until a commit here says
-  otherwise and the rule alone changes nothing.** `CLOUDFLARE_CACHE_PURGE_TOKEN` (Zone:Cache Purge,
-  this zone only) is a repository secret since the same day, so the deploy can purge.
-  The staleness it introduces is a DEPLOY question, not a privacy one: the two risks are a shell
-  naming last build's chunks, and an Open Graph head describing a renamed event for the TTL. **The
-  first is not a risk to accept but the reason the purge exists**: a new frontend image does not
-  contain the previous build's chunks, so a stale shell is a blank page rather than an old one.
+- **Edge caching with a short `s-maxage`, and a purge on deploy. SHIPPED 2026-09-17**, both halves in
+  one commit because either alone is a defect. The document is now served from the user's own PoP
+  instead of proxied to France, and `frontend-ssr` leaves the critical path of every navigation. The
+  blocking condition was a Cloudflare Cache Rule - HTML is not edge-cached by default whatever the
+  origin says - and **the user created it on 2026-09-17**: zone `canari-emse.fr`, everything outside
+  `/api/` and `/internal/` eligible, **Edge TTL "use cache-control if present, bypass if not"** so
+  the tunable stays in this repository rather than in a console, Browser TTL respecting origin.
+
+  **THE RULE'S PRESENCE IS READABLE WITHOUT READING THE RULE, AND THAT IS WORTH KNOWING** - neither
+  Cloudflare token here may read a ruleset (`Authentication error` on
+  `/rulesets/phases/http_request_cache_settings/entrypoint`, measured with both). But
+  `curl -I https://canari-emse.fr/` answered **`cf-cache-status: BYPASS`** on 2026-09-17, twice, and
+  BYPASS is not DYNAMIC: DYNAMIC means Cloudflare judged the response ineligible, BYPASS means it
+  judged it eligible **and the origin declined**. So the rule covers HTML and defers to
+  `Cache-Control` - proven from the outside, by the one header that distinguishes the two causes.
+
+  **THE HEADER IS `public, max-age=0, s-maxage=60`, AND EVERY TERM WAS PAID FOR.** `max-age=0`
+  because **a purge reaches a shared cache and never a user's disk**: a shell outliving its build
+  names content-hashed chunks the new image does not contain, so it is a BLANK page, and at the edge
+  that is recoverable while in a browser it is not. `s-maxage=60` because two independent numbers
+  agree on it - `serverSeo.ts` already set itself a 60 s freshness budget for these same bytes
+  (*"an edited post should not keep previewing its old title for long"*), and 60 s is the ceiling on
+  how long a stale shell could break the site **if the purge ever fails to run**. There is
+  deliberately **no `stale-while-revalidate`**: the earlier sketch here said `s-maxage=600,
+  stale-while-revalidate=60`, which buys hit-rate this site does not need and extends exactly that
+  window by a factor of ten.
+
+  **THE PURGE IS A STEP IN `serve-prod.yml`, AFTER THE HEALTH CHECK AND BEFORE `prod-released`.**
+  Ordering is load-bearing: purging before the new containers answer re-caches the OLD build from
+  the still-running old one. It derives the zone FROM the token (`#zone:read` is in its scope) and
+  asserts the match unique rather than reading `result[0]`, because **`jq` is not installed on the
+  self-hosted runner** - checked on the box, not assumed. It `purge_everything`, because the
+  cacheable set is every route the SPA has, per-post and per-association URLs included, and
+  purge-by-prefix is Enterprise. **It fails the job** on a missing token, a zone count other than
+  one, or a refusal, quoting Cloudflare's own `"message"` fields and nothing else - the success body
+  carries the account id and the name servers, which have no business in a public repo's CI log.
+
+  **WHAT DEV GETS, STATED RATHER THAN DISCOVERED.** `dev.canari-emse.fr` is on the SAME zone, and
+  `purge_everything` is zone-wide, so a dev deploy purging would flush production's cache on every
+  alpha. It does not purge. Its exposure is therefore **up to 60 s of blank page after a dev
+  deploy**, bounded by `s-maxage` and by nothing else - which is the same bound that protects
+  production when the purge fails, and the reason the number is 60 rather than 600.
+
+  The other staleness is an Open Graph head describing a renamed event for up to a minute. That one
+  is a preview, not a page, and 60 s is the budget the SEO module had already chosen for it.
 
 **NOTHING HERE IS A LEAK.** An unauthenticated fetch already receives this document; caching changes
 how fresh it is, never who may read it. Recorded because "the shell is per-user" is the first thing a
