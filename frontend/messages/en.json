@@ -587,6 +587,7 @@
   "post_view_profile_label": "View {name}'s profile",
   "post_view_anonymous_label": "Anonymous author",
   "post_anonymous_label": "Anonymous",
+  "post_anonymous_badge_hint": "This post was published anonymously - visible to you only in that capacity",
   "post_share_post_label": "Share post",
   "post_share_label": "Share",
   "post_link_copied_label": "Link copied",

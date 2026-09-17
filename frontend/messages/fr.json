@@ -612,6 +612,7 @@
   "post_view_profile_label": "Voir le profil de {name}",
   "post_view_anonymous_label": "Auteur anonyme",
   "post_anonymous_label": "Anonyme",
+  "post_anonymous_badge_hint": "Ce post a ete publie en anonyme - visible pour vous seul(e), a ce titre",
   "post_share_post_label": "Partager le post",
   "post_share_label": "Partager",
   "post_link_copied_label": "Lien copié",

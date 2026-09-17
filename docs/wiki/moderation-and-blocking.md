@@ -98,12 +98,22 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 
 A personal post (never an association one - the two are mutually exclusive, and an association
 post already anonymizes its author for everyone unconditionally) can be marked `anonymous` at
-creation. `PostsService.viewerCapabilities` strips `authorId` from the response for every viewer
-**except** the same `isContentModerator` tier - `canUnmaskAnonymous` is drawn from it, the same
-shape as `canPin`. `PATCH /posts/:postId/unmask` (`PostsController`, guarded by the same
-`assertContentModerator` pin/hide already use) clears the flag, one-directional: an author who did
-not choose anonymity at creation has no route back into it later, and the flag is otherwise
-immutable on edit - like `associationId` already is.
+creation - one option in the same "who is publishing" identity picker as the personal profile and
+each managed association, open to every user rather than gated to association admins.
+`PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
+**except** the same `isContentModerator` tier, or the post's own author (2026-09-17: a moderator
+must be able to tell WHO published an anonymous post, and so must the author looking at their own
+post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
+moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,
+guarded by the same `assertContentModerator` pin/hide already use) clears the flag,
+one-directional: an author who did not choose anonymity at creation has no route back into it
+later, and the flag is otherwise immutable on edit - like `associationId` already is.
+
+On the client, `PostHeader.svelte` never branches on `post.anonymous` alone - it branches on
+whether `authorId` is present on the payload. Absent (a regular reader): the generic icon and
+"Anonyme", nothing more. Present (moderator, admin, or self): the real avatar and name, exactly
+like any other personal post, plus a small badge next to the timestamp so the reader still knows
+the post was published anonymously.
 
 ---
 
