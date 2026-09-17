@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le recensement des key packages quittait le premier ecran natif, ou il coutait la moitie d'un chargement a froid
+
+Le banc ajoute la veille dit ceci, sur OXYGEN, 5 groupes, release, 20 echantillons : un chargement a
+froid coute **24,5 ms avec un logger installe et 12,9 ms sans**, a un pool de 1000 key packages.
+L'ecart n'est pas du bruit, c'est l'argument d'une ligne de log. `log::info!` se compile en
+`if niveau_actif { ... }` : sans logger, ses arguments ne sont jamais evalues, et l'un d'eux est
+`key_package_census_summary()`, qui `serde_json`-deserialise chaque bundle stocke, recalcule son
+`hash_ref` et fait une recherche de sous-chaine sur sa cle. Un telephone installe `tauri-plugin-log`
+au niveau info et paie tout cela, **sur le chemin attendu de `initialiser_mls`, devant le premier
+ecran**.
+
+Le web ne le faisait pas. `sessionAuth` appelle son recensement APRES `MLS ready`, et le commentaire
+de ce call site disait deja en toutes lettres que mille bundles deserialises n'ont rien a faire
+devant le badge connecte. Ce meme call site etait garde par `!isTauriRuntime()` - **et cette garde
+etait le defaut** : elle ne protegeait pas le natif du diagnostic, elle l'empechait seulement de le
+faire au bon endroit, puisque le natif en imprimait un depuis l'interieur du chargement.
+
+Le recensement natif est maintenant la commande `recenser_key_packages`, appelee depuis la meme ligne
+de `sessionAuth` que le recensement web ; la garde de plateforme disparait, et `logKeyPackageCensus`
+entre dans `IMlsService` - les deux implementations l'avaient deja, rien ne l'exigeait. La commande
+RETOURNE la ligne au lieu de la journaliser, pour que l'endroit qui decide ou va un diagnostic reste
+l'appelant, comme du cote wasm. La ligne de COMPOSITION reste dans le chargement : 0,209 ms au meme
+pool, mesuree dans la meme serie.
+
+**Ce que cela ne regle pas** : les 1644 ms de `mls-load-state` relevees sur un Mi 9T. OXYGEN n'est
+pas un Mi 9T et son pool est une fixture ; ce qui est etabli c'est la forme, et la moitie environ de
+ce chargement etait du travail qu'il n'avait pas besoin de faire. **Il en reste une moitie** :
+`prune_expired_key_packages`, 11,49 ms au meme pool, tourne toujours sur le chemin attendu. Elle
+n'est pas deplacee ici parce que c'est de la MAINTENANCE et non un diagnostic - la sortir demande un
+declencheur, et ce depot interdit qu'un declencheur soit une horloge.
+
 ### Added - une notification sociale arrivait sans aucune image, sur les deux plateformes
 
 Signale par l'utilisateur le 2026-09-17 : un post d'une association arrivait sur le telephone comme

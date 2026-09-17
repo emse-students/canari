@@ -691,32 +691,29 @@ impl MlsManager {
                 manager.state_composition_summary()
             );
 
-            // AND WHAT THE HEAVIEST LABEL IS MADE OF, because on every device measured so far it
-            // has been `KeyPackage` and the count alone names no remedy. 3050 bundles against a
-            // pool of fifty is expired debt, superseded fallbacks and a revoked pool stacked in one
-            // number, and those three are reclaimed by three different things - one of which is
-            // already running. This line is what stops the next reader dividing 7.2 MB by 50.
+            // THE CENSUS IS NOT PRINTED HERE, AND THAT IS THE ONE THING THIS FUNCTION USED TO DO
+            // THAT NOBODY COULD MEASURE.
             //
-            // NATIVE ONLY HERE, and gated by the SAME rule as the prune above rather than by a
-            // second one: this CALL SITE reads a clock to fill `expired`, and this crate must not
-            // read a clock on wasm - `SystemTime::now()` PANICS there, which is the v0.16.4 outage
-            // the block above is written around.
+            // It used to be a `log::info!` on this line, native only. `log::info!` expands to
+            // `if level_enabled { ... }`, so with no logger installed its ARGUMENT is never
+            // evaluated - and `key_package_census_summary()` deserialises every stored bundle,
+            // recomputes its `hash_ref` and scans its key. Every test and every bench in this
+            // repository runs with no logger, so all of them measured a load that skipped it while
+            // a device, running `tauri-plugin-log` at info, paid for it in full.
             //
-            // **THE WEB IS NOT WITHOUT IT ANY MORE, AND THE OLD NOTE HERE WAS WRONG ABOUT WHY.** It
-            // said a browser profile does not live long enough to reach the horizon. Two production
-            // console exports on 2026-09-16, twelve minutes apart on one profile, read 933 -> 983 ->
-            // 1013 key packages with nothing reclaimed: the browser is where the accumulation was
-            // actually observed, and it was the one platform that could print the count and not the
-            // breakdown. `WasmMlsClient::key_package_census` now takes `Date.now()/1000` and calls
-            // `key_package_census_summary_at` - the clock in the caller, none in this crate, on any
-            // target. It is a method rather than a line in this function because it walks and
-            // DESERIALISES every stored bundle, which is a different cost from the composition pass
-            // above, and the web start-up is not where an O(n) diagnostic belongs.
-            #[cfg(not(target_arch = "wasm32"))]
-            log::info!(
-                "load_or_create: key package census - {}",
-                manager.key_package_census_summary()
-            );
+            // Criterion on OXYGEN, 5 groups, 2026-09-17: a cold load at a 1000-package pool is
+            // 24.5 ms with a logger installed and 12.9 ms without. **HALF of a cold load was a
+            // diagnostic line on the critical path of the first screen**, and that path is the one
+            // the user's own cold-start target is about.
+            //
+            // It is not deleted, it MOVED to where the web has always called it - once MLS is
+            // ready, after the first screen, through `logKeyPackageCensus`. That call site's
+            // docblock already said in as many words that a thousand deserialised bundles do not
+            // belong in front of the connected badge; native was the platform doing exactly that,
+            // and the asymmetry (a `!isTauriRuntime()` guard) went with it. One census, one place,
+            // both platforms.
+            //
+            // The COMPOSITION line above stays: 0.2 ms at the same pool, measured in the same run.
 
             Ok(manager)
         } else {

@@ -586,6 +586,16 @@ export abstract class BaseMlsService implements IMlsService {
 
   abstract sendTyping(groupId: string, isTyping: boolean): void;
 
+  /**
+   * What the `KeyPackage` label in the load-time composition line is made of, once per session.
+   *
+   * ABSTRACT rather than a default no-op: the two implementations read the same state through two
+   * different bridges (a wasm call taking the caller's clock, a Tauri command reading the native
+   * one), and a base-class no-op is how native came to have no census here at all - it had one
+   * inside the awaited load instead, which is where the cost this removed was hiding.
+   */
+  abstract logKeyPackageCensus(): void;
+
   // ── The inbound gate ──────────────────────────────────────────────────────
 
   /**
