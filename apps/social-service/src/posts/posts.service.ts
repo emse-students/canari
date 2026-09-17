@@ -14,6 +14,7 @@ import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -88,21 +89,30 @@ export class PostsService {
     limit: number,
     offset: number
   ) {
-    return `posts:list:v2:${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}`;
+    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}`;
   }
 
-  /** Deletes the most-common list cache keys so the next request gets fresh data. */
+  /**
+   * Throws the whole feed cache away, for every reader.
+   *
+   * It used to delete eight literal keys, and every one of them named the ANONYMOUS reader at
+   * offset 0 - so a signed-in reader's page, whose key carries their own id, survived every create,
+   * delete, pin and moderation hide until the 30-second TTL expired. `AssociationsService` already
+   * swept the whole prefix for a branding change; the service that WRITES the posts covered less of
+   * its own cache than the one that merely renames things in it. Both go through
+   * `invalidatePostListCache` now, which is the only thing that knows the prefix.
+   */
   private async invalidateListCache() {
-    await this.redis.del(
-      this.listPostsCacheKey('all', undefined, undefined, undefined, 10, 0),
-      this.listPostsCacheKey('all', undefined, undefined, undefined, 20, 0),
-      this.listPostsCacheKey('all', undefined, undefined, undefined, 30, 0),
-      this.listPostsCacheKey('all', undefined, undefined, undefined, 50, 0),
-      this.listPostsCacheKey('associations', undefined, undefined, undefined, 10, 0),
-      this.listPostsCacheKey('associations', undefined, undefined, undefined, 20, 0),
-      this.listPostsCacheKey('associations', undefined, undefined, undefined, 30, 0),
-      this.listPostsCacheKey('associations', undefined, undefined, undefined, 50, 0)
-    );
+    try {
+      await invalidatePostListCache(this.redis);
+    } catch (e: unknown) {
+      // A SWALLOWED BRANCH LOGS: a sweep that failed leaves a deleted post on screen for up to the
+      // TTL, and that is exactly the symptom nobody can attribute without this line.
+      this.logger.warn(
+        `[CACHE] feed cache sweep failed - pages stay stale for up to ${PostsService.LIST_CACHE_TTL}s`,
+        e
+      );
+    }
   }
 
   /** The reader who holds nothing: nobody is logged in, so no control is drawn and none is owed. */

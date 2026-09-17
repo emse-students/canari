@@ -52,6 +52,7 @@ import {
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { invalidatePostListCache } from '../posts/post-list-cache';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -205,10 +206,14 @@ export class AssociationsService {
     private readonly userTagService: UserTagService
   ) {}
 
-  /** Deletes all `posts:list:v2:*` Redis keys so the next request rebuilds the feed with updated association data. */
+  /**
+   * Drops every cached feed page so the next request rebuilds it with this association's new name,
+   * slug or logo. The prefix lives in `post-list-cache`, with `PostsService`'s own sweep: this one
+   * was already complete and the writer's was not, which is the whole reason they now share.
+   */
   private async invalidatePostListCaches(): Promise<void> {
     try {
-      await this.redis.deleteByPattern('posts:list:v2:*');
+      await invalidatePostListCache(this.redis);
     } catch {
       /* non-fatal */
     }
