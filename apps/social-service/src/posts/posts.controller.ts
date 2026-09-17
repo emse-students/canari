@@ -165,9 +165,10 @@ export class PostsController {
     @Body() body: CreatePostDto
   ) {
     await this.assertNotMuted(xUserId);
+    const isGlobalAdmin = xGlobalAdmin === 'true';
     if (body.associationId) {
       const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
-        isGlobalAdmin: xGlobalAdmin === 'true',
+        isGlobalAdmin,
       });
       if (!canPost) {
         throw new BadRequestException('You need admin or owner role to post as this association');
@@ -176,7 +177,10 @@ export class PostsController {
     // Mutually exclusive with speaking for an association, which already anonymizes its author
     // unconditionally - never trust the client to have respected that itself.
     const anonymous = !!body.anonymous && !body.associationId;
-    return this.service.createPost({ ...body, authorId: xUserId, anonymous });
+    // THE SAME FLAG REACHES BOTH HALVES OF THIS REQUEST. It decided that the write was allowed
+    // above; it must also decide what the publisher is told they may do with the row it created,
+    // or the one identity is read twice and disagrees with itself.
+    return this.service.createPost({ ...body, authorId: xUserId, anonymous }, isGlobalAdmin);
   }
 
   /** Association agenda entry linked to this post (same association), if configured. */
