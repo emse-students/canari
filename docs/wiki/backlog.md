@@ -1511,18 +1511,47 @@ the notification's PREVIEW where the message goes. **Hypothesis, not evidence**:
 row, and the P1 two sections down already records that a cold device takes the HISTORY path instead.
 Whoever takes this reads the push payload and the resulting row before touching either.
 
-### P3 - voice notes appear in a discussion's "Medias" tab, and an imported audio file cannot be told from a recorded one (user, 2026-09-17)
+### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
 
 Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une discussion. +1 s'il est
 possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
 enregistres directement dans la conversation."*
 
+**One correction to the report, measured**: audio has always landed under **Fichiers**, never under
+Medias - `aggregateSharedContent` routes only `image` and `video` to the grid. "Medias" is the name
+of the whole panel (`chat_media_links_files_title`), which is what was meant.
+
 Two claims, and **the second is the harder one and decides the first.** By the time it arrives, a
 voice note and an imported `.m4a` are the same bytes with the same mime type - no inspection
-separates them. So what separates them has to be DECLARED BY THE SENDER, on the message, at the
-moment the composer knows which gesture produced it. That is the standing rule about carrying the
-discriminator to where the decision is already known; a heuristic on the file would be the fallback
-this repository forbids.
+separates them. So the sender declares it, at the one point where the gesture is known, and the
+declaration crosses four hops: the envelope, the protobuf `MediaMsg` (field 11, for channels), the
+outbox payload (for the MLS path, which re-encodes long after the composer is gone), and both
+decoders. **Absent is UNKNOWN and not "imported"**, so a `false` is dropped rather than written - a
+message from before this change keeps the behaviour it has always had. The mechanism is in
+[chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell).
+
+**WHAT IS LEFT, AND IT IS NOT WHERE THIS ENTRY FIRST SAID IT WAS.** A voice note arriving on a
+locked phone is still announced as an audio FILE - the field is on the wire and nothing reads it.
+But the sentence is not built by `mediaKind` in `CanariFirebaseMessagingService.kt`: there,
+`mediaKind` reaches exactly ONE decision, `if (decrypted.mediaKind != "image") return null`, which
+is the THUMBNAIL, and the service has no kind-to-sentence mapping at all. Its notification body is
+whatever `decrypted.text` holds, and that string arrives already rendered from Rust.
+
+**The four sentences live in `frontend/src-tauri/src/mobile/proto_fields.rs:259-264`**, in the push
+scanner, chosen from `kind_str` - the proto's `MediaKind` varint - whenever the media carries no
+caption. `MEDIA_KIND_AUDIO` yields `🎤 Audio` for a recording and for an import alike, and field 11
+sits unread two lines above. **Whoever takes this reads `kind_str`, not the Kotlin.**
+
+**A SECOND DEFECT AT THE SAME FOUR LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
+strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe`. Every
+other sentence this notification can show is read through `appLocaleContext(this)` and `R.string.*`;
+these four bypass Paraglide and the Android resources both, so an English-locale device is told
+`📎 Pièce jointe`. It is the same edit, and doing one without the other means touching these four
+lines twice.
+
+**They are also the strings `fix/une-photo-ne-redevient-pas-le-mot-photo` is about** - the same
+`📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the
+PERSISTENCE; this one owns the strings themselves. Neither closes the other.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one

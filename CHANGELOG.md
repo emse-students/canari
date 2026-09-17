@@ -152,6 +152,29 @@ AUTRE raison ne doit jamais etre blanchi en soumission verte - c'est la classe d
 fichier a deja payee deux fois. Pour pouvoir distinguer les deux sans lire la prose d'Apple, un
 refus porte desormais son statut comme un fait (`ApiError`) plutot qu'a l'interieur de son message.
 
+### Fixed - les vocaux ne s'affichent plus dans le panneau "Medias, liens et fichiers"
+
+Demande par l'utilisateur : *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une
+discussion. +1 s'il est possible de mettre les fichiers audios qui ont ete importes pour les
+differencier des audios enregistres directement dans la conversation."*
+
+**Les deux moities sont la meme question, et la seconde decide la premiere.** Une fois le message
+arrive, un vocal et un `.m4a` importe sont les memes octets avec le meme type MIME : rien ne les
+separe a la lecture, sauf le nom `vocal_<horodatage>` que le micro choisit - une distinction portee
+par une chaine de caracteres, que `ChatComposer.isAudioFile` refuse deja de lire pour cette raison
+precise.
+
+C'est donc l'emetteur qui le declare, au seul endroit de l'application ou le geste est connu :
+`sendVoiceNote` marque le fichier, et la declaration voyage jusqu'au bout - dans l'enveloppe
+(`MediaRef.voiceNote`), sur le fil (`MediaMsg.voice_note`, champ 11) et dans la file d'attente
+(`OutboxMediaPayload`), qui re-encode le proto bien apres la fermeture du composer. Le `kind` reste
+audio des deux cotes : ceci dit comment l'audio a ete PRODUIT, pas ce qu'il est.
+
+Un message anterieur ne dit rien, et **ne rien dire n'est pas dire "importe"** : protobuf decode un
+booleen absent en `false`, alors les deux decodeurs jettent le `false` au lieu de l'ecrire. Un vocal
+envoye avant aujourd'hui garde exactement le comportement qu'il a toujours eu, plutot que de
+disparaitre retroactivement sur une supposition.
+
 ## [0.18.10] - 2026-09-17
 
 ### Fixed - le filet qui vide les en-tetes d'identite envoyes par un client en couvrait deux sur quatre

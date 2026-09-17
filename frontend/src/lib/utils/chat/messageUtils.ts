@@ -206,6 +206,9 @@ export function appMsgToEnvelope(
             fileName: msg.media.fileName ?? undefined,
             width: msg.media.width && msg.media.width > 0 ? msg.media.width : undefined,
             height: msg.media.height && msg.media.height > 0 ? msg.media.height : undefined,
+            // protobuf gives an absent bool as `false`, and `false` here would be a claim the
+            // sender never made - so only a true reaches the envelope.
+            ...(msg.media.voiceNote ? { voiceNote: true } : {}),
           },
           msg.media.caption || undefined
         )
