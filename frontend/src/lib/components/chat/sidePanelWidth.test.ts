@@ -34,10 +34,15 @@
  *
  * VISIBILITY VARIANTS ARE DELIBERATELY OUT OF SCOPE, and that is a boundary rather than an
  * exemption list: `md:hidden` and `xl:hidden` decide WHICH CONTROLS EXIST, which is a question
- * about the device and the shape of the shell, not about how wide a box is. `ConversationSidePanel`
- * itself needs one (`xl:hidden` on the scrim, because below `xl` there IS a drawer to dismiss), and
- * `ChannelSettingsPanel` has a pair that moves a danger zone between two places - unmeasured, and
- * in the backlog rather than silently converted here.
+ * about the device and the shape of the shell, not about how wide a box is. `SidePanel` itself
+ * needs one (`xl:hidden` on the scrim, because below `xl` there IS a drawer to dismiss).
+ *
+ * THE BOUNDARY IS NOT A CLAIM THAT SUCH A VARIANT IS HARMLESS. `ChannelSettingsPanel` carried a
+ * PAIR of them - `md:hidden` on the danger zone in the content, `md:flex` on a second copy in the
+ * tab strip - left over from the two-column rail it had as a modal. From 768px of window up, "leave
+ * channel" and "delete channel" were therefore two more items of a `flex-row overflow-x-auto` tab
+ * bar, off its right end, while the copy a reader would look for was hidden. The fix was to DELETE
+ * a copy, which is why it is not a width assertion: no number about that panel was ever wrong.
  *
  * ## The family is derived, never listed
  *
