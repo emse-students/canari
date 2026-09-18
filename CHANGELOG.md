@@ -17,6 +17,12 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
+
+Huit textes visibles y etaient ecrits directement dans le composant (le champ de saisie, le lien
+vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
+choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
+une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
 ### Fixed - coller un texte finissant par un retour a la ligne ajoutait trois caracteres parasites au message
 
 Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ecrit en mojibake :
