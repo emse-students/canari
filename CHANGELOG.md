@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - social-service acceptait une identite tiree d'une signature JWT jamais verifiee, hors production
+
+La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
+route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
+et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
+[backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+
 ### Fixed - un post anonyme montrait le vrai nom de son auteur a tout le monde, dans le fil et dans la recherche
 
 `mustHideAnonymousAuthor` ne s'est jamais trompee ; les deux requetes qui alimentent le fil et la

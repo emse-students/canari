@@ -298,18 +298,20 @@ export default defineConfig(async () => ({
     // performed (`/api/call` -> `/ws`, `/api/chat-delivery-health` -> `/api/health`) and upgrades
     // websockets, so routing through it loses nothing.
     //
-    // `/channels` and `/ws` stay direct: they are not under `/api/`, and nginx has no location for
-    // either. `/ws` is the client's own alias for `/api/ws`.
+    // `/ws` STAYS DIRECT and is the only thing that does: it is not under `/api/`, nginx has no
+    // location for it, and it is the client's own alias for `/api/ws`.
+    //
+    // A BARE `/channels` RULE SAT HERE UNTIL 2026-09-18 AND ROUTED NOTHING. It was believed to be
+    // what kept an unverified-JWT branch alive in `social-service`'s guard, and it was neither:
+    // `social-service` mounts `setGlobalPrefix('api')` over `@Controller('channels')`, so the only
+    // path it has ever served is `/api/channels/...`, and no line of the frontend asks for the bare
+    // one. The rule pointed a path nobody requests at a service that would have 404'd it. Deleted
+    // with the branch it was supposed to justify.
     proxy: {
       '/api': {
         target: `http://localhost:${devApiPort}`,
         changeOrigin: true,
         ws: true,
-      },
-      // Bare `/channels` - social-service's own path, with no `/api` prefix and no nginx location.
-      '/channels': {
-        target: 'http://localhost:3014',
-        changeOrigin: true,
       },
       '/ws': {
         target: 'ws://localhost:3000',

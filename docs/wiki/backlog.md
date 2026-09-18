@@ -1572,7 +1572,7 @@ different POLICIES, and only the HMAC block inside them is genuinely duplicated:
 | Where | Refuses on | Other paths |
 | --- | --- | --- |
 | `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | none |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | none since 2026-09-18 - see below |
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | logs a denial, `/push/` routes only |
 | `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
 
@@ -1582,14 +1582,30 @@ intended**; the shared HMAC verification can be lifted out first and on its own,
 really is three identical copies. `verifyInternalToken` is exported from `core-service` and imported
 by NOBODY outside its own file.
 
-**AND THE UNVERIFIED-JWT BRANCH NEEDS A ROUTE, NOT A DELETION - THE USER HAS DECIDED.** It is
-unreachable on every deployed estate (dev PINS `NODE_ENV: production`, production defaults to it) so
-it runs only on a developer's machine - but it is not dead code there: `frontend/vite.config.js`
-sends `/channels` straight to `social-service:3014`, outside nginx, because **nginx has no location
-for it**. That request carries a bearer token and no `X-User-Id`, which is precisely the branch, so
-deleting it breaks `bun run dev`. Asked 2026-09-17, answered *"Fais-le"*: **give the local nginx a
-`/channels` location, point the vite proxy at it, then delete the branch** - closing the routing gap
-the fallback was papering over.
+**THE ROUTE THAT WAS TO BE CREATED DOES NOT NEED TO EXIST, AND THE BRANCH IS GONE (2026-09-18).**
+This paragraph asked for a local nginx `location /channels`, and the user answered *"Fais-le"* on
+2026-09-17. Executing it began by verifying the premise, and **the premise was false**:
+
+- `apps/social-service/src/main.ts:9` mounts `app.setGlobalPrefix('api')` over
+  `channels.controller.ts:48`'s `@Controller('channels')`. The service has therefore only ever
+  served `/api/channels/...`; a request for a bare `/channels` would have been **404'd by the
+  service the proxy rule pointed at**.
+- An exhaustive sweep of `frontend/src` finds **no line requesting a bare `/channels`** - every
+  caller already asks for `/api/channels/...`.
+- `infrastructure/local/Dockerfile.frontend` already carries a `location /api/channels` block, so
+  the routing gap this entry described was never open.
+
+So the vite rule aimed a path nobody requests at a service that would have refused it, and the
+"local dev without nginx" it was believed to serve does not exist. Deleting the rule and the branch
+it alone justified is therefore strictly better than building the route: the branch decided identity
+from an **unverified signature**, forwarding a decoded `sub` as `x-user-id`, and a deleted branch is
+the only kind that cannot be reached. Both deletions are asserted by
+`nginx-auth.guard.spec.ts`, which now refuses a well-formed Bearer token arriving on its own.
+
+**WHAT IS STILL OWED HERE IS THE HMAC, AND IT IS THE REST OF THIS ENTRY.** Outside production the
+guard still trusts the `X-User-Id` the local nginx sets without asserting `X-Internal-Token`. That
+is the three-service policy decision above, not a leftover of the deletion, and it was deliberately
+not smuggled in behind it.
 
 **Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
 an ARBITRARY user id is a separate and larger question, parked deliberately in `presence.rs`'s
