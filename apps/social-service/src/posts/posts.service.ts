@@ -13,7 +13,11 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
-import { PostNotificationsService } from './post-notifications.service';
+import {
+  PostNotificationsService,
+  ANONYMOUS_NOTIFICATION_ACTOR_ID,
+  ANONYMOUS_NOTIFICATION_ACTOR_NAME,
+} from './post-notifications.service';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 
 /**
@@ -359,14 +363,20 @@ export class PostsService {
     if (mentionedIds.length > 0 && entity.id) {
       void (async () => {
         try {
-          const actorName = await this.notifications.resolveActorName(authorId);
+          // A mention notification never went through `mustHideAnonymousAuthor` at all - it is
+          // written once, at creation, onto a row nothing re-shapes per reader (see the constants'
+          // own docblock). An anonymous post that mentions someone stays anonymous to them too.
+          const actorId = data.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : authorId;
+          const actorName = data.anonymous
+            ? ANONYMOUS_NOTIFICATION_ACTOR_NAME
+            : await this.notifications.resolveActorName(authorId);
           for (const recipientId of mentionedIds) {
             // createNotification also sends the FCM push (type 'social').
             await this.notifications.createNotification({
               recipientId,
               type: 'mention',
               postId: entity.id,
-              actorId: authorId,
+              actorId,
               text: markdown.slice(0, 60),
               actorName,
             });
@@ -621,7 +631,11 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (
          (posts."associationId" IS NOT NULL AND posts."associationId" = ANY($3::uuid[]))
-         OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[]))
+         -- Never an anonymous post: appearing in THIS feed at all already says "written by
+         -- someone in the small, known set you follow" - a leak no amount of masking the
+         -- author's name removes, because the leak is membership, not the name.
+         OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[])
+             AND NOT posts.anonymous)
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}

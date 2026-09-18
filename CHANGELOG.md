@@ -17,6 +17,16 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - une mention ou un abonnement revelait le vrai nom d'un post anonyme, dans l'onglet notifications
+
+Une notification n'a aucun masquage a la lecture : `actorName` est ecrit une fois pour toutes a la
+creation, et rien ne re-filtre la ligne stockee ensuite. Une mention resolvait et stockait le vrai
+nom sans jamais regarder `anonymous` ; corrige en le masquant ("Anonyme"). "Quelqu'un que vous
+suivez a publie" resolvait aussi le vrai nom - mais la, meme masque, le simple fait d'apparaitre
+dans cette notification (ou dans l'onglet "Suivis" du fil) revele que l'auteur fait partie du
+petit ensemble de comptes suivis : corrige en ne l'envoyant plus du tout pour un post anonyme,
+et en l'excluant du fil "Suivis". Signale par le meme utilisateur, dans la foulee du correctif
+ci-dessous. [moderation-and-blocking](docs/wiki/moderation-and-blocking.md#anonymous-posts---the-fourth-control-that-predicate-now-gates).
 
 ### Fixed - un post anonyme montrait le vrai nom de son auteur a tout le monde, dans le fil et dans la recherche
 

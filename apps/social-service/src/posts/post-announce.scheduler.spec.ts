@@ -160,6 +160,20 @@ describe('PostAnnounceScheduler', () => {
     expect(queries.some((q) => q.sql.includes('FROM users'))).toBe(false);
   });
 
+  it('never announces an anonymous personal post - not masked, skipped entirely', async () => {
+    // Reported by a user: even a masked "someone you follow just posted anonymously" notification
+    // still narrows the author down to the small, known set of people this reader follows - the
+    // membership itself is the leak, whatever name rides along with it. The follower query must
+    // not even run, the same way the audience query does not run for an ordinary personal post.
+    const post: Row = { id: 'p2', authorId: 'a2', anonymous: true, markdown: 'coucou' };
+    await scheduler([post], tables({ followers: ['f1'] })).announcePosts();
+
+    expect(batches).toEqual([]);
+    expect(queries.some((q) => q.sql.includes('user_follows'))).toBe(false);
+    // Still stamped: an anonymous post must not be reconsidered every minute for the rest of its life.
+    expect(updates).toHaveLength(1);
+  });
+
   it('writes nothing for a personal post nobody follows, rather than an empty batch', async () => {
     const post: Row = { id: 'p3', authorId: 'a3', markdown: 'coucou' };
     await scheduler([post], tables({ followers: [] })).announcePosts();
