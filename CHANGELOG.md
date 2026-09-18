@@ -17,6 +17,11 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - le selecteur d'emoji et une etiquette de l'editeur de carte ne passaient pas par les traductions
+
+Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
+le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
+voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
 ### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
 
 Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
@@ -30,6 +35,15 @@ La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a 
 decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
 compte, pas le temps.
 [cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
+### Added - l'estimation de versement suit desormais le bareme du prestataire actif, Stripe ou Lydia
+
+`StripeNetPayoutHint.svelte` calculait toujours les frais Stripe, quel que soit le fournisseur
+actif dans `platform_config.paymentProvider` - correct tant que Lydia n'est pas branche, faux le
+jour ou ca bascule, sans que rien n'avertisse un tresorier. Le bareme Lydia (10 centimes + 1% par
+paiement) confirme le 2026-09-18 ferme la question : `lydiaFees.ts` rejoint `stripeFees.ts`, et le
+composant, renomme `PayoutFeeHint` (il n'est plus l'arithmetique d'un seul fournisseur), demande
+`GET /api/payments/provider` et choisit. [payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not).
 
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 

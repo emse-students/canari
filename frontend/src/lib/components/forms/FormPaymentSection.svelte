@@ -8,7 +8,7 @@
     CONTROL_LABEL_CLASS,
     controlClass,
   } from '$lib/components/ui/controlClasses';
-  import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import FormSection from './FormSection.svelte';
   import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
   import { emptyMatrix, priceRange, type PriceMatrix } from '$lib/pricing/priceMatrix';
@@ -147,7 +147,7 @@
       />
     {/if}
 
-    <StripeNetPayoutHint
+    <PayoutFeeHint
       grossEuros={priceMatrix ? (gridRange?.max ?? 0) : basePrice}
       grossEurosMember={gridRange && gridRange.min !== gridRange.max ? gridRange.min : ''}
       showOptionSupplementNote={true}
