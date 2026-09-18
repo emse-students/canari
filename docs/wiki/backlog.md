@@ -2058,17 +2058,6 @@ seed before measuring**: if `/posts` is already the bottom entry on the cold pat
 tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
 backgrounded, foregrounded on another conversation).
 
-### G8 - P2 - adding a reaction pushes the thread DOWN, and can push the reaction itself under the composer
-
-Verbatim: *"mettre une reaction devrait faire monter la discussion, pas la descendre (actuellement,
-mettre une reaction fait descendre tout ce qui est en dessous, et va meme jusqu'a mettre une
-reaction sous le dernier message (donc sous la barre de saisie). Tu peux t'inspirer de Messenger."*
-
-A reaction adds height to a row. With the viewport anchored at the TOP of the scroll box, every row
-below it moves down and the bottom of the thread leaves the screen - on the last message the
-reaction lands under the composer, which is how G7 and G8 compound. **Anchoring at the bottom is the
-fix, and it is a property on the scroll container rather than a scroll call** - a scroll call is a
-clock in disguise and would fight the user's own scrolling.
 
 ### G9 - P2 - in a group, nothing says WHO reacted with what
 
@@ -2079,6 +2068,11 @@ forced (there are two people); in a group the pill is a count with no roster beh
 may already be there** - a reaction carries its sender - in which case this is a disclosure, not a
 wire change. That is the first thing to check, because it decides whether this is an afternoon or a
 protocol change.
+
+**POSTS ALREADY ANSWER THIS QUESTION, SO THE ANSWER IS A COMPONENT, NOT A DESIGN.**
+`ReactionsDisplay` names its reactors on hover or long press, portalled and placed by
+`bindFixedPopover`, and closes on an outside tap or `Escape`. The chat should reuse it rather than
+grow a second one - the gesture and the panel both.
 
 ### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
 
@@ -2091,21 +2085,6 @@ therefore hidden from the tab, and nothing can tell the panel otherwise.
 carries it, or the flag becomes a `source: 'recorded' | 'imported'` the sender must set. Written
 down so the name rule is not deleted as a heuristic by somebody who does not know it is
 load-bearing - **not worth doing before anybody has hit the collision.**
-
-### G11 - P3 - a post's reactor panel runs off the screen and then ignores the scroll
-
-Verbatim: *"pour les posts, meme si on peut voir qui a reagit en appuyant longtemps dessus, ca sort
-de l'ecran et si on scrolle, le panneau ne disparait pas (et ne suit pas le scroll)"*
-
-Three separate faults in one widget, and the two captures separate them cleanly. The panel is
-anchored to the reaction pill at the card's RIGHT edge and is clipped by the viewport, so the name
-it exists to show is the part cut off. It is positioned in VIEWPORT coordinates, so a scroll moves
-the card out from under it and leaves it hovering over an unrelated post - the second capture is the
-same panel over a different card. And nothing dismisses it on scroll.
-
-**The disclosure itself works here, which is what makes it the reference for G9**: posts already
-answer *who reacted with what*, by long press. Whatever the chat gains should be the same gesture
-and, where it can be, the same component - so this one is worth repairing rather than duplicating.
 
 ## Reported by the USER on 2026-09-17 - six items, verbatim
 

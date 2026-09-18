@@ -22,6 +22,7 @@
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
+  import { shouldFollowThreadBottom } from '$lib/utils/chat/threadAnchor';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -794,6 +795,47 @@
   $effect(() => {
     onMessagesScrollEl?.(chatContainer ?? null);
     return () => onMessagesScrollEl?.(null);
+  });
+
+  /**
+   * THE PANE FOLLOWS ITS OWN BOTTOM WHEN THE CONTENT GROWS, AND A MESSAGE COUNT COULD NOT SEE THAT.
+   *
+   * The re-pin above keys on `messageCount`, which is a proxy for "the thread got taller" - and it
+   * is the wrong one. A reaction chip appears, a link preview resolves, an image settles into its
+   * real aspect: the thread grows and the count does not move, so nothing re-pinned and every row
+   * below the change slid DOWN. On the last message that put the reaction under the composer, which
+   * is what the user reported on 2026-09-18 (*"mettre une reaction devrait faire monter la
+   * discussion, pas la descendre"* - the same request read from the other end).
+   *
+   * A MUTATION, NOT A TIMER. The trigger is the DOM change itself, so there is nothing to tune and
+   * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
+   * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
+   * nothing recomputes it without a scroll event, and content growing under a stationary reader
+   * fires none.
+   *
+   * `column-reverse` on the scroller would have been the property-level answer and was refused: it
+   * inverts `handleScroll`'s `scrollTop < 80` older-messages trigger, the prepend restore in
+   * `loadOlderGroups`, the sticky date walk and the toolbar's clipping maths - five mechanisms
+   * rewritten to fix one, with no measurement saying the defect needed it.
+   */
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    let previousHeight = el.scrollHeight;
+    const observer = new MutationObserver(() => {
+      const currentHeight = el.scrollHeight;
+      const follow = shouldFollowThreadBottom({
+        previousHeight,
+        currentHeight,
+        wasNearBottom: isNearBottom,
+        isLoadingOlder,
+        isEntering: entering,
+      });
+      previousHeight = currentHeight;
+      if (follow) el.scrollTop = currentHeight;
+    });
+    observer.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
   });
 
   $effect(() => {

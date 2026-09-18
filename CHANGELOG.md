@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - mettre une reaction faisait descendre la discussion au lieu de la faire monter
+
+Le re-pin du fil reagissait au NOMBRE de messages, et une reaction n'en ajoute aucun : le fil
+grandissait sans que rien ne regarde, donc tout ce qui etait en dessous descendait et le bas sortait
+de l'ecran - sur le dernier message, la reaction passait sous la barre de saisie. Le compte etait un
+mauvais indicateur de la croissance ; c'est desormais la croissance elle-meme qui est observee.
+[backlog](docs/wiki/backlog.md).
+
 ### Fixed - le fil passait derriere la barre de saisie pendant le defilement
 
 La liste reservait deja la hauteur de la barre, donc un fil au repos s'arretait au-dessus - ce qui
@@ -24,6 +32,13 @@ Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais le
 ne declarent rien, et des mois d'enregistrements restaient listes sous `vocal_<epoch>.m4a`, enfouissant
 les fichiers reellement echanges. Ils portent une seule preuve, le nom que l'enregistreur a lui-meme
 ecrit, et c'est desormais elle qui est lue faute de declaration. [backlog](docs/wiki/backlog.md).
+
+### Fixed - le panneau "qui a reagi" d'un post sortait de l'ecran et ne se fermait jamais au doigt
+
+Il lisait la position de la pastille UNE fois et l'ecrivait lui-meme : donc rien ne le ramenait dans
+l'ecran, un defilement le laissait au-dessus d'un autre post, et il ne se fermait que sur une sortie
+de souris qu'un doigt n'envoie jamais. Il utilise desormais `bindFixedPopover`, qui reglait deja les
+deux premiers, et se ferme sur une tape exterieure ou `Echap`. [backlog](docs/wiki/backlog.md).
 
 ### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
 
