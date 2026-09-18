@@ -26,6 +26,13 @@ racontaient un correctif deja livre. Le recit part la ou il sert - deux pages de
 ([cold-start](docs/wiki/frontend/cold-start.md), [key-package-pool](docs/wiki/protocols/key-package-pool.md)),
 le reste au `CHANGELOG` - et le backlog perd 1741 lignes sans perdre un seul item ouvert.
 
+### Fixed - dans un groupe, on ne pouvait pas voir qui avait mis quelle reaction
+
+Les noms etaient deja resolus et partaient dans un `title`, que l'ecran tactile ne dessine jamais.
+Le badge ouvre desormais le panneau que le fil d'actualite ouvre sur les siens - `ReactorsPanel`,
+extrait pour que les deux ne divergent pas : un placement, un jeu de fermetures, un resolveur de
+noms. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - mettre une reaction faisait descendre la discussion au lieu de la faire monter
 
 Le re-pin du fil reagissait au NOMBRE de messages, et une reaction n'en ajoute aucun : le fil

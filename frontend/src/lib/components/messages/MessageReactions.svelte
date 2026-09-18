@@ -1,16 +1,6 @@
 <script lang="ts">
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
   import { m } from '$lib/paraglide/messages';
-
-  function firstNameOnly(value: string): string {
-    const cleaned = value.trim();
-    if (!cleaned) return value;
-    if (cleaned.includes('@')) {
-      const local = cleaned.split('@')[0];
-      return local.split('.')[0];
-    }
-    return cleaned.split(' ')[0];
-  }
 
   interface Props {
     /** Emoji-keyed map of user IDs who have reacted with each emoji. */
@@ -25,26 +15,32 @@
 
   let { groupedReactions = {}, isOwn = false, currentUserId, onReact }: Props = $props();
 
-  // Resolved display names: userId → first name
-  let resolvedNames = $state<Record<string, string>>({});
+  /**
+   * THE NAMES WERE ONLY EVER IN A `title`, WHICH IS NOTHING ON A TOUCH SCREEN.
+   *
+   * Reported through the user on 2026-09-18: *"on me dit qu'il n'y a pas de moyen de voir qui a mis
+   * quelle reaction dans les groupes."* The data was already here - `groupedReactions` maps an emoji
+   * to the ids that chose it - and this row resolved those ids to first names and handed them to the
+   * native tooltip. A phone draws no tooltip, and in a DM nobody needs one because there are two
+   * people; in a group the badge was a count with no roster behind it.
+   *
+   * **POSTS HAD ALREADY ANSWERED THIS QUESTION, SO THE ANSWER IS A COMPONENT AND NOT A DESIGN.**
+   * `ReactorsPanel` is the panel the posts feed opens on its own badges, extracted so the two cannot
+   * drift: one placement, one set of dismissals, one name resolver. Growing a second one here would
+   * have been the third copy of the eight lines `userDisplayNames` exists to end.
+   */
+  let openEmoji = $state<string | null>(null);
+  let anchorEl = $state<HTMLElement | null>(null);
+  let panel = $state<ReturnType<typeof ReactorsPanel> | null>(null);
 
-  $effect(() => {
-    const allIds = Object.values(groupedReactions).flat();
-    const unique = [...new Set(allIds)];
-    for (const uid of unique) {
-      if (!resolvedNames[uid]) {
-        const sync = getUserDisplayNameSync(uid);
-        resolvedNames[uid] = firstNameOnly(sync || m.user_unknown_label());
-        // Async refresh
-        resolveUserDisplayName(uid).then((name) => {
-          if (name) resolvedNames = { ...resolvedNames, [uid]: firstNameOnly(name) };
-        });
-      }
-    }
-  });
+  function openPanel(emoji: string, anchor: HTMLElement) {
+    anchorEl = anchor;
+    openEmoji = emoji;
+  }
 
-  function resolveNames(userIds: string[]): string {
-    return userIds.map((id) => resolvedNames[id] || m.user_unknown_label()).join(', ');
+  function closePanel() {
+    openEmoji = null;
+    anchorEl = null;
   }
 </script>
 
@@ -82,7 +78,8 @@
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
           onReact?.(emoji);
         }}
-        title={resolveNames(users)}
+        onmouseenter={(e) => openPanel(emoji, e.currentTarget as HTMLElement)}
+        onmouseleave={() => panel?.scheduleHide()}
         aria-pressed={hasReacted}
         aria-label={users.length === 1
           ? m.msg_reaction_aria_label_one({ emoji })
@@ -96,3 +93,11 @@
     {/each}
   </div>
 {/if}
+
+<ReactorsPanel
+  bind:this={panel}
+  anchor={anchorEl}
+  emoji={openEmoji}
+  userIds={openEmoji ? (groupedReactions[openEmoji] ?? []) : []}
+  onClose={closePanel}
+/>
