@@ -115,6 +115,18 @@ whether `authorId` is present on the payload. Absent (a regular reader): the gen
 like any other personal post, plus a small badge next to the timestamp so the reader still knows
 the post was published anonymously.
 
+**`mustHideAnonymousAuthor` was never wrong; the two feed queries never asked it the real
+question (2026-09-18, reported by a user who posted "test" anonymously and read their own name
+off a second account's feed).** `listPosts`'s shared `selectBody` and `searchPosts`'s own copy
+both named `posts."authorId"` but never `posts.anonymous`, so every raw row arrived with
+`anonymous: undefined` and the predicate's first line, `if (!post.anonymous) return false`, read
+that as "not anonymous" for every post, moderator tier or not. `getById` (single-post view) loads
+the full TypeORM entity and was never affected - only the two feed-producing paths anyone actually
+browses. Fixed by adding the column to both queries;
+`posts.service.anonymous-list.spec.ts` asserts on the SQL text itself, because a unit test
+building its own `{ anonymous: true }` fixture and calling `shapeListRow` directly would have
+passed every day this shipped.
+
 ---
 
 ## Blocking

@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un post anonyme montrait le vrai nom de son auteur a tout le monde, dans le fil et dans la recherche
+
+`mustHideAnonymousAuthor` ne s'est jamais trompee ; les deux requetes qui alimentent le fil et la
+recherche ne selectionnaient jamais `posts.anonymous`, donc chaque ligne brute arrivait avec
+`anonymous: undefined` et le premier test de la fonction lisait cela comme "pas anonyme", pour
+tout le monde. Signale par un utilisateur qui a publie "test" en anonyme et lu son propre nom
+depuis un second compte. [moderation-and-blocking](docs/wiki/moderation-and-blocking.md#anonymous-posts---the-fourth-control-that-predicate-now-gates).
+
 ## [0.18.12] - 2026-09-18
 
 ### Fixed - le serveur distribuait des cles perimees et l'invitation echouait a chaque lancement
