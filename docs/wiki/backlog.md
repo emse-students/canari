@@ -2068,18 +2068,6 @@ peut le faire Messenger ?)."*
 The user has already named the fix he wants: an opaque band behind the composer, so the thread ends
 at it instead of sliding under it.
 
-### G8 - P2 - adding a reaction pushes the thread DOWN, and can push the reaction itself under the composer
-
-Verbatim: *"mettre une reaction devrait faire monter la discussion, pas la descendre (actuellement,
-mettre une reaction fait descendre tout ce qui est en dessous, et va meme jusqu'a mettre une
-reaction sous le dernier message (donc sous la barre de saisie). Tu peux t'inspirer de Messenger."*
-
-A reaction adds height to a row. With the viewport anchored at the TOP of the scroll box, every row
-below it moves down and the bottom of the thread leaves the screen - on the last message the
-reaction lands under the composer, which is how G7 and G8 compound. **Anchoring at the bottom is the
-fix, and it is a property on the scroll container rather than a scroll call** - a scroll call is a
-clock in disguise and would fight the user's own scrolling.
-
 ### G9 - P2 - in a group, nothing says WHO reacted with what
 
 Verbatim: *"on me dit qu'il n'y a pas de moyen de voir qui a mis quelle reaction dans les groupes."*

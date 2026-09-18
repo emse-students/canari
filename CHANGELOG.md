@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - mettre une reaction faisait descendre la discussion au lieu de la faire monter
+
+Le re-pin du fil reagissait au NOMBRE de messages, et une reaction n'en ajoute aucun : le fil
+grandissait sans que rien ne regarde, donc tout ce qui etait en dessous descendait et le bas sortait
+de l'ecran - sur le dernier message, la reaction passait sous la barre de saisie. Le compte etait un
+mauvais indicateur de la croissance ; c'est desormais la croissance elle-meme qui est observee.
+[backlog](docs/wiki/backlog.md).
+
 ### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
 
 Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais les messages anterieurs
