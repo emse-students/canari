@@ -149,11 +149,14 @@
     return `${date} ${time} - ${ev.title}`;
   }
 
-  /** Returns true for files whose preview should show a generic icon instead of an object URL. */
-  /** Appends newly picked files to the new-files list. */
-  function onPickFiles(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
+  /**
+   * Adds media to the pending list, whatever route it arrived by.
+   *
+   * The picker, a drop and a paste all end here: the editor body is Markdown and cannot hold an
+   * image, so the only place one can go is this list (user, 2026-09-18).
+   */
+  function addFiles(files: File[]) {
+    if (files.length === 0) return;
     newFiles = [...newFiles, ...files];
     newFilePreviews = [
       ...newFilePreviews,
@@ -161,6 +164,12 @@
     ];
     newFileThumbIcons = [...newFileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
     newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
+  }
+
+  /** Appends newly picked files to the new-files list. */
+  function onPickFiles(event: Event) {
+    const input = event.target as HTMLInputElement;
+    addFiles(Array.from(input.files ?? []));
     // Reset input so the same file can be picked again.
     input.value = '';
   }
@@ -324,6 +333,7 @@
     >
       <MarkdownComposerField
         bind:value={markdown}
+        onmedia={addFiles}
         placeholder="Écrivez votre message ici…"
         minHeight="120px"
         toolbarClass="mb-1"
