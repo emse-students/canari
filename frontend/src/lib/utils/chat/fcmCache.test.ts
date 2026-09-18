@@ -26,9 +26,10 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
-import { consumeFcmCache } from './fcmCache';
+import { consumeFcmCache, placeholderIdentityForPushEntry } from './fcmCache';
 
 const KEY = 'device-key-b64';
+const SELF = 'me-0000-0000';
 const MESSAGE_ID = 'msg-0000-1111';
 const GROUP_ID = 'grp-aaaa-bbbb';
 
@@ -84,7 +85,7 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
   it('injects the preview when no row exists yet - the case the cache is FOR', async () => {
     const { storage, saveMessage } = fakeStorage(null);
 
-    const result = await consumeFcmCache(KEY, storage);
+    const result = await consumeFcmCache(KEY, storage, SELF);
 
     expect(saveMessage).toHaveBeenCalledTimes(1);
     expect(saveMessage.mock.calls[0][0]).toMatchObject({
@@ -98,7 +99,7 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
   it('replaces an older push preview, which carries no more than this one does', async () => {
     const { storage, saveMessage } = fakeStorage(previewRow());
 
-    const result = await consumeFcmCache(KEY, storage);
+    const result = await consumeFcmCache(KEY, storage, SELF);
 
     expect(saveMessage).toHaveBeenCalledTimes(1);
     expect(result.messages).toHaveLength(1);
@@ -108,7 +109,7 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
     const before = envelopeRow();
     const { storage, saveMessage } = fakeStorage(before);
 
-    const result = await consumeFcmCache(KEY, storage);
+    const result = await consumeFcmCache(KEY, storage, SELF);
 
     // THE WRITE IS THE DEFECT, so it is the write that is asserted away. Before 2026-09-17 this
     // call happened and replaced `content` with the caption and `isFcmPreview` with true.
@@ -117,5 +118,63 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
     // list contains over the in-memory conversation, so a row returned here is a caption painted
     // over a picture already on screen - the same defect, one layer up and without a restart.
     expect(result.messages).toHaveLength(0);
+  });
+});
+
+/**
+ * A DM ARRIVING BY PUSH MUST NOT BE A GROUP, AND THE PUSH ALREADY SAID SO.
+ *
+ * Reported by the user on 2026-09-18 as two defects - no profile photo on a first contact until the
+ * app is restarted, and "it is square instead of round for people". One cause: the placeholder row
+ * carried a label and no type, so `buildConversationRow` wrote `group`, and a group is drawn with
+ * `GroupAvatar` - a rounded square with no user whose photo to fetch.
+ *
+ * The three cases below are the three states of `groupName`, and the middle one is the whole point:
+ * ABSENT is not EMPTY. A cache file written by an older native build has no such key, and reading
+ * that as "DM" would invent a peer out of whoever happened to message first.
+ */
+describe('placeholderIdentityForPushEntry reads the type the push already carried', () => {
+  const entry = (over: Record<string, unknown> = {}) => ({
+    groupId: GROUP_ID,
+    senderId: 'PEER-1',
+    senderName: 'Someone',
+    ...over,
+  });
+
+  it('an empty groupName is a DM, and the sender is the peer', () => {
+    const id = placeholderIdentityForPushEntry(entry({ groupName: '' }), SELF);
+
+    expect(id.conversationType).toBe('direct');
+    expect(id.directPeerId).toBe('peer-1');
+    expect(id.contactName).toBe('peer-1');
+    // The canonical key, not the sender's display name: `ConversationMeta` has no type column, so
+    // this string is the only thing a later boot can read the identity back out of.
+    expect(id.name).toBe(`${SELF}::peer-1`);
+  });
+
+  it('a named groupName is a group, and the name is the label', () => {
+    const id = placeholderIdentityForPushEntry(entry({ groupName: 'Les gourmands' }), SELF);
+
+    expect(id.conversationType).toBe('group');
+    expect(id.name).toBe('Les gourmands');
+    expect(id.directPeerId).toBeUndefined();
+  });
+
+  it('an ABSENT groupName says nothing, and so does the identity', () => {
+    const id = placeholderIdentityForPushEntry(entry(), SELF);
+
+    // No type at all - the builder's own default then stands, which is what an entry written by a
+    // pre-2026-09-15 native build has always got. Learning nothing is not learning `group`.
+    expect(id.conversationType).toBeUndefined();
+    expect(id.directPeerId).toBeUndefined();
+    expect(id.name).toBe('Someone');
+  });
+
+  it('refuses to make this device its own peer', () => {
+    const id = placeholderIdentityForPushEntry(entry({ groupName: '', senderId: SELF }), SELF);
+
+    // A push from our own device for a DM cannot say who the other member is, and answering
+    // "myself" would be a conversation with oneself - the exact row the roster repair exists for.
+    expect(id.conversationType).toBeUndefined();
   });
 });

@@ -239,7 +239,7 @@ const sites: Site[] = [
         [{ id: 'm1', conversationId: 'g-fcm', senderId: 'bob', content: 'hi', timestamp: 3 }],
         conversations,
         'u1',
-        new Map([['g-fcm', { name: 'bob', updatedAt: 3 }]])
+        new Map([['g-fcm', { name: 'bob', contactName: 'bob', updatedAt: 3 }]])
       );
     },
   },

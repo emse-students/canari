@@ -4,6 +4,7 @@ import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
+import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 
 /**
  * Merges FCM-cached messages into the in-memory conversation map.
@@ -40,7 +41,7 @@ export function mergeFcmMessagesIntoConversations(
   injected: StoredMessage[],
   conversations: Map<string, Conversation>,
   userId: string,
-  placeholders?: ReadonlyMap<string, { name: string; updatedAt: number }>
+  placeholders?: ReadonlyMap<string, PushPlaceholder>
 ): number {
   if (injected.length === 0) return 0;
 
@@ -61,10 +62,17 @@ export function mergeFcmMessagesIntoConversations(
         );
         continue;
       }
+      // THE WHOLE IDENTITY, NOT JUST THE LABEL. Handing `buildConversationRow` a name and no type
+      // made it write `group`, which is how a DM from a brand-new correspondent arrived with a
+      // square avatar and no photo - see `placeholderIdentityForPushEntry`.
       convo = buildConversationRow({
         id: convoId,
         lifecycle: 'pending',
-        identity: { contactName: placeholder.name, displayName: placeholder.name },
+        identity: {
+          ...placeholder,
+          contactName: placeholder.contactName,
+          displayName: placeholder.name,
+        },
         lastMessageAt: placeholder.updatedAt,
       });
       conversations.set(convoId, convo);

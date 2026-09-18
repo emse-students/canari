@@ -61,6 +61,7 @@
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+  import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import {
     refreshAppVersionCheck,
@@ -1044,17 +1045,23 @@
     // common case of the two - the app is backgrounded far more often than it is killed.
     globalConvs.beginConversationSource();
     try {
-      const injected = await consumeFcmCache(deviceKeyB64, storage).catch(() => ({
+      // THE USER ID IS READ BEFORE THE CALL, NOT AFTER IT. It decides which member of a DM is the
+      // PEER, so a placeholder built without it would name this device's own user as the
+      // correspondent - and the guard that used to sit below only checked it once the rows were
+      // already written.
+      const selfId = globalSession.userId;
+      if (!selfId) return;
+      const injected = await consumeFcmCache(deviceKeyB64, storage, selfId).catch(() => ({
         messages: [] as StoredMessage[],
-        placeholders: new Map<string, { name: string; updatedAt: number }>(),
+        placeholders: new Map<string, PushPlaceholder>(),
       }));
-      if (injected.messages.length === 0 || !globalSession.userId) return;
+      if (injected.messages.length === 0) return;
       // The placeholders are what let a FIRST message from a new correspondent appear without a
       // restart - see `mergeFcmMessagesIntoConversations`.
       mergeFcmMessagesIntoConversations(
         injected.messages,
         globalConvs.conversations,
-        globalSession.userId,
+        selfId,
         injected.placeholders
       );
     } finally {
