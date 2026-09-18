@@ -890,7 +890,7 @@ honest conclusion is that no DOM event can discriminate, and the lines should be
 they are read rather than suppressed.
 
 ---
-### P2 - THE COLD START IS 1092 ms AND 696 OF THEM ARE BEFORE THE APP'S FIRST WORD, WHERE NO INSTRUMENT LOOKS
+### P2 - 64% OF A COLD BOOT IS ONE MLS SPAN AND 29% IS A REGION WITH NO MARK IN IT; THE PROLOGUE IS 249 ms
 
 **THE TARGET IS UNDER ONE SECOND, ALL IN** (user). Every reading taken so far, every instrument, and
 every hypothesis refuted on the way is on [cold-start](frontend/cold-start.md), the only copy - read
@@ -903,21 +903,32 @@ under a second**. But the two changes did more than promised where they act: the
 first word to `MLS ready` fell from **580 ms to 319 ms** against the same browser's 2026-09-17
 reading. The full table is on [cold-start](frontend/cold-start.md).
 
-**SO THE REMAINING BUDGET IS THE PROLOGUE, AND NOTHING HERE HAS EVER MEASURED IT.** 696 ms of the
+**THE BUDGET WAS READ AS THE PROLOGUE AND THAT IS NOW REFUTED - see the paragraph after next.** What follows is the reading that produced the suspicion, and it stands; only the attribution to the browser was wrong. 696 ms of the
 1015 ms to `MLS ready` elapse before the application says its first word - **69%** - and every span
 in every table on that page lives in the 319 ms after it, because `bootBenchmark` starts at
 `login-start`. Inside those 319 ms there is no mistake left to find: a 66 ms token refresh, a 57 ms
 `/api/users/batch`, 68 ms of PIN verification, and 71 ms deserialising 7 873 982 B of MLS state.
 Deleting all four would still leave 696 ms.
 
-**WHAT IS OWED IS ONE GESTURE AND IT IS THE USER'S**: a single paste of
-`window.__canariBootBench.get()` from that browser. It already records
-`PerformanceNavigationTiming` unconditionally, which splits the 696 ms into DNS, connect, TTFB,
-parse and module evaluation - the breakdown the 2026-09-16 table has for another machine and not for
-this one. This workstation cannot reproduce the boot.
+**THE PASTE ARRIVED AND IT MOVED THE WHOLE QUESTION** (user's Firefox, production, navigation start
+2026-09-18 19:42:55Z - **16 minutes after `v0.18.13` deployed**, so a post-deploy first load with an
+empty cache for every asset, NOT comparable to the 1092 ms warm reading above). Of 4677 ms to `MLS
+ready`: the browser's own prologue is **249 ms (5%)**, `mls-load-state` is **2999 ms (64%)**, and
+**1358 ms (29%) elapse between `load` and `login-start` with no mark anywhere inside them**.
+`mls-load-state` carries `recovered: false`, so that is the nominal path, and it wraps three
+operations of different character - WASM instantiation, snapshot decryption, group rebuild - behind
+one number. `storage-open` next to it is 2 ms, so IndexedDB is not a candidate.
+
+**SO THE NEXT STEP IS TWO ADDITIVE MEASUREMENTS AND NO FIX.** Split `loadStateWithKey` into its
+three phases with `beginBootSpan`, and put one mark on the first line of application code so the
+1358 ms region stops being a subtraction between two things measured for other purposes. **No change
+to the load path may be written before those land**: 64% of the boot currently has no cause, only a
+name. Full table, and why the two readings must never share a column:
+[cold-start](frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
 
 **AND THE `+Nms` LOG OFFSET IS AN INSTRUMENT WITH AN EXPIRY** (user, 2026-09-18): it is switched off
-when this entry closes, because the 696 ms above is measured with it. The millisecond wall clock is
+when this entry closes. It was kept because the 696 ms above was measured with it; the boot bench
+now answers that question without it, so the offset survives only until the two splits above land. The millisecond wall clock is
 a separate fact and stays. [cold-start](frontend/cold-start.md#the-log-prefix-is-an-instrument-and-it-is-switched-off-when-this-page-closes-user-2026-09-18).
 
 **AND ONE PASS IS STILL ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED.**
