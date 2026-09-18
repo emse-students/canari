@@ -674,3 +674,60 @@ same fact and they do not expire together:
 
 **Closes on:** the cold start measured under 1 s, or the target formally abandoned. The change is
 then one line in `logPrefix()` plus its assertion in `logTruncate.test.ts`.
+
+## THE OBVIOUS SUSPECT IS REFUTED: 163 MODULE REQUESTS COST 178 ms, NOT TWO SECONDS (OXYGEN, 2026-09-18)
+
+Production, `v0.18.12`, Chrome on OXYGEN, a browser context created for the measurement so its cache
+and connection start empty. **This is not the user's Firefox and it does not answer the 696 ms
+above** - it answers a different question, asked because the shape of the build makes one hypothesis
+look obvious enough to act on without measuring.
+
+**What a cold `/chat` load actually fetches:**
+
+| | |
+| --- | ---: |
+| `<link rel="modulepreload">` tags in the document | **161** |
+| module requests | 163 |
+| bytes over the wire, modules only | 602 449 |
+| MEDIAN module size | **311 B** |
+| modules smaller than 2 KB | **143 of 169** |
+| DNS / connect / TTFB for the document | 57 / 29 / 104 ms |
+| `domInteractive` | 563 ms |
+| `loadEventEnd` | 1211 ms |
+| the two largest chunks finish at | 2127 and 2080 ms |
+| the first font finishes at | 2476 ms |
+
+A build that ships 143 files smaller than a single packet, and whose two real chunks are the LAST
+things to arrive, reads as a chunking defect: raise `experimentalMinChunkSize`, merge the dust, stop
+paying 163 round trips. **That is wrong, and one measurement is enough to say so.**
+
+**The measurement.** Fetch the same files with `cache: 'no-store'` on a connection that is already
+open and an edge that is already hot, and time them - first one at a time, then all at once:
+
+| | |
+| --- | ---: |
+| the 126 KB chunk, ALONE, `cf-cache-status: HIT` | **27-35 ms** |
+| the same chunk inside the cold page load | 1925 ms |
+| all 104 modules of a document, in parallel (985 KB decoded) | **178 ms** |
+| the same, re-run | 178 ms |
+| 20 modules fetched SERIALLY | 330 ms (16.5 ms each) |
+
+**So the requests are not the cost.** A hundred of them, in parallel, cost less than a fifth of a
+second; the flood does not starve the big chunks, because the big chunks are 30 ms of work. What
+made the cold load take 2.3 s is the COLD CONNECTION and the edge misses inside it - a congestion
+window opening from nothing, not a queue of small files. Merging chunks would have changed the count
+and not the time.
+
+**One trap inside the method, worth repeating because it inverted the first answer.** The first
+run appended `?probe=<random>` to bypass the browser cache, and measured 508 ms for that same
+126 KB chunk - fifteen times the real number. A query string is part of Cloudflare's cache key, so
+every one of those was an origin MISS. Bypass the BROWSER's cache with `cache: 'no-store'` and leave
+the URL alone, or the number measured is the origin's, not the reader's.
+
+**What this does and does not license.** It licenses leaving the chunking alone, and it removes one
+plausible explanation from the 696 ms prologue: whatever that time is, it is not 163 round trips
+against a warm cache, which is what a returning reader has. It does NOT measure the user's browser,
+their connection, or module EVALUATION - a warm reload here reached `domContentLoadedEventEnd` at
+179 ms with all 106 modules served from cache, which is the shape of a prologue with nothing in it,
+and theirs is 696. **The reading still owed is the one named above**: one paste of
+`window.__canariBootBench.get()` from that same Firefox.

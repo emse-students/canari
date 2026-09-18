@@ -18,6 +18,13 @@ n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un mes
 VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
 le commentaire de `muteCheck` qui pretendait le contraire est corrige.
 [localizedError](frontend/src/lib/utils/localizedError.ts).
+### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
+
+La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
+decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
+compte, pas le temps.
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 
 Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
