@@ -72,14 +72,26 @@
 # ==================================================================================================
 # THE ROWS
 # ==================================================================================================
-# All three are `none` today, and that is the honest state: the dev environment does not yet serve
-# anything, so it runs prod's majors exactly. `docs/wiki/backlog.md` holds the deferral - PG 15 -> 18
-# is a migration nobody has performed (user, 2026-09-01: "on verra ca plus tard") - and the row below
-# is where its rehearsal gets recorded when it happens.
+# All three are `none`, and that is the honest state: dev runs prod's majors exactly, so no gap is
+# claimed and nothing is lifted.
+#
+# PG 15 -> 18 WAS PERFORMED ON 2026-09-18 AND IT DID NOT EARN AN `in_place_upgrade` ROW. The crossing
+# was done by hand in a deliberate window, as a LOGICAL migration: production's cluster dumped with
+# `pg_dump -Fc` and restored into a cluster 18 built ITSELF on a NEW volume, the 15 volume kept
+# intact as the rollback. That never opened a data directory written by 15, so it demonstrates
+# nothing about `pg_upgrade` or the 18+ move of the mount point - and `lib/ceiling.sh` therefore
+# still refuses the next postgres major by name.
+#
+# THAT REFUSAL IS CORRECT AND WAS DELIBERATELY NOT RETIRED. What carried this crossing was a
+# procedure and a window, never a green suite, and 18 -> 19 will need both again unless someone
+# writes the test the ceiling names. Recording `logical_restore` here would be equally useless: the
+# field's own definition says it lifts NOTHING, and there is no gap to describe in any case, both
+# majors having moved together. The procedure and its measurements are in
+# `docs/wiki/infrastructure/databases.md`.
 
 postgres:
-  prod_major: "15"
-  dev_major: "15"
+  prod_major: "18"
+  dev_major: "18"
   evidence: none
   proof: ""
   lifts: ""

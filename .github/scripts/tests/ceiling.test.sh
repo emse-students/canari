@@ -119,10 +119,20 @@ fi
 # The named entries, each asserted on the reason it is there
 # -------------------------------------------------------------------------------------------------
 echo "the datastore arm reads a version, and fails CLOSED when it cannot:"
-# The incident itself, on the exact trailer Dependabot wrote (`postgres||18-alpine`): note the
-# EMPTY update-type, which is why this arm cannot be a semver rule.
-expect_refused postgres "18-alpine" "this is the 2026-09-01 outage, verbatim"
-expect_allowed postgres "15.19-alpine"   # a patch within the running major
+# THE INCIDENT, PINNED TO ITS SHAPE RATHER THAN TO ITS NUMBER. On 2026-09-01 the trailer read
+# `postgres||18-alpine` while production ran 15 - note the EMPTY update-type, which is why this arm
+# cannot be a semver rule. Production crossed to 18 on 2026-09-18, and a fixture still spelling `18`
+# would from that day have asserted that production's OWN major must be refused. So the crossing is
+# CONSTRUCTED from the compose file, exactly as the derived loop above already does: what is pinned
+# is the SHAPE the incident arrived in - an alpine tag, no update-type, a major production does not
+# run - and that shape survives every crossing without this file being edited on the day of one.
+pg_major=$(prod_image_major postgres)
+expect_refused postgres "$((pg_major + 1))-alpine" "a major crossing arrives exactly as the 2026-09-01 trailer did, with no update-type"
+expect_allowed postgres "${pg_major}.19-alpine"   # a patch within the running major
+# DOWN IS THE SAME HAZARD AS UP, and this assertion only became expressible on 2026-09-18: before the
+# crossing there was no major below the one production ran. An older server does not read a newer
+# cluster either, so a rollback by image tag alone is refused here rather than at startup.
+expect_refused postgres "$((pg_major - 1))-alpine" "an older major cannot read the cluster the running one wrote"
 expect_allowed redis "8.10-alpine"       # #306 and #308: a minor, and the on-disk format is stable
 expect_refused redis "9-alpine" "a redis major may rewrite the on-disk format of the message log"
 expect_allowed "dxflrs/garage" "v2.4.0"  # garage is tagged with a leading v
@@ -139,10 +149,10 @@ echo "the datastore arm is about an IMAGE, not about a name:"
 expect_allowed redis "1.7.0" cargo           # the client crate: it holds no data directory
 expect_allowed redis "9.0.0" cargo           # and a crate major is still the suite's business
 expect_refused redis "9-alpine" "the image still crosses a major that may rewrite the on-disk log" docker_compose
-expect_refused postgres "18-alpine" "this is the 2026-09-01 outage, and it arrived as a compose image" docker_compose
+expect_refused postgres "$((pg_major + 1))-alpine" "a major crossing arrives as a compose image, which is how the 2026-09-01 one did" docker_compose
 # FAILING CLOSED ON AN UNKNOWN ECOSYSTEM is what makes the argument safe to add: a caller that does
 # not know still gets today's behaviour, so only a caller that KNOWS can release the arm.
-expect_refused postgres "18-alpine" "an absent ecosystem must not be read as permission" ""
+expect_refused postgres "$((pg_major + 1))-alpine" "an absent ecosystem must not be read as permission" ""
 
 echo "the branch Dependabot pushed states its own ecosystem:"
 for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "fix/a-human-branch|"; do
