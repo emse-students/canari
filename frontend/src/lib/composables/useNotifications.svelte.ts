@@ -8,6 +8,11 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
+import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import {
+  postNativeMessageNotification,
+  type NativeMessageNotification,
+} from '$lib/utils/nativeNotification';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
@@ -637,7 +642,16 @@ export function useNotifications() {
     title: string,
     body: string,
     conversationId?: string,
-    mentionsMe = false
+    mentionsMe = false,
+    /**
+     * What the NATIVE builder needs, and only the inbound-message path can supply.
+     *
+     * On Android this is not decoration: it is the whole call. See `nativeNotification.ts` - the
+     * plugin below cannot draw a face, cannot offer a reply, and its tap opens the app onto
+     * nothing, so a second builder for the same event is what produced the doubled notification
+     * the user reported on 2026-09-18.
+     */
+    native?: NativeMessageNotification
   ) {
     if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
@@ -667,6 +681,28 @@ export function useNotifications() {
       return;
     }
     lastNotifAtByConv.set(convKey, now);
+    // ONE BUILDER ON ANDROID, AND IT IS THE RICH ONE. Checked before the plugin rather than
+    // inside it: the plugin path below is the WEB implementation, kept because web and desktop
+    // have nothing else, and running it here as well is what posted two notifications for one
+    // message. See `nativeNotification.ts` for the pair the user captured.
+    if (isAndroidTauriRuntime()) {
+      if (!native) {
+        // NO SECOND PATH. A call site that reaches Android with nothing for the native builder is
+        // a defect in that call site, and saying so is the only way it is ever found - falling
+        // back to the plain builder would restore exactly the shape this removed.
+        console.log(
+          `[NOTIF] Not raised for ${convKey} - Android has one builder and this call gave it nothing to build from.`
+        );
+        return;
+      }
+      const accepted = await postNativeMessageNotification(native);
+      console.log(
+        accepted
+          ? `[NOTIF] Raised for ${convKey} by the native builder${mentionsMe ? ` on ${CHANNEL_MENTIONS}` : ''}.`
+          : `[NOTIF] Not raised for ${convKey} - the native builder refused it; nothing else posts on Android.`
+      );
+      return;
+    }
 
     if (isTauriRuntime()) {
       try {
@@ -680,9 +716,14 @@ export function useNotifications() {
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
           if (mentionsMe) console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
-          // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION ON ANDROID, AND THE PLUGIN IS
-          // WHY - measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and
-          // landed on nothing.
+          // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION, AND THE PLUGIN IS WHY -
+          // measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and landed
+          // on nothing.
+          //
+          // ANDROID NO LONGER REACHES HERE: the branch above asks the native builder instead, which
+          // is the answer the last paragraph of this comment filed. What is left below is WEB and
+          // DESKTOP, where the plugin is the only builder there is - and desktop is a different
+          // implementation again (`desktop.rs`, notify-rust) that no session has measured.
           //
           // `tauri-plugin-notification` 2.3.3 puts THREE extras on the tap intent: the notification
           // id, the action id, and `notification.sourceJson`. On the way back,
@@ -696,16 +737,12 @@ export function useNotifications() {
           // callback - an unhandled rejection nothing logged, which is why a tap that did nothing
           // looked like a tap that did nothing on purpose. The guard makes the platform say so.
           //
-          // THE FIX IS NOT HERE. The Kotlin path carries identity properly - its tap is
-          // `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>`, a deep link the app already handles
-          // - and the plugin hardcodes `ACTION_MAIN` on the launcher activity with no way to pass a
-          // link. So the durable answer is for ONE builder to post every notification, natively,
-          // and for this call site to ask it rather than post its own. That is a new native command
-          // and it is filed as such; see docs/wiki/backlog.md.
-          //
-          // Kept rather than deleted because desktop is a different implementation (`desktop.rs`,
-          // notify-rust) and this session measured Android only. Deleting it would trade a known
-          // broken path for an unmeasured claim about another one.
+          // THE FIX WAS NOT HERE, AND IT SHIPPED ON 2026-09-18. The Kotlin path carries identity
+          // properly - its tap is `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>`, a deep link
+          // the app already handles - and the plugin hardcodes `ACTION_MAIN` on the launcher
+          // activity with no way to pass a link. So ONE builder posts every message notification
+          // natively and this call site asks it: `notifier_message_natif`, and
+          // `nativeNotification.ts` for the pair of notifications that removed.
           if (conversationId) {
             notifTargetsById.set(stableNotifId(conversationId), conversationId);
             armNotificationTapListener();

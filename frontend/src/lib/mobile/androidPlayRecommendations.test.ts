@@ -54,7 +54,10 @@ describe("Google Play's release recommendations, the actionable ones", () => {
     const decodes = fcm.match(/BitmapFactory\.decode\w+\([^\n]*/g) ?? [];
     expect(decodes.length).toBeGreaterThan(0);
     for (const call of decodes) expect(call).toMatch(/,\s*it\)/);
-    expect(fcm.match(/private fun decodeSampled\(/g)).toHaveLength(1);
+    // Matched WITHOUT its receiver: it became `Context.decodeSampled` on 2026-09-18, when the
+    // avatar chain moved into the companion object so a WebSocket frame could reach the one
+    // notification builder. What this counts is that there is still exactly ONE of it.
+    expect(fcm.match(/fun (Context\.)?decodeSampled\(/g)).toHaveLength(1);
   });
 
   it('sizes the notification icon from the platform, not from the source image', () => {

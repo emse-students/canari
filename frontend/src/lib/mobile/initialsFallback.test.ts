@@ -68,7 +68,12 @@ describe('the initials disc, across the three notification implementations', () 
     // Four paths per platform: a message, a reaction, a salon message, and since 2026-09-17 a
     // SOCIAL push - which had no picture at all until then. A fifth path added without a fallback
     // is the regression this counts - iOS showed nothing on the first three.
-    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(5); // 4 calls + the definition
+    //
+    // ANDROID HAS A FIFTH SINCE 2026-09-18, AND IT IS A TRIGGER RATHER THAN A PATH: a message that
+    // arrived over the WebSocket now asks the same builder a push does
+    // (`notifyMessageFromWebSocket`), so it fetches the same avatar and owes the same fallback.
+    // iOS has no such trigger - its WebView still posts through the plugin.
+    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(6); // 5 calls + the definition
     expect(swift.match(/attachInitials\(/g)).toHaveLength(5); // 4 calls + the definition
     // The ObjC trunk is the IN-APP path and serves the message AND the salon paths, so it has two
     // call sites, not three - and no social one: a social push in the foreground is a banner the
