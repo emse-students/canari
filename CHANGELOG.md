@@ -16,6 +16,13 @@ which is also where every release up to and including v0.13.1 now lives.
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
 le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
 voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
+### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
+
+La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
+decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
+compte, pas le temps.
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 
 Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
