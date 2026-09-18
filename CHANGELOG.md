@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.14] - 2026-09-18
+
 ### Added - un bouton "Nouveau formulaire" sur l'onglet Formulaires d'une association
 
 Redirige vers `/forms/create` avec l'association deja selectionnee et un retour vers ce meme
