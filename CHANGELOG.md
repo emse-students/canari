@@ -17,6 +17,16 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - le menu d'actions d'un post s'ouvrait sous le post suivant
+
+`PostCard` se souleve au survol (`hover:-translate-y-0.5`), et la carte sur laquelle un menu
+s'ouvre est justement celle sous le curseur : ouvrir le menu rendait donc sa PROPRE carte isolee
+dans son propre contexte d'empilement. `z-(--z-popover)` gagnait toujours a l'interieur de ce
+contexte, ce qui rendait le nombre juste a toute verification locale ; de l'exterieur, la carte
+reste `z-index: auto`, et le post suivant - plus loin dans le DOM, meme niveau - se peignait
+par-dessus toute la carte, menu compris. Le menu est desormais porte dans `<body>` et positionne
+contre son bouton, comme `UserAutocomplete` le fait deja.
+[design-reference](docs/wiki/frontend/design-reference.md#15-the-layer-ladder---twenty-rungs-and-the-two-inversions-that-paid-for-it).
 
 ### Fixed - une mention ou un abonnement revelait le vrai nom d'un post anonyme, dans l'onglet notifications
 

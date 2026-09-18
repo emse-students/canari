@@ -69,7 +69,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **a second Cloudflare Cache Rule, for `/api/users/*/avatar`** - the first one (2026-09-16) covers `/_app/immutable/*` only, so twenty-four faces still cross to Saint-Etienne on every cold load at 846-946 ms each. The origin already says `public, max-age=86400`; Cloudflare caches by EXTENSION and an API path has none, so only a rule lifts it | 1 rule in the dashboard | [P2 - twenty-four avatars cross the country](#p2---twenty-four-avatars-cross-the-country-on-every-cold-load-and-the-mls-init-waits-behind-them-measured-on-production-2026-09-16) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
-| Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
+| **Lydia's remaining Livrable A answers** (KYC document list, fee schedule, minimum payable amount, a "collecte" balance endpoint, rate limits, and who signs the `business/create` webhook / the `request/do` callback) - the homologation `provider_token`/`private_token` pair itself arrived 2026-09-18 and is in GitHub secrets, so this line no longer blocks Phase 0's credential bullet, only the rest of Livrable A | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
@@ -6598,11 +6598,18 @@ two flows that map cleanly onto it (one-off checkout, session lookup) with its o
 and specs, and the choice is a platform config column (`payment_provider`) that **defaults to
 `stripe`**. Stripe is what runs today and nothing about that is broken.
 
-What is missing is not code, which is why this is a question and not a P-anything: the **credentials**
-and the **answers Lydia owes**. Everything that does not map - live balance and status, saved payment
-methods - throws a documented error rather than faking a result, and that is deliberate: Lydia has no
-live status-poll endpoint, and the saved-card flow was **explicitly dropped by the user** rather than
-reimplemented, so every purchase becomes its own interactive request. Do not re-litigate that.
+What is missing is not code, which is why this is a question and not a P-anything: **the answers
+Lydia still owes** (Livrable A, below). **The homologation credentials themselves are no longer
+missing** - the `provider_token`/`private_token` pair arrived 2026-09-18 and is in GitHub secrets
+(`LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN`), so `serve-prod.yml` writes them into
+`core-service` on the next stable release exactly as it already does for Stripe's. **This does
+NOT flip anything live**: `platform_config.paymentProvider` still defaults to `stripe`, an
+admin-only switch at `/admin/platform` - the credentials merely make homologation testing
+possible once flipped, deliberately, by a human. Everything that does not map - live balance and
+status, saved payment methods - throws a documented error rather than faking a result, and that is
+deliberate: Lydia has no live status-poll endpoint, and the saved-card flow was **explicitly
+dropped by the user** rather than reimplemented, so every purchase becomes its own interactive
+request. Do not re-litigate that.
 
 The full provider mapping, the remaining open questions and the credentials still owed are in
 [`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
