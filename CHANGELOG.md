@@ -17,6 +17,7 @@ Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ec
 le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
 utilisent maintenant la constante partagee.
 [posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
+
 ### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
 
 La requete qui decide ce qu'une carte d'apercu AFFICHE partait au montage, donc un fil de liens
