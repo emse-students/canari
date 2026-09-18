@@ -2395,20 +2395,6 @@ this scope does NOT incur and the evidence for that, and the two defects the rep
 
 ## Security - blocked upstream
 
-### P3 - the two libcrux crates that ARE compiled are pinned by `openmls_rust_crypto 0.5.1`
-
-`libcrux-sha3` and `libcrux-secrets` reach this build through `hpke-rs`, and their advisories are
-the ones that survive. Both are pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is
-exact in Cargo semver - only a stable `openmls_rust_crypto 0.6.0` moves them. Each case is an entry
-in the crate's `.cargo/audit.toml` naming why it cannot be honoured and what lifts it, so
-`cargo audit` is green with none of them forgotten. A scheduled dependency upgrade, not a live
-defect.
-
-The rule the `libcrux-chacha20poly1305` measurement left - **a lockfile entry is not a
-dependency**, because `cargo audit` reads the lockfile while `cargo tree -i` reads what is actually
-compiled - is in [durable-rules](durable-rules.md). That alert is dismissed (user, 2026-08-31) and
-no Dependabot alert is open.
-
 ### P2 - no iOS build reaches a test device without shipping a pre-release, and the one artifact that exists refuses to install (measured 2026-09-07)
 
 **The `ios-release` artifact cannot be installed on any iPhone.** `.github/workflows/ios.yml` writes

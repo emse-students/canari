@@ -4,15 +4,6 @@
 
 [advisories]
 ignore = [
-  # The libcrux set, identical to frontend/mls-wasm and blocked by the same pin: sha3 and secrets
-  # are compiled through hpke-rs <- openmls_rust_crypto 0.5.1, chacha20poly1305 and aesgcm are in
-  # the lockfile without being built. Lifted by a stable openmls_rust_crypto 0.6.0.
-  "RUSTSEC-2026-0207",
-  "RUSTSEC-2026-0208",
-  "RUSTSEC-2026-0212",
-  "RUSTSEC-2026-0124",
-  "RUSTSEC-2026-0209",
-  "RUSTSEC-2026-0211",
   # quick-xml, both resolved versions, wants >=0.41.0: quadratic attribute checking, and unbounded
   # namespace allocation. Both are compiled, and neither is ours to move - 0.39.4 arrives through
   # plist <- tauri, 0.37.5 through tauri-winrt-notification <- notify-rust <-
