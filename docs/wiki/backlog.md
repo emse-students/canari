@@ -6956,26 +6956,6 @@ title survives, the join keeps working) or a denormalised `formTitle` on the sub
 time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
 which is why this is written down rather than done.
 
-### P2 - NOTHING DECLARES THE REDIS VERSION, AND THE TWO PLACES THAT NAME IT DISAGREED
-
-**Found 2026-08-31 while taking `ioredis` 6.** `infrastructure/docker-compose.prod.yml`,
-`docker-compose.dev.yml` and `infrastructure/local/docker-compose.yml` all say `image: redis:alpine`
-- a floating tag. `ci.yml` said `redis:7-alpine`. The box was measured and runs **8.8.0**, so the
-gate that proves a service can talk to Redis was proving it against a different major from the one
-it meets in production. **The CI half is fixed** (`redis:8-alpine`, with the reason in the file).
-
-**The production half is NOT, and it is deliberately the user's call.** This Redis is persisted and
-`history:{groupId}` is the ONLY shared copy of a conversation's messages - the per-device queue is
-deleted on ACK. Changing the image tag makes `docker compose up -d` recreate the container, so it is
-a restart of a store holding user data, which is a one-off action and not something to slip into a
-dependency commit.
-
-**What makes it worth doing anyway:** a floating tag on a persisted store means ANY deploy can pull
-a new Redis major under it, with nobody deciding and nothing recording that it happened. An RDB/AOF
-file is forward-compatible and not backward, so the jump is silent and the way back is not. Pinning
-to `redis:8-alpine` changes nothing about what is running today - it only removes the ability of a
-future `docker compose pull` to change it by itself.
-
 ### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
 
 **FOUND 2026-08-27, while measuring whether `oxvelte.config.json` could be deleted.** It cannot, on

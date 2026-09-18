@@ -475,14 +475,13 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        # 8, BECAUSE PRODUCTION RUNS 8.8.0 - measured on the box, not read off a tag. This was `7`
-        # while `infrastructure/docker-compose.prod.yml` said `redis:alpine`, so the gate proving a
-        # service can talk to Redis was proving it against a DIFFERENT MAJOR from the one it will
-        # meet. It mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default:
-        # a handshake exercised here against 7 says nothing certain about 8, and the reverse.
-        # The floating `redis:alpine` on the production side is the other half of this and is NOT
-        # fixed here - see docs/wiki/backlog.md, it restarts a Redis holding conversation history.
-        image: redis:8-alpine
+        # THE SAME DIGEST THE THREE COMPOSE FILES PIN, BECAUSE A GATE THAT PROVES A SERVICE CAN TALK
+        # TO REDIS PROVES NOTHING IF IT IS A DIFFERENT REDIS. This was `7` while every compose file
+        # said `redis:alpine`, so the handshake was exercised against a major production did not
+        # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
+        # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
+        # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
+        image: redis:8.10-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
         ports:
           - 6379:6379
         options: >-
