@@ -17,6 +17,13 @@ Huit textes visibles y etaient ecrits directement dans le composant (le champ de
 vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
 choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
 une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
+
+La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
+decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
+compte, pas le temps.
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 
 Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
