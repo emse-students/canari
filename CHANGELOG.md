@@ -19,6 +19,12 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
+
+Huit textes visibles y etaient ecrits directement dans le composant (le champ de saisie, le lien
+vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
+choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
+une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
 ### Fixed - coller un texte finissant par un retour a la ligne ajoutait trois caracteres parasites au message
 
 Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ecrit en mojibake :
