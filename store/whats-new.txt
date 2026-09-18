@@ -1,15 +1,7 @@
-version: 0.18.11
+version: 0.18.12
 
-Vos photos et vos vocaux restent ce qu'ils sont.
+Ajout d'un outil de recadrage pour les photos de groupes
 
-Une photo recue quand l'application etait ouverte reste une photo apres un redemarrage.
+On peut désormais voir qui a réagi dans un groupe
 
-Un vocal ne s'affiche plus parmi les fichiers partages.
-
-Un evenement propose se lit comme propose dans la liste, pas seulement dans le calendrier.
-
-Le panneau « Connexion en cours » ne laisse plus voir la conversation.
-
-Ouvrir un panneau ne renvoie plus la page tout en haut.
-
-Les parametres d'une communaute prennent tout l'ecran.
+Correction de divers bugs d'affichage
