@@ -19,6 +19,12 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+### Fixed - coller un texte finissant par un retour a la ligne ajoutait trois caracteres parasites au message
+
+Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ecrit en mojibake :
+le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
+utilisent maintenant la constante partagee.
+[posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
 ### Fixed - le selecteur d'emoji et une etiquette de l'editeur de carte ne passaient pas par les traductions
 
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
