@@ -81,6 +81,21 @@ export interface AddMessageToChatOptions {
   serverTimestamp?: number;
 }
 
+/**
+ * WHAT A BATCH OF MESSAGES IS - the one thing every caller of `batchAddMessages` knows and the
+ * notification decision inside it cannot see.
+ *
+ * `arrival`: these came over the wire now, for the first time. The reader has not been told.
+ * `restore`: these are an ARCHIVE being replayed into the store - a peer's history bundle. The
+ * reader has had them before, on this device or another, which is exactly why a peer still holds
+ * them to send.
+ *
+ * IT IS REQUIRED, DELIBERATELY. A default would have to pick one, and picking `arrival` is the
+ * defect this type exists to end: a history bundle raised an OS notification for a message the
+ * user had already dismissed, at every launch (`G2`, reported 2026-09-18).
+ */
+export type MessageBatchOrigin = 'arrival' | 'restore';
+
 export interface ChatMessage {
   id: string;
   senderId: string;

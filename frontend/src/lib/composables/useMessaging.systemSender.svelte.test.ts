@@ -99,7 +99,7 @@ describe('a bundle row from `system` is materialised as a system row', () => {
     const messaging = useMessaging();
     const { ctx, conversations } = makeContext();
 
-    await messaging.batchAddMessages([BUNDLE_NOTICE], CONVO, ctx);
+    await messaging.batchAddMessages([BUNDLE_NOTICE], CONVO, ctx, 'arrival');
 
     const [row] = rowsIn(conversations);
     expect(row.senderId).toBe('system');
@@ -142,7 +142,8 @@ describe('a bundle row from `system` is materialised as a system row', () => {
     await messaging.batchAddMessages(
       [{ senderId: 'peer-user', content: 'flagged by its writer', messageId: 'x', isSystem: true }],
       CONVO,
-      ctx
+      ctx,
+      'arrival'
     );
 
     expect(rowsIn(conversations)[0].isSystem).toBe(true);
@@ -155,7 +156,8 @@ describe('a bundle row from `system` is materialised as a system row', () => {
     await messaging.batchAddMessages(
       [{ senderId: 'peer-user', content: 'bonjour', messageId: 'm1' }],
       CONVO,
-      ctx
+      ctx,
+      'arrival'
     );
 
     expect(rowsIn(conversations)[0].isSystem).toBeFalsy();

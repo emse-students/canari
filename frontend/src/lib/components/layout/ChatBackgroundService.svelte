@@ -42,7 +42,7 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
-  import type { ChatMessage } from '$lib/types';
+  import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
@@ -698,8 +698,9 @@
         globalMessaging.endBulkMessageIngest(msgCtx(), phase),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
-        contactName: string
-      ) => globalMessaging.batchAddMessages(msgs, contactName, msgCtx()),
+        contactName: string,
+        origin: MessageBatchOrigin
+      ) => globalMessaging.batchAddMessages(msgs, contactName, msgCtx(), origin),
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       selectConversation: globalConvs.selectConversation,
       onChannelMemberJoined: (event: any) => {

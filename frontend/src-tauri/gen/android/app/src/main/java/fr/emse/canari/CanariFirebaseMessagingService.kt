@@ -504,6 +504,78 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
 
+        /**
+         * The messages this device has ALREADY ALERTED FOR, newest last, bounded.
+         *
+         * A DISMISSAL IS A DECISION AND IT HAS TO OUTLIVE THE PROCESS THAT TOOK IT. The shade is the
+         * only other record of what has been announced, and swiping a notification away erases it -
+         * after which a redelivery is indistinguishable from a first arrival. That is `G2`, reported
+         * 2026-09-18: *"une notification que j'ai ignoree se raffiche au lancement de l'app"*. The
+         * launch is what redelivers, because a push that the app was never awake to acknowledge is
+         * still queued, and the drain hands it back to this builder.
+         *
+         * SO IT IS A SET, NOT A WATERMARK. `sentAt` is the SENDER'S clock and nothing synchronises
+         * the senders in a group, so "newest instant already announced" would swallow a genuinely
+         * new message from anyone whose clock runs behind. The question being asked is "have I
+         * announced THIS message", and only a set answers it.
+         *
+         * IT IS THE SAME PREDICATE THE SHADE IS ASKED, deliberately: `sentAt` plus the body, exactly
+         * what [showMessageNotification] matches against `style.messages`. One rule, two stores - the
+         * live post while it is there, and this once it is gone.
+         */
+        private const val ALERTED_PREFS = "canari_alerted_messages"
+        private const val ALERTED_KEY = "keys"
+        private const val MAX_ALERTED_KEYS = 128
+        private val ALERTED_LOCK = Any()
+
+        /**
+         * Identifies one announced message, BY ITS SENDER'S INSTANT AND NOTHING ELSE.
+         *
+         * The body is deliberately not part of it, and that is the correction of a weakness the
+         * in-shade match below shipped with: the two triggers RENDER the same message differently.
+         * A push builds its text with `renderMentions` over the decrypted plaintext; the WebSocket
+         * frame builds its own with `getPreviewText`, which labels a media message, a poll and a
+         * bare link rather than quoting them. The two strings agree for plain prose and part company
+         * for everything else, so a key holding one could never match the other - exactly where a
+         * duplicate is most visible.
+         *
+         * `groupId` + the sender's `sentAt` is what both triggers carry unchanged. Two messages can
+         * only collide in one conversation within one millisecond, which one sender cannot do at all
+         * and two can only by coincidence; the cost of that coincidence is one notification not
+         * sounding, against a cross-language string equality that is wrong by construction.
+         *
+         * It also means no message text is written outside the encrypted database.
+         */
+        private fun alertedKey(notifKey: String, sentAt: Long): String = "$notifKey:$sentAt"
+
+        /** Whether this exact message has already raised a notification on this device. */
+        private fun Context.hasAlreadyAlerted(key: String): Boolean = synchronized(ALERTED_LOCK) {
+            getSharedPreferences(ALERTED_PREFS, Context.MODE_PRIVATE)
+                .getString(ALERTED_KEY, "")
+                .orEmpty()
+                .splitToSequence('\n')
+                .any { it == key }
+        }
+
+        /**
+         * Records that this message has been announced, bounded to the newest [MAX_ALERTED_KEYS].
+         *
+         * `commit()` rather than `apply()`, for the reason the whole record exists: the case it
+         * serves is the app being killed between the notification and the next launch, and an
+         * `apply()` still in flight at that moment is an announcement nothing remembers.
+         */
+        private fun Context.rememberAlerted(key: String) = synchronized(ALERTED_LOCK) {
+            val prefs = getSharedPreferences(ALERTED_PREFS, Context.MODE_PRIVATE)
+            val kept = prefs.getString(ALERTED_KEY, "")
+                .orEmpty()
+                .splitToSequence('\n')
+                .filter { it.isNotEmpty() && it != key }
+                .toMutableList()
+            kept.add(key)
+            while (kept.size > MAX_ALERTED_KEYS) kept.removeAt(0)
+            prefs.edit().putString(ALERTED_KEY, kept.joinToString("\n")).commit()
+        }
+
         internal fun getStableNotifId(context: Context, groupId: String): Int =
             synchronized(NOTIF_ID_LOCK) {
                 val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
@@ -1573,7 +1645,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // payload has no timestamp field at all, so a salon message that arrives BOTH ways can
             // still show its line twice. The notification is still single - the id is shared - and
             // the missing field is where that half belongs; see docs/wiki/backlog.md.
-            val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp && it.text == body }
+            //
+            // THE INSTANT ALONE, NOT THE INSTANT AND THE TEXT. This used to compare the body too,
+            // which quietly required the two triggers to RENDER a message identically - and they do
+            // not: see [alertedKey]. Any message that is not plain prose failed the match and was
+            // added a second time.
+            val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
             val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
             if (mediaUri != null && mediaMime != null) {
                 newMessage.setData(mediaMime, mediaUri)
@@ -1582,6 +1659,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
             } else {
                 style.addMessage(newMessage)
+            }
+
+            // AND IF IT IS NOT IN THE SHADE, IT MAY STILL HAVE BEEN ANNOUNCED - see [ALERTED_PREFS].
+            // The shade answers "is it still showing", which is a strictly weaker question than "has
+            // the user been told": a swipe, and `MainActivity.onResume`'s cancel-all, both erase the
+            // first answer while leaving the second true. Posting again is not a duplicate of
+            // something visible, it is a second announcement of something the user already dismissed.
+            //
+            // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
+            // and for the same reason: a reaction and a salon push both reach here with `sentAt = 0`,
+            // no message of theirs can be identified, and this must never guess.
+            val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
+            if (alertedKey != null && !alreadyPosted && hasAlreadyAlerted(alertedKey)) {
+                Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                return
             }
 
             // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
@@ -1630,6 +1722,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
             manager.notify(notifId, notif)
+
+            // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
+            // announcement that never reached the shade - the record would then suppress the retry.
+            alertedKey?.let { rememberAlerted(it) }
 
             // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
             // conversation's notification is active.

@@ -256,7 +256,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 10. **UX/RENDERING - THE ROUTE SWEEP IS DONE; WHAT IS OPEN IS REAL HARDWARE (all of it Chrome with
     an override), the channel list's width, and the ELEVEN USER REPORTS OF 2026-09-18 (`G1`-`G11`)
-    minus the two builders, now one: a replayed dismissal, back with no home behind it, reactions** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
+    minus THREE shipped and owed hardware: back-navigation, the composer band, reactions, files** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
 11. **COLD START - TARGET UNDER 1 s (user); `v0.18.5`'s 13 s is DEAD.** Three hypotheses refuted,
     two O(pool) passes and one IPC marshalling of the whole snapshot shipped; **82.7% of post-login
     is ONE native call and the next question is INSIDE Rust** ([backlog](docs/wiki/backlog.md)).

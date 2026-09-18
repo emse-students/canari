@@ -1,6 +1,11 @@
 import type { IMlsService } from '../IMlsService';
 import type { IStorage } from '$lib/db';
-import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  Conversation,
+  MessageBatchOrigin,
+  MessageReaction,
+} from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 
 /**
@@ -28,7 +33,8 @@ export interface MessageHandlerDeps {
   ) => Promise<void>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
-    contactName: string
+    contactName: string,
+    origin: MessageBatchOrigin
   ) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
   onChannelMemberJoined?: (event: {

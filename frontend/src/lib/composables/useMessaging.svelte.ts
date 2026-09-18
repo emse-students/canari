@@ -50,7 +50,7 @@ import {
   notificationGroupName,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { MediaService } from '$lib/media';
@@ -59,6 +59,7 @@ import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
   ChatMessage,
+  MessageBatchOrigin,
   MessageReaction,
   Conversation,
 } from '$lib/types';
@@ -281,7 +282,10 @@ export function useMessaging() {
         bulkIngestBuffer.clear();
         for (const [contactName, messages] of entries) {
           if (messages.length > 0) {
-            await batchAddMessages(messages, contactName, ctx);
+            // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
+            // running - they are new to the reader, and until 2026-09-05 this path told nobody
+            // (TAB-1). The restore case is the OTHER caller, in `systemMessageHandler`.
+            await batchAddMessages(messages, contactName, ctx, 'arrival');
             await yieldToMainThread();
           }
         }
@@ -440,7 +444,7 @@ export function useMessaging() {
     // it did not exist, so which switches applied to a mention depended on which transport
     // happened to carry it (NOTIF-16).
     const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
-    const senderName = getUserDisplayNameSync(senderId, convo.name);
+    const senderName = notificationSenderName(senderId, convo);
     const notificationBody = preview || m.notif_new_message();
     void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
       // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
@@ -720,7 +724,8 @@ export function useMessaging() {
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    origin: MessageBatchOrigin
   ) {
     if (messages.length === 0) return;
     const normalized = contactName.toLowerCase();
@@ -879,7 +884,21 @@ export function useMessaging() {
         `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${document.visibilityState}, none of them an inbound message - nothing to raise.`
       );
     }
-    if (lastInbound) {
+    // AND ONLY AN ARRIVAL IS NEWS. `brandNew` means "not already in the in-memory map", which on a
+    // cold start is EVERY message a peer sends back - the map is being filled for the first time.
+    // So the history bundle that repairs a device (`[HISTORY_BUNDLE]`, `systemMessageHandler`) came
+    // through here at every launch and raised a notification for its last message: the one the user
+    // had already read the notification for, and dismissed. That is `G2` in the user's words -
+    // "une notification que j'ai ignoree se raffiche au lancement de l'app" - and the timing said
+    // so, because a dismissal only survives until the next launch.
+    //
+    // The fix is not a clock and not a ledger: the caller KNOWS which of the two it is handing over,
+    // and used to throw that away at the door. A restore is silent here, always, on every platform.
+    if (lastInbound && origin === 'restore') {
+      console.log(
+        `[NOTIF] Batch into "${normalized}" restored ${brandNew.length} message(s) from an archive - a replay is not an arrival, nothing raised.`
+      );
+    } else if (lastInbound) {
       notifyInbound(
         ctx,
         normalized,
