@@ -16,7 +16,7 @@
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
-  import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import { m } from '$lib/paraglide/messages';
   import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -350,7 +350,7 @@
           <p class="text-text-muted text-xs">{m.admin_cercle_amount_hint()}</p>
           <!-- A 5 EUR recharge credits the member 5 EUR but pays the association less: the Cercle's
                treasury has to know the gap before setting the bounds. -->
-          <StripeNetPayoutHint grossEuros="" {minEuros} {maxEuros} />
+          <PayoutFeeHint grossEuros="" {minEuros} {maxEuros} />
 
           <div class="space-y-1">
             <label for="cercle-webhook-url" class="text-text-muted text-xs font-semibold"

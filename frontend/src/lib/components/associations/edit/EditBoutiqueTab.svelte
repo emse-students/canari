@@ -13,7 +13,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Plus, Trash2, ChevronDown, ShoppingBag } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
-  import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
@@ -412,7 +412,7 @@
         </div>
       {/if}
 
-      <StripeNetPayoutHint
+      <PayoutFeeHint
         grossEuros={newProductAmountCents}
         minEuros={newProductAllowCustom ? newProductMinCents : ''}
         maxEuros={newProductAllowCustom ? newProductMaxCents : ''}
