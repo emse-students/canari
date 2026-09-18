@@ -19,6 +19,7 @@
   import { ArrowUpRight, Images } from '@lucide/svelte';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
   import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
+  import { nearViewport } from '$lib/actions/nearViewport';
 
   interface ExternalPreviewPayload {
     url: string;
@@ -48,6 +49,18 @@
     squareCoverUrl?: string | null;
     /** When true, removes the top margin (card alone in the bubble). */
     standalone?: boolean;
+    /**
+     * Called once this card comes near the viewport, so the OWNER can start its fetch then rather
+     * than on render.
+     *
+     * It lives here rather than in `LinkPreviewCard` because that component renders EITHER this
+     * component or its own anchor, and an action cannot be applied to a component. Wrapping this
+     * one in an observable box was the alternative, and a wrapper with `display: contents` - the
+     * only layout-neutral wrapper there is - generates no box for an `IntersectionObserver` to
+     * watch. Both branches carry the action on their own root `<a>` instead, which changes no
+     * layout at all.
+     */
+    onnear?: () => void;
   }
 
   let {
@@ -58,6 +71,7 @@
     fallbackTitle,
     squareCoverUrl = null,
     standalone = false,
+    onnear,
   }: Props = $props();
 
   /**
@@ -77,6 +91,7 @@
   href={url}
   target="_blank"
   rel="noopener noreferrer"
+  use:nearViewport={{ onnear: () => onnear?.() }}
   class="group relative isolate overflow-hidden {standalone
     ? ''
     : 'mt-3'} flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 p-3 pr-2.5 transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:border-white/10 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 dark:hover:shadow-amber-400/5"

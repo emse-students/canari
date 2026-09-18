@@ -15,6 +15,8 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
+  import { nearViewport } from '$lib/actions/nearViewport';
+  import { Log } from '$lib/utils/Log';
   import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
@@ -72,8 +74,30 @@
   let externalPreview = $state<ExternalPreviewPayload | null>(null);
   let isLoading = $state(false);
 
+  /**
+   * Whether this card has come near enough to the viewport to be worth a request.
+   *
+   * THE METADATA FETCH USED TO FIRE ON RENDER, for every card the page mounted. A feed of a dozen
+   * link posts therefore opened a dozen `/api/mls/link-preview` requests during the cold start, all
+   * of them for cards below the fold, competing with the boot for the same connection. The `<img>`
+   * beside them was already deferred by `loading="lazy"`; this gives the request that decides what
+   * the card SAYS the same rule the browser applies to the picture.
+   */
+  let isNear = $state(false);
+
+  /**
+   * A card that has not asked yet looks exactly like a card that is waiting for an answer, and that
+   * is deliberate: both are "no answer yet". Without it, an above-the-fold card would paint its
+   * empty fallback for the one frame between layout and the observer's first callback, then flip
+   * into the skeleton - a flash saying "nothing here" about a card that is about to be filled.
+   */
+  const isPending = $derived(!isNear || isLoading);
+
   $effect(() => {
     const targetUrl = url;
+    // Reading `isNear` here is what subscribes this effect to it: the fetch starts on the edge
+    // from not-near to near, and on a changed `url`, and on nothing else.
+    if (!isNear) return;
     let cancelled = false;
 
     async function load() {
@@ -101,8 +125,11 @@
           const data = (await res.json()) as ExternalPreviewPayload;
           if (!cancelled) externalPreview = data;
         }
-      } catch {
-        // Fallback UI only
+      } catch (error) {
+        // A preview that fails degrades to the bare host, which is a perfectly good card - but the
+        // failure itself must not be silent. This is the only trace a lost preview leaves, and a
+        // rate is the only way to tell one dead site from a proxy that has stopped answering.
+        Log.d('LINK_PREVIEW', error instanceof Error ? error : new Error(String(error)));
       } finally {
         if (!cancelled) isLoading = false;
       }
@@ -239,9 +266,10 @@
 
 {#if coverCard}
   <EcosystemCoverPreview
+    onnear={() => (isNear = true)}
     url={parsed.href}
     preview={externalPreview}
-    {isLoading}
+    isLoading={isPending}
     siteLabel={ecosystemSite?.label ?? parsed.host}
     fallbackTitle={coverCard.fallbackTitle()}
     {squareCoverUrl}
@@ -249,6 +277,7 @@
   />
 {:else}
   <a
+    use:nearViewport={{ onnear: () => (isNear = true) }}
     onclick={handleClick}
     href={isInApp ? (inAppPath ?? '#') : parsed.href}
     target={isInApp ? undefined : '_blank'}
@@ -260,13 +289,13 @@
       : ''}"
   >
     {#if isInApp}
-      <CanariLinkPreviewMedia preview={canariPreview} loading={isLoading} />
+      <CanariLinkPreviewMedia preview={canariPreview} loading={isPending} />
     {:else}
       <div
         class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
  {previewImageUrl ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
       >
-        {#if isLoading}
+        {#if isPending}
           <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
         {:else if previewImageUrl}
           <img src={previewImageUrl} alt="" class="h-full w-full object-cover" loading="lazy" />
@@ -303,7 +332,7 @@
         {cardTitle}
       </p>
 
-      {#if isLoading && isInApp}
+      {#if isPending && isInApp}
         <div
           class="mt-1 h-3 w-4/5 max-w-[14rem] animate-pulse rounded bg-black/6 dark:bg-white/8"
         ></div>

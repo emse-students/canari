@@ -295,6 +295,36 @@ action is about to MOVE runs against a position that is about to stop being true
 that depends on where the node is - measuring it, scrolling to it, reading its containing block -
 reads the wrong answer, and reads it silently.
 
+### A request fired from an effect on render is a request for every card the page mounts
+
+`loading="lazy"` defers the IMAGE in a card and does nothing at all for the request that decides
+what the card SAYS. `LinkPreviewCard` asked `/api/mls/link-preview` from an `$effect` that ran on
+mount, so a feed of link posts opened one request per card during the cold start - all of them for
+cards below the fold, competing with the boot for the same connection.
+
+`actions/nearViewport.ts` is the primitive: one `IntersectionObserver`, `rootMargin: 400px` by
+default, calling back ONCE and disconnecting itself. The component holds an `isNear` flag, the effect
+reads it and returns early while it is false, and the pending UI is `!isNear || isLoading` - a card
+that has not asked yet and a card waiting for an answer are the same state, so nothing flashes
+"nothing here" about a card that is about to be filled.
+
+**Two things about it are deliberate and read wrong at a glance.** It fires immediately where
+`IntersectionObserver` is undefined, which is a CAPABILITY CHECK and not a fallback path: no primary
+path failed, the environment simply cannot answer, and the answer that preserves the old behaviour
+is "yes". And `rootMargin` is a DISTANCE, not a delay - it decides how far ahead the work happens,
+never whether it happens, so a wrong number costs a little early traffic or a little late paint and
+never a wrong answer.
+
+**An action cannot be applied to a component**, which is what decides where the call site sits when
+a component renders one of two shapes. `LinkPreviewCard` renders either its own `<a>` or
+`EcosystemCoverPreview`; a layout-neutral wrapper was the obvious alternative and is impossible,
+because `display: contents` generates no box and an element with no box is never observed. Both
+branches carry the action on their own root `<a>` instead, the second through an `onnear` prop.
+
+*This is not the deferral that was rejected on [backlog](../backlog.md).* That one gated the whole
+feed's ~45 requests at the SvelteKit route `load`, which changes the web client for every reader;
+this gates one card's own request from inside that card, and a card nobody scrolls to never asks.
+
 ### An API helper that ends in `res.json()` throws on a void response
 
 A `DELETE` or a void `POST` answers `204`, or `200` with an empty body - and `res.json()` on an
