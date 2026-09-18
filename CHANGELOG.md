@@ -17,6 +17,7 @@ Huit textes visibles y etaient ecrits directement dans le composant (le champ de
 vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
 choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
 une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+
 ### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
 
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
