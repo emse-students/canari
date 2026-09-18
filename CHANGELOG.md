@@ -19,6 +19,13 @@ flottaison. Elle attend maintenant que la carte approche de l'ecran, comme le na
 deja pour l'image a cote. Au passage, l'echec d'un apercu - jusqu'ici avale sans un mot - est
 journalise : c'est la seule trace qu'un apercu perdu laisse.
 [architecture](docs/wiki/frontend/architecture.md#a-request-fired-from-an-effect-on-render-is-a-request-for-every-card-the-page-mounts).
+### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
+
+Le corps est du Markdown : le serialiseur traverse tout ce qui n'est pas du texte, donc l'image
+etait perdue en silence - et venue d'un autre onglet (Messenger), elle declenchait en plus une
+erreur de securite. Le glisser-deposer et le collage ajoutent maintenant le fichier aux medias du
+post, comme le bouton Medias, et le corps ne recoit plus que du texte.
+[posts](docs/wiki/frontend/modules/posts.md#a-body-made-of-markdown-cannot-hold-an-image-so-nothing-but-text-is-ever-put-in-it).
 
 ### Fixed - le menu d'actions d'un post s'ouvrait sous le post suivant
 
