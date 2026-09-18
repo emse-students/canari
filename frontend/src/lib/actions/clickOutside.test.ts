@@ -149,4 +149,93 @@ describe('clickOutside', () => {
     expect(closed).toBe(1);
     action.destroy();
   });
+  /**
+   * THE OPENER IS NOT OUTSIDE, and the case is a panel opened by HOVER rather than by a click.
+   *
+   * One touch produces `mouseenter` and then `click` on the same node, so without this the tap that
+   * opens such a panel is itself an outside click - and whether it closes the panel depends on
+   * whether the panel had rendered in between. A control whose behaviour depends on a frame is what
+   * `ignore` exists to prevent, so these assert the guard, never a timing.
+   */
+  describe('ignore - the element that opened the panel', () => {
+    function withOpener() {
+      const panel = document.createElement('div');
+      const opener = document.createElement('button');
+      const openerChild = document.createElement('span');
+      const outside = document.createElement('div');
+      opener.appendChild(openerChild);
+      document.body.append(panel, opener, outside);
+
+      let closed = 0;
+      const action = clickOutside(panel, {
+        enabled: true,
+        callback: () => {
+          closed += 1;
+        },
+        ignore: () => opener,
+      });
+      return { panel, opener, openerChild, outside, action, closed: () => closed };
+    }
+
+    const click = (node: Node) =>
+      node.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
+
+    it('stays silent for a click on the opener', () => {
+      const t = withOpener();
+      click(t.opener);
+      expect(t.closed()).toBe(0);
+      t.action.destroy();
+    });
+
+    it('stays silent for a click INSIDE the opener, which is where a tap actually lands', () => {
+      const t = withOpener();
+      click(t.openerChild);
+      expect(t.closed()).toBe(0);
+      t.action.destroy();
+    });
+
+    it('still fires everywhere else, so the panel is not left undismissable', () => {
+      const t = withOpener();
+      click(t.outside);
+      expect(t.closed()).toBe(1);
+      t.action.destroy();
+    });
+
+    it('reads the opener through the accessor, so a panel that changes badge is still guarded', () => {
+      const panel = document.createElement('div');
+      const first = document.createElement('button');
+      const second = document.createElement('button');
+      document.body.append(panel, first, second);
+
+      let current: HTMLElement = first;
+      let closed = 0;
+      const action = clickOutside(panel, {
+        enabled: true,
+        callback: () => {
+          closed += 1;
+        },
+        ignore: () => current,
+      });
+
+      current = second;
+      click(second);
+      expect(closed).toBe(0);
+      click(first);
+      expect(closed).toBe(1);
+      action.destroy();
+    });
+
+    it('is optional - the plain callback form guards nothing but the element', () => {
+      const panel = document.createElement('div');
+      const opener = document.createElement('button');
+      document.body.append(panel, opener);
+      let closed = 0;
+      const action = clickOutside(panel, () => {
+        closed += 1;
+      });
+      click(opener);
+      expect(closed).toBe(1);
+      action.destroy();
+    });
+  });
 });
