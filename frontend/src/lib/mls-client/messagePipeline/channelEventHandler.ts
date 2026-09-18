@@ -257,7 +257,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const groupId = String(data.groupId || '');
     const currentEpoch = Number(data.currentEpoch || 0);
     log(
-      `[EPOCH] Commit rejeté pour groupe ${groupId.slice(0, 8)}… (epoch serveur: ${currentEpoch}) - re-add`
+      `[EPOCH] Commit rejected for group ${groupId.slice(0, 8)}… (server epoch: ${currentEpoch}) - re-add`
     );
     if (groupId) await onOutOfSync(groupId);
     return;

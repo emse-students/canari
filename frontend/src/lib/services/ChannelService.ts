@@ -310,7 +310,7 @@ export class ChannelService {
         throw new ChannelApiError(
           res.status,
           null,
-          `API Error ${res.status}: Le service est injoignable (Bad Gateway). Veuillez réessayer plus tard.`
+          `API Error ${res.status}: nginx answered HTML, so the service itself is unreachable`
         );
       }
       throw new ChannelApiError(res.status, readErrorCode(text), text || `API Error ${res.status}`);
