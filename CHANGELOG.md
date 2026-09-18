@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.13] - 2026-09-18
+
 ### Removed - six avis de securite etaient encore mis sous silence alors que la condition qui les levait est remplie
 
 `openmls_rust_crypto` est passe en 0.6.0, ce qui etait exactement la condition inscrite dans les deux
