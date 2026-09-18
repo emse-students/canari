@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
+
+Le corps est du Markdown : le serialiseur traverse tout ce qui n'est pas du texte, donc l'image
+etait perdue en silence - et venue d'un autre onglet (Messenger), elle declenchait en plus une
+erreur de securite. Le glisser-deposer et le collage ajoutent maintenant le fichier aux medias du
+post, comme le bouton Medias, et le corps ne recoit plus que du texte.
+[posts](docs/wiki/frontend/modules/posts.md#a-body-made-of-markdown-cannot-hold-an-image-so-nothing-but-text-is-ever-put-in-it).
+
 ### Fixed - le menu d'actions d'un post s'ouvrait sous le post suivant
 
 `PostCard` se souleve au survol (`hover:-translate-y-0.5`), et la carte sur laquelle un menu

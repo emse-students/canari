@@ -96,6 +96,41 @@ viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or ever
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
 carry the three too, or saving an edit removes the control that started it.
 
+## A body made of Markdown cannot hold an image, so nothing but text is ever put in it
+
+`MentionComposerInput` is the ONE `contenteditable` in this repository - the post composer, the post
+editor, the comment box and the chat composer all mount it - and until 2026-09-18 it left paste and
+drop to the browser. The browser's default for a `contenteditable` is to insert the clipboard's
+`text/html`, so an image dropped into a post body rendered on screen, and
+`serializeMentionEditor` - which keeps text, `<br>`, block boundaries and mention chips, and walks
+THROUGH everything else - dropped it silently on save. The reader was shown something the document
+could not hold, and found out by publishing (user, 2026-09-18: *"ce qui n'est evidemment pas
+sauvegarde ... du coup ca ne devrait meme pas etre possible"*).
+
+**Across an origin it is worse than a disappointment.** Copying a picture out of a Messenger tab
+puts no file on the clipboard at all - only `text/html` naming `blob:https://www.messenger.com/...`,
+which only the page that created it may read. Inserting that markup made the browser refuse the
+load with a security error the reader could do nothing about.
+
+**The rule is now one sentence, and it lives on the editor rather than on each of its five
+callers**: the default is refused unconditionally, files go to `onmedia`, and everything else is
+inserted as `text/plain`.
+
+| what arrives | where it goes |
+| --- | --- |
+| a dropped or pasted FILE | `onmedia(files)` - the caller's attachment list, exactly where its own media button delivers |
+| rich text | its `text/plain`, so the words survive and the styling a Markdown body cannot represent does not |
+| foreign markup with no file (the Messenger case) | nowhere, and a log line saying so - there is no file to rescue |
+
+`onmedia` is optional: a composer with no attachments (a comment box) still gets the refusal, which
+is the honest outcome. `filesFromTransfer` in `$lib/utils/composerTransfer.ts` is what reads the
+payload, and it reads `files` AND `items` because the two disagree - a drop fills the first, a
+pasted screenshot only the second. `ChatComposer` had one collector for each event, each correct
+only for its own; both are gone.
+
+`MentionComposerInput.transfer.svelte.test.ts` pins the properties on the editor's own DOM rather
+than through the serialiser, because the defect was visible on screen before anything was saved.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes
