@@ -862,7 +862,7 @@
 
                 <div class="border-cn-border space-y-1.5 border-t pt-2">
                   <span class="text-text-muted block text-xs font-semibold"
-                    >Membres affichés (Max 7)</span
+                    >{m.carte_members_shown_label()}</span
                   >
                   <div class="space-y-1">
                     {#if selectedContent}

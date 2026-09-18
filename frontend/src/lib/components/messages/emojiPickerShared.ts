@@ -1,8 +1,9 @@
+import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import enI18n from 'emoji-picker-element/i18n/en';
 
 /**
- * The library's own English strings, used as the BASE both locale overrides are spread onto.
+ * The library's own English strings, used as the BASE the translated overrides are spread onto.
  *
  * THIS EXISTS BECAUSE ONE MISSING KEY CRASHED THE PICKER, in production, on every reaction.
  * `emoji-picker-element` runs `state.i18n.skinToneLabel.replace('{skinTone}', ...)` inside one of
@@ -22,68 +23,54 @@ import enI18n from 'emoji-picker-element/i18n/en';
 const EMOJI_PICKER_BASE_I18N = enI18n;
 
 /**
- * French UI strings for emoji-picker-element. The `locale` attribute alone does NOT
- * translate the interface (only the data-source provides localized search keywords),
- * so the `i18n` property must be set explicitly - otherwise the search box reads "Search".
+ * The picker's own interface strings, for whichever locale is live.
+ *
+ * `emoji-picker-element` translates NOTHING from its `locale` attribute - that attribute only picks
+ * the data source's search keywords - so the `i18n` property has to be set explicitly or the search
+ * box reads "Search" in French. Until 2026-09-18 that was two hand-written objects and a
+ * `getLocale()` branch, which is Paraglide's job done twice by hand: a key added to one table and
+ * forgotten in the other was silent, and the same class of omission is what cost the picker a
+ * production crash (see above).
+ *
+ * It is a FUNCTION rather than a constant because `m.*()` reads the locale at CALL time; a
+ * module-level object would freeze whichever locale happened to be live at import.
  */
-export const EMOJI_PICKER_FR_I18N = {
-  ...EMOJI_PICKER_BASE_I18N,
-  categoriesLabel: 'Catégories',
-  emojiUnsupportedMessage: 'Votre navigateur ne supporte pas les emojis en couleur.',
-  favoritesLabel: 'Favoris',
-  loadingMessage: 'Chargement…',
-  networkErrorMessage: 'Impossible de charger les emojis.',
-  regionLabel: "Sélecteur d'emoji",
-  searchDescription:
-    'Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.',
-  searchLabel: 'Recherche',
-  searchResultsLabel: 'Résultats de recherche',
-  skinToneDescription:
-    'Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.',
-  skinTonesLabel: 'Tons de peau',
-  skinTones: ['Défaut', 'Clair', 'Moyen-clair', 'Moyen', 'Moyen-foncé', 'Foncé'],
-  categories: {
-    custom: 'Personnalisé',
-    'smileys-emotion': 'Smileys et émotions',
-    'people-body': 'Personnes et corps',
-    'animals-nature': 'Animaux et nature',
-    'food-drink': 'Nourriture et boissons',
-    'travel-places': 'Voyages et lieux',
-    activities: 'Activités',
-    objects: 'Objets',
-    symbols: 'Symboles',
-    flags: 'Drapeaux',
-  },
-};
-
-export const EMOJI_PICKER_EN_I18N = {
-  ...EMOJI_PICKER_BASE_I18N,
-  categoriesLabel: 'Categories',
-  emojiUnsupportedMessage: 'Your browser does not support color emoji.',
-  favoritesLabel: 'Favorites',
-  loadingMessage: 'Loading…',
-  networkErrorMessage: 'Could not load emoji.',
-  regionLabel: 'Emoji picker',
-  searchDescription:
-    'When search results are available, press up or down to select and enter to choose.',
-  searchLabel: 'Search',
-  searchResultsLabel: 'Search results',
-  skinToneDescription: 'When expanded, press up or down to select and enter to choose.',
-  skinTonesLabel: 'Skin tones',
-  skinTones: ['Default', 'Light', 'Medium-Light', 'Medium', 'Medium-Dark', 'Dark'],
-  categories: {
-    custom: 'Custom',
-    'smileys-emotion': 'Smileys & Emotion',
-    'people-body': 'People & Body',
-    'animals-nature': 'Animals & Nature',
-    'food-drink': 'Food & Drink',
-    'travel-places': 'Travel & Places',
-    activities: 'Activities',
-    objects: 'Objects',
-    symbols: 'Symbols',
-    flags: 'Flags',
-  },
-};
+export function emojiPickerI18n() {
+  return {
+    ...EMOJI_PICKER_BASE_I18N,
+    categoriesLabel: m.emoji_picker_categories_label(),
+    emojiUnsupportedMessage: m.emoji_picker_unsupported_message(),
+    favoritesLabel: m.emoji_picker_favorites_label(),
+    loadingMessage: m.emoji_picker_loading_message(),
+    networkErrorMessage: m.emoji_picker_network_error_message(),
+    regionLabel: m.emoji_picker_region_label(),
+    searchDescription: m.emoji_picker_search_description(),
+    searchLabel: m.emoji_picker_search_label(),
+    searchResultsLabel: m.emoji_picker_search_results_label(),
+    skinToneDescription: m.emoji_picker_skin_tone_description(),
+    skinTonesLabel: m.emoji_picker_skin_tones_label(),
+    skinTones: [
+      m.emoji_picker_skin_tone_default(),
+      m.emoji_picker_skin_tone_light(),
+      m.emoji_picker_skin_tone_medium_light(),
+      m.emoji_picker_skin_tone_medium(),
+      m.emoji_picker_skin_tone_medium_dark(),
+      m.emoji_picker_skin_tone_dark(),
+    ],
+    categories: {
+      custom: m.emoji_picker_category_custom(),
+      'smileys-emotion': m.emoji_picker_category_smileys_emotion(),
+      'people-body': m.emoji_picker_category_people_body(),
+      'animals-nature': m.emoji_picker_category_animals_nature(),
+      'food-drink': m.emoji_picker_category_food_drink(),
+      'travel-places': m.emoji_picker_category_travel_places(),
+      activities: m.emoji_picker_category_activities(),
+      objects: m.emoji_picker_category_objects(),
+      symbols: m.emoji_picker_category_symbols(),
+      flags: m.emoji_picker_category_flags(),
+    },
+  };
+}
 
 /** The self-hosted emojibase dataset for the current locale - never `undefined` (see git history: an
  * absent attribute was an outbound call to a third-party CDN on every picker open). */
@@ -107,8 +94,7 @@ export function attachEmojiPicker(
   node: HTMLElement,
   onEmoji: (emoji: string, shiftKey: boolean) => void
 ) {
-  const i18n = getLocale() === 'en' ? EMOJI_PICKER_EN_I18N : EMOJI_PICKER_FR_I18N;
-  (node as unknown as { i18n: typeof EMOJI_PICKER_FR_I18N }).i18n = i18n;
+  (node as unknown as { i18n: ReturnType<typeof emojiPickerI18n> }).i18n = emojiPickerI18n();
 
   let lastClickShiftKey = false;
   const handleCapturedClick = (event: Event) => {
