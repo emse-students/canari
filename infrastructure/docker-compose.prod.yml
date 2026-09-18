@@ -79,9 +79,20 @@ services:
     #
     # No gate in this repository can see that failure: `make run-ci`, `boot-nest-apps` and every
     # compose stack create their cluster from an EMPTY volume, which is the one case that always
-    # works. `postgres` is therefore refused by name in `.github/scripts/lib/ceiling.sh`, and the
-    # upgrade to 18 is a planned migration with its own procedure - see `docs/wiki/backlog.md`.
-    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+    # works. `postgres` is therefore still refused by name in `.github/scripts/lib/ceiling.sh`, and
+    # that refusal STAYS after this change: what made 18 safe here was a procedure and a window, not
+    # a green suite, and the next major will need both again.
+    #
+    # **18 IS REACHED BY A LOGICAL DUMP AND RESTORE ONTO A NEW VOLUME, NOT BY RETAGGING THIS LINE.**
+    # The tag and the mount move in ONE commit because they have to: pointing `postgres_data` at
+    # `/var/lib/postgresql` while the image is still 15 hands the 15 entrypoint an empty directory
+    # and it initialises a new cluster over the estate. Rehearsed on production's own bytes on
+    # 2026-09-15 and again on 2026-09-18 before the window - 53 of 53 tables row-identical, 160
+    # indexes, every constraint class, four extensions and an identical sort-order fingerprint (both
+    # images are Alpine, so both clusters are musl and the collation does not move under the
+    # indexes). The procedure, its numbers and its rollback are in
+    # `docs/wiki/infrastructure/databases.md`, the only copy.
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     restart: always
     expose:
       - "5432"
@@ -90,7 +101,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: auth_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_18:/var/lib/postgresql
 
   adminer:
     # Same rule, and this was the worst of the three: `:latest`, on a database admin UI, in
@@ -468,7 +479,15 @@ services:
         condition: service_started
 
 volumes:
+  # THE 15 VOLUME IS KEPT, AND KEEPING IT IS THE ROLLBACK. Rolling back is pointing
+  # the service above at this name and the 15 digest again; the dump is the SECOND
+  # line of defence, never the first. Delete it only once 18 has served a full week.
   postgres_data:
+  # 18+ expects ONE mount at `/var/lib/postgresql` and puts the cluster in a
+  # major-version subdirectory under it, so this cannot reuse the name above: the 15
+  # entrypoint handed `/var/lib/postgresql` would find an empty directory and
+  # initialise a new cluster over the estate. New major, new name, on purpose.
+  postgres_data_18:
   # The shared message log. See the redis service above for why this is not optional.
   redis_data:
   garage_meta:

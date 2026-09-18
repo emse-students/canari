@@ -86,14 +86,13 @@ services:
           memory: 2560M
 
   postgres:
-    # THE MAJOR IS HELD AT 15 HERE ONLY UNTIL THIS ENVIRONMENT EXISTS, AND THEN IT IS THE POINT.
-    # Production is refused `18-alpine` by name in `.github/scripts/lib/ceiling.sh` because no gate
-    # in this repository can see the failure it caused on 2026-09-01: every stack in CI creates its
-    # cluster from an EMPTY volume, the one case that always works. Dev is the missing gate - it
-    # carries a full copy of production's data directory, so an 18 that starts HERE and serves
-    # /api/version is the first real evidence anyone has had. Moving this line is a deliberate
-    # experiment with a declared expected gap, never a dependency bump.
-    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+    # DEV CROSSES WITH PRODUCTION, IN THE SAME COMMIT, AND THAT IS THE POINT OF THIS ENVIRONMENT.
+    # It carries a full copy of production's data, so it is the only place an 18 can be met before
+    # production meets it - which is why the two lines move together rather than dev going first and
+    # drifting. The automatic refusal in `.github/scripts/lib/ceiling.sh` stays: what made this safe
+    # was a procedure and a window, never a green suite. Moving this line is a deliberate migration
+    # with its own written rollback, never a dependency bump.
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     restart: always
     expose:
       - "5432"
@@ -104,7 +103,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: auth_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_18:/var/lib/postgresql
     # Production has no healthcheck here and depends on `service_started`, which is why a service
     # can win the race to an unready cluster. Dev gets one, and the app services below wait on it.
     healthcheck:
@@ -454,7 +453,15 @@ services:
         condition: service_started
 
 volumes:
+  # THE 15 VOLUME IS KEPT, AND KEEPING IT IS THE ROLLBACK. Rolling back is pointing
+  # the service above at this name and the 15 digest again; the dump is the SECOND
+  # line of defence, never the first. Delete it only once 18 has served a full week.
   postgres_data:
+  # 18+ expects ONE mount at `/var/lib/postgresql` and puts the cluster in a
+  # major-version subdirectory under it, so this cannot reuse the name above: the 15
+  # entrypoint handed `/var/lib/postgresql` would find an empty directory and
+  # initialise a new cluster over the estate. New major, new name, on purpose.
+  postgres_data_18:
   # The shared message log. See the redis service above for why this is not optional - the file
   # this replaces omitted it.
   redis_data:

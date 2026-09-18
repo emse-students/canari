@@ -26,6 +26,20 @@ trap 'rm -rf "$work"' EXIT
 
 failures=0
 
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/ceiling.sh
+. "$here/../lib/ceiling.sh"
+
+# THE CROSSING BELOW IS CONSTRUCTED FROM THE COMPOSE FILE, exactly as `ceiling.test.sh` does it -
+# postgres crossed to major 18 on 2026-09-18, and a fixture still spelling the literal `15 -> 18`
+# incident numbers would, from that day, assert that production's OWN major must be refused.
+pg_major=$(prod_image_major postgres)
+if [ -z "$pg_major" ]; then
+  echo "FAIL could not read production's postgres major; the crossing fixture below cannot be built"
+  exit 1
+fi
+pg_next=$((pg_major + 1))
+
 # A `gh` that answers from a fixture instead of the network. It is deliberately strict about the
 # path: a future refactor pointing back at `commits/<sha>` gets a hard failure here rather than an
 # empty answer that reads as "this pull request changes nothing".
@@ -98,12 +112,12 @@ check "refuses a branch where no commit carries a block" 1 "$work/no-block.json"
 # ── An update the table refuses is still refused, reading every commit ──────────────────────────
 # The widened read must not become a way past the ceiling: postgres crossing its production major
 # is the update that cost 33 minutes of production, and it stays refused with its test named.
-cat > "$work/postgres.json" <<'FIXTURE'
-chore(deps): bump postgres from 15-alpine to 18-alpine
+cat > "$work/postgres.json" <<FIXTURE
+chore(deps): bump postgres from ${pg_major}-alpine to ${pg_next}-alpine
 
 updated-dependencies:
 - dependency-name: postgres
-  dependency-version: 18-alpine
+  dependency-version: ${pg_next}-alpine
   dependency-type: direct:production
   update-type: version-update:semver-major
 chore: a maintainer commit on top, with no block of its own
@@ -144,17 +158,17 @@ updated-dependencies:
 FIXTURE
 check "leaves a 1.x minor alone" 1 "$work/onepointx.json"   "1.20.5 (minor)"
 
-cat > "$work/no-type.json" <<'FIXTURE'
-chore(deps): bump postgres from 15-alpine to 18-alpine
+cat > "$work/no-type.json" <<FIXTURE
+chore(deps): bump postgres from ${pg_major}-alpine to ${pg_next}-alpine
 
 updated-dependencies:
 - dependency-name: postgres
-  dependency-version: 18-alpine
+  dependency-version: ${pg_next}-alpine
   dependency-type: direct:production
 FIXTURE
-# A Docker tag carries NO `update-type` - `15-alpine -> 18-alpine` is not a semver comparison
+# A Docker tag carries NO `update-type` - a major crossing by tag alone is not a semver comparison
 # Dependabot can make - and an empty `()` reads as a field nobody filled in.
-check "names an absent update-type rather than printing nothing" 1 "$work/no-type.json"   "18-alpine (unclassified)"
+check "names an absent update-type rather than printing nothing" 1 "$work/no-type.json"   "${pg_next}-alpine (unclassified)"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."

@@ -58,7 +58,7 @@ services:
 
   postgres:
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
-    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     ports:
       - "5432:5432"
     environment:
@@ -66,7 +66,7 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: auth_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_18:/var/lib/postgresql
 
   # ─────────────────────────────────────────────────────
   # RUST SERVICES (3000-3009 range)
@@ -470,7 +470,15 @@ services:
       start_period: 30s
 
 volumes:
+  # THE 15 VOLUME IS KEPT, AND KEEPING IT IS THE ROLLBACK. Rolling back is pointing
+  # the service above at this name and the 15 digest again; the dump is the SECOND
+  # line of defence, never the first. Delete it only once 18 has served a full week.
   postgres_data:
+  # 18+ expects ONE mount at `/var/lib/postgresql` and puts the cluster in a
+  # major-version subdirectory under it, so this cannot reuse the name above: the 15
+  # entrypoint handed `/var/lib/postgresql` would find an empty directory and
+  # initialise a new cluster over the estate. New major, new name, on purpose.
+  postgres_data_18:
   garage_meta:
   garage_data:
   media_meta:
