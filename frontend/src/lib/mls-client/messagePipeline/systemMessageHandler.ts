@@ -909,7 +909,10 @@ export async function handleSystemEvent(
             `[HISTORY_BUNDLE] ${toAdd.length} messages received for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
           );
           if (batchAddMessages) {
-            await batchAddMessages(toAdd, convoKey);
+            // A RESTORE, AND THE WHOLE POINT OF THE DISTINCTION. A member answered this device's
+            // ask with its own archive; every message in it has been delivered before, which is why
+            // somebody still had it to send. Announcing the last one at every launch is `G2`.
+            await batchAddMessages(toAdd, convoKey, 'restore');
           } else {
             for (const item of toAdd) {
               await addMessageToChat(item.senderId, item.content, convoKey, item);

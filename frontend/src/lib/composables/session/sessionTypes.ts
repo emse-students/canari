@@ -11,7 +11,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { LoginErrorCode } from './loginErrors';
-import type { AddMessageToChatOptions, Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
@@ -38,7 +38,8 @@ export interface ChatSessionCallbacks {
   endBulkMessageIngest?: (phase: BulkIngestPhase) => void | Promise<void>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
-    contactName: string
+    contactName: string,
+    origin: MessageBatchOrigin
   ) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;
   selectConversation: (name: string) => void;

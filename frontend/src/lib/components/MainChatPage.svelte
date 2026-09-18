@@ -62,7 +62,12 @@
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
   import { CALLS_ENABLED } from '$lib/features';
-  import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
+  import type {
+    AddMessageToChatOptions,
+    ChatMessage,
+    Conversation,
+    MessageBatchOrigin,
+  } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
 
   interface Props {
@@ -272,8 +277,9 @@
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
-        contactName: string
-      ) => messaging.batchAddMessages(msgs, contactName, msgCtx()),
+        contactName: string,
+        origin: MessageBatchOrigin
+      ) => messaging.batchAddMessages(msgs, contactName, msgCtx(), origin),
     };
   }
 
@@ -322,8 +328,9 @@
         messaging.endBulkMessageIngest(msgCtx(), phase),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
-        contactName: string
-      ) => messaging.batchAddMessages(msgs, contactName, msgCtx()),
+        contactName: string,
+        origin: MessageBatchOrigin
+      ) => messaging.batchAddMessages(msgs, contactName, msgCtx(), origin),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
       onSendError: (msg: string) => {

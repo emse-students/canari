@@ -823,18 +823,50 @@ Three things the seam carries, each load-bearing:
 
 - **`groupName` is EMPTY for a direct message**, which is the server's own contract in
   `push-payload.ts`. Both triggers then render identically without being told which they are.
-- **`sentAt` is the SENDER's instant**, and it is what the builder de-duplicates on. `MessagingStyle`
-  re-injects the messages already in the shade, so a second trigger for one message recognises it
-  there and refreshes without adding a line or alerting again. A wall clock read in the builder
-  would stamp the same message twice and could never match. **The channel (salon) push carries no
-  timestamp at all**, so that half is open for salons - the notification is still single, but its
-  thread can show one message twice.
+- **`sentAt` is the SENDER's instant**, and it is what the builder de-duplicates on - the instant
+  ALONE, never the instant and the text. `MessagingStyle` re-injects the messages already in the
+  shade, so a second trigger for one message recognises it there and refreshes without adding a line
+  or alerting again. A wall clock read in the builder would stamp the same message twice and could
+  never match; so would the body, because **the two triggers render one message differently** (a push
+  runs `renderMentions` over the plaintext, a frame runs `getPreviewText`, which labels a media
+  message, a poll and a bare link instead of quoting them) - they agree for plain prose and part
+  company for everything else. **The channel (salon) push carries no timestamp at all**, so that half
+  is open for salons: the notification is still single, but its thread can show one message twice.
 - **`suppressInForeground` is FALSE for the WebSocket trigger.** Its caller has already asked a
   strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
   "is the app in front" in the builder would silence a foregrounded app showing another conversation.
 
 **The plain builder is not deleted - it is now web-only** (and desktop, a different implementation
 again in `desktop.rs`). They have nothing else.
+
+#### What the shade cannot remember
+
+**"Is it still showing" is strictly weaker than "has the user been told", and the builder had only
+the first.** The shade goes empty on a swipe - and on every launch, because
+`MainActivity.onResume` cancels every message notification as the visible half of cross-device read
+sync. After either, a redelivery is indistinguishable from a first arrival.
+
+And a launch is exactly when a redelivery happens: a push the app was never awake to ACK is still
+queued, and the startup drain hands it back over the socket. So a notification the user had read and
+dismissed came back every time they opened the app (`G2`, 2026-09-18).
+
+`showMessageNotification` therefore keeps a bounded record of what it has announced, in
+`SharedPreferences` (`canari_alerted_messages`), and consults it whenever the shade has nothing:
+
+- **A SET, NOT A WATERMARK.** `sentAt` is the SENDER's clock and nothing synchronises the senders in
+  a group, so "the newest instant already announced" would swallow a genuinely new message from
+  anybody whose clock runs behind - a correctness bug traded for a duplicate. The question is *have I
+  announced THIS message*, and only membership answers it.
+- **`commit()`, not `apply()`**, because the case it serves is the process dying between the
+  notification and the next launch - exactly when an in-flight `apply()` is lost.
+- **Written AFTER the post**, so a builder that threw on the way leaves nothing suppressing the retry.
+- **Only where a sender stamp exists.** A reaction and a salon push both reach the builder with
+  `sentAt = 0` and identify no message of their own; the record never guesses.
+
+**The web half of the same defect is elsewhere and is not this mechanism.** There, the replay is a
+peer's ARCHIVE being merged into an empty store, which `batchAddMessages` counted as arrivals; the
+caller now says which it is (`MessageBatchOrigin`, required). Two mechanisms because the two paths
+know different things - only the native side ever saw the push.
 
 #### The language a notification speaks
 

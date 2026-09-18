@@ -1945,42 +1945,49 @@ reference; `find_app_class` is the one way through it and any future upcall goes
    only because the payload is thinner than the socket frame, which is the same cause as (1).
 
 
-### G2 - P2 - a DISMISSED notification comes back when the app is launched, sometimes titled with a slug
+### G2 - a DISMISSED notification came back at launch, sometimes titled with a slug - FIXED 2026-09-18
 
 Verbatim: *"Il me semble meme qu'une notification que j'ai ignoree se raffiche au lancement de
 l'app, avec parfois des bugs comme le fait qu'on aie le slug au lieu du prenom."*
 
-Two facts in one sentence and they are probably the same path: something re-posts notifications for
-unread messages at launch, and that path titles them from a field the push path does not use - which
-is why the slug appears there and nowhere else. **A dismissal is a decision, and replaying over it
-is the defect independently of the title.**
+Two facts in one sentence, and reading them showed they are **not the same path** - the title half
+was a separate chain that only ever surfaced on the same launch. **A dismissal is a decision, and
+replaying over it is the defect independently of the title.** See `CHANGELOG.md` and
+[mobile](frontend/mobile.md#what-the-shade-cannot-remember).
 
-**BOTH HALVES ARE NOW READ, AND THEY ARE NOT THE SAME PATH AFTER ALL.**
+*The replay, and there were TWO sources of it.*
 
-*The replay.* `MainActivity.onResume` (`MainActivity.kt:183-192`) cancels every message notification
-the Kotlin side posted, and the WebView then re-posts from the startup catch-up drain:
-`endBulkMessageIngest` -> `batchAddMessages` -> `notifyInbound` (`useMessaging.svelte.ts:851-861`).
-Three things let it through. `notifyInbound` has **no staleness guard** where the receive TONE one
-line above it has one (`isStaleInboundMessage`, `messageUtils.ts:120`), so a message redelivered
-hours later notifies as if it were new. `canSeeArrival` is false for most of a launch
-(`arrivalVisibility.ts:46-60`), so every conversation in the catch-up qualifies. And the push path
-**never ACKs the queued row** - there is no `/ack` in the Kotlin service, only
-`fcm_message_cache.ndjson` - so the server redelivers over the socket at the next connect, and the
-de-dup that would have caught it depends on an ordering that is not guaranteed
-(`sessionAuth.ts:1146` opens the gateway before `:1190` consumes the FCM cache).
+1. **An archive counted as arrivals.** `batchAddMessages` raises one notification per flush from
+   `brandNew`, which means "not already in the in-memory map" - and on a cold start that map is
+   being filled for the first time, so every row a member sends back is brand new. The
+   `[HISTORY_BUNDLE]` path (`systemMessageHandler`) hands over exactly that. The caller knows which
+   of the two it is passing and used to discard it at the door; `MessageBatchOrigin` now carries it,
+   REQUIRED rather than defaulted, because defaulting is what made the bundle look like traffic.
+2. **A push redelivered over the socket.** `MainActivity.onResume` cancels every message
+   notification, and the shade was the builder's only memory of what it had announced - so after a
+   swipe, or after any launch, a redelivery looked like a first arrival. And a launch is when a
+   redelivery happens: the push path **never ACKs the queued row** (there is no `/ack` in the Kotlin
+   service, only `fcm_message_cache.ndjson`), so the server hands the message back at the next
+   connect. `showMessageNotification` now keeps a bounded durable record of what it has announced -
+   a SET, not a watermark, because `sentAt` is the SENDER's clock and nothing synchronises the
+   senders in a group.
 
-*The slug.* A different chain entirely. `notifyInbound` titles with
-`getUserDisplayNameSync(senderId, convo.name)`, and on a cold start that cache is EMPTY
-(`displayName.ts:174` returns the fallback), so the title becomes `convo.name` - which for a DM is
-the MLS group name `me::peer`, lowercased to a handle. **The slug is what a DM conversation is
-NAMED**, and `resolveConversationListPresentation` exists precisely so that name never reaches a
-screen. The notification path does not use it. Same family as G4.
+*The slug.* `notifyInbound` titled with `getUserDisplayNameSync(senderId, convo.name)`, and on a
+cold start that cache is empty, so the fallback always won - and `convo.name` for a DM is the MLS
+group key `me::peer`. **A conversation's name is not a person's**, and `name` is the one field that
+can be neither; `notificationSenderName` uses `contactName` instead, documented as the peer's
+username for a DM and the group's display name for a group, so it is never a key.
 
-Worth recording because it cuts the other way too: the server's `formatDisplayName`
-(`display-name.ts:12`) prefers `displayName` over first+last, while the client's
+**STILL OPEN, and it is the same missing field as G1's residual:** a message arriving both ways in a
+SALON is not covered by either half. The channel push payload carries no timestamp at all, so the
+builder can identify no message of its own there and the record never guesses. The fix is a field on
+that payload, at `chat-delivery-service`.
+
+**ALSO STILL OPEN, recorded here because reading G2 found it and it is not G2.** The server's
+`formatDisplayName` (`display-name.ts:12`) prefers `displayName` over first+last, while the client's
 `formatProfileDisplayName` (`displayName.ts:92`) prefers first+last over `displayName`. **Two
-opposite precedences for one question**, which is why the push and the local notification can title
-the same person differently.
+opposite precedences for one question**, so a push and a local notification can title the same person
+differently even when both resolve correctly.
 
 ### G3 - P2 - a brand-new conversation claims no device can serve its history, when there is no history
 

@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une notification ignoree revenait au lancement, parfois titree avec un slug
+
+Deux chemins la ramenaient, et aucun des deux ne savait qu'elle avait deja ete vue. Une archive
+renvoyee par un membre (`[HISTORY_BUNDLE]`) etait comptee comme une arrivee, parce que "nouveau"
+voulait dire "absent de la memoire" - et au demarrage la memoire se remplit pour la premiere fois,
+donc TOUT y est nouveau. Et sur Android, un message pousse pendant que l'application etait fermee
+est encore en file : le rattrapage le redonne au constructeur, qui n'avait pour memoire que le volet
+de notifications - lequel oublie tout des qu'on balaie, et des qu'on ouvre l'application.
+
+L'appelant sait lequel des deux il transmet et le jetait a la porte : `MessageBatchOrigin` le porte
+desormais, obligatoire plutot que par defaut. Cote Android le constructeur tient un registre borne
+de ce qu'il a deja annonce, qui survit a la mort du processus - **un ensemble, pas un seuil**, parce
+que `sentAt` est l'horloge de l'EXPEDITEUR et que rien ne synchronise les expediteurs d'un groupe.
+
+Le slug etait une autre chaine : le titre retombait sur le nom de la CONVERSATION, qui pour un
+message direct est la cle MLS `me::peer`. Un nom de conversation n'est pas un nom de personne.
+
 ### Fixed - un message notifiait DEUX fois sur Android, et une seule des deux etait la bonne
 
 Un message pouvait arriver par le WebSocket ET par le push - le serveur pousse une trame que le

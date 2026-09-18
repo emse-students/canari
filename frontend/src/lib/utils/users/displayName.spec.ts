@@ -28,7 +28,12 @@ vi.mock('$lib/stores/user', async () => {
 
 // resolveDisplayNames is imported dynamically inside its own suite: those tests call
 // vi.resetModules() to get a fresh display-name cache, which a static import would defeat.
-import { seedUserDisplayName, getUserDisplayNameSync, getUserInitials } from './displayName';
+import {
+  seedUserDisplayName,
+  getUserDisplayNameSync,
+  getUserInitials,
+  notificationSenderName,
+} from './displayName';
 import * as userStore from '$lib/stores/user';
 
 // Convenience: the mocked label
@@ -110,6 +115,41 @@ describe('getUserDisplayNameSync', () => {
 // ===========================================================================
 // resolveDisplayNames
 // ===========================================================================
+describe('notificationSenderName', () => {
+  // `G2`, 2026-09-18: at launch the cache is empty, so whatever the caller brings as a fallback IS
+  // the notification title. `notifyInbound` brought `convo.name`, which for a DM is the MLS group
+  // key - and the user saw a handle where a first name belongs.
+  const DM = { name: 'me::peer', contactName: 'Camille', conversationType: 'direct' as const };
+  const GROUP = { name: 'les-rootz', contactName: 'Les Rootz', conversationType: 'group' as const };
+
+  it('prefers the resolved name over any fallback, which is the ordinary case', () => {
+    seedUserDisplayName('sender-1', 'Camille Durand');
+    expect(notificationSenderName('sender-1', DM)).toBe('Camille Durand');
+  });
+
+  it('never titles a DM with the `me::peer` key, which is the defect', () => {
+    // The peer IS the sender of an inbound DM, so `contactName` is not a guess about who wrote it.
+    expect(notificationSenderName('unknown-sender', DM)).toBe('Camille');
+    expect(notificationSenderName('unknown-sender', DM)).not.toContain('::');
+  });
+
+  it('falls back to the group name for a group, where the alternative is a handle', () => {
+    expect(notificationSenderName('unknown-sender', GROUP)).toBe('Les Rootz');
+  });
+
+  it('reaches `name` only where it cannot be a key - a group with no contactName', () => {
+    expect(notificationSenderName('unknown-sender', { ...GROUP, contactName: '' })).toBe(
+      'les-rootz'
+    );
+  });
+
+  it('says it does not know rather than showing a key, for a DM with nothing else', () => {
+    expect(notificationSenderName('unknown-sender', { ...DM, contactName: '' })).toBe(
+      'Utilisateur inconnu'
+    );
+  });
+});
+
 describe('resolveDisplayNames', () => {
   beforeEach(() => {
     vi.resetModules();
