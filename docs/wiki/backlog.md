@@ -2089,6 +2089,11 @@ may already be there** - a reaction carries its sender - in which case this is a
 wire change. That is the first thing to check, because it decides whether this is an afternoon or a
 protocol change.
 
+**POSTS ALREADY ANSWER THIS QUESTION, SO THE ANSWER IS A COMPONENT, NOT A DESIGN.**
+`ReactionsDisplay` names its reactors on hover or long press, portalled and placed by
+`bindFixedPopover`, and closes on an outside tap or `Escape`. The chat should reuse it rather than
+grow a second one - the gesture and the panel both.
+
 ### G10 - P3 - voice notes are listed in the FILES tab, as `vocal_<epoch>.m4a`
 
 Verbatim: *"ne pas faire apparaitre les vocaux dans les fichiers."*
@@ -2104,21 +2109,6 @@ possible de mettre les fichiers audios qui ont ete importes pour les differencie
 enregistres directement dans la conversation."* An IMPORTED audio file is a file and belongs in that
 tab; a RECORDING does not. The generated name is evidence that the two are not distinguished
 anywhere the panel can read.
-
-### G11 - P3 - a post's reactor panel runs off the screen and then ignores the scroll
-
-Verbatim: *"pour les posts, meme si on peut voir qui a reagit en appuyant longtemps dessus, ca sort
-de l'ecran et si on scrolle, le panneau ne disparait pas (et ne suit pas le scroll)"*
-
-Three separate faults in one widget, and the two captures separate them cleanly. The panel is
-anchored to the reaction pill at the card's RIGHT edge and is clipped by the viewport, so the name
-it exists to show is the part cut off. It is positioned in VIEWPORT coordinates, so a scroll moves
-the card out from under it and leaves it hovering over an unrelated post - the second capture is the
-same panel over a different card. And nothing dismisses it on scroll.
-
-**The disclosure itself works here, which is what makes it the reference for G9**: posts already
-answer *who reacted with what*, by long press. Whatever the chat gains should be the same gesture
-and, where it can be, the same component - so this one is worth repairing rather than duplicating.
 
 ## Reported by the USER on 2026-09-17 - six items, verbatim
 

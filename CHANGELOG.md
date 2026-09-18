@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le panneau "qui a reagi" d'un post sortait de l'ecran et ne se fermait jamais au doigt
+
+Il lisait la position de la pastille UNE fois et l'ecrivait lui-meme : donc rien ne le ramenait dans
+l'ecran, un defilement le laissait au-dessus d'un autre post, et il ne se fermait que sur une sortie
+de souris qu'un doigt n'envoie jamais. Il utilise desormais `bindFixedPopover`, qui reglait deja les
+deux premiers, et se ferme sur une tape exterieure ou `Echap`. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
 
 Un premier message de quelqu'un avec qui on n'a pas encore de conversation cree sa fiche a partir du

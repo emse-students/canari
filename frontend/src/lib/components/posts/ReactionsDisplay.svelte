@@ -1,6 +1,8 @@
 <script lang="ts">
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
+  import { clickOutside } from '$lib/actions/clickOutside';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -19,9 +21,38 @@
   let { reactionCounts, reactions, userReaction, reactionList, onReactionClick }: Props = $props();
 
   let popupReactionType = $state<string | null>(null);
-  let popupPos = $state<{ top: number; left: number } | null>(null);
+  /** The badge the open panel belongs to - its anchor, and the click that must never dismiss it. */
+  let anchorEl = $state<HTMLElement | null>(null);
+  let panelEl = $state<HTMLElement | null>(null);
   let resolvedNames = $state<Record<string, string[]>>({});
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * THE PANEL IS PLACED BY THE SHARED ACTION, AND THAT IS THE WHOLE FIX FOR TWO OF ITS THREE FAULTS.
+   *
+   * It used to read the badge's rect ONCE, on hover, and write those viewport coordinates into a
+   * `fixed` element. Two consequences the user reported on 2026-09-18 (*"ca sort de l'ecran et si on
+   * scrolle, le panneau ne disparait pas (et ne suit pas le scroll)"*): `left` was the badge's left
+   * with nothing clamping it, so a badge near the right edge put the names off-screen - the one
+   * thing the panel exists to show - and a scroll moved the card out from under a panel that stayed
+   * where it was, leaving it over an unrelated post.
+   *
+   * `bindFixedPopover` already answers both, and answered them before this was written: it clamps
+   * both axes into the viewport, flips above the anchor when there is no room below, and re-applies
+   * on `scroll` and `resize` so the panel STAYS on its badge. Nothing here needed a new number.
+   */
+  $effect(() => {
+    if (!popupReactionType || !panelEl || !anchorEl) return;
+    return bindFixedPopover(panelEl, {
+      anchor: () => anchorEl,
+      offset: 6,
+      estimatedHeight: 200,
+    });
+  });
+
+  $effect(() => () => {
+    if (hideTimer) clearTimeout(hideTimer);
+  });
 
   async function loadNames(reactionType: string) {
     if (resolvedNames[reactionType]) return;
@@ -36,21 +67,27 @@
   }
 
   function onBadgeEnter(reactionType: string, anchor: HTMLElement) {
-    if (hideTimer) {
-      clearTimeout(hideTimer);
-      hideTimer = null;
-    }
-    const rect = anchor.getBoundingClientRect();
-    popupPos = { top: rect.bottom + 6, left: rect.left };
+    cancelHide();
+    anchorEl = anchor;
     popupReactionType = reactionType;
     void loadNames(reactionType);
   }
 
+  /**
+   * CLOSING IT MUST NOT DEPEND ON A POINTER LEAVING, BECAUSE ON A TOUCH SCREEN NOTHING EVER DOES.
+   *
+   * This opens on `mouseenter` and closed only on `mouseleave`, which a finger never sends - so the
+   * panel a long press had opened simply stayed, the third fault in the same report. An outside tap
+   * and `Escape` close it now; `mouseleave` still does too, for a pointer that has one.
+   */
+  function closePopup() {
+    cancelHide();
+    popupReactionType = null;
+    anchorEl = null;
+  }
+
   function scheduleHide() {
-    hideTimer = setTimeout(() => {
-      popupReactionType = null;
-      popupPos = null;
-    }, 120);
+    hideTimer = setTimeout(closePopup, 120);
   }
 
   function cancelHide() {
@@ -97,12 +134,20 @@
   </div>
 {/if}
 
-<!-- "Who reacted" tooltip - hover only. -->
-{#if popupReactionType && popupPos}
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && popupReactionType) closePopup();
+  }}
+/>
+
+<!-- "Who reacted" - opened by hover or a long press, closed by either pointer leaving it, a tap
+     outside, or Escape. `top`/`left` are written by `bindFixedPopover`, never here. -->
+{#if popupReactionType}
   <div
     use:portal
+    bind:this={panelEl}
+    use:clickOutside={{ enabled: true, callback: closePopup, ignore: () => anchorEl }}
     class="bg-cn-tooltip text-2xs pointer-events-auto fixed z-(--z-tooltip) max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 font-medium text-white shadow-xl"
-    style="top: {popupPos.top}px; left: {popupPos.left}px;"
     role="tooltip"
     onmouseenter={cancelHide}
     onmouseleave={scheduleHide}
