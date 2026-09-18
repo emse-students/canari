@@ -69,7 +69,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **a second Cloudflare Cache Rule, for `/api/users/*/avatar`** - the first one (2026-09-16) covers `/_app/immutable/*` only, so twenty-four faces still cross to Saint-Etienne on every cold load at 846-946 ms each. The origin already says `public, max-age=86400`; Cloudflare caches by EXTENSION and an API path has none, so only a rule lifts it | 1 rule in the dashboard | [P2 - twenty-four avatars cross the country](#p2---twenty-four-avatars-cross-the-country-on-every-cold-load-and-the-mls-init-waits-behind-them-measured-on-production-2026-09-16) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
-| **Lydia's remaining Livrable A answers** (KYC document list, fee schedule, minimum payable amount, a "collecte" balance endpoint, rate limits, and who signs the `business/create` webhook / the `request/do` callback) - the homologation `provider_token`/`private_token` pair itself arrived 2026-09-18 and is in GitHub secrets, so this line no longer blocks Phase 0's credential bullet, only the rest of Livrable A | blocked upstream | WP-LYDIA-1 |
+| **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
@@ -6599,9 +6599,11 @@ FACT, so it belongs behind the same seam the rest of the provider already sits b
 already consumed by the association edit page) and picks. The second is cheaper and needs no server
 change; the first is right if a third provider ever appears.
 
-**Its blocking condition is the same as WP-LYDIA-1's**, and deliberately so: Lydia's real fee
-schedule is part of the credentials Lydia still owes, and inventing a placeholder here would ship a
-second wrong number rather than none. Do it in the same work package.
+**Its blocking condition was the same as WP-LYDIA-1's, and it is now lifted (2026-09-18): Lydia's
+fee is confirmed at 10 centimes + 1% per payment**, the same shape as Stripe's own schedule (a
+fixed cent amount plus a percentage), so a `lydiaFees.ts` sibling to `stripeFees.ts` is now a real
+number to code rather than a placeholder that would have shipped a second wrong one. Still not
+done - only unblocked.
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
 
