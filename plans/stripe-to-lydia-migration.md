@@ -205,37 +205,47 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
 
 La spec technique complète (56 pages) répond déjà à l'essentiel de ce qui aurait dû être demandé -
 champs, signature, webhooks, permissions, erreurs sont tous documentés et intégrés au tableau
-ci-dessus. Ce qui reste réellement à demander au contact Lydia (pas trouvable dans la doc) :
+ci-dessus. **2026-09-18 : cinq des huit points ci-dessous sont désormais répondus.**
 
-- **Obtention concrète des credentials homologation** : un `provider_token` pour Canari (nécessaire
-  pour créer des Business par API et signer `business/addcashier` sans passer par un compte
-  utilisateur individuel) + au moins un `vendor_token` de test. La doc mentionne l'accès mais pas la
-  procédure/délai pour l'obtenir.
-- **Liste exacte des documents KYC pour `business/addcashier`** : le mail y renvoie un lien ("la liste
-  des documents présents ici") absent de la doc technique - à faire suivre par le contact Lydia.
-- **Modèle de frais** : la doc montre un champ `commission_lydia` dans `transaction/list` (exemple :
-  "1.20" pour une transaction de 12.40 EUR) mais ne documente pas le taux/barème par service (C2B,
-  Marketplace, B2C) - demander le barème contractuel.
+**Répondu :**
+
+- **Credentials homologation** : le `provider_token` et son `private_token` sont arrivés et vivent
+  dans les secrets GitHub (`LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN`) - voir
+  [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1). Un
+  `vendor_token` de test reste à produire, mais n'est plus une question à Lydia : il se crée via
+  `business/create` en homologation, comme n'importe quel Business.
+- **Modèle de frais** : **10 centimes + 1% par paiement**, confirmé - à coder comme la nouvelle
+  constante remplaçant le plancher Stripe (`forms.service.ts:428-435`), jamais un pourcentage seul.
+  Pas de ventilation par service (C2B / Marketplace / B2C) mentionnée - une seule formule tant que
+  rien n'indique le contraire.
+- **Solde "collecte" par Business** : **il n'existe pas d'équivalent générique à `balance.retrieve`**,
+  confirmé. `transaction/list` (réconciliation périodique) est la seule voie - exactement le
+  mécanisme déjà pratiqué pour MLS (`recon.mjs`), donc rien de nouveau à construire, juste à
+  brancher sur le bon endpoint.
+- **Qui signe le callback de `request/do`** (`confirm_url`/`cancel_url`/`expire_url`) : **confirmé -
+  le `private_token` du PROVIDER (Canari)**, jamais celui de la Business ciblée. L'hypothèse prise en
+  implémentant Phase 2 était donc correcte ; plus rien à vérifier avant la prod sur ce point.
+- **Le webhook `business/create` (`{vendor_token, event: BUSINESS_VALIDATED|BUSINESS_UNVALIDATED}`)**
+  : **confirmé sans schéma de signature**, comme observé dans la doc. `vendor_token` étant PUBLIC, un
+  récepteur non signé serait forgeable par quiconque connaît le `vendor_token` d'une autre
+  association - la décision de ne pas construire ce récepteur (2026-08-19) reste donc la bonne, avec
+  certitude plutôt qu'avec une lacune de documentation.
+
+**Encore ouvert :**
+
+- **Liste exacte des documents KYC pour `business/addcashier`** : le CANAL est confirmé (le contact
+  Lydia l'envoie par mail), mais la liste elle-même n'est pas encore arrivée - ce n'est plus une
+  question sans réponse, seulement un mail en attente.
 - **Montant minimum payable** : absent de la doc (Stripe impose 50 centimes EUR aujourd'hui,
-  `forms.service.ts:428-435`) - confirmer s'il existe un plancher équivalent côté Lydia.
-- **Solde "collecte" par Business** : `business/b2cbalance` ne couvre que le solde B2C - demander s'il
-  existe un endpoint de solde de collecte générique, ou si `transaction/list` (réconciliation
-  périodique) est la seule voie.
+  `forms.service.ts:428-435`) - toujours à confirmer s'il existe un plancher équivalent côté Lydia.
 - **Rate limits et allowlist IP** éventuelle, et si le sandbox homologation permet de simuler la
   livraison de webhooks de bout en bout pour du test automatisé (discipline déjà en place sur ce
   repo).
-- **Qui signe le callback de `request/do`** (`confirm_url`/`cancel_url`/`expire_url`) : le `private_token`
-  du provider (Canari) ou celui de la Business ciblée ? Trouvé en implémentant Phase 2 (voir ci-dessus)
-  - le code assume le token du provider, à confirmer avant la prod.
 - **Existe-t-il un moyen de récupérer l'état d'un Business "à la demande"** (équivalent de
   `accounts.retrieve`) plutôt que de dépendre uniquement du webhook `BUSINESS_VALIDATED` envoyé une
   fois ? Sans ça, un webhook manqué (redémarrage, panne réseau) laisse Canari sans moyen de rattraper
-  l'état - à demander explicitly, avec la fréquence de renvoi éventuelle du webhook en cas d'échec.
-- **Le webhook `business/create` (`{vendor_token, event: BUSINESS_VALIDATED|BUSINESS_UNVALIDATED}`)
-  a-t-il un schéma de signature**, comme celui de `request/do` ? Absent de tout ce qui a été lu
-  jusqu'ici, et `vendor_token` étant documenté PUBLIC, un récepteur sans signature serait forgeable
-  par quiconque connaît le `vendor_token` d'une autre association - c'est pourquoi ce récepteur n'a
-  volontairement pas été construit (2026-08-19, voir [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)).
+  l'état - à demander explicitement, avec la fréquence de renvoi éventuelle du webhook en cas
+  d'échec.
 
 ## Livrable B — Ce que l'association doit organiser
 
