@@ -396,7 +396,7 @@ export class PostsService {
     const term = q.trim();
     if (!term) return [];
     const selectBody = `posts.id,
-         posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
+         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
@@ -554,7 +554,7 @@ export class PostsService {
     }
 
     const selectBody = `posts.id,
-         posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
+         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
