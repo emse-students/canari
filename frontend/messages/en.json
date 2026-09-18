@@ -1456,6 +1456,7 @@
   "asso_members_role_admin": "Admin",
   "asso_forms_title": "Forms",
   "asso_forms_subtitle": "Forms linked to this club. Validate pending cash payments.",
+  "asso_forms_new_form_button": "New form",
   "asso_forms_payments_missing_no_manage": "Some forms are paid but online payments are not configured. Ask a manager with Manage the bank account access to activate them.",
   "asso_forms_payments_missing_can_manage_prefix": "Some forms are paid but ",
   "asso_forms_payments_missing_strong": "online payments are not yet configured",

@@ -47,7 +47,8 @@
   // Payment
   let basePrice = $state(0);
   let requiresPayment = $state(false);
-  let associationId = $state('');
+  /** Pre-selected by a "create a form" link from that association's own tab, e.g. `EditFormsTab`. */
+  let associationId = $state(page.url.searchParams.get('association') ?? '');
   let allowCashPayment = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let cotisation = $state(emptyCotisationSettings());
@@ -190,7 +191,11 @@
         allowMultipleSubmissions,
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
-        associationId: requiresPayment && associationId ? associationId : undefined,
+        // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
+        // created for exactly as a paid one does (the comment on `associations` above already said
+        // so; this line contradicted it, and a free form created from an association's own "create
+        // a form" button would otherwise vanish from that association's list the moment it saved).
+        associationId: associationId || undefined,
         ...(requiresPayment ? { allowCashPayment } : {}),
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }

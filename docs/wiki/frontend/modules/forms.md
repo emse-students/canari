@@ -353,6 +353,17 @@ who created it, or the managers who inherited it. The edit screen therefore show
 read-only text rather than a disabled picker - a disabled control suggests someone with more rights
 could change it, and there is no such someone.
 
+**The create screen dropped the choice for a free form (fixed 2026-09-19).** `associationId` was
+sent to the server only when `requiresPayment` was also true - so picking an association for a
+FREE form was accepted by the picker, shown in the summary, and then silently dropped from the
+payload: the form saved with no owner, and never appeared in that association's `EditFormsTab`.
+Nothing server-side ever required payment for an association to own a form
+(`formRequiresStripeReadyAssociation` only gates the STRIPE-readiness check, not whether the field
+may be set at all), so the restriction was the create page inventing a rule the API never asked
+for. `EditFormsTab` now also carries a "create a form" button
+(`/forms/create?association=<id>&returnTo=<back to this tab>`), which is what surfaced it: every
+free form created that way would otherwise have vanished from the list that opened it.
+
 ## What `/forms` lists
 
 Two sources, merged by id and sorted newest-first: forms the caller owns, and forms linked to an

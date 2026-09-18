@@ -78,7 +78,7 @@
     isConnectAccountReady(connectAccountStatus) || !!asso?.stripeOnboardingComplete
   );
 
-  let editSection = $state<
+  type EditSection =
     | 'profile'
     | 'members'
     | 'documents'
@@ -88,8 +88,31 @@
     | 'delegation'
     | 'formulaires'
     | 'partnerships'
-    | 'danger'
-  >('profile');
+    | 'danger';
+
+  const EDIT_SECTIONS: EditSection[] = [
+    'profile',
+    'members',
+    'documents',
+    'achats',
+    'cotisations',
+    'payments',
+    'delegation',
+    'formulaires',
+    'partnerships',
+    'danger',
+  ];
+
+  /** A link INTO a specific tab (the "create a form" button coming back, e.g.) names it in
+   *  `?section=`, read once here the same way `AssociationDetailView` reads it for its own tabs. */
+  function initialEditSection(): EditSection {
+    const requested = page.url.searchParams.get('section');
+    return EDIT_SECTIONS.includes(requested as EditSection)
+      ? (requested as EditSection)
+      : 'profile';
+  }
+
+  let editSection = $state<EditSection>(initialEditSection());
 
   /**
    * The three tiers this page gates on, gathered once. `myMembership.permissions` is always

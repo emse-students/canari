@@ -13,7 +13,7 @@
     type PendingCashSubmission,
   } from '$lib/forms/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { ClipboardList, TriangleAlert, Pencil, Trash2 } from '@lucide/svelte';
+  import { ClipboardList, TriangleAlert, Pencil, Trash2, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -126,14 +126,25 @@
 </script>
 
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
-  <div>
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-      <ClipboardList size={20} />
-      {m.asso_forms_title()}
-    </h2>
-    <p class="text-text-muted mt-1 text-sm">
-      {m.asso_forms_subtitle()}
-    </p>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <ClipboardList size={20} />
+        {m.asso_forms_title()}
+      </h2>
+      <p class="text-text-muted mt-1 text-sm">
+        {m.asso_forms_subtitle()}
+      </p>
+    </div>
+    <a
+      href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
+        `/associations/${asso.slug}/edit?section=formulaires`
+      )}"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+    >
+      <Plus size={16} />
+      {m.asso_forms_new_form_button()}
+    </a>
   </div>
 
   {#if hasPaidForms && !onlinePaymentsReady}

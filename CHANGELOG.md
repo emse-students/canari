@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - un bouton "Nouveau formulaire" sur l'onglet Formulaires d'une association
+
+Redirige vers `/forms/create` avec l'association deja selectionnee et un retour vers ce meme
+onglet. Au passage : un formulaire GRATUIT perdait son association au moment meme de la creation
+- `associationId` n'etait envoye au serveur que si `requiresPayment` l'etait aussi, une regle que
+l'API elle-meme n'a jamais demandee. Sans ce correctif, tout formulaire gratuit cree depuis ce
+nouveau bouton aurait disparu de la liste qui l'a ouvert.
+[forms](docs/wiki/frontend/modules/forms.md#a-forms-association-is-chosen-once-at-creation).
+
 ### Removed - les deux volumes PostgreSQL 15 laisses par la bascule sur 18 sont supprimes
 
 Leur retour arriere avait expire a la premiere ecriture sur 18 : ils etaient perimes, pas un filet.

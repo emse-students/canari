@@ -1481,6 +1481,7 @@
   "asso_members_role_admin": "Admin",
   "asso_forms_title": "Formulaires",
   "asso_forms_subtitle": "Formulaires liés à cette association. Validez les paiements en espèces en attente.",
+  "asso_forms_new_form_button": "Nouveau formulaire",
   "asso_forms_payments_missing_no_manage": "Certains formulaires sont payants mais les paiements en ligne ne sont pas configurés. Demandez à un responsable disposant de l'accès « Gérer le compte bancaire » de les activer.",
   "asso_forms_payments_missing_can_manage_prefix": "Certains formulaires sont payants mais ",
   "asso_forms_payments_missing_strong": "les paiements en ligne ne sont pas encore configurés",
