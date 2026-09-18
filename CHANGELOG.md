@@ -16,6 +16,7 @@ which is also where every release up to and including v0.13.1 now lives.
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
 -> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
 regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+
 ### Fixed - le menu d'actions d'un post s'ouvrait sous le post suivant
 
 `PostCard` se souleve au survol (`hover:-translate-y-0.5`), et la carte sur laquelle un menu
@@ -648,6 +649,7 @@ aucune raison de faire defiler quoi que ce soit a l'ouverture, puisqu'elle entre
 qui couvre deja le viewport. Dit ainsi, cela tient quel que soit l'ordre des effets. Les deux
 rebouclages de Tab du meme fichier gardent le defilement du navigateur, pour la raison inverse, et
 `focusTrap.test.ts` fixe les deux moities.
+
 ### Fixed - un 500 d'Apple a coute la mise en production de `v0.18.10`
 
 La soumission App Store est morte sur `POST /v1/reviewSubmissionItems -> 500 An unexpected error
@@ -1305,6 +1307,7 @@ ne perd rien.
 
 Un client plus recent que son serveur lit un 404 sans motif comme `unspecified` et se comporte
 exactement comme avant que le champ existe - voir `docs/wiki/legacy-compatibility.md`.
+
 ### Fixed - un paquet de cles perime bloquait une adhesion pour toujours, et rien ne pouvait le voir
 
 La date de peremption vit A L'INTERIEUR du KeyPackage MLS serialise, et la seule chose de cet estate
@@ -2015,6 +2018,7 @@ dechiffree pendant que le groupe avance de trois epoques devient **definitivemen
 Le plafond echangerait donc un travail borne au demarrage contre un risque non borne de perdre le
 message de quelqu'un. Le travail inutile, lui, a ete supprime la ou il etait reellement : les
 dix-neuf reconstructions du client MLS et le double telechargement du binaire WASM.
+
 ### Fixed - le binaire WASM de 5,4 Mo etait telecharge deux fois a chaque premier chargement
 
 Mesure sur Firefox contre la production le 15/09/2026 : `assets/mls_wasm_bg.ZX5A_PDr.wasm` en
@@ -2533,6 +2537,7 @@ c'etaient deux listes tenues a la main qui ne concordaient que tant que quelqu'u
 
 La branche 401 de `apiFetch` n'avait aucun test ; elle en a quatre, et le test qui affirmait qu'un
 401 n'est pas reessaye simulait une forme que `ChannelService` ne leve jamais.
+
 ### Fixed - "on teste tout" ne testait pas tout, et deux suites sautaient en silence
 
 Quand une pull request modifie `ci.yml` lui-meme, la detection de changements appelle `run_all`
@@ -2661,6 +2666,7 @@ Et le reste a ete CLASSE plutot que compte : sur les 152 occurrences restantes, 
 appel de journalisation et sont correctes**, 4 sont des docblocs qui citent la forme pour
 l'expliquer, et 26 seulement alimentent un ecran - toutes dans `lib/components`, qui est la passe
 suivante. Les arbres encore hors du garde le sont donc pour une raison, pas par retard.
+
 ### Fixed - cinq arbres de routes de plus ne montrent plus la phrase du serveur
 
 La balayage continue arbre par arbre, et ce sont les cinq que l'on rencontre **avant d'etre arrive
