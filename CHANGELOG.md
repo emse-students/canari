@@ -17,6 +17,12 @@ Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ec
 le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
 utilisent maintenant la constante partagee.
 [posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
+### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
+
+Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
+etaient ecrits en dur. Au passage, le bouton Lien selectionnait six caracteres - la longueur du mot
+francais - au lieu de la longueur reelle de l'exemple insere.
+[architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
 
 ### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
 
