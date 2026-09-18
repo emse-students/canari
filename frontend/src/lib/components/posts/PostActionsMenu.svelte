@@ -12,6 +12,8 @@
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { portal } from '$lib/actions/portal';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
 
@@ -92,6 +94,25 @@
 
   let open = $state(false);
   let copiedLink = $state(false);
+  let buttonEl: HTMLButtonElement | null = $state(null);
+  let menuEl: HTMLDivElement | null = $state(null);
+
+  /**
+   * Positions the portalled menu against its trigger button.
+   *
+   * PORTALLED BECAUSE A CARD HOVER TRAP SWALLOWED THE Z-INDEX. `PostCard` lifts on hover
+   * (`hover:-translate-y-0.5`), and a `transform` creates a stacking context - silently, per
+   * `docs/wiki/durable-rules.md`'s z-index section. The card the menu opens on is exactly the one
+   * being hovered, so opening the menu was the one moment its own card became an isolated
+   * context; `z-(--z-popover)` then only won against the OTHER things inside that same context,
+   * and the whole card - popover included - painted under the next post in the feed, whose plain
+   * `z-index: auto` box comes later in DOM order at the same layer. No number fixes a trap that
+   * isolates the element the number is on; escaping to `<body>` does, same as `UserAutocomplete`.
+   */
+  $effect(() => {
+    if (!open || !menuEl || !buttonEl) return;
+    return bindFixedPopover(menuEl, { anchor: () => buttonEl, alignEnd: true, offset: 4 });
+  });
 
   /** Runs a menu entry and closes the menu, which every entry does. */
   function pick(action: () => void) {
@@ -112,16 +133,13 @@
 
 {#if isLoggedIn}
   <!--
-    `relative` ONLY to anchor the panel, and `shrink-0` because `PostHeader` is the flex item that
-    gives: the name takes whatever this row leaves, which is now one button wide at every width.
-    The padding reproduces the offsets the old `absolute top-3 right-3` gave, so the control has not
-    moved - it is the four beside it that are gone.
+    `shrink-0` because `PostHeader` is the flex item that gives: the name takes whatever this row
+    leaves, which is now one button wide at every width. The panel itself is portalled and
+    positioned against the button (see the effect above), not anchored to this wrapper.
   -->
-  <div
-    class="relative flex shrink-0 items-center pt-3 pr-3"
-    use:clickOutside={() => (open = false)}
-  >
+  <div class="flex shrink-0 items-center pt-3 pr-3" use:clickOutside={() => (open = false)}>
     <button
+      bind:this={buttonEl}
       type="button"
       onclick={() => (open = !open)}
       aria-expanded={open}
@@ -136,10 +154,13 @@
     </button>
 
     {#if open}
+      <!-- Portalled so the card's own hover transform cannot trap it - see the effect above. -->
       <div
+        bind:this={menuEl}
+        use:portal
         role="menu"
         tabindex="-1"
-        class="bg-surface-elevated border-cn-border absolute top-full right-3 z-(--z-popover) flex w-56 flex-col gap-0.5 rounded-xl border p-1.5 shadow-lg"
+        class="bg-surface-elevated border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl border p-1.5 shadow-lg"
         transition:slide={{ duration: 150 }}
         onkeydown={(e) => {
           if (e.key === 'Escape') open = false;
