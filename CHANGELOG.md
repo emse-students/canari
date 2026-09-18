@@ -19,6 +19,7 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+
 ### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
 
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
