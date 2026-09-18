@@ -1945,49 +1945,22 @@ reference; `find_app_class` is the one way through it and any future upcall goes
    only because the payload is thinner than the socket frame, which is the same cause as (1).
 
 
-### G2 - a DISMISSED notification came back at launch, sometimes titled with a slug - FIXED 2026-09-18
+### G2 - ONE DISPLAY NAME, TWO OPPOSITE PRECEDENCES - the residue of the launch replay
 
-Verbatim: *"Il me semble meme qu'une notification que j'ai ignoree se raffiche au lancement de
-l'app, avec parfois des bugs comme le fait qu'on aie le slug au lieu du prenom."*
+The replay itself and its slug title shipped 2026-09-18 (`CHANGELOG.md`, and
+[mobile](frontend/mobile.md#what-the-shade-cannot-remember) for the mechanism). Two things reading
+it turned up are NOT fixed, and only they belong here.
 
-Two facts in one sentence, and reading them showed they are **not the same path** - the title half
-was a separate chain that only ever surfaced on the same launch. **A dismissal is a decision, and
-replaying over it is the defect independently of the title.** See `CHANGELOG.md` and
-[mobile](frontend/mobile.md#what-the-shade-cannot-remember).
-
-*The replay, and there were TWO sources of it.*
-
-1. **An archive counted as arrivals.** `batchAddMessages` raises one notification per flush from
-   `brandNew`, which means "not already in the in-memory map" - and on a cold start that map is
-   being filled for the first time, so every row a member sends back is brand new. The
-   `[HISTORY_BUNDLE]` path (`systemMessageHandler`) hands over exactly that. The caller knows which
-   of the two it is passing and used to discard it at the door; `MessageBatchOrigin` now carries it,
-   REQUIRED rather than defaulted, because defaulting is what made the bundle look like traffic.
-2. **A push redelivered over the socket.** `MainActivity.onResume` cancels every message
-   notification, and the shade was the builder's only memory of what it had announced - so after a
-   swipe, or after any launch, a redelivery looked like a first arrival. And a launch is when a
-   redelivery happens: the push path **never ACKs the queued row** (there is no `/ack` in the Kotlin
-   service, only `fcm_message_cache.ndjson`), so the server hands the message back at the next
-   connect. `showMessageNotification` now keeps a bounded durable record of what it has announced -
-   a SET, not a watermark, because `sentAt` is the SENDER's clock and nothing synchronises the
-   senders in a group.
-
-*The slug.* `notifyInbound` titled with `getUserDisplayNameSync(senderId, convo.name)`, and on a
-cold start that cache is empty, so the fallback always won - and `convo.name` for a DM is the MLS
-group key `me::peer`. **A conversation's name is not a person's**, and `name` is the one field that
-can be neither; `notificationSenderName` uses `contactName` instead, documented as the peer's
-username for a DM and the group's display name for a group, so it is never a key.
-
-**STILL OPEN, and it is the same missing field as G1's residual:** a message arriving both ways in a
-SALON is not covered by either half. The channel push payload carries no timestamp at all, so the
-builder can identify no message of its own there and the record never guesses. The fix is a field on
-that payload, at `chat-delivery-service`.
-
-**ALSO STILL OPEN, recorded here because reading G2 found it and it is not G2.** The server's
-`formatDisplayName` (`display-name.ts:12`) prefers `displayName` over first+last, while the client's
-`formatProfileDisplayName` (`displayName.ts:92`) prefers first+last over `displayName`. **Two
-opposite precedences for one question**, so a push and a local notification can title the same person
-differently even when both resolve correctly.
+1. **The server and the client disagree on how to build a name.** `formatDisplayName`
+   (`display-name.ts:12`) prefers `displayName` over first+last; `formatProfileDisplayName`
+   (`displayName.ts:92`) prefers first+last over `displayName`. **Two opposite precedences for one
+   question**, so a push and a locally-raised notification can title the same person differently
+   even when both resolve correctly. One of the two is wrong and nothing here says which; the fix is
+   to pick a precedence, state it where the type is declared, and delete the other.
+2. **A SALON message is covered by neither half of the launch fix**, for the same missing field as
+   `G1`'s first residual - the channel push payload carries no timestamp, so the builder can
+   identify no message of its own and the record never guesses. **One fix closes both**: do not
+   re-derive it here.
 
 ### G3 - P2 - a brand-new conversation claims no device can serve its history, when there is no history
 
@@ -2044,6 +2017,33 @@ This is a REQUIREMENT, not only a defect, and the last sentence is the part to b
 **posts are the home, so they are the terminal answer of any back that has nothing behind it.** A
 deep link that opens a conversation must therefore SEED the stack it did not come through, rather
 than arriving with an empty one.
+
+**THE CHAIN IS NOW READ END TO END, AND IT IS NOT YET ENOUGH TO WRITE A LINE.** Recorded so the next
+session starts here rather than re-deriving it:
+
+- **Back is the WEBVIEW's back-forward list, and exhausting it EXITS THE APP.**
+  `WryActivity.handleBackNavigation` is `true` (Tauri-GENERATED - do not edit it): `canGoBack()` ->
+  `goBack()`, else `onBackPressed()`, which finishes the activity. `pushState` entries count, so the
+  SPA drives it; there is no Kotlin-side home fallback and there should not be one.
+- **The list level already exists.** `ensureMobileConvoHistory` (`useConversations.svelte.ts:204`)
+  pushes a history overlay whenever a conversation is selected on an overlay-width layout, and a
+  notification landing reaches it like any tap: `openNotificationTarget` ->
+  `openConversationFromId` -> `nav.selectConversation(key)`. `isMobileOverlayLayout()` is a pure
+  width query, so it is answerable on the first frame.
+- **The posts level should already exist too, which is the part that does not add up.** `/` redirects
+  to `/posts` (`routes/+page.ts`), SvelteKit's INITIAL navigation replaces rather than pushes, and
+  the cold-start route to the target is `void goto(targetRoute)` in `ChatBackgroundService.svelte`'s
+  landing effect - a PUSH. That gives `/posts` -> `/chat` -> overlay, which is exactly what the user
+  asked for.
+
+**SO THE DEFECT IS IN A PATH THIS READING DID NOT REACH, AND ONE MEASUREMENT SETTLES WHICH.** The two
+candidates are a WARM tap (`onNewIntent` -> `onOpenUrl`, where `window.location.pathname` may already
+be `/chat` so nothing is pushed) and a tap arriving while a conversation is already open (where
+`ensureMobileConvoHistory` returns early on a non-null `mobileConvoHistoryClose`). **Do not write the
+seed before measuring**: if `/posts` is already the bottom entry on the cold path, a
+`history.length <= 1` guard is dead code that ships. The measurement is a handset, a notification
+tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
+backgrounded, foregrounded on another conversation).
 
 ### G7 - P3 - messages and reactions pass behind the composer
 
