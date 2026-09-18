@@ -45,7 +45,7 @@ export async function migrateFromLocalStorage(
         updatedAt: data.updatedAt || Date.now(),
       });
     } catch (e) {
-      log(`⚠️ Échec sauvegarde conversation ${contactName}: ${e}`);
+      log(`⚠️ Conversation save failed for ${contactName}: ${e}`);
       continue;
     }
 
