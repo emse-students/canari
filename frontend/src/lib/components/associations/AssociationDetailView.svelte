@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
     getAssociationBySlug,
@@ -97,7 +98,14 @@
 
   let following = $state(false);
   let followLoading = $state(false);
-  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop' | 'partnerships'>('about');
+  /**
+   * A link INTO a specific section (a post's "see the event" link, e.g.) names it in `?section=`,
+   * read once here rather than by each caller re-deciding which tab that means - the same seam
+   * `AssociationCalendarSection` reads `?fromPost=` through for a specific event within it.
+   */
+  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop' | 'partnerships'>(
+    page.url.searchParams.get('section') === 'calendar' ? 'calendar' : 'about'
+  );
 
   /**
    * THE WIDTH FOLLOWS THE SECTION, BECAUSE THIS PAGE IS FIVE PAGES BEHIND A TAB BAR.

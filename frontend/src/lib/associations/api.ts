@@ -646,11 +646,14 @@ export async function listAssociationLinkCandidates(
   );
 }
 
-/** Public - calendar event pointing to this post (feed). */
+/**
+ * Public - calendar event pointing to this post. Feed-shaped (association identity included),
+ * because the caller opens the calendar's own detail modal with it, which renders that identity.
+ */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
-  linkedEvent: AssociationCalendarEvent | null;
+  linkedEvent: AssociationCalendarFeedEvent | null;
 }> {
-  return request<{ linkedEvent: AssociationCalendarEvent | null }>(
+  return request<{ linkedEvent: AssociationCalendarFeedEvent | null }>(
     `/api/posts/${encodeURIComponent(postId)}/calendar-link`
   );
 }
@@ -661,6 +664,25 @@ export async function getCalendarEventLinkedToForm(formId: string): Promise<{
 }> {
   return request<{ linkedEvent: AssociationCalendarEvent | null }>(
     `/api/forms/${encodeURIComponent(formId)}/calendar-link`
+  );
+}
+
+/**
+ * The post (if any) linking to a calendar event - the reverse of `getCalendarEventLinkedToPost`.
+ * Always an association post: `linkedCalendarEventId` is only ever set alongside `associationId`.
+ */
+export interface LinkedPostSummary {
+  id: string;
+  markdown: string;
+  createdAt: string;
+  association: { id: string; name: string; slug: string; logoUrl: string | null };
+}
+
+export async function getPostLinkedToCalendarEvent(eventId: string): Promise<{
+  linkedPost: LinkedPostSummary | null;
+}> {
+  return request<{ linkedPost: LinkedPostSummary | null }>(
+    `/api/posts/calendar-link/${encodeURIComponent(eventId)}`
   );
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { browser } from '$app/environment';
   import {
     listAssociationCalendarEvents,
@@ -10,6 +11,7 @@
     listAssociationLinkCandidates,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
+    getCalendarEventLinkedToPost,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
@@ -177,6 +179,22 @@
   }
 
   onMount(() => void agenda.reload());
+
+  /**
+   * A post's "see the event" link names the POST rather than the event, because that is the only
+   * id it had (`resolvePostCalendarEventLink` never wrote the fact back onto the event). Fetched
+   * independently of `agenda.reload()`'s own month window - `openDetail` only ever sets local
+   * state, so the two do not need to be sequenced.
+   */
+  onMount(() => {
+    const fromPost = page.url.searchParams.get('fromPost')?.trim();
+    if (!fromPost) return;
+    void getCalendarEventLinkedToPost(fromPost)
+      .then(({ linkedEvent }) => {
+        if (linkedEvent) agenda.openDetail(linkedEvent);
+      })
+      .catch((err) => Log.d('associationCalendarSection.fromPost failed', err));
+  });
 
   const validatedEvents = $derived(
     agenda.events.filter((e) => (e.status ?? 'validated') === 'validated')

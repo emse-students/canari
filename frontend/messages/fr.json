@@ -2573,6 +2573,7 @@
   ],
   "calendar_event_fallback_title": "Événement",
   "calendar_event_linked_form": "Formulaire lié",
+  "calendar_event_linked_post": "Post lié",
   "mls_error_oom_text": "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
   "mls_error_private_mode_text": "Mode navigation privée - les messages ne seront pas conservés après fermeture.",
   "mls_error_keystore_lost_text": "Notifications push dégradées - reconnectez-vous pour les réactiver.",

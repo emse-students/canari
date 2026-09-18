@@ -2,11 +2,17 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
-  import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import {
+    associationLogoSrc,
+    getPostLinkedToCalendarEvent,
+    type AssociationCalendarFeedEvent,
+    type LinkedPostSummary,
+  } from '$lib/associations/api';
   import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
   import { eventOwners, type EventOwnerIdentity } from '$lib/calendar/feedEvents';
-  import { CalendarDays, ClipboardList, Pencil, Trash2 } from '@lucide/svelte';
+  import { CalendarDays, ClipboardList, Newspaper, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     open: boolean;
@@ -55,6 +61,28 @@
     const e = new Date(ev.endsAt);
     return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
+
+  /**
+   * The reverse of `event.linkedFormId`: a post names its event, never the other way round, so
+   * this is fetched rather than read off the event itself. Keyed on the event's own id so
+   * switching between two open events (the grid's own re-render, not a remount) still refetches.
+   */
+  let linkedPost = $state<LinkedPostSummary | null>(null);
+  $effect(() => {
+    const eventId = open ? event?.id : undefined;
+    if (!eventId) {
+      linkedPost = null;
+      return;
+    }
+    getPostLinkedToCalendarEvent(eventId)
+      .then((res) => {
+        linkedPost = res.linkedPost;
+      })
+      .catch((err) => {
+        linkedPost = null;
+        Log.d('calendarEventDetailModal.linkedPost failed', err);
+      });
+  });
 
   function toAgendaExport(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -132,6 +160,16 @@
         >
           <ClipboardList size={14} />
           {m.calendar_event_linked_form()}
+        </a>
+      {/if}
+
+      {#if linkedPost}
+        <a
+          href="/posts/{encodeURIComponent(linkedPost.id)}"
+          class="border-cn-border bg-cn-bg text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+        >
+          <Newspaper size={14} />
+          {m.calendar_event_linked_post()}
         </a>
       {/if}
 

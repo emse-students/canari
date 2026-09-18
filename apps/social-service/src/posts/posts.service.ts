@@ -396,6 +396,29 @@ export class PostsService {
     );
   }
 
+  /**
+   * Batches the distinct `linkedCalendarEventId`s off a page of rows into one summary per event -
+   * `listPosts` and `searchPosts` both need it, and a summary per DISTINCT event rather than per
+   * row is what keeps a page of "same event, many posts" from repeating the same lookup.
+   */
+  private async batchLoadLinkedCalendarEvents(
+    rows: { linkedCalendarEventId?: string | null }[]
+  ): Promise<Map<string, Record<string, unknown>>> {
+    const eventIds = [
+      ...new Set(rows.map((r) => r.linkedCalendarEventId).filter((id): id is string => !!id)),
+    ];
+    if (eventIds.length === 0) return new Map();
+    const summaries = await Promise.all(
+      eventIds.map((id) => this.associationsService.findValidatedCalendarEventSummary(id))
+    );
+    const map = new Map<string, Record<string, unknown>>();
+    eventIds.forEach((id, i) => {
+      const summary = summaries[i];
+      if (summary) map.set(id, summary);
+    });
+    return map;
+  }
+
   /** Full-text search across post markdown and association names. Excludes future-scheduled posts. */
   async searchPosts(
     q: string,
@@ -408,6 +431,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
+         posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
@@ -474,6 +498,7 @@ export class PostsService {
       viewer?.viewerUserId,
       viewer?.isAdmin === true
     );
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
     const result = rawPosts.map((p: any) => {
       let row = p;
@@ -485,6 +510,9 @@ export class PostsService {
           authorFirstName: info.firstName,
           authorLastName: info.lastName,
         };
+      }
+      if (row.linkedCalendarEventId) {
+        row = { ...row, linkedCalendarEvent: linkedEvents.get(row.linkedCalendarEventId) ?? null };
       }
       return this.shapeListRow(row, viewerCtx);
     });
@@ -566,6 +594,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
+         posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
@@ -703,6 +732,7 @@ export class PostsService {
     }
 
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
     const result = rawPosts.map((p: any) => {
       let row = p;
@@ -718,6 +748,9 @@ export class PostsService {
           authorFirstName: authorInfo.firstName,
           authorLastName: authorInfo.lastName,
         };
+      }
+      if (row.linkedCalendarEventId) {
+        row = { ...row, linkedCalendarEvent: linkedEvents.get(row.linkedCalendarEventId) ?? null };
       }
       return this.shapeListRow(row, viewerCtx);
     });
@@ -795,6 +828,43 @@ export class PostsService {
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
+  /**
+   * The most recent post linking to this calendar event, if any and if this viewer may see it -
+   * the reverse of `linkedCalendarEventId`, which lives on the post, never on the event.
+   *
+   * Reported by a user: linking an event on a post only ever showed the event ON the post; the
+   * event's own card showed nothing back. There is no `linkedPostId` column to read the other way
+   * because a post always names its event, never the reverse, so this asks the table that holds
+   * the fact rather than inventing a second, invertible copy of it that could drift from the
+   * first. `linkedCalendarEventId` is only ever set together with an `associationId`
+   * (`resolvePostCalendarEventLink` requires one), so the row this finds is always an association
+   * post - `mustHideAnonymousAuthor` never applies to it, but `shapeListRow` still runs, for the
+   * same moderation-hidden and capability fields every other read path carries.
+   */
+  async findPostLinkedToCalendarEvent(
+    eventId: string,
+    viewerId: string | undefined,
+    isGlobalAdmin: boolean
+  ): Promise<Record<string, unknown> | null> {
+    const rows: any[] = await this.postRepo.manager.query(
+      `SELECT posts.id, posts."authorId", posts.anonymous, posts.markdown, posts."createdAt",
+              posts."associationId", posts."linkedCalendarEventId", posts."hiddenByModeration",
+              assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug",
+              assoc."logoUrl" AS "assocLogoUrl"
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts."linkedCalendarEventId" = $1
+         AND NOT COALESCE(posts."hiddenByModeration", false)
+       ORDER BY posts."createdAt" DESC
+       LIMIT 1`,
+      [eventId]
+    );
+    const post = rows[0];
+    if (!post) return null;
+    const viewerCtx = await this.viewerContext([post], viewerId, isGlobalAdmin);
+    return this.stripBigIntForJson(this.shapeListRow(post, viewerCtx));
+  }
+
   async getById(
     id: string,
     opts?: { allowHidden?: boolean; viewerId?: string; isGlobalAdmin?: boolean }

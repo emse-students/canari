@@ -504,7 +504,9 @@
       {@const ev = localPost.linkedCalendarEvent}
       <div class="px-5 pb-3">
         <a
-          href="/associations/{encodeURIComponent(ev.associationSlug)}?section=agenda"
+          href="/associations/{encodeURIComponent(
+            ev.associationSlug
+          )}?section=calendar&fromPost={encodeURIComponent(localPost.id)}"
           class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
           <CalendarCheck size={14} strokeWidth={2.5} />

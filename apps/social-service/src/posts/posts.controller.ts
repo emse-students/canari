@@ -191,6 +191,22 @@ export class PostsController {
     return { linkedEvent };
   }
 
+  /** The reverse of the above: the post (if any) linking to this calendar event. */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
+  @Get('calendar-link/:eventId')
+  async getPostLinkedToCalendarEvent(
+    @Param('eventId') eventId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    const linkedPost = await this.service.findPostLinkedToCalendarEvent(
+      eventId,
+      xUserId,
+      xGlobalAdmin === 'true'
+    );
+    return { linkedPost };
+  }
+
   /**
    * Returns a single post by its ID. Global admins may load moderation-hidden posts; the author
    * may load their own post before its scheduled publication date, nobody else can.
