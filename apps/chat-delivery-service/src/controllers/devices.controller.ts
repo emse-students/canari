@@ -18,7 +18,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, DataSource, In, IsNull } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { KeyPackage } from '../entities/key-package.entity';
+import {
+  KeyPackage,
+  KEY_PACKAGE_LIFETIME_DAYS,
+  lastResortDeadline,
+} from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -177,9 +181,15 @@ export class DevicesController {
         // AN ELAPSED PACKAGE IS NOT A PACKAGE, and serving one used to cost the row as well as the
         // join: the DELETE below runs whether or not the peer can use what it was handed, so 171
         // aged rows in front of a valid one meant the valid one was reached on the 171st attempt.
-        // A NULL is a row from before migration 024 on a table that backfills exactly, so it means
-        // "not known to be expired" rather than "assume the worst".
-        .andWhere('(otkp."notAfter" IS NULL OR otkp."notAfter" > now())')
+        // AND THERE IS NO "UNKNOWN" ARM LEFT, which is what this used to have: it read
+        // `notAfter IS NULL OR notAfter > now()`, on the ground that a NULL was a pre-024 row and
+        // meant "not known to be expired". Migration 024 backfilled those, and 577 fresh NULLs were
+        // back within two days - old clients publish bare base64 with no date. The bound below is
+        // the same arithmetic the backfill proved exact for THIS table, whose rows are inserted once
+        // and never updated, so every row now answers the question whether or not a client spoke.
+        .andWhere(
+          `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
+        )
         // NEAREST TO EXPIRY FIRST, which is only correct now that the line above excludes the
         // elapsed ones: of the packages that can still be used, spending the shortest-lived first
         // is what stops it elapsing unused. `createdAt ASC` said the same thing by proxy and said it
@@ -217,9 +227,19 @@ export class DevicesController {
     // export, four requests and a crypto round each time. Returning null makes the endpoint 404, so
     // the adder gets something it can act on. Nothing here can conjure a valid package for a device
     // that has not connected since its own elapsed; what it can do is stop pretending.
-    if (device.notAfter && device.notAfter.getTime() <= Date.now()) {
+    //
+    // AND IT MUST NOT NEED THE CLIENT'S PERMISSION TO SAY SO, which is what this used to be: the
+    // test was `device.notAfter && ...`, and `notAfter` is written ONLY at `register-device`. On
+    // 2026-09-18, 683 of 719 rows on production were NULL, so 95% of devices were exempt from this
+    // refusal entirely - among them one caught in a user's console export serving a package 3.88
+    // days dead, the join failing with `LifetimeError(Expired)` on every launch. `lastResortDeadline`
+    // adds the arm that needs no report: the package is at least as old as the row, so a `createdAt`
+    // more than one lifetime back proves it elapsed. Three rows on production, and that device is
+    // one of them.
+    const deadline = lastResortDeadline(device);
+    if (deadline) {
       this.logger.warn(
-        `[KP] last-resort EXPIRED for ${userId}/${deviceId} (notAfter=${device.notAfter.toISOString()})` +
+        `[KP] last-resort EXPIRED for ${userId}/${deviceId} (${deadline.reason}=${deadline.at.toISOString()})` +
           ' - refusing rather than serving a package no peer can build a Welcome on'
       );
       return { refusal: 'expired' };
@@ -439,12 +459,23 @@ export class DevicesController {
       return { keyPackage, notAfter: sanitizeOptionalNotAfter(notAfter) };
     });
 
+    // AND AN OLD CLIENT'S SILENCE IS NOT A REASON TO STORE A NULL, which is what migration 024
+    // already proved: for THIS table `createdAt + 84 days` reconstructs the lifetime exactly, since
+    // rows are inserted once and never updated, and that is how the migration backfilled every row
+    // that predated it. Leaving the column NULL on new inserts meant the backfill drained and then
+    // refilled - 577 undated rows on production on 2026-09-18, every one of them written AFTER the
+    // migration - and each is a row the resolver cannot judge for the next 84 days. The same
+    // arithmetic applied at insert keeps the column total, so the serving filter needs no NULL arm.
+    // It rounds against us by however long the package sat before publication, which is the exact
+    // approximation the migration accepted for the same reason: a package is minted to be published.
+    // `key_package` gets no equivalent - see `lastResortDeadline` for why that row is different.
+    const assumedNotAfter = new Date(Date.now() + KEY_PACKAGE_LIFETIME_DAYS * 86_400_000);
     const rows = parsed.map((kp) =>
       this.oneTimeKeyPackageRepo.create({
         userId,
         deviceId,
         keyPackage: kp.keyPackage,
-        notAfter: kp.notAfter,
+        notAfter: kp.notAfter ?? assumedNotAfter,
       })
     );
     await this.oneTimeKeyPackageRepo.save(rows);
@@ -643,7 +674,9 @@ export class DevicesController {
         userId: safeUserId,
         deviceId: safeDeviceId,
       })
-      .andWhere('(otkp."notAfter" IS NULL OR otkp."notAfter" > now())')
+      .andWhere(
+        `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
+      )
       .getCount();
     return { count };
   }

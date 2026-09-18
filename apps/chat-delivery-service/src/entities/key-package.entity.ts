@@ -56,7 +56,56 @@ export class KeyPackage {
    * A NULL reads as "not known to be expired": no device is locked out by a fact nobody has. What it
    * costs is that the aged last-resort packages counted on production on 2026-09-16 - 4 of them, 2
    * with a join stuck on them right now - stay invisible until their owners next connect.
+   *
+   * **"UNTIL THEIR OWNERS NEXT CONNECT" WAS A PROMISE NOTHING KEEPS**, and a console export from a
+   * user's own browser on 2026-09-18 is what showed it. This column is written ONLY by
+   * `register-device`, which runs at enrolment; `republishKeyMaterial` - the thing a client calls
+   * every 30 s - refreshes the one-time pool and never touches this row. So a device enrolled before
+   * migration 024 stays NULL for the life of the install, the guard below never fires on it, and on
+   * that day 683 of 719 rows on production were in exactly that state. See
+   * {@link lastResortDeadline} for the half of the question the server can answer anyway.
    */
   @Column({ type: 'timestamptz', nullable: true })
   notAfter?: Date | null;
+}
+
+/**
+ * openmls's default KeyPackage lifetime: a package is minted with `not_after = mint + 84 days`.
+ *
+ * Spelled once here because four places had it as prose and one as a literal in migration 024.
+ */
+export const KEY_PACKAGE_LIFETIME_DAYS = 84;
+
+/**
+ * Says whether a last-resort package is CERTAINLY unusable, or `null` when nothing proves it is.
+ *
+ * **THE INFERENCE RUNS ONE WAY ONLY, AND THAT IS WHY IT IS SAFE.** `registerDevice` resets
+ * `createdAt` on every re-registration while the client REPUBLISHES the last-resort package it
+ * already holds rather than minting a new one - which is precisely why migration 024 refused to
+ * backfill `notAfter` from `createdAt`, and it was right to. But the same fact read in the other
+ * direction is sound: the package is AT LEAST as old as the row, so `createdAt + 84 days` is an
+ * upper bound on how long it can still live. Past that instant the package is dead whatever
+ * `notAfter` says, and before it nothing is proven. Certifying a package as VALID this way would be
+ * wrong; certifying one as DEAD cannot be.
+ *
+ * That asymmetry is the whole point. On production on 2026-09-18 it separates 3 rows that are
+ * provably dead - including the one a user's console export caught failing a join, its package 3.88
+ * days past its own `not_after` - from 680 that remain honestly unjudgeable.
+ */
+export function lastResortDeadline(row: {
+  notAfter?: Date | null;
+  createdAt: Date;
+}): { reason: 'reported' | 'proven'; at: Date } | null {
+  const now = Date.now();
+  if (row.notAfter && row.notAfter.getTime() <= now) {
+    return { reason: 'reported', at: row.notAfter };
+  }
+  // The bound holds whether or not the client ever reported a date, but a REPORTED date that has
+  // not elapsed is the better evidence and wins: it is the package's own lifetime, where this is
+  // only a bound on it. So this arm speaks for the rows that have no report at all.
+  if (!row.notAfter) {
+    const bound = new Date(row.createdAt.getTime() + KEY_PACKAGE_LIFETIME_DAYS * 86_400_000);
+    if (bound.getTime() <= now) return { reason: 'proven', at: bound };
+  }
+  return null;
 }

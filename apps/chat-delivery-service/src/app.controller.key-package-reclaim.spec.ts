@@ -117,17 +117,22 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
     await run();
 
     const where = otkpBuilder.calls.find((c) => c.method === 'where');
-    expect(String(where?.args[0])).toContain('"notAfter" <= now()');
+    expect(String(where?.args[0])).toContain('<= now()');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('deleted 171 one-time package(s)'));
   });
 
-  it('never deletes a row whose expiry nobody knows', async () => {
-    // The undated half is every row an older client wrote. Sweeping it would empty the pools of
-    // exactly the devices no fact exists about, and a device with no pool is served its static row
-    // to every peer - the condition this whole change exists to end.
+  it('judges an undated row by its own row age rather than skipping it', async () => {
+    // THIS USED TO ASSERT `"notAfter" IS NOT NULL`, and that exemption is what let the population
+    // grow: undated rows arrived at ~290 a day on production on 2026-09-18, every one written AFTER
+    // migration 024 backfilled the table, and none of them was ever swept. The fear behind it - that
+    // sweeping the undated would empty the pools of devices no fact exists about - does not apply to
+    // THIS table, whose rows are inserted once and never updated, so `createdAt + 84 days` IS the
+    // package's lifetime. A young undated row is still untouched; only one past that sum is taken.
     await run();
     const where = otkpBuilder.calls.find((c) => c.method === 'where');
-    expect(String(where?.args[0])).toContain('"notAfter" IS NOT NULL');
+    expect(String(where?.args[0])).not.toContain('IS NOT NULL');
+    expect(String(where?.args[0])).toContain('COALESCE("notAfter"');
+    expect(String(where?.args[0])).toContain("interval '84 days'");
   });
 
   it('says nothing at all on a clean estate', async () => {
@@ -139,14 +144,20 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
   it('NAMES the devices holding an expired last-resort, because the repair is per device', async () => {
     const elapsed = new Date('2026-09-14T08:00:00.000Z');
     estate(0, [
-      { userId: 'u1', deviceId: 'd1', notAfter: elapsed },
-      { userId: 'u2', deviceId: 'd2', notAfter: elapsed },
+      { userId: 'u1', deviceId: 'd1', notAfter: elapsed, createdAt: elapsed },
+      { userId: 'u2', deviceId: 'd2', notAfter: elapsed, createdAt: elapsed },
     ]);
     await run();
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('2 device(s) hold an EXPIRED'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('u1/d1@2026-09-14T08:00:00.000Z'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('u2/d2@2026-09-14T08:00:00.000Z'));
+    // WHICH ARM NAMED IT travels with the name: a reported date is the package's own lifetime,
+    // where a proven one is only the row-age bound that outlived it, and the repair differs.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('u1/d1@reported:2026-09-14T08:00:00.000Z')
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('u2/d2@reported:2026-09-14T08:00:00.000Z')
+    );
   });
 
   it('caps the names it prints but not the number it reports', async () => {
@@ -155,6 +166,7 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
       userId: `u${i}`,
       deviceId: `d${i}`,
       notAfter: new Date('2026-09-14T08:00:00.000Z'),
+      createdAt: new Date('2026-09-14T08:00:00.000Z'),
     }));
     estate(0, stale.slice(0, 20));
     fallbackBuilders[1] = stubQueryBuilder({ getCount: 40 });
