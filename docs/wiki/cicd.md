@@ -1149,9 +1149,12 @@ restores service in seconds and survives exactly until the next dispatch - which
 13:29, when a deploy from an origin still carrying 18 took production down a second time. The manual
 repair buys time to write the real one; it is never the repair.
 
-Postgres is still pinned at 15 in the tree, and the upgrade to 18 is now AUTHORIZED, production
-included - so the pin comes off in the order that entry sets out, not on a dependency bump:
-[backlog](backlog.md#p2---postgresql-15---18-authorized-on-production-2026-09-10-and-what-it-owes-before-the-cutover).
+Postgres CROSSED to 18 on 2026-09-18, in a window the user fixed, by the procedure in
+[databases](infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure) - a
+logical migration onto a NEW volume, the 15 one kept intact. **The refusal was not retired by it and
+must not be read as retired**: nothing in that crossing opened a data directory written by 15, so it
+demonstrates nothing about `pg_upgrade`, and `lib/ceiling.sh` still declines the next postgres major
+by name. What carried the crossing was a procedure and a window, never a green suite.
 
 #### A refusal is retired by a DECLARED gap in dev, and exactly one kind of evidence counts
 
