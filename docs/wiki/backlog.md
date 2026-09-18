@@ -1916,15 +1916,33 @@ handler posts its own, so the user would get two"* - and that the early return w
 the premise fails whenever there is no push, which is the ordinary backgrounded case, and a phone in
 a pocket never notified. Both versions of that guard are a guess about what the OTHER builder did.
 
-**THE USER HAS ALREADY NAMED THE DESIGN** (2026-09-18): *"pourquoi a-t-on encore des
-plain-notifications alors que les rich notifications sont super"*. So: on Android there is ONE
-builder, the Kotlin `MessagingStyle` one, and the WebSocket frame becomes a second TRIGGER for it
-rather than a second builder - same builder, same `getStableNotifId(groupId)` namespace, so whichever
-trigger arrives second REPLACES the first instead of stacking beside it, and the avatar and the two
-actions are there either way. The plain path stays exactly where it is the only thing that exists:
-the web.
+**THE USER NAMED THE DESIGN** (2026-09-18): *"pourquoi a-t-on encore des plain-notifications alors
+que les rich notifications sont super"*. It shipped the same day - see `CHANGELOG.md` and
+[mobile](frontend/mobile.md#one-builder-two-triggers). On Android there is now ONE builder, the
+Kotlin `MessagingStyle` one, and the WebSocket frame is a second TRIGGER for it rather than a second
+builder: same `getStableNotifId(groupId)` namespace, so whichever trigger arrives second UPDATES the
+first instead of standing beside it. The plain path stays where it is the only thing that exists -
+the web, and desktop, which is a third implementation again (`desktop.rs`) that nothing has measured.
 
-That is a native command plus one branch in `sendSystemNotification`, not a predicate.
+**IT NEEDED A CALL IN A DIRECTION THIS APP HAD NEVER MADE**, Rust into Kotlin, and the obstacle is
+worth keeping: a thread attached from native code has no Java frames on its stack, so `FindClass`
+resolves against the SYSTEM class loader and finds only the boot classpath. That is why
+`flush_webview_cookies` could only ever reach `android.webkit.CookieManager`. The app's own loader is
+taken in `JNI_OnLoad`, where the stack still carries `CanariApplication`, and kept as a global
+reference; `find_app_class` is the one way through it and any future upcall goes the same way.
+
+**TWO THINGS ARE STILL OPEN, AND BOTH ARE SMALL:**
+
+1. **A SALON MESSAGE ARRIVING BOTH WAYS CAN SHOW ITS LINE TWICE.** The notification is single - the
+   id is shared - but the builder de-duplicates on the SENDER's `sentAt`, and the channel push
+   payload (`handleChannelMessage`) carries no timestamp field at all. A wall clock cannot stand in:
+   the two triggers reach the builder at different moments, so it would stamp one message twice. The
+   fix is a field on that payload, at `chat-delivery-service`, not a heuristic here.
+2. **A CHANNEL IS TITLED DIFFERENTLY BY THE TWO TRIGGERS.** The push puts `<Communaute> - #<salon>`
+   in the banner and leaves the conversation title empty, because its payload names no human sender;
+   the WebSocket trigger knows the sender and titles the conversation with the salon. Both converge
+   on one notification, so this is a wording, not a duplicate - but it is a difference that exists
+   only because the payload is thinner than the socket frame, which is the same cause as (1).
 
 
 ### G2 - P2 - a DISMISSED notification comes back when the app is launched, sometimes titled with a slug

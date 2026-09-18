@@ -14,15 +14,27 @@ which is also where every release up to and including v0.13.1 now lives.
 ### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
 
 Un premier message de quelqu'un avec qui on n'a pas encore de conversation cree sa fiche a partir du
-cache FCM. Cette fiche portait un LIBELLE et pas de type, et le constructeur ecrit `group` quand un
-site ne dit rien - donc un DM etait rendu avec l'avatar de groupe : **un carre arrondi, et aucun
-utilisateur dont aller chercher la photo**, jusqu'a ce qu'un redemarrage laisse le balayage serveur
-reecrire la fiche. Deux retours de l'utilisateur (2026-09-18) qui n'en font qu'un.
+cache FCM : elle portait un LIBELLE et pas de type, et le constructeur ecrit `group` quand un site
+ne dit rien - donc un DM prenait l'avatar de groupe, carre et sans utilisateur dont chercher la
+photo. Le discriminateur etait deja sur le fil : le push ne porte pas de nom de groupe pour un DM,
+et **absent n'est pas vide**. [backlog](docs/wiki/backlog.md).
 
-Le discriminateur etait deja sur le fil, et ce fichier le documentait deja : le push ne porte pas de
-nom de groupe pour un DM. Il en a trois etats, pas deux - **absent n'est pas vide** - et le pair
-d'un DM est l'expediteur. Ce que cela ne sait pas separer est ecrit dans le code :
-[backlog](docs/wiki/backlog.md).
+### Fixed - un message notifiait DEUX fois sur Android, et une seule des deux etait la bonne
+
+Un message pouvait arriver par le WebSocket ET par le push - le serveur pousse une trame que le
+client n'a pas acquittee au bout de 10 s - et **deux constructeurs de notification differents**
+repondaient, chacun avec sa propre condition d'affichage et son propre identifiant. Rien ne pouvait
+les fusionner : l'une portait le visage de l'expediteur, le fil de la conversation, `Repondre` et
+`Marquer comme lu` ; l'autre une ligne de texte dont l'appui ouvrait l'application sur rien.
+
+La trame WebSocket n'est plus un second CONSTRUCTEUR mais un second DECLENCHEUR du meme. Les deux
+chemins postent sous le meme identifiant, donc la seconde arrivee MET A JOUR la premiere au lieu de
+s'ajouter a cote - et elle ne sonne pas une seconde fois pour un message deja affiche. Sur Android
+il n'y a plus qu'un constructeur, le riche ; le chemin simple reste ce qu'il a toujours ete ailleurs,
+le seul que le web ait.
+
+Cela demandait un appel dans un sens que cette application n'avait jamais fait, Rust vers Kotlin :
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 
 ### Changed - le chargement a froid EST la purge, a 89 %
 

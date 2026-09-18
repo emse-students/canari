@@ -22,7 +22,8 @@ import { describe, expect, it } from 'vitest';
  * frames, and every remaining push decrypts against a ratchet it has already advanced.
  *
  * MEASURED, on NOTIF-10, 2026-09-07: all five pushes arrive at 02:09:28; at 02:10:07 the service
- * logs `showNotification: app in foreground -> notification suppressed`, so the foreground had
+ * logs `showNotification: app in foreground -> notification suppressed` (the builder was renamed
+ * `showMessageNotification` on 2026-09-18 and the line with it), so the foreground had
  * arrived; the next push still entered the JNI and returned `SecretReuseError` at 02:10:13. The
  * guard had answered forty seconds earlier and nothing asked again.
  *
