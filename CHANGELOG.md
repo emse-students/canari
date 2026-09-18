@@ -19,6 +19,12 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+### Removed - social-service acceptait une identite tiree d'une signature JWT jamais verifiee, hors production
+
+La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
+route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
+et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
+[backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
 ### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
 
 Huit textes visibles y etaient ecrits directement dans le composant (le champ de saisie, le lien

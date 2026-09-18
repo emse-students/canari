@@ -9,10 +9,18 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * `auth_request` sub-request, so its presence guarantees the caller is
  * authenticated. It must never be accepted from untrusted clients directly.
  *
- * In non-production environments (local dev without nginx), the guard falls
- * back to decoding the JWT Bearer token and extracting the `sub` claim as
- * the user identity, then forwards it as `x-user-id` so downstream code
- * behaves identically.
+ * THERE IS NO "LOCAL DEV WITHOUT NGINX", WHICH IS WHY THIS GUARD NO LONGER DECODES A JWT. Until
+ * 2026-09-18 the non-production path read an unverified Bearer token, trusted its `sub` claim and
+ * forwarded it as `x-user-id` - a signature nobody checked deciding who the caller is. It was kept
+ * because `frontend/vite.config.js` was believed to send one route, bare `/channels`, straight to
+ * `social-service:3014` past nginx.
+ *
+ * THAT ROUTE DID NOT EXIST. This service mounts `setGlobalPrefix('api')` over `@Controller('channels')`,
+ * so the only path it has ever served is `/api/channels/...`; no line of the frontend requests the
+ * bare one; and the proxy rule therefore pointed a path nobody asks for at a service that would have
+ * refused it. Every `/api/*` call in local development goes through the local nginx, whose
+ * `/api/channels` location sets `X-User-Id` exactly as production's does. The branch guarded a door
+ * onto nothing, so it is deleted rather than routed - a fallback is a signal, never a path.
  */
 @Injectable()
 export class NginxAuthGuard implements CanActivate {
@@ -70,31 +78,18 @@ export class NginxAuthGuard implements CanActivate {
       return true;
     }
 
-    // Dev fallback: nginx is not present, extract userId from JWT.
+    // Outside production the local nginx is STILL in the path - see the class docblock - so the
+    // header it sets is read the same way, and a caller that arrives without it has bypassed it.
+    //
+    // WHAT IS DELIBERATELY NOT ASSERTED HERE IS THE HMAC, and that is the one thing local still
+    // takes on trust where production does not. Requiring `X-Internal-Token` outside production is
+    // an access-rule change across three services with three different policies, parked as such in
+    // `docs/wiki/backlog.md`; it is not smuggled in behind this deletion.
     if (userId) {
       return true;
     }
-    const authHeader = request.headers['authorization'];
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7);
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        try {
-          const payload = JSON.parse(
-            Buffer.from(parts[1], 'base64url').toString('utf-8')
-          ) as Record<string, unknown>;
-          const sub = typeof payload.sub === 'string' ? payload.sub.trim() : null;
-          if (sub) {
-            request.headers['x-user-id'] = sub;
-            return true;
-          }
-        } catch {
-          // Malformed token - fall through to UnauthorizedException
-        }
-      }
-    }
     throw new UnauthorizedException(
-      'Missing X-User-Id header or JWT - ensure the request passes through nginx auth.'
+      'Missing X-User-Id header - ensure the request passes through the local nginx.'
     );
   }
 }

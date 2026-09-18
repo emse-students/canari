@@ -135,12 +135,35 @@ describe('NginxAuthGuard (social-service)', () => {
       process.env.NODE_ENV = 'development';
     });
 
-    it('accepts the X-User-Id the local nginx sets, without touching the JWT branch', () => {
+    it('accepts the X-User-Id the local nginx sets', () => {
       expect(guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toBe(true);
     });
 
-    it('throws when neither a user header nor a bearer token is present', () => {
+    it('throws when no user header is present', () => {
       expect(() => guard.canActivate(makeContext({}))).toThrow(UnauthorizedException);
+    });
+
+    /**
+     * THE BRANCH THIS REPLACES DECIDED IDENTITY FROM AN UNVERIFIED SIGNATURE. It read the Bearer
+     * token, decoded the payload without checking the signature, and forwarded its `sub` as
+     * `x-user-id` - so anyone able to reach the port could name themselves. It survived because one
+     * vite proxy rule was believed to route past nginx; that route never existed (see the guard's
+     * docblock), and both are gone. This asserts the deletion rather than describing it: a token
+     * whose `sub` is a real user id, arriving with no header, must now be refused.
+     */
+    it('refuses a Bearer token on its own, however well formed its sub claim is', () => {
+      const payload = Buffer.from(JSON.stringify({ sub: 'user-1' })).toString('base64url');
+      const ctx = makeContext({ authorization: `Bearer header.${payload}.signature` });
+      expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+    });
+
+    it('does not let a Bearer token put an identity on a request that had none', () => {
+      const payload = Buffer.from(JSON.stringify({ sub: 'user-1' })).toString('base64url');
+      const headers: Record<string, string> = {
+        authorization: `Bearer header.${payload}.signature`,
+      };
+      expect(() => guard.canActivate(makeContext(headers))).toThrow(UnauthorizedException);
+      expect(headers['x-user-id']).toBeUndefined();
     });
   });
 });
