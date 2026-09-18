@@ -2058,15 +2058,6 @@ seed before measuring**: if `/posts` is already the bottom entry on the cold pat
 tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
 backgrounded, foregrounded on another conversation).
 
-### G7 - P3 - messages and reactions pass behind the composer
-
-Verbatim: *"le fait que l'on puisse avoir des messages ou reactions derriere la barre de saisie est
-moche. Il faudrait peut-etre limiter l'affichage comme le fait messenger (en mettant un fond a un
-rectangle contenant la partie basse de l'app de la meme couleur que le fond pour delimiter comme
-peut le faire Messenger ?)."*
-
-The user has already named the fix he wants: an opaque band behind the composer, so the thread ends
-at it instead of sliding under it.
 
 ### G9 - P2 - in a group, nothing says WHO reacted with what
 

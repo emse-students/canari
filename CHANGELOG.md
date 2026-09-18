@@ -19,6 +19,13 @@ de l'ecran - sur le dernier message, la reaction passait sous la barre de saisie
 mauvais indicateur de la croissance ; c'est desormais la croissance elle-meme qui est observee.
 [backlog](docs/wiki/backlog.md).
 
+### Fixed - le fil passait derriere la barre de saisie pendant le defilement
+
+La liste reservait deja la hauteur de la barre, donc un fil au repos s'arretait au-dessus - ce qui
+passait derriere, c'etait tout ce qui defilait, et aucune reserve ne peut l'atteindre. La barre pose
+desormais le FOND du fil lui-meme, nomme plutot que recopie : aucune teinte nouvelle, et rien ne
+glisse dessous. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
 
 Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais les messages anterieurs

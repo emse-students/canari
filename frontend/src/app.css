@@ -880,12 +880,33 @@ h6,
   scroll-padding-bottom: var(--chat-composer-height, 6rem);
 }
 
+/* THE THREAD'S GROUND, NAMED RATHER THAN COPIED - because the band below has to BE it, and a second
+   spelling of one colour is a colour that drifts. Declared on the panel so it inherits down to the
+   footer, and overridden once at 768px where the panel stops being transparent (see the card grid).
+
+   Below 768px the panel shows `html`'s paint through, which is `--app-bg-gradient`: a radial anchored
+   `at 50% 0%` that has fully faded by 55% of the viewport. The composer sits at the BOTTOM, past that
+   stop, so the flat token is exactly what is painted there - which is the only reason a flat fill may
+   stand in for a gradient at all. */
+.chat-thread-panel {
+  --chat-thread-ground: var(--cn-bg);
+}
+
 .chat-composer-footer {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  background: transparent;
+  /* OPAQUE, AND IT USED TO BE TRANSPARENT ON PURPOSE (user, 2026-09-18: *"le fait que l'on puisse
+     avoir des messages ou reactions derriere la barre de saisie est moche"*). The list already
+     RESERVES this height with `padding-bottom`, so a thread at rest ends above the bar; what showed
+     through was everything passing behind it MID-SCROLL, which no padding can reach.
+
+     This is not the band that was removed on 2026-09-14. That one was a `--cn-surface-alt` card,
+     rounded and shadowed, AROUND the input - a second surface saying nothing, and the rule it broke
+     was "two surfaces stacked in neighbouring tints are a surface too many". This adds no tint at
+     all: it is the ground the thread already sits on, made opaque so nothing slides under it. */
+  background: var(--chat-thread-ground, var(--cn-bg));
   padding-top: 0.5rem;
   padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
   pointer-events: none;
@@ -1658,7 +1679,8 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     margin: 0.75rem 0.75rem 0.75rem 0.375rem;
     border-radius: 0.75rem;
     overflow: hidden;
-    background: var(--cn-surface);
+    --chat-thread-ground: var(--cn-surface);
+    background: var(--chat-thread-ground);
   }
 }
 
