@@ -17,6 +17,12 @@ Huit textes visibles y etaient ecrits directement dans le composant (le champ de
 vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
 choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
 une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+### Fixed - coller un texte finissant par un retour a la ligne ajoutait trois caracteres parasites au message
+
+Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ecrit en mojibake :
+le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
+utilisent maintenant la constante partagee.
+[posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
 ### Fixed - le selecteur d'emoji et une etiquette de l'editeur de carte ne passaient pas par les traductions
 
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -

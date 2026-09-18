@@ -15,6 +15,10 @@
 import { it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MentionComposerInput from './MentionComposerInput.svelte';
+import {
+  COMPOSER_EMPTY_LINE_FILLER,
+  stripComposerDomFillers,
+} from '$lib/utils/mentions/mentionEditor';
 
 const mounted: (() => void)[] = [];
 
@@ -136,4 +140,24 @@ it('still pastes text, and pastes it as text rather than as the markup around it
 
   expect(editor.textContent).toContain('Tiramisu');
   expect(editor.querySelector('b')).toBeNull();
+});
+
+/**
+ * THE FILLER IS A CHARACTER THE SERIALISER IS PROMISED TO REMOVE, so it has to be THAT character.
+ *
+ * A caret after a trailing `<br>` anchors to the parent and types before it, so one zero-width
+ * space is appended to hold it - and `stripComposerDomFillers` is what keeps it out of the sent
+ * message. Shipped in that state, the literal was three mojibake characters (U+200B's own UTF-8
+ * read as Latin-1), which the stripper does not match and which would therefore have travelled
+ * into a post body. Comparing against the constant, rather than against "some invisible thing",
+ * is what makes that visible.
+ */
+it('ends a trailing line break with the one filler the serialiser strips', () => {
+  const { editor } = mountEditor();
+
+  pasteOn(editor, transfer({ data: { 'text/plain': 'first\nsecond\n' } }));
+
+  const text = editor.textContent ?? '';
+  expect(text).toBe(`firstsecond${COMPOSER_EMPTY_LINE_FILLER}`);
+  expect(stripComposerDomFillers(text)).toBe('firstsecond');
 });

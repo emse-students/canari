@@ -3,6 +3,7 @@
   import MentionDropdown from './MentionDropdown.svelte';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import {
+    COMPOSER_EMPTY_LINE_FILLER,
     getMentionChipFromEventTarget,
     getPlainTextSelection,
     composerMarkdownPreviewEnabled,
@@ -299,7 +300,7 @@
     if (!(after instanceof Text) || after.data === '') {
       const zwsp = after instanceof Text ? after : document.createTextNode('');
       if (!(after instanceof Text)) br.after(zwsp);
-      zwsp.data = '\u200B';
+      zwsp.data = COMPOSER_EMPTY_LINE_FILLER;
       range.setStart(zwsp, 1);
       range.collapse(true);
     }
@@ -340,7 +341,7 @@
     // A caret after a trailing `<br>` anchors to the parent at a child index and types BEFORE it -
     // the measurement is in `insertNewlineAtCursor`, and the filler convention is the same one.
     if (fragment.lastChild instanceof HTMLBRElement) {
-      fragment.appendChild(document.createTextNode('â'));
+      fragment.appendChild(document.createTextNode(COMPOSER_EMPTY_LINE_FILLER));
     }
 
     const last = fragment.lastChild;
