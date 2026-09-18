@@ -20,6 +20,7 @@
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { ConversationIdentity } from '$lib/utils/chat/conversations';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -81,6 +82,69 @@ export function placeholderNameForPushEntry(
 }
 
 /**
+ * The IDENTITY a placeholder row is given, from ONE push entry - not just its label.
+ *
+ * **THE LABEL WAS NEVER THE WHOLE ANSWER, AND THE MISSING HALF WAS VISIBLE.** A row built from a
+ * push carried a name and no type, and `buildConversationRow` writes `group` when a site does not
+ * say - deliberately, because most sites that cannot say really are looking at a group. So the
+ * first message from a NEW correspondent, the one case this whole file exists for, produced a
+ * conversation typed `group`: drawn with `GroupAvatar` (a rounded square, and no user whose photo
+ * to fetch) instead of the peer's round avatar, until a restart let the server sweep rewrite the
+ * row. Reported by the user on 2026-09-18 as two separate defects - "no profile photo before
+ * reloading the app" and "it is square instead of round for people" - which are this one.
+ *
+ * **THE DISCRIMINATOR WAS ALREADY ON THE WIRE, AND THIS FILE ALREADY DOCUMENTED IT.**
+ * {@link FcmCacheEntry.groupName} is empty for a DM by the server's own contract, which is why it
+ * does not travel beside an `isGroup` flag. Three states, not two:
+ *
+ * - **absent** - an entry written by a native build older than 2026-09-15. The push said nothing
+ *   about the group, so neither does this: no type, and the builder's default stands. Learning
+ *   nothing is the honest answer, and it is NOT the same as learning `group`.
+ * - **present and non-empty** - a named group. The name is the label and the type is `group`.
+ * - **present and empty** - a DM, and the peer is the sender, because a DM has exactly one other
+ *   member and the push came from them.
+ *
+ * For that last case the row is named with the canonical `self::peer` key rather than with the
+ * sender's display name. That is what every other DM row on disk carries, and it is the only form
+ * `deriveConversationIdentity` can read back: `ConversationMeta` has no type column, so a persisted
+ * DM named "Firstname LASTNAME" comes back from storage as a group on the NEXT boot too. The label
+ * a human sees is resolved from the peer id by `resolveConversationListPresentation`, as for every
+ * other DM.
+ *
+ * **WHAT THIS CANNOT SEPARATE, said rather than hidden:** the server writes `''` for a DM *and* for
+ * a group whose own name is empty (`messaging.service.ts`: `group?.isGroup ? name : ''`). Such a
+ * group would be drawn here as a DM with its first sender as the peer. It is already labelled with
+ * that sender's name today, so only the avatar changes, and the next server sync replaces the row
+ * outright - but it is a real edge and the fix for it belongs on the server's side of that ternary.
+ */
+export function placeholderIdentityForPushEntry(
+  entry: Pick<FcmCacheEntry, 'groupId' | 'senderId' | 'senderName' | 'groupName'>,
+  userId: string
+): PushPlaceholderIdentity {
+  const named = entry.groupName?.trim();
+  if (named) {
+    return { conversationType: 'group', name: named, contactName: named };
+  }
+
+  const self = userId.trim().toLowerCase();
+  const peer = entry.senderId.trim().toLowerCase();
+  if (entry.groupName !== undefined && self && peer && peer !== self) {
+    return {
+      conversationType: 'direct',
+      name: `${self}::${peer}`,
+      contactName: peer,
+      directPeerId: peer,
+    };
+  }
+
+  // The legacy entry, and the only case left with nothing to go on. No type: see the docblock.
+  return {
+    name: placeholderNameForPushEntry(entry),
+    contactName: placeholderNameForPushEntry(entry),
+  };
+}
+
+/**
  * What {@link consumeFcmCache} wrote, for BOTH stores it has to leave consistent.
  *
  * The messages alone were not enough, and the gap was a user-visible P1: a first message from
@@ -96,8 +160,20 @@ export interface FcmCacheInjection {
   /** Messages written to the DB, so a caller can update in-memory state without a history reload. */
   messages: StoredMessage[];
   /** The placeholder conversation written for each group seen, keyed by group id. */
-  placeholders: Map<string, { name: string; updatedAt: number }>;
+  placeholders: Map<string, PushPlaceholder>;
 }
+
+/**
+ * What a push entry says about WHO a conversation is with.
+ *
+ * `displayName` is absent on purpose: {@link ConversationIdentity} carries both a `contactName` and
+ * a `displayName`, and for a placeholder they are the same string - the row's `name`. Keeping one
+ * field here is what stops the two stores drifting.
+ */
+export type PushPlaceholderIdentity = Omit<ConversationIdentity, 'displayName'> & { name: string };
+
+/** One placeholder row, as both stores must see it. */
+export type PushPlaceholder = PushPlaceholderIdentity & { updatedAt: number };
 
 /** Nothing read, nothing written - the shape every early return owes. */
 const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
@@ -109,7 +185,8 @@ const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
  */
 export async function consumeFcmCache(
   deviceKeyB64: string,
-  storage: IStorage
+  storage: IStorage,
+  userId: string
 ): Promise<FcmCacheInjection> {
   if (!isTauriRuntime()) return NOTHING;
 
@@ -129,7 +206,7 @@ export async function consumeFcmCache(
   appendLog(`[FCM_CACHE] ${entries.length} message(s) to pre-inject from the FCM cache`);
 
   const injected: StoredMessage[] = [];
-  const placeholders = new Map<string, { name: string; updatedAt: number }>();
+  const placeholders = new Map<string, PushPlaceholder>();
   for (const entry of entries) {
     if (!entry.messageId || !entry.groupId || !entry.senderId) {
       appendLog(
@@ -168,11 +245,19 @@ export async function consumeFcmCache(
       // the sender's name served as a transient label that the Welcome would overwrite - and for a
       // group this device is already a member of no Welcome is ever coming, so the guess was the
       // name for good. {@link placeholderNameForPushEntry} carries what the push actually knew.
-      const placeholder = {
-        name: placeholderNameForPushEntry(entry),
+      const placeholder: PushPlaceholder = {
+        ...placeholderIdentityForPushEntry(entry, userId),
         updatedAt: entry.timestamp,
       };
-      await storage.mergeConversation({ id: entry.groupId, lifecycle: 'pending', ...placeholder });
+      // ONLY `name` REACHES STORAGE, AND THAT IS NOT A LOSS - `ConversationMeta` has no type and no
+      // peer column, so the name IS the persisted identity and `deriveConversationIdentity` reads it
+      // back. The rest of the identity travels in memory, to the caller, for the row it builds now.
+      await storage.mergeConversation({
+        id: entry.groupId,
+        lifecycle: 'pending',
+        name: placeholder.name,
+        updatedAt: placeholder.updatedAt,
+      });
       // RECORDED ONLY ON THE PATH THAT WROTE IT, so the caller cannot be handed a label for a row
       // that does not exist: a throw below leaves neither store carrying this group.
       placeholders.set(entry.groupId, placeholder);

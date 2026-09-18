@@ -47,9 +47,42 @@ const existing = (over: Partial<Conversation> = {}): Conversation => ({
 
 /** What `consumeFcmCache` returns beside the messages - the label it actually wrote to the DB. */
 const placeholders = (name = 'Alice') =>
-  new Map([['grp-aaaa-bbbb', { name, updatedAt: 1_700_000_000_000 }]]);
+  new Map([['grp-aaaa-bbbb', { name, contactName: name, updatedAt: 1_700_000_000_000 }]]);
+
+/** What the same call returns for a DM: the whole identity, not just a label. */
+const directPlaceholder = () =>
+  new Map([
+    [
+      'grp-aaaa-bbbb',
+      {
+        conversationType: 'direct' as const,
+        name: 'me::peer-1',
+        contactName: 'peer-1',
+        directPeerId: 'peer-1',
+        updatedAt: 1_700_000_000_000,
+      },
+    ],
+  ]);
 
 describe('mergeFcmMessagesIntoConversations', () => {
+  /**
+   * The first message from someone this device has never spoken to. Until 2026-09-18 the row built
+   * here was typed `group` - not because anything said so, but because the placeholder carried no
+   * type and the builder defaults. The user saw it as a square avatar with no photo, repaired only
+   * by a restart.
+   */
+  it('a DM placeholder builds a DIRECT row, with its peer', () => {
+    const convs = new Map<string, ReturnType<typeof existing>>();
+
+    expect(mergeFcmMessagesIntoConversations([message()], convs, 'me', directPlaceholder())).toBe(
+      1
+    );
+
+    const row = convs.get('grp-aaaa-bbbb');
+    expect(row?.conversationType).toBe('direct');
+    expect(row?.directPeerId).toBe('peer-1');
+  });
+
   it('adds the message to a conversation that is already in memory', () => {
     const convs = new Map([['grp-aaaa-bbbb', existing()]]);
 

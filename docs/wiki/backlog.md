@@ -1996,22 +1996,41 @@ history must first decide whether there is any to ask for.
 
 Verbatim: *"et pas de photo de profil en haut avant rechargement de l'app."*
 
-**CANDIDATE READ, AND IT IS SHARED WITH G5.** Two sites resolve a conversation's presentation
-through `resolveConversationListPresentation` and then throw its answer away for the one field that
-picks the avatar widget:
+**CAUSE ETABLIE, ET ELLE EST LA MEME QUE G5. CORRIGEE - voir `CHANGELOG.md`.**
 
-- `MainChatPage.svelte:168` - `isGroup: (c.conversationType ?? 'group') === 'group'`
-- `ChatArea.svelte:443` - `const convType = c.conversationType ?? 'group';`
+The path is the one this whole report describes: a first message from someone with no conversation
+yet arrives as a push, the native side caches it, and `consumeFcmCache` writes the row. That row was
+built with a LABEL and no type (`fcmMemoryMerge.ts`), and `buildConversationRow` writes `group` when
+a site does not say - deliberately, because most sites that cannot say are looking at a group. So
+the one case the FCM cache exists for was the one case the default was wrong for.
 
-`?? 'group'` turns *the record does not say* into *it is a group*, and the group branch draws
-`GroupAvatar`, which has no user to fetch a photo for. A restart repairs it because the startup
-sweep at `conversations.ts:916` rewrites the record with its real type. **The resolved answer is
-computed one line above both of these and discarded.**
+Two symptoms, one line: a group has no user whose photo to fetch, and `GroupAvatar` defaults to
+`shape='soft'`. **The restart repairs it** because `conversations.ts:916` rewrites the row from the
+server roster, which is exactly the *"avant rechargement de l'app"* in the report.
 
-A second, independent candidate sits on the same widget: both sites prefer `c.contactName` over
-`pres.contactId`, and for a DM `contactName` can hold the canonical `userId::peerId` key rather than
-a user id - which `Avatar` would spend on `GET /api/users/<key>/avatar` and get a 404 for. **Neither
-candidate is confirmed until a row in that state has been observed.**
+**THE DISCRIMINATOR WAS ALREADY ON THE WIRE AND ALREADY DOCUMENTED HERE.** `FcmCacheEntry.groupName`
+is empty for a DM by the server's own contract, and the field's own docblock said so - *"it is
+therefore both the label AND the discriminator, which is why it does not travel beside an `isGroup`
+flag"*. It was read for the label and never for the type. No wire change, no CSS change.
+
+**THREE STATES, NOT TWO, AND THAT IS THE PART WORTH KEEPING:** ABSENT (a cache file written by a
+native build older than 2026-09-15 - the push said nothing, so neither does the row), PRESENT AND
+NAMED (a group), PRESENT AND EMPTY (a DM, whose peer is the sender). Reading absent as empty would
+invent a peer out of whoever happened to message first.
+
+**WHAT IS STILL OPEN, and it is the server's half:** `messaging.service.ts` computes
+`groupName = group?.isGroup ? (group?.name ?? '') : ''`, so `''` also covers a group whose own name
+is empty and a group row that could not be read. Such a group is now drawn as a DM with its first
+sender as the peer. It was ALREADY labelled with that sender's name before this fix, so only the
+avatar changed - but the ternary is where that ambiguity is created and where it should be removed.
+
+**A SECOND, SEPARATE DEFECT WAS FOUND ON THE WAY AND IS NOT FIXED HERE.** The Welcome handler's
+early placeholder (`setupMessageHandler.ts:379`) tests the group **ID** for the `::` NAME pattern:
+`const isDirectByPattern = joinedGroupId.includes('::')`. A group id is a UUID, so that test is dead
+and the row is always `conversationType: 'group'` with the invented label `'Groupe'` - persisted.
+The authoritative derivation runs later in the same file and overwrites it, so this is a WINDOW
+rather than a permanent state, and nothing has yet observed a user inside it. Recorded so the next
+person does not have to find it twice.
 
 ### G5 - P3 - the initials placeholder is a rounded SQUARE where the photo is a CIRCLE
 

@@ -89,6 +89,7 @@ import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/ut
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
@@ -1187,12 +1188,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // conversations were loaded from storage a few lines above, which is BEFORE this call writes
       // the placeholder for a group joined in the background - so a first message from a new
       // correspondent has no conversation in the map here either.
-      const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
-        () => ({
-          messages: [],
-          placeholders: new Map<string, { name: string; updatedAt: number }>(),
-        })
-      );
+      const fcmInjected = await consumeFcmCache(
+        ctx.getDeviceKey(),
+        ctx.getStorage()!,
+        ctx.getUserId()
+      ).catch(() => ({ messages: [], placeholders: new Map<string, PushPlaceholder>() }));
       if (fcmInjected.messages.length > 0) {
         const mergedCount = mergeFcmMessagesIntoConversations(
           fcmInjected.messages,

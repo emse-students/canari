@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
+
+Un premier message de quelqu'un avec qui on n'a pas encore de conversation cree sa fiche a partir du
+cache FCM : elle portait un LIBELLE et pas de type, et le constructeur ecrit `group` quand un site
+ne dit rien - donc un DM prenait l'avatar de groupe, carre et sans utilisateur dont chercher la
+photo. Le discriminateur etait deja sur le fil : le push ne porte pas de nom de groupe pour un DM,
+et **absent n'est pas vide**. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - un message notifiait DEUX fois sur Android, et une seule des deux etait la bonne
 
 Un message pouvait arriver par le WebSocket ET par le push - le serveur pousse une trame que le
