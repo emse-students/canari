@@ -131,6 +131,22 @@ only for its own; both are gone.
 `MentionComposerInput.transfer.svelte.test.ts` pins the properties on the editor's own DOM rather
 than through the serialiser, because the defect was visible on screen before anything was saved.
 
+### The filler holding the caret must be the character the serialiser strips
+
+Pasted text is inserted by hand, so a paste ending in a newline ends the fragment with a `<br>` -
+and a caret placed after a trailing `<br>` anchors to the PARENT and types before it, not after.
+One zero-width space is appended to give the caret something to sit in, and
+`stripComposerDomFillers` removes exactly U+200B on the way out. That makes the IDENTITY of the
+character load-bearing: anything else put there is not a filler, it is content, and it reaches the
+sent message.
+
+The first version of this insert carried the mojibake of U+200B - its own UTF-8 read as Latin-1 and
+re-encoded, three visible characters the stripper does not match. Both filler sites in the component
+now use `COMPOSER_EMPTY_LINE_FILLER` from `$lib/utils/mentions/mentionEditor`, the same export the
+stripper is written against, so the two cannot drift apart again. The test asserts against that
+constant rather than against "some invisible thing", which is the only way the difference shows up
+in a diff at all.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes
