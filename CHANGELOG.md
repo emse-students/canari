@@ -18,6 +18,7 @@ colonne n'est ecrite qu'a l'enrolement : 683 lignes sur 719 etaient nulles, donc
 echappaient. Un export console du 2026-09-18 en a montre une servie 3,88 jours apres sa mort. Le
 raisonnement, les deux tables qui demandent des reponses opposees et ce qui reste du sont sur
 [key-package-pool](docs/wiki/protocols/key-package-pool.md).
+
 ### Changed - PostgreSQL passe de 15 a 18
 
 Le 2026-09-01 un bump automatique avait fait exactement cela et coute 33 minutes a huit services :
