@@ -18,6 +18,13 @@ colonne n'est ecrite qu'a l'enrolement : 683 lignes sur 719 etaient nulles, donc
 echappaient. Un export console du 2026-09-18 en a montre une servie 3,88 jours apres sa mort. Le
 raisonnement, les deux tables qui demandent des reponses opposees et ce qui reste du sont sur
 [key-package-pool](docs/wiki/protocols/key-package-pool.md).
+### Changed - PostgreSQL passe de 15 a 18
+
+Le 2026-09-01 un bump automatique avait fait exactement cela et coute 33 minutes a huit services :
+18 refuse le repertoire de donnees d'un 15 et attend son montage ailleurs. Les deux changent donc
+dans le meme commit, sur un volume NEUF - l'ancien est garde intact, c'est lui le retour arriere.
+Repete sur les octets memes de la production : 53 tables sur 53 identiques, meme empreinte d'ordre de
+tri. [databases](docs/wiki/infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure).
 
 ### Changed - le backlog ne contient plus que ce qui reste a faire
 
