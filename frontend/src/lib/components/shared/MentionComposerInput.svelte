@@ -14,6 +14,8 @@
     setPlainTextSelection,
     shouldRerenderComposerDom,
   } from '$lib/utils/mentions/mentionEditor';
+  import { filesFromTransfer, carriesUninsertableMarkup } from '$lib/utils/composerTransfer';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     value?: string;
@@ -31,6 +33,14 @@
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
+    /**
+     * Files a reader pasted or dropped ONTO the editor, handed to whoever owns the attachments.
+     *
+     * The editor never inserts them: its body is Markdown and could not hold them (see
+     * `handleEditorPaste`). A caller that omits this still gets the refusal - the files are simply
+     * not attached anywhere, which is the honest outcome for a composer that has no attachments.
+     */
+    onmedia?: (files: File[]) => void;
     onfocus?: () => void;
     onblur?: () => void;
   }
@@ -49,6 +59,7 @@
     onchange,
     onkeydown,
     onpaste,
+    onmedia,
     onfocus,
     onblur,
   }: Props = $props();
@@ -298,6 +309,136 @@
   }
 
   /**
+   * Inserts PLAIN TEXT at the caret, by the same route an ordinary keystroke takes.
+   *
+   * Same shape and same reasons as `insertNewlineAtCursor` above - a direct DOM mutation followed
+   * by a real `input` event, rather than a write to `value`, because a one-way (`value` +
+   * `onchange`) caller cannot take the `syncFromPlainText` path without losing the caret. Read that
+   * function's docblock; this one adds only the line splitting.
+   *
+   * Newlines become `<br>`, which is the ONE break `serializeMentionEditor` reads back - a block
+   * element would have its boundary silently dropped. A single-line composer flattens them to
+   * spaces instead of silently swallowing the text after the first one.
+   */
+  function insertPlainTextAtCursor(text: string) {
+    if (!editorEl || !text) return;
+    const { start, end } = getPlainTextSelection(editorEl);
+    setPlainTextSelection(editorEl, start, end);
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+
+    const normalised = text.replace(/\r\n?/g, '\n');
+    const lines = singleLine ? [normalised.replace(/\n+/g, ' ')] : normalised.split('\n');
+
+    const fragment = document.createDocumentFragment();
+    lines.forEach((line, i) => {
+      if (i > 0) fragment.appendChild(document.createElement('br'));
+      if (line) fragment.appendChild(document.createTextNode(line));
+    });
+    // A caret after a trailing `<br>` anchors to the parent at a child index and types BEFORE it -
+    // the measurement is in `insertNewlineAtCursor`, and the filler convention is the same one.
+    if (fragment.lastChild instanceof HTMLBRElement) {
+      fragment.appendChild(document.createTextNode('â'));
+    }
+
+    const last = fragment.lastChild;
+    range.insertNode(fragment);
+    if (last) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    editorEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  }
+
+  /**
+   * A PASTE PUTS TEXT IN THE BODY AND FILES IN THE ATTACHMENTS, AND NOTHING ELSE EVER.
+   *
+   * The browser's own default for a `contenteditable` is to insert the clipboard's `text/html`.
+   * That is how an `<img>` reached a body made of Markdown: it rendered, `serializeMentionEditor`
+   * walked through it on save, and the reader was shown something the document could not hold
+   * (user, 2026-09-18: *"ce qui n'est evidemment pas sauvegarde ... du coup ca ne devrait meme pas
+   * etre possible"*). With a foreign origin it is not even a disappointment - pasting a picture out
+   * of a Messenger tab produced `blob:https://www.messenger.com/...` and a security error the
+   * reader could do nothing with, because that blob is readable only by the page that made it.
+   *
+   * So the default is refused UNCONDITIONALLY, before anything is examined. What replaces it is
+   * decided from the clipboard: real files go to `onmedia` exactly as the media button's own picker
+   * would deliver them, and everything else is inserted as `text/plain`. Rich text pasted from a
+   * document therefore keeps its words and loses its styling, which is what a Markdown body can
+   * represent - the alternative was keeping markup on screen that the next save deletes.
+   *
+   * A caller's own `onpaste` still runs first and still wins: `ChatComposer` had this handler
+   * written twice over, and the one kept is the one on the element that owns the caret.
+   */
+  function handleEditorPaste(event: ClipboardEvent) {
+    onpaste?.(event);
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+
+    const files = filesFromTransfer(event.clipboardData);
+    if (files.length > 0) {
+      if (!onmedia) {
+        Log.d('COMPOSER', `paste carried ${files.length} file(s); this composer takes none`);
+        return;
+      }
+      onmedia(files);
+      return;
+    }
+
+    const text = event.clipboardData?.getData('text/plain') ?? '';
+    if (text) {
+      insertPlainTextAtCursor(text);
+      return;
+    }
+    if (carriesUninsertableMarkup(event.clipboardData)) {
+      Log.d('COMPOSER', 'paste carried markup with no file and no text - nothing inserted');
+    }
+  }
+
+  /**
+   * Claims the drag, because a `contenteditable` is a drop target by default and the default is
+   * exactly the defect: letting the browser handle it is how an image lands in the body.
+   */
+  function handleEditorDragOver(event: DragEvent) {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  }
+
+  /**
+   * A DROP IS A PASTE WITH A CURSOR: same rule, same two destinations.
+   *
+   * `stopPropagation` because an outer drop zone may be listening for the same files - `ChatComposer`
+   * wraps this editor in one - and two handlers attaching the same drop is one attachment too many.
+   */
+  function handleEditorDrop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const files = filesFromTransfer(event.dataTransfer);
+    if (files.length > 0) {
+      if (!onmedia) {
+        Log.d('COMPOSER', `drop carried ${files.length} file(s); this composer takes none`);
+        return;
+      }
+      onmedia(files);
+      return;
+    }
+
+    const text = event.dataTransfer?.getData('text/plain') ?? '';
+    if (text) {
+      insertPlainTextAtCursor(text);
+      return;
+    }
+    if (carriesUninsertableMarkup(event.dataTransfer)) {
+      Log.d('COMPOSER', 'drop carried markup with no file and no text - nothing inserted');
+    }
+  }
+
+  /**
    * @public - Flushes any active IME composition into the value before sending.
    * Must be called right before onSend() to prevent the last uncomposed word from being lost.
    */
@@ -357,7 +498,9 @@
     oninput={handleEditorInput}
     onclick={handleEditorClick}
     onkeydown={handleEditorKeydown}
-    {onpaste}
+    onpaste={handleEditorPaste}
+    ondragover={handleEditorDragOver}
+    ondrop={handleEditorDrop}
     {onfocus}
     {onblur}
     oncompositionstart={() => (isComposing = true)}

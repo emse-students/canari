@@ -17,6 +17,13 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
+
+Le corps est du Markdown : le serialiseur traverse tout ce qui n'est pas du texte, donc l'image
+etait perdue en silence - et venue d'un autre onglet (Messenger), elle declenchait en plus une
+erreur de securite. Le glisser-deposer et le collage ajoutent maintenant le fichier aux medias du
+post, comme le bouton Medias, et le corps ne recoit plus que du texte.
+[posts](docs/wiki/frontend/modules/posts.md#a-body-made-of-markdown-cannot-hold-an-image-so-nothing-but-text-is-ever-put-in-it).
 
 ### Fixed - le menu d'actions d'un post s'ouvrait sous le post suivant
 
