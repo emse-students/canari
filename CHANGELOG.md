@@ -16,6 +16,7 @@ which is also where every release up to and including v0.13.1 now lives.
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
 -> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
 regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+
 ### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
 
 Le corps est du Markdown : le serialiseur traverse tout ce qui n'est pas du texte, donc l'image
