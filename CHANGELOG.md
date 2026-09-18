@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
+
+Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
+n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un message qui est
+VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
+le commentaire de `muteCheck` qui pretendait le contraire est corrige.
+[localizedError](frontend/src/lib/utils/localizedError.ts).
+
 ### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
 
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms

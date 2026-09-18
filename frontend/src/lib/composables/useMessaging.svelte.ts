@@ -960,7 +960,7 @@ export function useMessaging() {
     );
 
     if (!text && filesToSend.length === 0) {
-      ctx.log('[SEND] Abort: pas de texte ni de fichier');
+      ctx.log('[SEND] Abort: no text and no file');
       return;
     }
     if (!ctx.selectedContact) {
