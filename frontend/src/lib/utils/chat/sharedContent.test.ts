@@ -68,9 +68,37 @@ describe('aggregateSharedContent', () => {
     expect(media).toHaveLength(0);
   });
 
-  it('keeps an audio message that predates the flag, because absent is unknown and not imported', () => {
+  /**
+   * THE MESSAGES THAT PREDATE THE FLAG, and there are two kinds of them - the distinction the user
+   * saw on 2026-09-18, months of voice notes filed under `Fichiers` as `vocal_<epoch>.m4a`.
+   *
+   * Absent is still not "imported": it is unknown, and the name is the ONLY evidence such a message
+   * carries. See `isVoiceNote` for why reading it there is bounded rather than a fallback.
+   */
+  it('drops a voice note recorded before the flag existed, recognised by the name its recorder wrote', () => {
+    const legacy = { ...mediaRef('audio', 'vieux-vocal'), fileName: 'vocal_1757900000000.m4a' };
+    const messages = [msg('m1', 1, serializeEnvelope(mkMediaEnvelope(legacy)))];
+    const { media, files } = aggregateSharedContent(messages);
+    expect(files).toHaveLength(0);
+    expect(media).toHaveLength(0);
+  });
+
+  it('keeps an audio message that predates the flag and carries no recorder name', () => {
     const messages = [msg('m1', 1, serializeEnvelope(mkMediaEnvelope(mediaRef('audio', 'vieux'))))];
     expect(aggregateSharedContent(messages).files.map((f) => f.media.mediaId)).toEqual(['vieux']);
+  });
+
+  /**
+   * THE ENVELOPE CARRIES `true | undefined` AND NEVER `false` (`envelope.ts:238`), so there is no
+   * "declared an import" state to assert at this level - an import is always undeclared, and the
+   * name is what separates it. `voiceNote.test.ts` pins the precedence itself.
+   */
+  it('keeps an imported file, which is undeclared like every other one, under its own name', () => {
+    const named = { ...mediaRef('audio', 'chanson2'), fileName: 'balade-a-velo.m4a' };
+    const messages = [msg('m1', 1, serializeEnvelope(mkMediaEnvelope(named)))];
+    expect(aggregateSharedContent(messages).files.map((f) => f.media.mediaId)).toEqual([
+      'chanson2',
+    ]);
   });
 
   it('skips deleted messages', () => {

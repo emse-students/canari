@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
+
+Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais les messages anterieurs
+ne declarent rien, et des mois d'enregistrements restaient listes sous `vocal_<epoch>.m4a`, enfouissant
+les fichiers reellement echanges. Ils portent une seule preuve, le nom que l'enregistreur a lui-meme
+ecrit, et c'est desormais elle qui est lue faute de declaration. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
 
 Un premier message de quelqu'un avec qui on n'a pas encore de conversation cree sa fiche a partir du

@@ -2089,21 +2089,17 @@ may already be there** - a reaction carries its sender - in which case this is a
 wire change. That is the first thing to check, because it decides whether this is an afternoon or a
 protocol change.
 
-### G10 - P3 - voice notes are listed in the FILES tab, as `vocal_<epoch>.m4a`
+### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
 
-Verbatim: *"ne pas faire apparaitre les vocaux dans les fichiers."*
+`MediaRef.voiceNote` travels as `true | undefined` and never as `false` (`envelope.ts:238` emits the
+key only when true), so an import is ALWAYS undeclared, and `isVoiceNote` separates it from an
+undeclared recording by FILE NAME. An audio file a person happened to name `vocal_<digits>.<ext>` is
+therefore hidden from the tab, and nothing can tell the panel otherwise.
 
-**THIS IS THE SECOND HALF OF A REPORT ALREADY ON FILE.** The user asked on 2026-09-16 that voice
-notes not appear under `Medias`; the capture shows the `Fichiers` tab listing them instead, under
-their generated `vocal_<epoch>.m4a` name. So the requirement is not "move them from one tab to the
-other" - **a voice note belongs to the conversation and to NEITHER tab**, and any fix that only
-teaches the media grid to skip them moves the defect one tab across.
-
-The same capture carries the OTHER half of that 2026-09-16 request, still open: *"+1 s'il est
-possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
-enregistres directement dans la conversation."* An IMPORTED audio file is a file and belongs in that
-tab; a RECORDING does not. The generated name is evidence that the two are not distinguished
-anywhere the panel can read.
+**The fix is sender-side**: either the import path declares `voiceNote: false` and the envelope
+carries it, or the flag becomes a `source: 'recorded' | 'imported'` the sender must set. Written
+down so the name rule is not deleted as a heuristic by somebody who does not know it is
+load-bearing - **not worth doing before anybody has hit the collision.**
 
 ### G11 - P3 - a post's reactor panel runs off the screen and then ignores the scroll
 

@@ -1,6 +1,7 @@
 import { parseEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
 import { isGifUrl } from '$lib/utils/chat/messageDisplay';
+import { isVoiceNote } from '$lib/utils/chat/voiceNote';
 
 /**
  * Aggregates the media, files and links shared in a conversation from its full
@@ -76,9 +77,9 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
       // An IMPORTED audio file stays, deliberately and by the same request (*"+1 s'il est possible
       // de mettre les fichiers audios qui ont ete importes pour les differencier des audios
       // enregistres"*) - it is a file someone chose to send. The two are the same bytes with the
-      // same mime type, so only the sender's own declaration separates them; a message that
-      // predates the flag says nothing, and keeps the behaviour it has always had.
-      if (env.media.voiceNote) continue;
+      // same mime type, so only the sender's own declaration separates them - see `isVoiceNote`,
+      // which also names the one piece of evidence a message predating that declaration carries.
+      if (isVoiceNote(env.media)) continue;
       const item: SharedMediaItem = {
         messageId: m.id,
         senderId: m.senderId,
