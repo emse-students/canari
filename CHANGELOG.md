@@ -17,6 +17,11 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
+
+La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
+-> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
+regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
 
 ### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
 
