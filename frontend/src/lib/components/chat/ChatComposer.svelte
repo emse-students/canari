@@ -25,6 +25,7 @@
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { filesFromTransfer } from '$lib/utils/composerTransfer';
   import { m } from '$lib/paraglide/messages';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
@@ -366,12 +367,6 @@
     }
   }
 
-  function collectDroppedFiles(event: DragEvent): File[] {
-    const dt = event.dataTransfer;
-    if (!dt) return [];
-    return Array.from(dt.files || []);
-  }
-
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
     isDragOver = true;
@@ -390,7 +385,7 @@
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDragOver = false;
-    const files = collectDroppedFiles(event);
+    const files = filesFromTransfer(event.dataTransfer);
     if (files.length > 0 && onFilesSelected) {
       onFilesSelected(files);
     }
@@ -398,27 +393,6 @@
 
   function fileKey(file: File, index: number): string {
     return `${file.name}-${file.size}-${file.lastModified}-${index}`;
-  }
-
-  function collectClipboardFiles(event: ClipboardEvent): File[] {
-    const dt = event.clipboardData;
-    if (!dt) return [];
-
-    const filesFromItems = Array.from(dt.items || [])
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file);
-
-    return filesFromItems;
-  }
-
-  function handlePaste(event: ClipboardEvent) {
-    if (!onFilesSelected) return;
-    const files = collectClipboardFiles(event);
-    if (files.length === 0) return;
-
-    event.preventDefault();
-    onFilesSelected(files);
   }
 
   function isImageFile(file: File): boolean {
@@ -898,7 +872,7 @@
             stopTyping();
           }}
           onkeydown={handleComposerKeydown}
-          onpaste={handlePaste}
+          onmedia={onFilesSelected}
         />
 
         <!-- Emoji picker button - desktop only: a phone keyboard already has its own emoji panel,

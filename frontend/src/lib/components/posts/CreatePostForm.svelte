@@ -264,6 +264,34 @@
     mediaCaptions = files.map(() => '');
   }
 
+  /**
+   * Adds media to the selection, KEEPING what is already there.
+   *
+   * Why this is not `onPickFiles`. That one replaces, and must: an `<input type="file">` hands over
+   * its entire selection on every change, so appending would duplicate everything already picked. A
+   * drop or a paste carries only what the reader just brought, and replacing on one would silently
+   * throw away the media they chose a moment earlier.
+   *
+   * The destination is otherwise identical - same previews, same icons, same empty caption - so a
+   * dropped file is indistinguishable from a picked one from here on, which is what was asked
+   * (user, 2026-09-18: *"Que glisser deposer ajoute le media au post (comme si on cliquait sur
+   * Medias -> Envoi du fichier)"*).
+   */
+  function addFiles(files: File[]) {
+    if (files.length === 0) return;
+    selectedFiles = [...selectedFiles, ...files];
+    filePreviews = [
+      ...filePreviews,
+      ...files.map((f) => (needsThumbIcon(f) ? '' : URL.createObjectURL(f))),
+    ];
+    fileThumbIcons = [...fileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
+    mediaCaptions = [...mediaCaptions, ...files.map(() => '')];
+    Log.d(
+      'POST_COMPOSER',
+      `${files.length} media dropped or pasted, ${selectedFiles.length} total`
+    );
+  }
+
   /** Remove a single media file from the selection by index. */
   function removeFile(i: number) {
     if (filePreviews[i]) URL.revokeObjectURL(filePreviews[i]);
@@ -514,6 +542,7 @@
 
       <MarkdownComposerField
         bind:value={markdown}
+        onmedia={addFiles}
         placeholder={m.post_create_message_placeholder()}
         minHeight="120px"
         toolbarClass="mb-1"

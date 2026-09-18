@@ -19,6 +19,8 @@
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
+    /** Files pasted or dropped onto the body, for a caller that owns an attachment list. */
+    onmedia?: (files: File[]) => void;
     onfocus?: () => void;
     onblur?: () => void;
   }
@@ -37,6 +39,7 @@
     onchange,
     onkeydown,
     onpaste,
+    onmedia,
     onfocus,
     onblur,
   }: Props = $props();
@@ -93,6 +96,7 @@
     {onchange}
     {onkeydown}
     {onpaste}
+    {onmedia}
     {onfocus}
     onblur={handleBlur}
   />
