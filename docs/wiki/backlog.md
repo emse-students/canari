@@ -571,8 +571,15 @@ a design that wipes without a prompt.**
 *What was also rejected, and why it is the wrong shape.* Deferring the ~45 feed requests (24
 profiles, avatars, link previews, forms) that the launch fires ahead of the biometric attempt. They
 delay the prompt only through main-thread contention, which the three fixes above already resolve by
-raising the prompt before the feed is under way; and the only place to gate them is the SvelteKit
+raising the prompt before the feed is under way; and the only place to gate ALL of them is the SvelteKit
 route `load`, which would change the web client for no durable gain.
+
+*One of the four was gated anyway, and from the other end.* A LINK PREVIEW asks for itself, so it
+can hold its own request back until its card is near the viewport - which is a card-local decision,
+not a route-level one, and it costs the web client nothing. That is
+[architecture](frontend/architecture.md#a-request-fired-from-an-effect-on-render-is-a-request-for-every-card-the-page-mounts).
+It changes nothing about the paragraph above: profiles, avatars and forms are asked for by the page
+rather than by a card, and they still have no owner that could defer them.
 
 **"Blocked on hardware" WAS FALSE AND IT SAT HERE FOR A DAY.** Both fixes are ancestors of
 `v0.18.1`, which the Pixel 6a was already running - `git merge-base --is-ancestor` settles it in a
