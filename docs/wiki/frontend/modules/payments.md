@@ -66,11 +66,15 @@ layer**, and it stays wherever it is a fact.
 | `MANAGE_STRIPE_CONNECT` / `canManageStripeConnect` | a persisted association permission flag |
 | `STRIPE_WEBHOOK_SECRET` | an environment variable, and Stripe's |
 | `stripe_return=1` | the query param an onboarding already in flight will come back with |
-| `stripeFees.ts`, `StripeNetPayoutHint`, `deriveStripeConnectStatus`, `buildStripeConnectStatusResponse` | the arithmetic and the mapping really are Stripe's; a neutral name here would be the lie |
+| `stripeFees.ts`, `deriveStripeConnectStatus`, `buildStripeConnectStatusResponse` | the arithmetic and the mapping really are Stripe's; a neutral name here would be the lie |
 
-The last row carries one open consequence: **the payout estimate is Stripe's fee schedule rendered
-under provider-neutral wording**, so it would be wrong the day Lydia goes live. That is a tracked P2
-in [backlog](../../backlog.md), not something this pass fixed.
+**`StripeNetPayoutHint` is gone from this row (2026-09-18)**, and for the same reason the row
+exists: once Lydia's fee (0,10 € + 1 %, confirmed by Lydia) got its own module (`lydiaFees.ts`,
+correctly still Stripe-shaped in name terms - its arithmetic really is Lydia's), the COMPONENT
+that renders either one is no longer single-provider arithmetic wearing a neutral name; keeping
+"Stripe" in it would have become the lie this table is about. It is `PayoutFeeHint.svelte` now,
+and picks its fee module by asking `GET /api/payments/provider` - the cheaper of the two options
+this page used to leave open, needing no change to `PaymentProvider` itself.
 
 ## Product purchase flow
 

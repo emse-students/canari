@@ -18,6 +18,15 @@ decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regro
 compte, pas le temps.
 [cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
 
+### Added - l'estimation de versement suit desormais le bareme du prestataire actif, Stripe ou Lydia
+
+`StripeNetPayoutHint.svelte` calculait toujours les frais Stripe, quel que soit le fournisseur
+actif dans `platform_config.paymentProvider` - correct tant que Lydia n'est pas branche, faux le
+jour ou ca bascule, sans que rien n'avertisse un tresorier. Le bareme Lydia (10 centimes + 1% par
+paiement) confirme le 2026-09-18 ferme la question : `lydiaFees.ts` rejoint `stripeFees.ts`, et le
+composant, renomme `PayoutFeeHint` (il n'est plus l'arithmetique d'un seul fournisseur), demande
+`GET /api/payments/provider` et choisit. [payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not).
+
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 
 Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
