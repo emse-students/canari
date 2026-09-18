@@ -1141,7 +1141,6 @@
   "chat_group_secured_sync_label": "Chiffré de bout en bout",
   "chat_group_name_label": "Nom du groupe",
   "chat_group_change_photo_label": "Changer la photo du groupe",
-  "chat_group_image_invalid_type": "Veuillez sélectionner une image.",
   "chat_group_image_upload_error": "Échec de l'envoi de la photo.",
   "chat_group_validate_rename_label": "Valider le renommage",
   "common_validate_button": "Valider",

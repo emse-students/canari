@@ -79,6 +79,13 @@ trame n'est plus un second constructeur mais un second DECLENCHEUR du meme - ce 
 appel dans un sens que cette application n'avait jamais fait, Rust vers Kotlin :
 [mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 
+### Added - la photo de groupe se recadre avant l'envoi, au lieu d'etre uploadee telle quelle
+
+`ChatGroupPanel` ouvrait directement l'image choisie sur `mediaService.uploadRaw`, sans passer par
+aucun outil de recadrage - le seul cote de l'app a uploader une image "brute" en avatar. Elle reutilise
+maintenant `AssociationLogoCropper` (glisser/zoomer/redimensionner un carre, export 512x512), deja
+partage par les logos d'association et les icones de carte. [chat](docs/wiki/frontend/modules/chat.md#ui-features).
+
 ### Changed - le chargement a froid EST la purge, a 89 %
 
 Le banc `load_phases` mesure le decodage CBOR de l'instantane a part du chargement complet, sur les
