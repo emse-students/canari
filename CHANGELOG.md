@@ -16,6 +16,16 @@ which is also where every release up to and including v0.13.1 now lives.
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
 -> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
 regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+### Fixed - une mention ou un abonnement revelait le vrai nom d'un post anonyme, dans l'onglet notifications
+
+Une notification n'a aucun masquage a la lecture : `actorName` est ecrit une fois pour toutes a la
+creation, et rien ne re-filtre la ligne stockee ensuite. Une mention resolvait et stockait le vrai
+nom sans jamais regarder `anonymous` ; corrige en le masquant ("Anonyme"). "Quelqu'un que vous
+suivez a publie" resolvait aussi le vrai nom - mais la, meme masque, le simple fait d'apparaitre
+dans cette notification (ou dans l'onglet "Suivis" du fil) revele que l'auteur fait partie du
+petit ensemble de comptes suivis : corrige en ne l'envoyant plus du tout pour un post anonyme,
+et en l'excluant du fil "Suivis". Signale par le meme utilisateur, dans la foulee du correctif
+ci-dessous. [moderation-and-blocking](docs/wiki/moderation-and-blocking.md#anonymous-posts---the-fourth-control-that-predicate-now-gates).
 
 ### Fixed - un post anonyme montrait le vrai nom de son auteur a tout le monde, dans le fil et dans la recherche
 
