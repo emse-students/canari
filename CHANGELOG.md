@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le backlog ne contient plus que ce qui reste a faire
+
+Il etait devenu un journal de travail : 390 lignes y portaient un mot de cloture, et trois entrees
+racontaient un correctif deja livre. Le recit part la ou il sert - deux pages de mesures nouvelles
+([cold-start](docs/wiki/frontend/cold-start.md), [key-package-pool](docs/wiki/protocols/key-package-pool.md)),
+le reste au `CHANGELOG` - et le backlog perd 1741 lignes sans perdre un seul item ouvert.
+
 ### Fixed - dans un groupe, on ne pouvait pas voir qui avait mis quelle reaction
 
 Les noms etaient deja resolus et partaient dans un `title`, que l'ecran tactile ne dessine jamais.
@@ -25,6 +32,13 @@ grandissait sans que rien ne regarde, donc tout ce qui etait en dessous descenda
 de l'ecran - sur le dernier message, la reaction passait sous la barre de saisie. Le compte etait un
 mauvais indicateur de la croissance ; c'est desormais la croissance elle-meme qui est observee.
 [backlog](docs/wiki/backlog.md).
+
+### Fixed - le fil passait derriere la barre de saisie pendant le defilement
+
+La liste reservait deja la hauteur de la barre, donc un fil au repos s'arretait au-dessus - ce qui
+passait derriere, c'etait tout ce qui defilait, et aucune reserve ne peut l'atteindre. La barre pose
+desormais le FOND du fil lui-meme, nomme plutot que recopie : aucune teinte nouvelle, et rien ne
+glisse dessous. [backlog](docs/wiki/backlog.md).
 
 ### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
 

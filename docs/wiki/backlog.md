@@ -884,612 +884,34 @@ honest conclusion is that no DOM event can discriminate, and the lines should be
 they are read rather than suppressed.
 
 ---
-### P2 - THE COLD START IS 1.3 s ON `0.18.8` AND 41% OF IT HAPPENS BEFORE THE APPLICATION SAYS A WORD (production, 2026-09-16)
+### P2 - THE COLD START IS A PREDICTION, NOT A RESULT, UNTIL ONE EXPORT IS TAKEN
+
+**THE TARGET IS UNDER ONE SECOND, ALL IN** (user). Every reading taken so far, every instrument, and
+every hypothesis refuted on the way is on [cold-start](frontend/cold-start.md), the only copy - read
+it before measuring anything, because three hypotheses died there already.
+
+**WHAT IS OWED IS ONE GESTURE, AND IT IS THE USER'S.** The last full table is `0.18.8`. Two changes
+landed after it (#760, the revocation round trip held across a decrypt worth 162 ms; #764, the socket
+handshake started before MLS, worth 182), and `v0.18.11` contains both. The arithmetic
+`1308 - 182 - 162 = 964` is a **PREDICTION** - the two savings may overlap, since both were waiting on
+the network - so **no line anywhere may quote a cold start under a second as measured** until one
+warm `window.__canariBootBench.get()` export is taken on the user's own browser, which this
+workstation cannot reproduce. Read the ORDER of `[WS] Opening connection` against `MLS ready` to tell
+whether #764 is present; the duration is the network on the day.
+
+**AND ONE PASS IS STILL ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED.**
+`prune_expired_key_packages` costs **11.49 ms** at a 1000-bundle pool (criterion, OXYGEN) inside
+`load_or_create`, in front of the first screen. It is maintenance, not a diagnostic - what it deletes
+must be deleted and nothing else deletes it - so moving it needs a TRIGGER, and a clock is forbidden
+here. **The blocking condition, written so nobody ships a timer instead:** name a durable fact that
+says *this pool has been pruned since it last changed*, carried in the state blob rather than
+inferred, and prune when that fact is absent. Until such a fact exists the pass stays where it is,
+because a pool that silently stops being pruned makes the prekey P1 worse.
+
+**THE NEXT QUESTION IS INSIDE RUST.** 82.7% of post-login is ONE native call, and the cost is linear
+in a pool nothing reclaims - which is the prekey P1, measured from the other end: 32% of everything
+decrypted on every boot is the unreclaimed one-time pool.
 
-The first measurement since `v0.18.5`, from the user's own Firefox export of 17:20 on `/posts`,
-which contains two consecutive reloads. **`+<ms>` is `performance.now()` - milliseconds since THIS
-document's navigation started - so nothing below is inferred.**
-
-| milestone | boot 1 (first load of `0.18.8`) | boot 2 (reload) |
-| --- | ---: | ---: |
-| the application's first word (`[A] token->refresh`) | 923 | **534** |
-| `Initialised in WEB mode (WASM)` | 1089 | **695** |
-| `MLS state loaded from IndexedDB` | 1255 | 856 |
-| `load_or_create` returns (7 617 611 B of state) | 1482 | 1092 |
-| `MLS ready - syncing messages in background` | 1484 | **1093** |
-| **`[WS] Connected to Chat Gateway`** | 1690 | **1308** |
-
-**THE 13 s IS DEAD AND MUST NOT BE QUOTED AGAIN.** It predates the Cache Rule and three boot fixes.
-The honest number against the user's "under 1 s tout compris" is **1.3 s to a connected socket**,
-with the app initialised at 695 ms.
-
-**WHAT DOMINATES IS NOW THE PART NOTHING HAD EVER MEASURED**: 534 ms of 1308 - **41%** - elapses
-between the navigation and the first line the application writes. That block contains exactly the
-two things already filed beside this entry: the document's own origin round trip (the app-shell
-entry, 120-146 ms of it) and the fetch, parse and evaluation of the module graph (the boot-bundle
-entry). The export could not separate them; `performance.getEntriesByType('navigation')` can.
-
-#### The split, taken 2026-09-16: the ROUND TRIP dominates it, not the bundle
-
-Three consecutive reloads of `https://canari-emse.fr/login` in Chrome on this workstation, each read
-straight off the navigation entry, with the first application line's own `+<ms>` prefix as the
-closing milestone:
-
-| | A | B | C |
-| --- | ---: | ---: | ---: |
-| DNS | 33.0 | 0.0 | 0.0 |
-| connect (QUIC + TLS) | 19.2 | 10.5 | 10.8 |
-| **TTFB (`requestStart` -> `responseStart`)** | **130.0** | **90.6** | **110.2** |
-| body (6.7 KB, zstd, h3) | 0.9 | 1.0 | 0.8 |
-| HTML parse to `domInteractive` | 63.1 | 28.0 | 29.1 |
-| module evaluation after `domInteractive` | 74.1 | 29.7 | 28.6 |
-| **the application's first word** | **323** | **162** | **185** |
-| first contentful paint | 264 | 152 | 176 |
-
-**THE ORIGIN ROUND TRIP IS 56-60% OF THE BLOCK, AND THE BUNDLE IS 15-23% OF IT.** 113 of the 114
-resources report `transferSize: 0` - the edge cache and the disk cache between them mean the ~100
-chunks cost almost nothing on a reload, and the 1 248 197 B of the boot-bundle entry buys back at
-most the 29-74 ms of evaluation. What is left is a document nobody may cache
-(`cf-cache-status: DYNAMIC`, `Cache-Control: no-store`) waiting on `frontend-ssr` in Saint-Etienne
-from an edge in Marseille. **So of the two entries filed beside this one, it is the round trip that
-is worth the work, and the bundle is worth it only for a FIRST visit.**
-
-**THIS IS THE SHAPE, NOT THE USER'S NUMBER.** It is Chrome, this workstation, `/login`, warm cache;
-the 534 ms is Firefox, the user's line, `/posts`, and a session. The proportions are what transfers -
-one reload of the user's own browser with these five fields read out would settle the absolute.
-
-#### THE PROPORTIONS DID NOT TRANSFER: 56-60% BECOMES 7% (user's Firefox + HAR, 2026-09-17)
-
-**The reload above asked for the absolute and got it, and it refutes the paragraph above it.** A
-console export and a HAR of the same boot, taken by the user on their own line at 09:23 on
-2026-09-17 against `0.18.9`, `/posts`, 386 requests. Every figure below is the HAR's own clock.
-
-| block | ms | share of the 1342 ms boot |
-| --- | ---: | ---: |
-| the document (TTFB 94, connection reused, 6 569 B zstd) | **94** | **7%** |
-| document's last byte -> the FIRST module request | 122 | 9% |
-| 173 modules, 1 333 140 B, all `cf-cache-status: HIT` -> the application's first word | 384 | 29% |
-| first word -> `MLS ready` | 580 | 43% |
-| `MLS ready` -> `[WS] Connected to Chat Gateway` | 162 | 12% |
-
-**THE ORIGIN ROUND TRIP IS 94 ms OF 1342, NOT 56-60% OF ANYTHING.** The Chrome probe measured 130 ms
-of TTFB against a 323 ms block and read that as the dominant term; on the user's line the same round
-trip is 94 ms against 1342 and is the SMALLEST of the five. The Chrome reading was not wrong about
-Chrome - it was answering a different question, on a different route, with no session and no MLS
-state to decrypt. **So the edge Cache Rule beside this entry is worth at most ~80 ms and must not be
-quoted as the cold-start fix; what dominates is the 580 ms of session and MLS work after the first
-word.**
-
-#### WHAT IS LEFT OF THE 43% IS THE ONE SPAN INSIDE IT, AND IT IS 78% ON A PHONE (`bootBenchmark.ts`, 2026-09-17)
-
-**Every number in the table above was read by a human off a HAR and a console export.** That is how
-the 580 ms is known to be 43%, and it is also why nothing is known about what is INSIDE it: the five
-rows are the five boundaries an export happens to expose, not a decomposition of the work.
-
-**The bench that exists measures the wrong side of the boundary.** `beginStartupCatchupBench()` is
-called in `sessionAuth.ts` on the line immediately BEFORE `[INIT] MLS ready`, so it times the sync
-that follows and never the init that precedes it. The largest block of the cold start was the only
-one with no instrument, and the instrument sat one line past its end.
-
-`frontend/src/lib/mls-client/bootBenchmark.ts` covers it, and it is a SECOND module rather than a
-third `kind` on the catch-up bench because all three of its properties are the opposite of that
-one's, and a column is only evidence for the question it was written to answer:
-
-| | catch-up bench | boot bench |
-| --- | --- | --- |
-| what it measures | durations, from `Date.now()` | OFFSETS from `performance.timeOrigin` |
-| concurrent steps | one active phase; a new one closes the last | named spans that may overlap |
-| what it counts | messages, conversations, acks | nothing - none of it is evidence here |
-
-**The offsets are the point.** A duration-only report has to be read against a HAR by hand, on a
-second clock, which is precisely the operation that turned a 94 ms round trip into a "56-60% of cold
-start" claim that was really 7%. Anchored at navigation start, a bench line and a HAR line are the
-same number. The report also carries the document's own `PerformanceNavigationTiming` - TTFB, body,
-`domContentLoaded` - so **it answers the WHOLE table above on its own, and a HAR is no longer owed
-for it.**
-
-**The overlap matters and is not a detail.** The gateway handshake is started ~200 ms before it is
-awaited and the revocation answer is deliberately held across the local decrypt, both on purpose and
-both recorded in this entry. A single-active-phase model would have closed those spans early and
-reported the concurrency this entry PAID for as if it were sequence.
-
-**IT RECORDS ON EVERY BOOT AND LOGS ONLY WHEN ASKED.** A flag that needs a reload cannot capture a
-cold start: by the time anyone wants the measurement, the boot in question is over. So
-`window.__canariBootBench.get()` answers on any build, with no flag and no reload -
-`localStorage.setItem('canari_boot_bench', '1')` only adds one summary line per boot on top.
-
-#### ITS FIRST RUN REFUTED THE FIRST THING IT WAS BUILT TO TEST (local estate, 2026-09-17)
-
-**The hypothesis was the two PBKDF2 derivations, and it is wrong for this boot and for the user's.**
-The PIN login path runs two sequential PBKDF2-SHA256 derivations on the same PIN and the same server
-salt - `computePinVerifier` at 100 000 iterations before the PIN check, `deriveDeviceKeyB64` at
-310 000 after it - and 410 000 iterations of SHA-256 in front of a boot is exactly the shape that
-looks like an answer. **It is not on the path being measured.** `loginImpl` takes the PIN branch only
-when neither a keystore nor a device-key vault answered; a returning session takes the `else`, and
-the whole PIN block - salt fetch, both derivations, the PIN-check round trip - is skipped.
-
-**And the user's boot is that same branch.** Their export prints `Initialising MLS (vault device key
-path)`, which is the log line inside that `else`. So the 410 000 iterations were never in their
-580 ms, and the instrument said so on its first run rather than after a change was built on them.
-**This is what the section above was written to avoid, and it worked at the first opportunity.**
-
-The first report, read off the scratch browser against the LOCAL estate:
-
-| | offset | duration |
-| --- | ---: | ---: |
-| document TTFB / `domContentLoaded` / `load` | - | 5.2 / 85.8 / 101.6 |
-| `login-start` | 147.4 | - |
-| `access-token` | 158.8 | 9.0 |
-| `resolve-device-id` | 221.1 | 0.1 |
-| `tab-leadership` (leader) | 221.2 | 7.8 |
-| `gateway-handshake-started` | 229.1 | - |
-| **`mls-init-and-storage`** | 229.5 | **159.1** |
-| `revocation-gate` (asked) | 388.6 | 45.7 |
-| `auth-token-final` | 434.8 | 0.2 |
-| **`MLS ready`** | **435.1** | - |
-
-**NOT ONE OF THESE NUMBERS IS THE USER'S AND NONE MAY BE QUOTED AS A COLD START.** It is a local
-estate on a loopback with a small state: the TTFB is 5 ms where theirs is 94, and `mls-init` here
-decrypts a fraction of their 7.6 MB. **What transfers is WHICH SPANS EXIST**, and that is the whole
-refutation - a branch that does not run costs nothing regardless of whose machine it is on.
-
-**What the run does prove about the instrument**: the offsets, the navigation entry, the overlap and
-the `window.__canariBootBench` reader all work on a real browser and a real boot. **The PIN spans are
-NOT proven end to end** - this boot never entered that branch, so they stand on the unit tests and
-the typecheck alone.
-
-**WHAT IS OWED IS ONE BOOT ON THE USER'S OWN BROWSER**, which is now one console command rather than
-a HAR export. Until then no number in this entry's arithmetic has moved.
-
-#### THE SECOND RUN IS THE FIRST ANDROID COLD START EVER MEASURED, AND IT MOVED THE SUSPECT (Mi 9T, 2026-09-17)
-
-**The PIN branch is now proven end to end, on the hardware where it is slowest.** The local run
-above never entered it, so the PIN spans stood on unit tests alone. This one entered it: a debug APK
-built from `99b4ae343` with a clean tree, installed on the Mi 9T over `adb reverse tcp:8081` against
-the LOCAL estate, unlocked with a real PIN. Every span the branch declares fired, in order, with no
-gap left unattributed.
-
-| | offset | duration |
-| --- | ---: | ---: |
-| document TTFB / `domContentLoaded` / `load` | - | 0 / 740.4 / 740.8 |
-| `login-start` | 3669.5 | - |
-| `access-token` | 3696.6 | 0.4 |
-| `pin-salt-fetch` | 3705.6 | 77.1 |
-| `pin-verifier-pbkdf2` (100 000 it.) | 3782.7 | 114 |
-| `resolve-device-id` | 3896.7 | 6.1 |
-| `pin-check-request` | 3902.8 | 35.6 |
-| `device-key-pbkdf2` (310 000 it.) | 3938.6 | 145 |
-| `tab-leadership` (leader) | 4083.9 | 0.2 |
-| `gateway-handshake-started` | 4084.2 | - |
-| **`mls-init-and-storage`** | 4086.1 | **1621.9** |
-| `revocation-gate` (not asked) | 5708 | 0 |
-| `auth-token-final` | 5733 | 0.3 |
-| **`MLS ready`** | **5736.9** | - |
-
-**THE INTERVAL FROM `load` TO `login-start` IS THE HARNESS TYPING A PIN AND IS NOT APP TIME.** 740.8
-to 3669.5 is 2.9 seconds and 51% of the wall clock, and it would be the largest line in this entry if
-anyone read it as one. It is not: the app was sitting on the PIN screen waiting for input, and the
-rig spent `2152ms` of it switching the keypad to manual and typing. **A human takes longer, not
-shorter.** Nothing in that interval is work the app is doing, and no total including it may be quoted
-as a cold start - which is exactly why the summary prints BOTH anchors rather than one.
-
-**What is app time is the 2067.4 ms after `login-start`**, and one span is 1621.9 of it:
-
-- **`mls-init-and-storage` is 78% of the measured boot, and it is ONE span with no internal
-  structure.** On the loopback desktop run it was 159 ms; here it is ten times that. Whatever the
-  target is, this block alone is over it. **It is now the whole question**, and decomposing it -
-  WASM instantiation against storage open against the first decrypt - is what the next iteration of
-  the instrument owes. Nothing else on this list is worth touching first.
-- **The two PBKDF2 derivations cost 259 ms together** - 114 + 145, on a 2019 midrange phone, on the
-  branch that actually runs them. That is 12.5% of the measured boot and 4.5% of the wall clock.
-  **Real, and not the story.** The hypothesis is now refuted twice: once by a boot that skipped the
-  branch, once by a boot that took it on the slowest hardware available.
-- **`ttfbMs` is 0 because there is no document request.** Tauri serves the frontend from inside the
-  APK, so the origin round trip that dominates the web reading does not exist here. This run
-  measures the client and nothing else, which is precisely what makes the 1621.9 unambiguous.
-
-**WHAT THIS RUN DOES NOT SETTLE.** It is not the user's browser and it is not the vault branch: a
-returning phone session skips the whole PIN block and enters `mls-init-and-storage` ~400 ms earlier,
-and it is against a LOCAL estate whose state is a fraction of production's 7.6 MB. **What transfers
-is the ONE ratio** - a block that is 78% of post-login time on real hardware is the target regardless
-of whose estate it reads.
-
-#### THE 1621.9 MS NOW HAS FIVE CLOCKS IN IT, AND ONE OF THEM IS THERE TO TEST A SUSPICION (2026-09-17)
-
-**The span measured a `Promise.allSettled` of two concurrent things, so its number is the SLOWER of
-the two and nothing said which.** That is the same defect as the one this whole entry started from,
-one level down: a clock whose reading cannot answer the question its own size raises. The pair keeps
-its clock - it is the honest wall time of the block - and each half gains one:
-
-| span | what it brackets | why it is separate |
-| --- | --- | --- |
-| `mls-init` | `mlsService.init(...)` | half of the `allSettled` |
-| `storage-open` | `getStorage(userId)` | the other half, concurrent with it |
-| `mls-load-state` | the decrypt inside `_initImpl`, BOTH platforms | the suspect: it opens the snapshot |
-| `mls-save-state` | the native snapshot write | **started and never awaited** |
-| `mls-list-groups` | `invoke('lister_groupes')` | **awaited**, so it IS on the critical path |
-
-**`mls-load-state` CARRIES THE SAME NAME ON BOTH PLATFORMS DELIBERATELY.** `WebMlsService` and
-`TauriMlsService` bracket their own decrypt with it, so an Android report and a browser report answer
-the same question with the same word. The user's boot is a browser one and the measured boot is a
-phone one; without a shared name the two readings cannot be set beside each other at all.
-
-**THE LAST TWO ROWS EXIST TO TEST ONE SUSPICION, AND IT IS WRITTEN DOWN BEFORE THE RUN RATHER THAN
-AFTER IT.** `_initImpl` starts the snapshot write without awaiting it, then awaits `lister_groupes`
-immediately after. `saveState`'s own docblock records **2.0 s of a 3.7 s phone measurement** for
-writing that snapshot twice. **If the native side serialises invokes, the awaited call queues behind
-the unawaited write and the boot pays for a write nobody asked it to wait for** - and no line
-anywhere would say so. That is a HYPOTHESIS. It is exactly the shape of the PBKDF2 one, which this
-same instrument refuted twice, so it is recorded as a prediction the next run may kill.
-
-`timeBootSpan` is what makes the unawaited half measurable without awaiting it: it wraps the promise
-instead of bracketing an `await`, so **a write still running at `MLS ready` is reported OPEN rather
-than closed at a moment it never reached**. A span with no end is the honest answer there, and the
-summary omits it rather than ranking a duration it does not have.
-
-#### AND THE RUN KILLED THAT HYPOTHESIS TOO, WHILE NAMING THE REAL BLOCK EXACTLY (Mi 9T, 2026-09-17)
-
-Second APK, built from the decomposition commit with a clean tree, same phone, same PIN branch,
-same local estate. `groups: 5`.
-
-| span | offset | duration | share of the 1988.1 ms after `login-start` |
-| --- | ---: | ---: | ---: |
-| `mls-init-and-storage` (the pair) | 3450.2 | 1689.2 | 85.0% |
-| `mls-init` | 3450.8 | 1688.5 | 84.9% |
-| **`mls-load-state`** | 3451.3 | **1644.4** | **82.7%** |
-| `mls-list-groups` | 5095.9 | 42.8 | 2.2% |
-| `storage-open` | 3450.8 | **2.5** | 0.1% |
-| `mls-save-state` (NOT awaited) | 5095.9 | 2712.1 | - it ENDS at 7808, long after `MLS ready` at 5144.4 |
-
-**THE HYPOTHESIS IS REFUTED, AND IT IS THE THIRD THIS INSTRUMENT HAS KILLED.** `mls-list-groups` and
-`mls-save-state` start at the SAME instant, 5095.9. The awaited call finished in **42.8 ms while the
-unawaited write ran for 2712.1 ms beside it**. The native side does NOT serialise the two, so the
-boot never queued behind that write and the suspicion written down above is wrong. It was recorded
-BEFORE the run precisely so it could be killed by one rather than quietly become an explanation.
-
-**THE PAIR'S CONCURRENCY BUYS NOTHING, MEASURABLY.** `storage-open` is **2.5 ms** against
-`mls-init`'s 1688.5. `Promise.allSettled` was hiding a 675x asymmetry: the pair's number was always
-the MLS half, and no arrangement of those two can matter.
-
-**SO THE WHOLE COLD START IS ONE NATIVE CALL.** `mls-load-state` is 97.4% of `mls-init` and 82.7% of
-everything after `login-start` - it is `loadStateWithKey` -> `invoke('initialiser_mls')`, the native
-decrypt and deserialisation of the snapshot. Everything else inside `_initImpl` together is 44 ms.
-**The next question is inside Rust, not inside TypeScript**, and it is the first time this entry has
-been able to say that with a number. For FIVE groups.
-
-**ONE THING THE RUN FOUND THAT NOBODY WAS LOOKING FOR**, and it is not on the boot's critical path:
-`mls-save-state` costs **2712.1 ms** and starts immediately after init, so the phone spends 2.7 s
-writing the snapshot while the catch-up sync runs. `saveState`'s docblock already records 2.0 s of a
-3.7 s measurement for writing that file twice. **The question this raises and does NOT answer: when
-init has just LOADED a snapshot and changed nothing, what does re-writing it buy?** The stated reason
-is that the FCM service must be able to decrypt before any message is processed - which is a reason
-for the file to EXIST, not for it to be rewritten with bytes it already holds. Answering that needs
-someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
-established it, and it must not be assumed.**
-
-#### A COLD LOAD IS THE PRUNE - 89% OF IT - SO THE NEXT COLD-START QUESTION IS QUEUE ITEM 5 (OXYGEN, 2026-09-17)
-
-The entry below ends by saying the next question is inside Rust. `load_phases` answers WHERE inside:
-it benches `from_reader::<PersistedState>` - the one thing a load does over every BYTE - against the
-full `load_or_create` on the same bytes, so the pair subtracts.
-
-| pool | full load | prune | CBOR decode | remainder |
-| --- | --- | --- | --- | --- |
-| 50 | 738.7 us | 500.2 us (**67.7%**) | 44.7 us (6.1%) | 193.8 us |
-| 500 | 5.581 ms | 5.008 ms (**89.7%**) | 0.295 ms (5.3%) | 0.278 ms |
-| 1000 | 11.374 ms | 10.082 ms (**88.6%**) | 0.562 ms (4.9%) | 0.730 ms |
-
-*(release, 5 groups, 20 samples, logger `Off` - both O(pool) diagnostics left this path in #822/#824.)*
-
-**THE SNAPSHOT DECODE IS 5%, AND THE REMAINDER IS FIXED.** WP-ANR-1's `byte_compat` had already paid
-that debt down. What the prune does not account for is ~200-700 us independent of the pool: the
-identity deserialise, the storage map move and one `MlsGroup::load` per group. **The group count is
-not the problem**, and the snapshot's SIZE is only a problem through what it is made of.
-
-**COMPOSED WITH #824's FINDING** - 88% of the prune is `serde_json::from_slice::<KeyPackageBundle>` -
-this says **~78% of a cold load is JSON deserialised to read expiry dates**. A thousand bundles opened
-to read a thousand dates.
-
-**SO THIS IS A DEPENDENCY, NOT A NEW LEAD.** Skipping that decode needs an index, the index is a field
-in the state blob's header, and the header WRITER cannot move until the reader is the floor
-(`minClientVersion`) - queue item 5. The cold-start target and the corruption-classification item are
-the same piece of work seen from two ends, and until now only one of them knew it.
-
-**WHAT THIS BENCH STILL DOES NOT MEASURE, stated rather than extrapolated away**: its largest fixture
-is a QUARTER of the 7.8 MB `TauriMlsService` records for the handset, and it starts from plaintext
-already in memory - neither the file read nor `load_with_key`'s ChaCha pass is in it. The 1644.4 ms
-the phone reports for `mls-load-state` includes both, and nothing here has separated them.
-
-##### THE 2712.1 MS: THE MARSHALLING IS GONE, THE RE-SERIALISATION AND THE WRITE ARE NOT (2026-09-17)
-
-The three facts the entry above says must not be assumed, established by reading the two sides:
-
-1. **`initialiser_mls` itself performs no save.** It resolves the at-rest key, calls
-   `MlsManager::load_with_key` and stores the manager in `AppState`. The only write on that path is
-   the one-shot `migrate_legacy_state_blob` for a pre-v0.11.0 blob.
-2. **`load_or_create` DOES mutate what it opens, sometimes**: it runs `prune_expired_key_packages`
-   once per native load, and that calls `mark_state_dirty()` when it deletes anything. So a
-   post-init write is not always writing bytes the file already holds - but nothing tells the
-   TypeScript side which case it is in, and the save is issued unconditionally.
-3. **Independently of 2, the snapshot cache is constructed DIRTY on every load**
-   (`state_snapshot: RefCell::new(StateSnapshotCache::new_dirty())`), deliberately and with a
-   comment: seeding it from the bytes just read would hand a legacy `mls.bin` straight back to the
-   first `save_state` and keep the old encoding for ever. So the first save after a load ALWAYS
-   re-serialises the whole state, whether or not anything changed. That is a real trade, and the
-   2712.1 ms is the first measurement of what it costs.
-
-**AND A THIRD COST WAS FOUND THAT IS NEITHER OF THOSE, AND IS PURE WASTE**: the command returned the
-whole encrypted snapshot to JavaScript, which Tauri serialises as a JSON array of one number per
-byte - 27.8 MB of JSON for a 7.8 MB blob - for four native call sites that all discarded it. Shipped;
-see the CHANGELOG entry. Measured on OXYGEN (desktop, release, a FLOOR for a handset): 95 ms of
-`serde_json` encoding plus 220 ms of `JSON.parse` + `Uint8Array.from`, ~315 ms excluding the transport
-copy itself.
-
-**WHAT IS STILL OPEN, NOW STATED PRECISELY.** The serialise and the disk write remain. Skipping the
-post-init write on a clean restore is gated on facts 2 and 3: the native side KNOWS whether the load
-mutated anything (the prune returns a count) and it is the only place that knows, so the discriminator
-has to be carried to TypeScript rather than guessed there - the rule this repository keeps about
-never learning by failing what a fact could have told you. Fact 3 is the harder half: skipping the
-write does not weaken the format migration's determinism (the snapshot stays dirty and the next real
-save still rebuilds it), but it does make the moment the migrated bytes reach DISK depend on what the
-user does next, which is exactly what that comment was written to prevent. **That is a decision about
-migration policy, not an optimisation, and it should be taken as one.**
-
-#### THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (OXYGEN, 2026-09-17)
-
-The entry above ends by saying the next question is inside Rust. `mls-core` had **no load benchmark
-at all** - every bench in `mls_perf.rs` measured SAVING - so `benches/mls_perf.rs` gained
-`load_or_create_cold` and `load_per_pool_passes`. The pool is the swept dimension rather than the
-group count, because the per-load passes walk key packages and because the accumulation is already
-known to be unbounded (queue item 2).
-
-**A BENCH THAT INSTALLS NO LOGGER MEASURES A DIFFERENT FUNCTION FROM THE ONE A PHONE RUNS**, and
-this is the finding, not a footnote. `log::info!` expands to `if level_enabled { ... }`, so with no
-logger installed `log::max_level()` is `Off` and **its arguments are never evaluated**. Two of
-`load_or_create`'s arguments are `state_composition_summary()` and `key_package_census_summary()`,
-and the second `serde_json`-deserialises every stored bundle, recomputes its `hash_ref` and runs a
-substring scan over its key. A device installs `tauri-plugin-log` at info and pays for all of it;
-every test and bench in this repository was blind to it. The benches now install a discarding logger
-and run each load TWICE, so the gap is a number in the output rather than a claim in a comment.
-
-Criterion, 20 samples, OXYGEN, 5 groups, release:
-
-| key-package pool | load, logger at INFO | load, logger OFF | what the two log lines cost |
-| --- | --- | --- | --- |
-| 50 | 1.416 ms | 0.829 ms | +0.59 ms (**+71 %**) |
-| 500 | 12.17 ms | 6.25 ms | +5.9 ms (**+95 %**) |
-| 1000 | 24.52 ms | 12.91 ms | +11.6 ms (**+90 %**) |
-
-And the three per-load passes measured apart from the load, same machine:
-
-| pass | 50 | 500 | 1000 | what it is |
-| --- | --- | --- | --- | --- |
-| `prune_expired_key_packages` | 0.578 ms | 5.69 ms | 11.49 ms | maintenance, always runs |
-| `key_package_census_summary` | 0.587 ms | 5.71 ms | 11.61 ms | a LOG LINE's argument |
-| `state_composition_summary` | 0.021 ms | 0.109 ms | 0.209 ms | a LOG LINE's argument |
-
-**SO A COLD LOAD AT A 1000-PACKAGE POOL IS ROUGHLY 1 ms OF DECODE, 11.5 ms OF PRUNING AND 11.6 ms OF
-A DIAGNOSTIC NOBODY READ.** All three are O(pool), none of them is needed before the first screen,
-and the comment on the census already says in as many words that "the web start-up is not where an
-O(n) diagnostic belongs" - while leaving it on the native one.
-
-**WHAT THIS DOES AND DOES NOT SETTLE.** It does not explain 1644 ms: OXYGEN is not a Mi 9T and its
-pool is a fixture. It settles the SHAPE - the cost is linear in a pool nothing reclaims, and about
-half of it is work the load does not need to do - and it gives the first reproducible number anyone
-can re-run. **The next measurement is the same sweep at the pool a real device carries**, which
-queue item 2 is already about, and the fix it argues for is moving both O(pool) passes off the
-awaited path rather than deleting either: the report is why the leak was found at all. That is a
-change in the Tauri command layer, not in `mls-core`, and it is not made here.
-
-#### THE PRUNE'S COST IS THE DECODE, NOT THE PROOF - MEASURED, AND IT REFUTED THE FIX THAT ARGUED FOR IT (OXYGEN, 2026-09-17)
-
-`prune_expired_key_packages` is the other O(pool) pass on the awaited cold load, 11.39 ms at a
-1000-package pool. It shared a walk with the census that PROVES every row - a `hash_ref` recomputed
-per bundle plus a serialisation - while the expiry test needs only the decoded lifetime. The obvious
-fix was to prove only the rows about to be deleted, and it shipped: the deleted set is unchanged
-(expired AND proven, exactly what the census counts as expired), now asserted by a test rather than
-guaranteed by the sharing.
-
-**AND THE NUMBER SAID THE HYPOTHESIS WAS MOSTLY WRONG**, which is the finding worth keeping:
-
-| pool | before | after | change |
-| --- | --- | --- | --- |
-| 50 | 0.560 ms | 0.495 ms | **-11.5%** |
-| 500 | 5.61 ms | 5.05 ms | **-11.2%** |
-| 1000 | 11.39 ms | 10.08 ms | **-12.1%** |
-
-The cryptographic proof was **12%** of the pass. The other 88% is
-`serde_json::from_slice::<KeyPackageBundle>` on every stored bundle - the DECODE. A thousand bundles
-are deserialised to read a thousand dates, and no rearrangement of what happens after the decode can
-recover that.
-
-**SO THE REMAINING ~10 ms NEEDS AN INDEX, AND THE INDEX IS BLOCKED.** The storage key is
-`label || json(hash_ref) || version` and carries no expiry, so the only way to skip the decode is to
-write the pool's expiries - or its earliest `not_after` - where a load can read them without opening
-every bundle. That is a field in the state blob, and **the blob-header WRITER cannot move until the
-reader is the floor (`minClientVersion`)**, which is item 5 of the queue. Two cheaper-looking routes
-are refuted in advance: a partial `serde` shape that decodes only the lifetime still parses the whole
-JSON and duplicates knowledge of openmls's wire format in a second place, and an in-memory cache of
-the earliest expiry is empty on precisely the path that matters - a COLD load.
-
-**WHAT MUST NOT BE BUILT INSTEAD**: a clock-driven "prune every N hours". Idempotence comes from
-durable state, termination from a proof, never from a clock - and a pool that silently stops being
-pruned is item 2 of the queue getting worse, which is a P1.
-
-Two things the export settles in passing, both measured rather than argued:
-
-- **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
-  chunks, median 16 ms, slowest 42 ms, 56 in flight at the peak, `cf-cache-status: HIT` on all 173,
-  and the last module byte lands at +627 ms - AFTER the application's first word at +600. The
-  `Link: rel=modulepreload` header is doing its job: the document body carries ZERO
-  `rel="modulepreload"` tags (10 `<link>` tags, none of them preload), so that 10 461-byte header is
-  the only early declaration there is, and what it buys is exactly the multiplexed burst above
-  rather than a level-by-level discovery. `preloadableAsset`'s docblock says so and this is the
-  reading behind it.
-- **122 ms elapse between the document's last byte and the first module request**, which nothing had
-  ever measured and which no entry here explains. It is 9% of the boot, and whether it is HTML
-  parse, zstd decode, the inline bootstrap or Firefox scheduling is NOT known - the export cannot
-  separate them and neither may a later reader.
-
-  **BUT ONE READING WOULD SETTLE THE LARGEST OF THOSE CAUSES, AND IT COSTS NOTHING TO TAKE.** The
-  header is the only early declaration, so the whole question is WHEN the browser acted on it.
-  Compare the first `/_app/immutable/` request against the DOCUMENT'S TWO TIMESTAMPS, not against
-  one of them:
-
-  | the first module request tracks | what it means |
-  | --- | --- |
-  | the document's response **start** (its TTFB) | the `Link:` header was honoured; the 122 ms is parse, decode or scheduling, and is small |
-  | the document's response **end** | the header did NOTHING in this engine, and the graph is discovered by EXECUTING the inline bootstrap at the end of `<body>` |
-
-  The measurement already in hand says the gap is counted from the END, which is the second row -
-  but it was read as "the header is working" on a different argument (the last module byte lands
-  after the app's first word, at +627 against +600), and **that argument is about the header being
-  USEFUL, never about when it fired**. The two are not the same claim and only one of them was
-  measured. This is the same shape as the 56-60% that inverted: a fact about one mechanism read as
-  a fact about the product.
-
-  **IF IT IS THE SECOND ROW, THE FIX IS NOT A TUNING.** `<link rel="modulepreload">` TAGS in the
-  head are discovered by the parser in every engine, where an HTTP `Link:` header is honoured only
-  by engines that implement header-driven module preloading - MDN's page for `modulepreload` does
-  not document the header form at all, checked 2026-09-17. **Do not build it before the reading**:
-  emitting the tags means post-processing the response SvelteKit already built, which costs the
-  streaming render, and paying that for an engine that never needed it would be the third
-  Chrome-shaped decision in this entry.
-
-#### WHAT THIS EXPORT COULD NOT MEASURE, AND WHY, SO NOBODY RE-READS IT AS THE ANSWER
-
-**Neither of the two fixes below was in the build.** `v0.18.9` was tagged 2026-09-16T17:18:37Z;
-`perf(session): tenir la reponse de revocation pendant le dechiffrement local` (#760) merged at
-17:41:58Z and `perf(session): la poignee de main du socket ne fait plus la queue derriere l'etat
-MLS` (#764) at 18:35:23Z. `git tag --contains` answers nothing for either. **A build is identified
-by what it CONTAINS, never by the fact that it is the latest one** - the tag was cut 23 minutes
-before the first of the two landed, and asking for the export against it was the error.
-
-**And the capture had the browser cache disabled**, so every one of the 241 immutable chunks was
-refetched: the request headers carry `Pragma: no-cache`. That makes `1342 ms` a NO-CACHE boot, not
-comparable to the `1308 ms` warm boot of `0.18.8` above - the only honest comparison between the two
-builds is that no boot change separates them, and the two numbers agree. **It is worth one line that
-a full refetch of 1.33 MB over 173 requests lands within 34 ms of a warm boot**: the disk cache is
-nearly worthless here because the edge already answers every chunk.
-
-**WHAT IS OWED IS ONE WARM EXPORT ON A BUILD CARRYING #760 AND #764**, and until it exists the
-964 ms arithmetic stays a prediction. **THAT BUILD NOW EXISTS**: `v0.18.11` was tagged
-2026-09-17T13:37:25Z, and both merged before it - #760 as `ee4af0670`, #764 on 2026-09-16T18:35:24Z.
-So nothing blocks the reading any more; it is one `window.__canariBootBench.get()` on the user's own
-browser, and the prediction stops being one the moment it is taken.
-
-#### The second block WAS 162 ms and is SHIPPED; what it leaves behind is one corrected claim
-
-The gap between `Initialising MLS (vault device key path)` (856 ms) and `Loading encrypted state
-with device key` (1018 ms) was the `/api/mls/devices/.../revoked` round trip awaited in front of a
-decrypt that needs no network at all. The promise is now held across that decrypt and read just
-after it; the story is in `CHANGELOG.md` and the reasoning sits on the gate itself in
-`sessionAuth.ts`.
-
-**ONE CLAIM THIS ENTRY MADE WAS WRONG, AND ENUMERATING THE BRANCHES IS WHAT FOUND IT.** It said a
-naive overlap was unsafe because `rotateDeviceIdentity` *publishes*. It does not: `_initImpl`
-reaches no publication at all - `generateKeyPackage` is called from `initializeConnection` and
-`republishKeyMaterial`, both far past the gate. Its one network step is `deleteDevice`, and
-`DELETE /api/mls/devices/:userId/:deviceId` ADDS a `RevokedDevice` row rather than removing one, so
-it can only reinforce a revocation. The conclusion the entry reached - hold the promise, gate before
-anything acts on the session - was right; the reason given for it was not, and a reason nobody can
-re-derive is what this file has already been burnt by once.
-
-**WHAT IS STILL OWED IS THE READING.** 162 ms is a Firefox measurement on the user's own line, and
-this workstation cannot reproduce that browser. One reload export of a build carrying the change
-says whether the gap is gone.
-
-**THE 2026-09-17 EXPORT IS NOT THAT READING, AND IT IS THE CONTROL INSTEAD.** `v0.18.9` was tagged
-23 minutes before #760 merged, so what it measures is the UNCHANGED code: `Initialising MLS (vault
-device key path)` at +917, `Loading encrypted state with device key` at +1085 - **168 ms**, against
-the 162 recorded here. The block reproduces. That is worth having, and it is not the answer.
-
-**AND THE KEY-PACKAGE LEAK NOW HAS A PRICE IN BYTES.** The same boot prints its own composition:
-
-```
-load_or_create: state composition - 7617618B total;
-  Tree           26x  2 575 517 B
-  MessageSecrets 26x  2 455 685 B
-  KeyPackage   1033x  2 453 307 B
-[MLS] key package census - 1033 proven (1032 one-time, 1 last-resort);
-  0 expired, 0 undecodable; 30 mint instant(s), largest batch 50
-```
-
-**32% of everything decrypted on every boot is the unreclaimed one-time pool**, and `0 expired, 0
-undecodable` says again that none of the three reclaims applies to it. That is the P1 above; what is
-new here is that it is no longer only a count, it is a third of the state this table is timing.
-
-**WHAT IS OWED IS ONE EXPORT PER CHANGE, NOT A CAMPAIGN.** This table is reproducible from any
-reload, costs the user one gesture, and every line in it is attributable to a document since #742.
-
-#### The LAST block was 215 ms, and the 182 of handshake in it are SHIPPED - what is left is the 33
-
-The same export, second boot, read line by line between `MLS ready` (+1093) and
-`[WS] Connected to Chat Gateway` (+1308):
-
-| +ms | line |
-| ---: | --- |
-| 1093 | `[INIT] MLS ready - syncing messages in background.` |
-| 1108 | `[MLS] key package census - 1033 proven` (15 ms, and it is IN FRONT of the badge) |
-| 1108 | session/device binding, push service, three API calls fired |
-| 1120 | `[TAB] Leadership acquired (Web Locks).` -> `Connecting to Gateway...` |
-| 1126 | `[WS] Opening connection -> wss://.../api/ws?device_id=...` |
-| **1308** | **connected** |
-
-**THE 182 ms OF HANDSHAKE ARE DONE** (unshipped as of this writing, merged on `main`). It never
-needed the state it was queued behind: `connect` sends a device id and a token, both of which
-`resolveDeviceId` answers before `init()`. The login now starts the handshake there and awaits it
-200 ms lower down; tab leadership moved up with it, because leadership is what decides whether to
-open a socket at all. What the concurrency owes is `BaseMlsService`'s inbound gate - every frame
-held in arrival order until `markInboundReady`, then replayed sequentially - because the gateway's
-delivery accounting cannot tell "handed to a client" from "handled by one", so an early frame with
-nowhere to go is a message lost on both ends. Six source guards in `offlineUnlock.test.ts` pin the
-order, which is the half a behavioural test cannot see.
-
-**WHAT IS LEFT HERE IS THE 33 ms OF SERIAL WORK, AND IT IS NOT WORTH MACHINERY.** 15 ms of it is the
-key-package census, kept deliberately: 1% of the boot does not justify rescheduling, and a claim
-nobody re-measured costs more than 15 ms is worth saving.
-
-**AND THE MEASUREMENT IS OWED AGAIN.** The table above is `0.18.8`. Nothing here has been re-read on
-a build carrying either this change or the 162 ms revocation change, and the arithmetic
-(1308 - 182 - 162 = 964) is a PREDICTION, not a result - the two savings may overlap, since both
-were waiting on the network. **One reload export on a build that CONTAINS both settles it**, and
-until it exists no line anywhere may quote a cold start under a second as measured.
-
-**`v0.18.9` IS NOT THAT BUILD AND THE 2026-09-17 EXPORT CONFIRMS IT FROM THE INSIDE**: `[WS] Opening
-connection` prints at +1218, still AFTER `MLS ready` at +1180, which is precisely the queueing #764
-removes. The handshake itself took 124 ms there against 182 here, and that difference is the
-network on the day rather than a change - **read the ORDER, not the duration, to tell whether this
-fix is present.**
-
-#### HALF OF A COLD LOAD LEFT THE CRITICAL PATH; THE OTHER HALF IS MAINTENANCE AND NEEDS A TRIGGER (2026-09-17)
-
-The criterion benches added the same day say a cold `load_or_create` costs **24.5 ms with a logger
-installed and 12.9 ms without**, at a 1000-key-package pool, 5 groups, on OXYGEN. The gap is the
-argument of a `log::info!`: `key_package_census_summary()`, which deserialises every stored bundle,
-recomputes its `hash_ref` and scans its key. A phone runs `tauri-plugin-log` at info and pays it, on
-the awaited path of `initialiser_mls`, in front of the first screen.
-
-**THAT HALF IS SHIPPED OUT OF THE LOAD.** The census is now the `recenser_key_packages` command,
-called from the line of `sessionAuth` that already called the web one after `MLS ready` - and the
-`!isTauriRuntime()` guard on that line, which looked like it spared native an O(n) diagnostic and in
-fact only stopped native doing it at the right moment, is gone with it. The composition line stays
-in the load: 0.209 ms at the same pool.
-
-**THE OTHER HALF IS `prune_expired_key_packages`, 11.49 ms at that pool, AND IT IS STILL THERE.** It
-is not a diagnostic, it is maintenance: what it deletes must be deleted, and nothing else deletes it.
-Moving it therefore needs a TRIGGER, and this repository forbids the obvious one - *idempotence comes
-from durable state, termination from a proof, never from a clock*. **The blocking condition, written
-so nobody ships a timer instead:** name a durable fact that says "this pool has been pruned since it
-last changed", carried in the state blob rather than inferred, and prune when that fact is absent.
-Until such a fact exists this pass stays where it is, because a pool that silently stops being pruned
-is item 2 of the queue getting worse, and item 2 is a P1.
-
-**NONE OF THIS EXPLAINS THE 1644 ms.** OXYGEN is not a Mi 9T and a fixture pool is not a field pool.
-What is established is the SHAPE - the cost is linear in a pool nothing reclaims - plus a
-reproducible first number.
-
----
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 
 Against the cold-start target of **under 1 s**, the FIRST thing in every waterfall:
@@ -1866,72 +1288,20 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ## Reported by the USER on 2026-09-18 - eleven items, verbatim
 
-Same contract as the 2026-09-17 section below: what is written under each item is the REPORT and
-whatever has since settled it. A hypothesis is marked as one, and nothing here is a diagnosis until
-it names the line it read.
+**WHAT IS WRITTEN UNDER EACH ITEM IS WHAT IS STILL OWED, AND NOTHING ELSE.** An item whose work
+has shipped is DELETED from here the day it merges - its story goes to `CHANGELOG.md` and its
+mechanism to the wiki page that entry points at. A hypothesis is marked as one, and nothing here is
+a diagnosis until it names the line it read.
 
 **NO IDENTITY FROM THE CAPTURES ENTERS THIS FILE.** The reports came with screenshots of real
 conversations between real students; the peers' names, their faces and their message text are
 evidence that stays in the chat. Counts, shapes and widget behaviour are all a defect needs.
 
-### G1 - P2 - the same chat message is notified TWICE, and the two notifications are not the same builder
+### G1 - ONE NOTIFICATION, TWO TRIGGERS, AND THE PUSH PAYLOAD IS THINNER THAN THE SOCKET FRAME
 
-Verbatim: *"Certaines notifications arrivent deux fois (je ne sais plus dans quelle configuration,
-app ouverte, fermee, background ?)."*
-
-The capture settles more than the sentence does: **the two rows are visibly different
-constructions.** The first has a title, a body, no avatar and no action; the second has the avatar
-and both `Repondre` / `Marquer comme lu` actions. So this is not one builder posting twice under two
-ids - it is TWO builders, and the shapes say which two: a rich `MessagingStyle` notification the app
-posts itself, beside a plain one drawn from somewhere else.
-
-**THE HYPOTHESIS ABOVE WAS REFUTED THE SAME DAY, AND THE REFUTATION IS THE USEFUL PART.** The
-payload is data-only: `messaging.service.ts:608-633` sends `{ token, data, android: { priority,
-ttl } }` and nothing else, and the ONE place in the monorepo that sets a top-level `notification`
-plus an `android.notification` is `push.controller.ts:828-840`, the admin-guarded
-`mls/push/broadcast-test` route, whose `type: 'push_test'` the Kotlin service does not even handle.
-**Android's own tray never drew anything.** Both notifications are ours.
-
-**THE DIAGNOSIS: TWO BUILDERS, TWO TRIGGERS, TWO ID NAMESPACES, AND NEITHER KNOWS THE OTHER EXISTS.**
-
-| | the plain one | the rich one |
-| --- | --- | --- |
-| built by | `useNotifications.svelte.ts:674`, `tauri-plugin-notification` | `CanariFirebaseMessagingService.kt:3296` |
-| triggered by | the WebSocket frame, via `notifyInbound` (`useMessaging.svelte.ts:429`) | the FCM data push, via `onMessageReceived` |
-| id | `stableNotifId(conversationId)`, a hash | `getStableNotifId`, a counter from 1000 |
-| channel | `canari_messages` | `canari_messages` |
-| style | `BigTextStyle`, no avatar, no action | `MessagingStyle`, avatar, `Repondre` + `Marquer comme lu` |
-| suppressed when | the reader can SEE the arrival | `MainActivity.isInForeground` |
-
-**The two suppression predicates are disjoint: a backgrounded app satisfies neither.** The ids
-cannot collide, so neither can replace the other. The doubling therefore needs both triggers to
-fire, which is exactly what `scheduleDeferredPush` (`messaging.service.ts:676-697`) arranges when a
-WS frame is not ACKed within 10 s - the phone then gets the frame AND the push. **That also answers
-the "in which configuration" the report could not:** backgrounded, with the socket alive and slow to
-ACK, never foreground.
-
-**AND THE ANSWER IS NOT TO ADD A THIRD PREDICATE.** The comment at `useMessaging.svelte.ts:367-383`
-records that native mobile USED to return early here, on the premise that *"the background push
-handler posts its own, so the user would get two"* - and that the early return was deleted because
-the premise fails whenever there is no push, which is the ordinary backgrounded case, and a phone in
-a pocket never notified. Both versions of that guard are a guess about what the OTHER builder did.
-
-**THE USER NAMED THE DESIGN** (2026-09-18): *"pourquoi a-t-on encore des plain-notifications alors
-que les rich notifications sont super"*. It shipped the same day - see `CHANGELOG.md` and
-[mobile](frontend/mobile.md#one-builder-two-triggers). On Android there is now ONE builder, the
-Kotlin `MessagingStyle` one, and the WebSocket frame is a second TRIGGER for it rather than a second
-builder: same `getStableNotifId(groupId)` namespace, so whichever trigger arrives second UPDATES the
-first instead of standing beside it. The plain path stays where it is the only thing that exists -
-the web, and desktop, which is a third implementation again (`desktop.rs`) that nothing has measured.
-
-**IT NEEDED A CALL IN A DIRECTION THIS APP HAD NEVER MADE**, Rust into Kotlin, and the obstacle is
-worth keeping: a thread attached from native code has no Java frames on its stack, so `FindClass`
-resolves against the SYSTEM class loader and finds only the boot classpath. That is why
-`flush_webview_cookies` could only ever reach `android.webkit.CookieManager`. The app's own loader is
-taken in `JNI_OnLoad`, where the stack still carries `CanariApplication`, and kept as a global
-reference; `find_app_class` is the one way through it and any future upcall goes the same way.
-
-**TWO THINGS ARE STILL OPEN, AND BOTH ARE SMALL:**
+Android posts ONE builder since 2026-09-18 and the WebSocket frame is a second TRIGGER for it rather
+than a second builder - see `CHANGELOG.md` and [mobile](frontend/mobile.md#one-builder-two-triggers).
+Three things outlived that, and the first two are one missing field:
 
 1. **A SALON MESSAGE ARRIVING BOTH WAYS CAN SHOW ITS LINE TWICE.** The notification is single - the
    id is shared - but the builder de-duplicates on the SENDER's `sentAt`, and the channel push
@@ -1943,7 +1313,9 @@ reference; `find_app_class` is the one way through it and any future upcall goes
    the WebSocket trigger knows the sender and titles the conversation with the salon. Both converge
    on one notification, so this is a wording, not a duplicate - but it is a difference that exists
    only because the payload is thinner than the socket frame, which is the same cause as (1).
-
+3. **DESKTOP IS A THIRD IMPLEMENTATION AND NOTHING HAS MEASURED IT.** The collapse to one builder is
+   Android's; `desktop.rs` builds its own notifications and the web builds a third. Neither has been
+   looked at for the doubling this item was opened for.
 
 ### G2 - ONE DISPLAY NAME, TWO OPPOSITE PRECEDENCES
 
@@ -1966,58 +1338,23 @@ A first contact has nothing older than its first message. The banner answers a q
 asked, and it is the first thing the user sees of a new correspondent. Whatever decides to solicit
 history must first decide whether there is any to ask for.
 
-### G4 - P2 - a first-contact conversation shows NO profile photo until the app is restarted
+### G4 - THE SERVER SAYS `''` FOR THREE DIFFERENT THINGS, AND THE CLIENT NOW READS IT AS ONE
 
-Verbatim: *"et pas de photo de profil en haut avant rechargement de l'app."*
+The first-contact row is drawn from its type since 2026-09-18 (`CHANGELOG.md`), and the shape
+followed the widget. Two things did not:
 
-**CAUSE ETABLIE, ET ELLE EST LA MEME QUE G5. CORRIGEE - voir `CHANGELOG.md`.**
-
-The path is the one this whole report describes: a first message from someone with no conversation
-yet arrives as a push, the native side caches it, and `consumeFcmCache` writes the row. That row was
-built with a LABEL and no type (`fcmMemoryMerge.ts`), and `buildConversationRow` writes `group` when
-a site does not say - deliberately, because most sites that cannot say are looking at a group. So
-the one case the FCM cache exists for was the one case the default was wrong for.
-
-Two symptoms, one line: a group has no user whose photo to fetch, and `GroupAvatar` defaults to
-`shape='soft'`. **The restart repairs it** because `conversations.ts:916` rewrites the row from the
-server roster, which is exactly the *"avant rechargement de l'app"* in the report.
-
-**THE DISCRIMINATOR WAS ALREADY ON THE WIRE AND ALREADY DOCUMENTED HERE.** `FcmCacheEntry.groupName`
-is empty for a DM by the server's own contract, and the field's own docblock said so - *"it is
-therefore both the label AND the discriminator, which is why it does not travel beside an `isGroup`
-flag"*. It was read for the label and never for the type. No wire change, no CSS change.
-
-**THREE STATES, NOT TWO, AND THAT IS THE PART WORTH KEEPING:** ABSENT (a cache file written by a
-native build older than 2026-09-15 - the push said nothing, so neither does the row), PRESENT AND
-NAMED (a group), PRESENT AND EMPTY (a DM, whose peer is the sender). Reading absent as empty would
-invent a peer out of whoever happened to message first.
-
-**WHAT IS STILL OPEN, and it is the server's half:** `messaging.service.ts` computes
-`groupName = group?.isGroup ? (group?.name ?? '') : ''`, so `''` also covers a group whose own name
-is empty and a group row that could not be read. Such a group is now drawn as a DM with its first
-sender as the peer. It was ALREADY labelled with that sender's name before this fix, so only the
-avatar changed - but the ternary is where that ambiguity is created and where it should be removed.
-
-**A SECOND, SEPARATE DEFECT WAS FOUND ON THE WAY AND IS NOT FIXED HERE.** The Welcome handler's
-early placeholder (`setupMessageHandler.ts:379`) tests the group **ID** for the `::` NAME pattern:
-`const isDirectByPattern = joinedGroupId.includes('::')`. A group id is a UUID, so that test is dead
-and the row is always `conversationType: 'group'` with the invented label `'Groupe'` - persisted.
-The authoritative derivation runs later in the same file and overwrites it, so this is a WINDOW
-rather than a permanent state, and nothing has yet observed a user inside it. Recorded so the next
-person does not have to find it twice.
-
-### G5 - P3 - the initials placeholder is a rounded SQUARE where the photo is a CIRCLE
-
-Verbatim: *"Elles est d'ailleurs carree au lieu de ronde pour les personnes."*
-
-Visible in one capture with no other context needed: in a single list, every row that has a photo is
-a circle and every row that falls back to initials is a `rounded-2xl` box. `Avatar.svelte` defaults
-to `shape='circle'` and draws its own initials round, so **the square ones are not `Avatar` at
-all** - they are `GroupAvatar`, whose default is `shape='soft'`. Which makes this the same defect as
-G4 seen from the other side: the widget is wrong, not the radius.
-
-Worth stating because it is the cheap half: once the type is read rather than defaulted, the shape
-and the missing photo go together, and there is no CSS change to make.
+1. **THE AMBIGUITY IS CREATED SERVER-SIDE AND SHOULD BE REMOVED THERE.** `messaging.service.ts`
+   computes `groupName = group?.isGroup ? (group?.name ?? '') : ''`, so `''` covers a DM, a group
+   whose own name is empty, AND a group row that could not be read. The client reads `''` as "DM",
+   which is right for the first and wrong for the other two - such a group is drawn as a DM with its
+   first sender as the peer. The ternary is where the three states collapse into one, and where they
+   should be separated.
+2. **A DEAD TEST PERSISTS AN INVENTED LABEL, AND IT IS A WINDOW RATHER THAN A STATE.** The Welcome
+   handler's early placeholder (`setupMessageHandler.ts:379`) tests the group **ID** for the `::`
+   NAME pattern: `const isDirectByPattern = joinedGroupId.includes('::')`. A group id is a UUID, so
+   the test is dead and the row is always written `conversationType: 'group'` with the label
+   `'Groupe'`. The authoritative derivation runs later in the same file and overwrites it, so nobody
+   has yet been observed inside the window - but it is written to disk while it lasts.
 
 ### G6 - P2 - BACK after opening a notification has no list and no home behind it
 
@@ -2058,15 +1395,6 @@ seed before measuring**: if `/posts` is already the bottom entry on the cold pat
 tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
 backgrounded, foregrounded on another conversation).
 
-### G7 - P3 - messages and reactions pass behind the composer
-
-Verbatim: *"le fait que l'on puisse avoir des messages ou reactions derriere la barre de saisie est
-moche. Il faudrait peut-etre limiter l'affichage comme le fait messenger (en mettant un fond a un
-rectangle contenant la partie basse de l'app de la meme couleur que le fond pour delimiter comme
-peut le faire Messenger ?)."*
-
-The user has already named the fix he wants: an opaque band behind the composer, so the thread ends
-at it instead of sliding under it.
 
 ### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
 
@@ -2220,133 +1548,54 @@ plus an open report, and must not be written up as the user's defect closed.
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
-### P2 - a reaction to your own message notifies on its OWN channel since 2026-09-17, and what this entry said before that was wrong
+### P2 - NOTIF-15 - NOTHING HAS HEARD `canari_reactions` ON A REAL HANDSET
 
-**THIS ENTRY CLAIMED, FROM 2026-09-10 TO 2026-09-17, THAT NO REACTION NOTIFIED AT ALL. IT DID, AND
-IT HAD SINCE 2026-05-17.** The claim was derived from the MLS frame class and stopped there:
-`frameDelivery.ts` classifies a reaction as a `mutation`, `{ silent: true, durable: true }`, with
-*"It must not notify, and it must survive"* written on it, and the server states the same rule from
-its side. All of that is true, and **none of it is the notification path**. A reaction notifies
-through a SEPARATE side channel that exists for exactly this: `addReaction` posts
-`/api/mls/notify-reaction` with the target's id, the emoji and the actor - never the message - and
-`messaging.controller.ts` pushes to the author alone, refusing when actor and author are the same
-user. `a60f76a4c` shipped it on 2026-05-17, four months before this entry said it did not exist.
+A reaction to your own message notifies on its own channel since 2026-09-17 (`CHANGELOG.md`), and
+`notificationChannels.test.ts` derives from the Kotlin that every declared channel is created and
+named in both locales - which is what makes a forgotten channel fail in CI rather than on a phone,
+since `NotificationManagerCompat` drops a notification whose channel does not exist without a word.
 
-**THE USER SAID SO AND WAS RIGHT**, in the words that found it: *"Ce n'est pas deja cable dans
-'canari-messages' ?"* - and it was, literally that channel. **The lesson is the entry's own shape:
-it read ONE mechanism, found it silent, and wrote a claim about the whole behaviour.** A frame class
-answers what the MLS transport does with a frame. Whether a person's phone rings is answered by the
-push path, and the two are separate by design because the server cannot read a frame.
+**WHAT NO TEST HERE CAN SEE IS WHETHER IT SOUNDS RIGHT.** NOTIF-15 on a real handset: a reaction to
+the recipient's OWN message arrives on `canari_reactions`, and every other reaction stays silent.
 
-**WHAT WAS ACTUALLY WRONG WAS THE CHANNEL, AND THE USER CHOSE ITS REPLACEMENT ON 2026-09-17**:
-*"Okay, nouveau canal."* `canari_reactions`, `IMPORTANCE_DEFAULT`, sound, no vibration, no DND
-bypass - heard, because being notified is the point, and not a heads-up over whatever the reader is
-doing, because it is an emoji. It replaces `canari_messages`, which was wrong three ways: it rang
-exactly like a message, it could not be silenced without silencing messages, and - because a
-notification id is stable PER CONVERSATION - **a reaction OVERWROTE an unread message notification
-from the same conversation**, while counting toward the launcher badge's unread total. Nobody had
-filed either of those two; they were found by reading the path the entry had never read.
+### P3 - THREE SERVICES REFUSE AN UNSIGNED CALLER THREE DIFFERENT WAYS, AND MERGING THEM IS A POLICY DECISION
 
-**WHAT IS LEFT HERE IS THE VERIFICATION, ON HARDWARE.** `notificationChannels.test.ts` now derives
-from the Kotlin that every declared channel is created and named in both locales - which is what
-makes a forgotten channel fail in CI rather than on a phone, since `NotificationManagerCompat` drops
-a notification whose channel does not exist without a word. What no test here can see is whether the
-thing sounds right: **NOTIF-15 on a real handset, reading that a reaction to the recipient's own
-message arrives on `canari_reactions` and that every other reaction stays silent.**
+The assertion that held this back exists: `auth-request-coverage.test.mjs` holds every route behind
+an `auth_request` location to a guard, reads the two Axum routers, and derives from the nginx config
+that all four identity values are set and forwarded by every one of the fifteen locations. **So a
+single guard may now read either discriminator.** What that gate found and fixed is in `CHANGELOG.md`
+and [nginx](infrastructure/nginx.md#auth-subrequest).
 
-### P3 - THE RULE "IS THIS CALLER SIGNED IN" IS WRITTEN THREE TIMES, AND WHAT HELD THE COLLAPSE BACK IS NOW SHIPPED (2026-09-17)
+**WHAT IS LEFT IS NOT A COLLAPSE, AND CALLING IT ONE WAS THIS ENTRY'S OWN MISTAKE.** Read side by
+side, the three files are not three copies of one guard that drifted in spelling - they are three
+different POLICIES, and only the HMAC block inside them is genuinely duplicated:
 
-**The assertion this entry was waiting for exists.** `auth-request-coverage.test.mjs` already held
-every NestJS route behind an `auth_request` location to a guard, an in-body idiom or a declared
-reason; since 2026-09-17 it reads the two Axum routers and the body of each handler they name, so
-`/api/presence` - the route the gate was written FOR, and which sat beside it rather than inside it
-for six days - is covered. The hold this entry carried is therefore lifted: it said the three copies
-must not be merged while collapsing them was the easy half and the smell was the only thing pointing
-at the missing assertion. The assertion is what points now.
+| Where | Refuses on | Other paths |
+| --- | --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | none |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | logs a denial, `/push/` routes only |
+| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
 
-**WHAT IS LEFT IS NOT A COLLAPSE, AND CALLING IT ONE WAS THE MISTAKE IN THIS ENTRY.** Read side by
-side 2026-09-17, the three files are not three copies of one guard that drifted in spelling. They are
-**three different policies**, and only the HMAC block inside them is genuinely duplicated:
+Picking any one of the three as "the" shared guard silently changes what the other two services
+refuse. **Whoever takes this decides, in writing and before touching a file, which refusals are
+intended**; the shared HMAC verification can be lifted out first and on its own, because that half
+really is three identical copies. `verifyInternalToken` is exported from `core-service` and imported
+by NOBODY outside its own file.
 
-| Where | Refuses on | If `INTERNAL_SHARED_SECRET` is absent | Other paths |
-| --- | --- | --- | --- |
-| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | **401 in production**, allowed otherwise | none |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | **401 in production since 2026-09-17** - it was the only one of the three that did not | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
-| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **401 in production**, allowed otherwise | logs a denial, `/push/` routes only |
-| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | n/a | none - Rust, and it stays where it is |
-
-**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Picking
-any one of the three as "the" shared guard silently changes what the other two services refuse -
-which is the exact accident the previous paragraph warns about, one level up from the discriminator
-it was written about. **Whoever takes this decides, in writing and before touching a file, which
-refusals are intended**; the shared HMAC verification can be lifted out first and on its own, because
-that half really is three identical copies.
-
-#### ONE OF THE TWO DIVERGENCES IS SETTLED, AND IT WAS WORSE THAN THIS ENTRY SAID (2026-09-17)
-
-This entry described `social-service` as falling through to a static `NGINX_AUTH_SECRET`. **Nothing
-anywhere sets that variable** - not a compose file, not an env template, not the nginx config, and
-not the production container, which reports `INTERNAL_SHARED_SECRET` and `NODE_ENV` and no third
-name. So the `if` guarding it never fired, the `else` branch did nothing whatever, and control
-reached `if (userId) return true`. **The fallback was not a weaker check; it was no check**, and with
-the real secret absent a bare `X-User-Id` header was accepted as proof of its own authenticity.
-
-Latent rather than active - all three services carry the secret in production - and fixed rather than
-recorded, because what held it shut was the presence of a variable and not the code. The guard now
-fails closed like its two siblings and the dead branch is deleted. **It also had no test, which is
-how it stayed the outlier**; it has thirteen, written around what it must REFUSE, and verified by
-mutation: replayed against the previous guard, exactly two fail, with `Received function did not
-throw`.
-
-**WHAT IS LEFT OF THE DIVERGENCE IS THE UNVERIFIED-JWT BRANCH, AND IT IS A QUESTION, NOT AN
-OVERSIGHT.** It is unreachable on every deployed estate - dev PINS `NODE_ENV: production` where
-production merely defaults to it - so it runs only on a developer's own machine. **But it is not dead
-code there**: `frontend/vite.config.js` sends `/channels` straight to `social-service:3014`, outside
-nginx, because nginx has no location for it. That request carries a bearer token and no `X-User-Id`,
-which is precisely the branch. Deleting it therefore breaks `bun run dev`, and the honest fix is to
-give the local nginx a `/channels` location and point the proxy at it - closing the routing gap the
-fallback was papering over. **Put to the user 2026-09-17 and awaiting their answer**, because it
-changes their local loop.
-
-`verifyInternalToken` is exported from `core-service` and imported by **nobody** outside its own
-file. Two names for one CONCEPT is also why a reader auditing "does everything have
-`NginxAuthGuard`" gets thirteen false positives in `chat-delivery-service`, all of which do carry
-`HeaderAuthGuard` per method.
-
-**TWO DISCRIMINATORS, AND THE MERGE MUST NOT PICK ONE BY ACCIDENT.** A non-empty `x-user-id` and
-`x-user-logged-in === 'true'` come from the same `auth_request_set` pair and should never disagree -
-but nothing asserted that they cannot, and one shared guard reading only one of them would silently
-change what the other two services refuse.
-
-**THE FIRST STEP IS DONE (2026-09-17) AND THE MERGE IS UNBLOCKED.**
-`auth-request-coverage.test.mjs` now derives from the nginx config that **all four identity values
-are set and forwarded by every one of the fifteen `auth_request` locations** - `$user_id`/`X-User-Id`,
-`$user_logged_in`/`X-User-Logged-In`, `$global_admin`/`X-Global-Admin`,
-`$internal_token`/`X-Internal-Token`. A location that read half an identity, or read one and dropped
-it, now names itself. Fifteen out of fifteen were already uniform, which is exactly when an invariant
-is cheap to write down. **So a single guard may now read either discriminator**, and the Rust copy is
-still not part of it: there is no guard layer in Axum here, and the handler is where the check
-belongs.
-
-**AND WRITING IT DOWN FOUND SOMETHING NOBODY WAS LOOKING FOR.** The server-level block that empties
-the identity headers a CLIENT might send - nginx forwards any header nobody overrode - cleared
-`X-User-Id` and `X-Global-Admin` correctly, cleared **`X-Logged-In`**, which is the sub-request's
-spelling and a name no service has ever read, and did not mention `X-Internal-Token` at all. The
-app-facing name `X-User-Logged-In` was therefore never neutralised, and `X-Internal-Token` is what a
-service with `INTERNAL_SHARED_SECRET` trusts another service by.
-
-**NOTHING WAS EXPLOITABLE, AND THE REASON IS NOT THAT BLOCK.** nginx inherits a `proxy_set_header`
-set only into a location declaring NONE of its own, and all 24 proxying locations declare theirs -
-enumerated, not assumed - so those lines reached nothing. They are the net for the NEXT location
-somebody adds without one, which is the easy mistake and precisely when a half-empty net is
-discovered. All four names are cleared since 2026-09-17, and the gate asserts it: dropping one
-reports *"the server-level block never clears `X-Internal-Token`, so a location that declares no
-`proxy_set_header` of its own forwards whatever the CLIENT sent under that name"*.
+**AND THE UNVERIFIED-JWT BRANCH NEEDS A ROUTE, NOT A DELETION - THE USER HAS DECIDED.** It is
+unreachable on every deployed estate (dev PINS `NODE_ENV: production`, production defaults to it) so
+it runs only on a developer's machine - but it is not dead code there: `frontend/vite.config.js`
+sends `/channels` straight to `social-service:3014`, outside nginx, because **nginx has no location
+for it**. That request carries a bearer token and no `X-User-Id`, which is precisely the branch, so
+deleting it breaks `bun run dev`. Asked 2026-09-17, answered *"Fais-le"*: **give the local nginx a
+`/channels` location, point the vite proxy at it, then delete the branch** - closing the routing gap
+the fallback was papering over.
 
 **Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
-an ARBITRARY user id - rather than only people they share a conversation with - is a separate and
-larger question, parked deliberately in `presence.rs`'s docblock: the gateway does not know who
-shares what. This entry is only about the signed-in floor.
+an ARBITRARY user id is a separate and larger question, parked deliberately in `presence.rs`'s
+docblock. This entry is only about the signed-in floor.
+
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 
 Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je
@@ -2719,91 +1968,23 @@ trees. **Do NOT answer it by creating a shared TypeScript package** - that was t
 (`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
 of `cors-origins.ts` and it has not changed.
 
-### P3 - the Android unit tests run now, and they tried three ways of not running (2026-09-10)
+### P3 - THE ANDROID SUITE TESTS A MIRROR OF THE LADDER, SO IT CANNOT FAIL WHEN THE LADDER CHANGES
 
-`PushDecryptLadderTest.kt` (now `frontend/src-tauri/android-tests/`) is a
-JUnit suite over the order the FCM service tries its recoveries in - MLS behaviour on the platform
-where MLS defects are hardest to see - and no workflow and no Makefile target invoked Gradle's unit
-tests, so its assertions had never executed on any machine. **First run ever: 2026-09-10, five
-tests, all passing.**
+The suite runs in CI since 2026-09-10 and the four ways it had of not running are closed
+(`CHANGELOG.md`; the executable-bit gate is `.github/scripts/tests/executable-bit.test.mjs`).
 
-**THE REMEDY THIS ENTRY PROPOSED WOULD HAVE BEEN A SECOND INSTANCE OF THE SAME DEFECT.** It said
-"`./gradlew testDebugUnitTest` is a few lines". That command **matches no task in the `app`
-module**: Tauri's Android template gives it ABI product flavours, so its unit-test tasks are
-`testUniversalDebugUnitTest`, `testArm64DebugUnitTest`, `testArmDebugUnitTest`,
-`testX86DebugUnitTest` and `testX86_64DebugUnitTest`. Measured before the fix: `BUILD SUCCESSFUL in
-16s`, **zero `:app:` tasks, zero tests**. A gate that green is exactly the "read as coverage"
-failure this entry was written about, one layer up.
+**THE REMAINDER IS BIGGER THAN IT LOOKS.** `runLadder` in `PushDecryptLadderTest.kt` is the FCM
+service's recovery ladder written out AGAIN in the test file - its docblock says so, because the real
+methods are private and JNI-bound. So it cannot fail when `CanariFirebaseMessagingService` changes,
+which is the one thing a regression test is for; the green tick means "the mirror still agrees with
+itself". Making it exercise the real code means lifting the ladder out of those private methods into
+a pure function the app and the standalone test project can share - and THAT test would legitimately
+need the app module, whose configuration is exactly what moving the suite out escaped
+(`tauri.settings.gradle` holds absolute paths and is gitignored; `google-services.json` lives in a
+secret). So the question of where it runs comes back with it.
 
-So `android-unit-tests.sh` does not treat the Gradle exit code as the answer. It deletes the
-results directory first (a stale report is not this run's evidence), runs the flavoured task, and
-then **reads the JUnit XML**: no report, or a report with no tests in it, fails and says why. Seven
-assertions in `android-unit-tests.test.sh` drive it against a fake `gradlew`, because the
-interesting case - green and empty - is one a real run does not produce on demand.
-
-**WHERE IT RUNS, and the measurement decided it.** The open question was `android.yml` (a
-`workflow_call` library reached only from `release.yml`, so a unit test there runs at RELEASE time,
-far too late to refuse a merge) against `ci.yml` (a JDK and a Gradle cache on pull requests that
-touch the native tree). Measured on 2026-09-10 with the daemon stopped, the build cache off and
-`app/build` and `.gradle` deleted: **31 seconds cold, 8 seconds warm**. Well inside the "couple of
-minutes" this entry set as the bar, so it is a `ci.yml` job behind a `gen/android` path filter,
-inside `ci-passed`, and `android.yml` keeps building only. `make test-android` runs the same script
-for a human.
-
-**AND IT STILL COULD NOT RUN IN CI, WHICH THE VERY NEXT PULL REQUEST FOUND.** Everything above
-was measured on a developer's own box. `:app` cannot be CONFIGURED anywhere else: its
-`settings.gradle` applies `gen/android/tauri.settings.gradle`, which tauri generates with absolute
-paths into one machine's cargo registry and `.gitignore` therefore excludes, and the module also
-wants a `google-services.json` that lives in a secret. Over the fourteen CI runs after the merge
-the job was SKIPPED thirteen times and FAILED the only time a change touched Android files, on
-`Could not read script 'tauri.settings.gradle' as it does not exist` - blocking a pull request for
-a reason with nothing to do with it. **The 31s/8s figures above are a local machine's, and the
-"first run ever" was local too.**
-
-Fixed 2026-09-10 by moving the suite OUT of the app module: it imports `org.junit` and nothing
-else - no Android type, no tauri type, nothing from `:app` - so it never needed any of that. It is
-now `frontend/src-tauri/android-tests`, a standalone Kotlin/JVM project with its own Gradle 9.1.0
-wrapper, whose entire toolchain is a JDK. Measured after the move: **14 seconds cold, 1 second
-warm**, and the script's seven self-tests still pass against it.
-
-**AND THE FIX'S OWN FIRST CI RUN FAILED, WHICH IS A FOURTH WAY OF NOT RUNNING.** Five seconds in,
-before Gradle: the relocated `gradlew` was committed `100644` beside the `gen/android` copy at
-`100755`. **Windows has no executable bit, so no local run can ever produce this failure** - every
-invocation here goes through `bash`, where the mode is inert - and `git status` and every editor
-show nothing. The first Linux runner to reach `./gradlew` answered `Permission denied`.
-
-Guarded now by `.github/scripts/tests/executable-bit.test.mjs`, in `make test-ci-scripts`: it
-derives the set from the tree rather than a list, taking every `./x` in command position across
-the Makefile, the workflows and the shell scripts, and demanding mode `100755`. Two things it
-learned on the way, both written into its docblock:
-
-- **Command position is the whole discipline.** Matching `./x` anywhere accused nineteen files,
-  every one an ARGUMENT - `docker build -f ./Dockerfile.frontend`, a compose volume mount, a
-  `cat ./frontend/package.json`. Making those executable would have been nonsense dressed as a fix.
-- **Its first draft failed its own motivating case and reported the tree CLEAN.** It resolved
-  `./gradlew` against the caller's directory, but the call is `cd "$ANDROID_DIR" && ./gradlew` - a
-  variable. Chasing a working directory through variables and `cd` is writing half a shell, and a
-  half-written one answers "clean" when it loses track. So it matches by NAME: if a name is run as
-  a command anywhere, every tracked file with that name must be executable. That covers both
-  `gradlew` wrappers from the single call site, which is what was wanted.
-
-It immediately found three more - `infrastructure/local/{env-from-prod,pull-prod-dump,restore-into-local}.sh`,
-all invoked `./x` from the Makefile, all `100644`. The Makefile had been **working around it** with
-a `chmod +x` before each call, which is a fallback standing in for a fix and is why the defect
-survived. Modes recorded, both `chmod` lines deleted.
-
-**THE REAL REMAINDER, and it is bigger than it looks: THE SUITE TESTS A MIRROR.** `runLadder` in
-`PushDecryptLadderTest.kt` is the service's ladder WRITTEN OUT AGAIN in the test file - the
-docblock says so, because the real methods are private and JNI-bound. So it cannot fail when
-`CanariFirebaseMessagingService` changes, which is the one thing a regression test is for. Making
-it exercise the real code means lifting the ladder out of those private methods into a pure
-function the app and the test project can share; THAT test would legitimately need the app module,
-and would need this whole question answered again. Until then the green tick means "the mirror
-still agrees with itself".
-
-**AND WHAT IS STILL UNGUARDED**: every `.swift` in the iOS tree. The same trap covers it - a test
-file nobody runs reads as coverage - and nothing here has measured whether an equivalent suite
-even exists.
+**AND EVERY `.swift` IN THE iOS TREE IS UNGUARDED.** The same trap covers it - a test file nobody
+runs reads as coverage - and nothing here has measured whether an equivalent suite even exists.
 
 ### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
 
@@ -2823,43 +2004,6 @@ the shape that report already handles, and it would name the array and the missi
 that report reaching hosts other than production, which is the row above this one. The two close
 together or not at all, and neither needs a new mechanism, only the existing one pointed at one
 more fact and one more box.
-
-### P2 - the nine NestJS pull requests were closed IN ONE BATCH, so the suppression question was never measured on one first, and Monday 2026-09-07 is the only thing that can answer it now (updated 2026-09-03)
-
-**THIS ROW WAS WRONG UNTIL 2026-09-03 AND SAID THE OPPOSITE.** It claimed nine of the ten backend
-pull-request slots were held by NestJS 12 bumps that could never go green. **They are all closed** -
-`#282 #281 #280 #278 #277 #267` and the rest, every one `CLOSED merged=non` at **2026-09-03T08:14**,
-the same minute, so this was a batch action. Two backend slots are occupied now, not nine, and the
-queue is not the problem any more.
-
-**WHAT THE BATCH COST IS THE MEASUREMENT, NOT THE QUEUE.** The plan written here was explicit: close
-**ONE** first, because closing a Dependabot pull request tells Dependabot to stop proposing that
-VERSION of that dependency, and nobody had established whether that suppression is per-package or
-would also silence the `nestjs` GROUP that is supposed to replace them. Closing all nine at once
-removed the control case. There is now exactly one way to find out, and it is to wait: the cargo and
-bun ecosystems are on `interval: weekly, day: monday`, so **Monday 2026-09-07** is when Dependabot
-next evaluates.
-
-**THE TWO OUTCOMES, AND THEY NEED DIFFERENT FIXES:**
-
-| What appears on 2026-09-07 | Meaning | What to do |
-|---|---|---|
-| ONE grouped pull request per service, `@nestjs/*` together | the group works and suppression is per-PR-version, not per-group | nothing; merge it through the ordinary gate |
-| NOTHING at all | closing the singles suppressed 12.x for those packages | the requirement has to change to un-suppress it - bump the version range in each `package.json` by hand, or re-open one closed pull request |
-
-**THE FOUR openmls PULL REQUESTS ARE THE SAME QUESTION, STILL IN ITS "BEFORE" STATE** - and that is
-what makes them worth keeping open rather than tidying away. `#297 #295 #291 #290` bump
-`openmls`, `openmls_traits`, `openmls_rust_crypto` and `openmls_basic_credential` from `0.8.1` to
-`0.9.0` as four SINGLES, all four red, for the documented reason that none can build alone
-(`there are multiple different versions of crate openmls_traits in the dependency graph`). **The
-`openmls` group already exists** in `.github/dependabot.yml` with `patterns: ["openmls*"]` and all
-three update-types - it simply landed AFTER these four were opened, exactly as the `nestjs` group
-did, and Dependabot does not group retroactively.
-
-So they are the control case the NestJS batch destroyed: **close ONE of the four on or after
-2026-09-07, once the NestJS outcome is known**, and the pair of observations answers the suppression
-question for good. Closing all four now would repeat the same mistake on the one family where
-getting it wrong is an ENCRYPTION defect rather than an availability one.
 
 ### P2 - two of the six cargo directories are invisible to Dependabot, and 194 updates were waiting behind that silence (measured 2026-09-02, decided and given a trigger 2026-09-10)
 
@@ -3875,23 +3019,6 @@ is raised but carries nothing readable (the decrypt failed - the
 [community notification P2](#p2---a-community-message-is-not-decrypted-in-a-background-notification-and-the-killed-case-is-unmeasured-for-both-kinds-user-2026-09-05)),
 or it works. The logcat is what separates the first from the second; the shade alone cannot.
 
-
-Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
-failure. **All six are closed as of 2026-08-19** and are not repeated here - the last one, two communities
-sharing a name, the user closed by decision rather than by code (2026-08-19: it is not a defect).
-The five that shipped on 2026-08-18: the mechanism is on
-[social-service](services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18),
-the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
-[durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. Those six are closed; the entry
-below them, a private salon's seed being sealed to the whole community, closed on 2026-08-20.
-WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified on production the same day -
-its entry below is kept as CLOSED because the second attempt at the fix is the interesting half. **One
-thing IS open here, and it is an observation rather than a finding:** the past-epoch seed frame below.
-**The association permission audit, asked for on 2026-08-26, SHIPPED the same day** - all three
-parts. Its measured flag table, the one predicate that replaced four disagreeing spellings, and the
-seven findings D1-D7 are on [association-permissions](association-permissions.md), the only copy;
-the rules it paid for are in [durable-rules](durable-rules.md), the story in `CHANGELOG.md`, and the
-French user page it owed is `docs/user-guide/permissions-association.md`.
 
 ### P3 - an epoch-0 seed frame is delivered on every rotation, and nobody can open it (observed 2026-08-21, did not reproduce)
 
@@ -6899,54 +6026,15 @@ turn it into a defect, are in [design-reference](frontend/design-reference.md) s
   CDP - A1, W1, or an iPhone once one is inspectable - so the sweep is repeatable rather than
   retyped. It found the P1 below on its first run.
 
-### The guided hardware session, 2026-09-14 - what a real phone actually showed
+### ONE MEASUREMENT FROM THE 2026-09-14 HARDWARE SESSION IS SUSPENDED, NOT FILED
 
-**Device A1**, Mi 9T, LineageOS 23.2 / Android 11, arm64, density 396 -> **436 x 945 CSS px**. The
-build was the **0.18.1 tester artifact** (release, versionCode 1800101), and its backend is
-**`https://dev.canari-emse.fr`** - measured from the client's own request origins, not inferred from
-the build's name. **A release APK cannot install over a debug one** (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`),
-so installing it uninstalled the debug build, wiped `mls.bin`, and the device re-enrolled as brand
-new.
-
-**THE ESTATE DECIDES WHAT EMPTINESS MEANS, AND THIS SESSION'S DEVICE WAS ON THE WRONG ONE.** The test
-population - the accounts the harness drives, their conversations, their history - lives on the
-**LOCAL** estate, which is what the rig has targeted since 2026-09-03. A phone pointed at `dev` has
-neither those accounts nor any MLS state of its own, so **`/chat` showing "Aucune discussion" there
-is the expected reading of a new device on an estate with nothing in it, not a defect.** The same
-holds for the "Nouvelle discussion" dialog, which rendered **no result list at all** for an empty
-query, for `a` and for `e` - three runs, the field cleared between each so a stale query could not be
-blamed. That measurement is **suspended, not filed**: it is only worth anything re-run against the
-local estate, where a directory with people in it exists.
-
-**The encryption-PIN screen does not fit the screens it will meet** (user, 2026-09-14: *"l'ecran du
-pin de chiffrement est tres grand et charge, il ne s'affichera pas bien sur beaucoup d'ecrans"*).
-Measured before typing the PIN, because typing destroys the evidence: the content stands **901 px**
-tall against the **945 px** this phone offers.
-
-**FIXED 2026-09-15, AND THE READING ABOVE WAS ABOUT THE WRONG QUANTITY.** This entry said the margin
-was the whole finding - 44 px to spare here, 101 px short on a tablet in landscape. But the modal
-body is `overflow-y-auto` in a panel capped at `max-h-[92dvh]`, so content taller than the screen was
-never CUT, only scrolled, and "does it fit" was never the question. What decides is **what is below
-the fold at scroll 0**. Measured on W3 with the numeric keypad: at **360 x 640** the form stood
-**928 px in a 530 px scrollport, the unlock button 195 px below the fold and the sign-out button some
-398 px** - the keypad visible, the PIN typeable, and the button that submits it off screen, on the
-one screen in the app a person cannot navigate away from. Both exits moved into `Modal`'s `footer`,
-which is `shrink-0` and outside the scrollport, and the rhythm went from `space-y-6` to `space-y-4`;
-the keypad and both buttons are now visible without scrolling at all three sizes. The measurement,
-the port of the rig selector it cost and what the tests pin are on
-[design-reference](frontend/design-reference.md#26-the-only-way-past-the-pin-gate-could-be-off-screen-and-no-overflow-check-could-see-it);
-the story is in `CHANGELOG.md`.
-
-**The route sweep could not have found it**, which is the part worth carrying forward rather than the
-pixels: its three questions are all about a container being EXCEEDED, and a vertical scrollport never
-is. That is now a rule in [durable-rules](durable-rules.md).
-
-**Phones cannot be put in landscape, and that is deliberate** - the lock is in Kotlin, not the
-manifest: `MainActivity.kt:47-53` sets `SCREEN_ORIENTATION_PORTRAIT` when the resource boolean
-`R.bool.canari_lock_portrait` is true, and leaves `SCREEN_ORIENTATION_UNSPECIFIED` otherwise, so a
-tablet keeps its rotation. `android:screenOrientation` takes one literal value and cannot serve both,
-which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
-it was grepped, found nothing, and the lock was still there.
+The "Nouvelle discussion" dialog rendered **no result list at all** on A1 - for an empty query, for
+`a` and for `e`, three runs with the field cleared between each so a stale query could not be
+blamed. **That is not yet a defect**: the build pointed at `dev`, where the directory the harness
+populates does not exist, and an empty estate is the expected reading. It is worth exactly one
+re-run against the LOCAL estate, where a directory with people in it exists; what the session
+established about reading a device before trusting it is in
+[device-verification](device-verification.md).
 
 ### P2 - the wry bump that removes the abort, once a STABLE runtime asks for it (found 2026-09-14 on A1)
 
@@ -7277,617 +6365,35 @@ misreading. A self-test asserting that every verdict `results.mjs` can produce i
 `rows.mjs` would pin it, and belongs with the other harness self-tests. `SETUP-FAILED` is added to
 the map meanwhile so the board reconciles today.
 
-### P1 - 3053 PREKEY BUNDLES ARE WRITTEN AND NOTHING CAN SAFELY RECLAIM THEM, AND THE ONE RULE THAT WOULD HAVE WAS REFUTED BY THE WELCOME WINDOW (churn fixed 2026-09-08; window measured on production 2026-09-12)
-
-#### THE CHURN'S ACCOUNT LIVES IN `CHANGELOG.md`, AND WHAT A LATER SESSION MUST NOT RE-DERIVE
-
-Four sections of investigation stood here until 2026-09-16 - the 2026-09-08 observation on the
-Mi 9T, the refutation of candidate 2 at the reload boundary, the lock-order cause and its
-verification on the same handset. All four describe a defect that SHIPPED, so the backlog is the
-wrong file for them: the account is `CHANGELOG.md`, *"a resume read the MLS keystore before it took
-the lock, so a mint that finished in between was erased"*, and the earlier half is under
-`[0.16.4]`, *"a device published fifty one-time prekeys and immediately purged all fifty"*.
-
-**What those sections established, and what a later session must not re-derive:** the pool is full
-at rest and carries fifty distinct packages; the reload no longer drops key material, because the
-read, the decrypt and the install happen under one manager lock rather than two; and the growth
-that fed the blob is SLOWED, not repaid - `load_or_create` deletes on `not_after` alone, so it
-bounds the leak at 84 days and reclaims nothing already written.
-
-**Stopping the churn and reclaiming the store are two pieces of work, and only the first is done.**
-The rest of this entry is the second.
-
-#### WHAT IS LEFT IS THE BALANCE: 3053 BUNDLES THAT CANNOT SAFELY BE DROPPED, DRAINING BY THEIR OWN 84-DAY LIFETIME
-
-*The blob's composition is a hypothesis until it is weighed, and no prune may be written before it
-is.* `state_composition` said `KeyPackage 3051x` and stopped there, which is the number every
-investigation so far has divided. `MlsManager::key_package_census_at` splits it, and the load-time
-log now prints it beside the composition on every device:
-
-```
-load_or_create: state composition - 10676363B total; KeyPackage 3051x7214310B, Tree 5x1704647B, MessageSecrets 5x1703382B
-load_or_create: key package census - 3051 proven (2782 one-time, 269 last-resort);
-                0 expired, 0 undecodable; 528 mint instant(s), largest batch 51
-```
-
-**Two causes, and the pool size is neither.** 2782 one-time bundles - about fifty-six purge/remint
-rounds - plus 269 last-resort, one per connection. A hypothesis that the fallback was the dominant
-cause was REFUTED by this measurement before any code was written for it: 9%, not the bulk.
-
-**Cause one, and why nobody had fixed it by scanning.** `republishKeyMaterial` purges the server and
-mints fifty; nothing local dropped the abandoned pool. The device cannot derive the dead set,
-because `resolveKeyPackagePayloadForDevice` DELETES a row as it hands it out - so "absent from the
-server" conflates "a peer is about to send the Welcome built on it" with "its owner revoked it".
-A row the PURGE deletes carries no such ambiguity: it was still in the pool, which is the same as
-never having been handed out. `DELETE /prekeys` now returns what it removed in ONE
-`DELETE ... RETURNING`, and `forget_key_packages` drops exactly that and never derives a set. The
-two-statement version was rejected on the same argument: a peer claiming a prekey between the select
-and the delete would have it reported as purged.
-
-**Cause two.** The fallback was minted unconditionally per connection while the pool beside it has
-always been incremental (`needed = 50 - existing`). Reuse is the whole meaning of the extension.
-Rotation is now the package's own lifetime.
-
-**Verified on hardware, the half observable without a storm** - two app processes, two connections:
-
-```
-08:49:19  pid 19179  census - 3053 proven (2782 one-time, 271 last-resort)
-08:49:20  pid 19179  republishing the held last-resort
-08:50:10  pid 19762  census - 3053 proven (2782 one-time, 271 last-resort)
-08:50:22  pid 19762  republishing the held last-resort
-```
-
-The count does not move. The purge-reclaim half cannot be triggered without a `NoMatchingKeyPackage`
-storm and no debug hook was added to the product to force one; it is covered by fifteen tests across
-the three layers, including the one that proves a HANDED-OUT bundle survives a purge that did not
-name it.
-
-**WHAT IS LEFT, AND IT IS ONE RULE WITH NO MECHANISM.** Three retention rules were drafted here.
-Rule three - *keep published + last-resort + the K most recently minted* - was the one this entry
-called "the one worth building", blocked on a single number: how long a Welcome may sit between the
-claim and the join. **That number was measured on production on 2026-09-12 and it killed the rule**
-(the section below carries it). K sits inside the delivery window whatever K is, so the rule cannot
-be repaired by raising it.
-
-**Rule two is what survives, and it is safe by construction rather than by argument**: a row the
-server's `DELETE ... RETURNING` names was still in the pool, so it was never handed out and no
-Welcome can exist for it - true whatever the window turns out to be. `forget_key_packages` drops
-exactly that set and never derives one. **It reclaims only the currently published fifty**, which is
-the whole of what can be justified today.
-
-**So the 3053 already written are not reclaimed, no rule on this device can reclaim them, and that
-is why NOTIF-1b is still blocked** - its 19 992 ms warm-up is the store, not the churn. The server
-has no record that these bundles were ever handed out, so nothing can prove a given one is not what
-a pending Welcome needs, and a rule that guessed would delete exactly that. `0 expired` on the day
-of measurement means the whole balance still has its life to run: 84 days from minting, so it
-drains on its own from **late October 2026** - and `load_or_create` already deletes on `not_after`,
-so that drain needs no work from anybody.
-
-**THE ONE THING THAT WOULD WIDEN THIS IS SERVER-SIDE, AND IT IS NOT WRITTEN.** A column recording
-when a package stopped being published - or the claim instant, which
-`resolveKeyPackagePayloadForDevice` destroys today by DELETEing the row as it hands it out - would
-let a later rule separate "abandoned" from "claimed, Welcome in flight". It would only ever help
-bundles minted after it exists, which is why it was passed over in favour of a one-off prune; the
-one-off prune is now refuted, so this is the remaining path. **Nobody has costed it, and it is not
-started.**
-
-**AND THE DIRECT PRUNE HAS NO SURFACE EITHER, WHICH IS WHAT 2026-09-11 FOUND WHEN IT WENT TO RUN
-IT.** The user's 2026-09-10 decision to prune the test fixture by hand was recorded as though the
-doing were clerical. It is not: the only thing that deletes these bundles is
-`MlsManager::prune_key_packages_expired_at(now_secs)`, called with an instant ~100 days ahead, which
-the tests do and **nothing in the product can**. There is no debug surface to hang it on -
-`VITE_ENABLE_DEV_ROUTES` survives only in generated ambient types, no route reads it, and
-`commands/mls.rs` carries no `cfg(debug_assertions)` command. Shipping a dev-gated destructive
-command into the product for one phone would violate both *one-off actions go to the user* and *a
-destructive control needs an allowlist of what it may touch*, and would leave a permanent hazard
-behind a flag nothing reads. **It was not built, and the 84-day drain makes it unnecessary.**
-
-#### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
-
-*A predicate that named the last incident is not the predicate that names the next one.* The claim
-"**its pool is empty essentially always**" was read off ONE device's log lines, and it does not
-survive contact with the population. Two `GROUP BY`s, one per estate, both read-only:
-
-| | production | local estate |
-| --- | --- | --- |
-| devices with a `key_package` | 614 | 580 |
-| devices with at least one prekey | 582 | 543 |
-| devices with a pool of **exactly 50** | **437** | **413** |
-| devices with a pool of **5 or fewer** | **0** | **0** |
-| live (non-revoked) devices with **no** prekey | **32** (5.2%) | - |
-
-The tail is 49, 48, 47, 46, 45... which is what ordinary consumption by peers looks like. It is not
-what a purge loop looks like.
-
-**WHAT IS STILL TRUE, AND IT IS THE DEFECT.** The churn is real and the server proves it: the most
-recent Tauri device - `tauri-f7a9bb80...`, the account the harness drives, prekeys stamped
-`2026-09-06 19:46:44.16218` - holds 50, and **all fifty carry that single timestamp to the
-microsecond.** One batch, minted at one instant, with nothing older surviving beside it. An earlier
-batch was purged wholesale and this one replaced it. That is the loop, and it is exactly the waste
-that feeds the `mls.bin` growth entry: ~97 kB of bundles a round into a local store that sheds
-nothing under 84 days.
-
-**WHAT IS FALSE, AND IT CHANGES A SEVERITY.** The pool is *full at rest*, because the republish
-follows the purge within the same connection. So the consequence this entry drew - "an empty pool
-means the static fallback is served to EVERY peer, so #390's `last_resort` marking is load-bearing
-for the NORMAL path" - is wrong. It is load-bearing for **32 devices out of 614**, which is a real
-minority and a real reason to keep the marking, but it is not the normal path and it must stop being
-described as one.
-
-**SO THE DEFECT IS WASTE AND GROWTH, NOT AVAILABILITY.** Peers are being served prekeys, and the
-NoMatchingKeyPackage family this entry was feared to explain has to be explained by something else.
-The cause of the churn is still open, and the three candidates below stand - but the guard shipped in
-\#393 is now the instrument that will name it, because it prints `REFUSED` when the round-tripped
-bytes match what this session minted and `purged` when they do not. **Nobody has yet seen which line
-it prints on a device**, and that single observation settles candidate 1 against candidates 2 and 3.
-
-**AND THE LOOP IS NOT VISIBLE IN THE ACTIVE POPULATION EITHER** - 103 production devices whose
-fallback `key_package` was refreshed inside three days, crossed against when their prekeys were
-minted:
-
-| what the device did | devices |
-| --- | --- |
-| kept its pool across connections (prekeys older than the last `key_package`) | **55**, avg pool 51 |
-| topped up incrementally (several mint timestamps) - **the design working** | **39** |
-| single batch of exactly 50, minted at the last connection | 27 |
-
-The middle row is the important one: 39 devices are doing exactly what the top-up was written to do,
-`needed = 50 - existing` with `existing` in the forties. And the 55 prove the pool SURVIVES a
-reconnection, which a purge loop would make impossible.
-
-**THE 27 CANNOT BE READ AS THE LOOP, AND SAYING OTHERWISE WOULD REPEAT THIS ENTRY'S ORIGINAL ERROR.**
-A device connecting for the FIRST time mints 50 in one batch at that connection. So does a device
-whose pool peers had fully consumed. Both produce the identical signature, and **a snapshot holds no
-history that separates them**. What the population settles is the severity claim; what it cannot
-settle is the mechanism.
-
-**THE OBSERVATION STILL OWED IS NOW TWO LINES, AND THIS PARAGRAPH SAID SOMETHING ELSE UNTIL
-2026-09-08.** It read `purged N/M` as proof of candidate 1, and candidate 1 has since been refuted
-from the code - the round trip cannot change a byte - so that reading is gone and the lines mean
-something narrower:
-
-| line, from a device reconnecting while holding a published batch | what it settles |
-| --- | --- |
-| `REFUSED to purge N/M` | **SEEN 2026-09-08, and it is the ACCUSATION rather than the all-clear**: the ownership check answered false for packages this session minted, and only the guard stopped them being purged. The pool is protected; the seam is BROKEN |
-| `purged N/M` | the fingerprints did NOT match. Since the bytes cannot have changed, the packages were minted by a process this `publishedThisSession` set does not describe - the manager/process identity, which is candidate 2's family |
-| `[RESUME] reload DROPS KEY MATERIAL - live keystore holds N ... holds M` | **candidate 2 outright**, and it is the line to look for first: it names the loss at the boundary where it happens rather than one layer later |
-
-**TWO OF THE THREE WERE SEEN ON 2026-09-08** - the measurement is at the top of this entry. The third,
-`[RESUME] reload DROPS KEY MATERIAL`, is the one still owed, and it is now the line that names the cause.
-
-**THE 32 ARE THEIR OWN QUESTION**, and none of them is revoked. Whether they are dormant devices that
-never reconnected, or devices genuinely stuck with an empty pool, is unanswered - `MAX(createdAt)`
-per device against last-seen would settle it.
-
-**This is the engine under the 19.5 MB blob, and it was invisible until somebody counted the log
-lines.** One NOTIF-1b run, lasting a couple of minutes, with the raw logcat kept:
-
-```
-[MLS][Tauri] generateKeyPackage native batch path needed=49     x3
-[MLS][Tauri] generateKeyPackage native batch path needed=50     x1
-[MLS] reconcilePublishedKeyPackages: purged 49/50 orphaned prekey(s)
-```
-
-**197 pool prekeys plus 4 fallbacks in ONE run** - 201 bundles at 1 936 bytes, ~389 kB - and in the
-same capture: **zero** `NoMatchingKeyPackage`, **zero** `republishKeyMaterial`, **zero** `[BG_SEND]`,
-**zero** `one-time pool EMPTY`. No storm, no healing, nothing exotic. **This is the ORDINARY path.**
-
-**THE DEFECT, SETTLED ON A CLEAN ESTATE - AND THIS ENTRY WAS WRONG TWICE BEFORE IT GOT HERE.**
-The sequence matters more than the conclusion, because both wrong readings were reasonable.
-
-*Reading 1, from the client log alone:* `needed=49` every connection and `purged 49/50` right after
-each top-up - a closed loop, the purge undoing its own refill.
-
-*Reading 2, after asking the server:* 148 inserted, 49 pruned, 1 remaining - so **98 had been CLAIMED
-by peers**, about one a second. That looked like it demoted the purge to a bit part, and this entry
-was rewritten to say claims empty the pool and the purge does not. **It was wrong.** The run had been
-taken on an estate carrying **42 live throwaway groups** a crashed check had left behind, and every
-reconnection re-entered all of them, so those claims were DEBRIS sitting on top of the real
-mechanism and hiding it.
-
-*Reading 3, the measurement that settles it:* `cleanup.mjs` swept 42 groups, 6 salons and a
-community; the run was repeated with nothing left that could claim a prekey. The delivery service,
-same phone, no peers inviting:
-
-```
-count=50            <- publish 50
-count=49  count=49
-deleted=49          <- purge
-count=50            <- publish 50
-deleted=50          <- purge ALL FIFTY
-count=50            <- publish 50
-deleted=50          <- purge ALL FIFTY
-count=50
-```
-
-**Every publish is followed by a purge of the whole batch, and `deleted=50` says it with no
-arithmetic to argue about.** The client agrees from its own side: `needed=50` at every connection -
-not 49, not 30 - which is only possible if the pool is EMPTY each time. Reading 1 was right, and the
-debris is what made it look like something else.
-
-**READ OFF THE PHONE, 2026-09-06 - THE QUESTION IS CLOSED AND THE FIRST ANSWER WAS RIGHT.** An APK
-carrying `state_composition` was built and the device said it itself, in one line at load:
-
-```
-state composition - 8006000B total; KeyPackage 2338x5523276B, MessageSecrets 5x1220171B, Tree 5x1208632B
-```
-
-| part | entries | bytes | share | each |
-| --- | --- | --- | --- | --- |
-| **KeyPackage** | **2 338** | **5 523 276** | **69%** | 2 362 |
-| MessageSecrets | 5 | 1 220 171 | 15% | 244 034 |
-| Tree | 5 | 1 208 632 | 15% | 241 726 |
-
-**Key packages dominate, which is what this entry said before two corrections talked it out of the
-position.** 2 338 accumulated bundles on a device whose server pool holds fifty. Both earlier
-readings were also true and neither was the whole: deleting 42 abandoned groups really did free
-12.8 MB (~300 kB a group, and the table shows where that lives), and epochs really are bounded. What
-none of them could do was ATTRIBUTE, which is why the instrument now exists.
-
-**THE PRUNE'S 84-DAY HORIZON IS FAR TOO GENEROUS, AND THIS IS THE NUMBER THAT PROVES IT.** Not one of
-the 2 338 has expired - the prune did not fire on this load - because the pile accumulated in WEEKS
-and openmls dates a key package 84 days ahead. A horizon that never arrives is a horizon that bounds
-nothing in practice. **The retention rule needs to be tighter than a default lifetime, or bounded by
-COUNT**, and the count is now readable rather than guessed.
-
-**AND THE OBVIOUS TIGHTENING IS UNSAFE, WHICH IS THE PART A LATER SESSION WOULD GET WRONG.** The
-natural rule - *keep the recently minted bundles, drop the old ones* - grades on the wrong axis. A
-prekey can sit UNCLAIMED on the server for weeks and be claimed a second before the prune runs: its
-bundle is then old by mint date and load-bearing by use. **Mint age does not measure the risk.** What
-does is time since the package stopped being published, and nothing records that today.
-
-Three candidate rules, and what each actually costs:
-
-| Rule | Safe? | Reclaims the 2 338? |
-| --- | --- | --- |
-| `not_after < now` (shipped) | yes | no - 84 days never arrives |
-| Drop what the server's DELETE says it removed | **yes, by construction** - a returned row was never claimed, so no Welcome can exist for it | no, only the 50 currently published |
-| Keep published + last-resort + the K most recently minted | only if K mints cannot happen inside a Welcome's delivery window | yes, ~4.9 MB at K=200 |
-
-The second is provably correct and needs the endpoint to return what it deleted rather than 204. The
-third is the only one that reclaims the historical pile, and its safety is an ARGUMENT rather than a
-construction: with the provenance guard (#393) holding the pool at 50, K=200 is four full refills -
-days - and a Welcome does not take days. The guard is what makes it defensible at all; on a build
-without it the loop mints 200 in hours and the rule would eat live bundles.
-
-#### THE WELCOME DELIVERY WINDOW, MEASURED ON PRODUCTION 2026-09-12 - AND IT REFUTES RULE THREE
-
-The line above asked for exactly one number before the rule could ship: how long a Welcome may sit
-between the claim and the join. It was read off production, read-only, from the two populations that
-carry it.
-
-**Joins that COMPLETED** (`dm_device_group_memberships`, `status='active'`, `kickedAt IS NULL`, 265
-rows): p50 **3.6 seconds**, p90 **1 day 5 h**, p99 **11 days**, worst **35 days 16 h**. 258 of 265
-landed inside five days; the whole tail is seven rows.
-
-**Welcomes STILL in flight** (`queued_message`, `isWelcome`, 98 rows - these are deleted on delivery,
-so every survivor is a Welcome nobody has taken): p50 **9 days 23 h**, p95 **40 days 5 h**, oldest
-**45 days 20 h**. Of the 98, **64 target a membership still `pending`** - genuinely waiting, oldest
-40 days 5 h.
-
-**So a Welcome does take days, and sometimes weeks.** "K=200 is four full refills - days - and a
-Welcome does not take days" is false on both halves. A worst case of 35 days 16 h is a join that
-really landed: any rule whose horizon is shorter than that would have eaten the bundle for it.
-And the mint rate is not one batch per refill - this entry establishes three paragraphs above that
-**a fresh last-resort package is published on EVERY connection**, so a device that connects a few
-times a day mints hundreds inside a 40-day window. K=200 sits well inside the window rather than
-outside it. **Rule three is unsafe as argued, and the argument cannot be repaired by raising K**:
-the K that clears a 40-day window at this mint rate reclaims nothing.
-
-**IT ALSO SOFTENS THIS ENTRY'S OWN COMPLAINT ABOUT 84 DAYS.** "Far too generous" is right about
-RECLAIM - 84 days never arrives against a pile that accumulates in weeks - and wrong about SAFETY, in
-a way a later session would act on: the observed window reaches 46 days, so the room between a safe
-horizon and the shipped one is under two months, not the wide margin the phrase implies. A horizon
-below ~46 days is not a tightening, it is a regression with a measurement against it.
-
-**What survives is rule two**, which is safe by construction rather than by argument: a row the
-server's DELETE returns was never claimed, so no Welcome can exist for it, whatever the window is.
-It reclaims only the currently published fifty - and that is now the whole of what can be justified
-without a column recording when a package stopped being published.
-
-**THE CAVEAT ON THE COMPLETED HALF, STATED RATHER THAN BURIED.** `updatedAt` moves on every write to
-the row, not only on the join - `kickedAt IS NULL` removes the kicks, nothing removes a demotion
-followed by a re-promotion. So those deltas are UPPER bounds on the claim-to-join delay. The bias is
-upward, which is the safe direction for a retention floor, and the second population settles the
-question independently: a queued Welcome that has waited 40 days is a Welcome the server held for 40
-days, with no column to misread.
-
-**A THIRD OF THE QUEUED WELCOMES CAN NEVER BE DELIVERED, AND NOTHING SAYS SO.** Of the 98: 24 target
-a membership that is already `active` (the device joined by another route - an external commit, or a
-later Welcome - and the queued copy will never be consumed, oldest 46 days), and 10 have **no
-membership row at all** (the device was deleted, which removes every row it had). `reportQueueDepth`
-counts depth and cannot separate "waiting" from "will never be taken", which is the same shape as the
-stale-base population before `reportStaleExternalJoinBases`. Worth its own row.
-
-~~**The pile is very likely no longer growing.**~~ **MEASURED FALSE ON THE HANDSET, 2026-09-08.** The
-device said it itself, at load, on a build carrying the guard:
-
-```
-state composition - 9076074B total; KeyPackage 2467x5831295B, Tree 51x1627467B, MessageSecrets 51x1370542B
-```
-
-**2 467 key packages against 2 338 two days earlier - +129 - and the loop did not run in that
-window.** The server log proves the negative for its whole 5-hour life: the phone appears in it
-exactly once, `[REGISTER_PREKEYS] ... count=50`, and there is **not one `PRUNE_PREKEYS` for any
-device**; the phone's 46 surviving prekeys all carry one timestamp to the microsecond, so it
-published a batch and KEPT it. So the growth is not purge debris - **it is the ordinary path**, which
-this entry names three paragraphs above without connecting the two: a fresh last-resort package is
-published on EVERY connection, and each top-up mints into a store that sheds nothing under 84 days.
-
-**That changes the disposition, not the severity.** It is not "a one-off reclaim of ~4.9 MB on
-affected handsets"; it is a slow leak that is still live on a build where the loop is fixed, and any
-rule written for it has to bound the STEADY state rather than clean up after an incident. **The
-reclaim argument in the table above was sized against a pile that had stopped growing, and it had
-not.** *(`mls.bin` is 9.07 MB here against 20.8 MB on 2026-09-06 - the group sweep held, and it is
-what makes the key-package share so visible: 64% of what is left.)*
-
-**AND A REAL GROUP IS NOT THE GROUP THE SYNTHETIC TEST MEASURED.** ~490 kB apiece here, against
-5 330 bytes for a fresh group of one and a 17 kB plateau at 81 epochs. The weight is `Tree` (member
-leaves a campaign accumulated - 242 kB is roughly 120 of them) and `MessageSecrets` (per-sender
-ratchet history, which `SenderRatchetConfiguration::new(2000, 2000)` sizes deliberately). Neither is
-epochs. **Every synthetic figure in `state_weight.rs` is a FLOOR and must be read as one.**
-
-**WHAT THE FIELD SHOWED THE SAME NIGHT, AND IT CORRECTS THIS ENTRY'S ARITHMETIC A THIRD TIME.**
-After `cleanup.mjs` swept 42 abandoned groups, the phone's `mls.bin` fell from **20 812 360 to
-8 018 495 bytes** - 12.8 MB, 61% - and one checkpoint from 48 449 ms to **6 943 ms**. The prune
-shipped that day did NOT fire (no line in the capture), so the drop is the groups.
-
-That looked like it demoted key packages, so the mechanism was measured rather than divided:
-`what_an_epoch_costs_at_constant_membership` churns one device in and out of a group forty times and
-**the state PLATEAUS - 81 epochs, 17 364 bytes, growth stops after the second round.** Epochs are
-bounded, `MessageSecrets` and `ResumptionPsk` stay at ONE entry each, so accumulated epochs are not
-what makes a real group heavy. **That refutation is the useful part**; what remains heavy about a
-campaign group is not yet named.
-
-**AND THE LOOP DID NOT REPRODUCE ON THE BUILD CARRYING THE GUARD.** With the pool emptied by hand to
-force a mint, the phone published 50 and kept all 50 - `needed=50`, no purge, and the guard's own
-`REFUSED` line never fired, meaning `keyPackageHasPrivate` recognised every one of them. The failing
-condition therefore needs something this run did not have, and the difference worth suspecting is the
-checkpoint cost: 48 s when it failed, 6.9 s when it did not. **That is a hypothesis and it is written
-as one** - three readings have already been wrong here, two of them from dividing numbers instead of
-removing a variable.
-
-**THE INSTRUMENT THAT WOULD HAVE SETTLED ALL OF THIS DID NOT EXIST**, which is why it now does:
-`MlsManager::state_composition` logs what the state is made of once per load, so the next occurrence
-is read rather than inferred.
-
-**WHAT THIS MEANS IN PRODUCTION, AND IT IS WORSE THAN THE BLOB.** A device whose one-time pool is
-empty is served its STATIC FALLBACK to every peer that asks. That is exactly the condition
-[mls-protocol](protocols/mls-protocol.md#the-two-kinds-of-key-package) names as the reason the
-fallback had to be marked `last_resort` - and this loop puts a device in that condition ESSENTIALLY
-ALWAYS rather than rarely. The 2026-09-06 `last_resort` fix (#390) is therefore not a safety net for
-an edge case; it is load-bearing for the normal path, and it explains why `NoMatchingKeyPackage` was
-so easy to reproduce before it.
-
-**And a device cannot fail to hold the private key of a package it minted seconds earlier**, so
-`keyPackageHasPrivate` is answering `false` about this device's own fresh mints: a broken seam
-between minting and asking, real and reproducible on a clean estate.
-
-**A CANDIDATE CAUSE, FOUND BY READING ON 2026-09-06, AND IT IS AN ORDERING DEFECT RATHER THAN A KEY
-DEFECT.** Three MLS engines share one `mls.bin` on Android - foreground Tauri, FCM JNI, Worker JNI -
-and each does *load, modify, write*. **Only the WRITE is protected.** `background_write_mls_bin`
-takes `mls_bin_write_lock` and tests `foreground_is_active()`; the load-modify-write cycle around it
-is not a unit, so nothing detects that the file changed between an engine's load and its write.
-
-And that test is a CLOCK. `FOREGROUND_GRACE_MS` is 30 s, refreshed by a 10 s JS heartbeat which -
-by its own comment - "auto-pauses on hidden". Meanwhile `sauvegarder_mls_et_persister`
-(`commands/mls.rs`) runs in this order:
-
-1. lock the manager;
-2. `save_encrypted_with_key(...)` - **the expensive half, measured at 48 s on the Mi 9T**;
-3. `write_mls_state_blob(...)` - which is the first thing that refreshes the guard.
-
-So on backgrounding the heartbeat stops, the guard lapses 30 s later, and step 2 keeps running for
-another ~18 s. **In that window a background engine reads `foreground_is_active() == false` and
-writes a blob it loaded before the mint.** The window is a function of the checkpoint's cost, which
-is why the defect tracks the slow checkpoint (48 s) and never appeared on the fast one (6.9 s) - at
-6.9 s it does not open at all.
-
-The sequence that produces the observed numbers exactly:
-
-| | |
-| --- | --- |
-| 1 | foreground mints 50 prekeys and publishes them |
-| 2 | app backgrounded; heartbeat paused, guard lapses at 30 s |
-| 3 | FCM arrives: the background engine loads the PRE-MINT `mls.bin`, works, writes it back - the 50 are gone from disk |
-| 4 | app foregrounded: `reloadStateFromDisk()` replaces the warm engine with that state |
-| 5 | reconciliation asks "do I hold the private key?" - **false, fifty times** - and purges all 50 |
-
-That is `count=50 / deleted=50`, and it explains why the device cannot back packages it demonstrably
-minted: the SESSION minted them, the STORAGE no longer has them.
-
-**THE FIX IS NOT A LONGER GRACE.** A deadline that must outlast an operation whose cost is unbounded
-is the clock this repository's own rule forbids as load-bearing. The durable-state form is a
-**compare-and-swap on the file**: an engine remembers the fingerprint of the blob it loaded and,
-under the write lock, refuses to write when the on-disk blob is no longer that one. A lost update
-becomes a detected conflict, the losing engine's work is retried against the current state, and the
-30 s stop being load-bearing - they may stay as an optimisation that avoids wasted work, which is
-what a clock is allowed to be.
-
-**THIS IS READ, NOT MEASURED.** The window is provable from the source and the ordering is wrong on
-its face, so the CAS is worth doing whether or not it is the whole cause. What would settle it is
-one capture pairing the `state composition` line at `load_or_create` with the guard's own refusals
-across a background/foreground cycle - if the KeyPackage count falls across step 3, the chain holds.
-
-**What each round costs.** ~50 bundles x 1 936 bytes = ~97 kB written into a state that nothing
-prunes below 84 days. Measured across one day on this handset:
-
-| | 2026-09-06 morning | 2026-09-06 evening | delta |
-| --- | --- | --- | --- |
-| `stat mls.bin` | 19 548 753 | **20 812 360** | **+1 263 607 (+6.5%)** |
-| one checkpoint | 17.1 / 17.1 / 19.7 s | **25.7 s / 48.4 s** | ~2.5x |
-
-+1.26 MB a day is ~652 bundles a day at the measured weight, which is ~13 rounds of fifty - entirely
-consistent with the rounds seen in a single two-minute run. **On a clean estate the whole of that is
-the loop**: with nothing able to claim a prekey, the device still published 50 and purged 50, three
-times in one run. This is not a client honestly replacing what peers consumed; it is a device
-refilling a pool it empties itself, into a local store that until 2026-09-06 never deleted anything
-and now only sheds at 84 days. **The growth feeds itself**: a bigger blob is a
-slower checkpoint, and a slower checkpoint widens every window in the app that a checkpoint sits
-inside. This is why the per-connection fallback reuse and a shorter local retention matter more than
-they looked - the mint rate is not going to fall.
-
-**IT ALSO EXPLAINS A ROW THAT FAILED THE SAME EVENING.** NOTIF-1b went `FAIL` with
-`notifiedInMs = 20887` against 2 152 ms that morning, on the same build. Twenty-one seconds is not a
-notification defect - it is the phone sitting inside a 25-to-48-second checkpoint. The row was
-measuring the blob.
-
-**WHERE THE FAULT IS NOT.** `mls-core/tests/published_prekeys_are_recognised.rs` mints 50 prekeys and
-asks `key_package_has_private` about each through the publish round trip: all 50 recognised, the
-last-resort fallback recognised, and another device's package correctly refused. **So the Rust is
-right and the defect is above it** - in the seam between publishing and asking. That narrows it to a
-short list, and each is checkable without a phone:
-
-1. ~~the bytes `listOwnPrekeys` returns are not byte-identical to what `publishKeyPackages` sent
-   (base64 framing, `number[]` marshalling across the Tauri IPC)~~ - **REFUTED FROM THE CODE,
-   2026-09-08**, and by construction rather than by a run. `publishKeyPackages` sends
-   `toBase64(bytes)`; the server VALIDATES the string and stores it verbatim
-   (`devices.controller.ts`, `registerDevicePrekeys` - `create({ keyPackage: kp })`, no decode, no
-   re-encode); `listDevicePrekeys` returns `r.keyPackage` straight off the column; the client reads
-   it back with `fromBase64`. There is no transformation anywhere on the path, so the round trip
-   cannot change a byte - which also means the guard's fingerprint and `keyPackageHasPrivate`
-   cannot both be failing for THIS reason;
-2. **the manager answering `key_package_a_clef_privee` is not the one that minted - NAMED PRECISELY
-   2026-09-08, AND REPRODUCED WITHOUT A PHONE.** The mechanism is the reload boundary:
-   `recharger_mls_au_resume` replaces the live manager with one rebuilt from `mls.bin`, gated ONLY
-   by `reload_is_monotonic`, which compares GROUP EPOCHS and nothing else. **Key material is not a
-   group epoch.** A snapshot predating a mint therefore holds every group at exactly its live epoch,
-   passes the guard, and installs a keystore missing all fifty bundles the device published seconds
-   earlier - after which `key_package_has_private` answers `false` about the device's own mints,
-   which is exactly what the reconciliation reads as a server orphan.
-   `reload_monotonic.rs::a_snapshot_predating_a_mint_passes_the_epoch_guard_while_losing_every_minted_key_package`
-   pins all three steps: the guard accepts, the count drops by 50, and **50 of 50 published packages
-   are unrecognisable to the reloaded manager** - the `purged 50/50` line, reproduced on a desktop.
-   *This makes the checkpoint-duration correlation the entry below wrote as a bare hypothesis into a
-   consequence: a 48 s checkpoint is a 48 s window in which the blob on disk is the PRE-MINT one,
-   seven times wider than at 6.9 s.* **What it does NOT prove is that a resume actually fires inside
-   that window on the handset** - that is the observation still owed, and the instrument below is
-   what answers it;
-3. the reconciliation races the publish and reads a list the mint has not landed in. **Partly
-   answered**: `generateKeyPackage` is AWAITED before the reconciliation is started, and
-   `generer_key_packages_et_persister` mints AND writes `mls.bin` under the same lock, so the mint is
-   durable before the list is asked for. What remains true is that the reconciliation is started with
-   `void` (`initializeConnection.ts`) and therefore runs CONCURRENTLY with the rest of connection
-   sync - which is what makes candidate 2's window reachable at all.
-
-**AND CANDIDATE 2 IS NOT A NEW HYPOTHESIS - IT IS A KNOWN DEFECT CLASS WHOSE NATIVE INSTANCE WAS
-MISSED, AND THE WEB SIDE HAD ALREADY WRITTEN THE ARGUMENT DOWN.** `WebMlsService.installUnlessOvertaken`
-exists for precisely this, and its docblock states the finding above in its own words:
-
-> `swapClientMonotonic` cannot answer this. It refuses a regression and measures one with the EPOCH,
-> which is evidence for "is this snapshot from an older epoch" and for nothing else - a generation
-> that moved inside one epoch is just as stale and completely invisible to it.
-
-It then predicts the miss: *"a rule that lives at one call site is a rule the next off-thread worker
-will not inherit"*. **`recharger_mls_au_resume` is that next caller** - it snapshots (`mls.bin`),
-works on a copy (loads a candidate), and installs it - and it inherited only the epoch half, across
-a language boundary where nothing could compare the two. **The web guard is not theoretical either:
-it FIRED during the HEAL-REVOKE-5 run of 2026-09-08**, on the key-package path itself -
-`[MLS] key package worker state DISCARDED: the live client was mutated 1 time(s) since the snapshot`
-- so the hazard is observed, on the same operation, on the platform that guards it.
-
-**WHAT THIS DOES NOT LICENCE IS COPYING THE WEB FIX**, and the asymmetry is the reason the native
-side gets an accusation instead. On web the two candidates are ORDERED: the worker's output derives
-from an older snapshot and the live client is authoritative, so refusing is free. At the native
-resume BOTH sides have moved - the background engine advanced the blob, the foreground minted into
-the live manager - and neither is a superset of the other. That is a merge, not a precedence, and
-nobody has written it.
-
-**CANDIDATE 2 IS NO LONGER A CANDIDATE, AND THE DEVICE LINE THIS ENTRY WAS OWED IS TAKEN.** At
-09:51:43.207 on 2026-09-08 the shipped instrument accused, on hardware, for the first time:
-`[RESUME] reload DROPS KEY MATERIAL - live keystore holds 2625 key package(s), the mls.bin being
-loaded holds 2624`, with `Every group is at or ahead of its live epoch, so the epoch guard cannot
-see this` in its own text and a `KeyPackage published` two seconds later. **One bundle, not
-forty-nine** - so the reload is A source of the churn this entry measures and not, on this evidence,
-the whole of it. The same run also showed the reload putting back the RECEIVE ratchet, which no
-key-package count can see; both readings and the ordering are in **"one frame is decrypted by three
-engines against one receive ratchet"** under Storage and retention.
-
-**AND IT WAS MEASURED ON THE RECEIVE RATCHET TOO.**
-`mls.bin reloaded on resume (C2)` was observed putting a secret tree back far enough that two
-generations already consumed by the foreground decrypted a second time, with the epoch unmoved at
-196 throughout - the exact blind spot this section predicts for `swapClientMonotonic`. The table and
-the timings are in **"one frame is decrypted by three engines against one receive ratchet"** under
-Storage and retention; read the two together, because the reload is one mechanism and the key
-packages counted below are only the half an accusation can see.
-
-**THE INSTRUMENT FOR CANDIDATE 2 SHIPPED 2026-09-08, AND IT ACCUSES RATHER THAN REFUSES.**
-`recharger_mls_au_resume` now compares `key_package_count()` across the reload and logs
-`[RESUME] reload DROPS KEY MATERIAL - live keystore holds N ... the mls.bin being loaded holds M` at
-`error` level. **Refusing was considered and rejected on a mechanism, not a budget**: this reload
-exists to pick up what a background JNI engine advanced while the app was away, and that advance is
-often a RATCHET GENERATION rather than an epoch - a decrypted application message moves no epoch at
-all - so a refusal grading on key packages would silently drop the background work the reload was
-written to rescue, trading a known defect for an unmeasured one. **A later session must not "finish"
-this by turning the accusation into a refusal without answering that first.**
-
-**WHY THE EXISTING SAFETY NETS DO NOT CATCH IT.** `reconcilePublishedKeyPackages` is documented as
-*"conservative: only purges PROVEN orphans"* and treats a validation error as "leave it alone" - so a
-package that cannot be checked survives. It has no floor and no rate check: **purging 49 of 50 is
-indistinguishable, to that function, from purging 1 of 50.** A reconciliation that removes ~all of
-what was just added is not conservative, it is a loop, and nothing says so. This repository's own
-rule applies exactly - a fallback's rate must be measured against the population before its name is
-believed.
+### P1 - THE MINTING LOOP HAS NEVER BEEN OBSERVED ON THE HANDSET, AND A BLOB'S SIZE CANNOT SETTLE IT
+
+Every count this repository has carried for the one-time pool - 3053, 3051, 2782, ten thousand - was
+INFERRED from a blob's weight plus an assumption about what else was in it. The full record, the
+production populations, and the rules and candidate causes REFUTED on the way are on
+[key-package-pool](protocols/key-package-pool.md), the only copy. **Do not re-derive any of it**; in
+particular all three reclaims are refuted against this pool (`0 expired, 0 undecodable` on every
+census), and the 2026-09-06 prune bounds the ceiling rather than touching the loop that fills it.
 
 **WHAT IS OWED, IN ORDER.**
 
-1. ~~**A floor and a loud refusal in `reconcilePublishedKeyPackages`**~~ - **SHIPPED, AND THE FLOOR
-   WAS DELIBERATELY NOT BUILT** (`e5aba1f76`, #393, four tests). Re-read 2026-09-08: this item asked
-   for the wrong mechanism and the fix says why in the code. A share-based floor cannot work, because
-   a device restored from an older backup HAS genuinely lost every private key and purging 50 of 50
-   is exactly what the function is for - so "too many" is not the discriminator. **Provenance is**:
-   `publishedThisSession` holds the fingerprint of every package this process minted, and a `false`
-   from `keyPackageHasPrivate` about one of those is never evidence about the server. It is refused,
-   counted, and accused at `console.error`.
+1. **ONE OBSERVATION OF THE RELOAD PATH ON A REAL HANDSET, READ OVER CDP AND NOT LOGCAT.** The
+   instrument ships and ACCUSES rather than refuses: `reconcilePublishedKeyPackages` refuses to purge
+   a package this process minted (`publishedThisSession` holds the fingerprints), counts the refusal
+   and raises it at `console.error`. The 2026-09-08 attempt drove a full NOTIF phase across the phone
+   and found no `[RESUME]` line at all - **which is not evidence the reload never ran**: the success
+   path logs at `debug`, which a release build may filter, and the JS half of the sequence never
+   reaches logcat, because logcat carries only the native side and the WebView's console is read over
+   CDP. So the owed line is one CDP console read across a background/resume.
+2. **A DEVICE THAT CAN REPORT ITS OWN STATE CENSUS**, and it is now cheaper than (1): groups, members,
+   one-time bundles, last-resort. It would settle this entry, the blob entry and the 2026-09-06
+   19.5 MB question in one line each. Filed on the blob entry, where it serves three items.
+3. **THE PER-CONNECTION FALLBACK REUSE**, already filed against the blob entry - the same family of
+   waste.
 
-   **The residue, and it is not nothing.** That set is per-process and deliberately not durable -
-   the claim it supports is "this process minted these bytes". So packages minted in an EARLIER
-   session are still purgeable, and a device whose keystore is emptied by the reload of candidate 2
-   and then RESTARTED would run the loop again with nothing to refuse it. The guard closes the
-   observed case, not the class.
-2. **Then the cause**, from the three-item list above - and this is now the FIRST open item. Item 1
-   is refuted from the code; item 2 is named, reproduced on a desktop, and instrumented; item 3 is
-   partly answered. **What is left is one observation on the handset**, and see the note below it for
-   what was tried on 2026-09-08.
-3. **The per-connection fallback reuse** already filed against the blob entry, which is the same
-   family of waste.
-
-**FIRST ATTEMPT AT THE OWED OBSERVATION, 2026-09-08, AND IT DID NOT REACH THE PATH.** The phone runs
-`f2748d75` - the very commit that carries the instrument, built forty seconds after it - so the
-handset CAN print the accusation. A full NOTIF phase was driven across it (backgrounded sends, pushes,
-a notification tap that foregrounds the app), and logcat over that window holds **no** `[RESUME]` line
-from Canari at all: not the `error` accusation, not the `debug` line a successful reload leaves, and
-not the `warn` the counting branch emits. The only `RESUME` lines in the buffer are the Android
-launcher's.
-
-**That is not yet evidence that the reload never ran**, and saying so is the point: the successful
-path logs at `debug`, which a release build may filter, and the JS half of the sequence
-(`[MLS][Tauri] mls.bin reloaded on resume (C2)`, `Resume reload SKIPPED`) does not reach logcat at
-all - the WebView's console is read over CDP, and logcat carries only the native side. **So the next
-attempt reads the phone's CDP console across a background/resume, not its logcat**, and that is the
-one line still owed.
-
-**AN ATTEMPT AT A SECOND OBSERVATION, 2026-09-16, AND IT COULD NOT BE MADE TO CARRY WEIGHT.** The
-Mi 9T was re-imaged by the 2026-09-14 hardware session (`firstInstallTime=2026-09-14 20:12:15`) and
-runs `0.18.1`. Four hours after first run its `mls.bin` was **2 750 195 bytes** for a device holding
-4 conversations and 1 180 messages. The temptation is to read the residue as bundles and call the
-loop live - **and that reading does not hold.** Group weight depends on membership, this install's
-membership was never counted, and between fifty and two hundred members a group the four groups
-account for anywhere from 0.45 MB to 1.6 MB of it. The bundle residue is therefore somewhere between
-~600 and ~1 400, which accuses nothing.
-
-**What the attempt did establish is that a file size is the wrong instrument, and this entry has
-been using it since September.** Every count here - 3053, 3051, 2782, ten thousand - was inferred
-from a blob's weight and an assumption about what else was in it. **The cheapest next step is no
-longer the CDP observation; it is a device that can report its own state census** (groups, members,
-one-time bundles, last-resort), which would settle this entry, the blob entry and the 2026-09-06
-19.5 MB question in one line each. See the blob entry below, where that item now lives.
-
-**And this handset can no longer answer the other half either**: its 19.5 MB blob went with the debug
-build, so the prune's reclaim is not observable here.
-
-**The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
-these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
+**AND THE SHIPPED GUARD CLOSES THE OBSERVED CASE, NOT THE CLASS.** `publishedThisSession` is
+per-process and deliberately not durable - the claim it supports is "this process minted these
+bytes". Packages minted in an EARLIER session are still purgeable, so a device whose keystore is
+emptied and then RESTARTED would run the loop again with nothing to refuse it.
 
 ### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT NAMES THE REMEDY NOW REACHES THE WEB, UNSHIPPED (two production consoles, 2026-09-16)
 
@@ -8440,32 +6946,18 @@ where the only available gate is `cargo check`. Until then, a bump of any crate 
 done by hand in one commit that refreshes all three locks, and the Dependabot pull request is
 superseded rather than merged.
 
-### P1 - the three refusals the auto-merge ceiling makes, and the test that retires each
+### P1 - TWO CLASSES OF DEPENDENCY UPDATE STILL CANNOT MERGE UNATTENDED, AND EACH NAMES ITS MISSING TEST
 
 **`dependabot-auto-merge.yml` refuses only what this repository has no gate for**, and every refusal
 names its missing test in a comment on the pull request. The standing directive is that a refusal is
 never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
-closed is a whole class of update that starts merging on its own.
-
-Measured three times on 2026-08-31 by running the SHIPPED script against every open pull request:
-**5 merge / 28 refuse in the morning; 26 merge / 6 refuse once the first gate was written; and
-7 merge / 5 refuse / 19 held by a real CI failure once the second landed.** The third reading is
-the one that changed the subject: **the ceiling is no longer what holds the queue** - nineteen
-pull requests are red, and they are red because the gates written that day work. #263 bumps
-`@nestjs/common` to 12 in ONE service and dies on `Boot the real AppModule`; #298 dies on a
-deprecated `from_slice`. Both are the suite being evidence, which is the whole design.
-
-**All three readings PREDATE the `typeorm` row closing**, so the refuse count is now lower than any
-of them and no number here should be quoted as current. The measurement that IS current is the
-hourly sweep's own log - it prints what it merged, what it refused and what it held, every pass.
+closed is a whole class of update that starts merging on its own. Five rows closed between
+2026-08-31 and 2026-09-15 and are not repeated here - the gates they bought are in `CHANGELOG.md`
+and [cicd](cicd.md). **Quote no refuse COUNT from anywhere**: the hourly sweep's own log prints what
+it merged, refused and held, every pass, and that is the only current reading.
 
 | Refused | Why the suite cannot see it | The test that retires it | State |
 | --- | --- | --- | --- |
-| ~~`@nestjs/*` MAJORS (22 PRs)~~ | ~~no test ever constructed the real application module~~ | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **CLOSED 2026-08-31.** Green on all four services against a real Postgres, Redis and S3; the case is deleted from the ceiling |
-| ~~bare `typeorm` MAJOR, or an unclassified bump of it~~ | **CLOSED 2026-08-31.** The boot proved the schema BUILDS and nothing more - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs - while every unit suite mocks its repositories, so no test had ever watched this ORM return a row and a major changing how a query is BUILT would have passed all 1105 of them | `app-module.boot-spec.ts` now issues a real `find({ take: 1 })` through EVERY entity the app registered, by metadata rather than by a named list | **GREEN on core, social and chat-delivery in CD run `33403833044`**, and the clause is out of `dependabot-auto-merge.sh`. media-service carries no query test and asserts WHY: it declares no `typeorm`, and that assertion fails the day someone gives it a database |
-| ~~`chacha20poly1305`, `argon2`, `ciborium`~~ | ~~nothing opened a keystore written by the PREVIOUS version~~ | `tests/cross_version_state.rs` + the four frozen artefacts under `tests/fixtures/` | **CLOSED 2026-08-31.** An at-rest envelope is read by the device that SEALED it, so the backward direction is the whole question - measured by enumerating every `encrypt_blob` call site, all of them state persistence. Falsified by corrupting each fixture: all four tests go red |
-| ~~`openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`~~ | ~~a WIRE format is read by OTHER devices on OTHER versions, so the forward direction exists and no frozen fixture can see it~~ | `.github/scripts/mls-forward-compat.sh` + `frontend/mls-cross-version`, its own `ci.yml` job | **CLOSED 2026-09-15.** No fixture could close it and none was written: an MLS frame carries a random reuse guard, so today cannot reproduce a frozen ciphertext the way `aes-gcm` did. THE OLD CODE IS RUN INSTEAD - `FIXTURE_VERSION` is checked out into a worktree, one driver depending on nothing but `mls-core` through a relative path is built against BOTH libraries, and the two binaries hold one conversation through files: old creates the group and admits today by Welcome, today mints a frame old must read, old mints one today must read. Falsified by flipping one byte of today's `send_message` output - the forward leg goes red and names itself. The earlier reading that this needed a NEW fixture was wrong: the conversation is built live, so the four frozen artefacts are untouched. **The code decision the compiler forced came with it**: openmls 0.9.0's `OwnPrivateMessage` now carries what 0.8.1 raised as the `CannotDecryptOwnMessage` ERROR, so the marker moved to the success arm and the string-matching arm was DELETED - 0.9.0 contains no such string, so it was a branch no input could reach. `OwnPendingCommit` is unreachable under `PURE_CIPHERTEXT` (measured) and is written as a signal, not a path |
-| ~~`aes-gcm` (0 PRs open)~~ | ~~it opens a channel push sealed by ANOTHER member's device (`decrypt_channel_message`), and src-tauri freezes nothing~~ | `src-tauri/src/mobile/cross_version_push.rs` + two frozen artefacts under `src-tauri/tests/fixtures/` | **CLOSED 2026-08-31.** Two fixtures rather than one, so a failure names its cause: a FIXED key accuses the AEAD, a Graine-DERIVED key accuses the HKDF. Falsified by flipping one ciphertext bit - the channel test goes red while the Graine one stays green. **Both directions are covered**, which is what let the arm be deleted rather than narrowed: an AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must reproduce the frozen bytes, and equal bytes are equal in both directions. A protocol that may ADD fields is not, which is why `openmls` stays refused. First test in src-tauri, in the crate rather than under `tests/` because `mod mobile` exists only under `cfg(test)` |
 | `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above). **AND THE OPEN PR IS A PORT, NOT A BUMP** - `webrtc` 0.20 is a rewrite onto the Sans-I/O `rtc` crate and gives 26 errors against this SFU, measured 2026-09-15, so the call comes after the port |
 | `stripe` (1 PR) | **half of it the compiler already sees, and that half is safe.** The SDK types `apiVersion` as the literal its release was cut against and this service pins that value in one constant, so a bump that still COMPILES cannot change which API the app talks to and merges like anything else. A bump that crosses an API version stops the tree compiling in four files at once. What no gate can answer is whether the app still READS what the new API sends - payload shapes and object fields are what an API version decides | fixtures per API version for this service's Stripe surface: the events `webhook.controller.ts` handles and the fields `stripe-payment-provider.ts` and `users.service.ts` read, so a crossing is proved rather than read in a changelog | open. **#304 (22.3.2 -> 22.6.0) is the live case**: it wants `2026-08-26.dahlia` where the constant says `2026-06-24.dahlia`, and CI is red on exactly those four files. Crossing it is a decision about PAYMENTS and therefore the USER's - see `apps/core-service/src/payment/stripe-api-version.ts`, which says so in its own docblock |
 
@@ -8571,304 +7063,61 @@ as long as it took to run the real gate. Move the file.
 
 ## Localisation
 
-### P2 - 218 places still render the server's English prose to a French user (re-measured 2026-09-11)
+### P2 - NO REFUSAL CAN BE TOLD FROM ANOTHER, BECAUSE ONLY SOME ENDPOINTS CLASSIFY AT THE THROW
 
-**How it was found.** The user hit one of them: *"En passant, 'No codes left for this partnership'
-est non traduite."* That sentence is thrown by `partnerships.service.ts` and was rendered verbatim
-because the shop had nothing else to show - `request()` in `lib/associations/api.ts` threw
-`new Error(serverMessage)`, and the sentence was the only thing that survived the hop.
+The sweep that stopped the server's English reaching a French screen is finished - `src` is owned
+whole by `frontend/src/lib/associations/serverProse.test.ts`, which walks 1 004 hand-written sources
+and holds ONE allowlist entry. The mechanism, the rule it enforces and the two routes to a localized
+line (`LocalizedError` for a throw whose message is the reader's, `describeApiRefusal` for a status)
+are on [durable-rules](durable-rules.md) and
+[social-service](services/social-service.md); the passes are in `CHANGELOG.md`.
 
-**The reported path is fixed** and is the pattern for the rest: the service classifies at the
-THROW with a code (`PARTNERSHIP_NO_CODES_LEFT` and three siblings, one builder for the seven
-identical "not found" throws), `request()` throws `SocialApiError` carrying that code, and the
-screen maps codes it knows to Paraglide messages. **Anything unrecognised becomes a generic
-localised line rather than the server's text**, so no path is left that can put English on screen
-in that component - asserted by `socialApiError.test.ts`, which fails if `.message` reappears in
-the file.
+**WHAT THE SWEEP NEVER NEEDED IS STILL OWED.** Not showing English needed nothing from the server;
+distinguishing one refusal from another does, and that is **a code at the THROW, per endpoint**. The
+shape to copy is the delivery service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED`, and
+`PARTNERSHIP_NO_CODES_LEFT` plus its three siblings. It is per-endpoint judgement about which
+refusals a user can ACT on, never a mechanical rewrite - which is why it is endpoint by endpoint,
+most-used screens first. Until an endpoint has one, a screen that cannot map a refusal shows a
+generic localised line, which is correct and uninformative.
 
-**The measurement, and it is the reason this is an entry rather than a sweep.** A census of
-`frontend/src` on 2026-09-10 found **185** places rendering `e instanceof Error ? e.message`, of
-which **20** are in the shop and associations trees. One is now fixed. The other 184 are the same
-defect in the same shape, and every one of them needs its server side to grow a code first - which
-is per-endpoint judgement about which refusals a user can act on, not a mechanical rewrite.
+**AND ONE SITE CANNOT CLOSE ALONE.** `sessionAuth.ts:638` compares an error against the shared
+constant `MLS_LOCAL_STATE_UNDECRYPTABLE` - stable matching, but the defect is upstream:
+`classifyStateLoadFailure` already separates `sealed` (an old PIN opens it) from `unknown`
+(corruption, no PIN helps), and both throws collapse the two into that one marker. Typing the marker
+without deciding what the screen DOES with `unknown` ships the same wrong diagnosis behind a better
+shape. It closes with the P1 that reports a damaged MLS state as a PIN rotation. It is the guard's
+one allowlist entry, and that entry FAILS the day the site stops offending, so it cannot rot while
+the P1 waits.
 
-**What NOT to do**: translate the sentences. A distinction carried in prose is a distinction
-exactly one call site will make, and the sentences are log text for developers. The delivery
-service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED` is the precedent and the shape to copy.
+### P3 - the upload cap is one number set in two places that measure two different things
 
-**What would close it**: a guard of the same kind as `socialApiError.test.ts` but tree-wide, which
-cannot be turned on until the codes exist - so the honest order is endpoint by endpoint, most-used
-screens first, with the guard's allowlist shrinking as they land.
+The client refuses a file over `VITE_MEDIA_MAX_SIZE_MB` (default 100); nginx refuses a body over
+`client_max_body_size 100m`. Same number, neither knowing about the other, **and they measure
+different bytes**: the client measures the PLAINTEXT file, what is uploaded is the ciphertext inside
+a multipart envelope, a couple of hundred bytes larger. So a file of exactly the limit passes the
+client's check and is refused by nginx - and an installed APK carries whatever value it was BUILT
+with, which nothing keeps in step with the box.
 
-#### 218 OCCURRENCES LEFT IN CHAT, GRAINE, SETTINGS, POSTS AND ADMIN - AND THE GUARD NEVER NEEDED THE CODES
+The member is no longer misled (the 413 reads "le contenu envoye est trop volumineux" rather than an
+English exception), so this is no longer a user-facing defect - but the two caps should be ONE fact,
+derived, with the envelope accounted for on whichever side does the refusing. **Reproduce the
+boundary before either number moves**: it is an infrastructure change and a build-time variable, and
+nothing has yet observed the gap it predicts.
 
-**2026-09-11.** The paragraph above is wrong in one load-bearing respect, and finding out cost
-nothing: **not showing English needs nothing from the server.** Distinguishing one refusal from
-another does - that is a code at the THROW, per endpoint, and it is still owed. But every one of
-these sites already declared the right answer and then threw it away:
+### P3 - a group creation that fails tells the member nothing, and closes the modal on a group that does not exist
 
-```
-uploadError = e instanceof Error ? e.message : m.asso_cotisations_load_error();
-```
+`createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan group, and
+leave a console line as the only trace. The modal closes, the conversation is not there, and the
+member is left to work out why. This was true before the prose sweep and nothing regressed - the
+sentences that path used to build never reached a screen either. Fixing it is a UI change (the
+creation modal has to STAY OPEN and render a refusal), not a sweep, which is why it is here rather
+than folded into a commit about a ternary.
 
-`request()` throws with the server's text, so the ternary picks English **every time the call
-reaches the server at all**, and the localized half is dead code that runs only for a non-`Error`
-throw. Deleting the preference is the whole fix, and it needs no endpoint to change.
+### P3 - the workers and `mls-client` are the trees nobody has swept, and nothing blocks it
 
-**Seventy sites in `components/associations`, `components/shop`, `routes/associations` and
-`routes/shop`**, in two passes that differ in what they cost:
-
-| shape | sites | what it took |
-| --- | --- | --- |
-| fallback already a Paraglide call | 30 | a deletion, scripted - the string is the one the file already declared |
-| fallback a raw literal (`'Error'`, `'Erreur'`, `'Upload error'`, `'Download error'`) | 38 | the operation read off the awaited call above it, mapped to `common_load_error` / `common_save_error` / `common_delete_error` / `common_generic_error_label` |
-| an English TEMPLATE literal carrying a status code | 1 | `asso_doc_upload_storage_error`, with `{status}` as a parameter |
-| a document upload with no key at all | 1 | `asso_doc_upload_error` |
-
-The raw literals were **two violations in one line** - the server's English when the throw was an
-`Error`, and an untranslated inline literal when it was not.
-
-**`src/lib/associations/serverProse.test.ts` is the tree-wide guard.** It walks every tree it owns,
-fails any file whose code (comments stripped, so the rule stays documentable beside itself) still
-matches `instanceof Error ? x.message`, and asserts per-tree that it found files at all - a floor on
-the total would not catch a path typo, because the healthy trees clear any floor a missing one
-leaves. An allowlist entry that stops offending fails too.
-
-**ITS ALLOWLIST HELD EXACTLY ONE ENTRY, FROM 2026-09-15 TO 2026-09-16, AND THAT CASE IS WHY THE
-CENSUS CANNOT BE SWEPT BLIND.** `SettingsSecuritySection.svelte` rendered `.message` from a PIN
-change, and that message is not the server talking: `changePinImpl` throws
-`new Error(m.auth_pin_change_current_incorrect())`, so the text is already French and deleting the
-preference would have replaced a precise sentence with a vaguer one. The predicate finds the
-shape, not the provenance, and provenance is the whole question.
-
-**IT CLOSED WITHOUT WAITING FOR THE P1 IT WAS PARKED AGAINST**, because the thing it needed was
-smaller than a per-endpoint code: `LocalizedError` (`lib/utils/localizedError.ts`) says of a THROW
-that its message is the reader's, and `localizedMessage(e, <declared line>)` is what a screen asks.
-The twelve throws in `sessionAuth.ts` whose message is a Paraglide call are that type now, and
-`ServerUnreachableError` became a SUBCLASS rather than a sibling - it was already this contract
-plus one more fact. **The allowlist is empty again**, which is what it is supposed to be.
-
-**WHAT IS LEFT, AND THE COUNT IS RE-MEASURED EVERY PASS RATHER THAN DECREMENTED.** The 185 this
-sweep started from (the entry above carried it until 2026-09-15, when it stopped carrying a count at
-all because it had gone stale while this one was re-measured) came from one predicate; a broader one over `frontend/src` finds ~288 occurrences of the ternary, of
-which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
-call and are correctly dev-facing.
-
-**ONE REMAINS, DOWN FROM 194, AND IT IS THE ALLOWLISTED ONE** (one predicate at both ends,
-measured rather than decremented). The intermediate readings were 125 on 2026-09-15 - the 49 of the
-admin pass plus the 20 of the component pass - 127 immediately before the component-ROOT pass of
-2026-09-16, the tree having moved twice in between, 117 after it, 93 after `lib/composables`, and 37
-after `lib/utils`. **That is why this line is re-measured and never decremented**: two sites arrived
-while the count sat still.
-
-The seven occurrences a raw `grep` still finds in `frontend/src` are **six comments** quoting the
-shape in order to explain it - `utils/localizedError.ts`, `utils/chat/messaging.ts`,
-`calendar/calendarErrors.ts` and its test, and the guard's own docblock and regex - plus
-`composables/session/sessionAuth.ts:726`, which is `ALLOWED`'s single entry and closes with the P1
-that owns the question. The guard strips comments before matching, so it sees exactly one.
-
-The member-facing pass closed 27 across `components/posts`, `components/settings`,
-`routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
-pass closed the last three in `components/calendar` and `routes/calendar` and gave that endpoint its
-codes; the landing pass closed seven across `routes/c`, `routes/g`, `routes/account`, `routes/auth`
-and `routes/directory` - the five trees a member meets BEFORE being anywhere yet; the admin pass
-closed 49 in ONE tree, thirteen of its fourteen files, every one of them with a Paraglide fallback
-already declared; the component pass closed 20 more across six subtrees of `lib/components` -
-channels, chat, moderation, profile, shared and sidebar - two of which were the DOUBLE violation,
-a raw French literal as the fallback ('Erreur lors du retrait.', 'Erreur'), so neither half of the
-line was translated whichever branch ran; and the component-ROOT pass of 2026-09-16 closed the
-last 10 and handed the guard the whole 218-file directory in one entry instead of eleven subtrees.
-
-**The landing pass found the case the sweep's shape does not cover.** `routes/auth/callback`
-declared `String(e)` as its fallback, so BOTH halves of that line were untranslatable and deleting
-the preference alone would have left the other - it gained `auth_callback_exchange_failed` instead.
-It is also the most exposed line the sweep has met: it renders into the sign-in card, for a reader
-who has not reached the application and cannot retry past it. Read the fallback before assuming the
-deletion is the whole fix.
-
-**AND THE ADMIN PASS FOUND WHAT ALL THE EARLIER ONES HAD BEEN COSTING.** Deleting `.message`
-deletes the only trace of the failure wherever the catch does not log, and **42 of those 49 did
-not** - a silent swallow. They gained `Log.d('admin.<page>.<fn> failed', e)` in the same commit, as
-did six sites of the landing pass and twenty of the component pass. This guard cannot assert that
-half - it reads one regex - which is why the two travel together rather than one of them arriving
-here as a queue item.
-
-**THE REMAINDER IS CLASSIFIED, NOT QUEUED. Every one of the 125, 2026-09-15:**
-
-| where the site sits | sites | what it means |
-| --- | --- | --- |
-| in or feeding a `Log.d` / `console.*` / `appendLog` call | 96 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
-| a docblock or test quoting the shape to explain it | 4 | the guard strips comments before matching, so it never sees these |
-| a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carried it in a shape this predicate never matched, and closed 2026-09-15) |
-| assigned to an error state a screen renders, or an intermediate on the way to one | 18 | READ, one at a time, 2026-09-15: see below - none of them is a tree this sweep can still close |
-
-**WHAT THE COMPONENT PASS COULD NOT CLOSE IS A DIFFERENT SHAPE, AND DELETING A PREFERENCE DOES NOT
-TOUCH IT.** Seven sites hand the raw text to a Paraglide key BUILT to carry it - eight until
-2026-09-15, when the status route took the only one of them holding a status - so the sentence is
-localized and its subject is not:
-
-| key | reads | sites | state |
-| --- | --- | --- | --- |
-| `chat_forward_error({ reason })` | "Echec du transfert : {reason}" | `useMessaging.svelte.ts` x2 | OPEN |
-| `chat_media_send_error({ reason })` | "Echec de l'envoi du media : {reason}" | `useMessaging.svelte.ts` | OPEN, and half of it HAS a status |
-| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2 | CLOSED 2026-09-16, generic line + the exception in the log |
-| `auth_login_failed({ reason })` | "La connexion n'a pas pu demarrer : {reason}" | `auth/LoginPage.svelte` | CLOSED 2026-09-16, same |
-| `chat_call_error({ msg })` | "Erreur appel : {msg}" | `MainChatPage.svelte` | CLOSED 2026-09-16, `CallInitiateError(status)` |
-| - | - | `lib/utils/chat/messaging.ts` | CLOSED 2026-09-15 on the status route |
-
-`auth_callback_denied({ reason })` is the same shape with a different author - the reason is
-Authentik's `error_description`, not this estate's.
-
-**It closes the way the calendar one did: a code at the throw, per endpoint, mapped once** - or, since
-2026-09-15, by the cheaper second route beside it: a STATUS at the throw, which costs no endpoint
-work at all. `describeApiRefusal` (`utils/apiRefusal.ts`) turns 401/403/404/409/429 plus an action
-label into a sentence and answers `null` for anything else, so a caller keeps its own wording rather
-than being handed an invented reason.
-
-**THE READING IS DONE, 2026-09-15, AND IT CLOSED EXACTLY ONE OF THE EIGHT.**
-`lib/utils/chat/messaging.ts` is that one, and the discriminator is not a matter of taste: it is the
-only site HOLDING AN HTTP STATUS AT THE POINT OF THE THROW, because `ChannelService.handleError`
-throws `ChannelApiError(status, code, text)` and `text` is the server's own body. The other seven
-wrap work that performs no HTTP request where it fails - the outbox, the MLS layer, a forward whose
-inner call already caught its own refusal - so no status exists to map and **a code at the throw is
-what they need**, which is what this entry said before the second route appeared. Until they have
-one, the trees holding these sites stayed outside the guard, because a file it owns must answer in
-full. **Three of those four trees closed on 2026-09-16** - `src/lib/components` (root),
-`components/layout` and `components/auth` - and the directory went in as ONE entry.
-**`lib/composables` closed the same day, and the count this entry carried for it was WRONG**: it
-said three sites, which was the number a READER meets. The guard's regex finds the SHAPE, so the
-tree actually held **twenty-five**, nineteen of them log lines. They were not exempted - a log
-that writes `e.message` throws away the type, the stack and the `cause` of whatever it caught, so
-`String(e)` is the better line, and a convention with no exceptions is the only one a regex can
-hold.
-
-The six that reached a member closed three ways, the same three the component pass found. The
-media send got a STATUS at the throw (`MediaUploadError`, new), which is also how a 413 stopped
-being indistinguishable - to the code - from a 500: the special case existed only to write a
-different string, and nothing read it back. The two forwards had nothing to add, because
-`sendChatMessage` RETURNS its refusal already localized and anything reaching those catches is
-unexpected. And the login error field was showing `_e.message`, so `SessionExpiredError`'s
-`'Session expired - please log in again'` was what a French member read; `LoginFailure` is a
-`LocalizedError` now and the field asks instead of assuming. **Two raw English literals were
-sitting beside it** - `'Please fill in all fields.'` and
-`'Biometric authentication failed. Please enter your PIN manually.'` - both with a Paraglide key
-that already existed.
-
-**One more defect of the same family was found where this guard cannot look.**
-`classifyApiError` in `useChannelWorkspaces` fed an ARBITRARY error's message into
-`channel_action_error_generic({ action, detail })`: `readErrorDetail` parses a documented Nest
-envelope, and only a refusal this API answered has one, so a `TypeError` of ours was shown to a
-member as the reason their community would not load. A detail is quoted only when it came from an
-envelope now, and `channel_action_error_unknown` says just what was attempted otherwise.
-
-**AND ONE THING THE 413 EXPOSED THAT IS STILL OPEN.** The client refuses a file over
-`VITE_MEDIA_MAX_SIZE_MB` (default 100) and nginx refuses a body over `client_max_body_size
-100m` - the same number, set in two places that do not know about each other, measured against
-two different things. The client measures the PLAINTEXT file; what is uploaded is the
-ciphertext inside a multipart envelope, which is a couple of hundred bytes larger. So a file
-of exactly the limit passes the client's check and is refused by nginx, and an installed APK
-carries whatever value it was BUILT with, which nothing keeps in step with the box. The 413
-now reads as "le contenu envoye est trop volumineux" instead of an English exception, so the
-member is no longer misled - but the two caps should be one fact, derived, with the envelope
-accounted for on whichever side does the refusing. Not attempted here: it is an infrastructure
-change and a build-time variable, and it needs the boundary REPRODUCED before either moves.
-
-**THE LAST EIGHTEEN WERE READ INDIVIDUALLY, AND NOT ONE IS AN ORDINARY SITE.** They are the reason
-this sweep has an end rather than a remainder:
-
-- **Four rendered an error the app itself THREW, already in French** - the PIN and login path
-  (`ChatBackgroundService.svelte` x2, `sessionAuth.ts:1339`, plus the allowlisted
-  `SettingsSecuritySection.svelte`). Deleting the preference would have REPLACED a precise sentence
-  with a vaguer one, which was the allowlist's whole argument. **THREE OF THE FOUR CLOSED
-  2026-09-16 and it took none of the P1's endpoint work**: `LocalizedError` types the throw, so a
-  screen can ASK whether a message is the reader's instead of assuming. **THE FOURTH CLOSED WITH
-  `lib/composables` the same day**: `LoginFailure(code, m.auth_...())` already carried a code, and
-  all six of its throws build their message from Paraglide, so it became a `LocalizedError`
-  subclass and the catch renders `localizedMessage(_e, m.auth_pin_login_failed())`. That catch is
-  also reached by `SessionExpiredError` and by any `TypeError` from a dead socket, which is what
-  made the assumption load-bearing in both directions. **One raw English
-  literal hiding among them was closed earlier** - `'Login failed after recovery.'`, thrown into the
-  recovery modal, now `auth_pin_recovery_login_failed`. **A second one closed 2026-09-16**:
-  `'Server-side PIN reset failed.'` was the whole of what a French reader saw when a PIN reset
-  failed; it stays in the log and the modal shows `auth_pin_reset_failed`.
-- **Two branched on the error's PROSE**, which is a different durable rule and a worse one.
-  **ONE IS CLOSED, 2026-09-15**: `useChannelWorkspaces` decided RETRYABILITY with a word list
-  (`fetch`, `network`, `timeout`, `abort`, `err_internet_disconnected`) and recovered an HTTP
-  status by hunting any three-digit number in the body, while `ChannelApiError.status` had carried
-  it since the type was introduced. It reads the type now, and so does the toast - one predicate
-  answers both, where two hand-kept lists agreed only while someone kept them agreeing. The status
-  was being guessed because `apiFetch` had flattened three different refusals into one French
-  sentence one frame after `refresh()` took care to separate them; that seam is typed too
-  (`SessionExpiredError` for a dead cookie, the new `RefreshFailedError` for the 502 during a
-  deploy, the transport failure as itself). See `CHANGELOG.md`.
-  **THE SECOND IS NOT AN ORPHAN AND MUST NOT BE CLOSED ALONE**: `sessionAuth.ts:638` compares the
-  message against `MLS_LOCAL_STATE_UNDECRYPTABLE` - a shared CONSTANT rather than a sentence, so
-  the matching is stable - and the real defect is upstream of it. `classifyStateLoadFailure`
-  already separates `sealed` (an old PIN opens it) from `unknown` (corruption, no PIN helps), and
-  both throws collapse the two into that one marker. Typing the marker without deciding what the
-  screen does with `unknown` would ship the same wrong diagnosis behind a better shape. It closes
-  with the P1 PIN-vs-corrupt-state item, whose reader is written and unshipped. **It is the
-  allowlist's one entry since 2026-09-16**, which is what that list is for: `lib/composables`
-  joined the guard with every OTHER site in that file closed, and the entry FAILS the day this one
-  stops offending - so it cannot rot while the P1 waits.
-- **The rest cross a boundary as DATA, not as a screen**: a worker's `postMessage({ detail })`
-  (x3), `mlsDecryptSession`'s per-message `{ ok: false, error }`, and log lines.
-
-**THE ARGUMENT FOR LEAVING A LOG-ONLY TREE OUTSIDE THE GUARD IS DEAD, AND `src/lib/utils` IS WHAT
-KILLED IT.** The reason recorded here was that `lib/utils/chat`, `graine`, the workers and
-`mls-client` are almost entirely logs while the regex finds the SHAPE, never the destination. The
-utils pass of 2026-09-16 took 319 files and **fifty-six sites, of which NOT ONE was on a screen** -
-and closing them cost nothing and bought the type back: `String(e)` renders `Error: <message>`
-rather than `<message>`, so every one of those log lines now keeps what it was throwing away. The
-workers and `mls-client` are blocked on nothing but somebody doing the same sweep.
-
-**AND THE FIFTY-SIXTH SITE IS WHY A TREE IS TAKEN WHOLE RATHER THAN SITE BY SITE.**
-`utils/chat/groupCreation.ts` held `toUiDiscussionError`, documented as producing *"user-friendly
-strings suitable for display in the UI"*: five `raw.toLowerCase().includes(...)` branches over an
-exception's words - `'no registered device'`, `'session expir'`, `'401'`, `'failed to fetch'`,
-`'already_member'` - each returning an English sentence, falling back to the server's own text.
-**All three of its call sites are `log(...)`**, and `appendLog` writes to the console. So it
-rendered nothing, translated nothing, and staked its correctness on prose from layers that never
-promised it. It is deleted. **A NAME IS NOT A CONSUMER** - see
-[durable-rules](durable-rules.md), where the 413 case recorded the same rule one size smaller.
-
-With it went the LAST site in `src/lib` or `src/routes` that read an exception's words to decide
-what had happened; everything left compares against a shared CONSTANT
-(`MLS_LOCAL_STATE_UNDECRYPTABLE`, `MEDIA_PURGED_MESSAGE`), which is a marker rather than a sentence.
-Verified with `grep -rnE "\.message\s*(\.(includes|startsWith|match|toLowerCase)\(|===)"` over
-both trees: two hits, both `typeof obj.message === 'string'` shape checks on parsed JSON.
-
-**THE GUARD OWNS `src` WHOLE SINCE 2026-09-16 - ONE ENTRY, NOT SEVENTEEN.** The last trees closed
-the same day: `lib/services` (15 sites, twelve of them in `CallService.ts`), `lib/mls-client` (7),
-`lib/workers` (5), `lib/stores`, `lib/i18n.ts` and `hooks.client.ts` - **29 sites, every one a log
-line or a string crossing a `postMessage` boundary whose protocol declares it a string**. With
-nothing left for a partial list to mean, the seventeen entries and their per-pass comments collapse
-into `TREES = ['src']`, and the file walks **1 004** hand-written sources.
-
-**A SKIP IS PERMITTED FOR EXACTLY ONE REASON - THE FILE IS GENERATED**, and there are four:
-`src/lib/paraglide` (2 658 files of compiler output, and the only one that matters to the clock),
-`src/lib/wasm`, and `src/lib/proto/canari.{js,d.ts}`. None is in git; every pipeline rebuilds them.
-A hand-written file that cannot answer goes in `ALLOWED` instead, where it FAILS the day it stops
-offending. Two assertions keep the single entry honest: the seventeen former trees are listed as
-`MUST_COVER` and each must still contribute files - a walk silently returning a fraction of `src`
-clears any floor on the total - and the skipped paths must contribute none.
-
-Every walked file is clean but ONE, `sessionAuth.ts`, which is the allowlist's single entry and
-carries the reason it cannot yet close. **The census that began at 194 is finished.** What is NOT
-finished is the separate, still-open half: the CODES at the throw, per endpoint, that would let one
-refusal be told from another. Nothing in this sweep needed them, which was its whole argument.
-
-**ONE THING THE UTILS READING FOUND AND DID NOT FIX.** A group creation that fails tells the member
-NOTHING: `createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan
-group, and the only trace is the console line this pass rewrote. That was already true before
-`toUiDiscussionError` was deleted - its sentences never reached a screen either - so nothing
-regressed, but the modal closes on a group that does not exist and the member is left to work out
-why. Fixing it is a UI change (the creation modal has to stay open and render a refusal), not a
-sweep, so it is written down here rather than folded into a commit about a ternary.
-
-**A tree is added only once every file under it answers**, which is why they arrive in batches: a
-guard owning half a directory is one a new file walks past. The CODES are the separate, still-open
-half.
+Every other tree under `src` answers the guard. These are blocked on nothing but somebody doing the
+same pass: replace `e instanceof Error ? e.message` with `String(e)` in a log line, which renders
+`Error: <message>` rather than `<message>` and keeps the type the old shape threw away.
 
 ## Infrastructure
 

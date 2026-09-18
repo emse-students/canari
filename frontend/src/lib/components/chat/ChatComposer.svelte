@@ -631,13 +631,15 @@
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
       <!--
-        IT NEEDS ITS OWN SURFACE, BECAUSE THE FOOTER HAS NONE. `.chat-composer-footer` is
-        `position: absolute` over the message list on `background: transparent` - by design, so the
-        thread runs under the input bar - and the bar itself is the only thing here that carries a
-        fill. This strip had none, so file tiles and their captions were drawn straight onto the
-        conversation and read as two layers of text superimposed (reported 2026-09-09). The reply
-        preview strip a few lines above solves exactly this and is copied rather than re-invented:
-        one filled, rounded, shadowed panel, inset from the same gutters.
+        IT NEEDS ITS OWN SURFACE, AND IT STILL DOES NOW THAT THE FOOTER HAS ONE.
+        `.chat-composer-footer` is `position: absolute` over the message list; it was
+        `background: transparent` until 2026-09-18, so this strip drew file tiles and their captions
+        straight onto the conversation and read as two layers of text superimposed (reported
+        2026-09-09). The footer now paints the thread's own ground (`--chat-thread-ground`), which
+        ends that superimposition - but a strip flush with the ground is not a strip, and these tiles
+        need to read as a thing being composed rather than as part of the thread. The reply preview
+        a few lines above solves exactly that and is copied rather than re-invented: one filled,
+        rounded, shadowed panel, inset from the same gutters.
 
         AND IT IS CAPPED. `flex-wrap` with no ceiling grows a row per two or three files and pushes
         the input bar off the top of a phone, with nothing to scroll - the one part of a composer
