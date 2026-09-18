@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
+
+Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais les messages anterieurs
+ne declarent rien, et des mois d'enregistrements restaient listes sous `vocal_<epoch>.m4a`, enfouissant
+les fichiers reellement echanges. Ils portent une seule preuve, le nom que l'enregistreur a lui-meme
+ecrit, et c'est desormais elle qui est lue faute de declaration. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - le panneau "qui a reagi" d'un post sortait de l'ecran et ne se fermait jamais au doigt
 
 Il lisait la position de la pastille UNE fois et l'ecrivait lui-meme : donc rien ne le ramenait dans
