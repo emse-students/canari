@@ -17,6 +17,7 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+
 ### Fixed - une mention ou un abonnement revelait le vrai nom d'un post anonyme, dans l'onglet notifications
 
 Une notification n'a aucun masquage a la lecture : `actorName` est ecrit une fois pour toutes a la
