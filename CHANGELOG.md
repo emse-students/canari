@@ -19,6 +19,12 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
+
+Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
+etaient ecrits en dur. Au passage, le bouton Lien selectionnait six caracteres - la longueur du mot
+francais - au lieu de la longueur reelle de l'exemple insere.
+[architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
 
 ### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
 
