@@ -16,6 +16,7 @@ which is also where every release up to and including v0.13.1 now lives.
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
 -> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
 regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+
 ### Fixed - une mention ou un abonnement revelait le vrai nom d'un post anonyme, dans l'onglet notifications
 
 Une notification n'a aucun masquage a la lecture : `actorName` est ecrit une fois pour toutes a la
