@@ -21,29 +21,34 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+
 ### Removed - social-service acceptait une identite tiree d'une signature JWT jamais verifiee, hors production
 
 La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+
 ### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
 
 Huit textes visibles y etaient ecrits directement dans le composant (le champ de saisie, le lien
 vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
 choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
 une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+
 ### Fixed - coller un texte finissant par un retour a la ligne ajoutait trois caracteres parasites au message
 
 Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ecrit en mojibake :
 le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
 utilisent maintenant la constante partagee.
 [posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
+
 ### Fixed - le selecteur d'emoji et une etiquette de l'editeur de carte ne passaient pas par les traductions
 
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
 le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
 voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
+
 ### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
 
 Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
@@ -51,6 +56,7 @@ n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un mes
 VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
 le commentaire de `muteCheck` qui pretendait le contraire est corrige.
 [localizedError](frontend/src/lib/utils/localizedError.ts).
+
 ### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
 
 La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
@@ -229,16 +235,15 @@ lire des dates d'expiration**, et la piste suivante du demarrage n'est pas une n
 l'item 5 de la file. Tableau complet, ce que le banc ne mesure pas, et la dependance :
 [backlog](docs/wiki/backlog.md).
 
-### Changed - le snapshot MLS entier traversait le pont IPC en tableau de nombres JSON pour quatre appelants qui le jetaient
+### Changed - le snapshot MLS entier traversait le pont IPC pour quatre appelants qui le jetaient
 
-`sauvegarder_mls_et_persister` chiffrait l'etat, ecrivait `mls.bin` **et** rendait les octets ; Tauri
-serialise un `Vec<u8>` de retour en JSON, soit un entier decimal par octet - **27,8 Mo de JSON pour
-un instantane de 7,8 Mo**, a chaque checkpoint et une fois de plus devant le premier ecran, alors que
-les quatre appels natifs jetaient le resultat. Le type de retour venait du web, ou les octets SONT la
-persistance, et il etait declare sur `IMlsService` : il n'y est plus, et `sauvegarder_mls` - la
-variante sans ecriture, enregistree et appelee par personne - est supprimee. Le cout evite, les deux
-moities mesurees et ce que la question ouverte du demarrage devient :
-[backlog](docs/wiki/backlog.md).
+`sauvegarder_mls_et_persister` ecrivait `mls.bin` **et** rendait les octets ; Tauri serialise un
+`Vec<u8>` en JSON, soit un entier decimal par octet - **27,8 Mo de JSON pour un instantane de
+7,8 Mo**, a chaque checkpoint et une fois de plus devant le premier ecran, alors que les quatre
+appels natifs jetaient le resultat. Le type de retour venait du web, ou les octets SONT la
+persistance, et il etait declare sur `IMlsService` ; il n'y est plus. `sauvegarder_mls`, enregistree
+et appelee par personne, est supprimee. Le cout evite et ce que la question ouverte du demarrage
+devient : [backlog](docs/wiki/backlog.md).
 
 ### Changed - anonyme devient une identite de publication, ouverte a tout le monde ; un moderateur (et l'auteur) voient toujours qui a publie
 
