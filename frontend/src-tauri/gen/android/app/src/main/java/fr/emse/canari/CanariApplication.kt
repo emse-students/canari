@@ -28,6 +28,11 @@ import java.io.File
 class CanariApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // WHY THE CONTEXT IS CACHED HERE. A notification built for a WEBSOCKET frame is asked for
+        // by Rust, over a JNI upcall from a thread with no Android component behind it - no
+        // Activity, no Service, nothing holding a Context. This is the one object guaranteed to
+        // exist for the life of the process, and `onCreate` runs before any component of ours can.
+        appContext = applicationContext
         try {
             System.loadLibrary("mines_app_lib")
         } catch (_: UnsatisfiedLinkError) {
@@ -210,6 +215,18 @@ class CanariApplication : Application() {
 
     companion object {
         private const val TAG = "CanariApp"
+
+        /**
+         * The process-wide Application context, or null before [onCreate] has run.
+         *
+         * `@Volatile` because it is written on the main thread and read from whatever thread the
+         * JNI upcall attached - see [CanariFirebaseMessagingService.notifyMessageFromWebSocket].
+         */
+        @Volatile
+        private var appContext: Context? = null
+
+        /** @return the Application context, or null if this process has no [CanariApplication]. */
+        internal fun appContext(): Context? = appContext
 
         /**
          * Creates the notification channels if they do not exist yet.

@@ -779,6 +779,63 @@ overwrite the pending record INCLUDING its resolver, so the first promise never 
 
 MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes from `fetchAvatar(senderId)`; ours comes from `fetchAvatar(loadUserId())` - Android attributes the inline reply to the self `Person` while the reply is in flight, so an iconless self is a blank face on the only message in that thread the user actually wrote. `MlsContextLoader.loadUserId` reads just the `userId` field of `push_context.json`, deliberately not `loadPushContext`, whose expensive half is a Keystore round trip this caller has no use for. iOS shows a single attachment image rather than a thread, so it has no self `Person` and nothing to fix there.
 
+#### One builder, two triggers
+
+**Android had TWO message-notification builders until 2026-09-18, and they shared nothing but the
+channel they filed on.**
+
+| | the plain one | the rich one |
+| --- | --- | --- |
+| built by | the WebView, `tauri-plugin-notification` | `CanariFirebaseMessagingService` |
+| triggered by | a WebSocket frame | an FCM data push |
+| shows | a line of text | the sender's face, the thread, `Repondre`, `Marquer comme lu` |
+| the id | `stableNotifId(conversationId)`, a hash | `getStableNotifId(groupId)`, a stored counter |
+| suppressed when | the reader can SEE the message land (`canSeeArrival`) | the app is in the foreground |
+| a tap | opens the app onto nothing | opens the conversation |
+
+The two suppression predicates are **disjoint** - a backgrounded app satisfies neither - and the two
+id namespaces cannot collide, so nothing merged them. A message that arrived over the socket AND was
+pushed therefore produced two notifications side by side, which is exactly what the server arranges
+when a frame is not ACKed within 10 s (`scheduleDeferredPush`). The user reported it with a capture
+of the pair on 2026-09-18.
+
+**The WebSocket frame is now a second TRIGGER for the same builder, not a second builder.** Both
+paths post under `getStableNotifId(groupId)`, and Android replaces by id whoever posted - so the
+second arrival is an UPDATE of the first.
+
+That needed a call in the direction this app had never made, **Rust into Kotlin**, and the obstacle
+is documented where it bites: a thread attached from native code has no Java frames on its stack, so
+`FindClass` falls back to the system class loader and finds only the boot classpath. The app's own
+loader is taken in `JNI_OnLoad`, where the stack still carries `CanariApplication`, and kept as a
+global reference; `find_app_class` is the one way through it.
+
+```
+notifyInbound (useMessaging)
+  -> sendSystemNotification (useNotifications)   -- isAndroidTauriRuntime() ? native : plugin
+    -> postNativeMessageNotification (nativeNotification.ts)
+      -> invoke('notifier_message_natif')        -- commands/notifications.rs
+        -> find_app_class + call_static_method
+          -> CanariFirebaseMessagingService.notifyMessageFromWebSocket   -- queues on WS_NOTIF_LANE
+            -> Context.showMessageNotification   -- the one builder, in the companion object
+```
+
+Three things the seam carries, each load-bearing:
+
+- **`groupName` is EMPTY for a direct message**, which is the server's own contract in
+  `push-payload.ts`. Both triggers then render identically without being told which they are.
+- **`sentAt` is the SENDER's instant**, and it is what the builder de-duplicates on. `MessagingStyle`
+  re-injects the messages already in the shade, so a second trigger for one message recognises it
+  there and refreshes without adding a line or alerting again. A wall clock read in the builder
+  would stamp the same message twice and could never match. **The channel (salon) push carries no
+  timestamp at all**, so that half is open for salons - the notification is still single, but its
+  thread can show one message twice.
+- **`suppressInForeground` is FALSE for the WebSocket trigger.** Its caller has already asked a
+  strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
+  "is the app in front" in the builder would silence a foregrounded app showing another conversation.
+
+**The plain builder is not deleted - it is now web-only** (and desktop, a different implementation
+again in `desktop.rs`). They have nothing else.
+
 #### The language a notification speaks
 
 **Not the phone's.** The Français/English toggle in Canari's settings and the device language are

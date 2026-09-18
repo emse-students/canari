@@ -37,6 +37,7 @@ use crate::commands::mls::{
     rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil,
     sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome,
 };
+use crate::commands::notifications::notifier_message_natif;
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
     get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
@@ -59,6 +60,20 @@ use crate::commands::storage::{
 #[cfg(target_os = "android")]
 static ANDROID_JAVA_VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
+/// The APP's class loader, cached because a native thread cannot reach our classes without it.
+///
+/// `FindClass` resolves against the class loader of the nearest Java frame on the calling thread's
+/// stack. A thread attached from Rust has none, so it falls back to the SYSTEM loader - which knows
+/// the boot classpath and nothing of `fr.emse.canari`. That is why `flush_webview_cookies` could
+/// only ever call a framework class, and it is the whole obstacle between Rust and our own Kotlin.
+///
+/// `JNI_OnLoad` is the one place where that is not true: it runs on the thread that called
+/// `System.loadLibrary`, whose stack still carries `CanariApplication`. The loader taken there is
+/// kept as a global reference and every later upcall goes through [`find_app_class`].
+#[cfg(target_os = "android")]
+static ANDROID_CLASS_LOADER: std::sync::OnceLock<jni::objects::GlobalRef> =
+    std::sync::OnceLock::new();
+
 /// Caches the `JavaVM` when the native library is loaded.
 ///
 /// Every other JNI symbol in this file is called FROM Kotlin, so the JVM hands it a `JNIEnv`.
@@ -66,19 +81,100 @@ static ANDROID_JAVA_VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::
 /// Kotlin knows nothing about - and that needs a `JavaVM` to attach the calling thread to.
 /// `JNI_OnLoad` is the only hook guaranteed to run before any of our Rust code can, because it is
 /// what `System.loadLibrary("mines_app_lib")` invokes (CanariApplication and generated/Rust.kt).
+///
+/// # Safety
+///
+/// `vm` is the `JavaVM` pointer the JVM itself passes on `System.loadLibrary`, and it is
+/// dereferenced here. Nothing but the JVM may call this symbol - which is why it is `unsafe`
+/// rather than left to a lint suppression.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn JNI_OnLoad(
+pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut std::ffi::c_void,
 ) -> jni::sys::jint {
     match unsafe { jni::JavaVM::from_raw(vm) } {
         Ok(vm) => {
             let _ = ANDROID_JAVA_VM.set(vm);
+            if let Some(vm) = ANDROID_JAVA_VM.get() {
+                cache_app_class_loader(vm);
+            }
         }
         Err(e) => log::error!("[JNI] JNI_OnLoad: JavaVM::from_raw failed: {e}"),
     }
     jni::sys::JNI_VERSION_1_6
+}
+
+/// Takes the app's class loader from the thread that is loading this library, and keeps it.
+///
+/// Every failure is logged rather than absorbed: without it, every Rust-to-Kotlin call in the
+/// process fails, and the first symptom would be a message notification that never appears.
+#[cfg(target_os = "android")]
+fn cache_app_class_loader(vm: &jni::JavaVM) {
+    // `get_env` rather than `attach_current_thread`: this thread is already a Java thread - it is
+    // the one executing `System.loadLibrary` - and it is precisely that fact we are here to use.
+    let mut env = match vm.get_env() {
+        Ok(env) => env,
+        Err(e) => return log::error!("[JNI] JNI_OnLoad: get_env failed: {e}"),
+    };
+    let class = match env.find_class("fr/emse/canari/CanariApplication") {
+        Ok(c) => c,
+        Err(e) => {
+            return log::error!("[JNI] JNI_OnLoad: find_class(CanariApplication) failed: {e}")
+        }
+    };
+    let loader = match env
+        .call_method(&class, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .and_then(|v| v.l())
+    {
+        Ok(l) => l,
+        Err(e) => return log::error!("[JNI] JNI_OnLoad: getClassLoader failed: {e}"),
+    };
+    match env.new_global_ref(&loader) {
+        Ok(global) => {
+            let _ = ANDROID_CLASS_LOADER.set(global);
+            log::debug!("[JNI] app class loader cached");
+        }
+        Err(e) => log::error!("[JNI] JNI_OnLoad: new_global_ref(ClassLoader) failed: {e}"),
+    }
+}
+
+/// Loads one of OUR classes by its binary name (dots, e.g. `fr.emse.canari.MainActivity`).
+///
+/// Goes through the cached app loader rather than `FindClass`, which on a native thread would look
+/// only at the boot classpath - see [`ANDROID_CLASS_LOADER`]. Returns `None` when the loader was
+/// never cached or the class is absent, both of which the caller must report rather than retry.
+#[cfg(target_os = "android")]
+pub(crate) fn find_app_class<'a>(
+    env: &mut jni::JNIEnv<'a>,
+    binary_name: &str,
+) -> Option<jni::objects::JClass<'a>> {
+    let Some(loader) = ANDROID_CLASS_LOADER.get() else {
+        log::error!("[JNI] find_app_class({binary_name}): no class loader cached");
+        return None;
+    };
+    let name = match env.new_string(binary_name) {
+        Ok(n) => n,
+        Err(e) => {
+            log::error!("[JNI] find_app_class({binary_name}): new_string failed: {e}");
+            return None;
+        }
+    };
+    match env
+        .call_method(
+            loader.as_obj(),
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[(&name).into()],
+        )
+        .and_then(|v| v.l())
+    {
+        Ok(class) => Some(jni::objects::JClass::from(class)),
+        Err(e) => {
+            log::error!("[JNI] find_app_class({binary_name}): loadClass failed: {e}");
+            None
+        }
+    }
 }
 
 /// The cached `JavaVM`, or `None` if `JNI_OnLoad` never ran (which would mean the library was not
@@ -918,7 +1014,8 @@ pub fn run() {
             forget_graine_channel,
             forget_graine_sessions,
             actualiser_cle_keystore_avec_devicekey,
-            flush_webview_cookies
+            flush_webview_cookies,
+            notifier_message_natif
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

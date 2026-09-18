@@ -1167,6 +1167,475 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             manager.notify(PENDING_SYNC_NOTIF_ID, notif)
             Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
         }
+
+        /**
+         * The lane a WebSocket-triggered notification is built on.
+         *
+         * Separate from [MLS_PUSH_LANE] deliberately: this one fetches an avatar over HTTP with a
+         * 5 s timeout, and queueing that behind whatever `mls.bin` work is in flight would delay a
+         * banner for a message the WebView has ALREADY decrypted. Single-threaded all the same, so
+         * a burst of messages builds its notifications in arrival order rather than racing for the
+         * same notification id.
+         */
+        private val WS_NOTIF_LANE: ExecutorService =
+            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-ws-notif") }
+
+        /**
+         * Posts the SAME notification a push would, for a message that arrived over the WEBSOCKET.
+         *
+         * **WHY THIS EXISTS.** Until 2026-09-18 Android had TWO notification builders. A push came
+         * here and produced a `MessagingStyle` notification with the sender's face, a reply action
+         * and a deep link that opens the conversation. A WebSocket frame was notified by the WebView
+         * through `tauri-plugin-notification`, which produces a plain line with no avatar, no
+         * actions, and a tap that opens the app onto nothing (the plugin hardcodes `ACTION_MAIN` and
+         * cannot carry our deep link - measured on a Mi 9T, 2026-09-07).
+         *
+         * They had DISJOINT suppression predicates and DISJOINT id namespaces, so a backgrounded app
+         * whose ACK lost the race with `scheduleDeferredPush` got both, side by side, for one
+         * message. The user reported it on 2026-09-18 with a capture of the pair, and answered the
+         * design question himself: *"pourquoi a-t-on encore des plain-notifications alors que les
+         * rich notifications sont super"*.
+         *
+         * So the WebSocket frame stopped being a second BUILDER and became a second TRIGGER. Both
+         * paths now share [getStableNotifId], which is what makes a second arrival an UPDATE of the
+         * first rather than a second notification - Android replaces by id, whoever posted it.
+         *
+         * Called from Rust (`notifier_message_natif`), itself called from the WebView. Returns
+         * whether the work was QUEUED, which is all a caller can be told synchronously: the avatar
+         * fetch is network I/O and runs on [WS_NOTIF_LANE]. `false` means no Application context was
+         * available, which would mean this process has no `CanariApplication` - a fact worth a line
+         * rather than a silent nothing.
+         *
+         * @param groupId the conversation this message belongs to - the deep link and the id both
+         *   come from it.
+         * @param senderId whose avatar to draw. Empty falls back to the initials disc.
+         * @param senderName the name on the message line inside the conversation.
+         * @param groupName the conversation title, EMPTY for a direct message - the same contract
+         *   the push payload uses, so both triggers render identically.
+         * @param sentAt the sender's own instant in ms, 0 when unknown. See the de-duplication in
+         *   [showMessageNotification]: without it the two triggers cannot recognise one message.
+         */
+        @JvmStatic
+        fun notifyMessageFromWebSocket(
+            groupId: String,
+            senderId: String,
+            senderName: String,
+            groupName: String,
+            body: String,
+            mentionsMe: Boolean,
+            sentAt: Long,
+        ): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
+                return false
+            }
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt")
+            WS_NOTIF_LANE.execute {
+                try {
+                    val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
+                    context.showMessageNotification(
+                        senderName = senderName,
+                        groupName = groupName,
+                        body = body,
+                        largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                        groupId = groupId,
+                        channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
+                        sentAt = sentAt,
+                        // The WebView already decided this reader cannot see the message land.
+                        suppressInForeground = false,
+                    )
+                } catch (e: Exception) {
+                    // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
+                    // message the server will never push, so a silent throw here is a message the
+                    // user is never told about.
+                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${e.message}", e)
+                }
+            }
+            return true
+        }
+
+        // --- The message notification, and the avatar chain it needs -------------------
+        //
+        // THESE LIVE IN THE COMPANION OBJECT BECAUSE THE BUILDER HAS TWO TRIGGERS AND ONLY ONE OF
+        // THEM HAS A SERVICE. A push arrives at an instance of this service; a WebSocket frame
+        // arrives in the WebView, which reaches Kotlin through a static JNI upcall and has no
+        // instance to call. They are extensions on Context so that every call site inside the
+        // class is unchanged - the service IS a Context, so `fetchAvatar(id)` still resolves.
+
+        /** Cache file for a userId's avatar (filesystem-safe name). */
+        private fun Context.avatarCacheFile(userId: String): File {
+            val safeId = userId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(40)
+            return File(filesDir, "avatar_$safeId.jpg")
+        }
+
+        /**
+         * Edge length Android draws a notification large icon at, on THIS screen's density.
+         *
+         * Read from the platform instead of guessed: `notification_large_icon_width` is the dimension
+         * the framework itself scales a large icon down to, so it is the smallest decode that costs
+         * nothing visible - and it is the fact that spares us decoding an avatar at its upload
+         * resolution only to discover how big it was. The initials disc keeps its own 96 px, which
+         * `initialsFallback.test.ts` pins against the two Apple copies; this is the avatar branch.
+         */
+        private fun Context.notificationIconSizePx(): Int =
+            resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
+
+        /**
+         * Decodes an avatar no larger than the icon it becomes.
+         *
+         * THE RESOLUTION ON THE WIRE IS NOT OURS TO BOUND. The bytes come from MiGallery, through
+         * core-service, through `/api/mls/push/avatar` - and no hop in that chain carries a size
+         * parameter, so what arrives is whatever its owner uploaded. Decoding it whole allocated
+         * width*height*4 bytes here and again in [circleCrop], inside the FCM service process, where
+         * running out of memory does not soften the icon: it loses the NOTIFICATION.
+         *
+         * Two passes. `inJustDecodeBounds` reads the header only and allocates no pixels; then
+         * `inSampleSize` - which the decoder honours in powers of two ONLY - takes the decode down to
+         * the smallest power of two still at or above [target]. [circleCrop] covers the remaining
+         * factor of under two, so the sampling never has to land exactly.
+         *
+         * @param target Edge length in pixels the icon is drawn at.
+         * @param decode Runs ONE decode pass under the given options. The same lambda serves a file
+         *   and a byte array, which is why neither call site carries a copy of this.
+         */
+        private fun Context.decodeSampled(target: Int, decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            decode(bounds)
+            val shortest = minOf(bounds.outWidth, bounds.outHeight)
+            if (shortest <= 0) {
+                // The decoder reports -1 on bytes it cannot read at all. Saying so is the point: the
+                // caller only sees a null, which is indistinguishable from "this user has no avatar".
+                Log.w(TAG, "decodeSampled: unreadable image header (${bounds.outWidth}x${bounds.outHeight})")
+                return null
+            }
+            var sample = 1
+            while (shortest / (sample * 2) >= target) sample *= 2
+            Log.d(TAG, "decodeSampled: ${bounds.outWidth}x${bounds.outHeight} -> inSampleSize=$sample, target=$target")
+            return decode(BitmapFactory.Options().apply { inSampleSize = sample })
+        }
+
+        /**
+         * Downloads the sender's avatar, with a 24h file cache.
+         * The cache avoids the HTTP request when the app is in the background and
+         * the network is slow or PushSecretKeystore.retrieve() is unstable.
+         */
+        private fun Context.fetchAvatar(userId: String): Bitmap? =
+            cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId)) {
+                val ctx    = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
+                val secret = retrievePushSecret(this) ?: return@cachedRemoteIcon null
+                ("${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
+                    "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                    "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
+            }
+
+        /**
+         * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
+         *
+         * Extracted from [fetchAvatar] when the association logo became a second caller. The cache
+         * matters more than it looks: this runs in the FCM service process, where the app may be dead,
+         * the Keystore may be slow to answer and the network may be a cell radio waking up - and an
+         * icon that arrives after the notification is posted arrives never.
+         *
+         * @param label the caller's name, so a log line says which fetch it describes.
+         * @param subject what is being fetched, truncated in logs - a user id or a media id.
+         * @param request the URL to fetch and the `Authorization` header to send with it, or null for a
+         *   route that takes none - sending an empty one would be a header the proxy has to reason
+         *   about. It is a LAMBDA rather than two parameters so that a cache HIT pays for neither: the
+         *   avatar URL needs the push context and the Keystore to be built at all, and the comment this
+         *   replaced said in as many words that a fresh cache entry must cost neither.
+         */
+        private fun Context.cachedRemoteIcon(
+            label: String,
+            subject: String,
+            cacheFile: File,
+            request: () -> Pair<String, String?>?,
+        ): Bitmap? {
+            val target = notificationIconSizePx()
+            val now = System.currentTimeMillis()
+            if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
+                decodeSampled(target) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
+                    Log.d(TAG, "$label: from cache for ${subject.take(8)}")
+                    return circleCrop(bmp, target)
+                }
+            }
+            val (url, authorization) = request() ?: return null
+            return try {
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout    = 5_000
+                    requestMethod  = "GET"
+                    authorization?.let { setRequestProperty("Authorization", it) }
+                    instanceFollowRedirects = true
+                }
+                try {
+                    val code = conn.responseCode
+                    if (code == 200) {
+                        val bytes = conn.inputStream.readBytes()
+                        // Save to cache for the next notifications
+                        try {
+                            cacheFile.writeBytes(bytes)
+                            Log.d(TAG, "$label: cached for ${subject.take(8)}")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "$label: unable to save the cache: ${e.message}")
+                        }
+                        decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
+                            ?.let { circleCrop(it, target) }
+                    } else {
+                        // 401/403 is NOT "this user has no avatar": it is our push secret being
+                        // rejected, and the same credential guards the media proxy and the
+                        // ciphertext fetch that a message falls back to - so a silent 403 here is
+                        // the visible tip of something that costs a MESSAGE elsewhere. It used to be
+                        // logged at debug level alongside the ordinary misses, which is how it went
+                        // unnoticed until a user remarked the picture was missing (WP-DIRECTBOOT-1).
+                        if (code == 401 || code == 403) {
+                            Log.e(TAG, "$label: HTTP $code - push secret REJECTED, background auth is broken in this process")
+                        } else {
+                            Log.d(TAG, "$label: HTTP $code for $subject -> initials fallback")
+                        }
+                        null
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "$label: ${e.message} -> initials fallback")
+                null
+            }
+        }
+
+        /**
+         * Crops a bitmap into a circle at a FIXED edge length (for the notification icon).
+         *
+         * The size is a PARAMETER, where it used to be the source's own shortest edge. An avatar
+         * arrives at whatever resolution its owner uploaded (see [decodeSampled]), and taking the
+         * output size from the source carried that resolution into a SECOND ARGB_8888 allocation - so
+         * a 3000x3000 photo cost its 36 MB twice over, for an icon drawn at
+         * [notificationIconSizePx]. The centre square is scaled onto the whole target, which is the
+         * framing the previous unscaled draw already produced.
+         */
+        private fun circleCrop(src: Bitmap, target: Int): Bitmap {
+            val edge   = minOf(src.width, src.height)
+            val output = Bitmap.createBitmap(target, target, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            // FILTER_BITMAP_FLAG is new and load-bearing now that the draw SCALES: without it the
+            // downscale is nearest-neighbour and a face comes out visibly aliased.
+            val paint  = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            canvas.drawCircle(target / 2f, target / 2f, target / 2f, paint)
+            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+            val left = (src.width - edge) / 2
+            val top  = (src.height - edge) / 2
+            canvas.drawBitmap(
+                src,
+                Rect(left, top, left + edge, top + edge),
+                Rect(0, 0, target, target),
+                paint
+            )
+            src.recycle()
+            return output
+        }
+
+        /** Generates a circular bitmap with the first letter of the name (fallback when no avatar). */
+        private fun generateInitialsBitmap(name: String): Bitmap {
+            val size   = 96
+            val bmp    = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            val paint  = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.color = android.graphics.Color.parseColor("#6366f1")
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            paint.color     = android.graphics.Color.WHITE
+            paint.textSize  = size * 0.4f
+            paint.textAlign = Paint.Align.CENTER
+            val fm = paint.fontMetrics
+            canvas.drawText(
+                name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, paint
+            )
+            return bmp
+        }
+
+        /**
+         * Shows (or updates) a notification for an MLS message (DM or group).
+         * A single stable ID per conversation: each new message overwrites the previous
+         * notification instead of stacking a new one.
+         * Suppressed if the app is in the foreground: the WebSocket already delivered the message to the UI.
+         */
+        internal fun Context.showMessageNotification(
+            senderName: String,
+            groupName: String,
+            body: String,
+            largeIcon: Bitmap,
+            groupId: String,
+            mediaUri: Uri? = null,
+            mediaMime: String? = null,
+            channel: String = CHANNEL_MESSAGES,
+            /**
+             * Offer reply and mark-as-read. False for a REACTION: both actions answer "there is a
+             * message here for you", and neither means anything against a reaction - replying to one
+             * is nonsense and there is nothing of it to mark read. Everything else this function does
+             * is exactly what a reaction wants, which is why this is a parameter and not a second path.
+             */
+            quickActions: Boolean = true,
+            /**
+             * The SENDER's `sentAt` for the message this notification is about, in ms. Handed to the
+             * quick actions so acknowledging the conversation from the shade names an instant taken
+             * from the messages themselves. 0 when unknown, which the actions read as "say nothing".
+             */
+            sentAt: Long = 0L,
+            /**
+             * Whether a foregrounded app is on its own a reason not to post.
+             *
+             * TRUE for a PUSH, which knows nothing finer: the frame came from outside and the only
+             * question it can ask is whether anybody is looking at the app at all.
+             *
+             * FALSE for a WEBSOCKET frame, because its trigger has already asked a STRICTLY FINER
+             * question. `canSeeArrival` in the WebView answers whether this reader can see THIS
+             * conversation land, so a foregrounded app showing a DIFFERENT conversation - or
+             * sitting on the posts feed - still notifies. Re-asking the coarse question here would
+             * throw that answer away and restore the silence the finer predicate exists to prevent.
+             */
+            suppressInForeground: Boolean = true,
+        ) {
+            if (suppressInForeground && MainActivity.isInForeground) {
+                Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
+                return
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            CanariApplication.ensureChannels(this, manager)
+            val res = appLocaleContext(this)
+
+            val isGroup = groupName.isNotEmpty() && groupName != senderName
+
+            // Stable ID per conversation: notify() with the same ID updates the existing notification.
+            // A reaction takes its own namespace so it updates the previous REACTION rather than the
+            // conversation's unread message - see [reactionNotifKey].
+            val notifKey = if (channel == CHANNEL_REACTIONS) reactionNotifKey(groupId) else groupId
+            val notifId = if (groupId.isNotEmpty()) getStableNotifId(this, notifKey) else 0
+
+            val tapIntent = Intent(this, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this, notifId, tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // MessagingStyle: successive messages of the same conversation STACK instead of
+            // replacing each other. We rebuild the style from the active notification (if present),
+            // bounding the history to MAX_NOTIF_MESSAGES to avoid unbounded growth.
+            val senderPerson = Person.Builder()
+                .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
+                .setIcon(IconCompat.createWithBitmap(largeIcon))
+                .build()
+            // Our own Person carries our avatar too: Android attributes the inline reply to it while
+            // the reply is in flight, so leaving it iconless is a blank face on the only message in
+            // that thread the user actually wrote. Same 24h file cache as the sender's avatar, so this
+            // costs one request a day at most, and an unresolvable avatar simply stays iconless.
+            val selfAvatar = MlsContextLoader.loadUserId(this)?.let { fetchAvatar(it) }
+            val selfPerson = Person.Builder()
+                .setName(res.getString(R.string.notif_sender_self))
+                .apply { selfAvatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+                .build()
+
+            val existingNotif = try {
+                manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
+            } catch (e: Exception) {
+                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}")
+                null
+            }
+
+            val style = NotificationCompat.MessagingStyle(selfPerson)
+            if (isGroup) {
+                style.conversationTitle = groupName
+                style.isGroupConversation = true
+            }
+            // Re-inject the previous (bounded) messages, then add the new one.
+            existingNotif
+                ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+                ?.messages
+                ?.takeLast(MAX_NOTIF_MESSAGES - 1)
+                ?.forEach { style.addMessage(it) }
+            // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
+            // thumbnail while keeping the conversation's MessagingStyle stacking. NotificationManager
+            // grants the system read access to the FileProvider content Uri carried in the notification.
+            // THE SENDER'S OWN INSTANT, NOT THIS ONE. It is what the shade should show, and it is
+            // also the only thing that lets the two triggers recognise the SAME message: a push and
+            // a WebSocket frame reach this builder at different moments, so a wall clock read here
+            // would stamp one message twice and the line below could never match.
+            val stamp = if (sentAt > 0) sentAt else System.currentTimeMillis()
+            // ONE MESSAGE, ONE LINE, WHICHEVER TRIGGER ARRIVES SECOND. `style.messages` holds the
+            // history re-injected from the notification already in the shade, so this asks the post
+            // itself - durable state, not a clock and not a flag this process would lose on a kill.
+            //
+            // IT NEEDS A SENT-AT TO WORK, and the channel (salon) push does not carry one: that
+            // payload has no timestamp field at all, so a salon message that arrives BOTH ways can
+            // still show its line twice. The notification is still single - the id is shared - and
+            // the missing field is where that half belongs; see docs/wiki/backlog.md.
+            val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp && it.text == body }
+            val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
+            if (mediaUri != null && mediaMime != null) {
+                newMessage.setData(mediaMime, mediaUri)
+            }
+            if (alreadyPosted) {
+                Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
+            } else {
+                style.addMessage(newMessage)
+            }
+
+            // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
+            // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
+            // the old post first - the rebuilt MessagingStyle above already carries its history.
+            if (existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
+                existingNotif.channelId != channel
+            ) {
+                manager.cancel(notifId)
+            }
+
+            val isReactionNotif = channel == CHANNEL_REACTIONS
+
+            val notifBuilder = NotificationCompat.Builder(this, channel)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setStyle(style)
+                .setAutoCancel(true)
+                // Below API 26 there are no channels and this is the whole of the importance, so it
+                // has to say what the channel says: DEFAULT for a reaction, HIGH for a message.
+                .setPriority(
+                    if (isReactionNotif) NotificationCompat.PRIORITY_DEFAULT
+                    else NotificationCompat.PRIORITY_HIGH
+                )
+                .setContentIntent(pendingIntent)
+                .setLargeIcon(largeIcon)
+                // The second trigger for a message already in the shade re-posts the same content,
+                // so it must not sound or vibrate a second time - which is the whole of what the
+                // user saw as "the same notification twice".
+                .setOnlyAlertOnce(alreadyPosted)
+
+            // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
+            // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
+            // - so a reaction arriving alone would be a grouped notification whose summary has just
+            // been cancelled, a shape OEM shells render inconsistently. It is also not a message, which
+            // is the whole reason it left [CHANNEL_MESSAGES].
+            if (!isReactionNotif) notifBuilder.setGroup(GROUP_KEY_MESSAGES)
+
+            // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
+            // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
+            if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+            }
+
+            val notif = notifBuilder.build()
+
+            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
+            manager.notify(notifId, notif)
+
+            // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
+            // conversation's notification is active.
+            refreshBadgeSummary(this)
+        }
+
     }
 
     // ─── Key-based JNI variants (always used, PIN never stored in push_context.json) ───
@@ -1732,7 +2201,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
             val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
             Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-            showNotification(
+            showMessageNotification(
                 senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
                 channel, sentAt = decrypted?.sentAt ?: 0L,
             )
@@ -2828,72 +3297,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     // --- Avatar ----------------------------------------------------------------
 
-    /** Cache file for a userId's avatar (filesystem-safe name). */
-    private fun avatarCacheFile(userId: String): File {
-        val safeId = userId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(40)
-        return File(filesDir, "avatar_$safeId.jpg")
-    }
 
-    /**
-     * Edge length Android draws a notification large icon at, on THIS screen's density.
-     *
-     * Read from the platform instead of guessed: `notification_large_icon_width` is the dimension
-     * the framework itself scales a large icon down to, so it is the smallest decode that costs
-     * nothing visible - and it is the fact that spares us decoding an avatar at its upload
-     * resolution only to discover how big it was. The initials disc keeps its own 96 px, which
-     * `initialsFallback.test.ts` pins against the two Apple copies; this is the avatar branch.
-     */
-    private val notificationIconSizePx: Int by lazy {
-        resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
-    }
 
-    /**
-     * Decodes an avatar no larger than the icon it becomes.
-     *
-     * THE RESOLUTION ON THE WIRE IS NOT OURS TO BOUND. The bytes come from MiGallery, through
-     * core-service, through `/api/mls/push/avatar` - and no hop in that chain carries a size
-     * parameter, so what arrives is whatever its owner uploaded. Decoding it whole allocated
-     * width*height*4 bytes here and again in [circleCrop], inside the FCM service process, where
-     * running out of memory does not soften the icon: it loses the NOTIFICATION.
-     *
-     * Two passes. `inJustDecodeBounds` reads the header only and allocates no pixels; then
-     * `inSampleSize` - which the decoder honours in powers of two ONLY - takes the decode down to
-     * the smallest power of two still at or above [target]. [circleCrop] covers the remaining
-     * factor of under two, so the sampling never has to land exactly.
-     *
-     * @param target Edge length in pixels the icon is drawn at.
-     * @param decode Runs ONE decode pass under the given options. The same lambda serves a file
-     *   and a byte array, which is why neither call site carries a copy of this.
-     */
-    private fun decodeSampled(target: Int, decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        decode(bounds)
-        val shortest = minOf(bounds.outWidth, bounds.outHeight)
-        if (shortest <= 0) {
-            // The decoder reports -1 on bytes it cannot read at all. Saying so is the point: the
-            // caller only sees a null, which is indistinguishable from "this user has no avatar".
-            Log.w(TAG, "decodeSampled: unreadable image header (${bounds.outWidth}x${bounds.outHeight})")
-            return null
-        }
-        var sample = 1
-        while (shortest / (sample * 2) >= target) sample *= 2
-        Log.d(TAG, "decodeSampled: ${bounds.outWidth}x${bounds.outHeight} -> inSampleSize=$sample, target=$target")
-        return decode(BitmapFactory.Options().apply { inSampleSize = sample })
-    }
 
-    /**
-     * Downloads the sender's avatar, with a 24h file cache.
-     * The cache avoids the HTTP request when the app is in the background and
-     * the network is slow or PushSecretKeystore.retrieve() is unstable.
-     */
-    private fun fetchAvatar(userId: String): Bitmap? =
-        cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId)) {
-            val ctx    = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
-            val secret = retrievePushSecret(this) ?: return@cachedRemoteIcon null
-            ("${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
-                "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
-                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
-        }
 
     /**
      * The picture on a SOCIAL push: an association's logo, or a person's photo.
@@ -2938,80 +3344,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    /**
-     * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
-     *
-     * Extracted from [fetchAvatar] when the association logo became a second caller. The cache
-     * matters more than it looks: this runs in the FCM service process, where the app may be dead,
-     * the Keystore may be slow to answer and the network may be a cell radio waking up - and an
-     * icon that arrives after the notification is posted arrives never.
-     *
-     * @param label the caller's name, so a log line says which fetch it describes.
-     * @param subject what is being fetched, truncated in logs - a user id or a media id.
-     * @param request the URL to fetch and the `Authorization` header to send with it, or null for a
-     *   route that takes none - sending an empty one would be a header the proxy has to reason
-     *   about. It is a LAMBDA rather than two parameters so that a cache HIT pays for neither: the
-     *   avatar URL needs the push context and the Keystore to be built at all, and the comment this
-     *   replaced said in as many words that a fresh cache entry must cost neither.
-     */
-    private fun cachedRemoteIcon(
-        label: String,
-        subject: String,
-        cacheFile: File,
-        request: () -> Pair<String, String?>?,
-    ): Bitmap? {
-        val target = notificationIconSizePx
-        val now = System.currentTimeMillis()
-        if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
-            decodeSampled(target) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
-                Log.d(TAG, "$label: from cache for ${subject.take(8)}")
-                return circleCrop(bmp, target)
-            }
-        }
-        val (url, authorization) = request() ?: return null
-        return try {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5_000
-                readTimeout    = 5_000
-                requestMethod  = "GET"
-                authorization?.let { setRequestProperty("Authorization", it) }
-                instanceFollowRedirects = true
-            }
-            try {
-                val code = conn.responseCode
-                if (code == 200) {
-                    val bytes = conn.inputStream.readBytes()
-                    // Save to cache for the next notifications
-                    try {
-                        cacheFile.writeBytes(bytes)
-                        Log.d(TAG, "$label: cached for ${subject.take(8)}")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "$label: unable to save the cache: ${e.message}")
-                    }
-                    decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
-                        ?.let { circleCrop(it, target) }
-                } else {
-                    // 401/403 is NOT "this user has no avatar": it is our push secret being
-                    // rejected, and the same credential guards the media proxy and the
-                    // ciphertext fetch that a message falls back to - so a silent 403 here is
-                    // the visible tip of something that costs a MESSAGE elsewhere. It used to be
-                    // logged at debug level alongside the ordinary misses, which is how it went
-                    // unnoticed until a user remarked the picture was missing (WP-DIRECTBOOT-1).
-                    if (code == 401 || code == 403) {
-                        Log.e(TAG, "$label: HTTP $code - push secret REJECTED, background auth is broken in this process")
-                    } else {
-                        Log.d(TAG, "$label: HTTP $code for $subject -> initials fallback")
-                    }
-                    null
-                }
-            } finally {
-                conn.disconnect()
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "$label: ${e.message} -> initials fallback")
-            null
-        }
-    }
 
     /**
      * Downloads and decrypts an image/GIF message blob for a rich notification thumbnail (WP-XP-3).
@@ -3096,209 +3428,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    /**
-     * Crops a bitmap into a circle at a FIXED edge length (for the notification icon).
-     *
-     * The size is a PARAMETER, where it used to be the source's own shortest edge. An avatar
-     * arrives at whatever resolution its owner uploaded (see [decodeSampled]), and taking the
-     * output size from the source carried that resolution into a SECOND ARGB_8888 allocation - so
-     * a 3000x3000 photo cost its 36 MB twice over, for an icon drawn at
-     * [notificationIconSizePx]. The centre square is scaled onto the whole target, which is the
-     * framing the previous unscaled draw already produced.
-     */
-    private fun circleCrop(src: Bitmap, target: Int): Bitmap {
-        val edge   = minOf(src.width, src.height)
-        val output = Bitmap.createBitmap(target, target, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
-        // FILTER_BITMAP_FLAG is new and load-bearing now that the draw SCALES: without it the
-        // downscale is nearest-neighbour and a face comes out visibly aliased.
-        val paint  = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        canvas.drawCircle(target / 2f, target / 2f, target / 2f, paint)
-        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-        val left = (src.width - edge) / 2
-        val top  = (src.height - edge) / 2
-        canvas.drawBitmap(
-            src,
-            Rect(left, top, left + edge, top + edge),
-            Rect(0, 0, target, target),
-            paint
-        )
-        src.recycle()
-        return output
-    }
 
-    /** Generates a circular bitmap with the first letter of the name (fallback when no avatar). */
-    private fun generateInitialsBitmap(name: String): Bitmap {
-        val size   = 96
-        val bmp    = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        val paint  = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = android.graphics.Color.parseColor("#6366f1")
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-        paint.color     = android.graphics.Color.WHITE
-        paint.textSize  = size * 0.4f
-        paint.textAlign = Paint.Align.CENTER
-        val fm = paint.fontMetrics
-        canvas.drawText(
-            name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-            size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, paint
-        )
-        return bmp
-    }
 
     // --- Notification display --------------------------------------------------
     //
-    // getStableNotifId / cancelConversationNotification live in the companion object above
-    // (shared with CanariNotificationActionReceiver).
-
-    /**
-     * Shows (or updates) a notification for an MLS message (DM or group).
-     * A single stable ID per conversation: each new message overwrites the previous
-     * notification instead of stacking a new one.
-     * Suppressed if the app is in the foreground: the WebSocket already delivered the message to the UI.
-     */
-    private fun showNotification(
-        senderName: String,
-        groupName: String,
-        body: String,
-        largeIcon: Bitmap,
-        groupId: String,
-        mediaUri: Uri? = null,
-        mediaMime: String? = null,
-        channel: String = CHANNEL_MESSAGES,
-        /**
-         * Offer reply and mark-as-read. False for a REACTION: both actions answer "there is a
-         * message here for you", and neither means anything against a reaction - replying to one
-         * is nonsense and there is nothing of it to mark read. Everything else this function does
-         * is exactly what a reaction wants, which is why this is a parameter and not a second path.
-         */
-        quickActions: Boolean = true,
-        /**
-         * The SENDER's `sentAt` for the message this notification is about, in ms. Handed to the
-         * quick actions so acknowledging the conversation from the shade names an instant taken
-         * from the messages themselves. 0 when unknown, which the actions read as "say nothing".
-         */
-        sentAt: Long = 0L,
-    ) {
-        if (MainActivity.isInForeground) {
-            Log.d(TAG, "showNotification: app in foreground -> notification suppressed (groupId=${groupId.take(8)})")
-            return
-        }
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureNotificationChannels(manager)
-        val res = appLocaleContext(this)
-
-        val isGroup = groupName.isNotEmpty() && groupName != senderName
-
-        // Stable ID per conversation: notify() with the same ID updates the existing notification.
-        // A reaction takes its own namespace so it updates the previous REACTION rather than the
-        // conversation's unread message - see [reactionNotifKey].
-        val notifKey = if (channel == CHANNEL_REACTIONS) reactionNotifKey(groupId) else groupId
-        val notifId = if (groupId.isNotEmpty()) getStableNotifId(this, notifKey) else 0
-
-        val tapIntent = Intent(this, MainActivity::class.java).apply {
-            action = Intent.ACTION_VIEW
-            setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, notifId, tapIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // MessagingStyle: successive messages of the same conversation STACK instead of
-        // replacing each other. We rebuild the style from the active notification (if present),
-        // bounding the history to MAX_NOTIF_MESSAGES to avoid unbounded growth.
-        val senderPerson = Person.Builder()
-            .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
-            .setIcon(IconCompat.createWithBitmap(largeIcon))
-            .build()
-        // Our own Person carries our avatar too: Android attributes the inline reply to it while
-        // the reply is in flight, so leaving it iconless is a blank face on the only message in
-        // that thread the user actually wrote. Same 24h file cache as the sender's avatar, so this
-        // costs one request a day at most, and an unresolvable avatar simply stays iconless.
-        val selfAvatar = MlsContextLoader.loadUserId(this)?.let { fetchAvatar(it) }
-        val selfPerson = Person.Builder()
-            .setName(res.getString(R.string.notif_sender_self))
-            .apply { selfAvatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
-            .build()
-
-        val existingNotif = try {
-            manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
-        } catch (e: Exception) {
-            Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}")
-            null
-        }
-
-        val style = NotificationCompat.MessagingStyle(selfPerson)
-        if (isGroup) {
-            style.conversationTitle = groupName
-            style.isGroupConversation = true
-        }
-        // Re-inject the previous (bounded) messages, then add the new one.
-        existingNotif
-            ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
-            ?.messages
-            ?.takeLast(MAX_NOTIF_MESSAGES - 1)
-            ?.forEach { style.addMessage(it) }
-        // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
-        // thumbnail while keeping the conversation's MessagingStyle stacking. NotificationManager
-        // grants the system read access to the FileProvider content Uri carried in the notification.
-        val newMessage = NotificationCompat.MessagingStyle.Message(
-            body, System.currentTimeMillis(), senderPerson
-        )
-        if (mediaUri != null && mediaMime != null) {
-            newMessage.setData(mediaMime, mediaUri)
-        }
-        style.addMessage(newMessage)
-
-        // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
-        // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
-        // the old post first - the rebuilt MessagingStyle above already carries its history.
-        if (existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
-            existingNotif.channelId != channel
-        ) {
-            manager.cancel(notifId)
-        }
-
-        val isReactionNotif = channel == CHANNEL_REACTIONS
-
-        val notifBuilder = NotificationCompat.Builder(this, channel)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setStyle(style)
-            .setAutoCancel(true)
-            // Below API 26 there are no channels and this is the whole of the importance, so it
-            // has to say what the channel says: DEFAULT for a reaction, HIGH for a message.
-            .setPriority(
-                if (isReactionNotif) NotificationCompat.PRIORITY_DEFAULT
-                else NotificationCompat.PRIORITY_HIGH
-            )
-            .setContentIntent(pendingIntent)
-            .setLargeIcon(largeIcon)
-
-        // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
-        // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
-        // - so a reaction arriving alone would be a grouped notification whose summary has just
-        // been cancelled, a shape OEM shells render inconsistently. It is also not a message, which
-        // is the whole reason it left [CHANNEL_MESSAGES].
-        if (!isReactionNotif) notifBuilder.setGroup(GROUP_KEY_MESSAGES)
-
-        // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
-        // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
-        if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-            notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
-            notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
-        }
-
-        val notif = notifBuilder.build()
-
-        Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
-        manager.notify(notifId, notif)
-
-        // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
-        // conversation's notification is active.
-        refreshBadgeSummary(this)
-    }
+    // WHAT IS LEFT HERE IS WHAT ONLY A PUSH RAISES. getStableNotifId, cancelConversationNotification
+    // and the MESSAGE builder itself live in the companion object above: the first two are shared
+    // with CanariNotificationActionReceiver, and the third has a second trigger with no service
+    // behind it - see showMessageNotification and notifyMessageFromWebSocket.
 
     /**
      * Shows a simple notification (social or form) without MLS decryption.
@@ -3485,7 +3622,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
             ?: generateInitialsBitmap(actorName)
 
-        showNotification(
+        showMessageNotification(
             senderName = actorName,
             groupName = "",
             body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
@@ -3567,8 +3704,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
-        Log.d(TAG, "handleChannelMessage: showNotification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")
-        showNotification(
+        Log.d(TAG, "handleChannelMessage: notification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")
+        showMessageNotification(
             // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
             // conversation title and the Person's name is what the banner shows. A salon has no
             // human sender to name anyway - the server sends only `senderId`, for the avatar.

@@ -46,6 +46,10 @@ import {
   applyReaction,
   canAddDistinctReactionEmoji,
 } from '$lib/utils/chat/messageReactions';
+import {
+  notificationGroupName,
+  type NativeMessageNotification,
+} from '$lib/utils/nativeNotification';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
@@ -99,7 +103,8 @@ export interface MessagingContext {
     title: string,
     body: string,
     conversationId?: string,
-    mentionsMe?: boolean
+    mentionsMe?: boolean,
+    native?: NativeMessageNotification
   ) => Promise<void>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
@@ -355,11 +360,20 @@ export function useMessaging() {
   function notifyInbound(
     ctx: MessagingContext,
     conversationKey: string,
-    conversationName: string,
+    /**
+     * The conversation ROW, not just its name.
+     *
+     * The native builder needs to know whether this is a group and what it is called, and the row
+     * is where both already are - deriving it from the name would be `deriveConversationIdentity`
+     * run a second time, in a second place, against a string that is a `me::peer` key for a DM.
+     */
+    convo: Pick<Conversation, 'name' | 'contactName' | 'conversationType'>,
     senderId: string,
     content: string,
     isSystem: boolean,
-    isOwn: boolean
+    isOwn: boolean,
+    /** The SENDER's instant in ms - what lets the native builder recognise one message. */
+    sentAt: number
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -426,12 +440,20 @@ export function useMessaging() {
     // it did not exist, so which switches applied to a mention depended on which transport
     // happened to carry it (NOTIF-16).
     const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
-    void ctx.sendSystemNotification(
-      getUserDisplayNameSync(senderId, conversationName),
-      preview || m.notif_new_message(),
-      conversationKey,
-      mentionsMe
-    );
+    const senderName = getUserDisplayNameSync(senderId, convo.name);
+    const notificationBody = preview || m.notif_new_message();
+    void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
+      // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+      // plain notification, it asks the native builder for the SAME one a push would raise. See
+      // `nativeNotification.ts` for the pair of notifications this replaced.
+      conversationId: conversationKey,
+      senderId,
+      senderName,
+      groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+      body: notificationBody,
+      mentionsMe,
+      sentAt,
+    });
   }
 
   async function addMessageToChat(
@@ -646,7 +668,16 @@ export function useMessaging() {
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    notifyInbound(ctx, normalized, convo.name, senderId, content, isSystem, isOwn);
+    notifyInbound(
+      ctx,
+      normalized,
+      convo,
+      senderId,
+      content,
+      isSystem,
+      isOwn,
+      resolvedTimestamp.getTime()
+    );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     if (ctx.storage && !skipDbSave) {
@@ -852,11 +883,12 @@ export function useMessaging() {
       notifyInbound(
         ctx,
         normalized,
-        convo.name,
+        convo,
         lastInbound.senderId,
         lastInbound.content,
         false,
-        false
+        false,
+        lastInbound.timestamp.getTime()
       );
     }
 
