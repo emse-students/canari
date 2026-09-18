@@ -17,6 +17,12 @@ La branche existait pour une regle de proxy vite `/channels` censee contourner n
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
 [backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
+
+Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
+etaient ecrits en dur. Au passage, le bouton Lien selectionnait six caracteres - la longueur du mot
+francais - au lieu de la longueur reelle de l'exemple insere.
+[architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
 
 ### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
 
