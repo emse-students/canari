@@ -277,7 +277,7 @@
 <article
   class="bg-cn-surface relative overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
 >
-  <!-- En-tête -->
+  <!-- Header. -->
   <div class="bg-cn-surface border-b border-black/5 px-5 py-4 dark:border-white/10">
     <p class="text-2xs mb-0.5 font-bold tracking-widest text-amber-500 uppercase">
       Modifier la publication
@@ -303,7 +303,7 @@
             class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
           >
             <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
-            Lier à un événement validé (optionnel)
+            {m.post_create_link_event_label()}
           </label>
           <select
             id="edit-post-linked-calendar-event"
@@ -312,7 +312,7 @@
             class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
           >
             <option value="" class="bg-white font-medium dark:bg-zinc-900">
-              {loadingLinkableEvents ? 'Chargement…' : '- Aucun événement -'}
+              {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
             </option>
             {#each linkableCalendarEvents as ev (ev.id)}
               <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
@@ -321,7 +321,7 @@
             {/each}
           </select>
           <p class="text-text-muted text-2xs mt-1.5 ml-1">
-            Seuls les événements validés de l'agenda apparaissent ici.
+            {m.post_create_validated_events_hint()}
           </p>
         </div>
       </div>
@@ -334,7 +334,7 @@
       <MarkdownComposerField
         bind:value={markdown}
         onmedia={addFiles}
-        placeholder="Écrivez votre message ici…"
+        placeholder={m.post_create_message_placeholder()}
         minHeight="120px"
         toolbarClass="mb-1"
         editorClass="min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
@@ -402,7 +402,7 @@
                 {:else}
                   <img
                     src={newFilePreviews[i]}
-                    alt="Aperçu"
+                    alt={m.post_create_image_preview_alt()}
                     class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />
                 {/if}
@@ -447,7 +447,7 @@
       </div>
     {/if}
 
-    <!-- Formulaire attaché -->
+    <!-- Attached form. -->
     {#if includeForm}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <FormSection
@@ -460,7 +460,7 @@
       </div>
     {/if}
 
-    <!-- Bannière d'erreur -->
+    <!-- Error banner. -->
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
@@ -480,7 +480,7 @@
         <!-- Add media. -->
         <label
           for={mediaInputId}
-          title="Médias"
+          title={m.post_create_photos_label()}
           class="text-text-muted flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
  {newFiles.length > 0
             ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
@@ -495,7 +495,7 @@
           {:else}
             <FileText size={18} strokeWidth={newFiles.length > 0 ? 2.5 : 2} />
           {/if}
-          <span class="hidden text-xs sm:inline">Médias</span>
+          <span class="hidden text-xs sm:inline">{m.post_create_photos_label()}</span>
         </label>
         <input
           id={mediaInputId}
@@ -534,7 +534,7 @@
           <span class="hidden text-xs sm:inline">Formulaire</span>
         </button>
 
-        <!-- Séparateur -->
+        <!-- Separator. -->
         <div class="mx-0.5 hidden h-6 w-px shrink-0 bg-black/10 sm:block dark:bg-white/10"></div>
 
         <!-- Programmation -->

@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
+
+Huit textes visibles y etaient ecrits directement dans le composant (le champ de saisie, le lien
+vers un evenement, l'etiquette "Medias", le texte alternatif d'un apercu) : ils ignoraient la langue
+choisie. Les cles existaient deja, utilisees par le formulaire de creation juste a cote - c'est
+une copie qui ne les avait jamais reprises. [architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+
 ### Fixed - une image glissee ou collee dans le corps d'un post s'affichait puis disparaissait a l'enregistrement
 
 Le corps est du Markdown : le serialiseur traverse tout ce qui n'est pas du texte, donc l'image
