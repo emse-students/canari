@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - six avis de securite etaient encore mis sous silence alors que la condition qui les levait est remplie
+
+`openmls_rust_crypto` est passe en 0.6.0, ce qui etait exactement la condition inscrite dans les deux
+`.cargo/audit.toml` : `libcrux-sha3` est en 0.0.10, `libcrux-secrets` en 0.0.6, et `libcrux-aesgcm` a
+quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `frontend/mls-wasm`
+n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
+quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
+[audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
 ### Removed - social-service acceptait une identite tiree d'une signature JWT jamais verifiee, hors production
 
 La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
