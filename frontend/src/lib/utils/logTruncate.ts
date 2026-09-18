@@ -41,6 +41,15 @@ function pad(n: number, width: number): string {
  * Printed on EVERY line rather than for an opening window: a threshold would be a rule about when
  * the number is allowed to be true, and `+7214883ms` hours into a session is still a correct answer
  * to "how long has this document been alive". The wall clock is what one reads by then.
+ *
+ * **THE OFFSET IS AN INSTRUMENT AND IT IS SWITCHED OFF WHEN THE COLD-START WORK CLOSES** (user,
+ * 2026-09-18, reading `+428270ms` seven minutes into a session). It is still here because the
+ * measurement that would close that work is TAKEN WITH IT: 69% of the 2026-09-18 boot happens
+ * before the app's first word, and the offset is what says so. The paragraph above is therefore
+ * the argument for keeping it UNTIL then, not for ever. The wall clock is a separate fact - it
+ * aligns an export with a waterfall or a second device - and nothing has asked for its removal.
+ * The condition and the one-line change are on
+ * [cold-start](../../../../docs/wiki/frontend/cold-start.md#the-log-prefix-is-an-instrument-and-it-is-switched-off-when-this-page-closes-user-2026-09-18).
  */
 function logPrefix(): string {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- read once, never stored, never mutated

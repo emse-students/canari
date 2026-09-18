@@ -257,9 +257,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - THE ROUTE SWEEP IS DONE; WHAT IS OPEN IS REAL HARDWARE (all of it Chrome with
     an override), the channel list's width, and FIVE of the ELEVEN 2026-09-18 REPORTS: a first
     contact with no history, back with no home, the composer band, two reaction items** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
-11. **COLD START - TARGET UNDER 1 s (user); `v0.18.5`'s 13 s is DEAD.** Every reading and every
-    refuted hypothesis is [cold-start](docs/wiki/frontend/cold-start.md); **under a second is a
-    PREDICTION until one export is taken** ([backlog](docs/wiki/backlog.md)).
+11. **COLD START - MEASURED 1092 ms (prod, 2026-09-18), AND 696 ms OF IT IS BEFORE THE APP'S FIRST
+    WORD** - 69%, the one region no instrument covers. Target under 1 s (user); every reading is
+    [cold-start](docs/wiki/frontend/cold-start.md), what is owed is in [backlog](docs/wiki/backlog.md).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

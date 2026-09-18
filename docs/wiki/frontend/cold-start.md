@@ -498,11 +498,10 @@ builds is that no boot change separates them, and the two numbers agree. **It is
 a full refetch of 1.33 MB over 173 requests lands within 34 ms of a warm boot**: the disk cache is
 nearly worthless here because the edge already answers every chunk.
 
-**WHAT IS OWED IS ONE WARM EXPORT ON A BUILD CARRYING #760 AND #764**, and until it exists the
-964 ms arithmetic stays a prediction. **THAT BUILD NOW EXISTS**: `v0.18.11` was tagged
-2026-09-17T13:37:25Z, and both merged before it - #760 as `ee4af0670`, #764 on 2026-09-16T18:35:24Z.
-So nothing blocks the reading any more; it is one `window.__canariBootBench.get()` on the user's own
-browser, and the prediction stops being one the moment it is taken.
+**THE EXPORT WAS TAKEN ON 2026-09-18 AND THE PREDICTION IS REFUTED IN BOTH DIRECTIONS** - see
+[the measurement](#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18)
+below. The in-app half saved MORE than predicted; the end-to-end number did not reach 964 ms,
+because the half nobody had been measuring is now 69% of the boot.
 
 ## The second block WAS 162 ms and is SHIPPED; what it leaves behind is one corrected claim
 
@@ -576,11 +575,12 @@ order, which is the half a behavioural test cannot see.
 key-package census, kept deliberately: 1% of the boot does not justify rescheduling, and a claim
 nobody re-measured costs more than 15 ms is worth saving.
 
-**AND THE MEASUREMENT IS OWED AGAIN.** The table above is `0.18.8`. Nothing here has been re-read on
-a build carrying either this change or the 162 ms revocation change, and the arithmetic
-(1308 - 182 - 162 = 964) is a PREDICTION, not a result - the two savings may overlap, since both
-were waiting on the network. **One reload export on a build that CONTAINS both settles it**, and
-until it exists no line anywhere may quote a cold start under a second as measured.
+**THE MEASUREMENT WAS OWED AND IS NOW TAKEN.** The table above is `0.18.8`; the arithmetic
+(1308 - 182 - 162 = 964) was a PREDICTION, and the reading that answers it is
+[below](#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+The two savings did NOT overlap - together they took 261 ms off the in-app phase against the 344 ms
+predicted for the whole boot - but 964 ms was still not reached. **No line anywhere may quote a cold
+start under a second: the measured figure is 1092 ms.**
 
 **`v0.18.9` IS NOT THAT BUILD AND THE 2026-09-17 EXPORT CONFIRMS IT FROM THE INSIDE**: `[WS] Opening
 connection` prints at +1218, still AFTER `MLS ready` at +1180, which is precisely the queueing #764
@@ -614,3 +614,63 @@ is item 2 of the queue getting worse, and item 2 is a P1.
 **NONE OF THIS EXPLAINS THE 1644 ms.** OXYGEN is not a Mi 9T and a fixture pool is not a field pool.
 What is established is the SHAPE - the cost is linear in a pool nothing reclaims - plus a
 reproducible first number.
+
+## The 964 ms prediction is answered: 1092 ms, and the in-app half OVER-delivered (2026-09-18)
+
+`v0.18.12`, production, the user's own Firefox, route `/chat`, from a console export. **The only
+honest comparison is the 2026-09-17 reading above**, taken on the same browser by the same person;
+the `0.18.8` table at the top is another machine and another day, and comparing across those is what
+produced the prediction this section answers.
+
+| milestone (offset from navigation) | 2026-09-17, `v0.18.9`, cache DISABLED | 2026-09-18, `v0.18.12` |
+| --- | ---: | ---: |
+| the application's first word (`[A] token->refresh`) | 600 | 696 |
+| `MLS ready - syncing messages in background` | 1180 | **1015** |
+| **`[WS] Connected to Chat Gateway`** | **1342** | **1092** |
+| of which: first word -> `MLS ready` | **580** | **319** |
+
+**THE PREDICTION WAS 964 AND THE ANSWER IS 1092, YET THE FIXES DID MORE THAN THEY PROMISED.** The
+two changes were predicted to take 344 ms off the boot. Inside the phase they act on they took
+**261 ms off a span of 580**, and `MLS ready` arrives 165 ms earlier end to end. The target is
+missed anyway, and the reason is not in either fix.
+
+**69% OF THIS BOOT HAPPENS BEFORE THE APPLICATION SAYS ANYTHING - 696 ms OF 1015.** That is the
+whole of the remaining budget and it is the one region no instrument here covers: `bootBenchmark`
+starts at `login-start`, and every span in every table above lives in the 319 ms AFTER the first
+word. **The two prologues above are not comparable** - 2026-09-17 ran with the cache disabled and
+refetched 1.33 MB, so its 600 ms and this 696 ms measure different work, and neither is a regression
+against the other. What both agree on is the SHARE: the prologue was 45% of that boot and is 69% of
+this one, because only the second half has been optimised.
+
+**WHAT IS INSIDE THE 319 ms IS NO LONGER WORTH ATTACKING**, and the export says so line by line: a
+66 ms token refresh, a 57 ms `/api/users/batch` the boot waits on, 68 ms from `Verifying PIN...` to
+`MLS state loaded from IndexedDB`, and 71 ms of `load_or_create` deserialising **7 873 982 B** of
+MLS state. Nothing there is a mistake; they are the costs of the work. Removing all four would still
+leave 696 ms.
+
+**SO THE NEXT READING IS A `PerformanceNavigationTiming`, NOT ANOTHER SPAN.** `bootBenchmark.get()`
+already records it unconditionally; what is owed is one paste of
+`window.__canariBootBench.get()` from that same browser, which splits the 696 ms into DNS, connect,
+TTFB, parse and module evaluation the way the 2026-09-16 table does - and that table's own verdict
+was that the ROUND TRIP dominates, not the bundle.
+
+### The log prefix is an instrument, and it is switched off when this page closes (user, 2026-09-18)
+
+Reading `[17:37:41.866 +428270ms]` seven minutes into a session, the user asked that **this
+precision be disabled once the cold-start work is finished**. `logPrefix()` in
+`frontend/src/lib/utils/logTruncate.ts` argues the opposite today - that an offset hours into a
+session is still a correct answer - and that argument was written when the offset was the only thing
+placing the lines that carry no clock.
+
+**It is not removed yet, because the 696 ms above is measured with it.** The two halves are not the
+same fact and they do not expire together:
+
+- the **`+Nms` offset** exists to measure the distance between the navigation and the app's first
+  word. That distance is this page's entire remaining subject, so the offset goes when this page
+  closes, and not before.
+- the **millisecond wall clock** is what lines a console export up with a network waterfall, a
+  server log or a second device's export. It is not cold-start machinery and nothing here asks for
+  it to go; **removing it would need the user to say so.**
+
+**Closes on:** the cold start measured under 1 s, or the target formally abandoned. The change is
+then one line in `logPrefix()` plus its assertion in `logTruncate.test.ts`.
