@@ -19,6 +19,13 @@ quitte le graphe. Mesure sur une base d'avis fraiche : sans aucune exclusion, `f
 n'a plus une seule vulnerabilite (son fichier disparait donc) et `frontend/src-tauri` n'en a que les
 quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence gratuit.
 [audit.toml](frontend/src-tauri/.cargo/audit.toml) porte la regle et les quatre restantes.
+### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
+
+Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
+n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un message qui est
+VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
+le commentaire de `muteCheck` qui pretendait le contraire est corrige.
+[localizedError](frontend/src/lib/utils/localizedError.ts).
 ### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
 
 La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de

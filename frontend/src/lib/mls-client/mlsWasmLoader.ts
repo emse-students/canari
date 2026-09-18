@@ -35,7 +35,7 @@ export async function loadMlsWasmModule(): Promise<MlsWasmBindings> {
       });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        throw new Error(`Chargement WASM timeout (15 s) depuis ${wasmUrl} - vérifiez le réseau`, {
+        throw new Error(`WASM load timed out (15 s) from ${wasmUrl} - check the network`, {
           cause: e,
         });
       }
@@ -53,7 +53,7 @@ export async function loadMlsWasmModule(): Promise<MlsWasmBindings> {
     const contentType = wasmResponse.headers.get('Content-Type')?.toLowerCase() ?? '';
     if (contentType.includes('text/html')) {
       throw new Error(
-        `Réponse HTML reçue à la place du binaire WASM (${wasmUrl}). Vérifiez le routage statique / MIME.`
+        `HTML answered where the WASM binary was expected (${wasmUrl}). Check the static routing / MIME type.`
       );
     }
 

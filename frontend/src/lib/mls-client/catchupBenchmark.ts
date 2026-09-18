@@ -261,9 +261,10 @@ export function formatCatchupBenchSummary(report: CatchupBenchReport): string {
     `${report.localMessageCount} msgs locaux`,
   ];
   if (report.pendingFetchedCount > 0) parts.push(`${report.pendingFetchedCount} pending`);
-  if (report.messagesProcessed > 0) parts.push(`${report.messagesProcessed} traités`);
-  if (report.newMessagesIngested > 0) parts.push(`${report.newMessagesIngested} ingestés UI`);
-  if (report.conversationsTouched > 0) parts.push(`${report.conversationsTouched} conv touchées`);
+  if (report.messagesProcessed > 0) parts.push(`${report.messagesProcessed} processed`);
+  if (report.newMessagesIngested > 0) parts.push(`${report.newMessagesIngested} ingested into UI`);
+  if (report.conversationsTouched > 0)
+    parts.push(`${report.conversationsTouched} conversations touched`);
   if (report.msPerMessage !== null) parts.push(`${report.msPerMessage} ms/msg`);
   if (report.msPerConversation !== null) parts.push(`${report.msPerConversation} ms/conv`);
   if (report.mlsSaveStateCount > 0) {

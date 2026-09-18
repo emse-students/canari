@@ -22,14 +22,14 @@ export async function createGroupInvite(
       body: JSON.stringify(opts ?? {}),
     }
   );
-  if (!res.ok) throw new Error(`Création du lien échouée (${res.status})`);
+  if (!res.ok) throw new Error(`Invite link creation failed (${res.status})`);
   return res.json() as Promise<{ token: string }>;
 }
 
 /** Previews a group invite (group name) before joining. */
 export async function getGroupInvitePreview(token: string): Promise<GroupInvitePreview> {
   const res = await apiFetch(`${deliveryUrl()}/api/mls/group-invites/${encodeURIComponent(token)}`);
-  if (!res.ok) throw new Error(`Invitation introuvable (${res.status})`);
+  if (!res.ok) throw new Error(`Invite not found (${res.status})`);
   return res.json() as Promise<GroupInvitePreview>;
 }
 
