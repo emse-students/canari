@@ -1863,6 +1863,10 @@ can attribute.
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
+- **Group photo**: `ChatGroupPanel` opens the picked image in `AssociationLogoCropper` (drag/zoom/
+  resize square crop, exported at 512x512) before uploading it as the group avatar, the same
+  component associations and card icons already use - see
+  [design-reference](../design-reference.md) for the crop mechanism itself.
 
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 

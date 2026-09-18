@@ -19,6 +19,7 @@
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
+  import AssociationLogoCropper from '../associations/AssociationLogoCropper.svelte';
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -100,31 +101,24 @@
   // ── Group avatar upload ─────────────────────────────────────────────────────
   let imageUploading = $state(false);
   let imageUploadError = $state('');
-  let imageInput = $state<HTMLInputElement | null>(null);
+  let showPhotoCropper = $state(false);
   const mediaService = new MediaService();
 
-  /** Uploads the selected image as a raw/public media blob and reports its id to the parent. */
-  async function handleImageFileChange(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      imageUploadError = m.chat_group_image_invalid_type();
-      input.value = '';
-      return;
-    }
+  /** Uploads the cropped square export as a raw/public media blob and reports its id to the parent. */
+  async function handlePhotoCropExport(blob: Blob) {
+    showPhotoCropper = false;
     imageUploading = true;
     imageUploadError = '';
     try {
+      const file = new File([blob], 'group-photo.jpg', { type: 'image/jpeg' });
       const token = await getToken();
       const mediaId = await mediaService.uploadRaw(file, token);
       onSetImage?.(mediaId);
     } catch (e) {
-      Log.d('chatGroupPanel.handleImageFileChange failed', e);
+      Log.d('chatGroupPanel.handlePhotoCropExport failed', e);
       imageUploadError = m.chat_group_image_upload_error();
     } finally {
       imageUploading = false;
-      input.value = '';
     }
   }
 
@@ -227,7 +221,7 @@
     {#if isGroupConversation}
       <button
         type="button"
-        onclick={() => imageInput?.click()}
+        onclick={() => (showPhotoCropper = true)}
         disabled={imageUploading}
         aria-label={m.chat_group_change_photo_label()}
         title={m.chat_group_change_photo_label()}
@@ -244,13 +238,6 @@
           {/if}
         </span>
       </button>
-      <input
-        bind:this={imageInput}
-        type="file"
-        accept="image/*"
-        class="hidden"
-        onchange={handleImageFileChange}
-      />
     {:else}
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
     {/if}
@@ -559,6 +546,20 @@
     </div>
   {/if}
 </div>
+
+<!-- Group photo cropper -->
+<Modal
+  open={showPhotoCropper}
+  onClose={() => (showPhotoCropper = false)}
+  title={m.chat_group_change_photo_label()}
+  maxWidth="max-w-lg"
+>
+  <AssociationLogoCropper
+    onExport={handlePhotoCropExport}
+    onCancel={() => (showPhotoCropper = false)}
+    outputFormat="jpeg"
+  />
+</Modal>
 
 <!-- Invite modal -->
 <Modal
