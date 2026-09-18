@@ -23,6 +23,20 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 
+/**
+ * What a notification ABOUT an anonymous post carries instead of the real author - the identity
+ * `mustHideAnonymousAuthor` already withholds from a post's own reader, withheld here too. A
+ * notification has no per-viewer read-time shaping the way a post does (`actorName` is
+ * denormalized onto the row at write time, per `PostNotification`'s own docblock), so the two
+ * call sites that notify ABOUT an anonymous post - a mention, and `PostAnnounceScheduler`'s
+ * "someone you follow published" - must mask before they call `createNotification(s)`, not after.
+ * An empty `actorId` is what `Avatar.svelte` already reads as "no user to look up" (the same
+ * shape a post with no author, or a parrainage entry with no `sub`, already uses) - the client
+ * needs no change to draw initials from `actorName` rather than a 404.
+ */
+export const ANONYMOUS_NOTIFICATION_ACTOR_ID = '';
+export const ANONYMOUS_NOTIFICATION_ACTOR_NAME = 'Anonyme';
+
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {

@@ -74,10 +74,14 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn((userId: string) => Promise.resolve(moderators.includes(userId))),
     };
+    const follows = {
+      getFollowedAssociationIdsForUser: jest.fn(() => Promise.resolve([])),
+      getFollowedUserIdsForUser: jest.fn(() => Promise.resolve(['author-1'])),
+    };
     return new PostsService(
       postRepo as unknown as Repository<Post>,
       { get: jest.fn(), setex: jest.fn() } as unknown as RedisService,
-      {} as FollowsService,
+      follows as unknown as FollowsService,
       associations as unknown as AssociationsService,
       {} as PostNotificationsService
     );
@@ -146,6 +150,26 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
     });
 
     expect(row.authorId).toBe('author-1');
+  });
+
+  it('excludes an anonymous post from the followed feed - membership itself is the leak', async () => {
+    // Reported by a user: masking the author's name is not enough here, because appearing in the
+    // "followed" feed at all already says "written by someone in the small, known set you follow" -
+    // a leak the WHERE clause has to close, not a rendering choice.
+    const { query, calls } = makeQueryMock();
+    const service = makeService(query);
+
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'followed',
+      viewerUserId: 'someone-else',
+    });
+
+    const feedQuery = calls.find((sql) => sql.includes('FROM posts'));
+    expect(feedQuery).toMatch(
+      /"authorId"\s*=\s*ANY\(\$4::text\[\]\)\s*\n?\s*AND NOT posts\.anonymous/
+    );
   });
 
   it('searchPosts selects posts.anonymous and masks it the same way', async () => {

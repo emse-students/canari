@@ -127,6 +127,29 @@ browses. Fixed by adding the column to both queries;
 building its own `{ anonymous: true }` fixture and calling `shapeListRow` directly would have
 passed every day this shipped.
 
+**A NOTIFICATION HAS NO READ-TIME MASK AT ALL, SO THE SAME BUG'S SECOND HALF LIVED AT WRITE
+TIME (2026-09-18, same user).** `PostNotification.actorName` is denormalized onto the row when it
+is created (its own docblock says so) and `getNotifications` returns the stored rows verbatim -
+there is no per-viewer shaping step for a notification the way `shapeListRow` gives a post one.
+Two write paths never checked `anonymous` before resolving and storing the real identity:
+
+- **A mention.** `createPost` resolved `actorName` and wrote `actorId` unconditionally for every
+  `@mentioned` recipient. Fixed by masking both to `ANONYMOUS_NOTIFICATION_ACTOR_ID` (an empty
+  string - what `Avatar.svelte` already reads as "no user to look up", so the client needed no
+  change) and `ANONYMOUS_NOTIFICATION_ACTOR_NAME` (`'Anonyme'`) before calling
+  `createNotification`, exported from `post-notifications.service.ts` so both call sites share
+  one pair of constants. A mention's recipient is not a leak the way the second path is - see
+  below - so masking the actor is the whole fix here.
+- **"Someone you follow published" (`PostAnnounceScheduler.announcePersonalPost`).** THIS ONE IS
+  NOT MASKED, IT IS SKIPPED ENTIRELY, and the difference matters: `announcePersonalPost` exists
+  only because its recipient follows a small, known set of people, so even a perfectly masked
+  "someone you follow just posted anonymously" notification still narrows the author down to that
+  set - the leak is the recipient's membership in `user_follows`, not the name on the row, and no
+  amount of masking removes it. `listPosts`'s `feed: 'followed'` branch has the identical shape
+  for the identical reason: appearing in that feed at all already says "authored by someone you
+  follow", so its `WHERE` clause now excludes `posts.anonymous` from the authored-by-a-followed-
+  user arm rather than relying on `shapeListRow` to hide the name once the row is already there.
+
 ---
 
 ## Blocking

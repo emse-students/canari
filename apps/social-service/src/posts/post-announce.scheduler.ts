@@ -132,13 +132,26 @@ export class PostAnnounceScheduler {
     });
   }
 
-  /** A person published: the people who follow them are told, and nobody else. */
+  /**
+   * A person published: the people who follow them are told, and nobody else.
+   *
+   * NEVER for an anonymous post - not masked, SKIPPED. Masking the actor is what a post's own
+   * card does when read, and that is enough there because the feed audience is "everyone". A
+   * follower's candidate set is not everyone: `announcePersonalPost` exists at all only because
+   * this reader follows a small, known set of people, so a masked notification would still say
+   * "one of the few accounts you follow just posted anonymously" - which narrows the author down
+   * by exactly the fact this notification carries, whatever name is on it. The only fix that
+   * removes the signal is to never announce it.
+   */
   private async announcePersonalPost(post: Post): Promise<number> {
+    if (post.anonymous) return 0;
     const rows: unknown = await this.postRepo.manager.query(
       `SELECT "followerUserId" FROM user_follows WHERE "followedUserId" = $1`,
       [post.authorId]
     );
-    const recipientIds = Array.isArray(rows) ? rows.map((r) => String(r.followerUserId)) : [];
+    const recipientIds = Array.isArray(rows)
+      ? rows.map((r) => String(r.followerUserId)).filter((id) => id !== post.authorId)
+      : [];
     if (recipientIds.length === 0) return 0;
     return this.notifications.createNotifications({
       recipientIds,
