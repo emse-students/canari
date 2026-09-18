@@ -18,6 +18,7 @@ n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un mes
 VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
 le commentaire de `muteCheck` qui pretendait le contraire est corrige.
 [localizedError](frontend/src/lib/utils/localizedError.ts).
+
 ### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
 
 La requete qui decide ce qu'une carte d'apercu AFFICHE partait au montage, donc un fil de liens
