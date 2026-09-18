@@ -663,7 +663,7 @@ export class CallService {
           room_token: this.currentRoomToken ?? undefined,
         });
         joinTimeout = window.setTimeout(() => {
-          fail(new Error('SFU Join ack timeout (20s) - redéployer call-service'));
+          fail(new Error('SFU Join ack timeout (20s) - redeploy call-service'));
           ws.close();
         }, 20_000);
       };
@@ -735,7 +735,7 @@ export class CallService {
     }
     if (!canUseRtpScriptTransform()) {
       appendLog(
-        '[Call] RTCRtpScriptTransform indisponible - E2E désactivé (Firefox ≥ 117 : vérifier media.peerconnection.scripttransform.enabled)'
+        '[Call] RTCRtpScriptTransform unavailable - E2E disabled (Firefox >= 117: check media.peerconnection.scripttransform.enabled)'
       );
       this.e2eActive.set(false);
       return;
@@ -835,7 +835,7 @@ export class CallService {
 
     appendLog(
       `[Call] creating PeerConnection (${isGeckoBrowser() ? 'Firefox' : 'non-Firefox'}, ` +
-        `RTCRtpScriptTransform=${canUseRtpScriptTransform() ? 'oui' : 'non'})`
+        `RTCRtpScriptTransform=${canUseRtpScriptTransform() ? 'yes' : 'no'})`
     );
     const pcConfig: RTCConfiguration = {
       iceServers,
@@ -865,7 +865,7 @@ export class CallService {
         });
         if (relayCandidateCount === 0) {
           appendLog(
-            '[Call] Aucun candidat TURN relay - Cloudflare TURN indisponible ou mal configuré'
+            '[Call] No TURN relay candidate - Cloudflare TURN unavailable or misconfigured'
           );
         }
       }
