@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.12] - 2026-09-18
+
 ### Fixed - le serveur distribuait des cles perimees et l'invitation echouait a chaque lancement
 
 Le garde-fou ajoute le 2026-09-16 ne se declenchait que si le client avait signale une date, et cette
