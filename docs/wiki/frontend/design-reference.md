@@ -999,6 +999,17 @@ on the phone.
 `MessageMobileActions` now is; `UserAutocomplete` already was. `transform`, `filter`,
 `opacity < 1`, `contain: paint` and `isolation: isolate` are the same trap.
 
+**The trap does not need `will-change` - a plain `:hover` transform springs it just as silently,
+and the element it traps need not even be full-page (2026-09-18, reported by a user: a post's
+overflow menu opened below the next post in the feed).** `PostCard` lifts on hover
+(`hover:-translate-y-0.5`), and the card a menu opens ON is exactly the card under the cursor - so
+opening the menu is the one moment its OWN card becomes an isolated stacking context.
+`PostActionsMenu`'s `z-(--z-popover)` still won against everything else inside that context, which
+is why the number looked right by every local check; from OUTSIDE, the card's own box is still
+`z-index: auto`, and the next post - later in DOM order, same layer - painted over the whole card,
+popover included. `PostActionsMenu` is now portalled too, positioned against its button with
+`bindFixedPopover` rather than `absolute top-full`.
+
 ## 16. Three questions measured and settled, so nobody counts them again
 
 Each of these closed a backlog entry on 2026-09-09. They live here rather than there because a
