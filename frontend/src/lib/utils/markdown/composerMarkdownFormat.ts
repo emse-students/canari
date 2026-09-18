@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { m } from '$lib/paraglide/messages';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
 
 /**
@@ -35,25 +36,25 @@ export async function applyComposerMarkdownFormat(
 
   switch (type) {
     case 'bold':
-      doWrap('**', '**', 'texte en gras');
+      doWrap('**', '**', m.md_placeholder_bold());
       break;
     case 'italic':
-      doWrap('*', '*', 'texte en italique');
+      doWrap('*', '*', m.md_placeholder_italic());
       break;
     case 'strikethrough':
-      doWrap('~~', '~~', 'texte barré');
+      doWrap('~~', '~~', m.md_placeholder_strikethrough());
       break;
     case 'heading':
-      doPrefix('## ', 'Titre');
+      doPrefix('## ', m.md_placeholder_heading());
       break;
     case 'quote':
-      doPrefix('> ', 'citation');
+      doPrefix('> ', m.md_placeholder_quote());
       break;
     case 'code':
-      doWrap('`', '`', 'code');
+      doWrap('`', '`', m.md_placeholder_code());
       break;
     case 'list':
-      doPrefix('- ', 'élément');
+      doPrefix('- ', m.md_placeholder_list());
       break;
     case 'link':
       if (selected) {
@@ -61,9 +62,12 @@ export async function applyComposerMarkdownFormat(
         newSelStart = selStart + selected.length + 3;
         newSelEnd = newSelStart + 3;
       } else {
-        newText = text.slice(0, selStart) + '[texte](url)' + text.slice(selEnd);
+        // The selection lands on the placeholder itself, so its LENGTH decides where it ends -
+        // a literal 6 was the length of the French word and silently mis-selected any other.
+        const placeholder = m.md_placeholder_link_text();
+        newText = text.slice(0, selStart) + `[${placeholder}](url)` + text.slice(selEnd);
         newSelStart = selStart + 1;
-        newSelEnd = selStart + 6;
+        newSelEnd = newSelStart + placeholder.length;
       }
       break;
     default:

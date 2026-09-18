@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
+
+Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
+etaient ecrits en dur. Au passage, le bouton Lien selectionnait six caracteres - la longueur du mot
+francais - au lieu de la longueur reelle de l'exemple insere.
+[architecture](docs/wiki/frontend/architecture.md#i18n-paraglide).
+
 ### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
 
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
