@@ -2068,21 +2068,6 @@ peut le faire Messenger ?)."*
 The user has already named the fix he wants: an opaque band behind the composer, so the thread ends
 at it instead of sliding under it.
 
-### G9 - P2 - in a group, nothing says WHO reacted with what
-
-Verbatim: *"on me dit qu'il n'y a pas de moyen de voir qui a mis quelle reaction dans les groupes."*
-
-Reported to the user by a third party, so the configuration is second-hand. In a DM the answer is
-forced (there are two people); in a group the pill is a count with no roster behind it. **The data
-may already be there** - a reaction carries its sender - in which case this is a disclosure, not a
-wire change. That is the first thing to check, because it decides whether this is an afternoon or a
-protocol change.
-
-**POSTS ALREADY ANSWER THIS QUESTION, SO THE ANSWER IS A COMPONENT, NOT A DESIGN.**
-`ReactionsDisplay` names its reactors on hover or long press, portalled and placed by
-`bindFixedPopover`, and closes on an outside tap or `Escape`. The chat should reuse it rather than
-grow a second one - the gesture and the panel both.
-
 ### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
 
 `MediaRef.voiceNote` travels as `true | undefined` and never as `false` (`envelope.ts:238` emits the
