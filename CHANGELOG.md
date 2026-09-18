@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
+
+La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
+-> 319 ms), mais 69% du demarrage se passe avant que l'application ne parle, et aucun instrument ne
+regarde la. [cold-start](docs/wiki/frontend/cold-start.md#the-964-ms-prediction-is-answered-1092-ms-and-the-in-app-half-over-delivered-2026-09-18).
+
 ### Fixed - un post anonyme montrait le vrai nom de son auteur a tout le monde, dans le fil et dans la recherche
 
 `mustHideAnonymousAuthor` ne s'est jamais trompee ; les deux requetes qui alimentent le fil et la

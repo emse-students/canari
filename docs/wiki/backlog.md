@@ -883,20 +883,35 @@ honest conclusion is that no DOM event can discriminate, and the lines should be
 they are read rather than suppressed.
 
 ---
-### P2 - THE COLD START IS A PREDICTION, NOT A RESULT, UNTIL ONE EXPORT IS TAKEN
+### P2 - THE COLD START IS 1092 ms AND 696 OF THEM ARE BEFORE THE APP'S FIRST WORD, WHERE NO INSTRUMENT LOOKS
 
 **THE TARGET IS UNDER ONE SECOND, ALL IN** (user). Every reading taken so far, every instrument, and
 every hypothesis refuted on the way is on [cold-start](frontend/cold-start.md), the only copy - read
 it before measuring anything, because three hypotheses died there already.
 
-**WHAT IS OWED IS ONE GESTURE, AND IT IS THE USER'S.** The last full table is `0.18.8`. Two changes
-landed after it (#760, the revocation round trip held across a decrypt worth 162 ms; #764, the socket
-handshake started before MLS, worth 182), and `v0.18.11` contains both. The arithmetic
-`1308 - 182 - 162 = 964` is a **PREDICTION** - the two savings may overlap, since both were waiting on
-the network - so **no line anywhere may quote a cold start under a second as measured** until one
-warm `window.__canariBootBench.get()` export is taken on the user's own browser, which this
-workstation cannot reproduce. Read the ORDER of `[WS] Opening connection` against `MLS ready` to tell
-whether #764 is present; the duration is the network on the day.
+**THE PREDICTION IS ANSWERED AND IT WAS WRONG IN BOTH DIRECTIONS** (`v0.18.12`, production, the
+user's Firefox, `/chat`, 2026-09-18). `1308 - 182 - 162 = 964` predicted the whole boot; the measured
+figure is **1092 ms** to `[WS] Connected to Chat Gateway`, so **no line may still quote a cold start
+under a second**. But the two changes did more than promised where they act: the span from the app's
+first word to `MLS ready` fell from **580 ms to 319 ms** against the same browser's 2026-09-17
+reading. The full table is on [cold-start](frontend/cold-start.md).
+
+**SO THE REMAINING BUDGET IS THE PROLOGUE, AND NOTHING HERE HAS EVER MEASURED IT.** 696 ms of the
+1015 ms to `MLS ready` elapse before the application says its first word - **69%** - and every span
+in every table on that page lives in the 319 ms after it, because `bootBenchmark` starts at
+`login-start`. Inside those 319 ms there is no mistake left to find: a 66 ms token refresh, a 57 ms
+`/api/users/batch`, 68 ms of PIN verification, and 71 ms deserialising 7 873 982 B of MLS state.
+Deleting all four would still leave 696 ms.
+
+**WHAT IS OWED IS ONE GESTURE AND IT IS THE USER'S**: a single paste of
+`window.__canariBootBench.get()` from that browser. It already records
+`PerformanceNavigationTiming` unconditionally, which splits the 696 ms into DNS, connect, TTFB,
+parse and module evaluation - the breakdown the 2026-09-16 table has for another machine and not for
+this one. This workstation cannot reproduce the boot.
+
+**AND THE `+Nms` LOG OFFSET IS AN INSTRUMENT WITH AN EXPIRY** (user, 2026-09-18): it is switched off
+when this entry closes, because the 696 ms above is measured with it. The millisecond wall clock is
+a separate fact and stays. [cold-start](frontend/cold-start.md#the-log-prefix-is-an-instrument-and-it-is-switched-off-when-this-page-closes-user-2026-09-18).
 
 **AND ONE PASS IS STILL ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED.**
 `prune_expired_key_packages` costs **11.49 ms** at a 1000-bundle pool (criterion, OXYGEN) inside
