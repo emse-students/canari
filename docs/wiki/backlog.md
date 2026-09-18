@@ -1074,6 +1074,13 @@ Cloudflare `HIT`, all multiplexed on one connection. Compression is working - 1.
 There is nothing left to win by moving these bytes around, and **a task proposing to is proposing to
 re-measure this table**.
 
+**RE-MEASURED 2026-09-18, FROM THE OTHER DIRECTION, BECAUSE THE BUILD'S SHAPE INVITES THE OPPOSITE
+CONCLUSION**: the document declares 161 `modulepreload`s, the MEDIAN module is 311 B and 143 of 169
+are under 2 KB, which reads as a chunking defect. It is not one - 104 of them fetched in parallel on
+a warm connection take **178 ms**, and the 126 KB chunk that takes 1925 ms inside a cold page load
+takes **27-35 ms** alone. Merging chunks would change the count and not the time.
+[cold-start](frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
 **WHAT IS LEFT IS THE JAVASCRIPT ITSELF.** 1.62 MB of it is parsed and compiled on the main thread
 before the app runs, on the same thread that then decrypts twenty-four avatars and initialises MLS.
 On a mid-range phone that is a substantial fraction of the whole budget, and unlike the network half
