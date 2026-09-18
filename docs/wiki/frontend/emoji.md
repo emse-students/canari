@@ -177,9 +177,26 @@ into `static/`) and `emojiData.test.ts` (asserts the committed files stay byte-i
 package). This entry only ADDS `--emoji-font-family` on the `<emoji-picker>` element - it does not
 touch the dataset or its sync mechanism.
 
+## The picker's interface strings come from Paraglide, like every other string on screen
+
+`emoji-picker-element` translates NOTHING from its `locale` attribute - that attribute only chooses
+which search keywords the dataset carries - so the `i18n` PROPERTY has to be set explicitly or the
+search box reads "Search" in a French interface. Until 2026-09-18 that was two hand-written objects
+in `emojiPickerShared.ts` and a `getLocale()` branch picking between them: Paraglide's job, done
+twice by hand, in the one file whose docblock already records what an incomplete table costs.
+
+It is now one `emojiPickerI18n()` built from 27 `m.emoji_picker_*` keys, spread onto the library's
+own `enI18n` exactly as before. Two properties come out of that shape rather than out of discipline:
+a key present in one locale and missing in the other is no longer expressible, and the table is a
+FUNCTION because `m.*()` reads the locale at call time - a module-level constant would freeze
+whichever locale was live at import, which the two constants it replaced did not do.
+
+`emojiPickerShared.test.ts` asserts the completeness in BOTH locales against `Object.keys(enI18n)`,
+so the crash below is pinned rather than remembered.
+
 ## `emojiUnsupportedMessage` - not deleted, and why
 
-`MessageEmojiPicker.svelte`'s two i18n objects each carry an `emojiUnsupportedMessage` string,
+`emojiPickerShared.ts`'s i18n table carries an `emojiUnsupportedMessage` string,
 required by `emoji-picker-element`'s own completeness invariant (every i18n key must be present or
 the picker throws - see the docblock above `EMOJI_PICKER_BASE_I18N`). It cannot be deleted without
 breaking that invariant, so it stays; bundling the font everywhere makes the state it describes

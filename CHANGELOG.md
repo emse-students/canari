@@ -11,6 +11,11 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le selecteur d'emoji et une etiquette de l'editeur de carte ne passaient pas par les traductions
+
+Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
+le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
+voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
 ### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
 
 Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
