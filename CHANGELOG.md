@@ -33,21 +33,20 @@ ne dit rien - donc un DM prenait l'avatar de groupe, carre et sans utilisateur d
 photo. Le discriminateur etait deja sur le fil : le push ne porte pas de nom de groupe pour un DM,
 et **absent n'est pas vide**. [backlog](docs/wiki/backlog.md).
 
+### Fixed - une notification ignoree revenait au lancement, parfois titree avec un slug
+
+Deux chemins la ramenaient et aucun ne savait qu'elle avait deja ete vue : une archive renvoyee par
+un membre, comptee comme des arrivees, et un push encore en file que le rattrapage redonne au
+constructeur - dont la seule memoire etait le volet de notifications, qu'un balayage vide. Le titre
+retombait par ailleurs sur le nom de la CONVERSATION, qui pour un message direct est la cle MLS
+`me::peer`. [mobile](docs/wiki/frontend/mobile.md#what-the-shade-cannot-remember).
+
 ### Fixed - un message notifiait DEUX fois sur Android, et une seule des deux etait la bonne
 
-Un message pouvait arriver par le WebSocket ET par le push - le serveur pousse une trame que le
-client n'a pas acquittee au bout de 10 s - et **deux constructeurs de notification differents**
-repondaient, chacun avec sa propre condition d'affichage et son propre identifiant. Rien ne pouvait
-les fusionner : l'une portait le visage de l'expediteur, le fil de la conversation, `Repondre` et
-`Marquer comme lu` ; l'autre une ligne de texte dont l'appui ouvrait l'application sur rien.
-
-La trame WebSocket n'est plus un second CONSTRUCTEUR mais un second DECLENCHEUR du meme. Les deux
-chemins postent sous le meme identifiant, donc la seconde arrivee MET A JOUR la premiere au lieu de
-s'ajouter a cote - et elle ne sonne pas une seconde fois pour un message deja affiche. Sur Android
-il n'y a plus qu'un constructeur, le riche ; le chemin simple reste ce qu'il a toujours ete ailleurs,
-le seul que le web ait.
-
-Cela demandait un appel dans un sens que cette application n'avait jamais fait, Rust vers Kotlin :
+Un message arrivant par le WebSocket ET par le push reveillait **deux constructeurs differents**,
+aux conditions d'affichage et aux identifiants disjoints, donc rien ne pouvait les fusionner. La
+trame n'est plus un second constructeur mais un second DECLENCHEUR du meme - ce qui demandait un
+appel dans un sens que cette application n'avait jamais fait, Rust vers Kotlin :
 [mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 
 ### Changed - le chargement a froid EST la purge, a 89 %

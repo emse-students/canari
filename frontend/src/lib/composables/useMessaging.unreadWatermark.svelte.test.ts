@@ -101,7 +101,8 @@ describe('the unread badge during a history reconciliation', () => {
         { senderId: PEER, content: 'old two', messageId: 'old-2', timestamp: OLD },
       ],
       CONVO,
-      ctx
+      ctx,
+      'arrival'
     );
 
     expect(unreadIn(conversations)).toBe(0);
@@ -119,7 +120,8 @@ describe('the unread badge during a history reconciliation', () => {
         { senderId: PEER, content: 'new two', messageId: 'new-2', timestamp: FRESH },
       ],
       CONVO,
-      ctx
+      ctx,
+      'arrival'
     );
 
     expect(unreadIn(conversations)).toBe(2);
@@ -136,7 +138,8 @@ describe('the unread badge during a history reconciliation', () => {
         { senderId: PEER, content: 'new', messageId: 'a-2', timestamp: FRESH },
       ],
       CONVO,
-      oldFirst.ctx
+      oldFirst.ctx,
+      'arrival'
     );
 
     const newFirst = makeContext({ [ME]: WATERMARK });
@@ -146,7 +149,8 @@ describe('the unread badge during a history reconciliation', () => {
         { senderId: PEER, content: 'old', messageId: 'b-2', timestamp: OLD },
       ],
       CONVO,
-      newFirst.ctx
+      newFirst.ctx,
+      'arrival'
     );
 
     expect(unreadIn(oldFirst.conversations)).toBe(1);
@@ -164,7 +168,8 @@ describe('the unread badge during a history reconciliation', () => {
         { senderId: PEER, content: 'two', messageId: 'n-2', timestamp: FRESH },
       ],
       CONVO,
-      ctx
+      ctx,
+      'arrival'
     );
 
     expect(unreadIn(conversations)).toBe(2);

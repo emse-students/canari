@@ -20,7 +20,7 @@ here and nothing else.**
 
 ## Where the pass stands
 
-**Android is done except H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+**Android is done except B-bis, H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
 was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
@@ -60,6 +60,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | Check | Closes | Android | iOS |
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
+| B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -232,6 +233,33 @@ deleted.` means the same thing here. iOS keychain service is `fr.emse.canari`, a
 sent in a *newer epoch* than the persisted state cannot be decrypted and correctly falls back to
 the generic text. `decryptProtoWithCommits: success after catch-up` is the in-memory catch-up path
 succeeding. If a check fails, confirm which of the two you are looking at before filing anything.
+
+## B-bis. A DISMISSED notification does not come back at the next launch - owed on Android
+
+**Proves** the one thing no gate here can see: that the builder's durable record of what it has
+announced (`canari_alerted_messages`) actually survives the process and is consulted. The vitest
+suite `dismissedNotificationReplay.test.ts` reads the Kotlin source and proves the code is WRITTEN;
+only a phone proves the shade stays empty.
+
+1. Kill the app. From the peer account, send a DM with recognisable text.
+2. Wait for the notification, then **swipe it away** without opening the app.
+3. Launch the app and let the startup catch-up finish.
+
+**Pass** = nothing reappears in the shade, and the message is in the conversation. A notification for
+that same message is a FAIL: the push was redelivered over the socket (it was never ACKed) and the
+record did not recognise it.
+
+**Then, in the same run, the case that must NOT be silenced:** with the app killed again, have the
+peer send a SECOND message and do not dismiss it. Open the app. Dismiss nothing. Have the peer send a
+THIRD. **Pass** = the third notifies. A silent third means the record is behaving like a watermark
+rather than a set, which is the failure mode its shape exists to avoid.
+
+**Where to look:** `adb logcat -s CanariFCM`. `showMessageNotification: already announced and
+dismissed -> nothing posted` is the suppression firing; `already in the shade -> refreshed without
+alerting` is the OTHER guard (the notification was still visible) and does not test this one.
+
+**Known limit, not a bug:** a SALON message is not covered. Its push payload carries no timestamp, so
+the builder can identify no message of its own and never guesses - see `docs/wiki/backlog.md`.
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 

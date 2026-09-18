@@ -461,9 +461,13 @@ async function handleWelcome({
                 const envelope = appMsgToEnvelope(appMsg);
                 if (envelope) {
                   if (batchAddMessages) {
+                    // ARRIVALS, not a restore: these frames reached this device over the wire and
+                    // were held only because the Welcome had not landed yet. Nobody has been told
+                    // about them, so the notification is owed.
                     await batchAddMessages(
                       [{ senderId: msg.sender, content: envelope.content, ...envelope.options }],
-                      joinedGroupId
+                      joinedGroupId,
+                      'arrival'
                     );
                   } else {
                     await addMessageToChat(

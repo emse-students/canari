@@ -174,6 +174,32 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
   return fallback?.trim() || m.user_unknown_label();
 }
 
+/**
+ * The name to put on a NOTIFICATION for a message from `senderId`, and the one fallback that is
+ * not a guess.
+ *
+ * A CONVERSATION'S NAME IS NOT A PERSON'S, AND `name` IS THE ONE FIELD THAT CAN BE NEITHER.
+ * `notifyInbound` passed `convo.name` to {@link getUserDisplayNameSync} as the fallback, and on a
+ * COLD START that fallback always wins: the display-name cache is empty, the message is being
+ * replayed into an app that has just launched, and nothing has resolved anybody yet. For a DM
+ * `convo.name` is the MLS group key `me::peer`, so the notification was titled with a handle -
+ * the second half of `G2`, reported 2026-09-18 as *"on a le slug au lieu du prenom"*. It reads as
+ * an unrelated glitch and is the same launch.
+ *
+ * `contactName` is documented as the peer's username for a DM and the group's display name for a
+ * group, so it is never a key - which makes it the right fallback for a DM and a HONEST one for a
+ * group, where the banner names the group anyway and the alternative is a handle. `name` is only
+ * reached where the conversation is not a DM, the one shape in which it cannot be `me::peer`.
+ */
+export function notificationSenderName(
+  senderId: string,
+  convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
+): string {
+  const fallback =
+    convo.contactName?.trim() || (convo.conversationType === 'direct' ? '' : convo.name?.trim());
+  return getUserDisplayNameSync(senderId, fallback);
+}
+
 export async function resolveUserDisplayName(userId: string): Promise<string | null> {
   const normalized = normalizeUserId(userId);
 

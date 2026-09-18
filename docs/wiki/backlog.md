@@ -1945,42 +1945,16 @@ reference; `find_app_class` is the one way through it and any future upcall goes
    only because the payload is thinner than the socket frame, which is the same cause as (1).
 
 
-### G2 - P2 - a DISMISSED notification comes back when the app is launched, sometimes titled with a slug
+### G2 - ONE DISPLAY NAME, TWO OPPOSITE PRECEDENCES
 
-Verbatim: *"Il me semble meme qu'une notification que j'ai ignoree se raffiche au lancement de
-l'app, avec parfois des bugs comme le fait qu'on aie le slug au lieu du prenom."*
+`formatDisplayName` (`display-name.ts:12`, server) prefers `displayName` over first+last;
+`formatProfileDisplayName` (`displayName.ts:92`, client) prefers first+last over `displayName`. So a
+push and a locally-raised notification can title the same person differently even when both resolve
+correctly. One of the two is wrong and nothing here says which. **Pick a precedence, state it where
+the type is declared, delete the other.**
 
-Two facts in one sentence and they are probably the same path: something re-posts notifications for
-unread messages at launch, and that path titles them from a field the push path does not use - which
-is why the slug appears there and nowhere else. **A dismissal is a decision, and replaying over it
-is the defect independently of the title.**
-
-**BOTH HALVES ARE NOW READ, AND THEY ARE NOT THE SAME PATH AFTER ALL.**
-
-*The replay.* `MainActivity.onResume` (`MainActivity.kt:183-192`) cancels every message notification
-the Kotlin side posted, and the WebView then re-posts from the startup catch-up drain:
-`endBulkMessageIngest` -> `batchAddMessages` -> `notifyInbound` (`useMessaging.svelte.ts:851-861`).
-Three things let it through. `notifyInbound` has **no staleness guard** where the receive TONE one
-line above it has one (`isStaleInboundMessage`, `messageUtils.ts:120`), so a message redelivered
-hours later notifies as if it were new. `canSeeArrival` is false for most of a launch
-(`arrivalVisibility.ts:46-60`), so every conversation in the catch-up qualifies. And the push path
-**never ACKs the queued row** - there is no `/ack` in the Kotlin service, only
-`fcm_message_cache.ndjson` - so the server redelivers over the socket at the next connect, and the
-de-dup that would have caught it depends on an ordering that is not guaranteed
-(`sessionAuth.ts:1146` opens the gateway before `:1190` consumes the FCM cache).
-
-*The slug.* A different chain entirely. `notifyInbound` titles with
-`getUserDisplayNameSync(senderId, convo.name)`, and on a cold start that cache is EMPTY
-(`displayName.ts:174` returns the fallback), so the title becomes `convo.name` - which for a DM is
-the MLS group name `me::peer`, lowercased to a handle. **The slug is what a DM conversation is
-NAMED**, and `resolveConversationListPresentation` exists precisely so that name never reaches a
-screen. The notification path does not use it. Same family as G4.
-
-Worth recording because it cuts the other way too: the server's `formatDisplayName`
-(`display-name.ts:12`) prefers `displayName` over first+last, while the client's
-`formatProfileDisplayName` (`displayName.ts:92`) prefers first+last over `displayName`. **Two
-opposite precedences for one question**, which is why the push and the local notification can title
-the same person differently.
+The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
+both, and it is not re-derived here.
 
 ### G3 - P2 - a brand-new conversation claims no device can serve its history, when there is no history
 
@@ -2056,6 +2030,33 @@ This is a REQUIREMENT, not only a defect, and the last sentence is the part to b
 **posts are the home, so they are the terminal answer of any back that has nothing behind it.** A
 deep link that opens a conversation must therefore SEED the stack it did not come through, rather
 than arriving with an empty one.
+
+**THE CHAIN IS NOW READ END TO END, AND IT IS NOT YET ENOUGH TO WRITE A LINE.** Recorded so the next
+session starts here rather than re-deriving it:
+
+- **Back is the WEBVIEW's back-forward list, and exhausting it EXITS THE APP.**
+  `WryActivity.handleBackNavigation` is `true` (Tauri-GENERATED - do not edit it): `canGoBack()` ->
+  `goBack()`, else `onBackPressed()`, which finishes the activity. `pushState` entries count, so the
+  SPA drives it; there is no Kotlin-side home fallback and there should not be one.
+- **The list level already exists.** `ensureMobileConvoHistory` (`useConversations.svelte.ts:204`)
+  pushes a history overlay whenever a conversation is selected on an overlay-width layout, and a
+  notification landing reaches it like any tap: `openNotificationTarget` ->
+  `openConversationFromId` -> `nav.selectConversation(key)`. `isMobileOverlayLayout()` is a pure
+  width query, so it is answerable on the first frame.
+- **The posts level should already exist too, which is the part that does not add up.** `/` redirects
+  to `/posts` (`routes/+page.ts`), SvelteKit's INITIAL navigation replaces rather than pushes, and
+  the cold-start route to the target is `void goto(targetRoute)` in `ChatBackgroundService.svelte`'s
+  landing effect - a PUSH. That gives `/posts` -> `/chat` -> overlay, which is exactly what the user
+  asked for.
+
+**SO THE DEFECT IS IN A PATH THIS READING DID NOT REACH, AND ONE MEASUREMENT SETTLES WHICH.** The two
+candidates are a WARM tap (`onNewIntent` -> `onOpenUrl`, where `window.location.pathname` may already
+be `/chat` so nothing is pushed) and a tap arriving while a conversation is already open (where
+`ensureMobileConvoHistory` returns early on a non-null `mobileConvoHistoryClose`). **Do not write the
+seed before measuring**: if `/posts` is already the bottom entry on the cold path, a
+`history.length <= 1` guard is dead code that ships. The measurement is a handset, a notification
+tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
+backgrounded, foregrounded on another conversation).
 
 ### G7 - P3 - messages and reactions pass behind the composer
 
