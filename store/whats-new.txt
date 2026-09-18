@@ -1,13 +1,5 @@
-version: 0.18.13
+version: 0.18.14
 
-Un post anonyme ne laisse plus apparaître le nom de son auteur
+Un post mentionnant un événement est accessible depuis l'événement mentionné
 
-Le menu d'actions d'un post s'ouvre à nouveau au bon endroit
-
-Une image glissée ou collée dans un post rejoint les médias au lieu de disparaître
-
-Un texte collé sur plusieurs lignes n'ajoute plus de caractères parasites
-
-L'interface parle anglais jusqu'au bout quand l'application est en anglais
-
-Démarrage plus rapide : les aperçus de liens attendent d'approcher de l'écran
+Les formulaires d'association peuvent être créés depuis la page d'association
