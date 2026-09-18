@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le serveur distribuait des cles perimees et l'invitation echouait a chaque lancement
+
+Le garde-fou ajoute le 2026-09-16 ne se declenchait que si le client avait signale une date, et cette
+colonne n'est ecrite qu'a l'enrolement : 683 lignes sur 719 etaient nulles, donc 95% des appareils y
+echappaient. Un export console du 2026-09-18 en a montre une servie 3,88 jours apres sa mort. Le
+raisonnement, les deux tables qui demandent des reponses opposees et ce qui reste du sont sur
+[key-package-pool](docs/wiki/protocols/key-package-pool.md).
+
 ### Changed - le backlog ne contient plus que ce qui reste a faire
 
 Il etait devenu un journal de travail : 390 lignes y portaient un mot de cloture, et trois entrees

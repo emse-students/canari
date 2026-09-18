@@ -2,7 +2,11 @@ import { Controller, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nest
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
-import { KeyPackage } from './entities/key-package.entity';
+import {
+  KeyPackage,
+  KEY_PACKAGE_LIFETIME_DAYS,
+  lastResortDeadline,
+} from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
@@ -1086,7 +1090,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const reclaimed = await this.oneTimeKeyPackageRepo
       .createQueryBuilder()
       .delete()
-      .where('"notAfter" IS NOT NULL AND "notAfter" <= now()')
+      // TOTAL, LIKE THE TWO READ SITES: `IS NOT NULL AND <= now()` left every undated row in place
+      // for ever, and undated rows were arriving at ~290 a day on production on 2026-09-18. They are
+      // exactly the rows the resolver could not judge, so they are exactly the ones worth reclaiming.
+      .where(
+        `COALESCE("notAfter", ("createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') <= now()`
+      )
       .execute();
     if (reclaimed.affected && reclaimed.affected > 0) {
       this.logger.log(
@@ -1094,27 +1103,47 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    // THE SAME TWO ARMS THE RESOLVER REFUSES ON, or this report is blind to the population it
+    // exists to name. It asked for `notAfter IS NOT NULL` alone, and that column is written only at
+    // `register-device`: on 2026-09-18, 36 of 719 rows carried a date and none of them had elapsed,
+    // so this warning had never once fired while three devices sat unjoinable. The second arm is
+    // `lastResortDeadline`'s proof - the package is at least as old as its row - spelled in SQL.
     const staleFallbacks = await this.keyPackageRepo
       .createQueryBuilder('kp')
       .select('kp.userId', 'userId')
       .addSelect('kp.deviceId', 'deviceId')
       .addSelect('kp.notAfter', 'notAfter')
-      .where('kp."notAfter" IS NOT NULL AND kp."notAfter" <= now()')
-      .orderBy('kp."notAfter"', 'ASC')
+      .addSelect('kp.createdAt', 'createdAt')
+      .where(
+        `(kp."notAfter" IS NOT NULL AND kp."notAfter" <= now())
+         OR (kp."notAfter" IS NULL AND (kp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days' <= now())`
+      )
+      .orderBy('kp."notAfter"', 'ASC', 'NULLS LAST')
       .limit(20)
-      .getRawMany<{ userId: string; deviceId: string; notAfter: Date }>();
+      .getRawMany<{ userId: string; deviceId: string; notAfter: Date | null; createdAt: Date }>();
     if (staleFallbacks.length > 0) {
       // NAMED, not counted: the repair is per device and a total tells nobody which one to look at.
       // The cap is what keeps a bad day from being a log flood; the count above it says how bad.
       const total = await this.keyPackageRepo
         .createQueryBuilder('kp')
-        .where('kp."notAfter" IS NOT NULL AND kp."notAfter" <= now()')
+        .where(
+          `(kp."notAfter" IS NOT NULL AND kp."notAfter" <= now())
+           OR (kp."notAfter" IS NULL AND (kp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days' <= now())`
+        )
         .getCount();
       this.logger.warn(
         `[CRON] reclaimExpiredKeyPackages: ${total} device(s) hold an EXPIRED last-resort package - ` +
           'every join addressed to one is refused until its owner reconnects and republishes. ' +
           staleFallbacks
-            .map((r) => `${r.userId}/${r.deviceId}@${new Date(r.notAfter).toISOString()}`)
+            .map((r) => {
+              // WHICH ARM NAMED IT, because the repair differs: a reported date is the package's
+              // own, where a proven one is only the bound that outlived it.
+              const d = lastResortDeadline({
+                notAfter: r.notAfter,
+                createdAt: new Date(r.createdAt),
+              });
+              return `${r.userId}/${r.deviceId}@${d ? `${d.reason}:${d.at.toISOString()}` : 'unknown'}`;
+            })
             .join(' ')
       );
     }

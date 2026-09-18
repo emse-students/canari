@@ -623,3 +623,73 @@ build, so the prune's reclaim is not observable here.
 
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
+
+## THE SERVER SERVED A DEAD LAST-RESORT PACKAGE TO 95% OF DEVICES, AND THE COLUMN THAT SHOULD HAVE STOPPED IT WAS NULL FOR ALL OF THEM
+
+**Found on 2026-09-18 in a console export the user took on their own browser**, on production
+`v0.18.11`, two days after migration 024 shipped to fix exactly this:
+
+```
+[RUST::INFO] add_members_bulk to group: 60fbab12... (1 key packages)
+[RUST::WARN] Skipping invalid KeyPackage at index 0: LifetimeError(Expired { not_after: 1789396881, now: 1789732051 })
+[PENDING] Add error for tauri-01c42125...: Crypto/OpenMLS error: No valid KeyPackages to add
+```
+
+`not_after` is 2026-09-14T14:41:21Z and `now` is 2026-09-18T11:47:31Z: the package was **3.88 days
+dead** when the server handed it over. The invitation is neither satisfied nor abandoned, so it
+retries on every launch, for ever - the condition migration 024 was written to end.
+
+### Which row it came from, established by elimination rather than assumed
+
+The one-time pool's serving query already excluded elapsed rows, so a dated one-time row could not
+have been served. It was therefore either an undated one-time row or the static last-resort row.
+The two measurements below settle it:
+
+| table | `notAfter` NULL | dated and valid | dated and elapsed |
+| --- | --- | --- | --- |
+| `one_time_key_package` | 577 | 30 829 | 14 (correctly refused) |
+| `key_package` (last-resort) | **683** | 36 | 0 |
+
+The 577 undated one-time rows were **all created on 2026-09-17 or 2026-09-18**, and
+`createdAt + 84 days` puts every one of them in December - none could be the 2026-09-14 package. The
+last-resort row is what was served, and a direct query confirmed that device's row is one of **three**
+on production whose `createdAt` is more than a lifetime old.
+
+### Why the guard never fired, which is the actual defect
+
+`resolveKeyPackagePayloadForDevice` refused on `if (device.notAfter && device.notAfter <= now)`. That
+column is written **only** by `register-device`, which runs at enrolment. `republishKeyMaterial` -
+the routine a client runs every 30 s - calls `deleteAllOneTimePrekeys` then `generateKeyPackage`, and
+**never touches the last-resort row**. So the entity docblock's "they stay invisible until their
+owners next connect" was a promise nothing keeps: 683 of 719 rows were NULL, the `&&` short-circuited,
+and **95% of devices were exempt from the refusal entirely**.
+
+### The two tables need opposite answers, and that is the whole fix
+
+`createdAt + 84 days` is not one rule applied twice:
+
+* **`one_time_key_package` is INSERT-once and never updated**, so the sum IS the package's lifetime -
+  which is precisely why migration 024 backfilled it that way. The mistake was making it a one-shot
+  UPDATE: old clients publish bare base64 with no date, so the backfill drained and refilled at ~290
+  rows a day. Migration 025 makes it the column `DEFAULT`, the publish path applies it to an undated
+  or unparseable batch, and the two read sites plus the reclaim `COALESCE` to it - so the filter is
+  **total** and no read has an "unknown" arm left.
+* **`key_package` is UPDATED in place** and `registerDevice` resets `createdAt` while the client
+  republishes a package it already holds, so a row can carry today's date and a package that elapses
+  in four days. Backfilling it would certify dead packages as live, and 024 was right to refuse.
+
+But the same fact read the other way is sound, and that is `lastResortDeadline`: **the package is at
+least as old as its row**, so `createdAt + 84 days` is an upper bound on how long it can still live.
+Past that instant it is dead whatever `notAfter` says; before it, nothing is proven. Certifying a
+package VALID this way would be wrong; certifying one DEAD cannot be. On production that separates
+**3 provably dead rows** - including the one in the export - from 680 that stay honestly unjudgeable,
+and it needs no client to speak first.
+
+A reported date that has **not** elapsed still wins: it is the package's own lifetime, where the
+bound is only a limit on it.
+
+### What this does NOT fix
+
+The 680 unjudgeable rows drain only as their owners re-enrol, because nothing republishes a
+last-resort package's date. **Making `republishKeyMaterial` carry it is the durable repair and is not
+done** - see `docs/wiki/backlog.md`.

@@ -48,6 +48,10 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
         deviceId: 'd1',
         keyPackage: 'THE-STATIC-ROW',
         deviceName: 'Mi 9T',
+        // `createdAt` is a `@CreateDateColumn`, so every real row carries one and
+        // `lastResortDeadline` reads it to judge a row no client has ever dated. A stub without it
+        // is a row that cannot exist; these cases are about a LIVE fallback, so the date is today.
+        createdAt: new Date(),
       }),
       find: jest.fn().mockResolvedValue([]),
     };
