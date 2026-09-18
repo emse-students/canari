@@ -17,6 +17,13 @@ Le caractere invisible qui retient le curseur apres un `<br>` final avait ete ec
 le nettoyeur ne le reconnaissait pas, donc il partait avec le message. Les deux emplacements
 utilisent maintenant la constante partagee.
 [posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips).
+### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
+
+La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de
+decoupage. Les memes 104 modules charges en parallele coutent 178 ms : les regrouper changerait le
+compte, pas le temps.
+[cold-start](docs/wiki/frontend/cold-start.md#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
 ### Fixed - la barre de mise en forme inserait ses exemples en francais, quelle que soit la langue
 
 Les huit textes que les boutons Gras, Italique, Titre, Lien... deposent dans la zone de saisie
