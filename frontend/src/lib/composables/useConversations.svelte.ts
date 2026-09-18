@@ -409,7 +409,7 @@ export function useConversations() {
         // no trace of why. `isLoadingHistory` still clears via `finally` below, so the skeleton
         // stops showing regardless, which is exactly what made this indistinguishable from a
         // conversation that genuinely has no history.
-        ctx.log(`[HISTORY] Échec chargement historique (${id.slice(0, 8)}…): ${String(e)}`);
+        ctx.log(`[HISTORY] History load failed (${id.slice(0, 8)}…): ${String(e)}`);
       }
     } finally {
       if (isSelected) isLoadingHistory = false;
@@ -496,7 +496,7 @@ export function useConversations() {
         });
       }
     } catch (e) {
-      ctx.log(`[CHANNEL] Échec chargement historique: ${String(e)}`);
+      ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
       if (isSelected) isLoadingHistory = false;
     }

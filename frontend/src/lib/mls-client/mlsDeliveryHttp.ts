@@ -39,8 +39,8 @@ export async function assertOkMlsDeliveryResponse(
   }
   const details = bodyPreview ? ` - ${bodyPreview}` : '';
   throw new Error(
-    `Impossible d'envoyer l'invitation sécurisée (${context}). ` +
-      `Le serveur a répondu ${response.status} ${response.statusText}${details}`
+    `Could not send the secure invitation (${context}). ` +
+      `The server answered ${response.status} ${response.statusText}${details}`
   );
 }
 
