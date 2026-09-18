@@ -199,6 +199,19 @@ nothing and looks like a dead WebView rather than a wrong name.
   install step. Then date the CODE from a string the running app logs - `git log -S "<that line>"` -
   because a log string is version-stamped evidence the process hands you for free. See rule 17 in
   [testing-methodology](testing-methodology.md).
+- **KNOW WHICH ESTATE THE BUILD POINTS AT, because it decides what EMPTINESS means.** Read it from
+  the client's own request origins, never from the build's name. The test population - the accounts
+  the harness drives, their conversations, their history - lives on the **LOCAL** estate; a phone
+  pointed at `dev.canari-emse.fr` has neither those accounts nor any MLS state of its own, so
+  `/chat` reading "Aucune discussion" there is the expected reading of a new device on an empty
+  estate, not a defect. The same holds for a directory search that returns nothing. Measured on A1
+  on 2026-09-14, where it cost a session's worth of readings before it was noticed.
+- **A PHONE CANNOT BE PUT IN LANDSCAPE, AND A MANIFEST GREP ANSWERS THAT QUESTION WITH SILENCE.**
+  The lock is in Kotlin, not the manifest: `MainActivity.kt:47-53` sets
+  `SCREEN_ORIENTATION_PORTRAIT` when the resource boolean `R.bool.canari_lock_portrait` is true and
+  leaves `SCREEN_ORIENTATION_UNSPECIFIED` otherwise, so a tablet keeps its rotation.
+  `android:screenOrientation` takes one literal value and cannot serve both, which is why a resource
+  qualifier carries it.
 - **A second account.** Every push check needs a peer to send from. A second phone, or the web app
   in another browser profile, both work.
 - **A log capture.** iOS: Console.app or the Xcode device console, filtered on the app and on
