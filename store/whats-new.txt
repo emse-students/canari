@@ -1,7 +1,11 @@
-version: 0.18.12
+version: 0.18.13
 
-Ajout d'un outil de recadrage pour les photos de groupes
+Un post anonyme ne laisse plus apparaître le nom de son auteur
 
-On peut désormais voir qui a réagi dans un groupe
+Le menu d'actions d'un post s'ouvre à nouveau au bon endroit
 
-Correction de divers bugs d'affichage
+Une image glissée ou collée dans un post rejoint les médias au lieu de disparaître
+
+L'interface parle anglais jusqu'au bout quand l'application est en anglais
+
+Démarrage plus rapide : les aperçus de liens attendent d'approcher de l'écran

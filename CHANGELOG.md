@@ -16,6 +16,13 @@ which is also where every release up to and including v0.13.1 now lives.
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
 le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
 voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
+### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
+
+Chacun de ces `Error` est remplace par une phrase Paraglide chez son appelant : le texte francais
+n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un message qui est
+VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
+le commentaire de `muteCheck` qui pretendait le contraire est corrige.
+[localizedError](frontend/src/lib/utils/localizedError.ts).
 ### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
 
 La page declare 161 modules dont la mediane fait 311 octets, ce qui ressemble a un defaut de

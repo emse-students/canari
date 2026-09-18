@@ -46,7 +46,7 @@ describe('assertOkMlsDeliveryResponse', () => {
       expect.fail('expected throw');
     } catch (e) {
       const msg = String(e);
-      expect(msg).toMatch(/Impossible d'envoyer l'invitation sécurisée \(sendWelcome\)/);
+      expect(msg).toMatch(/Could not send the secure invitation \(sendWelcome\)/);
       expect(msg).toMatch(/409/);
     }
   });
