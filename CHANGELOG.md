@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - les deux volumes PostgreSQL 15 laisses par la bascule sur 18 sont supprimes
+
+Leur retour arriere avait expire a la premiere ecriture sur 18 : ils etaient perimes, pas un filet.
+Supprimes par leur NOM apres verification qu'aucun conteneur ne les referencait et que les deux
+estates servent bien 18.6 - 428 Mo recuperes.
+[databases](docs/wiki/infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure).
+
 ### Changed - le prologue du navigateur n'est pas le cout du demarrage a froid non plus, et le vrai poste est mesure
 
 Le banc de demarrage a enfin ete lu sur le navigateur de l'utilisateur : sur 4677 ms, le navigateur

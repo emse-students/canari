@@ -43,7 +43,7 @@ production volume. This is not configuration a value can get wrong.
 A compose project with no top-level `name:` is named after the DIRECTORY its file sits in - and both
 deployed compose files sit in `infrastructure/`. Neither declared one. So the dev file, run the
 obvious way with `-f` and no `-p`, would have joined production's project: dev's `postgres_data`
-resolves to `infrastructure_postgres_data`, which is production's live database (measured on the
+resolves to `infrastructure_postgres_data`, which was THEN production's live database (measured on the
 server: `infrastructure_postgres_data`, `infrastructure_redis_data`, `infrastructure_garage_data`),
 and dev's network to production's network. The isolation was one forgotten flag away from being
 nothing at all, and "pass the right flag" is not a property of a system - it is a thing somebody

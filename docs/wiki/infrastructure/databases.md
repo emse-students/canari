@@ -102,9 +102,16 @@ another contributor in the window the user fixed, and shipped with `v0.18.12`. M
 services healthy, `GET /api/version` answering 200 in 126 ms. `auth_db` reads **86 MB where it read
 127 MB on 15** - that is the expected shape of a logical restore, which rebuilds every index and
 leaves no dead tuples behind, not a loss; the per-table counts are what settles it, never the total.
-Both 15 volumes - `infrastructure_postgres_data` and `canari-dev_postgres_data` - were kept and are
-now stale: **the rollback expired at the first write onto 18**, and deleting them is a decision
-nobody has taken yet.
+
+**BOTH 15 VOLUMES ARE DELETED, 2026-09-18** (user: *"Pour PostgreSQL, tu peux nettoyer"*). The
+rollback had expired at the first write onto 18, so they were stale rather than a fallback.
+`infrastructure_postgres_data` (230.2 MB) and `canari-dev_postgres_data` (197.8 MB) were removed BY
+NAME - never `docker volume prune`, which cannot tell an orphan from a stopped container's data.
+**The three checks taken first are the procedure, not caution**: no container referenced either
+(`docker ps -a --filter volume=`), each carried `PG_VERSION` **15** while the live pair carried
+**18**, both estates answered on 18.6 with production's 53 tables present, and the same three were
+re-read afterwards. 428 MB reclaimed; production and dev both still answer 200 on `/api/version`.
+The live volumes are `infrastructure_postgres_data_18` and `canari-dev_postgres_data_18`.
 
 **WHAT IT DID NOT DO IS RETIRE THE CEILING.** This was a LOGICAL migration onto a NEW volume, so
 nothing ever opened a data directory written by 15 - the exact question `lib/ceiling.sh` asks. The
