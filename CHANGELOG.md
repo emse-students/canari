@@ -70,6 +70,16 @@ n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un mes
 VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
 le commentaire de `muteCheck` qui pretendait le contraire est corrige.
 [localizedError](frontend/src/lib/utils/localizedError.ts).
+### Fixed - le lien post-evenement n'allait que dans un sens, disparaissait au rechargement, et menait a la mauvaise page
+
+Trois defauts, un seul rapport utilisateur. La carte de l'evenement ne montrait jamais le post qui
+le cite - il n'existe pas de colonne inverse, donc `PostsService.findPostLinkedToCalendarEvent`
+interroge directement `posts` plutot que d'en inventer une. `listPosts`/`searchPosts` ne
+selectionnaient jamais `linkedCalendarEventId`, donc le lien tenait juste apres la creation
+(passe par l'entite complete) et disparaissait au rechargement (passe par le fil, qui ne l'avait
+jamais). Et le bouton menait a `?section=agenda`, un parametre que rien ne lisait, vers la page
+generale de l'association plutot que l'evenement precis.
+[calendar](docs/wiki/frontend/modules/calendar.md#a-post-links-an-event-the-event-does-not-link-a-post).
 
 ### Changed - le decoupage du bundle n'est pas le coupable du demarrage a froid, et c'est mesure
 

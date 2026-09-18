@@ -310,3 +310,34 @@ fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a 
 3-months-back/12-months-forward window - the same window the frontend computes for the link it
 builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
 `AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+
+## A post links an event; the event does not link a post
+
+`Post.linkedCalendarEventId` is the only column - there is no `linkedPostId` on
+`AssociationCalendarEvent`, unlike `linkedFormId`, which the event DOES carry (see above).
+`resolvePostCalendarEventLink` requires an `associationId` to set it, so a post carrying this field
+is always an association post, never a personal or anonymous one - `mustHideAnonymousAuthor` never
+has an opinion about it.
+
+**The event's own card shows the post by asking, not by reading a column** - reported by a user
+2026-09-18 after the reverse direction rendered nothing. `PostsService.findPostLinkedToCalendarEvent`
+queries `posts WHERE "linkedCalendarEventId" = $1`, takes the most recent match if more than one
+post ever names the same event, and runs the result through the same `shapeListRow` every other
+read path does (a no-op here, since the row is always an association post). Exposed at
+`GET /api/posts/calendar-link/:eventId` - the mirror of the forward lookup at
+`GET /api/posts/:postId/calendar-link` - and fetched by `CalendarEventDetailModal` when it opens,
+rendered as a pill beside the `linkedFormId` one when a post exists.
+
+**Two more defects shipped in the forward direction, same report.** `listPosts` and `searchPosts`
+build their rows from a raw SQL column list that never named `linkedCalendarEventId` at all - so a
+post's own "see the event" pill was there right after creating or editing it (that path loads the
+full TypeORM entity) and gone the moment the feed was reloaded (that path did not). And the pill's
+`href` pointed at `/associations/:slug?section=agenda` - a query param NOTHING ever read
+(`AssociationDetailView` had no code reading `?section=` at all) and a section name
+(`agenda`) that was never this page's own name for it (`calendar`) even if something had. Fixed to
+`?section=calendar&fromPost=:postId`: `AssociationDetailView` now reads `section` on mount, and
+`AssociationCalendarSection` reads `fromPost`, fetches `getCalendarEventLinkedToPost(postId)` (the
+forward lookup, now returning the full `AssociationCalendarFeedEvent` shape the modal renders -
+association identity included - rather than the bare `serializeCalendarEvent` it used to), and
+calls `agenda.openDetail(event)` directly. That call needs no month loaded: `openDetail` only ever
+sets local state, so it is independent of `agenda.reload()`'s own window.

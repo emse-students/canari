@@ -1005,6 +1005,12 @@ export class AssociationsService {
     return ev.id;
   }
 
+  /**
+   * The event a post links to, shaped like `listCalendarEvents` rather than the bare serializer -
+   * the caller (opening the calendar's own detail modal from a post) needs the same
+   * `AssociationCalendarFeedEvent` shape that modal already renders, association identity
+   * included, not the narrower object other callers of `serializeCalendarEvent` are content with.
+   */
   async findCalendarEventByLinkedPost(postId: string) {
     const post = await this.postRepo.findOne({
       where: { id: postId },
@@ -1017,7 +1023,19 @@ export class AssociationsService {
         status: AssociationCalendarEventStatus.Validated,
       },
     });
-    return ev ? this.serializeCalendarEvent(ev) : null;
+    if (!ev) return null;
+    const [coOwners, ownerById] = await Promise.all([
+      this.batchLoadCoOwners([ev.id]),
+      this.batchLoadEventOwners([ev.associationId]),
+    ]);
+    const owner = ownerById.get(ev.associationId);
+    return {
+      ...this.serializeCalendarEvent(ev, coOwners.get(ev.id) ?? []),
+      associationName: owner?.name ?? '',
+      associationSlug: owner?.slug ?? '',
+      associationColor: owner?.color ?? null,
+      associationLogoUrl: owner?.logoUrl ?? null,
+    };
   }
 
   /** Minimal event payload for post cards (validated events only). */

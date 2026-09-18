@@ -2548,6 +2548,7 @@
   ],
   "calendar_event_fallback_title": "Event",
   "calendar_event_linked_form": "Linked form",
+  "calendar_event_linked_post": "Linked post",
   "mls_error_oom_text": "Insufficient memory - reload the app to receive new messages.",
   "mls_error_private_mode_text": "Private browsing mode - messages will not be saved after closing.",
   "mls_error_keystore_lost_text": "Push notifications degraded - log in again to reactivate them.",
