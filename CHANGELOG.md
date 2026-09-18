@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - un apercu de lien n'est plus demande tant que sa carte est loin de l'ecran
+
+La requete qui decide ce qu'une carte d'apercu AFFICHE partait au montage, donc un fil de liens
+ouvrait une requete par carte pendant le demarrage a froid, toutes pour des cartes sous la ligne de
+flottaison. Elle attend maintenant que la carte approche de l'ecran, comme le navigateur le fait
+deja pour l'image a cote. Au passage, l'echec d'un apercu - jusqu'ici avale sans un mot - est
+journalise : c'est la seule trace qu'un apercu perdu laisse.
+[architecture](docs/wiki/frontend/architecture.md#a-request-fired-from-an-effect-on-render-is-a-request-for-every-card-the-page-mounts).
+
 ### Changed - le demarrage a froid n'est plus une prediction : 1092 ms mesures, dont 696 avant le premier mot de l'app
 
 La prediction etait 964 ms. Les deux correctifs ont fait mieux que promis la ou ils agissent (580 ms
