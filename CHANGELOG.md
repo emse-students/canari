@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le fil passait derriere la barre de saisie pendant le defilement
+
+La liste reservait deja la hauteur de la barre, donc un fil au repos s'arretait au-dessus - ce qui
+passait derriere, c'etait tout ce qui defilait, et aucune reserve ne peut l'atteindre. La barre pose
+desormais le FOND du fil lui-meme, nomme plutot que recopie : aucune teinte nouvelle, et rien ne
+glisse dessous. [backlog](docs/wiki/backlog.md).
+
 ### Fixed - les vocaux enregistres avant le 2026-09-17 restaient dans l'onglet Fichiers
 
 Un vocal est exclu des deux onglets depuis que l'expediteur le declare - mais les messages anterieurs
