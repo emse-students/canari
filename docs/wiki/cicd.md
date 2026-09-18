@@ -80,6 +80,17 @@ is reached from any starting state - seven mergeable green pull requests sat unt
 GitHub's auto-merge does not do, since it re-evaluates when the PULL REQUEST changes and never when
 the BASE does).
 
+**CLOSING A DEPENDABOT PULL REQUEST SUPPRESSES THAT VERSION, NOT THAT PACKAGE AND NOT ITS GROUP -
+MEASURED 2026-09-18.** The question mattered because nine NestJS 12 pull requests were closed in ONE
+batch on 2026-08-31, destroying the control case the plan had asked for (close ONE first, watch what
+comes back). The answer arrived on its own: `@nestjs/schematics` 11.1.0 -> **12.0.0** was among the
+closed singles (#266, #281), and when **12.0.1** was cut Dependabot proposed it again - #663 and
+#666, opened and merged 2026-09-14. A closed pull request tells Dependabot "not this version";
+the next version of the same package is a new proposal. **So a batch close costs nothing but the
+measurement it destroys**, and the `openmls` four that were being held as a second control case are
+moot: that train went in by hand as #680 on 2026-09-15, with the forward-compat gate that let it
+merge.
+
 **AND THEN STEP 6, WHICH IS WHY A RELEASE IS POSSIBLE AT ALL.** GitHub squash-merges, deletes the
 branch (`delete_branch_on_merge`, set true on 2026-09-03; `--delete-branch` was passed until then
 and did nothing, `gh` performing the deletion after a merge IT made and `--auto` making none, so
@@ -1079,7 +1090,7 @@ feeds that filter the file list a real bump produces and requires it to fire. Wh
 cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
 external join or a PSK would pass it. The live
 list is in
-[backlog](backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).
+[backlog](backlog.md#p1---two-classes-of-dependency-update-still-cannot-merge-unattended-and-each-names-its-missing-test).
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
