@@ -634,7 +634,10 @@ two changes were predicted to take 344 ms off the boot. Inside the phase they ac
 **261 ms off a span of 580**, and `MLS ready` arrives 165 ms earlier end to end. The target is
 missed anyway, and the reason is not in either fix.
 
-**69% OF THIS BOOT HAPPENS BEFORE THE APPLICATION SAYS ANYTHING - 696 ms OF 1015.** That is the
+**69% OF THIS BOOT HAPPENS BEFORE THE APPLICATION SAYS ANYTHING - 696 ms OF 1015.** *(The
+attribution of that region to the browser is REFUTED by the boot-bench paste in the last section of
+this page: the browser's own share is 249 ms. The time is real; it is spent after the document is
+finished and before login begins.)* That is the
 whole of the remaining budget and it is the one region no instrument here covers: `bootBenchmark`
 starts at `login-start`, and every span in every table above lives in the 319 ms AFTER the first
 word. **The two prologues above are not comparable** - 2026-09-17 ran with the cache disabled and
@@ -730,4 +733,60 @@ against a warm cache, which is what a returning reader has. It does NOT measure 
 their connection, or module EVALUATION - a warm reload here reached `domContentLoadedEventEnd` at
 179 ms with all 106 modules served from cache, which is the shape of a prologue with nothing in it,
 and theirs is 696. **The reading still owed is the one named above**: one paste of
-`window.__canariBootBench.get()` from that same Firefox.
+`window.__canariBootBench.get()` from that same Firefox. **IT ARRIVED - see the last section of
+this page.** The prologue is 249 ms and this paragraph's suspicion of the 696 was right for the
+wrong reason: the time is real, it is simply not the browser's.
+
+## THE PASTE ARRIVED: THE PROLOGUE IS 249 ms, AND 64% OF THE BOOT IS ONE SPAN NOBODY HAD LOOKED AT (2026-09-18)
+
+`window.__canariBootBench.get()` from the user's own Firefox, production, navigation start
+**19:42:55.895Z**. **READ THE CLOCK BEFORE THE NUMBERS: that is 16 minutes after `v0.18.13` deployed
+to production**, so every asset hash had just changed and the HTTP cache held nothing for this
+build - the WASM was re-downloaded and re-compiled. This is a POST-DEPLOY FIRST LOAD, the worst
+cold start the application has and the rarest one a reader meets.
+
+**IT IS THEREFORE NOT COMPARABLE TO THE 1092 ms ABOVE, AND ANY TABLE PUTTING THEM IN ADJACENT
+COLUMNS IS WRONG.** That reading was a warm one on `v0.18.12`. This is the same trap as the
+`?probe=` cache-key error further up, wearing different clothes: the measurement is sound, the
+comparison is not. What this paste settles is the SHAPE of a boot, and the shape does not depend on
+which of the two it is.
+
+| region | span | ms | share | instrumented |
+| --- | --- | ---: | ---: | --- |
+| the browser's own prologue | navigation -> `load` | **249** | 5% | yes: `ttfb` 91, document body 0 |
+| **the gap nothing watches** | `load` -> `login-start` | **1358** | **29%** | **NO - not one mark** |
+| login preliminaries | `access-token`, `resolve-device-id`, `tab-leadership` | 1 | 0% | yes |
+| **the MLS state load** | `mls-load-state` | **2999** | **64%** | yes, but as ONE span |
+| the tail | `revocation-gate`, `auth-token-final` | 1 | 0% | yes |
+| | **navigation -> `MLS ready`** | **4677** | | |
+
+**THE 696 ms PROLOGUE IS REFUTED AS A PROLOGUE.** The section above attributed 69% of a boot to the
+region before the application's first word, and named it the one region no instrument covered. The
+browser's own share of this boot is **249 ms**, of which 91 ms is the origin round trip and **0 ms
+is the document body**. Taken with the module-count refutation above (163 requests, 178 ms), both
+suspects this file spent 2026-09-18 pursuing are now dead by measurement.
+
+**WHAT REPLACED IT IS NOT WHERE ANYONE WAS LOOKING.** The document is finished at 249 ms and
+`login-start` does not fire until 1607. That is **1358 ms between the browser being done and the
+application beginning to authenticate, with no mark anywhere inside it** - the same size of hole as
+the one just refuted, on the other side of the boundary everybody was watching. `bootBenchmark`
+opens at `login-start` by construction, so this region is invisible to it BY DESIGN, and saying so
+is not the same as measuring it.
+
+**AND THE SINGLE LARGEST COST IS ONE UNSPLIT SPAN.** `mls-load-state` runs 1677 -> 4676 and carries
+`recovered: false`, so this is the NOMINAL path and not a recovery: three seconds of ordinary
+start-up. It wraps `loadStateWithKey` ([WebMlsService](../../../frontend/src/lib/services/WebMlsService.ts)),
+which does three things of completely different character - instantiate the WASM module, decrypt the
+snapshot, rebuild the groups - and reports them as one number. **Nothing here says which of the three
+it is, and no fix should be written until something does.** `storage-open` beside it is 2 ms, so
+reaching IndexedDB is not a candidate.
+
+**THE NEXT MEASUREMENT IS SMALL AND IT IS THE ONLY ONE WORTH TAKING**: two more `beginBootSpan`
+calls inside `loadStateWithKey`, splitting WASM instantiation from snapshot decryption from group
+reconstruction, plus one mark at the first line of application code so the 1358 ms region stops
+being a subtraction between two things measured for other reasons. Both are additive, both are
+cheap, and neither is a fix.
+
+**ONE READING IS A SHAPE, NOT A BUDGET.** This is a single boot, on one machine, on the first load
+of a fresh build. The 64%/29% split is the finding; the 4677 ms is not a figure to quote as "the
+cold start" anywhere, and the 1 s target is not measured against it.

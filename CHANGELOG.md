@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le prologue du navigateur n'est pas le cout du demarrage a froid non plus, et le vrai poste est mesure
+
+Le banc de demarrage a enfin ete lu sur le navigateur de l'utilisateur : sur 4677 ms, le navigateur
+lui-meme ne prend que 249 ms, `mls-load-state` en prend 2999 (64 %), et 1358 ms s'ecoulent entre la
+fin du document et le debut de la connexion sans une seule marque. Deux mesures additives sont dues
+avant toute correction. [cold-start](docs/wiki/frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
+
 ## [0.18.13] - 2026-09-18
 
 ### Removed - six avis de securite etaient encore mis sous silence alors que la condition qui les levait est remplie
