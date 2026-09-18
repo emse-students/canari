@@ -74,7 +74,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 | **three legacy rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two whose destroyed accents no directory entry resolves. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | [P2 - the legacy rows are loaded and NOT ONE claim has been observed](#p2---the-legacy-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171) |
-| **pick the window for the PostgreSQL 15 -> 18 production cutover.** Steps 1 to 3 are done and measured (2026-09-15); step 4 is user-visible downtime on a live estate, and the compose shape change cannot merge ahead of it. The procedure and the rollback are written down and rehearsed - what is owed is a time | 1 decision, then ~15 min of downtime | [P2 - PostgreSQL 15 -> 18](#p2---postgresql-15---18-authorized-on-production-2026-09-10-and-what-it-owes-before-the-cutover) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 
 ## Open defects, in severity order
@@ -2302,90 +2301,6 @@ that is down**, which is the requirement no probe hosted on `canari` or `mitv` c
 fails on migrations never reaches them and reports only "migrations failed" - true, and silent about
 the estate being down. Reaching them on the failure path, or asserting the datastores before
 migrations, would make the run say what actually happened.
-
-### P2 - PostgreSQL 15 -> 18: AUTHORIZED ON PRODUCTION (2026-09-10), and what it owes before the cutover
-
-**The park is over.** It was a deferral the user chose (2026-09-01: *"remettre 18 est pas si genant
-si on fait la migration, mais on verra ca plus tard"*), and on 2026-09-10 they reversed it and
-authorized the whole thing, production included. **That authorization is recorded HERE because
-nothing else in this repository would carry it**, and the standing rule is that production is
-read-only except where the user says otherwise.
-
-**THE ORDER IS NOT NEGOTIABLE, and each step exists because the previous one can fail silently.
-STEPS 1 TO 3 WERE PERFORMED AND MEASURED ON 2026-09-15; step 4 is what is left:**
-
-1. ~~A verified `pg_dump` off production~~ **DONE** - through Bash, never PowerShell, which
-   text-encodes stdout and destroys a binary pipe. 23,253,358 bytes in 45.8 s, 282 TOC entries.
-2. ~~That dump RESTORED, proving it is readable and not merely written~~ **DONE** - into a fresh
-   18.6 cluster with the new mount layout, `--exit-on-error`, 1.62 s, silent.
-3. ~~The upgrade exercised end to end, against a data directory written by 15~~ **DONE** - 50 of 53
-   tables row-identical (the three that differ are the three that MOVE), 158 indexes, every
-   constraint class, both enums, four extensions and the collation identical; the application booted
-   on 18 and served `/api/version`; and the 2026-09-01 refusal reproduced verbatim at exit 1.
-4. **OWED: the production cutover, with the rollback written down BEFORE it starts.** It is
-   user-visible downtime on a live estate, so the window is the user's to pick -
-   [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
-
-**THE PROCEDURE, ITS NUMBERS AND ITS ROLLBACK ARE IN
-[databases](infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure), the
-only copy.** Two findings there are worth naming here because both would fail a naive check on a
-migration that is exactly right: the three tables whose counts differ are the live-churn ones and a
-total would hide that, and PostgreSQL 17+ catalogues NOT NULL constraints in `pg_constraint` so 347
-appear from nowhere.
-
-**The reason for the pin was a missing PROCEDURE**, which is what the rest of this entry supplies,
-and it is also why a later session must not read `postgres:15-alpine` as neglect and bump the tag.
-
-**What happened, in one line:** the auto-merge shipped `15-alpine -> 18-alpine`, the deploy recreated
-the container, PostgreSQL 18 exited on startup against the existing `postgres_data`, and all eight
-backend services lost `auth_db` - the only database - for 33 minutes. The full account is in
-`CHANGELOG.md`; the rule it left is in
-[durable-rules](durable-rules.md#release-and-ci---cicd). The image is refused by name in
-`.github/scripts/lib/ceiling.sh` now, so Dependabot's next attempt is declined with its reason
-rather than merged.
-
-**Why it is not a one-line bump.** PostgreSQL 18 refuses the data directory for TWO independent
-reasons, and a procedure has to answer both:
-
-1. **The catalogue.** A 15 cluster is not readable by 18 - `pg_upgrade` needs BOTH binaries present
-   at once, which no single official image carries. Either a `tianon/postgres-upgrade`-style
-   throwaway container, or a `pg_dumpall` / restore, which is the simple option and the one with
-   downtime proportional to the database.
-2. **The mount moved.** The 18+ images expect a single mount at `/var/lib/postgresql` and place the
-   cluster in a major-version subdirectory beneath it; this repository mounts `postgres_data` at
-   `/var/lib/postgresql/data`. So `docker-compose.prod.yml`, `docker-compose.dev.yml` and
-   `infrastructure/local/docker-compose.yml` all change shape, not just a tag - and the `pg_isready`
-   / `psql` invocations in `serve-prod.yml`'s migration step run inside that container.
-
-**What retires this entry, and it is the same thing that lifts the refusal:** a test that starts the
-NEW major against a data directory written by the OLD one and proves the upgrade path carries it.
-That is the gate `lib/ceiling.sh` names, and writing it makes a whole class of datastore update
-merge by itself - the same shape as `boot-nest-apps` releasing 22 refusals on 2026-08-31. It also
-covers `redis` and `garage`, which sit behind the same arm for the same reason and have never been
-upgraded across a major either.
-
-**MEASURED 2026-09-15: `auth_db` is 96 MB** (100,326,759 bytes; it was 84 MB on 2026-09-01, so
-re-measure before the window rather than quoting either line - it only grows). That settles the
-choice, and the rehearsal confirmed it: a dump and restore of this database is **2.4 seconds of
-work**, so `pg_upgrade` and its requirement that both majors' binaries live in one image buy nothing
-here and are not built.
-
-**WHAT THE CUTOVER COMMIT MUST CARRY, AND WHY IT CANNOT BE MERGED AHEAD OF THE WINDOW.** The compose
-SHAPE change and the image tag are ONE commit: mounting `postgres_data` at `/var/lib/postgresql`
-while the image is still 15 hands the 15 entrypoint an empty directory and it initialises a new
-cluster over the estate. Three files move together - `infrastructure/docker-compose.prod.yml`,
-`infrastructure/docker-compose.dev.yml`, `infrastructure/local/docker-compose.yml` - and the
-`pg_isready` / `psql` steps in `serve-prod.yml`'s migration job run inside that container. Nothing
-deploys on a push, so the commit is safe on `main`; it is a RELEASE that would carry it, which is
-why the window and the release are the same decision.
-
-**AND ONE QUESTION THE REHEARSAL COULD NOT ANSWER BY MEASURING**, parked in
-[open-questions](open-questions.md#decision-owed---the-ceilings-postgres-arm-names-a-test-this-estates-own-upgrade-path-can-never-satisfy):
-by `infrastructure/dev/version-gap.yml`'s own taxonomy this rehearsal is a `logical_restore`, which
-"lifts NOTHING", and the only value that lifts the refusal is `in_place_upgrade` - the new major
-serving production's OWN data directory. This estate decided on 2026-09-01 not to build that path.
-So the row stays `evidence: none` and the ceiling keeps refusing, correctly; what is owed is a
-decision about what the refusal should NAME, not a measurement.
 
 ### P3 - one merge out of three did NOT delete its remote branch, and nothing here refused it (observed 2026-09-03)
 
@@ -6563,7 +6478,7 @@ state, a `reloadClientFromState` that decrypted it a second time, and three encr
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
 
-### P1 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO 680 DEVICES STAY UNJUDGEABLE (production, measured 2026-09-18)
+### P1 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO 677 DEVICES STAY UNJUDGEABLE (production, re-measured on the deployed fix 2026-09-18)
 
 **The re-measurement this entry was waiting for happened, and it refuted the entry.** The server did
 NOT refuse expired last-resort packages: the guard tested `device.notAfter && ...`, that column is
@@ -6587,9 +6502,18 @@ last-resort row. Two shapes, and the choice is a measurement away:
    makes none, and `registerDevice` resets `createdAt`, which is what makes the bound in shape 1
    unusable afterwards - so taking this one means taking it knowingly.
 
+**THE FIX IS DEPLOYED AND THE HALVES SEPARATED CLEANLY, measured on production at 15:0x after
+migration 025 applied at 14:52:27 (v0.18.12).** The one-time pool is now TOTAL and stays that way:
+**0 undated rows** out of 31,636 where there were 577, **0 expired served** where there were 14, and
+the column carries `DEFAULT now() + '84 days'` so an old client publishing bare base64 can no longer
+create an undated row. The last-resort table is what is left - 724 rows, **3 proven dead and now
+refused** rather than served, **677 unjudgeable**. The entry's own prediction held: the 3 close by
+CODE, the 677 do not close at all until something republishes.
+
 **Closes on A MEASUREMENT** - how many devices on production hold a last-resort package that has
-actually elapsed, unanswerable from here today and answerable the moment shape 1 ships. Shape 1
-first, then read the count, then decide whether shape 2 is worth its round trip.
+actually elapsed. Still unanswerable: the 677 are unjudgeable BY CONSTRUCTION, not for want of
+looking, and only shape 1 makes the count exist. Shape 1 first, then read the count, then decide
+whether shape 2 is worth its round trip.
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 

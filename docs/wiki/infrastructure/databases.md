@@ -2,7 +2,7 @@
 
 ## PostgreSQL
 
-**Image**: `postgres:18-alpine` in all three compose files since #841 (2026-09-18).  
+**Image**: `postgres:18-alpine` - **PostgreSQL 18.6, crossed on 2026-09-18** on both estates.  
 **Port**: 5432 (container), 5433 (dev host)  
 **Database**: `auth_db`
 
@@ -95,6 +95,22 @@ To check production against the entities, dump `information_schema.columns` and 
 PostgreSQL is backed up daily via `pg_dump -d auth_db --clean --if-exists` (logical dump, gzip). See `docs/wiki/infrastructure/backup.md`.
 
 ### Crossing a MAJOR version - the rehearsed procedure
+
+**THE CROSSING WAS PERFORMED ON 2026-09-18 AND BOTH ESTATES SERVE 18.6.** It was carried out by
+another contributor in the window the user fixed, and shipped with `v0.18.12`. Measured afterwards:
+53 tables, the `dm_group_members` sentinel present, 90 migrations recorded, all eight backend
+services healthy, `GET /api/version` answering 200 in 126 ms. `auth_db` reads **86 MB where it read
+127 MB on 15** - that is the expected shape of a logical restore, which rebuilds every index and
+leaves no dead tuples behind, not a loss; the per-table counts are what settles it, never the total.
+Both 15 volumes - `infrastructure_postgres_data` and `canari-dev_postgres_data` - were kept and are
+now stale: **the rollback expired at the first write onto 18**, and deleting them is a decision
+nobody has taken yet.
+
+**WHAT IT DID NOT DO IS RETIRE THE CEILING.** This was a LOGICAL migration onto a NEW volume, so
+nothing ever opened a data directory written by 15 - the exact question `lib/ceiling.sh` asks. The
+refusal stands by name, `version-gap.yml` stays `evidence: none`, and 18 -> 19 needs this same
+procedure and this same window again. **The section below is therefore kept as the reference, not
+as history.**
 
 **A datastore major is an OPERATION, not a dependency update, and this section is why.** On
 2026-09-01 an auto-merge shipped `postgres:15-alpine -> 18-alpine`, the deploy recreated the
