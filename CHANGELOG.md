@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la reponse par glissement n'a jamais fonctionne : un drapeau que rien n'ecrivait
+
+`MessageBubble` gardait `supportsHover`, initialise a `true` et affecte par rien, donc le garde-fou
+du geste repondait non sur tous les appareils depuis le 2026-03-26 - reponse ET reaction par
+glissement, qui partagent le meme handler. Tout le module de gestes etait teste et juste ; personne
+ne l'appelait. Le predicat quitte le composant pour le module teste et lit
+`isCoarsePointerDevice()`, qui existait deja.
+[chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
+
 ## [0.18.17] - 2026-09-20
 
 ### Fixed - le scroll partait sur le thread principal partout, pour un geste que dix sections ne peuvent pas faire

@@ -36,6 +36,7 @@
   } from '$lib/utils/chat/messageDisplay';
   import { isEmojiOnlyText } from '$lib/utils/emoji';
   import {
+    canStartReplySwipe,
     createReplySwipeGesture,
     replySwipeDragOffset,
     reactionSwipeDragOffset,
@@ -45,6 +46,7 @@
     updateReplySwipeGesture,
     type ReplySwipeGestureState,
   } from '$lib/utils/messageSwipeReply';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
 
   interface Props {
     /** Unique identifier of the message, used as the DOM anchor for scroll navigation. */
@@ -179,7 +181,10 @@
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
   let mediaPurgedByRetention = $state(false);
-  let supportsHover = $state(true);
+  // WAS `let supportsHover = $state(true)` - and NOTHING EVER WROTE TO IT, so `canSwipeReply` said
+  // no on every device from 2026-03-26 to 2026-09-20. `isCoarsePointerDevice()` is the predicate
+  // this repo already owns for exactly this question, and it is READ here rather than assumed.
+  let coarsePointer = $state(isCoarsePointerDevice());
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let lastTapTime = 0;
   let pointerStartX = $state(0);
@@ -362,9 +367,13 @@
   }
 
   function canSwipeReply(pointerType?: string): boolean {
-    if (supportsHover || pointerType === 'mouse') return false;
-    if (isDeleted || effectiveSystem || !onReply) return false;
-    return true;
+    return canStartReplySwipe({
+      coarsePointer,
+      pointerType,
+      isDeleted,
+      isSystem: effectiveSystem,
+      hasReplyHandler: Boolean(onReply),
+    });
   }
 
   function pointerCoords(e: PointerEvent | TouchEvent): { x: number; y: number } {
@@ -487,6 +496,14 @@
       },
     };
   }
+
+  // A tablet gaining a mouse, or a desktop browser toggling device emulation, changes the answer
+  // under the reader's hands - and this is also the read that corrects a server render, where
+  // `matchMedia` cannot be asked and the helper answers `false`.
+  $effect(() => {
+    coarsePointer = isCoarsePointerDevice();
+    return onCoarsePointerChange((coarse) => (coarsePointer = coarse));
+  });
 
   let replyHintOpacity = $derived(replySwipeProgress(replyDragPx, isOwn));
 

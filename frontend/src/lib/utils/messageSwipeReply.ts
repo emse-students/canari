@@ -105,3 +105,38 @@ export function shouldTriggerReactionSwipe(
   const awayFromCenter = isOwn ? deltaX > threshold : deltaX < -threshold;
   return awayFromCenter && Math.abs(deltaY) < threshold * 0.75;
 }
+
+/** What a bubble knows about itself when it is asked whether a swipe may start. */
+export interface ReplySwipeEligibility {
+  /** The reader's PRIMARY pointer is a finger or a stylus (`isCoarsePointerDevice`). */
+  coarsePointer: boolean;
+  /** The pointer that produced this event, when the event carries one. */
+  pointerType?: string;
+  /** A tombstone has nothing to reply to. */
+  isDeleted: boolean;
+  /** A system notice is not somebody's message. */
+  isSystem: boolean;
+  /** Whether a surface actually wired a reply handler. */
+  hasReplyHandler: boolean;
+}
+
+/**
+ * MAY A SWIPE START ON THIS BUBBLE?
+ *
+ * **THIS PREDICATE LIVED IN THE COMPONENT AND WAS WRONG THERE FOR SIX MONTHS.** It read a
+ * `supportsHover` flag initialised to `true` and assigned by nothing, so it answered "no" on every
+ * device, and the whole gesture - reply AND the reaction swipe that shares its handler - has never
+ * once run in production. Everything in this file was tested and correct; nothing called it.
+ * *"la reponse en swipant un message n'a pas l'air de marcher, est-elle implementee ?"* (user,
+ * 2026-09-20 - it was, and it was switched off).
+ *
+ * It is here, and not in the bubble, because that is what makes it testable: a gate a component
+ * holds privately is a gate no test can fail. The capability question it asks is
+ * `isCoarsePointerDevice()`, which this repo already owns - a mouse-and-keyboard reader has the
+ * hover toolbar and does not need a gesture, and a laptop with a touchscreen reports `fine` and
+ * keeps the toolbar.
+ */
+export function canStartReplySwipe(state: ReplySwipeEligibility): boolean {
+  if (!state.coarsePointer || state.pointerType === 'mouse') return false;
+  return !state.isDeleted && !state.isSystem && state.hasReplyHandler;
+}
