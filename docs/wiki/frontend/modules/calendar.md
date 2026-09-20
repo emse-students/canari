@@ -32,8 +32,8 @@ seven columns is a question about room, so a touch laptop keeps the grid):
 
 | | below `md` | at or above `md` |
 | --- | --- | --- |
-| `/calendar` | `CalendarScheduleList`, no grid | 360px rail (nav, filter, export, day panel) + `MonthCalendarGridRich` |
-| `AssociationCalendarSection` | `CalendarScheduleList`, no grid | 360px rail (nav, day panel) + `MonthCalendarGridRich` |
+| `/calendar` | `CalendarScheduleList`, no grid, no month nav | 360px rail (nav, filter, export, day panel) + `MonthCalendarGridRich` |
+| `AssociationCalendarSection` | `CalendarScheduleList`, no grid, no month nav | 360px rail (nav, day panel) + `MonthCalendarGridRich` |
 
 The association's section drew the grid at EVERY width until 2026-09-14 - 48px a day on a 390px
 phone - because the 2026-09-09 phone rule and the 2026-09-10 rail were written for `/calendar` and
@@ -50,6 +50,58 @@ page IS the filter) and no export block (the section's own header carries subscr
 track is `lg:grid-cols-[360px_minmax(0,1fr)]` in both, `minmax(0,1fr)` rather than `1fr` for the
 reason written at `/calendar`'s copy - `1fr` is `minmax(auto,1fr)`, and `auto` will not shrink below
 the seven-column grid's min-content width.
+
+### BELOW `md` THE UNIT IS A WINDOW, NOT A MONTH - AND THE ARROWS WENT WITH IT
+
+The schedule list drew ONE CALENDAR MONTH until 2026-09-20, which is the grid's unit wearing a
+list's clothes. A grid has to be a month: it draws squares, so it needs a first and a last one. A
+list has neither, and inheriting the constraint cost the reader the two things the view exists for -
+opening the agenda on the 28th meant scrolling past 27 days that had already happened, and reaching
+next week meant finding a month arrow (user: *"plutot que d'afficher le mois courant [...] on
+affiche le mois glissant"*).
+
+So below `md` the agenda starts at TODAY and grows forward on scroll. Four facts decide the shape,
+and all four are in `agendaMonth.svelte.ts`:
+
+| | value | why that one |
+| --- | --- | --- |
+| first day | `calendarDayOf(new Date())` | the day the READER is in, which at 01:00 is still yesterday's evening - a party running 23:00-02:00 is still on, and plain midnight would drop its row out from under someone who is at it |
+| step | 3 months, one request | the endpoints take a RANGE; a month was never the fetch unit. At one month per scroll tick, July and August cost a round trip each to say nothing |
+| horizon | `ROLLING_HORIZON_MONTHS = 12` | the range the `.ics` subscription already publishes and the backend already defaults to - the horizon the app had, now visible to the reader too |
+| backwards | nothing | the past is a desktop question (user, 2026-09-20). No bidirectional scroll, so no upward scroll anchoring, so no list that moves under the thumb |
+
+**THE MONTH NAME SURVIVES AS A SEPARATOR, NOT AS A CONTROL.** The day gutter says `12 / mar.`; in a
+flow that crosses months, nothing else distinguishes 3 December from 3 January. It is a `sticky`
+heading per month section, which is why each month is its own block and the card is drawn UNDER the
+heading rather than around it: an ancestor with a clipped overflow becomes the scrollport a sticky
+child sticks inside, and one that cannot scroll simply carries the heading off the top. `top-0` is
+the top of `.page-scroll-wrap`, which begins below the mobile header.
+
+**`focusDate` DOES NOT STOP MEANING ANYTHING, IT STOPS BEING CHOSEN BY ARROWS.** It still decides
+which month `/calendar/export` exports and which month a phone turned sideways gets, so the list
+reports the month crossing the top band of the viewport back through `rolling.setVisibleMonth`.
+Without that the PDF button would silently export whatever month the window opened in.
+
+**THREE THINGS THIS SHAPE OWES, EACH WRITTEN AFTER ASKING WHAT ITS ABSENCE WOULD LOOK LIKE:**
+
+- **The chunks are merged BY EVENT ID.** The server's range predicate is an overlap, so a WEI
+  running 31 October to 2 November comes back in the chunk that ends in October *and* the one that
+  starts in November. Concatenating puts one id in the list twice, and a keyed `{#each}` over that
+  does not paint a row twice - it throws `each_key_duplicate` and takes the page down, which this
+  module has already shipped once (prod, 2026-09-14, above).
+- **The observer is RE-ARMED after every step.** An `IntersectionObserver` reports transitions, and
+  appending a chunk below a sentinel that never left the screen is not one - so a quiet stretch
+  ends the scroll for good, on a build that works wherever the data is dense.
+  `CalendarScheduleList.rolling.svelte.test.ts` pins it, because nothing else can.
+- **A failed APPEND keeps the rows already drawn** and offers a retry, where a failed FIRST window
+  still clears everything. The two are different: rows already on screen are still exactly what
+  they claim to be, while a stale month under an error banner is a month the header is lying about.
+  A stall also stops the automatic retries - an observer that re-fires on every scroll turns one
+  failing request into a stream of them.
+
+A ROTATION REFETCHES. The two shapes hold different ranges and neither answers the other's question:
+turning a phone sideways mid-scroll would hand the grid a September built out of a year of events,
+and turning it back would hand the list one month under a heading that promises twelve.
 
 ### THE PAGE IS NOT THE OWNER OF EVERYTHING IT LISTS
 

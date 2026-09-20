@@ -12,7 +12,7 @@ import {
   eventCardsOnDay,
   eventCoversDay,
   eventsOnDay,
-  groupMonthEventsByDay,
+  groupEventsByDayInRange,
   formatEventTimeRange,
   eventAccentColor,
   eventOwners,
@@ -82,15 +82,20 @@ describe('eventsOnDay', () => {
   });
 });
 
-describe('groupMonthEventsByDay', () => {
+describe('groupEventsByDayInRange', () => {
+  /** A whole month, which is the shape the grid asks for and one range among many. */
+  function month(year: number, monthIndex: number): [Date, Date] {
+    return [new Date(year, monthIndex, 1), new Date(year, monthIndex + 1, 0)];
+  }
+
   it('returns one group per day that has events, and no empty days', () => {
-    const groups = groupMonthEventsByDay(
+    const groups = groupEventsByDayInRange(
       [
         event({ id: 'a', startsAt: localIso(2026, 9, 3, 12) }),
         event({ id: 'b', startsAt: localIso(2026, 9, 20, 12) }),
         event({ id: 'c', startsAt: localIso(2026, 9, 3, 19) }),
       ],
-      new Date(2026, 8, 15)
+      ...month(2026, 8)
     );
 
     // Three events on two days: a schedule is a list of what is happening, not thirty blank rows.
@@ -99,30 +104,95 @@ describe('groupMonthEventsByDay', () => {
   });
 
   it('reaches the last day of the month, including one that has 31', () => {
-    const groups = groupMonthEventsByDay(
+    const groups = groupEventsByDayInRange(
       [event({ id: 'nye', startsAt: localIso(2026, 12, 31, 22) })],
-      new Date(2026, 11, 1)
+      ...month(2026, 11)
     );
 
     expect(groups.map((g) => g.day)).toEqual([31]);
   });
 
-  it('ignores events belonging to another month', () => {
-    const groups = groupMonthEventsByDay(
+  it('ignores events outside the range', () => {
+    const groups = groupEventsByDayInRange(
       [event({ startsAt: localIso(2026, 10, 2, 12) })],
-      new Date(2026, 8, 15)
+      ...month(2026, 8)
     );
 
     expect(groups).toEqual([]);
   });
 
   it('repeats a multi-day event on each of its days', () => {
-    const groups = groupMonthEventsByDay(
+    const groups = groupEventsByDayInRange(
       [event({ id: 'wei', startsAt: localIso(2026, 9, 5, 8), endsAt: localIso(2026, 9, 7, 18) })],
-      new Date(2026, 8, 1)
+      ...month(2026, 8)
     );
 
     expect(groups.map((g) => g.day)).toEqual([5, 6, 7]);
+  });
+
+  /**
+   * THE PHONE'S WINDOW IS NOT A MONTH, and these are the two things that used to be impossible to
+   * express: a start that is not the 1st, and an end in another month.
+   */
+  it('starts on the day it was given, not on the first of its month', () => {
+    const groups = groupEventsByDayInRange(
+      [
+        event({ id: 'past', startsAt: localIso(2026, 9, 3, 12) }),
+        event({ id: 'today', startsAt: localIso(2026, 9, 28, 12) }),
+      ],
+      new Date(2026, 8, 28),
+      new Date(2026, 8, 30)
+    );
+
+    expect(groups.map((g) => g.events[0].id)).toEqual(['today']);
+  });
+
+  it('crosses a month boundary, and the day numbers restart rather than continue', () => {
+    const groups = groupEventsByDayInRange(
+      [
+        event({ id: 'sep', startsAt: localIso(2026, 9, 30, 12) }),
+        event({ id: 'oct', startsAt: localIso(2026, 10, 1, 12) }),
+      ],
+      new Date(2026, 8, 28),
+      new Date(2026, 10, 30)
+    );
+
+    expect(groups.map((g) => g.day)).toEqual([30, 1]);
+    expect(groups.map((g) => g.date.getMonth())).toEqual([8, 9]);
+  });
+
+  it('keeps a multi-day event on every day of its own that the window covers', () => {
+    // It began before the window opened - the server returns it, because its range predicate is an
+    // overlap - and the days it still covers are the reader's answer to "what is on today".
+    const groups = groupEventsByDayInRange(
+      [
+        event({
+          id: 'wei',
+          startsAt: localIso(2026, 9, 25, 18),
+          endsAt: localIso(2026, 10, 2, 12),
+        }),
+      ],
+      new Date(2026, 8, 28),
+      new Date(2026, 9, 31)
+    );
+
+    expect(groups.map((g) => [g.date.getMonth(), g.day])).toEqual([
+      [8, 28],
+      [8, 29],
+      [8, 30],
+      [9, 1],
+      [9, 2],
+    ]);
+  });
+
+  it('draws nothing when the window ends before it starts', () => {
+    expect(
+      groupEventsByDayInRange(
+        [event({ startsAt: localIso(2026, 9, 28, 12) })],
+        new Date(2026, 8, 28),
+        new Date(2026, 8, 27)
+      )
+    ).toEqual([]);
   });
 });
 

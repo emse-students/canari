@@ -399,18 +399,21 @@
     </div>
   {/if}
 
-  {#if agenda.scheduleLayout}
+  {#if agenda.scheduleLayout && agenda.rolling}
+    {@const rolling = agenda.rolling}
     <!-- THE PHONE GETS THE SAME ANSWER AS `/calendar`, AND HAD NONE AT ALL. Seven columns of 48px
          say which days exist and nothing about what is on them, and this section drew that grid on
          every screen: the association's agenda was unreadable on the device most people open it on,
          while the global one had been a schedule list since 2026-09-09. `CalendarScheduleList`
-         takes the month out of the events themselves, so there is no selected day to carry and no
-         day panel to place. -->
-    {@render monthNav()}
+         takes its own window out of the events themselves, so there is no selected day to carry and
+         no day panel to place.
 
+         THE MONTH NAV GOES WITH IT (user, 2026-09-20): the list rolls forward from today rather
+         than drawing one month, so there is no month for the arrows to step. The desktop rail below
+         keeps them, because a grid has to be a month. -->
     <CalendarScheduleList
-      focusDate={agenda.focusDate}
       events={feedEvents}
+      {rolling}
       loading={agenda.loading}
       ownAssociationId={associationId}
       onEventClick={agenda.openDetail}

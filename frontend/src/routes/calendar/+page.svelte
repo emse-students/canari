@@ -530,15 +530,23 @@
       </div>
     {/snippet}
 
-    {#if agenda.scheduleLayout}
-      <!-- THE PHONE IS UNCHANGED. One list, no grid: seven columns of 48px say which days exist
-           and nothing about what is on them. `CalendarScheduleList` takes the month out of the
-           feed itself, so there is no selected day to carry here, and no day panel to place. -->
+    {#if agenda.scheduleLayout && agenda.rolling}
+      {@const rolling = agenda.rolling}
+      <!-- THE PHONE IS A LIST, NO GRID: seven columns of 48px say which days exist and nothing
+           about what is on them. `CalendarScheduleList` takes its own window out of the feed, so
+           there is no selected day to carry here, and no day panel to place.
+
+           AND THE MONTH NAV IS GONE FROM THIS BAR (user, 2026-09-20). The list rolls forward from
+           today, so there is no month to name and no arrow to press - the scroll does both, and a
+           control that steps a unit the view no longer has is a control that lies. The filter and
+           the export stay: one changes what is in the window, the other exports the month the
+           reader is scrolled to, which the list keeps `focusDate` pointed at.
+
+           A FAILED LOAD STILL REPLACES THE LIST rather than banner-ing above it, but only for the
+           FIRST window - an append that fails leaves the rows it already drew and offers a retry
+           at the foot, because those rows are still exactly what they claim to be. -->
       <Card class="space-y-4 p-4 sm:p-5">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {@render monthNav()}
-          {@render associationFilter()}
-        </div>
+        {@render associationFilter()}
         <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
           {@render exportActions()}
         </div>
@@ -546,10 +554,11 @@
 
       {#if agenda.loadError}
         {@render loadErrorBox()}
-      {:else}
+      {/if}
+      {#if agenda.events.length > 0 || !agenda.loadError}
         <CalendarScheduleList
-          focusDate={agenda.focusDate}
           events={sortedEvents}
+          {rolling}
           loading={agenda.loading}
           onEventClick={agenda.openDetail}
         />
