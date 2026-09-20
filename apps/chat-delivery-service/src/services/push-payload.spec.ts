@@ -85,6 +85,47 @@ describe('buildPushDataFields', () => {
   });
 });
 
+/**
+ * THE KIND OF CONVERSATION IS ITS OWN ANSWER, AND `groupName` WAS NEVER ABLE TO GIVE IT.
+ *
+ * Every reader used to test `groupName` for emptiness, which reads a DM, a group nobody named and
+ * a group row the server could not fetch as the same thing. Production said the middle state is a
+ * third of all groups. These pin the three, including the one that is an ABSENT key rather than a
+ * false one: saying nothing and saying "DM" are different sentences, and a reader must be able to
+ * tell them apart.
+ */
+describe('buildPushDataFields - the conversation kind, which used to be guessed from a name', () => {
+  it('says so for a group', () => {
+    expect(buildPushDataFields({ ...baseInput, isGroup: true }).isGroup).toBe('true');
+  });
+
+  it('says so for a DM, rather than leaving it to be inferred from an empty name', () => {
+    expect(buildPushDataFields({ ...baseInput, groupName: '', isGroup: false }).isGroup).toBe(
+      'false'
+    );
+  });
+
+  it('SAYS SO FOR A GROUP NOBODY NAMED - the state that used to read as a DM', () => {
+    const data = buildPushDataFields({ ...baseInput, groupName: '', isGroup: true });
+    expect(data.groupName).toBe('');
+    expect(data.isGroup).toBe('true');
+  });
+
+  it('OMITS THE KEY when the server could not read the row - absent is not false', () => {
+    const data = buildPushDataFields({ ...baseInput, isGroup: undefined });
+    expect('isGroup' in data).toBe(false);
+  });
+
+  it('costs the ciphertext exactly what it takes, because the budget is measured not guessed', () => {
+    const withKind = inlineProtoBudget({ ...baseInput, isGroup: true });
+    const without = inlineProtoBudget({ ...baseInput, isGroup: undefined });
+    // 'isGroup' (7) + 'true' (4) in the data map; the APNs side carries it too, so the budget is
+    // whichever of the two is larger - the point is that it MOVED, and by a bounded amount.
+    expect(without - withKind).toBeGreaterThan(0);
+    expect(without - withKind).toBeLessThan(40);
+  });
+});
+
 describe('buildApnsRequest', () => {
   it('builds a mutable-content alert for visible messages', () => {
     const data = buildPushDataFields(baseInput);

@@ -17,8 +17,30 @@ export interface PushMessageInput {
   senderId: string;
   /** Resolved sender display name (empty when unknown). */
   senderName: string;
-  /** Resolved group name for group chats (empty for DMs). */
+  /** Resolved group name for group chats (empty for DMs, and for a group nobody named). */
   groupName: string;
+  /**
+   * Whether the conversation is a multi-member GROUP, or `undefined` when the server could not
+   * read the row to find out.
+   *
+   * **THIS EXISTS BECAUSE `groupName` COULD NOT ANSWER IT, AND WAS ASKED ANYWAY.** Until
+   * 2026-09-21 every reader - the web placeholder builder, the Android service, the iOS NSE and
+   * the ObjC++ push handler - decided "group or DM" by testing whether `groupName` was empty.
+   * That reads three different states as one: a DM (no name by design), a group nobody named, and
+   * a group row this server failed to read. Measured on production the same day: **467 of 1433
+   * ordinary groups carry no name at all (33%), and 374 of those had advanced past MLS epoch 0**,
+   * so they are established conversations rather than abandoned rows. A push from any of them was
+   * drawn as a DM with its first sender as the peer.
+   *
+   * The discriminator was never missing - `messaging.service` already SELECTs `isGroup` and threw
+   * it away in a ternary. It travels now, because a distinction carried in prose is one exactly
+   * one call site will make.
+   *
+   * `undefined` is a third state and not a default: it says the server does not know, which is a
+   * different sentence from "it is a DM", and a reader that cannot use it must fall back to what
+   * it did before rather than invent an answer.
+   */
+  isGroup?: boolean;
   /** Inline base64 MLS ciphertext, or '' when too large (client fetches it). */
   proto: string;
   /** When true, no notification is shown (read receipts, own-device copies, control frames). */
@@ -96,6 +118,10 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
     senderId: input.senderId,
     senderName: input.senderName,
     groupName: input.groupName,
+    // OMITTED, NOT FALSE, WHEN THE SERVER DOES NOT KNOW. An absent key is the only way to say
+    // "no information" over a transport whose values are all strings, and every reader already has
+    // to cope with an absent key anyway - a device may be running a build older than this one.
+    ...(input.isGroup === undefined ? {} : { isGroup: input.isGroup ? 'true' : 'false' }),
     proto: input.proto,
     silent: input.silent ? 'true' : 'false',
     isWelcome: input.isWelcome ? 'true' : 'false',

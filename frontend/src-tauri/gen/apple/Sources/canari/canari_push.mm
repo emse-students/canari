@@ -907,6 +907,7 @@ static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) 
 }
 
 static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString *senderName,
+                                NSString *groupName, NSNumber *isGroup,
                                 CanariDecryptedMessage *msg) {
   if (msg.messageId.length == 0) {
     return;
@@ -916,10 +917,19 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
     @"messageId" : msg.messageId,
     @"senderId" : senderId ?: @"",
     @"senderName" : senderName ?: @"",
+    // THE CONVERSATION'S NAME AND ITS KIND, which the other two writers have carried since
+    // 2026-09-15 and 2026-09-21 and this one did not carry at all: the web consumer builds a
+    // placeholder row from this entry, and with neither it labelled the row after whoever messaged
+    // first and typed it a DM. `groupName` is the LABEL; `isGroup` is the discriminator, omitted
+    // below when the push did not say - an absent key means "no information", not `false`.
+    @"groupName" : groupName ?: @"",
     @"content" : msg.text ?: @"",
     @"timestamp" : @(msg.sentAt),
     @"type" : msg.type ?: @"text",
   } mutableCopy];
+  if (isGroup != nil) {
+    entry[@"isGroup"] = isGroup;
+  }
   if (msg.mediaKind.length > 0) {
     entry[@"mediaKind"] = msg.mediaKind;
   }
@@ -2788,6 +2798,10 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
   NSString *queuedMessageId =
       [data[@"queuedMessageId"] isKindOfClass:[NSString class]] ? data[@"queuedMessageId"] : nil;
   NSString *inlineProto = [data[@"proto"] isKindOfClass:[NSString class]] ? data[@"proto"] : @"";
+  // nil when the push did not say - see `CanariWriteFcmCache`. Swift twin: `NotificationService`.
+  NSNumber *isGroup = [data[@"isGroup"] isKindOfClass:[NSString class]]
+                          ? @([data[@"isGroup"] isEqualToString:@"true"])
+                          : nil;
   BOOL silent = [data[@"silent"] isEqualToString:@"true"];
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -2848,7 +2862,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       }
       body = CanariBuildFallbackText(senderName);
     } else {
-      CanariWriteFcmCache(groupId, senderId, senderName, decrypted);
+      CanariWriteFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted);
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{

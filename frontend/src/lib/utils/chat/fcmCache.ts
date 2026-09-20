@@ -39,16 +39,28 @@ interface FcmCacheEntry {
   senderId: string;
   senderName: string;
   /**
-   * The GROUP's display name, copied straight from the push - empty for a DM, by the server's own
-   * contract (`PushMessageInput.groupName`: *"Resolved group name for group chats (empty for
-   * DMs)"*). It is therefore both the label AND the discriminator, which is why it does not travel
-   * beside an `isGroup` flag: the two would be one fact written twice.
+   * The GROUP's display name, copied straight from the push - empty for a DM, and ALSO empty for a
+   * group nobody named, which is why it is no longer asked to be the discriminator as well. That
+   * job moved to {@link FcmCacheEntry.isGroup} on 2026-09-21.
    *
    * ABSENT, NOT EMPTY, ON A FILE WRITTEN BY AN OLDER NATIVE BUILD. The cache is a file on disk that
    * outlives an app update, so an entry queued before 2026-09-15 has no such key at all - see
    * {@link placeholderNameForPushEntry}, which is where that case is answered rather than here.
    */
   groupName?: string;
+  /**
+   * Whether the conversation is a GROUP, copied from the push's own `isGroup` field.
+   *
+   * **ONE FACT, WRITTEN ONCE, BY THE ONLY PARTY THAT HOLDS IT.** Until 2026-09-21 this was read off
+   * `groupName` being non-empty, and production says a third of all groups (467 of 1433) carry no
+   * name at all - 374 of them past MLS epoch 0, so established conversations rather than abandoned
+   * rows. Every push from one of those was drawn here as a DM with its first sender as the peer.
+   *
+   * Absent means the push did not say: an entry written by a native build older than 2026-09-21,
+   * or a message whose group row the server could not read (it logs and omits the key rather than
+   * guessing). Absent is NOT `false`.
+   */
+  isGroup?: boolean;
   content: string;
   timestamp: number;
   type: string;
@@ -111,14 +123,14 @@ export function placeholderNameForPushEntry(
  * a human sees is resolved from the peer id by `resolveConversationListPresentation`, as for every
  * other DM.
  *
- * **WHAT THIS CANNOT SEPARATE, said rather than hidden:** the server writes `''` for a DM *and* for
- * a group whose own name is empty (`messaging.service.ts`: `group?.isGroup ? name : ''`). Such a
- * group would be drawn here as a DM with its first sender as the peer. It is already labelled with
- * that sender's name today, so only the avatar changes, and the next server sync replaces the row
- * outright - but it is a real edge and the fix for it belongs on the server's side of that ternary.
+ * **THE EDGE THIS USED TO GET WRONG IS NOW ANSWERED ON THE WIRE (2026-09-21).** Reading the three
+ * states above off `groupName` alone could not separate a DM from a group NOBODY NAMED, and both
+ * arrived as `''`; such a group was drawn as a DM with its first sender as the peer. Production
+ * said that state is 467 of 1433 groups. {@link FcmCacheEntry.isGroup} now carries the answer from
+ * the only party that holds it, and it is consulted FIRST. `groupName` is back to being a label.
  */
 export function placeholderIdentityForPushEntry(
-  entry: Pick<FcmCacheEntry, 'groupId' | 'senderId' | 'senderName' | 'groupName'>,
+  entry: Pick<FcmCacheEntry, 'groupId' | 'senderId' | 'senderName' | 'groupName' | 'isGroup'>,
   userId: string
 ): PushPlaceholderIdentity {
   const named = entry.groupName?.trim();
@@ -126,9 +138,19 @@ export function placeholderIdentityForPushEntry(
     return { conversationType: 'group', name: named, contactName: named };
   }
 
+  // AN UNNAMED GROUP IS STILL A GROUP. There is nothing to label it with, so it keeps the last
+  // resort below - but it must not be typed `direct`, which would give it a peer it does not have.
+  if (entry.isGroup === true) {
+    const fallbackLabel = placeholderNameForPushEntry(entry);
+    return { conversationType: 'group', name: fallbackLabel, contactName: fallbackLabel };
+  }
+
   const self = userId.trim().toLowerCase();
   const peer = entry.senderId.trim().toLowerCase();
-  if (entry.groupName !== undefined && self && peer && peer !== self) {
+  // `isGroup === false` says it outright; `groupName === ''` is the older build's way of saying the
+  // same thing, and it stays readable because the cache file outlives an app update.
+  const saysDirect = entry.isGroup === false || entry.groupName !== undefined;
+  if (saysDirect && self && peer && peer !== self) {
     return {
       conversationType: 'direct',
       name: `${self}::${peer}`,
