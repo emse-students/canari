@@ -25,6 +25,7 @@ import {
   migrateLegacyMlsStateBlob,
   resetMlsWasmModuleCacheForTests,
 } from './mlsWasmLoader';
+import { getBootReport, resetBootBench } from './bootBenchmark';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -67,6 +68,39 @@ describe('loadAndInitWasm', () => {
       new Response('<!doctype html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
     );
     await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(/HTML/);
+  });
+
+  it('splits the state load into the two spans this layer can honestly separate', async () => {
+    // 64% of a cold boot sat inside `mls-load-state` as ONE number on 2026-09-18, which names a
+    // cost and no cause. These two say which half; a third span for decryption alone would be a
+    // boundary that does not exist, because the constructor does decrypt AND rebuild inside Rust.
+    resetBootBench();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+    await loadAndInitWasm('user-1', 'dev-1', undefined, 'pin', true);
+
+    const byName = new Map(getBootReport().spans.map((s) => [s.name, s]));
+    expect([...byName.keys()]).toEqual(
+      expect.arrayContaining(['wasm-module', 'wasm-client-construct'])
+    );
+    // Closed, not merely opened: an open span reports `null` and would read as a missing platform.
+    expect(byName.get('wasm-module')?.durationMs).not.toBeNull();
+    expect(byName.get('wasm-client-construct')?.durationMs).not.toBeNull();
+  });
+
+  it('closes the constructor span even when the constructor throws', async () => {
+    // A step that failed still took the time it took. Losing the span would make a failed boot look
+    // faster than a working one, which is the one direction a benchmark must never be wrong in.
+    resetBootBench();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+    WasmMlsClient.mockImplementationOnce(() => {
+      throw new Error('constructor refused the snapshot');
+    });
+
+    await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(
+      'constructor refused the snapshot'
+    );
+    const span = getBootReport().spans.find((s) => s.name === 'wasm-client-construct');
+    expect(span?.durationMs).not.toBeNull();
   });
 
   it('throws when body is not wasm magic', async () => {

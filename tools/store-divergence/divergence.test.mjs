@@ -43,7 +43,7 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
 }
 
 {
-  process.stdout.write('\nthe App Store: four causes, and they are not the same errand\n');
+  process.stdout.write('\nthe App Store: five causes, and they are not the same errand\n');
   eq('READY_FOR_SALE is live', asState('0.16.5', [V('0.16.5', 'READY_FOR_SALE')]), 'live');
   eq('PENDING_APPLE_RELEASE is live too', asState('0.16.5', [V('0.16.5', 'PENDING_APPLE_RELEASE')]), 'live');
 
@@ -57,7 +57,43 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   // what an occupied slot leaves behind now that the submission is allowed to be green.
   eq('PREPARE_FOR_SUBMISSION is not-submitted', asState('0.16.5', [V('0.16.5', 'PREPARE_FOR_SUBMISSION')]), 'not-submitted');
   eq('READY_FOR_REVIEW is not-submitted - attached to a submission nobody sent', asState('0.16.5', [V('0.16.5', 'READY_FOR_REVIEW')]), 'not-submitted');
-  eq('and a version that does not exist at all is not-submitted', asState('0.16.5', [V('0.16.4', 'READY_FOR_SALE')]), 'not-submitted');
+  eq(
+    'and a version that does not exist, with the slot free, is not-submitted',
+    asState('0.16.5', [V('0.16.4', 'READY_FOR_SALE')]),
+    'not-submitted'
+  );
+
+  // THE ARM THAT WAS WRONG FOR FOUR DAYS. Absent is not one cause: from 2026-09-16 every stable
+  // read `no version was ever created for it`, which accuses the pipeline, while the truth was that
+  // an earlier version held Apple's one slot and `submit.mjs` had correctly refused to touch it.
+  // The two want opposite errands - a re-run, and a decision in App Store Connect - so the report
+  // may not answer them with the same sentence.
+  const held = classifyAppStore({
+    wanted: '0.18.14',
+    versions: [V('0.18.13', 'WAITING_FOR_REVIEW'), V('0.18.12', 'READY_FOR_SALE')],
+  });
+  eq('absent because an earlier version is WITH Apple is slot-held, not not-submitted', held.state, 'slot-held');
+  eq(
+    'and it names the occupant and its state, or the reader has to go and look',
+    held.why.includes('0.18.13') && held.why.includes('WAITING_FOR_REVIEW'),
+    true
+  );
+  // A RE-RUN IS THE WRONG ERRAND HERE and saying so is the whole point of the new state.
+  eq('the errand it states is App Store Connect', held.why.includes('App Store Connect'), true);
+
+  // AN OCCUPANT THAT IS STILL EDITABLE IS THE OTHER CASE: the next iOS run renames it, so the
+  // errand really is a re-run and the state stays `not-submitted`.
+  const renameable = classifyAppStore({ wanted: '0.16.5', versions: [V('0.16.4', 'PREPARE_FOR_SUBMISSION')] });
+  eq('an editable occupant is still not-submitted', renameable.state, 'not-submitted');
+  eq('and the line says a re-run resolves it', renameable.why.includes('re-running'), true);
+
+  // TWO OCCUPANTS CONTRADICT APPLE'S OWN RULE. Nothing here can pick between them, and a re-run
+  // will not either, so it reads as a held slot rather than a deferral.
+  eq(
+    'several occupants at once is slot-held',
+    asState('0.16.5', [V('0.16.4', 'PREPARE_FOR_SUBMISSION'), V('0.16.3', 'IN_REVIEW')]),
+    'slot-held'
+  );
 
   // APPLE SAID NO. A different errand from "nobody asked": one needs a fix, the other a re-run.
   for (const st of ['REJECTED', 'DEVELOPER_REJECTED', 'METADATA_REJECTED', 'INVALID_BINARY']) {
@@ -115,6 +151,8 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   eq('a never-sent submission needs a human', both('not-submitted', 'live').ok, false);
   eq('and it is named, so the report has an errand', both('not-submitted', 'live').acting, ['App Store']);
   eq('a refusal needs a human', both('rejected', 'live').ok, false);
+  eq('so does a slot nobody here may free', both('slot-held', 'live').ok, false);
+  eq('slot-held is in the set that needs a human', NEEDS_A_HUMAN.has('slot-held'), true);
   eq('both halves can need one at once', both('rejected', 'not-submitted').acting, ['App Store', 'Google Play']);
 
   // NEVER SILENTLY GREEN. A credential that expires answers nothing, and an answerless report that

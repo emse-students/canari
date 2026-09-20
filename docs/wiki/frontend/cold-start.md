@@ -781,11 +781,26 @@ snapshot, rebuild the groups - and reports them as one number. **Nothing here sa
 it is, and no fix should be written until something does.** `storage-open` beside it is 2 ms, so
 reaching IndexedDB is not a candidate.
 
-**THE NEXT MEASUREMENT IS SMALL AND IT IS THE ONLY ONE WORTH TAKING**: two more `beginBootSpan`
-calls inside `loadStateWithKey`, splitting WASM instantiation from snapshot decryption from group
-reconstruction, plus one mark at the first line of application code so the 1358 ms region stops
-being a subtraction between two things measured for other reasons. Both are additive, both are
-cheap, and neither is a fix.
+**THE NEXT MEASUREMENT IS SMALL AND IT IS THE ONLY ONE WORTH TAKING**: split `loadStateWithKey`,
+plus one mark at the first line of application code so the 1358 ms region stops being a subtraction
+between two things measured for other reasons. Both are additive, both are cheap, and neither is a
+fix.
+
+**AND THE SPLIT IS TWO SPANS, NOT THREE - THE PARAGRAPH ABOVE FIRST SAID THREE AND THAT WAS WRONG**
+(corrected 2026-09-20, when the code was read rather than assumed). `loadAndInitWasm` is two lines:
+`loadMlsWasmModule()`, then `new WasmMlsClient(...)`. **Decryption and group rebuild happen inside
+that one constructor, in Rust**, so no TypeScript boundary separates them and a third span here
+would be an invented one. Splitting the constructor is a measurement `mls-core` owes.
+
+**BOTH INSTRUMENTS MERGED 2026-09-20 - AND MERGED IS NOT SHIPPED, WHICH DECIDES WHERE THE READING CAN BE TAKEN.** `#873` landed on `main` AFTER `43a7cea45`, the bump `v0.18.15` was cut from, so **the build production serves does NOT carry these spans**: a paste from it would show the old shape and read as a refutation. The next pre-release puts them on `dev.canari-emse.fr`, the next stable on production, and either is a valid place to read them. `wasm-module` and
+`wasm-client-construct` now bracket the two halves of `mls-load-state`, and `app-first-line` is
+marked in `hooks.client.ts` - the earliest client seam there is, the same reason the WASM prefetch
+sits there. **`wasm-module` IS A WAIT, NOT A DOWNLOAD**: the module promise is memoised and the
+prefetch starts it at that seam, so a near-zero value means the prefetch arrived in time and says
+nothing about what the binary cost. `installBootBenchDevTools` moved to the same seam, because it
+used to run at `login-start` and `window.__canariBootBench` therefore did not exist until the PIN
+screen - a boot that never reaches login being precisely the one worth reading. **The reading is
+what is owed now, and it is one paste again.**
 
 **ONE READING IS A SHAPE, NOT A BUDGET.** This is a single boot, on one machine, on the first load
 of a fresh build. The 64%/29% split is the finding; the 4677 ms is not a figure to quote as "the

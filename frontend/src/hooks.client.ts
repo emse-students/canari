@@ -8,6 +8,7 @@
  */
 
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { installBootBenchDevTools, markBoot } from '$lib/mls-client/bootBenchmark';
 import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
@@ -18,6 +19,24 @@ import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones.
 installConsoleIdTruncation();
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE BOOT BENCH OPENS HERE, NOT AT THE PIN
+// ════════════════════════════════════════════════════════════════════════════
+//
+// `app-first-line` is what SPLITS the browser's own prologue from the application's. Without it the
+// region between the document finishing and `login-start` is a subtraction between two numbers
+// measured for other reasons, and on 2026-09-18 that subtraction was **1358 ms with nothing inside
+// it** - 29% of a cold boot, invisible to every span because the bench used to open at login.
+// This file is the earliest client seam there is, which is the same reason the WASM prefetch below
+// sits here, so the mark bounds that region from the front for the price of one array push.
+//
+// `installBootBenchDevTools` moves here for a second reason of its own: it used to run at
+// `login-start`, so `window.__canariBootBench` did not exist until the PIN screen - and a boot that
+// never reaches login is precisely the one somebody wants to read. Recording was always
+// unconditional; only the way in was late.
+installBootBenchDevTools();
+markBoot('app-first-line');
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
 export function handleError({ error }: { error: unknown }): void {

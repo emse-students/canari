@@ -24,15 +24,27 @@ report is how a three-day silence becomes a permanent one.*
 
 ## What it will not conflate
 
-A store not carrying the version has four causes, and a human acts on each differently.
+A store not carrying the version has five causes, and a human acts on each differently.
 
 | verdict | meaning | the errand |
 | --- | --- | --- |
 | `live` | the store serves it | none |
 | `pending` | it is WITH the store - Apple reviews in days | **none**, and saying otherwise daily is how a report teaches its reader to skip it |
-| `not-submitted` | uploaded and never sent - the deferral | re-run the store job once the slot is free |
+| `not-submitted` | uploaded and never sent, and nothing is in the way | re-run the store job |
+| `slot-held` | uploaded and never sent **because another version holds Apple's one slot** and is with Apple | a DECISION in App Store Connect on the version named; **a re-run will not touch it** |
 | `rejected` | the store said NO | read what they said, and fix it |
 | `unknown` | the report could not look | fix the credential; **this is never a pass** |
+
+**`slot-held` was split out of `not-submitted` on 2026-09-20, after four days of naming the wrong
+cause.** Every stable from 0.18.7 read *"the App Store has no version X at all - the release
+uploaded a build to TestFlight and no version was ever created for it"*, which describes a release
+that never tried. The release had tried: `submit.mjs` returned `EXIT_SLOT_HELD` because 0.18.13 sat
+in `WAITING_FOR_REVIEW`, and the iOS job said exactly that in its own step summary. The report
+therefore accused the pipeline where the truth was a queue, and sent its reader to re-run a job that
+would defer again - *an errand that does not work, repeated every morning, is the one thing a daily
+report cannot survive.* Who holds the slot is not re-derived here: `chooseVersionSlot` in
+[`../app-store/submit.mjs`](../app-store/submit.mjs) is the one implementation, and this report asks
+it over the list it already has, so reader and writer cannot drift.
 
 `unknown` failing is deliberate. A credential that expires would otherwise turn the whole check into
 a green light, which is the failure mode a report exists to prevent.
@@ -41,6 +53,30 @@ The App Store's rejection states are a set of their own in `submit.mjs` (`VERSIO
 than a second list here: they also belong to `VERSION_EDITABLE`, which is correct for the question
 *that* asks - *may this release write into the slot?* - where a rejected version and an unsubmitted
 one are equally writable. One list, spread into both readers, so they cannot drift.
+
+## The two App Store verdicts are a SEQUENCE, not a choice
+
+`slot-held` and `not-submitted` are the same release seen before and after Apple moves, and reading
+them in that order is what makes the daily red actionable:
+
+1. a stable is released while an earlier version holds the slot and is with Apple - **`slot-held`**.
+   Nothing to do, and nothing anybody here CAN do. The line names the occupant and its state, so the
+   wait has a subject rather than being an alarm.
+2. Apple releases that occupant, or refuses it - the slot frees. The same stable now reads
+   **`not-submitted`**: no version exists for it and nothing is in the way any more.
+3. **That is the morning to re-run the `App Store / Build iOS IPA` job of the last stable.** It
+   creates the version, attaches the build already sitting in TestFlight and submits. A re-run is
+   safe here: `ios.yml` reads Apple's `ITMS-4238 / Redundant Binary Upload` as success precisely so
+   that it is.
+
+**Step 2 is why `slot-held` stays red.** Demoted to a `pending`-like pass it would be quiet exactly
+while a stable is failing to reach the App Store, and the transition that means *act now* would
+arrive with nothing to notice it against. A red light with no green edge is the other failure: a
+reader who cannot tell "wait" from "act" eventually does neither, which is how a wrong sentence
+survived four days here.
+
+*What a re-run CANNOT do is carry a fix* - the tag carries the code, so a re-run replays the old
+commit. It carries the submission, which is the only thing wanted at step 3.
 
 ## Running it
 
@@ -80,5 +116,6 @@ An exact match alone reports the second absent; a substring match alone matches 
 bun tools/store-divergence/divergence.test.mjs
 ```
 
-34 assertions over the classification, which is the half that can be wrong silently. The HTTP calls
+The classification is the half that can be wrong silently, so that is what is asserted. No count is
+quoted here: the one that was went stale the first time an arm was added. The HTTP calls
 are not mocked: a fake that matches its own expectations asserts nothing.
