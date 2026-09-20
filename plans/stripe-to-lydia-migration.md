@@ -151,6 +151,17 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   3. Un Business créé n'est pas un Business validé (voir la lacune "statut en direct" ci-dessous) :
      le titre restait entièrement vert, comme si l'affaire était close. Un badge "En attente"
      l'accompagne désormais dès que `lydiaAccountId` existe.
+- **2026-09-20, en prod, association "les rootz" : un quatrième trou, plus profond.** Le test manuel
+  ci-dessus (curl) recevait bien `api_token`/`dashboard_url` ; le VRAI flux applicatif, lui, a reçu
+  deux fois de suite un 200 de 2 octets - `{}`, ni `error` ni les champs attendus (confirmé par les
+  logs nginx ; **rien côté `core-service` ne loggait quoi que ce soit sur ce chemin**, donc la cause
+  exacte côté Lydia reste à lire au prochain essai). `postForm` ne reconnaissait que le champ `error`
+  comme signal d'échec, donc ce `{}` traversait tel quel : `data.api_token`/`data.dashboard_url`
+  undefined, `JSON.stringify` les fait disparaître, et le contrôleur répondait 200 vide - un
+  "succès" que rien ne distinguait d'un vrai. Deux correctifs : `postForm` logge désormais CHAQUE
+  réponse (redactée sur `api_token_id`, jamais loggé en clair), et `createOnboarding` lève une
+  erreur explicite quand `api_token`/`dashboard_url` manquent tous les deux sans `error` - le
+  prochain essai dira enfin CE QUE Lydia a répondu.
 - **2026-08-19 : le callback `request/do` est maintenant reçu, sur l'hypothèse du point (2).**
   `createCheckoutSession` enregistre désormais `confirm_url`/`cancel_url`/`expire_url` par requête, et
   `POST /api/payments/lydia-request-callback` (`webhook.controller.ts`) vérifie `sig` via

@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - creer un compte Lydia Pro repondait 200 vide, sans jamais le dire au treso
+
+En prod, deux essais sur la meme association ont recu `{}` (ni erreur, ni les champs attendus) -
+et rien cote `core-service` ne loggait ce chemin, donc la cause exacte cote Lydia reste a lire au
+prochain essai. `postForm` logge maintenant chaque reponse (`api_token_id` redacte), et
+`createOnboarding` refuse un `{}` silencieux au lieu de le laisser passer pour un succes.
+[migration plan](plans/stripe-to-lydia-migration.md).
+
 ### Added - l'apercu d'un lien vers une publication montre sa propre photo, sous le logo
 
 Le petit logo restait celui de l'association ; la photo de la publication elle-meme n'apparaissait
