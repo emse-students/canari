@@ -1243,6 +1243,7 @@
   "asso_calendar_event_kind_break_hint": "Shown as a background band on the calendar (no-course day, holidays, public holiday). Takes no slot and does not block other events.",
   "asso_calendar_event_start_label": "Start",
   "asso_calendar_event_end_label": "End (optional)",
+  "calendar_event_poster_alt": "Event poster",
   "asso_calendar_event_description_label": "Description (optional)",
   "asso_calendar_event_poster_label": "Poster / image (optional)",
   "asso_calendar_poster_alt": "Poster",

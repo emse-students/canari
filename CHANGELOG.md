@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'affiche se voit en entier dans l'agenda et dans un partage, et le logo n'a plus de cadre
+
+Le traitement du fil (image entiere, reste peint avec l'image floutee) n'existait que dans
+`PostMedia` ; il devient `LetterboxedImage` et sert aussi au detail d'un evenement et a l'apercu
+d'une publication partagee. Le liseret autour du logo etait le degrade de fond de la tuile, vu par
+le pixel que la bordure laisse ouvert - il n'appartient qu'au cas sans image.
+[letterbox](docs/wiki/frontend/design-reference.md#29-the-letterbox-exists-once-and-three-surfaces-use-it),
+[le liseret](docs/wiki/frontend/design-reference.md#30-the-black-line-around-a-logo-was-the-tiles-own-backdrop-one-pixel-of-it).
+
 ### Fixed - le scroll partait sur le thread principal partout, pour un geste que dix sections ne peuvent pas faire
 
 Premier retour iPhone du projet : des bandes non peintes pendant le scroll du fil. La coquille
