@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.16] - 2026-09-20
+
 ### Fixed - creer un compte Lydia Pro repondait 200 vide, sans jamais le dire au treso
 
 En prod, deux essais sur la meme association ont recu `{}` (ni erreur, ni les champs attendus) -
