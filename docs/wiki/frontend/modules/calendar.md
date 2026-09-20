@@ -393,3 +393,56 @@ forward lookup, now returning the full `AssociationCalendarFeedEvent` shape the 
 association identity included - rather than the bare `serializeCalendarEvent` it used to), and
 calls `agenda.openDetail(event)` directly. That call needs no month loaded: `openDetail` only ever
 sets local state, so it is independent of `agenda.reload()`'s own window.
+
+## HOW FAR BACK THE AGENDA GOES: THE READER'S OWN PROMO (2026-09-20)
+
+*"ce serait bien de mettre une limite pour remonter sur l'agenda en regle generale, comme on a une
+limite pour les posts (quelqu'un de la promo X ne peut pas voir avant aout X je crois)"* (user).
+They remembered it exactly: the posts feed has cut its history at `${promo}-08-01` for a long time,
+and the agenda never did - so a first-year could scroll the grid back into a school they had not
+joined.
+
+**THE RULE IS NOW ONE FUNCTION, AND THE FEED IS ITS SECOND CALLER**:
+[`promo-visibility.ts`](../../../../apps/social-service/src/common/promo-visibility.ts) in
+social-service, next to `user-blocks.ts` and for the same reason. It answers one question - what date
+does this reader's history start at - and returns `null` for the three cases that have no answer: a
+global admin, an anonymous reader, and a viewer whose row carries no promo.
+
+**IT APPLIES TO BOTH CALENDAR READS, AND THAT IS NOT OPTIONAL.** `GET /calendar/feed` (the aggregated
+agenda) and `GET /associations/:id/events` (an association's own tab) return the same rows through
+two query builders. A limit only one of them honours is not a limit: the other route lists the same
+events, takes the same `from`/`to`, and is already called by the same page. Both take a
+`CalendarViewer` - `{ userId?, isGlobalAdmin? }` - built by the controller from the `x-user-id` and
+`x-global-admin` headers nginx forwards.
+
+**THE COLUMN IS `startsAt`, NOT `createdAt`.** What a reader means by "how far back does the agenda
+go" is the date of the event; the day somebody typed it in answers a different question. This is the
+one place the agenda's rule differs in shape from the posts feed's, which cuts on
+`COALESCE(scheduledAt, createdAt)` because a post has no other date.
+
+### It is a RELEVANCE limit, and calling it anything else would be a lie
+
+The aggregated agenda is a **public** route, and its `.ics` twin is subscribed to by calendar apps
+that send no identity and never will - so an event before the cutoff was never secret, and the `.ics`
+feed carries no cutoff at all. That is not a hole in a security control; it is the absence of a
+security control that was never claimed. **Anything that must be SECRET is refused by a guard.**
+Writing this down is the point: a reader who believed the cutoff was confidentiality would find the
+`.ics` route and file a P1 against a mechanism working as designed.
+
+### The arrows are NOT clamped, and that is a decision
+
+`createAgendaMonth` is the one implementation of "which month am I looking at", so a clamp would be
+cheap to write - and it would put the rule in a second place, on a client that would then have to
+fetch the viewer's promo and agree with the server about August. The posts feed does not clamp
+anything either: it simply ends. Paging back past the cutoff shows empty months, which is what the
+end of a history looks like. **What would make a clamp free is the feed answering with an envelope
+that names its own floor** - one number, derived server-side, with nothing to drift. Nobody has asked
+for it.
+
+### What no test covers
+
+Every test here is a unit test over a query-builder stub: they prove the clause is built, with the
+right column and the right date, and that it is absent for an admin and for an anonymous reader.
+**Nothing has run this against a database**, so the `::timestamptz` cast is asserted as text and not
+as a plan. The population it will meet is also unmeasured - how many events on prod start before the
+cutoff of a current promo is one `GROUP BY` nobody has run.
