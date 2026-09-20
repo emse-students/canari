@@ -165,6 +165,25 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     ).rejects.toThrow(/api_token\/dashboard_url/);
   });
 
+  it('surfaces the {status, code, message} error shape, distinct from the {error, message} one', async () => {
+    // The actual cause of the incident above, once logging existed to see it: a REJECTED
+    // business/create (unrecognized provider_token) answers in a completely different shape from
+    // every other Lydia call this class makes - no `error` key at all.
+    mockedAxios.post.mockResolvedValue({
+      data: { status: 'error', code: '104', message: 'Provider inconnu' },
+    });
+
+    const provider = makeProvider();
+    await expect(
+      provider.createOnboarding({
+        associationId: 'assoc-1',
+        refreshUrl: 'r',
+        returnUrl: 'u',
+        legalProfile,
+      })
+    ).rejects.toThrow(/Provider inconnu/);
+  });
+
   it('throws when the legal profile is missing', async () => {
     const provider = makeProvider();
     await expect(

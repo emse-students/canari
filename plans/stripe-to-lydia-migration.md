@@ -162,6 +162,15 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   réponse (redactée sur `api_token_id`, jamais loggé en clair), et `createOnboarding` lève une
   erreur explicite quand `api_token`/`dashboard_url` manquent tous les deux sans `error` - le
   prochain essai dira enfin CE QUE Lydia a répondu.
+- **2026-09-20, le prochain essai a parlé : `{"status":"error","code":"104","message":"Provider
+  inconnu"}`.** Cause réelle enfin visible - le `provider_token` configuré n'est pas reconnu par
+  Lydia en homologation, une question de compte/identifiants côté Lydia, pas de code. Mais cette
+  réponse a aussi révélé un DEUXIÈME bug : elle n'a NI `error` NI les champs attendus, dans une
+  forme `{status, code, message}` que `postForm` ne reconnaissait pas du tout (seule la forme
+  `{error: "<code>", message}` l'était) - elle serait tombée dans le message générique du point
+  précédent plutôt que d'afficher "Provider inconnu" au trésorier. `postForm` reconnaît maintenant
+  les deux formes. **Reste dû à l'USER** : vérifier/régénérer `LYDIA_PROVIDER_TOKEN` côté Lydia -
+  aucun changement de code ne peut résoudre un token que Lydia elle-même ne reconnaît pas.
 - **2026-08-19 : le callback `request/do` est maintenant reçu, sur l'hypothèse du point (2).**
   `createCheckoutSession` enregistre désormais `confirm_url`/`cancel_url`/`expire_url` par requête, et
   `POST /api/payments/lydia-request-callback` (`webhook.controller.ts`) vérifie `sig` via

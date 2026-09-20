@@ -91,19 +91,33 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   private async postForm<T>(path: string, fields: Record<string, string>): Promise<T> {
     const body = new URLSearchParams(fields);
-    const res = await axios.post<T & { error?: string; message?: string }>(
-      `${this.baseUrl}${path}.json`,
-      body.toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
+    const res = await axios.post<
+      T & { error?: string; status?: string; code?: string; message?: string }
+    >(`${this.baseUrl}${path}.json`, body.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
     // Every call through here was previously unlogged, so a response that was neither the
-    // expected shape NOR a recognized `error` field (see `createOnboarding` below) left no trace
-    // anywhere - the caller silently got back whatever fields WERE there and nothing else. Logging
-    // the body (redacted) is what makes that case diagnosable instead of just absent.
+    // expected shape NOR a recognized error left no trace anywhere - the caller silently got back
+    // whatever fields WERE there and nothing else. Logging the body (redacted) is what makes that
+    // case diagnosable instead of just absent.
     const loggable = res.data && typeof res.data === 'object' ? redactForLog(res.data) : res.data;
     this.logger.log(`${path} -> ${JSON.stringify(loggable)}`);
-    if (res.data && 'error' in res.data && res.data.error && res.data.error !== '0') {
-      throw new BadRequestException(`Lydia error ${res.data.error}: ${res.data.message ?? ''}`);
+    // TWO error shapes, confirmed in homologation, and a single check missed the second one
+    // entirely: `request/do`/`request/state`/a successful `business/create` all use
+    // `{error: "0" | "<code>", message}`, but a REJECTED `business/create` (observed: an unknown
+    // `provider_token`, code 104, "Provider inconnu") instead answers `{status: "error", code,
+    // message}` - no `error` key at all. The first shape used to be the only one recognized, so
+    // this fell through as neither a caught error NOR the expected fields, and the caller below
+    // (`createOnboarding`) had nothing but a generic "unexpected shape" to show for a message
+    // Lydia had already spelled out.
+    const numericError =
+      res.data && 'error' in res.data && res.data.error && res.data.error !== '0'
+        ? res.data.error
+        : null;
+    const statusError = res.data?.status === 'error' ? (res.data.code ?? 'unknown') : null;
+    const errorCode = numericError ?? statusError;
+    if (errorCode) {
+      throw new BadRequestException(`Lydia error ${errorCode}: ${res.data.message ?? ''}`);
     }
     return res.data;
   }

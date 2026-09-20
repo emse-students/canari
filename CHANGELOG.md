@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une deuxieme forme d'erreur Lydia (`{status, code, message}`) n'etait pas reconnue non plus
+
+Le correctif precedent a fait parler les logs : Lydia refuse le `provider_token` configure
+("Provider inconnu", code 104 - un identifiant a verifier cote Lydia, pas un bug). Mais cette
+reponse n'a ni `error` ni les champs attendus, dans une forme que `postForm` ne reconnaissait pas
+du tout - elle serait tombee dans un message generique plutot que d'afficher le vrai motif au
+tresorier. Les deux formes sont reconnues desormais.
+[migration plan](plans/stripe-to-lydia-migration.md).
+
 ## [0.18.16] - 2026-09-20
 
 ### Fixed - creer un compte Lydia Pro repondait 200 vide, sans jamais le dire au treso
