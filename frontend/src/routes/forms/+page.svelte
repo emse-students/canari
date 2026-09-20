@@ -24,15 +24,14 @@
     Trash2,
     ChevronUp,
     Users,
-    X,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { submitterName } from '$lib/forms/submissionTable';
+  import FormSubmissionsTable from '$lib/components/forms/FormSubmissionsTable.svelte';
 
   let copiedId = $state<string | null>(null);
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
@@ -113,8 +112,7 @@
   }
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
-    const name =
-      [sub.firstName, sub.lastName].filter(Boolean).join(' ') || getUserDisplayNameSync(sub.userId);
+    const name = submitterName(sub);
     if (
       !(await showConfirm(m.form_list_delete_submission_confirm({ name }), {
         danger: true,
@@ -135,36 +133,13 @@
       deletingSubmissionId = null;
     }
   }
-
-  /** Formats an ISO date string as "DD/MM/YYYY HH:MM". */
-  function formatDate(iso: string): string {
-    const d = new Date(iso);
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  }
-
-  /** Returns a human-readable label for a payment status. */
-  function statusLabel(s: string): string {
-    if (s === 'free') return m.form_status_free();
-    if (s === 'pending') return m.form_status_pending();
-    if (s === 'pending_cash') return m.form_status_pending_cash();
-    if (s === 'paid') return m.form_status_paid();
-    if (s === 'cancelled') return m.form_status_cancelled();
-    if (s === 'expired') return m.form_status_expired();
-    return s;
-  }
-
-  /** Formats cents as a currency string, or "-" for zero. */
-  function formatAmount(cents: number): string {
-    if (!cents) return '-';
-    return (cents / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      style: 'currency',
-      currency: 'eur',
-    });
-  }
 </script>
 
-<PageContainer>
+<!-- `tool` and not the default `reading`: this is the responses TABLE, which `pageWidth.ts` names
+     as the shape that width exists for, and it is the width its own two editor pages already use.
+     At 680px the six controls and the table were sharing a column written to bound a line of
+     prose. -->
+<PageContainer width="tool">
   <PageHeader
     title={m.form_list_title()}
     subtitle={forms.length === 1
@@ -330,67 +305,12 @@
                 </p>
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
-                <div class="overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead>
-                      <tr
-                        class="text-text-muted border-cn-border border-b text-left text-xs font-bold tracking-wide uppercase"
-                      >
-                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
-                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
-                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_status()}</th>
-                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_amount()}</th>
-                        <th class="pb-2 whitespace-nowrap"></th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-cn-border/50 divide-y">
-                      {#each subs as sub (sub.id)}
-                        <tr class="text-text-main">
-                          <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
-                            >{formatDate(sub.createdAt)}</td
-                          >
-                          <td class="py-2 pr-4 whitespace-nowrap">
-                            {#if sub.firstName || sub.lastName}
-                              {[sub.firstName, sub.lastName].filter(Boolean).join(' ')}
-                            {:else}
-                              <span class="text-text-muted/60 font-mono text-xs"
-                                >{getUserDisplayNameSync(sub.userId)}</span
-                              >
-                            {/if}
-                          </td>
-                          <td class="py-2 pr-4">
-                            <span
-                              class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
- {sub.paymentStatus === 'paid'
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                                : sub.paymentStatus === 'free'
-                                  ? 'bg-cn-border/40 text-text-muted'
-                                  : sub.paymentStatus === 'pending' ||
-                                      sub.paymentStatus === 'pending_cash'
-                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                                    : 'bg-red-err/20 text-red-err'}"
-                            >
-                              {statusLabel(sub.paymentStatus)}
-                            </span>
-                          </td>
-                          <td class="py-2 pr-4 text-xs font-medium"
-                            >{formatAmount(sub.totalPaid)}</td
-                          >
-                          <td class="py-2">
-                            <button
-                              onclick={() => void handleDeleteSubmission(form.id, sub)}
-                              disabled={deletingSubmissionId === sub.id}
-                              class="ui-icon-button text-text-muted hover:bg-red-err/10 rounded-lg transition-colors hover:text-red-600 disabled:opacity-50"
-                              title={m.form_list_delete_response_title()}
-                            >
-                              <X size={13} />
-                            </button>
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
+                <FormSubmissionsTable
+                  items={form.items ?? []}
+                  submissions={subs}
+                  deletingId={deletingSubmissionId}
+                  onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}
+                />
               {/if}
             </div>
           {/if}

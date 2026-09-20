@@ -16,6 +16,7 @@ import { FormReminder } from './entities/form-reminder.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
+import { answerText } from './answer-text';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
@@ -1207,7 +1208,7 @@ export class FormsService {
       };
 
       form.items.forEach((item: any) => {
-        row[item.id] = this.formatAnswer(sub.answers[item.id], item);
+        row[item.id] = answerText(sub.answers[item.id], item);
       });
 
       sheet.addRow(row);
@@ -1292,23 +1293,5 @@ export class FormsService {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
     await this.formRepo.update(formId, { imageMediaId: null, imageUrl: null });
     return this.formRepo.findOne({ where: { id: formId } });
-  }
-
-  /** Converts a raw answer value to a human-readable string for the Excel export, resolving option IDs to their labels. */
-  private formatAnswer(ans: any, item: any): string {
-    if (!ans) return '';
-    if (Array.isArray(ans)) {
-      if (item.options?.length) {
-        return ans.map((id) => item.options.find((o: any) => o.id === id)?.label || id).join(', ');
-      }
-      return ans.join(', ');
-    }
-    if (typeof ans === 'object') {
-      return JSON.stringify(ans);
-    }
-    if (item.options?.length) {
-      return item.options.find((o: any) => o.id === ans)?.label || ans;
-    }
-    return String(ans);
   }
 }

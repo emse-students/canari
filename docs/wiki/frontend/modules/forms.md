@@ -392,6 +392,39 @@ now icon-only (`.ui-icon-button`, `title=` for the label), matching the delete b
 was. `EditFormsTab`'s three-action row kept its text labels (it never ran out of room) but gained the
 same `min-w-0`/`truncate` floor on its name, for the same reason (2026-09-20).
 
+### The responses accordion shows the ANSWERS, and the form decides its own layout (2026-09-20)
+
+The accordion printed four fixed columns - date, name, status, amount - and not one answer, so the
+thing a manager opens it for was the thing it did not show. **Nothing was missing from the browser**:
+`getSubmissions` has always returned `answers`, and `getForms` returns the whole form, questions
+included. The page simply never read them.
+
+A column per question is not the fix either. A form has as many questions as it likes, and three of
+the eight types - `long_text`, `multiple_choice`, the two matrices - have no bounded length, so one
+paragraph would set the height of every row. **So the layout is derived from the FORM**
+(`forms/submissionTable.ts`), not from the viewport and not from a setting:
+
+| | What decides it |
+|---|---|
+| Becomes a column | `short_text`, `single_choice`, `dropdown`, `linear_scale` - the bounded types - capped at `MAX_ANSWER_COLUMNS` (3, measured against the 1024px `tool` width) |
+| Never becomes a column | anything conditional (`dependsOn`, `showIf`), whatever its type: it is asked of a subset by construction, so its column is blanks with a few values in it |
+| Reads in the row's panel | everything, in the form's own question order |
+
+A form of three short questions therefore lays itself flat; a form of twenty paragraphs keeps its
+four columns and puts everything in the panel. Neither needed a decision from anybody.
+
+**The panel lists what the person ANSWERED, not what the form asked.** It is driven by `form.items`
+(so a value whose question has since been deleted has no label and is not shown - the export
+iterates the items for the same reason) and drops the blanks: a list of what somebody did not say is
+longer than the list of what they did.
+
+**The page moved from `reading` to `tool`** (680px -> 1024px). It is the responses TABLE, which
+`pageWidth.ts` names as the shape that width exists for, and it is what its own two editor pages
+already used. Below `sm` the rows are cards instead: the table overflowed a phone at five columns
+before any answer was added to it, and a horizontal scrollbar is not a reading of anything. The two
+layouts share every piece through snippets, so the status pill, the panel and the two controls have
+one definition each.
+
 ### Configurations the API refuses
 
 `FormsService.assertCotisationConfigValid` runs on create AND update, and rejects every setting that
@@ -473,6 +506,17 @@ condition with no criterion), `forms/visibility.spec.ts` (memoisation, cycles, t
 ANDed with `showIf`) and `frontend/src/lib/pricing/priceMatrix.test.ts` (the cross product and the
 payload). What the boutique does with the same grid is covered by `products.service.spec.ts` - see
 [cotisations](../../cotisations.md#a-product-prices-on-the-same-grid-a-form-does).
+
+**The reading of a stored answer is a DECLARED DUPLICATE**, and the two suites over it are why.
+`frontend/src/lib/forms/answerText.ts` and `apps/social-service/src/forms/answer-text.ts` are the
+same file byte for byte, declared in `.github/scripts/lib/declared-duplicates.mjs` so a gate refuses
+them drifting; `answerText.test.ts` and `answer-text.spec.ts` assert the same cases on each side.
+They answer ONE question - what did this person answer - asked by the responses table and by the
+XLSX an hour later, and those two must not be able to disagree. The copy exists because there is no
+TS library between `frontend/` and `apps/` ([libs](../../libs.md)). `submissionTable.test.ts` covers
+which questions become columns, and `FormSubmissionsTable.answers.svelte.test.ts` mounts the
+component for the part neither file can prove: that a column arrives as a header AND a cell, that the
+panel is shut until opened, and that its `colspan` still spans the whole header.
 
 `frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
 arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws
