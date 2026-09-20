@@ -20,6 +20,13 @@ ne vivent plus que la ou le geste existe. Une deuxieme cause supposee, `touch-ac
 REFUTEE au doigt sur le Mi 9T et n'est pas a rouvrir.
 [design-reference](docs/wiki/frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform).
 
+### Changed - le prefixe `+Nms` disparait des logs : le demarrage a froid est mesure, et sous la seconde
+
+Trois lectures en production donnent 968 ms (rafraichissement), 998 ms (Ctrl-F5) et 1182 ms (cache
+desactive) jusqu'a `MLS ready`, sans qu'une seule ligne du chemin de chargement ait ete touchee. Le
+64% attribue a `mls-load-state` est refute : c'est 8%. L'offset etait un instrument avec une date
+d'expiration (utilisateur, 2026-09-18) et `app-first-line` mesure desormais ce qu'il servait a lire.
+[cold-start](docs/wiki/frontend/cold-start.md).
 
 ### Added - la liste des formulaires montre enfin les reponses, et prend la largeur d'un tableau
 

@@ -769,7 +769,7 @@ groups are built with `max_past_epochs(2)` (`mls-core/src/group.rs`), so an appl
 undecrypted while the group advances three epochs is **permanently undecryptable** -
 `messaging.rs` has the branch that says so, and the loss it describes was measured on prod
 2026-08-11. A cap would therefore trade a bounded amount of startup work for an unbounded risk of
-losing somebody's message, which is the defect class of queue item 15, deliberately re-created.
+losing somebody's message, which is the defect class of queue item 14, deliberately re-created.
 
 What was actually costing the session was never the length of the walk:
 

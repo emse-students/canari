@@ -657,26 +657,23 @@ already records it unconditionally; what is owed is one paste of
 TTFB, parse and module evaluation the way the 2026-09-16 table does - and that table's own verdict
 was that the ROUND TRIP dominates, not the bundle.
 
-### The log prefix is an instrument, and it is switched off when this page closes (user, 2026-09-18)
+### The log prefix was an instrument, and it was switched off on 2026-09-20 (user, 2026-09-18)
 
 Reading `[17:37:41.866 +428270ms]` seven minutes into a session, the user asked that **this
-precision be disabled once the cold-start work is finished**. `logPrefix()` in
-`frontend/src/lib/utils/logTruncate.ts` argues the opposite today - that an offset hours into a
-session is still a correct answer - and that argument was written when the offset was the only thing
-placing the lines that carry no clock.
+precision be disabled once the cold-start work is finished**. It was kept past that request for one
+stated reason - the 696 ms above was measured WITH it - and the condition it was kept under was
+written down at the same time: *the cold start measured under 1 s, or the target formally abandoned*.
 
-**It is not removed yet, because the 696 ms above is measured with it.** The two halves are not the
-same fact and they do not expire together:
+**THE CONDITION FIRED.** The 2026-09-20 readings put an ordinary boot at 968 ms, and the offset's
+own subject - the distance between the navigation and the app's first word - is now `app-first-line`,
+one mark reporting 331-485 ms directly instead of a subtraction the reader performs on every line.
+**A second instrument for a question the first one answers is noise on every line the application
+ever prints**, which is the objection the user raised in the first place.
 
-- the **`+Nms` offset** exists to measure the distance between the navigation and the app's first
-  word. That distance is this page's entire remaining subject, so the offset goes when this page
-  closes, and not before.
-- the **millisecond wall clock** is what lines a console export up with a network waterfall, a
-  server log or a second device's export. It is not cold-start machinery and nothing here asks for
-  it to go; **removing it would need the user to say so.**
-
-**Closes on:** the cold start measured under 1 s, or the target formally abandoned. The change is
-then one line in `logPrefix()` plus its assertion in `logTruncate.test.ts`.
+`logPrefix()` is one line shorter and `logTruncate.test.ts` now anchors on `[HH:MM:SS.mmm]` with
+nothing after it, so the offset cannot come back unnoticed. **The millisecond wall clock stays**: it
+is what lines a console export up with a network waterfall, a server log or a second device's
+export, it is not cold-start machinery, and removing it would need the user to say so.
 
 ## THE OBVIOUS SUSPECT IS REFUTED: 163 MODULE REQUESTS COST 178 ms, NOT TWO SECONDS (OXYGEN, 2026-09-18)
 
@@ -738,6 +735,9 @@ this page.** The prologue is 249 ms and this paragraph's suspicion of the 696 wa
 wrong reason: the time is real, it is simply not the browser's.
 
 ## THE PASTE ARRIVED: THE PROLOGUE IS 249 ms, AND 64% OF THE BOOT IS ONE SPAN NOBODY HAD LOOKED AT (2026-09-18)
+
+> **READ THE 2026-09-20 SECTION BELOW BEFORE QUOTING ANYTHING HERE.** The 64% is a property of
+> THIS boot - a post-deploy first load - and not of an ordinary one, where the same span is 8%.
 
 `window.__canariBootBench.get()` from the user's own Firefox, production, navigation start
 **19:42:55.895Z**. **READ THE CLOCK BEFORE THE NUMBERS: that is 16 minutes after `v0.18.13` deployed
@@ -805,3 +805,71 @@ what is owed now, and it is one paste again.**
 **ONE READING IS A SHAPE, NOT A BUDGET.** This is a single boot, on one machine, on the first load
 of a fresh build. The 64%/29% split is the finding; the 4677 ms is not a figure to quote as "the
 cold start" anywhere, and the 1 s target is not measured against it.
+
+## THE SPLIT ANSWERED ON THE DAY IT SHIPPED: AN ORDINARY BOOT IS 968 ms AND `mls-load-state` IS 8% OF IT (2026-09-20)
+
+Three pastes from the same Firefox and the same production, on `v0.18.16`. **That build carries the
+two instruments and it was verified in the bytes the browser actually receives**, not inferred from
+a merge: `/_app/immutable/entry/app.p6JlViPb.js` contains `W(),A(),k(`app-first-line`)` - the
+console shim, the dev-tools install and the mark, in the order `hooks.client.ts` writes them.
+
+| region | refresh | Ctrl-F5 | cache disabled | share (refresh) |
+| --- | ---: | ---: | ---: | ---: |
+| navigation -> `app-first-line` | **331** | **413** | **485** | 34% |
+| `app-first-line` -> `login-start` | **355** | 181 | **358** | 37% |
+| `login-start` -> `gateway-handshake-started` | 83 | 141 | 160 | 9% |
+| `wasm-module` (the WAIT on the prefetched module) | **0** | **0** | **0** | 0% |
+| **`mls-load-state`** (entirely `wasm-client-construct`) | **74** | **71** | **80** | **8%** |
+| `revocation-gate` (`asked: true`) | 123 | 191 | 99 | 13% |
+| **navigation -> `MLS ready`** | **968** | **998** | **1182** | |
+
+**THE 1 s TARGET IS MET FOR AN ORDINARY BOOT** (user: *"si on peut descendre en dessous de 1s tout
+compris ce serait super"*), and **NOT** for one that fetches every asset over the wire, which is
+1182 ms. Nothing was done to the load path to get either number - the standing rule was that no
+change could be written before this reading, and none was. What changed is what is known.
+
+**THE 64% IS REFUTED AS A PROPERTY OF THE APPLICATION.** `mls-load-state` was 2999 ms on 2026-09-18
+and is **74, 71 and 80 ms** across three boots - a nine-millisecond spread on the same machine, the
+same `recovered: false` nominal path, two days later. A forty-fold difference nobody fixed is not a
+regression; it is a different boot, and the 2026-09-18 one was the rare one.
+
+**AND THE COLD-DOWNLOAD HALF OF THE EXPLANATION IS REFUTED TOO, BY THE THIRD READING.** The leading
+account of the 2999 ms was that the WASM binary was in no cache and the prefetch lost its race, the
+wait being reported inside `mls-load-state` when that was still one span. **With the browser cache
+disabled, `wasm-module` is still 0 ms** - the module promise starts at `app-first-line` and is
+awaited 518 ms later, and that head start is enough even with every asset forced back over the
+network. So the browser's cache cannot produce the 2999 ms.
+
+**WHAT SURVIVES OF IT IS ONE FORM, AND NO BROWSER CAN MEASURE IT.** Firefox's "Disable cache" empties
+the browser's, not Cloudflare's. The 2026-09-18 reading was taken 16 minutes after `v0.18.13`
+deployed, when every asset hash had just changed and the EDGE was cold too - an origin fetch from
+Paris behind the first request for a new hash. **That is now the only version of the hypothesis left
+standing, it has a mechanism and no measurement, and it cannot be taken from a workstation** - it
+wants a synthetic first request against a freshly deployed hash. It is not worth building; what it
+would establish is that a post-deploy first load is slow, which the 4677 ms already said.
+
+**THE CONCLUSION DOES NOT DEPEND ON WHETHER THE THIRD READING'S CACHE WAS ALREADY OFF.** The user
+asked (*"c'etait peut-etre deja desactive ?"*). The prologue answers it - 331 warm, 413 on Ctrl-F5,
+485 with the box ticked, and `ttfb` 52 / 32 / 17 - so the three readings straddle the question rather
+than settling it. It does not matter: **`wasm-module` is 0 on all three**, including a Ctrl-F5 that
+unambiguously bypasses, so no reading in the set is compatible with the prefetch losing its race.
+
+**WHAT IS EXPENSIVE NOW, IN ORDER, AND NONE OF IT IS MLS.**
+
+1. **The prologue, 331-485 ms (34-41%)**: everything before the first line of application code.
+   `ttfb` is 17-52 ms and the document body is 0, so this is the bundle - fetching, parsing and
+   running it. **It is the largest single cost of a boot, it is the one that grows when the network
+   is made to work (331 -> 413 -> 485), and it is the one this file has now chased twice under two
+   wrong names.**
+2. **`app-first-line` -> `login-start`, 181-358 ms**: still one subtraction with no mark inside it.
+   The mark moved the boundary; it did not fill the region.
+3. **`revocation-gate`, 99-191 ms**, `asked: true` - a round trip MLS-ready waits on. It is the
+   largest *instrumented* span in the boot, and it spans 92 ms across three readings minutes apart
+   while `mls-load-state` spans 9 ms. That is the difference between a network call and a
+   computation, and it is the reason neither is worth optimising from three samples.
+
+**THREE READINGS ARE NOT A BUDGET.** Same machine, same browser, same account, same account's
+snapshot, within minutes. They establish the SHAPE of a boot, that the target is reachable, and that
+the MLS cost is small and stable. They establish no distribution, nothing about a phone, and nothing
+about a first-ever load on a device with no snapshot to decrypt - which is the boot `recovered:
+false` has never been observed against.
