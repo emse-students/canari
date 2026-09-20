@@ -257,9 +257,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's
     width, FIVE of the ELEVEN 2026-09-18 REPORTS, and TWO CHANGES SHIPPED 2026-09-20 ON GATES AND
     TESTS AND NEVER ONCE RENDERED - the phone agenda's rolling window, the forms responses table** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it), [forms](docs/wiki/frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)).
-11. **COLD START - 64% OF A BOOT IS `mls-load-state`, 29% A REGION WITH NO MARK, BOTH INSTRUMENTED
-    2026-09-20 BUT MERGED AFTER v0.18.15 SO PROD CARRIES NEITHER AND NOTHING IS READ.** Under 1 s
-    (user); **no load-path change before that reading**: [cold-start](docs/wiki/frontend/cold-start.md), [backlog](docs/wiki/backlog.md).
+11. **COLD START - THE TARGET IS MET AND THE 64% IS REFUTED: an ordinary production boot is 968 ms
+    and `mls-load-state` is 8% of it** (three readings, 2026-09-20); the `+Nms` log offset went with
+    it. Nothing open, and what NO reading covers is a phone: [cold-start](docs/wiki/frontend/cold-start.md), [backlog](docs/wiki/backlog.md).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

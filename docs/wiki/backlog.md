@@ -890,49 +890,11 @@ honest conclusion is that no DOM event can discriminate, and the lines should be
 they are read rather than suppressed.
 
 ---
-### P2 - 64% OF A COLD BOOT IS ONE MLS SPAN AND 29% IS A REGION WITH NO MARK IN IT; THE PROLOGUE IS 249 ms
+### P3 - ONE MAINTENANCE PASS IS ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED
 
-**THE TARGET IS UNDER ONE SECOND, ALL IN** (user). Every reading taken so far, every instrument, and
-every hypothesis refuted on the way is on [cold-start](frontend/cold-start.md), the only copy - read
-it before measuring anything, because three hypotheses died there already.
-
-**THE PREDICTION IS ANSWERED AND IT WAS WRONG IN BOTH DIRECTIONS** (`v0.18.12`, production, the
-user's Firefox, `/chat`, 2026-09-18). `1308 - 182 - 162 = 964` predicted the whole boot; the measured
-figure is **1092 ms** to `[WS] Connected to Chat Gateway`, so **no line may still quote a cold start
-under a second**. But the two changes did more than promised where they act: the span from the app's
-first word to `MLS ready` fell from **580 ms to 319 ms** against the same browser's 2026-09-17
-reading. The full table is on [cold-start](frontend/cold-start.md).
-
-**THE BUDGET WAS READ AS THE PROLOGUE AND THAT IS NOW REFUTED - see the paragraph after next.** What follows is the reading that produced the suspicion, and it stands; only the attribution to the browser was wrong. 696 ms of the
-1015 ms to `MLS ready` elapse before the application says its first word - **69%** - and every span
-in every table on that page lives in the 319 ms after it, because `bootBenchmark` starts at
-`login-start`. Inside those 319 ms there is no mistake left to find: a 66 ms token refresh, a 57 ms
-`/api/users/batch`, 68 ms of PIN verification, and 71 ms deserialising 7 873 982 B of MLS state.
-Deleting all four would still leave 696 ms.
-
-**THE PASTE ARRIVED AND IT MOVED THE WHOLE QUESTION** (user's Firefox, production, navigation start
-2026-09-18 19:42:55Z - **16 minutes after `v0.18.13` deployed**, so a post-deploy first load with an
-empty cache for every asset, NOT comparable to the 1092 ms warm reading above). Of 4677 ms to `MLS
-ready`: the browser's own prologue is **249 ms (5%)**, `mls-load-state` is **2999 ms (64%)**, and
-**1358 ms (29%) elapse between `load` and `login-start` with no mark anywhere inside them**.
-`mls-load-state` carries `recovered: false`, so that is the nominal path, and it wraps three
-operations of different character - WASM instantiation, snapshot decryption, group rebuild - behind
-one number. `storage-open` next to it is 2 ms, so IndexedDB is not a candidate.
-
-**THE TWO INSTRUMENTS MERGED 2026-09-20; WHAT IS OWED IS A READING, AND NOT FROM TODAY'S PRODUCTION.** `#873` landed after the commit `v0.18.15` was cut from, so the released build does not carry these spans - the reading needs the next pre-release (dev) or the next stable (production). `wasm-module` and
-`wasm-client-construct` split `mls-load-state`, and `app-first-line` bounds the 1358 ms region from
-the front. **The split is TWO spans, not the three this entry first claimed** - `loadAndInitWasm`
-calls the module loader and then one Rust constructor that decrypts AND rebuilds, so no TypeScript
-boundary separates those two and a third span would be invented; that one is `mls-core`'s to take.
-**No change to the load path may be written before the reading lands**: 64% of the boot still has a
-name and no cause, and `wasm-module` is a WAIT rather than a download - the first thing the reading
-has to be read against. Full table, and why the two readings must never share a column:
-[cold-start](frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
-
-**AND THE `+Nms` LOG OFFSET IS AN INSTRUMENT WITH AN EXPIRY** (user, 2026-09-18): it is switched off
-when this entry closes. It was kept because the 696 ms above was measured with it; the boot bench
-now answers that question without it, so the offset survives only until the two splits above land. The millisecond wall clock is
-a separate fact and stays. [cold-start](frontend/cold-start.md#the-log-prefix-is-an-instrument-and-it-is-switched-off-when-this-page-closes-user-2026-09-18).
+**THE COLD START THIS ENTRY USED TO CARRY IS CLOSED** - 968 ms on an ordinary production boot,
+2026-09-20, with `mls-load-state` at 8% rather than the 64% it claimed for two days. It is not
+summarised here: [cold-start](frontend/cold-start.md) is the only copy and it holds every reading.
 
 **AND ONE PASS IS STILL ON THE AWAITED PATH, BLOCKED ON A FACT NOBODY HAS DEFINED.**
 `prune_expired_key_packages` costs **11.49 ms** at a 1000-bundle pool (criterion, OXYGEN) inside
@@ -943,9 +905,13 @@ says *this pool has been pruned since it last changed*, carried in the state blo
 inferred, and prune when that fact is absent. Until such a fact exists the pass stays where it is,
 because a pool that silently stops being pruned makes the prekey P1 worse.
 
-**THE NEXT QUESTION IS INSIDE RUST.** 82.7% of post-login is ONE native call, and the cost is linear
-in a pool nothing reclaims - which is the prekey P1, measured from the other end: 32% of everything
-decrypted on every boot is the unreclaimed one-time pool.
+**THE NEXT QUESTION IS INSIDE RUST, AND ITS 82.7% MUST BE RE-DERIVED BEFORE IT IS QUOTED AGAIN.** It
+said ONE native call is 82.7% of post-login. On 2026-09-20 post-login is 282 ms, of which that call
+is 74 ms (26%) and `revocation-gate` is 123 ms (44%) - so the figure describes a population these
+readings do not contain, and *a predicate that named the last incident is not the predicate that
+names the next one*. What survives untouched is the shape it pointed at: the cost is linear in a pool
+nothing reclaims, which is the prekey P1 measured from the other end - 32% of everything decrypted on
+every boot is the unreclaimed one-time pool.
 
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 

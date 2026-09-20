@@ -32,30 +32,26 @@ function pad(n: number, width: number): string {
  * server log, or a second device's export. Built by hand rather than by `toLocaleTimeString`, which
  * gives neither the milliseconds nor the same format on two machines.
  *
- * The OFFSET is `performance.now()`: milliseconds since this document's navigation started. It is
- * NOT the wall clock minus the first line, and the difference is the point - **nothing in a console
- * export says when the page began**, so the distance between the navigation and the app's first
- * word has never been measured, and it is part of the cold start. It is also monotonic, so it
- * survives a clock adjustment mid-boot where a subtraction of two wall clocks does not.
+ * **THERE IS NO `+Nms` OFFSET SINCE 2026-09-20, AND ITS REMOVAL WAS THE CONDITION IT SHIPPED
+ * UNDER** (user, 2026-09-18: it is switched off when the cold-start work closes, having read
+ * `+428270ms` seven minutes into a session). It printed `performance.now()` on every line because
+ * **nothing in a console export says when the page began**, so the distance between the navigation
+ * and the app's first word could not be measured any other way - and that distance was 69% of the
+ * 2026-09-18 boot.
  *
- * Printed on EVERY line rather than for an opening window: a threshold would be a rule about when
- * the number is allowed to be true, and `+7214883ms` hours into a session is still a correct answer
- * to "how long has this document been alive". The wall clock is what one reads by then.
- *
- * **THE OFFSET IS AN INSTRUMENT AND IT IS SWITCHED OFF WHEN THE COLD-START WORK CLOSES** (user,
- * 2026-09-18, reading `+428270ms` seven minutes into a session). It is still here because the
- * measurement that would close that work is TAKEN WITH IT: 69% of the 2026-09-18 boot happens
- * before the app's first word, and the offset is what says so. The paragraph above is therefore
- * the argument for keeping it UNTIL then, not for ever. The wall clock is a separate fact - it
- * aligns an export with a waterfall or a second device - and nothing has asked for its removal.
- * The condition and the one-line change are on
- * [cold-start](../../../../docs/wiki/frontend/cold-start.md#the-log-prefix-is-an-instrument-and-it-is-switched-off-when-this-page-closes-user-2026-09-18).
+ * It is gone because that measurement now has an instrument of its own: `markBoot('app-first-line')`
+ * records exactly the same quantity, as one number rather than a subtraction the reader performs on
+ * every line, and it reported 331-485 ms across three production readings on 2026-09-20. **A second
+ * instrument for a question one already answers is noise on every line the application ever
+ * prints** - which is the whole objection the user raised. The boot bench is
+ * {@link installBootBenchDevTools}, read with `window.__canariBootBench.get()`.
+ * [cold-start](../../../../docs/wiki/frontend/cold-start.md).
  */
 function logPrefix(): string {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- read once, never stored, never mutated
   const now = new Date();
   const clock = `${pad(now.getHours(), 2)}:${pad(now.getMinutes(), 2)}:${pad(now.getSeconds(), 2)}.${pad(now.getMilliseconds(), 3)}`;
-  return `[${clock} +${Math.round(performance.now())}ms]`;
+  return `[${clock}]`;
 }
 
 /**

@@ -53,12 +53,15 @@ describe('installConsoleIdTruncation stamps every line', () => {
     console.log = original;
   });
 
-  it('puts a millisecond wall clock and an offset since navigation in front of the line', () => {
+  it('puts a millisecond wall clock, and ONLY that, in front of the line', () => {
     console.log('Initialised in WEB mode (WASM)');
 
     expect(printed).toHaveLength(1);
     const [prefix, ...rest] = printed[0];
-    expect(prefix).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3} \+\d+ms\]$/);
+    // The `+Nms` offset since navigation was removed on 2026-09-20 once the cold-start work closed:
+    // `markBoot('app-first-line')` measures the one thing it was kept for, so this anchor is what
+    // REFUSES it coming back - a second instrument for an answered question is noise on every line.
+    expect(prefix).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]$/);
     expect(rest).toEqual(['Initialised in WEB mode (WASM)']);
   });
 
