@@ -918,7 +918,7 @@ ready`: the browser's own prologue is **249 ms (5%)**, `mls-load-state` is **299
 operations of different character - WASM instantiation, snapshot decryption, group rebuild - behind
 one number. `storage-open` next to it is 2 ms, so IndexedDB is not a candidate.
 
-**THE TWO INSTRUMENTS SHIPPED 2026-09-20; WHAT IS OWED IS NOW A READING.** `wasm-module` and
+**THE TWO INSTRUMENTS MERGED 2026-09-20; WHAT IS OWED IS A READING, AND NOT FROM TODAY'S PRODUCTION.** `#873` landed after the commit `v0.18.15` was cut from, so the released build does not carry these spans - the reading needs the next pre-release (dev) or the next stable (production). `wasm-module` and
 `wasm-client-construct` split `mls-load-state`, and `app-first-line` bounds the 1358 ms region from
 the front. **The split is TWO spans, not the three this entry first claimed** - `loadAndInitWasm`
 calls the module loader and then one Rust constructor that decrypts AND rebuilds, so no TypeScript
