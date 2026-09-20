@@ -2190,6 +2190,67 @@ on the iPhone that reported it**, and nobody here has one - the standing hazard 
 for iOS. The Android side of the same defect is measurable on the Mi 9T, and the `touch-action`
 intersection rule is engine-independent.
 
+## 29. The letterbox exists once, and three surfaces use it
+
+**The mechanism is section 19's**, invented on 2026-09-10 for the feed: an image whose box is shaped
+by something other than itself is drawn CONTAINED, and the remainder is painted with the same image
+again, scaled past the edges, blurred hard and veiled with `--cn-surface`. It is deliberately not a
+dominant-colour extraction - no canvas, no pixel read, no second fetch - and the bands still come
+from the picture's own colours by construction.
+
+**It lived inside `PostMedia` and nowhere else, so the two surfaces a poster is most often MET on
+still cropped it.** An association posts an A4 poster (ratio 0.707); the event modal gave it a 13rem
+box and the shared-link card a 10rem band, and `object-cover` absorbed the difference by cutting
+from the bottom up - which is the band carrying the date, the place and the price. The same
+complaint, twice, a fortnight apart: *"on manque de l'information"* (2026-09-10), then *"ce serait
+bien de pouvoir voir l'affiche en entier (quitte a mettre des marges comme dans les posts) dans
+l'agenda, ou dans un partage de publication"* (2026-09-20).
+
+`LetterboxedImage.svelte` is that treatment as a component, and `PostMedia` now calls it rather than
+holding it. **THE CALLER STILL OWNS THE BOX, AND THERE ARE EXACTLY TWO WAYS TO SIZE ONE**, which is
+why the component takes classes rather than dimensions:
+
+| the caller | what it knows | what it passes |
+| --- | --- | --- |
+| a feed post | the aspect it reserved before the bytes arrive | `imgClass="h-full"` - the picture fills the reserved shape |
+| the event modal | nothing; it is a modal | `imgClass="max-h-[60svh]"` - a CEILING, and the contained picture sets its own height |
+| the shared-link card | a band, chosen by the card | `imgClass="h-full"` inside `h-56 sm:h-64` |
+
+The `<img>` stays in flow for the middle row alone: an absolutely positioned one collapses a box
+that has no height of its own to nothing.
+
+**The card's band went from 10rem to 14rem in the same change.** A contained portrait picture is
+only as wide as its band is high, so the old height did show the whole poster - at a size nothing on
+it could be read at, which answers the letter of the request and not the request.
+
+## 30. The black line around a logo was the tile's own backdrop, one pixel of it
+
+*"pourquoi il y a un trait noir autour du logo ?"* (user, 2026-09-20). The thumbnail of a link to
+Canari (`CanariLinkPreviewMedia`) carried `bg-gradient-to-br from-cn-ink via-[#1e2848]
+to-amber-700/70` on the box unconditionally, with the image `absolute inset-0` over it.
+
+**`inset-0` resolves against the PADDING box, and the border is outside it.** A 1px border therefore
+leaves exactly one pixel of the element's own background visible all the way round, under a border
+drawn at 5% (light) or 10% (dark) opacity - so whatever the box's background is, that is the ring you
+see. Here it is navy at one corner and burnt amber at the other, and an association logo on a white
+ground turns it into a drawn frame.
+
+**Measured before it was changed**, on the tile in isolation with the real logo file, five variants
+in both themes: with the gradient, with only the border, with only the scrim, with neither. The
+frame survives every variant that keeps the gradient and appears in none that drops it. Two earlier
+hypotheses died the same way and are not to be reopened: the logo's own file (512x512, RGB, white to
+the edge - it has no dark border and no alpha), and `object-cover` cropping a non-square image (it
+is square).
+
+The gradient is the FALLBACK's backdrop - it exists so the centred site favicon has something to sit
+on - so it moved onto that branch. **The bottom scrim (`from-black/35`) went with it**: a scrim is
+what makes white text legible over a photo, nothing is ever drawn over this tile, and all it did was
+grey the lower third of whatever logo it was given.
+
+**The rule, and it is general:** a decoration on a box that a child covers is invisible except where
+the child does NOT reach - the border, the corner radius, the moment before the bytes arrive. Put it
+on the branch that needs it, not on the box.
+
 ## 31. A hashtag named a colour, on a surface whose colour it could not know
 
 *"Les # ne sont pas forcement visibles (jaune sur jaune)"* (user, 2026-09-20). Both places that

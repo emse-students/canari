@@ -1268,6 +1268,7 @@
   "asso_calendar_event_kind_break_hint": "Affichée en bandeau de fond sur le calendrier (jour sans cours, vacances, férié). N'occupe pas de place et n'empêche pas les autres événements.",
   "asso_calendar_event_start_label": "Début",
   "asso_calendar_event_end_label": "Fin (optionnel)",
+  "calendar_event_poster_alt": "Affiche de l'événement",
   "asso_calendar_event_description_label": "Description (optionnel)",
   "asso_calendar_event_poster_label": "Affiche / image (optionnel)",
   "asso_calendar_poster_alt": "Affiche",
