@@ -19,6 +19,7 @@ d'une publication partagee. Le liseret autour du logo etait le degrade de fond d
 le pixel que la bordure laisse ouvert - il n'appartient qu'au cas sans image.
 [letterbox](docs/wiki/frontend/design-reference.md#29-the-letterbox-exists-once-and-three-surfaces-use-it),
 [le liseret](docs/wiki/frontend/design-reference.md#30-the-black-line-around-a-logo-was-the-tiles-own-backdrop-one-pixel-of-it).
+## [0.18.17] - 2026-09-20
 
 ### Fixed - le scroll partait sur le thread principal partout, pour un geste que dix sections ne peuvent pas faire
 
