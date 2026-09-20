@@ -20,6 +20,20 @@ const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
 /**
+ * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
+ * private_token (see `createOnboarding`'s docblock on why it is never persisted either).
+ */
+const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id']);
+
+function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) =>
+      LYDIA_LOG_REDACT_KEYS.has(key) ? [key, '[redacted]'] : [key, value]
+    )
+  );
+}
+
+/**
  * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Platform config still defaults
  * `paymentProvider` to `stripe` - flipping it live is gated on the two gaps below, not on code.
  * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
@@ -82,6 +96,12 @@ export class LydiaPaymentProvider implements PaymentProvider {
       body.toString(),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
+    // Every call through here was previously unlogged, so a response that was neither the
+    // expected shape NOR a recognized `error` field (see `createOnboarding` below) left no trace
+    // anywhere - the caller silently got back whatever fields WERE there and nothing else. Logging
+    // the body (redacted) is what makes that case diagnosable instead of just absent.
+    const loggable = res.data && typeof res.data === 'object' ? redactForLog(res.data) : res.data;
+    this.logger.log(`${path} -> ${JSON.stringify(loggable)}`);
     if (res.data && 'error' in res.data && res.data.error && res.data.error !== '0') {
       throw new BadRequestException(`Lydia error ${res.data.error}: ${res.data.message ?? ''}`);
     }
@@ -200,6 +220,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
         business_phone: profile.businessPhone,
       }
     );
+    // `postForm` only throws on a recognized `error` field - a response with NEITHER an error
+    // NOR the fields this call actually needs (observed in homologation: 200, no `error`, no
+    // `api_token`/`dashboard_url` at all) fell through as a "success" with both fields undefined,
+    // which `JSON.stringify` then drops - the caller received `{}` and had no way to tell the two
+    // apart. The log line above already puts the raw shape somewhere a human can read it; this is
+    // what turns it into an error the treasurer actually sees.
+    if (!data.api_token || !data.dashboard_url) {
+      throw new BadRequestException(
+        'Lydia business/create answered with neither an error nor the expected api_token/dashboard_url - see the core-service log for the raw response'
+      );
+    }
     return { url: data.dashboard_url, accountId: data.api_token };
   }
 

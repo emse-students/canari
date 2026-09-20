@@ -147,6 +147,24 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     expect(sent.get('business_phone')).toBe('+33100000000');
   });
 
+  it('throws rather than silently returning undefined fields when Lydia answers with neither an error nor api_token/dashboard_url', async () => {
+    // Observed in homologation (2026-09-20): a 200 with `{}` - no `error`, no `api_token`, no
+    // `dashboard_url`. Nothing in `postForm` treats that as a failure, so it used to fall through
+    // as { url: undefined, accountId: undefined }, which the controller then serialized as `{}` -
+    // a "successful" onboarding call the treasurer had no way to tell apart from a real one.
+    mockedAxios.post.mockResolvedValue({ data: {} });
+
+    const provider = makeProvider();
+    await expect(
+      provider.createOnboarding({
+        associationId: 'assoc-1',
+        refreshUrl: 'r',
+        returnUrl: 'u',
+        legalProfile,
+      })
+    ).rejects.toThrow(/api_token\/dashboard_url/);
+  });
+
   it('throws when the legal profile is missing', async () => {
     const provider = makeProvider();
     await expect(
