@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.15] - 2026-09-20
+
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
 
 Six boutons pleins (modifier, partager, QR, exporter, reponses, supprimer) demandaient plus de
