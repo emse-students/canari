@@ -19,6 +19,7 @@ import {
   ANONYMOUS_NOTIFICATION_ACTOR_NAME,
 } from './post-notifications.service';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
+import { promoCutoffFor } from '../common/promo-visibility';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -554,23 +555,10 @@ export class PostsService {
       // Redis miss or error - fall through to DB
     }
 
-    // Promo-based date gate: non-admin viewers cannot see posts published before
-    // August 1st of their promo year.
-    let promoCutoff: string | null = null;
-    if (!isAdmin && viewerUserId) {
-      try {
-        const rows: { promo: number | null }[] = await this.postRepo.manager.query(
-          `SELECT promo FROM users WHERE id = $1 LIMIT 1`,
-          [viewerUserId]
-        );
-        const viewerPromo = rows[0]?.promo ?? null;
-        if (viewerPromo != null) {
-          promoCutoff = `${viewerPromo}-08-01`;
-        }
-      } catch {
-        /* non-fatal */
-      }
-    }
+    // Promo-based date gate: a viewer cannot see posts published before the August their own
+    // promo opens on. SHARED WITH THE AGENDA since 2026-09-20 - the rule, and why it is a
+    // relevance limit rather than a confidentiality one, is in `promo-visibility.ts`.
+    const promoCutoff = await promoCutoffFor(this.postRepo.manager, viewerUserId, isAdmin);
 
     // SQL fragment added to every query when a promo cutoff applies.
     // The parameter index is computed per-query below.
