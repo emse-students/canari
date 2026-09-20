@@ -1893,10 +1893,20 @@ reports `pointer: fine` and keeps the toolbar. The bubble re-reads it on mount (
 cannot ask `matchMedia`, and the helper answers `false` there) and subscribes to changes, so a
 tablet gaining a mouse or a browser toggling device emulation moves the answer.
 
-**WHAT IS STILL OWED: A FINGER.** Everything above is proven by reading and by unit tests. The
-gesture end to end - lock, drag, release, the reply composer filling - has been verified on no
-hardware, and an APK embeds its own frontend so the phone cannot see this fix until one is built
-from this tree.
+**THE WIRING IS NOW TESTED, NOT JUST THE MATHS.**
+`MessageBubble.swipeReply.svelte.test.ts` mounts the real bubble and dispatches real `pointerdown` /
+`pointermove` / `pointerup` at the real `[data-swipe-reply]` element, plus one pass over the
+`touchstart` / `touchmove` / `touchend` path that a finger actually takes, and asserts that `onReply`
+fires. It runs with `matchMedia('(pointer: coarse)')` stubbed to match, because that single fact is
+what the old gate got wrong. Five of its twelve cases go red if `canStartReplySwipe` is made to
+return `false` - measured by mutating it - so the suite fails the way the original defect did. The
+refusals are pinned too: a mouse `pointerType`, a fine-pointer device, a tombstone, a system pill, a
+drag too short, and a vertical drag (scrolling a thread must never answer a message).
+
+**WHAT IS STILL OWED: A FINGER.** Everything above is proven by reading and by tests in a simulated
+DOM. The gesture end to end on a real screen - the bubble travelling under the thumb, the reply
+composer filling - has been verified on no hardware, and an APK embeds its own frontend so the phone
+cannot see this fix until one is built from this tree.
 
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 
