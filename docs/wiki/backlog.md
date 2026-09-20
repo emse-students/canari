@@ -7436,12 +7436,12 @@ estate work is done, cancelling a superseded pre-release's store arms, or simply
 hand - the thing to keep is that the serialisation is correct and only its GRANULARITY is wrong: the
 estate and the stores do not need the same lock.
 
-## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE FIXED-UNMEASURED AND ONE STILL OPEN
+## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE UNMEASURED AND ONE UNDIAGNOSED
 
 **2026-09-20, from a user's iPhone**, relayed by the user. The first iOS feedback this project has
 ever had, and the ONLY two reports it carries, so neither may be widened into a class.
 
-### 1. The scroll - FIXED, and owed one measurement nothing here can take
+### 1. The scroll - ONE READING ON THAT iPHONE IS OWED, and nothing here can take it
 
 *"Ca lag assez fort quand je scrolle"*, *"Canari se bave un peu dessus"*, *"le tactile bug un peu
 aussi"*, *"dans associations tout etc..."*, plus an 18.5 s recording of `/posts` showing unpainted
