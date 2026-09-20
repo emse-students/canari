@@ -83,7 +83,6 @@ import {
   endBootSpan,
   timeBootSpan,
   finishBootBench,
-  installBootBenchDevTools,
 } from '$lib/mls-client/bootBenchmark';
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
@@ -407,7 +406,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   // the module graph and hydration are all visible as the gap before `login-start` without anything
   // needing to instrument them. That gap is the other half of the cold start, and a bench anchored
   // at this line would have hidden it exactly as the catch-up bench hid the 43% that precedes it.
-  installBootBenchDevTools();
+  // The dev-tools install moved to `hooks.client.ts` on 2026-09-20: the report has to be reachable
+  // from a boot that never gets this far, and that seam is where `app-first-line` is marked.
   markBoot('login-start');
   const userId = ctx.getUserId();
   const pin = ctx.getPin();

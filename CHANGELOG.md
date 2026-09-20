@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le poste le plus cher du demarrage a froid est enfin decoupe en deux
+
+`mls-load-state` pesait 64 % d'un demarrage en un seul nombre : `wasm-module` et
+`wasm-client-construct` disent maintenant laquelle des deux moities paie, et `app-first-line` borne
+par l'avant les 1358 ms que personne ne mesurait. Aucune correction n'accompagne ces mesures,
+deliberement.
+[cold-start](docs/wiki/frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
+
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
 
 Six boutons pleins (modifier, partager, QR, exporter, reponses, supprimer) demandaient plus de
