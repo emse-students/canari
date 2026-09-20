@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - la liste des formulaires montre enfin les reponses, et prend la largeur d'un tableau
+
+L'accordeon affichait la date, le nom, le statut et le montant, jamais une seule reponse - alors que
+le navigateur les avait deja. Les questions courtes deviennent des colonnes (trois au plus,
+jamais une question conditionnelle), tout le reste se lit dans le panneau d'une ligne, et la page
+passe de 680 a 1024 px. En dessous de `sm`, les lignes deviennent des cartes.
+[forms](docs/wiki/frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20).
+
+### Fixed - l'export Excel ecrivait `{"Lundi":"Oui"}` dans la cellule d'une question a matrice
+
+Et il perdait un zero, qui est pourtant une reponse valable sur une echelle. Le lecteur est
+desormais le meme fichier des deux cotes, surveille par le gate des duplications declarees, donc
+l'ecran et le tableur ne peuvent plus repondre deux choses differentes.
+[forms](docs/wiki/frontend/modules/forms.md#tests).
+
 ### Changed - sur mobile, l'agenda part d'aujourd'hui et se deroule, au lieu d'ouvrir sur le mois courant
 
 La vue liste avait garde l'unite de la GRILLE : ouverte le 28, elle commencait par 27 jours deja

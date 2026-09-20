@@ -96,6 +96,15 @@ export const DECLARED_GROUPS = [
       'apps/social-service/src/minesweeper/engine/game.ts',
     ],
   },
+  {
+    what: 'the reading of a submitted form answer, screen and spreadsheet',
+    compare: 'exact',
+    why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',
+    files: [
+      'frontend/src/lib/forms/answerText.ts',
+      'apps/social-service/src/forms/answer-text.ts',
+    ],
+  },
 ];
 
 /**
