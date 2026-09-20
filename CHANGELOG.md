@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.17] - 2026-09-20
+
 ### Fixed - le scroll partait sur le thread principal partout, pour un geste que dix sections ne peuvent pas faire
 
 Premier retour iPhone du projet : des bandes non peintes pendant le scroll du fil. La coquille
