@@ -394,6 +394,13 @@ floor. Until then the two causes remain unseparated in the field.
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix
 and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test file.
 
+**AND ONE MORE THING CLOSES WITH IT, DELIBERATELY PARKED RATHER THAN LEFT BEHIND.**
+`serverProse.test.ts` carries exactly one `ALLOWED` entry, `lib/composables/session/sessionAuth.ts`:
+it compares the init failure against `MLS_LOCAL_STATE_UNDECRYPTABLE`, and that marker collapses the
+same two causes this entry is about. Typing it without deciding what the screen does with `unknown`
+would ship the same wrong diagnosis behind a better shape. **When step 2 lands, that entry is what
+must stop being allowed** - and the guard FAILS on an entry that stops offending, so it will say so.
+
 ---
 
 ### P2 - the legacy rows are LOADED on both estates, and NOT ONE claim has been observed (shipped 2026-09-11, v0.17.1)
@@ -483,71 +490,7 @@ conversation shortcut implies, and doing the group alone would split the stack w
 the conversation treatment.
 
 ---
-### P2 - three sites still hand the server's words to a Paraglide key BUILT to carry them, and all three sit in ONE file
 
-**THE LIVE RECORD OF THE SERVER-PROSE SWEEP IS FURTHER DOWN, NOT HERE** - see *218 places still
-render the server's English prose to a French user*, which owns the guard
-(`src/lib/associations/serverProse.test.ts`), the trees it has closed, the re-measured remainder and
-the classification of every site left. **Do not re-derive a count in this entry**; that is what made
-it wrong. It carried its own stale figure (185 sites across 61 `.svelte` files) from 2026-09-09
-until 2026-09-15 while the sweep below re-measured every pass, so a reader arriving here first
-worked to a number nobody had checked in six days.
-
-**WHAT IS OPEN, AND IT IS THREE SINCE 2026-09-16 - eight on 2026-09-11, seven on 2026-09-15.** The
-sweep parks these because deleting a preference cannot close them: they hand the raw text to a
-Paraglide key BUILT to carry it, so the sentence is localized and its subject is not. What is left
-is `chat_forward_error({ reason })` twice and `chat_media_send_error({ reason })` once, **all
-three in `frontend/src/lib/composables/useMessaging.svelte.ts`**, which is the last thing keeping
-`lib/composables` outside the guard.
-
-**THE SECOND ROUTE WAS READ AGAINST ALL EIGHT ON 2026-09-15, AND IT REACHED EXACTLY ONE.**
-`describeApiRefusal` (`utils/apiRefusal.ts`) turns a STATUS plus a localized action label into a
-sentence - 401/403/404/409/429, `null` for anything else so a caller keeps its own wording rather
-than being handed an invented reason. `lib/utils/chat/messaging.ts` is the one it closed, and the
-discriminator is not a matter of taste: it is the ONLY site holding an HTTP status at the point of
-the throw, `ChannelApiError(status, code, text)` straight out of `ChannelService.handleError`.
-
-**FOUR OF THE SEVEN CLOSED ON 2026-09-16, AND NOT ONE OF THEM NEEDED A NEW ENDPOINT CODE** - see
-`CHANGELOG.md`. Two (`chat_send_error` x2) had nothing to say beyond "it failed" and took the
-generic line they already had a key for; `auth_login_failed` was the same, before any response
-existed to describe; `chat_call_error` turned out to HOLD a status that `fetchInitiateCall` was
-spelling into a string, so it took `CallInitiateError(status, ...)` and the one refusal mapper.
-
-**AND THE ENTRY WAS WRONG ABOUT ONE OF THE THREE THAT ARE LEFT, WHICH IS WHY THE READING IS PER
-SITE.** It said each of them "performs no HTTP request where it fails". `chat_media_send_error`
-does: its `catch` in `useMessaging.svelte.ts` wraps BOTH the MLS branch (which only queues to
-IndexedDB - no status, nothing to map) and the CHANNEL branch, which is `encryptAndUpload` plus
-`sendEncryptedChannelMessage` - four `!res.ok` throws in `lib/media.ts` that spell the status into
-the message, and a `ChannelApiError` that already carries one. So that site is TWO failures
-sharing one catch, and the cheap status route reaches half of it. **`lib/media.ts` also throws
-`'Media upload failed: 413 (fichier trop volumineux)'`** - a French fragment inside a dev-facing
-English message, which is the defect in both directions at once.
-
-The two forward sites are the ones the original prescription still describes exactly: a forward
-whose inner call already caught its own refusal, with nothing but an exception to show for it.
-
-**The reading had to be per site, not a sweep**, for the reason this entry already paid for twice:
-the predicate finds the shape, never the provenance. Four sites in these trees render an error the
-app itself THREW, already in French, and replacing one of those with a status sentence would trade a
-precise line for a vaguer one.
-
-**THE RULE VIOLATION AMONG THEM IS CLOSED, AND IT DID NOT WAIT FOR CALLING TO COME BACK.**
-`MainChatPage.svelte` branched on `msg.includes('Groupe introuvable') || msg.includes('Group not
-found')` to choose a toast - the distinction-in-prose the durable rules forbid - and it had
-already rotted: **nothing in the client throws either sentence**, so the branch depended on a
-server body no test asserts. Typing the throw is not one of the five switches `CALLS_ENABLED`
-holds, so it moved on its own: `CallInitiateError` carries the status, `describeCallFailure` maps
-it, and a 404 keeps the desynced-group sentence because that is the one a reader can act on.
-
-**Why the route exists at all** is in `CHANGELOG.md`: a codeless 403 from
-`global-admin-or-association-role.guard.ts` reached the deposit modal as "Erreur lors de la
-sauvegarde", identical to a server fault, because `calendarErrorMessage` read only the CODE and that
-guard throws without one. `SocialApiError` now carries `status` beside `code`.
-
-**What must NOT happen** is translating the server's messages. They are dev-facing and English is
-correct for them, the same as every log here.
-
----
 ### P3 - a revocation round trip sits in front of the fingerprint prompt, and moving it is REVERTED, not to be re-opened (measured on the Pixel 6a, 2026-09-15)
 
 Launch to BiometricPrompt on the Pixel 6a was **4.2 - 4.6 s**, measured by attaching CDP to the
