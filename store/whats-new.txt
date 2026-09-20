@@ -1,5 +1,3 @@
-version: 0.18.14
+version: 0.18.15
 
-Un post mentionnant un événement est accessible depuis l'événement mentionné
-
-Les formulaires d'association peuvent être créés depuis la page d'association
+Les actions sur un formulaire (modifier, partager, exporter...) ne cachent plus son nom
