@@ -145,6 +145,8 @@ export interface Association {
   /** Lydia Business vendor_token - own column, independent from the Stripe pair above. */
   lydiaAccountId: string | null;
   lydiaOnboardingComplete: boolean;
+  /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
+  lydiaDashboardUrl: string | null;
   /** True if this is the BDE association (unlocks BDE-only permission flags). */
   isBDE: boolean;
   /** Hex-encoded 32-byte master key for the document vault (MANAGE_DOCUMENTS only). */
@@ -2032,11 +2034,13 @@ export async function startLydiaOnboarding(
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
   });
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`onboarding ${res.status}: ${details || res.statusText}`);
+  const body = await res.json().catch(() => ({}));
+  // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
+  // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
+  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+    throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
-  return (await res.json()) as { url: string; accountId: string };
+  return body as { url: string; accountId: string };
 }
 
 // ── Association categories (thematic taxonomy) ───────────────────────────────

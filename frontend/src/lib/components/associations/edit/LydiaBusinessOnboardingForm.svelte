@@ -12,8 +12,8 @@
 
   interface Props {
     asso: Association;
-    /** Called with the vendor token Lydia returned, so the parent can persist it locally. */
-    onAccountCreated: (accountId: string) => void;
+    /** Called with the vendor token and dashboard URL Lydia returned, so the parent can persist both locally. */
+    onAccountCreated: (accountId: string, dashboardUrl: string) => void;
     /** Called once the Lydia Business has been unlinked, so the parent can clear it locally. */
     onDisconnected: () => void;
   }
@@ -80,17 +80,17 @@
         businessPhone: businessPhone.trim(),
       });
       createdDashboardUrl = result.url;
-      onAccountCreated(result.accountId);
+      onAccountCreated(result.accountId, result.url);
     } catch (err) {
-      error = m.common_save_error();
+      error = err instanceof Error && err.message ? err.message : m.common_save_error();
     } finally {
       submitting = false;
     }
   }
 
-  async function openDashboard() {
+  async function openDashboard(url: string) {
     const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal(createdDashboardUrl);
+    await navigateExternal(url);
   }
 </script>
 
@@ -101,25 +101,51 @@
   </h2>
 
   {#if asso.lydiaAccountId}
-    <p class="text-green-ok text-sm font-semibold">{m.asso_lydia_created_title()}</p>
+    <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
+      {m.asso_lydia_created_title()}
+      <span
+        class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
+      >
+        {m.asso_lydia_status_pending()}
+      </span>
+    </p>
     <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
     <p class="text-text-muted text-xs">
       {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.lydiaAccountId}</span>
     </p>
-    <button
-      type="button"
-      onclick={() => void handleDisconnect()}
-      disabled={disconnecting}
-      class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-    >
-      {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
-    </button>
+    <div class="flex flex-wrap items-center gap-2">
+      {#if asso.lydiaDashboardUrl}
+        <button
+          type="button"
+          onclick={() => void openDashboard(asso.lydiaDashboardUrl ?? '')}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm"
+        >
+          <ExternalLink size={16} />
+          {m.asso_lydia_open_dashboard_button()}
+        </button>
+      {/if}
+      <button
+        type="button"
+        onclick={() => void handleDisconnect()}
+        disabled={disconnecting}
+        class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+      >
+        {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
+      </button>
+    </div>
   {:else if createdDashboardUrl}
-    <p class="text-green-ok text-sm font-semibold">{m.asso_lydia_created_title()}</p>
+    <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
+      {m.asso_lydia_created_title()}
+      <span
+        class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
+      >
+        {m.asso_lydia_status_pending()}
+      </span>
+    </p>
     <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
     <button
       type="button"
-      onclick={() => void openDashboard()}
+      onclick={() => void openDashboard(createdDashboardUrl)}
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm"
     >
       <ExternalLink size={16} />

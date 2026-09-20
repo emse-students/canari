@@ -1463,15 +1463,18 @@ export class AssociationsController {
     return this.service.clearStripeAccount(id);
   }
 
-  /** Sets the Lydia Business vendor_token for an association; called internally by core-service. */
+  /**
+   * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
+   * internally by core-service.
+   */
   @Post(':id/lydia-account')
   setLydiaAccount(
     @Param('id') id: string,
-    @Body() body: { lydiaAccountId: string },
+    @Body() body: { lydiaAccountId: string; lydiaDashboardUrl?: string },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    return this.service.setLydiaAccountId(id, body.lydiaAccountId);
+    return this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
   }
 
   /**

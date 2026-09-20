@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le formulaire de creation d'un compte Lydia Pro signale ses erreurs, garde son bouton tableau de bord, et n'affiche plus un titre entierement vert
+
+Trois trous dans le meme formulaire : une erreur de creation (y compris le provider non configure,
+que l'API repond en 200 `{ok: false}` et que le frontend ignorait) ne remontait jamais a l'ecran ;
+`dashboard_url` n'etait garde qu'en memoire le temps de la session, perdu au moindre rechargement -
+il est desormais persiste (`lydiaDashboardUrl`, migration 063) ; et le titre restait entierement
+vert des la creation, alors que le Business n'est pas encore valide par Lydia (aucun lecteur de
+statut en direct n'existe cote Lydia, lacune connue) - un badge "En attente" l'accompagne maintenant.
+[migration plan](plans/stripe-to-lydia-migration.md).
+
 ## [0.18.14] - 2026-09-18
 
 ### Added - un bouton "Nouveau formulaire" sur l'onglet Formulaires d'une association

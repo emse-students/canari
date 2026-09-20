@@ -2397,12 +2397,17 @@ ${rejectionReason}`
   // Own columns, independent from the Stripe ones above - an association keeps both links
   // regardless of which provider is currently active platform-wide (WP-LYDIA coexistence).
 
-  /** Stores the Lydia Business vendor_token for an association and invalidates post-list caches. */
-  async setLydiaAccountId(id: string, lydiaAccountId: string) {
+  /**
+   * Stores the Lydia Business vendor_token (and its dashboard URL, handed out once by
+   * `business/create` and never re-issuable) for an association, and invalidates post-list caches.
+   */
+  async setLydiaAccountId(id: string, lydiaAccountId: string, lydiaDashboardUrl?: string) {
     const asso = await this.findById(id);
-    await this.assoRepo.update(id, { lydiaAccountId });
+    const update: Partial<Association> = { lydiaAccountId };
+    if (lydiaDashboardUrl) update.lydiaDashboardUrl = lydiaDashboardUrl;
+    await this.assoRepo.update(id, update);
     await this.invalidatePostListCaches();
-    return { ...asso, lydiaAccountId };
+    return { ...asso, ...update };
   }
 
   /** Flips lydiaOnboardingComplete to true once the Lydia Business is confirmed ready. */
@@ -2416,7 +2421,11 @@ ${rejectionReason}`
    * onboarding from scratch. Local unlink only - the Lydia Business itself is left untouched.
    */
   async clearLydiaAccount(id: string) {
-    await this.assoRepo.update(id, { lydiaAccountId: null, lydiaOnboardingComplete: false });
+    await this.assoRepo.update(id, {
+      lydiaAccountId: null,
+      lydiaOnboardingComplete: false,
+      lydiaDashboardUrl: null,
+    });
     await this.invalidatePostListCaches();
   }
 

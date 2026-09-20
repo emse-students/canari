@@ -208,11 +208,15 @@ export class PaymentController {
       const providerId = await this.paymentService.getActiveProviderId();
       const path = providerId === 'lydia' ? 'lydia-account' : 'stripe-account';
       const bodyKey = providerId === 'lydia' ? 'lydiaAccountId' : 'stripeAccountId';
+      // Lydia's dashboard_url is handed out exactly once, at business/create - unlike Stripe's
+      // re-issuable Express dashboard link, so it must be captured here or it is gone for good.
+      const body: Record<string, string> = { [bodyKey]: result.accountId };
+      if (providerId === 'lydia' && result.url) body.lydiaDashboardUrl = result.url;
       try {
         const socialBase = this.socialBase;
         await axios.post(
           `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/${path}`,
-          { [bodyKey]: result.accountId },
+          body,
           internalSocialRequestConfig()
         );
       } catch (err: unknown) {
