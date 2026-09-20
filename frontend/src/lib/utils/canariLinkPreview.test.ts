@@ -4,7 +4,28 @@ import {
   postPreviewTitle,
 } from './canariLinkPreviewFormat';
 import { setLocale } from '$lib/paraglide/runtime';
-import type { PostEntity } from '$lib/posts/api';
+import type { PostEntity, PostMediaRef } from '$lib/posts/api';
+
+vi.mock('$lib/posts/api', () => ({ getPost: vi.fn() }));
+
+const { getPost } = await import('$lib/posts/api');
+const getPostMock = getPost as unknown as ReturnType<typeof vi.fn>;
+const { fetchCanariLinkPreview } = await import('./canariLinkPreview');
+
+function post(overrides: Partial<PostEntity>): PostEntity {
+  return {
+    id: '1',
+    markdown: 'hello',
+    mentions: [],
+    links: [],
+    images: [],
+    media: [],
+    polls: [],
+    createdAt: '',
+    updatedAt: '',
+    ...overrides,
+  } as PostEntity;
+}
 
 describe('parseCanariLinkTarget', () => {
   // Expected labels are French, so the locale is PINNED rather than inherited: the resolution
@@ -73,5 +94,53 @@ describe('postAuthorDisplayName', () => {
       updatedAt: '',
     } as PostEntity;
     expect(postAuthorDisplayName(post)).toBe('BDE');
+  });
+});
+
+describe('fetchCanariLinkPreview (post) - the small logo slot and the own-photo banner', () => {
+  beforeEach(() => {
+    getPostMock.mockReset();
+  });
+
+  it("carries the post's own image separately from the association logo", async () => {
+    const media: PostMediaRef = {
+      type: 'image',
+      mediaId: 'm1',
+      key: 'k',
+      iv: 'i',
+      mimeType: 'image/webp',
+      size: 10,
+    };
+    getPostMock.mockResolvedValue(
+      post({
+        association: { id: 'a', name: 'BDE', slug: 'bde', logoUrl: '/api/media/public/logo' },
+        media: [media],
+      })
+    );
+    const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p1');
+    // The small thumbnail stays the association logo...
+    expect(preview?.imageUrl).toContain('/api/media/public/logo');
+    // ...and the post's own (still-encrypted) photo is a distinct field, untouched.
+    expect(preview?.postImage).toEqual(media);
+  });
+
+  it('has no postImage when the post carries none', async () => {
+    getPostMock.mockResolvedValue(post({}));
+    const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p2');
+    expect(preview?.postImage).toBeNull();
+  });
+
+  it('ignores a non-image attachment (e.g. a video) for the banner', async () => {
+    const media: PostMediaRef = {
+      type: 'video',
+      mediaId: 'm2',
+      key: 'k',
+      iv: 'i',
+      mimeType: 'video/mp4',
+      size: 10,
+    };
+    getPostMock.mockResolvedValue(post({ media: [media] }));
+    const preview = await fetchCanariLinkPreview('https://canari-emse.fr/posts/p3');
+    expect(preview?.postImage).toBeNull();
   });
 });

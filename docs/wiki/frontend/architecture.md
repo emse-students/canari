@@ -325,6 +325,32 @@ branches carry the action on their own root `<a>` instead, the second through an
 feed's ~45 requests at the SvelteKit route `load`, which changes the web client for every reader;
 this gates one card's own request from inside that card, and a card nobody scrolls to never asks.
 
+### A post's own image, in its own link preview, without dragging in a decrypt stack for every card
+
+`LinkPreviewCard`'s in-app branch showed only the association's logo for a post link (`fetchPostPreview`
+in `canariLinkPreview.ts`), never the post's own attached photo - identical to the external Open
+Graph card's gap, but for a different reason. The OG card is unauthenticated and post images are
+still client-side CEK-encrypted (`key`/`iv` on `PostMediaRef`, same shape as `PostMedia.svelte`
+already decrypts for a post's own feed rendering), so an external crawler genuinely cannot show it -
+that one keeps the association-logo fallback, on purpose. But `LinkPreviewCard` runs client-side, to
+an ALREADY-AUTHENTICATED viewer with the same feed-audience access `getPost(postId)` already checks,
+so nothing stops it from decrypting the photo exactly as the post itself does.
+
+The small logo slot (`CanariLinkPreviewMedia`) is left alone; the post's own photo, when it has one,
+is a SEPARATE full-width banner below the logo/text row (`postImage` on `CanariLinkPreview`, resolved
+from `post.media.find(m => m.type === 'image')`) - the user's own call: it augments the card rather
+than replacing what the small slot already showed.
+
+**`PostMedia.svelte` is loaded with a dynamic `import()`, never a static one, and that is not an
+optimization - it is what keeps every OTHER card cheap.** A static import pulled in the whole
+decrypt/lightbox/PDF-viewer stack transitively (`MediaService` → `useMessaging.svelte.ts` →
+`globalChatSingleton.svelte.ts`), which broke `LinkPreviewCard.deferred.svelte.test.ts` outright
+(`MediaService is not a constructor` - a happy-dom import-order issue that static analysis alone did
+not catch) and would have cost every external link, form, association, profile, and imageless post
+preview that same weight for a component only a post WITH a photo ever renders. Loaded alongside the
+decrypt token (`getToken()`, itself cheap and in-memory-cached) in one `Promise.all`, exactly when
+`fetchCanariLinkPreview` answers with a `postImage`.
+
 ### An API helper that ends in `res.json()` throws on a void response
 
 A `DELETE` or a void `POST` answers `204`, or `200` with an empty body - and `res.json()` on an

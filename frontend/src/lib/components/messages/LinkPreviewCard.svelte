@@ -2,6 +2,7 @@
   import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
   import EcosystemCoverPreview from '$lib/components/messages/EcosystemCoverPreview.svelte';
+  import { getToken } from '$lib/stores/auth';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
@@ -73,6 +74,23 @@
   let canariPreview = $state<CanariLinkPreview | null>(null);
   let externalPreview = $state<ExternalPreviewPayload | null>(null);
   let isLoading = $state(false);
+  /**
+   * Live token for decrypting a post's OWN banner image (`canariPreview.postImage`), fetched only
+   * when a preview actually carries one - most cards never do, and `getToken()` is cheap but not
+   * free. Unlike `imageUrl` (a plain public URL), this image is still ciphertext: `PostMedia`
+   * decrypts it the exact same way the post itself does in its own feed, to this same
+   * already-authenticated viewer.
+   */
+  let postImageAuthToken = $state('');
+  /**
+   * `PostMedia` drags in the whole decrypt/lightbox/PDF-viewer stack (`MediaService`, the global
+   * chat singleton...) - weight every OTHER link preview (external sites, forms, associations,
+   * profiles, a post with no photo of its own) has no reason to pay. Loaded on demand, exactly
+   * when a post preview turns out to carry its own image.
+   */
+  let PostMedia = $state<typeof import('$lib/components/posts/PostMedia.svelte').default | null>(
+    null
+  );
 
   /**
    * Whether this card has come near enough to the viewport to be worth a request.
@@ -112,7 +130,17 @@
       try {
         if (isInAppHref(targetUrl)) {
           const data = await fetchCanariLinkPreview(targetUrl);
-          if (!cancelled) canariPreview = data;
+          if (cancelled) return;
+          canariPreview = data;
+          if (data?.postImage) {
+            const [token, mod] = await Promise.all([
+              getToken(),
+              import('$lib/components/posts/PostMedia.svelte'),
+            ]);
+            if (cancelled) return;
+            postImageAuthToken = token;
+            PostMedia = mod.default;
+          }
           return;
         }
 
@@ -284,71 +312,84 @@
     rel={isInApp ? undefined : 'noopener noreferrer'}
     class="group {standalone
       ? ''
-      : 'mt-3'} bg-cn-surface hover:bg-cn-surface flex items-stretch gap-3.5 overflow-hidden rounded-2xl border border-black/5 p-3 transition-all duration-300 hover:border-amber-500/35 hover:shadow-md sm:p-4 dark:border-white/10 dark:hover:bg-black/40 {isInApp
+      : 'mt-3'} bg-cn-surface hover:bg-cn-surface flex flex-col overflow-hidden rounded-2xl border border-black/5 transition-all duration-300 hover:border-amber-500/35 hover:shadow-md dark:border-white/10 dark:hover:bg-black/40 {isInApp
       ? 'ring-1 ring-amber-500/12'
       : ''}"
   >
-    {#if isInApp}
-      <CanariLinkPreviewMedia preview={canariPreview} loading={isPending} />
-    {:else}
-      <div
-        class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
+    <div class="flex items-stretch gap-3.5 p-3 sm:p-4">
+      {#if isInApp}
+        <CanariLinkPreviewMedia preview={canariPreview} loading={isPending} />
+      {:else}
+        <div
+          class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
  {previewImageUrl ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
-      >
-        {#if isPending}
-          <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
-        {:else if previewImageUrl}
-          <img src={previewImageUrl} alt="" class="h-full w-full object-cover" loading="lazy" />
-        {:else if faviconUrl}
-          <!-- No Open Graph image: the site's own favicon stands in for its logo.
-               Already proven loadable by the probe above, so it needs no onerror. -->
-          <img
-            src={faviconUrl}
-            alt=""
-            class="h-8 w-8 object-contain opacity-70 transition-opacity duration-300 group-hover:opacity-100"
-          />
-        {:else if faviconSearchDone}
-          <Globe
-            size={20}
-            strokeWidth={2}
-            class="text-text-muted opacity-50 transition-opacity duration-300 group-hover:opacity-80"
-          />
+        >
+          {#if isPending}
+            <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
+          {:else if previewImageUrl}
+            <img src={previewImageUrl} alt="" class="h-full w-full object-cover" loading="lazy" />
+          {:else if faviconUrl}
+            <!-- No Open Graph image: the site's own favicon stands in for its logo.
+                 Already proven loadable by the probe above, so it needs no onerror. -->
+            <img
+              src={faviconUrl}
+              alt=""
+              class="h-8 w-8 object-contain opacity-70 transition-opacity duration-300 group-hover:opacity-100"
+            />
+          {:else if faviconSearchDone}
+            <Globe
+              size={20}
+              strokeWidth={2}
+              class="text-text-muted opacity-50 transition-opacity duration-300 group-hover:opacity-80"
+            />
+          {/if}
+        </div>
+      {/if}
+
+      <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
+        <span
+          class="text-2xs sm:text-2xs inline-flex max-w-full items-center self-start truncate rounded-md bg-amber-500/12 px-2 py-0.5 font-bold tracking-wider text-amber-800 dark:bg-amber-400/10 dark:text-amber-300 {isInApp
+            ? 'uppercase'
+            : 'normal-case'}"
+        >
+          {cardCategory}
+        </span>
+
+        <p
+          class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-sm dark:group-hover:text-amber-300"
+        >
+          {cardTitle}
+        </p>
+
+        {#if isPending && isInApp}
+          <div
+            class="mt-1 h-3 w-4/5 max-w-[14rem] animate-pulse rounded bg-black/6 dark:bg-white/8"
+          ></div>
+        {:else if cardSubtitle}
+          <p class="text-text-muted line-clamp-2 text-xs leading-snug opacity-90">
+            {cardSubtitle}
+          </p>
         {/if}
       </div>
+
+      <div
+        class="text-text-muted shrink-0 self-center pr-1 pl-0.5 opacity-35 transition-all duration-300 group-hover:translate-x-0.5 group-hover:text-amber-600 group-hover:opacity-100 dark:group-hover:text-amber-400"
+      >
+        {#if isInApp}
+          <ArrowUpRight size={20} strokeWidth={2.25} />
+        {:else}
+          <ExternalLink size={20} strokeWidth={2.25} />
+        {/if}
+      </div>
+    </div>
+
+    {#if isInApp && canariPreview?.postImage && postImageAuthToken && PostMedia}
+      <!-- The post's OWN photo, below the logo/text row rather than replacing the logo there -
+           the small slot above stays the association's mark (or the brand, for a personal post),
+           exactly what it already was. -->
+      <div class="relative h-40 w-full border-t border-black/5 sm:h-48 dark:border-white/10">
+        <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} />
+      </div>
     {/if}
-
-    <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
-      <span
-        class="text-2xs sm:text-2xs inline-flex max-w-full items-center self-start truncate rounded-md bg-amber-500/12 px-2 py-0.5 font-bold tracking-wider text-amber-800 dark:bg-amber-400/10 dark:text-amber-300 {isInApp
-          ? 'uppercase'
-          : 'normal-case'}"
-      >
-        {cardCategory}
-      </span>
-
-      <p
-        class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-sm dark:group-hover:text-amber-300"
-      >
-        {cardTitle}
-      </p>
-
-      {#if isPending && isInApp}
-        <div
-          class="mt-1 h-3 w-4/5 max-w-[14rem] animate-pulse rounded bg-black/6 dark:bg-white/8"
-        ></div>
-      {:else if cardSubtitle}
-        <p class="text-text-muted line-clamp-2 text-xs leading-snug opacity-90">{cardSubtitle}</p>
-      {/if}
-    </div>
-
-    <div
-      class="text-text-muted shrink-0 self-center pr-1 pl-0.5 opacity-35 transition-all duration-300 group-hover:translate-x-0.5 group-hover:text-amber-600 group-hover:opacity-100 dark:group-hover:text-amber-400"
-    >
-      {#if isInApp}
-        <ArrowUpRight size={20} strokeWidth={2.25} />
-      {:else}
-        <ExternalLink size={20} strokeWidth={2.25} />
-      {/if}
-    </div>
   </a>
 {/if}

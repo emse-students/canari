@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - l'apercu d'un lien vers une publication montre sa propre photo, sous le logo
+
+Le petit logo restait celui de l'association ; la photo de la publication elle-meme n'apparaissait
+jamais, ni la, ni dans la carte Open Graph externe. Cote externe la photo reste chiffree cote client
+et rien n'y change ; cote application, l'apercu est deja authentifie avec le meme acces que la
+publication elle-meme, donc il la dechiffre desormais et l'affiche en bandeau sous le logo/texte,
+sans remplacer ce dernier. [architecture](docs/wiki/frontend/architecture.md).
+
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
 
 Six boutons pleins (modifier, partager, QR, exporter, reponses, supprimer) demandaient plus de
