@@ -32,6 +32,7 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
+import { promoCutoffFor } from '../common/promo-visibility';
 import {
   isDelegating,
   resolvePaymentTarget,
@@ -169,6 +170,19 @@ function calendarDateRefusal(
 }
 
 /** CRUD, logo management, membership, and Stripe helpers for student associations. */
+
+/**
+ * Who is asking for a list of events, which decides how far back that list goes.
+ *
+ * Both calendar reads are PUBLIC routes - `x-user-id` is whatever nginx forwarded and is absent for
+ * an anonymous reader - so this is optional by construction, and an absent viewer gets the whole
+ * window exactly as before. The limit itself is `promoCutoffFor`, shared with the posts feed.
+ */
+export interface CalendarViewer {
+  userId?: string;
+  isGlobalAdmin?: boolean;
+}
+
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -1096,9 +1110,14 @@ export class AssociationsService {
     associationId: string,
     fromIso?: string,
     toIso?: string,
-    opts?: { includePending?: boolean; includeRejected?: boolean }
+    opts?: { includePending?: boolean; includeRejected?: boolean; viewer?: CalendarViewer }
   ) {
     await this.findById(associationId);
+    const promoCutoff = await promoCutoffFor(
+      this.calendarRepo.manager,
+      opts?.viewer?.userId,
+      opts?.viewer?.isGlobalAdmin
+    );
     const qb = this.calendarRepo
       .createQueryBuilder('e')
       .where(
@@ -1115,6 +1134,9 @@ export class AssociationsService {
     if (opts?.includePending) statuses.push(AssociationCalendarEventStatus.Pending);
     if (opts?.includeRejected) statuses.push(AssociationCalendarEventStatus.Rejected);
     qb.andWhere('e.status IN (:...statuses)', { statuses });
+    if (promoCutoff) {
+      qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
+    }
     if (fromIso?.trim()) {
       // Include multi-day events that started before `from` but end within or after the window.
       qb.andWhere('COALESCE(e.endsAt, e.startsAt) >= :from', { from: new Date(fromIso) });
@@ -1481,7 +1503,7 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: { includePending?: boolean }
+    opts?: { includePending?: boolean; viewer?: CalendarViewer }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -1501,12 +1523,21 @@ export class AssociationsService {
       await this.findById(aid);
     }
 
+    const promoCutoff = await promoCutoffFor(
+      this.calendarRepo.manager,
+      opts?.viewer?.userId,
+      opts?.viewer?.isGlobalAdmin
+    );
+
     const qb = this.calendarRepo
       .createQueryBuilder('e')
       .innerJoin(Association, 'a', 'a.id = e.associationId')
       // Overlap condition: event starts before window end AND ends (or starts) within/after window.
       .where('e.startsAt <= :to AND COALESCE(e.endsAt, e.startsAt) >= :from', { from, to })
       .orderBy('e.startsAt', 'ASC');
+    if (promoCutoff) {
+      qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
+    }
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {
