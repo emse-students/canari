@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le prefixe `+Nms` disparait des logs : le demarrage a froid est mesure, et sous la seconde
+
+Trois lectures en production donnent 968 ms (rafraichissement), 998 ms (Ctrl-F5) et 1182 ms (cache
+desactive) jusqu'a `MLS ready`, sans qu'une seule ligne du chemin de chargement ait ete touchee. Le
+64% attribue a `mls-load-state` est refute : c'est 8%. L'offset etait un instrument avec une date
+d'expiration (utilisateur, 2026-09-18) et `app-first-line` mesure desormais ce qu'il servait a lire.
+[cold-start](docs/wiki/frontend/cold-start.md).
+
 ### Added - la liste des formulaires montre enfin les reponses, et prend la largeur d'un tableau
 
 L'accordeon affichait la date, le nom, le statut et le montant, jamais une seule reponse - alors que
