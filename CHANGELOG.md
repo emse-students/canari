@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - sur mobile, l'agenda part d'aujourd'hui et se deroule, au lieu d'ouvrir sur le mois courant
+
+La vue liste avait garde l'unite de la GRILLE : ouverte le 28, elle commencait par 27 jours deja
+passes, et la semaine suivante demandait une fleche. Elle part desormais du jour meme et charge la
+suite au scroll jusqu'a un horizon de 12 mois - le nom du mois reste comme separateur collant, les
+fleches disparaissent. Le passe reste sur desktop (utilisateur, 2026-09-20).
+[calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it).
+
 ### Fixed - une deuxieme forme d'erreur Lydia (`{status, code, message}`) n'etait pas reconnue non plus
 
 Le correctif precedent a fait parler les logs : Lydia refuse le `provider_token` configure

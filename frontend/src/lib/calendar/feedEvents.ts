@@ -138,16 +138,29 @@ export function dayOccupancy(event: AssociationCalendarFeedEvent, day: Date): Da
   return start.getHours() < HALF_DAY_PIVOT_HOUR ? 'morning' : 'afternoon';
 }
 
+/**
+ * Every event covering ONE DATED DAY, ordered by start.
+ *
+ * The day is a Date here rather than a `(focusDate, day)` pair because the phone's agenda walks a
+ * window that crosses months, and that pair cannot name the 3rd of the NEXT month. `eventsOnDay`
+ * below is this function narrowed to a month's square, which is all the grid ever asks for.
+ */
+export function eventsOnDate(
+  events: AssociationCalendarFeedEvent[],
+  date: Date
+): AssociationCalendarFeedEvent[] {
+  return events
+    .filter((event) => eventCoversDay(event, date))
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+}
+
 /** Every event covering one day of `focusDate`'s month, ordered by start. */
 export function eventsOnDay(
   events: AssociationCalendarFeedEvent[],
   focusDate: Date,
   day: number
 ): AssociationCalendarFeedEvent[] {
-  const target = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-  return events
-    .filter((event) => eventCoversDay(event, target))
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  return eventsOnDate(events, new Date(focusDate.getFullYear(), focusDate.getMonth(), day));
 }
 
 /**
@@ -177,27 +190,36 @@ export function breaksOnDay(
 }
 
 /**
- * The month of `focusDate`, as one group per day THAT HAS EVENTS.
+ * The days from `fromDay` to `toDay` INCLUSIVE that have events, one group each, in order.
  *
  * Empty days are dropped rather than rendered blank: a schedule is a list of what is happening, and
  * a month with four events should be four rows and not thirty. A multi-day event appears in every
  * day it covers, which is what makes the list answer "what is on today" rather than "what started
  * today".
+ *
+ * A RANGE, NOT A MONTH, AND THE MONTH WAS THE ACCIDENT. This answered "which days does the schedule
+ * draw" by walking 1..daysInMonth, so the phone's agenda could only ever be one calendar month -
+ * which is a constraint the GRID has (it draws squares) and a list does not. Since 2026-09-20 the
+ * phone rolls forward from today across month boundaries, and the month is simply the range whose
+ * ends are a first and a last square.
+ *
+ * The cursor steps by calendar date rather than by 24 hours: a DST change makes a day 23 or 25
+ * hours long, and adding a fixed span would skip or repeat one twice a year.
  */
-export function groupMonthEventsByDay(
+export function groupEventsByDayInRange(
   events: AssociationCalendarFeedEvent[],
-  focusDate: Date
+  fromDay: Date,
+  toDay: Date
 ): EventDayGroup[] {
-  const year = focusDate.getFullYear();
-  const month = focusDate.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
   const groups: EventDayGroup[] = [];
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const onThisDay = eventsOnDay(events, focusDate, day);
+  const last = squareOf(toDay);
+  const cursor = squareOf(fromDay);
+  while (cursor.getTime() <= last.getTime()) {
+    const onThisDay = eventsOnDate(events, cursor);
     if (onThisDay.length > 0) {
-      groups.push({ date: new Date(year, month, day), day, events: onThisDay });
+      groups.push({ date: new Date(cursor.getTime()), day: cursor.getDate(), events: onThisDay });
     }
+    cursor.setDate(cursor.getDate() + 1);
   }
   return groups;
 }
