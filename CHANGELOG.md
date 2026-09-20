@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le scroll partait sur le thread principal partout, pour un geste que dix sections ne peuvent pas faire
+
+Premier retour iPhone du projet : des bandes non peintes pendant le scroll du fil. La coquille
+posait quatre ecouteurs tactiles non passifs sur toutes les routes - `touchstart` compris, qui
+bloque le demarrage d'un scroll - et `/posts` en ajoutait un cinquieme sur le scroller lui-meme. Ils
+ne vivent plus que la ou le geste existe. Une deuxieme cause supposee, `touch-action: pan-y`, a ete
+REFUTEE au doigt sur le Mi 9T et n'est pas a rouvrir.
+[design-reference](docs/wiki/frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform).
+
+
 ### Added - la liste des formulaires montre enfin les reponses, et prend la largeur d'un tableau
 
 L'accordeon affichait la date, le nom, le statut et le montant, jamais une seule reponse - alors que

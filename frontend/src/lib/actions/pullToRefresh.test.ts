@@ -22,6 +22,36 @@ function scroller() {
   return node;
 }
 
+/**
+ * Counts the `touchmove` listeners the action holds on its node.
+ *
+ * THE COUNT IS THE MEASUREMENT, not whether the handler declines. A bound non-passive `touchmove`
+ * takes its scroller off the compositor for as long as it is bound: the engine cannot know the
+ * handler will decline, so it routes every move through the main thread first. The action declined
+ * correctly all along and still cost `/posts` - which binds it to the app's main scroller - every
+ * scroll of the feed.
+ */
+function trackTouchMove(node: HTMLElement) {
+  const state = { bound: 0 };
+  const add = node.addEventListener.bind(node) as (...a: unknown[]) => void;
+  const remove = node.removeEventListener.bind(node) as (...a: unknown[]) => void;
+  node.addEventListener = ((type: string, ...rest: unknown[]) => {
+    if (type === 'touchmove') state.bound += 1;
+    return add(type, ...rest);
+  }) as typeof node.addEventListener;
+  node.removeEventListener = ((type: string, ...rest: unknown[]) => {
+    if (type === 'touchmove') state.bound -= 1;
+    return remove(type, ...rest);
+  }) as typeof node.removeEventListener;
+  return state;
+}
+
+/** Moves the scroller and tells it so, the way a real scroll does. */
+function scrollTo(node: HTMLElement, top: number) {
+  (node as unknown as { scrollTop: number }).scrollTop = top;
+  node.dispatchEvent(new Event('scroll'));
+}
+
 describe('pullToRefresh', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -59,6 +89,64 @@ describe('pullToRefresh', () => {
     touch(node, 'touchstart', 100);
 
     expect(touch(node, 'touchmove', 200)).toBe(false);
+  });
+
+  describe('the listener exists only where the gesture can begin', () => {
+    it('holds one at the top and none once the scroller has moved', () => {
+      const node = scroller();
+      const moves = trackTouchMove(node);
+      pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+      expect(moves.bound).toBe(1);
+
+      scrollTo(node, 40);
+      expect(moves.bound).toBe(0);
+    });
+
+    it('re-arms when the scroller comes back, and the pull still works', () => {
+      const node = scroller();
+      const moves = trackTouchMove(node);
+      pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+
+      scrollTo(node, 40);
+      scrollTo(node, 0);
+      expect(moves.bound).toBe(1);
+
+      touch(node, 'touchstart', 100);
+      expect(touch(node, 'touchmove', 140)).toBe(true);
+    });
+
+    it('binds nothing at all when it mounts onto a scroller already away from the top', () => {
+      const node = scroller();
+      (node as unknown as { scrollTop: number }).scrollTop = 40;
+      const moves = trackTouchMove(node);
+      pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+
+      expect(moves.bound).toBe(0);
+    });
+
+    it('keeps the binding through a pull already under way', () => {
+      // A claimed pull is `preventDefault`ed, so no scroll event arrives to re-arm it. Losing the
+      // listener here would drop the gesture halfway through, with the indicator on screen.
+      const node = scroller();
+      const moves = trackTouchMove(node);
+      pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+
+      touch(node, 'touchstart', 100);
+      touch(node, 'touchmove', 140);
+      scrollTo(node, 0);
+
+      expect(moves.bound).toBe(1);
+    });
+
+    it('releases the listener on destroy', () => {
+      const node = scroller();
+      const moves = trackTouchMove(node);
+      const { destroy } = pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+
+      destroy();
+
+      expect(moves.bound).toBe(0);
+    });
   });
 
   describe('the spinner appears if and only if work follows it', () => {

@@ -150,10 +150,38 @@ export type SwipeNavContext = {
   keyboardOpen: boolean;
 };
 
+/**
+ * Whether this SCREEN can ever swipe - the coarse half of the question, and the ONLY half that may
+ * decide whether a touch LISTENER EXISTS.
+ *
+ * THE TWO HALVES ARE NOT THE SAME QUESTION, AND CONFLATING THEM COST EVERY SCROLL IN THE APP.
+ * `isSwipeNavActive` below answers "may THIS gesture navigate", which depends on things that change
+ * under the finger - a keyboard, an open conversation, an overlay on the history stack. That answer
+ * is read inside the handlers, at gesture time, and it is right to read it late.
+ *
+ * But a NON-PASSIVE `touchmove` listener costs its scroller whether or not its handler ever does
+ * anything: the engine cannot know the handler will return immediately, so it marks the region
+ * non-fast-scrollable and hands every move to the main thread BEFORE it is allowed to scroll. The
+ * root layout bound one unconditionally - on every route and every platform, `/associations` and
+ * the nine other swipe-EXCLUDED prefixes included - so every scroll in the app paid for a gesture
+ * most screens cannot perform. Reported from an iPhone 2026-09-20 as unpainted bands during a
+ * scroll of the feed, which is what a compositor shows when rasterisation is waiting on a blocked
+ * main thread.
+ *
+ * So arming asks only what a screen IS - its route and its viewport - and never what the moment is.
+ * Both of those change through a re-render the listener set can follow; none of the others can.
+ *
+ * `swipeViewport` is passed in rather than read here because the caller that matters holds it as
+ * reactive state (a `matchMedia` read answers once and never again, and the listener set has to
+ * follow a rotation). One implementation, two callers.
+ */
+export function isSwipeNavArmed(pathname: string, swipeViewport: boolean): boolean {
+  return swipeViewport && isSwipeNavRoute(pathname);
+}
+
 /** Whether swipe-between-tabs should be active for the current UI state. */
 export function isSwipeNavActive(ctx: SwipeNavContext): boolean {
-  if (!isSwipeNavViewport()) return false;
-  if (!isSwipeNavRoute(ctx.pathname)) return false;
+  if (!isSwipeNavArmed(ctx.pathname, isSwipeNavViewport())) return false;
   if (ctx.mobileConvoOpen || ctx.keyboardOpen) return false;
   if (historyOverlayStackDepth() > 0) return false;
   return true;

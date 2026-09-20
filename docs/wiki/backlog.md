@@ -7435,3 +7435,65 @@ of service was queued behind a TestFlight upload.** Whatever the fix is - a lane
 estate work is done, cancelling a superseded pre-release's store arms, or simply knowing to cancel by
 hand - the thing to keep is that the serialisation is correct and only its GRANULARITY is wrong: the
 estate and the stores do not need the same lock.
+
+## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE FIXED-UNMEASURED AND ONE STILL OPEN
+
+**2026-09-20, from a user's iPhone**, relayed by the user. The first iOS feedback this project has
+ever had, and the ONLY two reports it carries, so neither may be widened into a class.
+
+### 1. The scroll - FIXED, and owed one measurement nothing here can take
+
+*"Ca lag assez fort quand je scrolle"*, *"Canari se bave un peu dessus"*, *"le tactile bug un peu
+aussi"*, *"dans associations tout etc..."*, plus an 18.5 s recording of `/posts` showing unpainted
+bands. Cause, mechanism, the frames and what was REFUTED on the Mi 9T are in
+[design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform),
+the only copy.
+
+**What is owed: the same scroll, on the same iPhone, on a build carrying the fix.** Nothing on this
+workstation can produce that reading - the Mi 9T settles the Chromium half and Chromium is not the
+engine that reported it. Until then the fix is reasoned, tested and unmeasured **on the platform it
+was written for**, which is precisely the standing iOS hazard this repository records. A green
+`bun run test` is not a scroll.
+
+**Two things it did NOT close, both P3 and both measurable here**: the feed is not virtualised, so
+the composited layer grows with every page of infinite scroll; and `loading="lazy"` is still absent
+from the three avatar components, deliberately - they render behind an `imageLoaded` flag a cached
+blob sets eagerly, so a lazy avatar entering the viewport mid-fling would show an empty disc where
+initials are today. That is a memory question, and it is owed a measurement rather than a guess.
+
+### 2. The bundled emoji font is not active on WebKit - OPEN, P2, cause narrowed to two
+
+*"Il a l'air d'avoir toujours les emojis Apple ?"* - confirmed by cropping the recording: the
+fire and the movie camera are Apple's drawings, unambiguously.
+
+**Three facts narrow it, and the third was measured on 2026-09-20:**
+
+1. **Nunito and Fredoka load correctly on the same iPhone** (visible in every frame). They arrive as
+   `@import '@fontsource-variable/...'`, bundled by Vite with a rewritten hashed URL; the emoji font
+   is a hand-written absolute `url('/fonts/...')` in `app.css`. So this is not "webfonts fail on
+   iOS", it is this font by this path.
+2. **Safari on the same iPhone shows Apple emoji too** (the user asked, 2026-09-20). So it is NOT
+   the `tauri://localhost` origin, and the defect is on the WEB as well as in the app.
+3. **Both files are served correctly from both estates** - `curl` on `canari-emse.fr` and
+   `dev.canari-emse.fr`, `HTTP 200`, 1 981 256 and 5 705 472 bytes, `content-type: font/woff2`, the
+   committed sizes to the byte. So it is not a deploy, a path or a MIME.
+
+**Two causes survive, and nothing here can separate them:**
+
+- WebKit accepts `tech(color-COLRv1)`, takes the 1.98 MB derivation and cannot paint it;
+- WebKit takes the 5.7 MB merged file and REJECTS it outright - its `SVG ` table has never been
+  parsed by any WebKit.
+
+[emoji.md](frontend/emoji.md) says in its own words that the ladder was *"Verified in a real
+Chrome"*, that the SVG-only derivation is unshipped because *"nothing on this workstation can verify
+that it draws"*, and that *"shipping an unverified colour font to iOS is the precise shape of the
+three iOS defects that were invisible to every gate here."* **This is the fourth.** The build gate
+`check-emoji-coverage.mjs` shapes with harfbuzz: it proves the glyphs exist, never that an engine
+draws them.
+
+**WHAT MUST NOT BE DONE IS A GUESS.** Dropping the `tech()` line and serving the merged font to
+everyone would fix cause one, do nothing for cause two, and cost every Chromium and Firefox reader
+3.7 MB on a page whose cold start is queue item 11. **What separates them is one instrument**: a
+static probe page on `dev` that reports `document.fonts` state and which URL won, readable on a
+phone with no devtools and no Mac. It is small, it is the only thing that turns this from an
+argument into a reading, and it is owed before any edit to that `@font-face`.
