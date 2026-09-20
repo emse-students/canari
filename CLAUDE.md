@@ -254,9 +254,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - THE ROUTE SWEEP IS DONE; WHAT IS OPEN IS REAL HARDWARE (all of it Chrome with
-    an override), the channel list's width, FIVE of the ELEVEN 2026-09-18 REPORTS, and THE PHONE
-    AGENDA'S ROLLING WINDOW - SHIPPED 2026-09-20 ON GATES AND TESTS, NEVER ONCE RENDERED** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it)).
+10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's
+    width, FIVE of the ELEVEN 2026-09-18 REPORTS, and TWO CHANGES SHIPPED 2026-09-20 ON GATES AND
+    TESTS AND NEVER ONCE RENDERED - the phone agenda's rolling window, the forms responses table** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it), [forms](docs/wiki/frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)).
 11. **COLD START - 64% OF A BOOT IS `mls-load-state`, 29% A REGION WITH NO MARK, BOTH INSTRUMENTED
     2026-09-20 BUT MERGED AFTER v0.18.15 SO PROD CARRIES NEITHER AND NOTHING IS READ.** Under 1 s
     (user); **no load-path change before that reading**: [cold-start](docs/wiki/frontend/cold-start.md), [backlog](docs/wiki/backlog.md).
