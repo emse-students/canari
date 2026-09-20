@@ -45,6 +45,16 @@ jamais, ni la, ni dans la carte Open Graph externe. Cote externe la photo reste 
 et rien n'y change ; cote application, l'apercu est deja authentifie avec le meme acces que la
 publication elle-meme, donc il la dechiffre desormais et l'affiche en bandeau sous le logo/texte,
 sans remplacer ce dernier. [architecture](docs/wiki/frontend/architecture.md).
+### Fixed - un lien Canari partage ailleurs n'affichait que "Publication - Canari", et n'a jamais affiche autre chose
+
+Le gate de flux du 2026-09-10 a ferme `/api/posts/:id` a tout appelant sans session, l'injecteur
+d'entete y compris : 22 `401` en 72 h de logs `frontend-ssr`, et `0 posts` dans chaque sitemap, sans
+rien de rouge parce que les deux consommateurs degradent en silence. Une porte plus etroite
+(`/api/public/posts/:id/preview`) sert desormais le texte, l'auteur et **la photo du post
+dechiffree** - aux publications d'association seulement, un post personnel gardant la carte
+generique. Les invitations groupe et communaute gagnent une description et, cote groupe, l'image qui
+lui manquait.
+[seo](docs/wiki/frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing).
 
 ### Fixed - le rapport quotidien sur les stores accusait le pipeline la ou Apple faisait la queue
 

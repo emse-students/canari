@@ -51,9 +51,11 @@ export function absoluteImageUrl(image: string | undefined | null): string {
  *
  * - every tag carries `data-canari-seo`, which is how the client removes this block before adding
  *   its own and the document does not end up with two of each;
- * - `og:image:width`/`height` are emitted only for the default site image. Those numbers are
- *   `SITE.defaultOgImage*`, and an entity's own logo has dimensions nobody here knows - declaring
- *   1080x1080 for a 200x200 logo makes the unfurler reserve a box the image never fills.
+ * - `og:image:width`/`height` are emitted only where the numbers are KNOWN: the default site image
+ *   (`SITE.defaultOgImage*`) and an enricher that carries its own (`meta.imageWidth/Height`, which
+ *   a post's stored photo does). An association logo still declares none - its dimensions are
+ *   nobody's here, and claiming 1080x1080 for a 200x200 logo makes the unfurler reserve a box the
+ *   image never fills.
  *
  * The last element is not a tag at all: it is the resolved metadata as JSON, which the client
  * reads back in `SeoHead.svelte`. Without it, hydration REPLACES this head with what the browser
@@ -68,6 +70,17 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
   const image = absoluteImageUrl(meta.image);
   const isDefaultImage = image === siteAssetUrl(SITE.defaultOgImagePath);
   const imageAlt = isDefaultImage ? SITE.defaultOgImageAlt : meta.imageAlt;
+  // The default image's dimensions are a constant; an enricher's are a fact it looked up. Anything
+  // else declares none rather than inventing a pair - see the block comment above.
+  //
+  // BOTH OR NEITHER. A lone `og:image:width` describes no box, and a consumer that reads one and
+  // not the other has been handed a half-fact rather than a smaller one. `SeoHead.svelte` gates on
+  // the same conjunction, which is what keeps the two tag sets comparable line by line.
+  const declaredWidth = isDefaultImage ? SITE.defaultOgImageWidth : meta.imageWidth;
+  const declaredHeight = isDefaultImage ? SITE.defaultOgImageHeight : meta.imageHeight;
+  const hasDimensions = !!declaredWidth && !!declaredHeight;
+  const imageWidth = hasDimensions ? String(declaredWidth) : '';
+  const imageHeight = hasDimensions ? String(declaredHeight) : '';
   const isArticle = (meta.ogType ?? SITE.defaultOgType) === 'article';
 
   return [
@@ -81,8 +94,8 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
     metaProperty('og:description', meta.description),
     metaProperty('og:url', canonicalUrl),
     metaProperty('og:image', image),
-    isDefaultImage ? metaProperty('og:image:width', String(SITE.defaultOgImageWidth)) : '',
-    isDefaultImage ? metaProperty('og:image:height', String(SITE.defaultOgImageHeight)) : '',
+    metaProperty('og:image:width', imageWidth),
+    metaProperty('og:image:height', imageHeight),
     metaProperty('og:image:alt', imageAlt),
     isArticle ? metaProperty('article:published_time', meta.publishedAt) : '',
     isArticle ? metaProperty('article:author', meta.authorName) : '',

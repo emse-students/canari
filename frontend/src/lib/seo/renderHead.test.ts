@@ -36,15 +36,45 @@ describe('renderSeoTags', () => {
     for (const tag of tags) expect(tag).toContain('data-canari-seo');
   });
 
-  it('declares image dimensions only for the default site image', () => {
+  it('declares image dimensions only where they are known, never guessed', () => {
     expect(renderSeoTags(base, '/posts/abc')).toContain('og:image:width');
-    // An entity logo has dimensions this process does not know.
+
+    // An entity logo has dimensions this process does not know. Declaring a pair anyway makes the
+    // unfurler reserve a box the image never fills, which is worse than declaring none.
     const withLogo = renderSeoTags(
       { ...base, image: 'https://canari-emse.fr/api/media/public/abc' },
       '/posts/abc'
     );
     expect(withLogo).not.toContain('og:image:width');
     expect(withLogo).toContain('og:image');
+
+    // A post's own photo DOES carry its size, stored beside it - and it is what lets a
+    // `summary_large_image` card render large instead of degrading to a thumbnail.
+    const withPhoto = renderSeoTags(
+      {
+        ...base,
+        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        imageWidth: 2048,
+        imageHeight: 1365,
+      },
+      '/posts/abc'
+    );
+    expect(withPhoto).toContain('<meta property="og:image:width" content="2048"');
+    expect(withPhoto).toContain('<meta property="og:image:height" content="1365"');
+  });
+
+  it('declares neither dimension when an enricher knows only one of the pair', () => {
+    // A lone width describes no box. Half a fact is not a smaller fact here.
+    const half = renderSeoTags(
+      {
+        ...base,
+        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        imageWidth: 2048,
+      },
+      '/posts/abc'
+    );
+    expect(half).not.toContain('og:image:width');
+    expect(half).not.toContain('og:image:height');
   });
 
   it('canonicalizes to the meta path, falling back to the pathname', () => {

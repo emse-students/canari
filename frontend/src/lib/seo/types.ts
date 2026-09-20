@@ -16,6 +16,16 @@ export interface SeoMeta {
   image?: string;
   /** Describes `image` for screen readers and for the alt text an unfurler shows. */
   imageAlt?: string;
+  /**
+   * Pixel dimensions of `image`, when the enricher genuinely knows them.
+   *
+   * Declared only where they are a fact - a post's own photo, whose size is stored beside it - and
+   * never guessed. An unfurler reserves the box these describe before the bytes arrive, so a wrong
+   * pair is worse than none: the card renders a gap the image never fills. It is also what lets
+   * `twitter:card: summary_large_image` render large rather than silently degrading to a thumbnail.
+   */
+  imageWidth?: number;
+  imageHeight?: number;
   /** ISO 8601 publication date, emitted as `article:published_time` for `ogType: 'article'`. */
   publishedAt?: string;
   /** Display name credited as the author of an article. */
