@@ -19,6 +19,14 @@ Dans un message il prend desormais la couleur de la bulle ; dans une publication
 deja prouvee de la puce de mention.
 [design-reference](docs/wiki/frontend/design-reference.md#31-a-hashtag-named-a-colour-on-a-surface-whose-colour-it-could-not-know).
 
+### Fixed - la reponse par glissement n'a jamais fonctionne : un drapeau que rien n'ecrivait
+
+`MessageBubble` gardait `supportsHover`, initialise a `true` et affecte par rien, donc le garde-fou
+du geste repondait non sur tous les appareils depuis le 2026-03-26 - reponse ET reaction par
+glissement, qui partagent le meme handler. Tout le module de gestes etait teste et juste ; personne
+ne l'appelait. Le predicat quitte le composant pour le module teste et lit
+`isCoarsePointerDevice()`, qui existait deja.
+[chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
 ### Fixed - l'affiche se voit en entier dans l'agenda et dans un partage, et le logo n'a plus de cadre
 
 Le traitement du fil (image entiere, reste peint avec l'image floutee) n'existait que dans
