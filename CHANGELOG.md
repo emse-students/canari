@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
+
+Six boutons pleins (modifier, partager, QR, exporter, reponses, supprimer) demandaient plus de
+largeur qu'une ligne n'en avait, et le nom du formulaire etait le seul element sans plancher de
+largeur - il perdait donc en premier, tronque a presque rien. Les six sont desormais des boutons
+icone seule (comme l'etait deja celui de suppression), avec un `title` pour le libelle.
+[forms](docs/wiki/frontend/modules/forms.md).
+
 ### Changed - le formulaire de creation d'un compte Lydia Pro signale ses erreurs, garde son bouton tableau de bord, et n'affiche plus un titre entierement vert
 
 Trois trous dans le meme formulaire : une erreur de creation (y compris le provider non configure,

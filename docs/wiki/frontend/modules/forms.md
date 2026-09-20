@@ -385,6 +385,13 @@ print the raw form id, which told a person nothing.
 `EditFormsTab` offers edit and delete on the same set from the association's own space. Its actions
 are unconditional because the tab itself only renders for a caller holding `MANAGE_FORMS`.
 
+**The global list's row carries SIX actions** (edit, share link, QR, export, responses, delete) -
+labelled pill buttons for all six demanded more width than a row had to give, and the name (the only
+flex item with a `min-w-0` floor) lost that fight first, truncating to almost nothing. All six are
+now icon-only (`.ui-icon-button`, `title=` for the label), matching the delete button, which already
+was. `EditFormsTab`'s three-action row kept its text labels (it never ran out of room) but gained the
+same `min-w-0`/`truncate` floor on its name, for the same reason (2026-09-20).
+
 ### Configurations the API refuses
 
 `FormsService.assertCotisationConfigValid` runs on create AND update, and rejects every setting that
