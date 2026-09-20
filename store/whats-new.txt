@@ -1,3 +1,7 @@
-version: 0.18.16
+version: 0.18.17
 
-L'apercu d'un lien vers une publication montre desormais sa propre photo
+Sur telephone, l'agenda part d'aujourd'hui et se deroule au fil du defilement, au lieu d'ouvrir sur le mois en cours.
+
+La liste des reponses d'un formulaire affiche desormais les reponses elles-memes, et non plus seulement la date et le nom.
+
+L'apercu d'un lien vers une publication montre sa propre photo et son propre texte.
