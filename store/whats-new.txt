@@ -1,3 +1,3 @@
-version: 0.18.15
+version: 0.18.16
 
-Les actions sur un formulaire (modifier, partager, exporter...) ne cachent plus son nom
+L'apercu d'un lien vers une publication montre desormais sa propre photo
