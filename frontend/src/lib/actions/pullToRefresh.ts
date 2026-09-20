@@ -1,6 +1,9 @@
 /**
  * Svelte action that adds a native-feeling pull-to-refresh gesture to any scrollable element.
- * Attaches non-passive touchmove so it can preventDefault when pulling down.
+ *
+ * It needs a non-passive `touchmove` to claim the pull, and a non-passive `touchmove` takes its
+ * scroller off the compositor for as long as it is bound - so it is bound only where the gesture
+ * can begin. See `syncMoveBinding` at the foot of this file.
  */
 
 export interface PullToRefreshOptions {
@@ -137,15 +140,52 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
     startY = 0;
   }
 
+  let moveBound = false;
+
+  function bindMove(): void {
+    if (moveBound) return;
+    node.addEventListener('touchmove', onTouchMove, { passive: false });
+    moveBound = true;
+  }
+
+  function unbindMove(): void {
+    if (!moveBound) return;
+    node.removeEventListener('touchmove', onTouchMove);
+    moveBound = false;
+  }
+
+  /**
+   * THE NON-PASSIVE `touchmove` EXISTS ONLY WHERE THE GESTURE CAN BEGIN, WHICH IS `scrollTop === 0`.
+   *
+   * `onTouchStart` already refuses anywhere else, so the listener spent the whole of a long feed
+   * bound and declining - and a bound non-passive `touchmove` costs its scroller whether or not the
+   * handler does anything: the engine cannot know in advance that it will decline, so it marks the
+   * region non-fast-scrollable and routes every move through the main thread before it is allowed
+   * to scroll. `/posts` binds this action to `.page-scroll-wrap` ITSELF, the app's main scroller, so
+   * that was the whole feed, on top of the shell's own listener - both reported from an iPhone on
+   * 2026-09-20 as unpainted bands during a scroll.
+   *
+   * A passive `scroll` listener is what re-asks the question. `active` and `refreshing` hold the
+   * binding through a pull that is already under way: the pull is claimed with `preventDefault`, so
+   * no scroll event arrives to re-arm it, and a refresh that scrolls the list under itself must not
+   * unbind the gesture it is serving.
+   */
+  function syncMoveBinding(): void {
+    if (node.scrollTop === 0 || active || refreshing) bindMove();
+    else unbindMove();
+  }
+
   node.addEventListener('touchstart', onTouchStart, { passive: true });
-  node.addEventListener('touchmove', onTouchMove, { passive: false });
-  node.addEventListener('touchend', onTouchEnd);
+  node.addEventListener('touchend', onTouchEnd, { passive: true });
+  node.addEventListener('scroll', syncMoveBinding, { passive: true });
+  syncMoveBinding();
 
   return {
     destroy() {
       node.removeEventListener('touchstart', onTouchStart);
-      node.removeEventListener('touchmove', onTouchMove);
       node.removeEventListener('touchend', onTouchEnd);
+      node.removeEventListener('scroll', syncMoveBinding);
+      unbindMove();
       removeIndicator();
     },
   };

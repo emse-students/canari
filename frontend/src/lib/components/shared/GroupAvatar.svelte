@@ -112,6 +112,7 @@
   <img
     src={blobUrl}
     alt={name || m.group_avatar_fallback_alt()}
+    decoding="async"
     class="{shapeClasses} shrink-0 object-cover shadow-sm select-none {sizeClasses}"
   />
 {:else}

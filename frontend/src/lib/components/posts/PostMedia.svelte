@@ -284,6 +284,7 @@
             ? 'relative h-full w-full object-contain'
             : 'h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105'}
           loading="lazy"
+          decoding="async"
         />
       </button>
     {:else if mediaType === 'video'}

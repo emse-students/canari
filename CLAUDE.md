@@ -241,8 +241,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    ([backlog](docs/wiki/backlog.md)).
 6. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
-   never the audit's**; the table emptied 2026-09-14 - four of five rows artifacts, one family never
-   defined here, the last a distinction with no reader. D8/R-D8 REFUTED, not to be re-opened. **FIVE
+   never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
    CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
@@ -274,6 +273,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
 18. **P2 - A SALON NOTIFICATION IS BLIND FOR EVERY MESSAGE OF A SESSION MINTED WHILE THE APP WAS SHUT** (user, PROD 2026-09-19) - the seed IS pushed and the
     push service drops it unread on `silent && !CALLS_ENABLED`; nothing is LOST, and the fix is owed its TESTS ([backlog](docs/wiki/backlog.md)).
+19. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE
+    reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half. **The BUNDLED
+    EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

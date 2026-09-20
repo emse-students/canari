@@ -502,6 +502,20 @@ h6,
 }
 
 /* Mobile swipe between main tabs (+layout.svelte) */
+/* `will-change: transform` IS LOAD-BEARING FOR LAYOUT AND IS NOT A PERFORMANCE HINT. It makes this
+   wrapper the containing block for every `position: fixed` inside a page, which `design-reference`
+   section 15 measured at 210px of window unreachable without it.
+
+   `touch-action: pan-y pinch-zoom` BELONGS TO THE SWIPE GESTURE AND STAYS UNCONDITIONAL, which was
+   tried the other way and MEASURED WRONG on 2026-09-20. The theory was that it forbade horizontal
+   panning to the nineteen `overflow-x-auto` panes inside this wrapper - the association tab strip,
+   the admin nav, the permission grid - because the allowed directions intersect over the ancestor
+   chain. On the Mi 9T, Chrome, real finger: an ancestor at `pan-y pinch-zoom` scrolled its nested
+   strip 346px where `auto` scrolled it 348. The property is applied (a control scroller at `pan-x`
+   held `scrollTop` at 0 through a vertical swipe) - the RESTRICTION simply does not reach a
+   descendant that is itself the scroll container. Gating it bought nothing and would have handed
+   double-tap zoom back to ten route prefixes.
+   See `design-reference` section 28. */
 .page-scroll-wrap {
   touch-action: pan-y pinch-zoom;
   will-change: transform;

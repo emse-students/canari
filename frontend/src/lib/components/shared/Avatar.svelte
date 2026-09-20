@@ -138,6 +138,7 @@
       <img
         src={display.url}
         alt={`Avatar de ${displayLabel}`}
+        decoding="async"
         class="h-full w-full object-cover transition-opacity duration-150 select-none {imageLoaded
           ? 'opacity-100'
           : 'opacity-0'}"

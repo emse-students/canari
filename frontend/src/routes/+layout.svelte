@@ -33,6 +33,8 @@
     classifySwipeRelease,
     createSwipeNavGestureState,
     isSwipeNavActive,
+    isSwipeNavArmed,
+    isSwipeNavViewport,
     shouldIgnoreSwipeTarget,
     swipeDragResistancePx,
     swipeNavTargetHref,
@@ -41,6 +43,7 @@
     type SwipeNavDirection,
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
+  import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
@@ -164,9 +167,25 @@
   });
 
   // ── Swipe navigation (mobile only) ────────────────────────────────────────
+  let appShell = $state<HTMLDivElement | null>(null);
   let pageScrollWrap = $state<HTMLDivElement | null>(null);
   let swipeGesture = $state<SwipeNavGestureState | null>(null);
   let swipeEnterClass = $state('');
+
+  /**
+   * The viewport half of arming, held as STATE because a `matchMedia` read answers once and never
+   * again. The same shape `ChatArea` and `ChatComposer` already use for their own question.
+   */
+  let swipeNavViewport = $state(false);
+  $effect(() => {
+    swipeNavViewport = isSwipeNavViewport();
+    return onViewportChange(SWIPE_NAV_QUERY, (matches) => {
+      swipeNavViewport = matches;
+    });
+  });
+
+  /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
+  const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
 
   function swipeNavContext() {
     return {
@@ -284,16 +303,41 @@
     return () => window.clearTimeout(timer);
   });
 
-  /** `touchmove` must be non-passive so horizontal lock can call `preventDefault`. */
-  function swipeNavTouchMove(node: HTMLElement) {
-    const onMove = (e: TouchEvent) => handleTouchMove(e);
-    node.addEventListener('touchmove', onMove, { passive: false });
-    return {
-      destroy() {
-        node.removeEventListener('touchmove', onMove);
-      },
+  /**
+   * THE GESTURE'S LISTENERS EXIST ONLY WHERE THE GESTURE DOES.
+   *
+   * `touchmove` must be non-passive so the horizontal lock can `preventDefault`. `touchstart`
+   * decides nothing the engine has to wait for, so it is passive - which it was not: an element
+   * handler (`ontouchstart={...}`) is non-passive like any other, and a non-passive `touchstart` on
+   * the shell stops a scroll from STARTING as surely as a `touchmove` stops it from continuing.
+   * Both were bound on every route and every platform; see `isSwipeNavArmed`.
+   *
+   * The effect tracks `appShell` and `swipeNavArmed` and nothing else. The handlers re-ask
+   * `isSwipeNavActive` themselves - that is the fine half of the question and it cannot be
+   * answered from a render.
+   */
+  $effect(() => {
+    const node = appShell;
+    if (!node || !swipeNavArmed) return;
+
+    node.addEventListener('touchstart', handleTouchStart, { passive: true });
+    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    node.addEventListener('touchend', handleTouchEnd, { passive: true });
+    node.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+
+    return () => {
+      node.removeEventListener('touchstart', handleTouchStart);
+      node.removeEventListener('touchmove', handleTouchMove);
+      node.removeEventListener('touchend', handleTouchEnd);
+      node.removeEventListener('touchcancel', handleTouchCancel);
+      // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have
+      // cleared is cleared here instead - otherwise a rotation, or a keyboard opening under the
+      // finger, leaves the wrapper parked at whatever `translate3d` the last move wrote with no
+      // gesture left to snap it back.
+      swipeGesture = null;
+      clearSwipeTransform(pageScrollWrap);
     };
-  }
+  });
 </script>
 
 <SeoHead />
@@ -302,12 +346,11 @@
 
 <PlatformGateOverlay />
 
+<!-- The swipe gesture's touch listeners are bound to this node in script, and only on a screen that
+     can swipe - see the effect above. They are deliberately NOT `ontouch*` attributes: those bind
+     unconditionally and non-passively, which is what cost every scroll in the app its compositor. -->
 <div
-  role="presentation"
-  use:swipeNavTouchMove
-  ontouchstart={handleTouchStart}
-  ontouchend={handleTouchEnd}
-  ontouchcancel={handleTouchCancel}
+  bind:this={appShell}
   class="flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
 >
   <!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`

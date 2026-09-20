@@ -71,6 +71,7 @@
   <img
     src={displaySrc}
     alt={name}
+    decoding="async"
     class="{shapeClasses} shrink-0 bg-white object-cover shadow-sm select-none {sizeClasses}"
     title={name}
     onerror={() => {

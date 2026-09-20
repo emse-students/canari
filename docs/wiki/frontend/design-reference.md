@@ -2066,3 +2066,126 @@ One copy now, unconditional.
 and it derives the panel family from what `MainChatPage` renders between the shell's tags rather
 than listing four files. It asserts padding and flex-direction only: `md:hidden` decides WHICH
 CONTROLS EXIST, which is a question about the device, not about how much room there is.
+
+## 28. Every scroll in the app ran on the main thread, for a gesture ten prefixes cannot perform
+
+**Reported from an iPhone on 2026-09-20** - the first iOS feedback this project has ever had -
+as *"ca lag assez fort quand je scrolle"*, *"Canari se bave un peu dessus"* and *"le tactile bug un
+peu aussi ... dans associations"*. An 18.5 s screen recording of `/posts` settles what "se bave"
+means, and it is not a slow render:
+
+| t | what the frame shows |
+| --- | --- |
+| 9.2 s | the whole content area **black**; the header and the bottom bar are intact |
+| 13.2 s | the lower 60% empty under the last drawn card |
+| 16.4 s | the upper 65% empty, the next card rising from the bottom edge |
+
+The header and the tab bar never blink, and they are the two things OUTSIDE the scroller. So the
+compositor is scrolling the layer and **the layer has not been rasterised** - unpainted tiles, which
+is what WebKit shows when rasterisation is waiting behind a blocked main thread.
+
+### What blocked it
+
+**A non-passive `touchmove` listener takes its scroller off the compositor for as long as it is
+bound.** The engine cannot know in advance that the handler will return without calling
+`preventDefault`, so it marks the region non-fast-scrollable and routes every move through the main
+thread BEFORE it is allowed to scroll. The same is true of `touchstart`, which decides whether a
+scroll may start at all. Safari makes those two passive by default on `window`, `document` and
+`document.body` - and on nothing else, so a listener on a `<div>` is non-passive unless it says
+otherwise.
+
+`routes/+layout.svelte` bound FOUR of them on the app shell, the parent of `.page-scroll-wrap`:
+`touchmove` explicitly non-passive, and `ontouchstart` / `ontouchend` / `ontouchcancel` as element
+handlers, which are non-passive like any other. All four were bound **unconditionally** - every
+route, every platform, every viewport - for the swipe-between-tabs gesture, which
+`SWIPE_NAV_EXCLUDED_PREFIXES` already refuses on `/associations`, `/profile`, `/forms`, `/events`,
+`/admin` and five more - ten in all. On those screens the handler returned immediately and the scroller paid for
+it anyway.
+
+**And `/posts`, the page that was filmed, had a second one.** `pullToRefresh` binds its own
+non-passive `touchmove`, and the feed binds that action to `.page-scroll-wrap` **itself** - the
+app's main scroller. Its `onTouchStart` refuses anywhere but `scrollTop === 0`, correctly, and the
+listener stayed bound for the whole of a long feed regardless. Two non-passive `touchmove`
+listeners in one ancestor chain is the worst case in the app, and it is the one that was reported.
+
+### The shape of the repair - arming is a different question from activating
+
+`isSwipeNavActive` answers *may THIS gesture navigate*, and it depends on things that move under the
+finger: a keyboard, an open conversation, an overlay on the history stack. It is read inside the
+handlers, late, and that is right.
+
+Whether a LISTENER EXISTS is a different question, and only a coarse one may answer it - what the
+screen IS, not what the moment is. `isSwipeNavArmed(pathname, swipeViewport)` is that half: route
+and viewport, both things a render can follow. The layout holds the viewport answer as state fed by
+`onViewportChange(SWIPE_NAV_QUERY, ...)` - the shape `ChatArea` and `ChatComposer` already use -
+and one `$effect` binds and unbinds all four listeners with it. `touchstart`, `touchend` and
+`touchcancel` are now passive; only `touchmove` is not.
+
+**Disarming mid-gesture never sees its `touchend`**, so the effect's teardown clears `swipeGesture`
+and the wrapper's transform itself. Without that, a rotation - or a keyboard opening under the
+finger - leaves the page parked at whatever `translate3d` the last move wrote, with no gesture left
+to snap it back.
+
+`pullToRefresh` takes the same treatment against its own question: the non-passive `touchmove` is
+bound only where the gesture can BEGIN, and a passive `scroll` listener re-asks after every scroll.
+`active` and `refreshing` hold the binding through a pull already under way - a claimed pull is
+`preventDefault`ed, so no scroll event arrives to re-arm it.
+
+### REFUTED, ON HARDWARE: `touch-action: pan-y` was NOT what stopped the tab strips panning
+
+The second half of the report - *"le tactile bug un peu aussi ... dans associations"* - had an
+obvious-looking cause. `.page-scroll-wrap` carries `touch-action: pan-y pinch-zoom` unconditionally
+for the gesture, the allowed pan directions are the INTERSECTION over the hit element and its
+ancestors, and there are nineteen `overflow-x-auto` panes inside that wrapper: the association
+page's own section tabs (`AssociationDetailView.svelte`), the admin nav, `PermissionGrid`,
+`PriceGridEditor`, `FormSubmissionsTable`, a post's code block. The reading was that none of them
+could be panned by finger, and that `shouldIgnoreSwipeTarget` - which already walks out of exactly
+those regions and declines the gesture - proved the CSS half was a second, blunter copy of a
+decision the JS had already taken.
+
+**Measured on the Mi 9T, Chrome, real finger through `adb input swipe`, 2026-09-20 - and it is
+wrong.** Two identical strips, one under an ancestor at `touch-action: pan-y pinch-zoom`, one under
+an ancestor at `auto`, 410px of overflow each, the same 702px swipe:
+
+| | `scrollLeft` after the swipe |
+| --- | --- |
+| under `pan-y pinch-zoom` (today) | **346** |
+| under `auto` (the proposed change) | **348** |
+
+**And the property IS being applied**, which is the control that makes the result mean something: a
+third scroller carrying `touch-action: pan-x` ON ITSELF held `scrollTop` at **0** through a vertical
+swipe wholly inside it. So `touch-action` works, and the restriction simply **does not reach a
+descendant that is itself the scroll container** for the direction being asked for.
+
+The gating was written, measured, and reverted in the same session. It bought nothing, and it had a
+cost that only showed up once the benefit was gone: `pan-y pinch-zoom` excludes double-tap zoom, so
+making it conditional hands double-tap zoom - and the tap delay behind it - back to the ten
+swipe-excluded prefixes. **Do not re-open this without a WebKit measurement**: Chromium is what the
+Mi 9T and the Android WebView run, and the report came from an iPhone. Nothing here says what
+WebKit does, and nothing here may be quoted as if it did.
+
+What remains as the explanation for the touch half of the report is the same blocked main thread as
+the scroll half: a non-passive `touchstart` on the shell delays the engine's decision about every
+tap and pan, which is felt as dropped and late touches. That is what the arming above removes.
+
+### What was NOT changed, and why
+
+**`will-change: transform` stays unconditional.** It is not a performance hint here: it makes
+`.page-scroll-wrap` the containing block for every `position: fixed` inside a page, which section 15
+measured at **210 px of window unreachable** without it. Gating it on the armed class would change
+the layout of every non-armed page. It was also not the cause: a permanently composited layer is
+only a problem when rasterisation cannot keep up, which is what the blocked main thread above was
+doing.
+
+`decoding="async"` was added to the three avatar components and to a post's image, which moves their
+decode off the main thread during the same scroll. `loading="lazy"` was NOT added to the avatars:
+they render behind an `imageLoaded` flag that a cached blob sets eagerly, so a lazy avatar entering
+the viewport mid-fling would show an empty disc where the initials placeholder is today. That is a
+memory question, not this one, and it is owed a measurement rather than a guess.
+
+### What this does not prove
+
+Everything above is read from the code and from the recording. **No before/after measurement exists
+on the iPhone that reported it**, and nobody here has one - the standing hazard this project records
+for iOS. The Android side of the same defect is measurable on the Mi 9T, and the `touch-action`
+intersection rule is engine-independent.
