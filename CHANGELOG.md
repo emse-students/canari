@@ -18,6 +18,7 @@ which is also where every release up to and including v0.13.1 now lives.
 par l'avant les 1358 ms que personne ne mesurait. Aucune correction n'accompagne ces mesures,
 deliberement.
 [cold-start](docs/wiki/frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
+## [0.18.15] - 2026-09-20
 
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
 
