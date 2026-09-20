@@ -22,7 +22,6 @@
     Check,
     QrCode,
     Trash2,
-    ChevronDown,
     ChevronUp,
     Users,
     X,
@@ -248,50 +247,57 @@
                 {/if}
               </p>
             </div>
+            <!-- Icon-only, all six - a text label on each of six actions demanded more width than
+                 a viewport had to give, and the only flex item without a `min-w-0` floor is the
+                 name above, so it lost that fight first and truncated to almost nothing. -->
             <div class="flex shrink-0 flex-wrap gap-2">
               <a
                 href="/forms/{form.id}/edit"
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-colors"
+                class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl transition-colors"
+                title={m.form_list_edit_button()}
               >
-                <Pencil size={14} />
-                {m.form_list_edit_button()}
+                <Pencil size={16} />
               </a>
               <button
                 onclick={() => copyFormLink(form.id)}
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
+                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                title={copiedId === form.id
+                  ? m.form_list_link_copied()
+                  : m.form_list_share_button()}
               >
                 {#if copiedId === form.id}
-                  <Check size={14} class="text-green-ok" />
-                  {m.form_list_link_copied()}
+                  <Check size={16} class="text-green-ok" />
                 {:else}
-                  <Link size={14} />
-                  {m.form_list_share_button()}
+                  <Link size={16} />
                 {/if}
               </button>
               <button
                 onclick={() => (qrForm = form)}
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
+                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                title={m.qr_button()}
               >
-                <QrCode size={14} />
-                {m.qr_button()}
+                <QrCode size={16} />
               </button>
               <button
                 onclick={() => handleExport(form.id)}
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
+                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                title={m.form_list_export_button()}
               >
-                <Download size={14} />
-                {m.form_list_export_button()}
+                <Download size={16} />
               </button>
               <button
                 onclick={() => toggleResponses(form.id)}
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
+                class="ui-icon-button rounded-xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
+                  form.id
+                ]
+                  ? 'border-cn-yellow/40 bg-cn-yellow/10 text-cn-dark'
+                  : 'border-cn-border text-text-main hover:border-cn-yellow/40'}"
+                title={m.form_list_responses_button()}
               >
-                <Users size={14} />
-                {m.form_list_responses_button()}
                 {#if expandedForms[form.id]}
-                  <ChevronUp size={12} />
+                  <ChevronUp size={16} />
                 {:else}
-                  <ChevronDown size={12} />
+                  <Users size={16} />
                 {/if}
               </button>
               <button
@@ -300,7 +306,7 @@
                 class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50"
                 title={m.common_delete_button()}
               >
-                <Trash2 size={14} />
+                <Trash2 size={16} />
               </button>
             </div>
           </div>

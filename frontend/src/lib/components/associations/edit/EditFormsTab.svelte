@@ -187,8 +187,8 @@
       {#each forms as form (form.id)}
         <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border px-4 py-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p class="text-text-main text-sm font-semibold">{form.title}</p>
+            <div class="min-w-0 flex-1">
+              <p class="text-text-main truncate text-sm font-semibold">{form.title}</p>
               {#if form.description}
                 <p class="text-text-muted mt-0.5 line-clamp-2 text-xs">{form.description}</p>
               {/if}
