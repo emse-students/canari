@@ -216,6 +216,10 @@ export class AssociationsController {
    * Aggregated agenda across associations (`startsAt` in `[from, to]`).
    * `from`/`to` default to a rolling window when omitted; optional `associationId` limits to
    * one association. Public.
+   *
+   * A SIGNED-IN READER'S HISTORY STOPS WHERE THEIR OWN DOES: nothing starting before the August
+   * their promo opens on (`promo-visibility.ts`, the rule the posts feed already used). An
+   * anonymous reader is unchanged, having no promo to stop at.
    */
   @Get('calendar/feed')
   async aggregatedCalendarFeed(
@@ -237,6 +241,7 @@ export class AssociationsController {
     }
     return this.service.listAggregatedCalendarFeed(from, to, associationId, {
       includePending: include,
+      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
     });
   }
 
@@ -246,6 +251,11 @@ export class AssociationsController {
    * default to a rolling window (see `AssociationsService.defaultCalendarFeedRange`), since a
    * subscribed URL is saved once by the calendar app and re-polled forever with no way to ever
    * add query params to it.
+   *
+   * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
+   * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
+   * not a confidentiality boundary - see `promo-visibility.ts`. Anything that must be SECRET is
+   * refused by a guard, and this route has never served anything of the sort.
    */
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
@@ -315,7 +325,11 @@ export class AssociationsController {
     return this.service.reorderMembers(id, dto.userIds);
   }
 
-  /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */
+  /**
+   * Returns scheduled events for the association (optional `from` / `to` ISO date bounds).
+   * Cut at the caller's own promo, exactly as the aggregated feed is - a limit only one of the two
+   * honoured would be no limit at all, since this route lists the same rows.
+   */
   @Get(':id/events')
   async listCalendarEvents(
     @Param('id') id: string,
@@ -348,6 +362,7 @@ export class AssociationsController {
     return this.service.listCalendarEvents(id, from, to, {
       includePending: include,
       includeRejected: includeRej,
+      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
     });
   }
 

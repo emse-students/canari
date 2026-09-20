@@ -19,6 +19,20 @@ glissement, qui partagent le meme handler. Tout le module de gestes etait teste 
 ne l'appelait. Le predicat quitte le composant pour le module teste et lit
 `isCoarsePointerDevice()`, qui existait deja.
 [chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
+### Added - l'agenda s'arrete la ou l'arrivee du lecteur commence
+
+Un lecteur de la promo X ne remonte plus avant le 1er aout X, exactement comme le fil de
+publications - la regle devient une seule implementation, partagee par les deux, et s'applique aux
+DEUX lectures d'evenements (agenda agrege et onglet d'une association). C'est une limite de
+pertinence sur une route publique, pas une frontiere de confidentialite.
+[calendar](docs/wiki/frontend/modules/calendar.md#how-far-back-the-agenda-goes-the-readers-own-promo-2026-09-20).
+
+### Fixed - une base morte elargissait silencieusement le fil de publications
+
+Le `catch` vide autour de la lecture de la promo du lecteur transformait une panne de base en fil
+sans limite, sans une ligne de log pour le dire. Il n'y en a plus : la requete passe par le meme
+gestionnaire que la requete suivante, qui echouerait de toute facon.
+[promo-visibility](docs/wiki/frontend/modules/calendar.md#how-far-back-the-agenda-goes-the-readers-own-promo-2026-09-20).
 
 ## [0.18.17] - 2026-09-20
 

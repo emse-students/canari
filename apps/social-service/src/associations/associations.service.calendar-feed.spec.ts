@@ -19,9 +19,12 @@ function makeQueryBuilder() {
   return qb;
 }
 
-function makeService() {
+function makeService(promoRows: unknown[] = []) {
   const qb = makeQueryBuilder();
-  const calendarRepo = { createQueryBuilder: jest.fn(() => qb) };
+  // `manager` is only reached when a viewer is passed - every other case short-circuits in
+  // `promoCutoffFor` before it is touched, which is why the older cases below need no rows.
+  const manager = { query: jest.fn(() => Promise.resolve(promoRows)) };
+  const calendarRepo = { createQueryBuilder: jest.fn(() => qb), manager };
   // POSITIONAL, AND THIRTEEN LONG - so a constructor change silently shifts every argument after
   // the one it touched. The comments are the guard: keep them aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
@@ -95,6 +98,42 @@ describe('AssociationsService.listAggregatedCalendarFeed', () => {
     await expect(
       service.listAggregatedCalendarFeed('2026-02-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('cuts a signed-in reader at their own promo, as a clause of its own', async () => {
+    const { service, qb } = makeService([{ promo: 2025 }]);
+    await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {
+      viewer: { userId: 'u1' },
+    });
+
+    const clause = qb.andWhere.mock.calls.find(
+      ([sql]: [string]) => typeof sql === 'string' && sql.includes('promoCutoff')
+    ) as [string, { promoCutoff: string }] | undefined;
+    expect(clause).toBeDefined();
+    // `startsAt`, not `createdAt`: what a reader means by "how far back does the agenda go" is the
+    // date of the event, never the day somebody typed it in.
+    expect(clause?.[0]).toContain('e.startsAt >=');
+    expect(clause?.[1].promoCutoff).toBe('2025-08-01');
+  });
+
+  it('adds no such clause for an anonymous reader - the route is public and carries no identity', async () => {
+    const { service, qb } = makeService([{ promo: 2025 }]);
+    await service.listAggregatedCalendarFeed();
+    const clause = qb.andWhere.mock.calls.find(
+      ([sql]: [string]) => typeof sql === 'string' && sql.includes('promoCutoff')
+    );
+    expect(clause).toBeUndefined();
+  });
+
+  it('adds no such clause for a global admin, who is shown the whole archive on purpose', async () => {
+    const { service, qb } = makeService([{ promo: 2025 }]);
+    await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {
+      viewer: { userId: 'u1', isGlobalAdmin: true },
+    });
+    const clause = qb.andWhere.mock.calls.find(
+      ([sql]: [string]) => typeof sql === 'string' && sql.includes('promoCutoff')
+    );
+    expect(clause).toBeUndefined();
   });
 
   it('reports a malformed associationId as not-found instead of a raw database error', async () => {
