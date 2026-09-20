@@ -18,6 +18,7 @@ jamais, ni la, ni dans la carte Open Graph externe. Cote externe la photo reste 
 et rien n'y change ; cote application, l'apercu est deja authentifie avec le meme acces que la
 publication elle-meme, donc il la dechiffre desormais et l'affiche en bandeau sous le logo/texte,
 sans remplacer ce dernier. [architecture](docs/wiki/frontend/architecture.md).
+
 ### Fixed - le rapport quotidien sur les stores accusait le pipeline la ou Apple faisait la queue
 
 Depuis le 2026-09-16 il annoncait chaque matin qu'aucune version App Store n'avait jamais ete creee
