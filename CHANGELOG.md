@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le rapport quotidien sur les stores accusait le pipeline la ou Apple faisait la queue
+
+Depuis le 2026-09-16 il annoncait chaque matin qu'aucune version App Store n'avait jamais ete creee
+pour la derniere stable, ce qui decrit une release qui n'a pas essaye. Elle avait essaye : la
+soumission s'est effacee devant une version anterieure qui occupe l'unique creneau d'Apple. Un etat
+`slot-held` separe les deux causes et nomme la bonne corvee - une decision dans App Store Connect,
+jamais une relance de job - en interrogeant `chooseVersionSlot`, la seule implementation de cette
+regle, au lieu de la redemontrer.
+[store-divergence](tools/store-divergence/README.md).
+
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
 
 Six boutons pleins (modifier, partager, QR, exporter, reponses, supprimer) demandaient plus de

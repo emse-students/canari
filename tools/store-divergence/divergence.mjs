@@ -15,13 +15,16 @@
  * and never submitted, and nothing would say so. Making a failure quiet without adding a report is
  * how a three-day silence becomes a permanent one.
  *
- * WHAT IT REFUSES TO CONFLATE. A store not carrying the version has four causes and a human acts on
+ * WHAT IT REFUSES TO CONFLATE. A store not carrying the version has five causes and a human acts on
  * each differently:
  *
  *   live           the store serves it. Nothing to do.
  *   pending        it is WITH the store - Apple reviews in days. Nothing to do, and saying
  *                  otherwise every morning is how a report teaches its reader to skip it.
- *   not-submitted  it was uploaded and never sent. THIS IS THE DEFERRAL: re-run the job.
+ *   not-submitted  it was uploaded and never sent, and NOTHING IS IN THE WAY: re-run the job.
+ *   slot-held      it was uploaded and never sent BECAUSE ANOTHER VERSION HOLDS APPLE'S ONE SLOT
+ *                  and that version is with Apple. A re-run changes nothing - the errand is a
+ *                  decision in App Store Connect, on the version this report names.
  *   rejected       the store said NO. Somebody must read what they said and fix it.
  *   unknown        THE REPORT COULD NOT LOOK. Never silently a pass: a credential that expired
  *                  would otherwise turn this whole file into a green light.
@@ -35,10 +38,16 @@
  * Exit 1 - at least one store needs a human, and the line above it says which and why.
  */
 
-import { VERSION_DONE, VERSION_IN_REVIEW, VERSION_REJECTED, mintToken } from '../app-store/submit.mjs';
+import {
+  VERSION_DONE,
+  VERSION_IN_REVIEW,
+  VERSION_REJECTED,
+  chooseVersionSlot,
+  mintToken,
+} from '../app-store/submit.mjs';
 
 /** The four outcomes that mean somebody has to do something. `pending` and `live` do not. */
-export const NEEDS_A_HUMAN = new Set(['not-submitted', 'rejected', 'unknown']);
+export const NEEDS_A_HUMAN = new Set(['not-submitted', 'slot-held', 'rejected', 'unknown']);
 
 /**
  * Does this Play release name describe the version we are looking for?
@@ -61,6 +70,53 @@ export function matchesVersion(name, version) {
 }
 
 /**
+ * The App Store has no version by that name - and there are THREE reasons for that, wanting
+ * different errands.
+ *
+ * THIS REPORT NAMED THE WRONG ONE FOR FOUR DAYS. From 2026-09-16 every stable read `the App Store
+ * has no version X at all - the release uploaded a build to TestFlight and no version was ever
+ * created for it`, which describes a release that never tried. The release HAD tried: `submit.mjs`
+ * returned `EXIT_SLOT_HELD` because an earlier version occupied Apple's single slot in
+ * `WAITING_FOR_REVIEW`, and the iOS job said so in its own summary. So the daily line accused the
+ * pipeline where the truth was a queue, and sent its reader to re-run a job that would defer again.
+ * That is the failure a report is least able to survive: an errand that does not work, repeated
+ * every morning.
+ *
+ * `chooseVersionSlot` is the ONE implementation of who holds that slot - the same call the
+ * submission itself makes, over the same list this report already holds. Asking it here cannot
+ * drift from the writer's answer, which re-deriving the rule locally certainly would.
+ *
+ * @param {{wanted: string, versions: Array<unknown>}} input
+ * @returns {{state: string, why: string}}
+ */
+function whyThereIsNoVersion({ wanted, versions }) {
+  const slot = chooseVersionSlot({ versions, versionString: wanted });
+
+  // THE SLOT IS OCCUPIED BY SOMETHING NO SCRIPT MAY MOVE - `blocked` is one version with Apple,
+  // `fail` is the several Apple is not supposed to allow at once. Both want the SAME errand, a
+  // decision in App Store Connect, so they share an arm rather than inventing a sixth state.
+  // `slot.why` already names the occupant, its state and what is owed: it is the sentence the
+  // submission itself refuses with.
+  if (slot.action === 'blocked' || slot.action === 'fail')
+    return { state: 'slot-held', why: `${wanted} has no version of its own: ${slot.why}` };
+
+  // THE SLOT HOLDS SOMETHING STILL EDITABLE, so the next iOS run renames it and submits. A re-run
+  // IS the errand here, which is exactly what it is not in the two arms above.
+  if (slot.action === 'rename')
+    return {
+      state: 'not-submitted',
+      why: `the App Store has no version ${wanted} - the slot holds ${slot.from} (${slot.state}), which is still editable, so re-running the iOS job renames it and submits`,
+    };
+
+  // THE SLOT IS EMPTY: nothing was in the way and nothing was created. The original sentence, now
+  // said only when it is true.
+  return {
+    state: 'not-submitted',
+    why: `the App Store has no version ${wanted} at all and nothing occupies the slot - the release uploaded a build to TestFlight and no version was ever created for it`,
+  };
+}
+
+/**
  * What the App Store holds for this version, from the whole version list.
  *
  * @param {{wanted: string, versions: unknown}} input
@@ -71,11 +127,7 @@ export function classifyAppStore({ wanted, versions }) {
     return { state: 'unknown', why: 'App Store Connect returned no version list, so nothing here is known' };
 
   const mine = versions.find((v) => v?.attributes?.versionString === wanted);
-  if (!mine)
-    return {
-      state: 'not-submitted',
-      why: `the App Store has no version ${wanted} at all - the release uploaded a build to TestFlight and no version was ever created for it`,
-    };
+  if (!mine) return whyThereIsNoVersion({ wanted, versions });
 
   const st = mine.attributes?.appStoreState;
   if (!st) return { state: 'unknown', why: `version ${wanted} exists but carries no appStoreState` };
@@ -228,7 +280,7 @@ async function main() {
         '',
         ok
           ? 'Both stores have it, or are still working on it. Nothing to do.'
-          : `**${acting.join(' and ')} need a human.** The evidence column says which errand: a version that was never submitted is a re-run of the store job; a refusal has to be read and fixed.`,
+          : `**${acting.join(' and ')} need a human.** The evidence column says which errand: a version that was never submitted is a re-run of the store job; a slot held by an earlier version is a DECISION in App Store Connect that no re-run will touch; a refusal has to be read and fixed.`,
         '',
       ].join('\n')
     );
