@@ -1868,6 +1868,46 @@ can attribute.
   component associations and card icons already use - see
   [design-reference](../design-reference.md) for the crop mechanism itself.
 
+### The swipe gesture was switched off by a variable nothing writes (2026-09-20)
+
+*"la reponse en swipant un message n'a pas l'air de marcher, est-elle implementee ? Testee sur
+mobile ?"* (user). It was implemented, in `messageSwipeReply.ts`, with its own unit tests - and it
+had never run once, on any device, since 2026-03-26.
+
+`MessageBubble` gated the gesture on `let supportsHover = $state(true)`. **Nothing in the repository
+ever assigned to it** - two occurrences in the whole tree, the declaration and the read - so
+`canSwipeReply` returned `false` unconditionally. The reaction swipe shares the same handler and was
+dead with it.
+
+**WHY NO GATE SAW IT, AND THIS IS THE part WORTH KEEPING.** `messageSwipeReply.test.ts` was green
+throughout: it tests the gesture MATHS - the lock between horizontal and vertical, the clamped drag
+offset, the trigger threshold - and every one of those functions was correct. The predicate deciding
+whether any of it would be CALLED lived in the component, privately, where no test could reach it.
+*A green gate is not a working system*, in its sharpest form: the tested part worked and the
+untested part was one wrong default.
+
+The fix moves the predicate into the tested module as `canStartReplySwipe`, and the capability it
+asks about is `isCoarsePointerDevice()` - which this repo already owned, for exactly this question.
+A mouse reader has the hover toolbar and does not need a gesture; a laptop with a touchscreen
+reports `pointer: fine` and keeps the toolbar. The bubble re-reads it on mount (a server render
+cannot ask `matchMedia`, and the helper answers `false` there) and subscribes to changes, so a
+tablet gaining a mouse or a browser toggling device emulation moves the answer.
+
+**THE WIRING IS NOW TESTED, NOT JUST THE MATHS.**
+`MessageBubble.swipeReply.svelte.test.ts` mounts the real bubble and dispatches real `pointerdown` /
+`pointermove` / `pointerup` at the real `[data-swipe-reply]` element, plus one pass over the
+`touchstart` / `touchmove` / `touchend` path that a finger actually takes, and asserts that `onReply`
+fires. It runs with `matchMedia('(pointer: coarse)')` stubbed to match, because that single fact is
+what the old gate got wrong. Five of its twelve cases go red if `canStartReplySwipe` is made to
+return `false` - measured by mutating it - so the suite fails the way the original defect did. The
+refusals are pinned too: a mouse `pointerType`, a fine-pointer device, a tombstone, a system pill, a
+drag too short, and a vertical drag (scrolling a thread must never answer a message).
+
+**WHAT IS STILL OWED: A FINGER.** Everything above is proven by reading and by tests in a simulated
+DOM. The gesture end to end on a real screen - the bubble travelling under the thumb, the reply
+composer filling - has been verified on no hardware, and an APK embeds its own frontend so the phone
+cannot see this fix until one is built from this tree.
+
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 
 **The web had exactly ONE out-of-page unread signal before this, and it is conditional.**
