@@ -9,6 +9,8 @@
  *
  * WASM assets live under `$lib/wasm/` (built output).
  */
+import { beginBootSpan, endBootSpan, timeBootSpan } from './bootBenchmark';
+
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
 
 let wasmModulePromise: Promise<MlsWasmBindings> | null = null;
@@ -152,6 +154,24 @@ export async function migrateLegacyMlsStateBlob(
  *   state beside it, which is a loss on a returning device and the ordinary shape of a first
  *   enrolment. It cannot tell them apart, every caller can, and a parameter the compiler demands is
  *   what stops the next call site from letting it default to whichever is convenient.
+ *
+ * TWO BOOT SPANS COME OUT OF HERE, AND THEY SPLIT `mls-load-state` AS FAR AS TYPESCRIPT CAN SPLIT
+ * IT. The boot bench read on 2026-09-18 put 64% of a cold start inside `mls-load-state` as one
+ * number, which names a cost and no cause ([cold-start](../../../../docs/wiki/frontend/cold-start.md)).
+ * These two say which half:
+ *
+ *  - `wasm-module` IS A WAIT, NOT A DOWNLOAD. `loadMlsWasmModule` is memoised and `hooks.client.ts`
+ *    starts it at the earliest client seam there is, so by the time login reaches here the fetch is
+ *    usually already in flight. A large value means the prefetch is not arriving in time; a value
+ *    near zero means it did its job and says nothing about what the binary cost to fetch.
+ *  - `wasm-client-construct` is the Rust constructor: snapshot decryption AND group rebuild.
+ *    **THOSE TWO CANNOT BE SEPARATED FROM HERE** - they are one call into WASM - so splitting them
+ *    further is a measurement `mls-core` owes, not one this file can take. Reporting three spans
+ *    from here would be inventing a boundary that does not exist.
+ *
+ * Both are WEB-ONLY. The `mls-wasm-stub` plugin replaces this module on Tauri, where the state load
+ * crosses the IPC bridge instead, so a native report carries `mls-load-state` and neither of these.
+ * An absent span is not a zero one, and the report says `null` rather than 0 for exactly that reason.
  */
 export async function loadAndInitWasm(
   userId: string,
@@ -160,6 +180,12 @@ export async function loadAndInitWasm(
   deviceKeyB64: string | undefined,
   stateWasExpected: boolean
 ): Promise<any> {
-  const initWasm = await loadMlsWasmModule();
-  return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64, stateWasExpected);
+  const initWasm = await timeBootSpan('wasm-module', loadMlsWasmModule());
+  // The constructor is synchronous, so begin/end around it is exact rather than a promise boundary.
+  beginBootSpan('wasm-client-construct');
+  try {
+    return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64, stateWasExpected);
+  } finally {
+    endBootSpan('wasm-client-construct');
+  }
 }

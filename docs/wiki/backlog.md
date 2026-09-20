@@ -918,11 +918,14 @@ ready`: the browser's own prologue is **249 ms (5%)**, `mls-load-state` is **299
 operations of different character - WASM instantiation, snapshot decryption, group rebuild - behind
 one number. `storage-open` next to it is 2 ms, so IndexedDB is not a candidate.
 
-**SO THE NEXT STEP IS TWO ADDITIVE MEASUREMENTS AND NO FIX.** Split `loadStateWithKey` into its
-three phases with `beginBootSpan`, and put one mark on the first line of application code so the
-1358 ms region stops being a subtraction between two things measured for other purposes. **No change
-to the load path may be written before those land**: 64% of the boot currently has no cause, only a
-name. Full table, and why the two readings must never share a column:
+**THE TWO INSTRUMENTS SHIPPED 2026-09-20; WHAT IS OWED IS NOW A READING.** `wasm-module` and
+`wasm-client-construct` split `mls-load-state`, and `app-first-line` bounds the 1358 ms region from
+the front. **The split is TWO spans, not the three this entry first claimed** - `loadAndInitWasm`
+calls the module loader and then one Rust constructor that decrypts AND rebuilds, so no TypeScript
+boundary separates those two and a third span would be invented; that one is `mls-core`'s to take.
+**No change to the load path may be written before the reading lands**: 64% of the boot still has a
+name and no cause, and `wasm-module` is a WAIT rather than a download - the first thing the reading
+has to be read against. Full table, and why the two readings must never share a column:
 [cold-start](frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
 
 **AND THE `+Nms` LOG OFFSET IS AN INSTRUMENT WITH AN EXPIRY** (user, 2026-09-18): it is switched off
