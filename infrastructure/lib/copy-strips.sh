@@ -72,10 +72,13 @@ apply_copy_strips() {
   "$sql" "TRUNCATE TABLE push_token;" "$database"
   printf '%s   push_token truncated\n' "$prefix"
 
-  # (b) ALL SEVEN payment-provider columns, across four tables - seven rather than five because
-  # `associations` carries a Lydia pair beside the Stripe pair (WP-LYDIA coexistence). Measured on
-  # production 2026-09-01: 5 associations hold a real `stripeAccountId`; both Lydia columns are
-  # empty so far, which is exactly why they are stripped now rather than when they are not.
+  # (b) ALL EIGHT payment-provider columns, across four tables - eight rather than five because
+  # `associations` carries a Lydia trio beside the Stripe pair (WP-LYDIA coexistence):
+  # `lydiaAccountId`/`lydiaOnboardingComplete` plus `lydiaDashboardUrl`, added alongside them
+  # because it is the SAME kind of live identifier - Lydia hands it out once, at business/create,
+  # and never re-issues it. Measured on production 2026-09-01: 5 associations hold a real
+  # `stripeAccountId`; every Lydia column is empty so far, which is exactly why they are stripped
+  # now rather than when they are not.
   #
   # The REASON differs between the two targets and the action does not. In dev there is no Stripe
   # credential at all (user, 2026-09-01: "oublie. Stripe ne sera pas accessible en dev pour le
@@ -91,9 +94,10 @@ apply_copy_strips() {
   "$sql" "UPDATE associations SET \"stripeOnboardingComplete\" = false WHERE \"stripeOnboardingComplete\";" "$database"
   "$sql" "UPDATE associations SET \"lydiaAccountId\" = NULL WHERE \"lydiaAccountId\" IS NOT NULL;" "$database"
   "$sql" "UPDATE associations SET \"lydiaOnboardingComplete\" = false WHERE \"lydiaOnboardingComplete\";" "$database"
+  "$sql" "UPDATE associations SET \"lydiaDashboardUrl\" = NULL WHERE \"lydiaDashboardUrl\" IS NOT NULL;" "$database"
   "$sql" "UPDATE purchase_records SET \"stripePaymentIntentId\" = NULL WHERE \"stripePaymentIntentId\" IS NOT NULL;" "$database"
   "$sql" "UPDATE submissions SET \"stripeSessionId\" = NULL WHERE \"stripeSessionId\" IS NOT NULL;" "$database"
-  printf '%s   payment identifiers cleared: 7 columns across users, associations, purchase_records, submissions\n' "$prefix"
+  printf '%s   payment identifiers cleared: 8 columns across users, associations, purchase_records, submissions\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say

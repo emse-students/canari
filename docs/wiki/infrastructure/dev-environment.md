@@ -173,7 +173,7 @@ environment, so the script needs no compose file, no `.env` and no path to be co
 | | what | why |
 |---|---|---|
 | (a) | `TRUNCATE push_token` | the rows belong to production's FCM sender and to real devices. A shared sender would deliver a test notification to a member's phone; a dev sender rejects every row, which is 70-odd logged failures per send |
-| (b) | 7 payment columns across 4 tables | there is no Stripe and no Lydia in dev at all, so each is a live identifier with no credential behind it. It is seven, not the five the plan first named, because `associations` carries a Lydia pair beside the Stripe pair |
+| (b) | 8 payment columns across 4 tables | there is no Stripe and no Lydia in dev at all, so each is a live identifier with no credential behind it. It is eight, not the five the plan first named, because `associations` carries a Lydia trio beside the Stripe pair - `lydiaDashboardUrl` joined the other two 2026-09-20, same reasoning: it is handed out once by `business/create` and never re-issued |
 | (c) | `platform_config.payment_provider` left ALONE | its type is `'stripe' \| 'lydia'` with no third value, so nothing can say "payments are off". Writing anything else would contradict what the code asserts about the column |
 
 (c) is a recorded gap, not an oversight: dev presents Stripe as the live provider and fails on use.
