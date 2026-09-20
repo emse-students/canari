@@ -48,6 +48,14 @@ export class Association {
   lydiaOnboardingComplete: boolean;
 
   /**
+   * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable
+   * (unlike Stripe's Express dashboard link) - stored so the treasurer can still reach it after
+   * the creating session ends.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  lydiaDashboardUrl: string | null;
+
+  /**
    * Parent association whose Stripe Connect account receives this association's payments when
    * delegation is approved. Distinct from `parentAssociationId` (a promo list's owning BDE):
    * this one is purely financial routing + accounting access. Null when no delegation is set.

@@ -136,6 +136,21 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   n'est délibérément PAS persisté : les appels signés côté provider (`business/addcashier`, etc.)
   utilisent le private_token du PROVIDER (Canari), jamais celui de la Business ciblée - confirmé par
   le champ "Provider private token" dans la spec de signature de `business/addcashier`.
+- **2026-09-20 : trois trous fermés sur le même formulaire.** `business/create` testé en
+  homologation renvoie bien `{error: "0", api_token, api_token_id, dashboard_url}` - la forme que le
+  code attend, ce qui a fait remonter trois lacunes distinctes :
+  1. Une erreur de création (y compris `createOnboarding` répondant 200 `{ok: false, message}` sur
+     un provider non configuré - un cas que `!res.ok` seul ne voit pas) ne remontait jamais à
+     l'écran ; `startLydiaOnboarding` et le composant affichent désormais le message réel.
+  2. `dashboard_url` n'était gardé qu'en mémoire le temps de la session - perdu au premier
+     rechargement, alors que `createConnectDashboardLink` refuse explicitement d'en réémettre un
+     pour Lydia (voir plus bas). Colonne `lydiaDashboardUrl` ajoutée (migration 063,
+     `associations` table) : `payment.controller.ts` la persiste au moment de la création, et
+     `LydiaBusinessOnboardingForm.svelte` affiche le bouton "Ouvrir le tableau de bord" aussi bien
+     juste après création qu'après un rechargement.
+  3. Un Business créé n'est pas un Business validé (voir la lacune "statut en direct" ci-dessous) :
+     le titre restait entièrement vert, comme si l'affaire était close. Un badge "En attente"
+     l'accompagne désormais dès que `lydiaAccountId` existe.
 - **2026-08-19 : le callback `request/do` est maintenant reçu, sur l'hypothèse du point (2).**
   `createCheckoutSession` enregistre désormais `confirm_url`/`cancel_url`/`expire_url` par requête, et
   `POST /api/payments/lydia-request-callback` (`webhook.controller.ts`) vérifie `sig` via

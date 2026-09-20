@@ -1813,6 +1813,7 @@
   "asso_lydia_submit_button": "Créer le compte Lydia Pro",
   "asso_lydia_submitting_label": "Création en cours…",
   "asso_lydia_created_title": "Compte Lydia Pro créé",
+  "asso_lydia_status_pending": "En attente",
   "asso_lydia_created_desc": "Le compte a été créé chez Lydia. L'activation des virements automatiques dépend ensuite de la validation du dossier par Lydia, qui n'est pas encore suivie automatiquement ici.",
   "asso_lydia_open_dashboard_button": "Ouvrir le tableau de bord Lydia",
   "asso_lydia_vendor_token_label": "Identifiant Lydia enregistré",

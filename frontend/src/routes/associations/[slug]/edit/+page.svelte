@@ -551,11 +551,18 @@
           {#if canManageStripeConnect && activePaymentProvider === 'lydia'}
             <LydiaBusinessOnboardingForm
               {asso}
-              onAccountCreated={(accountId) => {
-                if (asso) asso = { ...asso, lydiaAccountId: accountId };
+              onAccountCreated={(accountId, dashboardUrl) => {
+                if (asso)
+                  asso = { ...asso, lydiaAccountId: accountId, lydiaDashboardUrl: dashboardUrl };
               }}
               onDisconnected={() => {
-                if (asso) asso = { ...asso, lydiaAccountId: null, lydiaOnboardingComplete: false };
+                if (asso)
+                  asso = {
+                    ...asso,
+                    lydiaAccountId: null,
+                    lydiaOnboardingComplete: false,
+                    lydiaDashboardUrl: null,
+                  };
               }}
             />
           {:else if canManageStripeConnect}
