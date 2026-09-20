@@ -265,18 +265,18 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
     and audit in [backlog](docs/wiki/backlog.md).
 14. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
-    five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
-    ([backlog](docs/wiki/backlog.md)).
+    five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
 15. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
 16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
-    PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
-    message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
+17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing
+    blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
 18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
+19. **P2 - A SALON NOTIFICATION IS BLIND FOR EVERY MESSAGE OF A SESSION MINTED WHILE THE APP WAS SHUT** (user, PROD 2026-09-19) - the seed IS pushed and the
+    push service drops it unread on `silent && !CALLS_ENABLED`; nothing is LOST, and the fix is owed its TESTS ([backlog](docs/wiki/backlog.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

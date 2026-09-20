@@ -3409,7 +3409,7 @@ about any other.
 | --- | --- | --- |
 | DM or group (per-conversation MLS ratchet) | **FAIL** - LIFE-2, no notification at all. **Cause found and fixed 2026-09-05**; owed a re-run | **PASS-DIRTY** - LIFE-3, and it passes *because* a killed app cannot ACK |
 | Community salon (the community's shared key) | **PASS, measured 2026-09-05** - full plaintext in the shade in 2 244 ms, seed mirrored | **UNMEASURED** |
-| Community salon, seed NEVER mirrored | **UNMEASURED - and this is the user's report's likeliest home** | **UNMEASURED** |
+| Community salon, seed NEVER mirrored | **FAIL, and the cause is found** - the seed IS pushed and the push service drops it unread, so the banner is blind for EVERY message of that session; production 2026-09-20, [its own entry](#p2---the-seed-of-a-new-session-is-pushed-to-the-phone-and-the-push-service-throws-it-away-unread-so-every-notification-of-that-session-is-blind-until-the-app-is-opened-reported-by-the-user-measured-on-production-2026-09-20) | same cause, **owed the row** |
 
 **THE DM ROW'S CAUSE IS ESTABLISHED AND IS NOT THIS ENTRY'S.** It is
 [the backgrounded-phone P1](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05):
@@ -3451,6 +3451,85 @@ two. All four need the phone, which is
 rows with the invitation question in
 [Communities and permissions](#communities-and-permissions): a notification that never arrives and a
 notification that arrives undecryptable are different failures, and only the logcat separates them.
+
+
+### P2 - THE SEED OF A NEW SESSION IS PUSHED TO THE PHONE AND THE PUSH SERVICE THROWS IT AWAY UNREAD, SO EVERY NOTIFICATION OF THAT SESSION IS BLIND UNTIL THE APP IS OPENED (reported by the USER, measured on production 2026-09-20)
+
+**This fills the cell the entry above left open** - *community salon, seed NEVER mirrored* - and it
+is not the race that section accepted. It is a state, and it lasts until the reader next opens the
+app.
+
+**THE REPORT, AND THE THREE ROWS BEHIND IT.** The user, on Android: one banner carried the message
+text, the next two read `Nouveau message dans #general`. `Mineurchestre / #general`, 2026-09-19,
+three messages from one sender in 50 seconds:
+
+| sent | `senderSessionId` | `messageIndex` | what the shade showed |
+| --- | --- | --- | --- |
+| 08:47:00 | `V1N1F1kjvcZQO9xxM9bywXBd` | 1 | the plaintext |
+| 08:47:21 | `0fQHGe5SOmbfiVqlUx4TuTbh` | 0 | `Nouveau message dans #general` |
+| 08:47:50 | `0fQHGe5SOmbfiVqlUx4TuTbh` | 1 | `Nouveau message dans #general` |
+
+**The sender rotated between the first message and the second**, and the first decrypted for the
+ordinary reason: `V1N1` was minted on 2026-09-16 at 05:18:39 - one second after the reader's
+`channel_members` row was written and half an hour before that reader's first device entered the
+distribution group - so it reached the device through the history bundle, and `storeIncomingSeed`
+mirrors every seed it stores (`frameHandler.ts`). `0fQH` was minted 21 seconds before the message it
+sealed, and never reached the mirror at all.
+
+**WHY IT ROTATED THERE, THREE DAYS LATE.** `shouldRotateGraineSession` compares the session's
+`distributionEpoch` with the group's, and the group's is a LOCAL read
+(`distributionEpochFor` -> `mlsService.getEpoch`). Group `2de1b91f` went 0 -> 3 on 2026-09-16
+(05:49:59, 05:58:04, 06:30:43), three external joins by the READER's own three devices. The sender's
+client observed none of it until it came back online on the 19th, between 08:47:00 and 08:47:21 - so
+the rotation, and its blind notifications, landed in the middle of a burst rather than on a quiet
+salon. **An ADD rotating is deliberate** (`channel-encryption` section 4.2) and the cost written
+there is one O(1) distribution; the cost measured here is one blind banner per message of the new
+session, per device that is not running.
+
+**THE CAUSE, AND IT IS A PREMISE THAT WENT FALSE.** The seed is not missing from the phone because
+nothing sent it:
+
+1. A seed goes out as `DELIVERY.keyMaterial` - `silent: true, durable: true` (`frameDelivery.ts`).
+2. `deliverQueuedFrame` is armed with `pushable: durable` (`messaging.service.ts`), so a device that
+   did not ACK gets an FCM data push **carrying the frame inline**. The phone was sent the seed.
+3. `CanariFirebaseMessagingService` returns before any decrypt, at `if (silent && !CALLS_ENABLED)`,
+   under the comment *"nothing a silent frame's plaintext is read for is enabled, so it is not
+   read"*. **That was true when it was written and Graine falsified it**: the consumer of a silent
+   frame's plaintext is `graine_seeds.json`.
+4. And past that return there is still nothing to read it with: `proto_fields.rs` recognises
+   `AppMessage` fields 10-12 and answers `{"ok": false}` so the frame rings nobody - correct - but
+   no path extracts the seed, and only the foreground WebView ever writes the mirror
+   (`mirrorGraineSeed`).
+
+So `lookupGraineSeed` misses for every message of that session, `buildChannelFallbackText` answers,
+and it answers again 29 seconds later - which is the measurement: a device processing frames would
+have had the seed long before the third message.
+
+**WHAT THIS IS NOT.** No message is lost. The frame is durable, the queue for that group is empty,
+and the rows render on the next foreground load through `announceGraineRepair`. The cost is the
+notification, and the notification only - which is why it is P2 and not P1.
+
+**AND NOTHING COUNTS IT.** The degradation is a `Log.d` on the device
+(`handleChannelMessage: no seed/ciphertext -> generic notification`) and the silent skip explains
+itself once per process. No report, no rate, nothing that would have said this was happening. *A
+correct mechanism with no report is found by hand, a day late* - here it was found by the user.
+
+**WHAT IS OWED, AND THE TESTS ARE THE POINT (user, 2026-09-20).**
+
+- **Carry the seed through the push service**, read-only: decrypt the inline frame without
+  persisting `mls.bin` - the invariant the DM push path already holds and its tests already assert -
+  extract `GraineMsg` and write ONLY `graine_seeds.json`, which is not MLS state. The foreground
+  still processes the durable queue row afterwards, so nothing is consumed by doing this.
+- **Decide on the frame's KIND, never on `silent`.** The early return above is one boolean standing
+  in for a classification; the next useful silent frame would inherit the same silence by accident.
+- **The tests that would hold it**: a Rust test that a silent frame carrying fields 10-12 yields the
+  seed and leaves `mls.bin` untouched (the drain tests already have the shape); a
+  `channelPushFields`-style assertion that the seed writer and the native reader agree on the mirror;
+  and the harness row that is the whole point - a salon message under a session minted while the app
+  is KILLED must put the plaintext in the shade. That row is the unmeasured cell of the table above.
+- **iOS is worse and unmeasured.** The NSE runs on an alert push; a silent `keyMaterial` frame does
+  not wake it at all, and iOS throttles silent pushes on its own terms. One iPhone row, after the
+  Android half.
 
 ## MLS state, device healing and delivery - the defects the campaign measured
 

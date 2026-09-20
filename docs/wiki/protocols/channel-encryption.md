@@ -262,6 +262,14 @@ Two things it does NOT survive unchanged:
   - a generic "new message in #channel" - already covers it, and that is the correct outcome rather
   than a new mechanism.
 
+  **THAT PARAGRAPH DESCRIBES A RACE, AND WHAT PRODUCTION DOES IS A STATE - corrected 2026-09-20.**
+  Only the FOREGROUND writes the mirror. A seed travels silent (`DELIVERY.keyMaterial`) and the
+  Android push service returns on `silent && !CALLS_ENABLED` before decrypting anything, so a
+  session minted while the app was not running is blind for EVERY message it seals, not for the
+  first - measured on a real report, three messages, two blind, 29 seconds apart. The seed IS
+  pushed to the phone; nothing there reads it. See the backlog entry
+  [the seed is pushed and the push service throws it away unread](../backlog.md#p2---the-seed-of-a-new-session-is-pushed-to-the-phone-and-the-push-service-throws-it-away-unread-so-every-notification-of-that-session-is-blind-until-the-app-is-opened-reported-by-the-user-measured-on-production-2026-09-20).
+
 ### 4.10 Seeds must become durable, which they are not today
 
 `ChannelKeyVault` was **in memory only**, and that was sound while it lasted: the server re-served
