@@ -20,6 +20,7 @@ soumission s'est effacee devant une version anterieure qui occupe l'unique crene
 jamais une relance de job - en interrogeant `chooseVersionSlot`, la seule implementation de cette
 regle, au lieu de la redemontrer.
 [store-divergence](tools/store-divergence/README.md).
+
 ### Changed - le poste le plus cher du demarrage a froid est enfin decoupe en deux
 
 `mls-load-state` pesait 64 % d'un demarrage en un seul nombre : `wasm-module` et
@@ -27,6 +28,7 @@ regle, au lieu de la redemontrer.
 par l'avant les 1358 ms que personne ne mesurait. Aucune correction n'accompagne ces mesures,
 deliberement.
 [cold-start](docs/wiki/frontend/cold-start.md#the-paste-arrived-the-prologue-is-249-ms-and-64-of-the-boot-is-one-span-nobody-had-looked-at-2026-09-18).
+
 ## [0.18.15] - 2026-09-20
 
 ### Fixed - les six actions d'une ligne de formulaire prenaient toute la place, jusqu'a rendre son nom illisible
@@ -117,6 +119,7 @@ n'atteignait donc que les journaux, ou la langue du projet est l'anglais. Un mes
 VRAIMENT destine au lecteur se declare comme tel - c'est ce que `LocalizedError` sert a dire - et
 le commentaire de `muteCheck` qui pretendait le contraire est corrige.
 [localizedError](frontend/src/lib/utils/localizedError.ts).
+
 ### Fixed - le lien post-evenement n'allait que dans un sens, disparaissait au rechargement, et menait a la mauvaise page
 
 Trois defauts, un seul rapport utilisateur. La carte de l'evenement ne montrait jamais le post qui
