@@ -1,4 +1,4 @@
-import type { PostEntity } from '$lib/posts/api';
+import type { PostEntity, PostMediaRef } from '$lib/posts/api';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import { inAppPathFromHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
@@ -16,8 +16,16 @@ export interface CanariLinkPreview {
   categoryLabel: string;
   title: string;
   subtitle?: string;
-  /** Public image URL (form banner, association logo). */
+  /** Public image URL (form banner, association logo) - shown as the small thumbnail. */
   imageUrl?: string | null;
+  /**
+   * The post's OWN first image, still encrypted (mediaId/key/iv) - never a URL, unlike
+   * {@link imageUrl}. Rendered as a full-width banner BELOW the logo/text row, by the same
+   * authenticated decrypt path a post uses in its own feed. Never sent anywhere unauthenticated
+   * (unlike the external Open Graph card, which has no access to the CEK and falls back to the
+   * association logo alone).
+   */
+  postImage?: PostMediaRef | null;
 }
 
 export type CanariLinkTarget =

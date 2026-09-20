@@ -47,7 +47,11 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
     categoryLabel: m.link_label_post(),
     title: postPreviewTitle(post),
     subtitle: postAuthorDisplayName(post),
+    // The small thumbnail stays the association logo (or brand mark for a personal post) -
+    // the post's own photo, when it has one, is a separate full-width banner (see `postImage`),
+    // never a stand-in for the logo slot.
     imageUrl: post.association?.logoUrl ? associationLogoSrc(post.association.logoUrl) : null,
+    postImage: post.media?.find((item) => item.type === 'image') ?? null,
   };
 }
 
