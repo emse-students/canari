@@ -1,5 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
+  import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import {
@@ -140,10 +141,16 @@
       </p>
 
       {#if associationLogoSrc(event.imageUrl)}
-        <img
+        <!-- THE POSTER IS THE INFORMATION, so it is shown whole. `object-cover` in a 13rem box cut
+             an A4 poster (ratio 0.707, what an association actually posts) from the bottom up -
+             exactly the band carrying the date, the place and the price. The modal has no
+             dimensions to reserve a shape from, so it states a CEILING and lets the contained
+             picture set its own height; the remainder is the picture again, blurred. -->
+        <LetterboxedImage
           src={associationLogoSrc(event.imageUrl) ?? ''}
-          alt=""
-          class="border-cn-border/40 max-h-52 w-full rounded-xl border object-cover"
+          alt={m.calendar_event_poster_alt()}
+          class="border-cn-border/40 rounded-xl border"
+          imgClass="max-h-[60svh]"
         />
       {/if}
 

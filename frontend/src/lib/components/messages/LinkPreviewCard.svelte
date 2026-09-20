@@ -387,8 +387,13 @@
       <!-- The post's OWN photo, below the logo/text row rather than replacing the logo there -
            the small slot above stays the association's mark (or the brand, for a personal post),
            exactly what it already was. -->
-      <div class="relative h-40 w-full border-t border-black/5 sm:h-48 dark:border-white/10">
-        <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} />
+      <!-- LETTERBOXED, like the post this is a preview OF. Without it the slot cropped the picture
+           to its own band, which on an A4 poster (ratio 0.707, what an association actually posts)
+           takes the bottom off - the date, the place and the price. The band is also TALLER than the
+           10rem it was: a contained portrait poster is only as wide as the band is high, so the
+           previous height showed all of it at a size nothing could be read at. -->
+      <div class="relative h-56 w-full border-t border-black/5 sm:h-64 dark:border-white/10">
+        <PostMedia media={canariPreview.postImage} authToken={postImageAuthToken} letterbox />
       </div>
     {/if}
   </a>

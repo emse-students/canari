@@ -8,6 +8,7 @@
     Video as VideoIcon,
     Mic,
   } from '@lucide/svelte';
+  import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
@@ -262,30 +263,31 @@
         class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
         aria-label={m.post_zoom_image_label()}
       >
-        {#if letterbox}
-          <!-- The remainder, painted with the picture. Blurred hard and scaled past the edges so
-               the blur's own transparent fringe never reaches the box, then veiled with the
-               surface token so the bands sit in the theme instead of shouting over it. It is
-               `aria-hidden` because it is the same picture as the one below, at no information. -->
-          <div
-            class="absolute inset-0 scale-125 bg-cover bg-center blur-2xl saturate-150"
-            style="background-image: url({blobUrl})"
-            aria-hidden="true"
-          ></div>
-          <div class="bg-cn-surface/35 absolute inset-0" aria-hidden="true"></div>
-        {/if}
         <!-- NO HOVER ZOOM WHEN THE WHOLE PICTURE IS THE POINT: scaling a contained picture past
              its box crops it again, which is the defect this branch exists to end. The grid cell
-             keeps the zoom, having been cropped by design already. -->
-        <img
-          src={blobUrl}
-          alt={media.fileName ?? m.post_image_alt()}
-          class={letterbox
-            ? 'relative h-full w-full object-contain'
-            : 'h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105'}
-          loading="lazy"
-          decoding="async"
-        />
+             keeps the zoom, having been cropped by design already.
+
+             THE LETTERBOX TREATMENT MOVED TO `LetterboxedImage` ON 2026-09-20, unchanged, because
+             two other places need it - the agenda's poster and a shared post's preview card - and a
+             blurred fill written three times is three chances to drift apart. This caller RESERVES
+             the shape (`mediaAspectStyle` already sized the box), so the picture takes `h-full`
+             rather than a ceiling. -->
+        {#if letterbox}
+          <LetterboxedImage
+            src={blobUrl}
+            alt={media.fileName ?? m.post_image_alt()}
+            class="h-full w-full"
+            imgClass="h-full"
+          />
+        {:else}
+          <img
+            src={blobUrl}
+            alt={media.fileName ?? m.post_image_alt()}
+            class="h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105"
+            loading="lazy"
+            decoding="async"
+          />
+        {/if}
       </button>
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
