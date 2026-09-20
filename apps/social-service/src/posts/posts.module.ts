@@ -5,6 +5,7 @@ import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostPreviewService } from './post-preview.service';
 import { FeedAudienceGuard } from './feed-audience.guard';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import { Post } from './entities/post.entity';
@@ -30,9 +31,13 @@ import { ModerationModule } from '../moderation/moderation.module';
     PostsService,
     PostInteractionsService,
     PostNotificationsService,
+    PostPreviewService,
     PostAnnounceScheduler,
     PushService,
   ],
-  exports: [PostNotificationsService],
+  // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview
+  // routes live on the `/api/public/` surface, but the rule deciding what a post may disclose
+  // belongs beside the posts it reasons about, not in the controller that happens to serve it.
+  exports: [PostNotificationsService, PostPreviewService],
 })
 export class PostsModule {}

@@ -68,15 +68,24 @@ async function associationEntries(): Promise<SitemapEntry[]> {
 /**
  * Recent ASSOCIATION posts, newest first.
  *
- * `feed=associations`, not `feed=all`, and the distinction is deliberate. Both are readable
- * without a session and both already exclude scheduled and moderation-hidden rows, so either would
- * be safe to serve - but submitting a URL to a search engine is not the same act as not blocking
- * it. An association's post is a communication its authors want found; a student's personal post
- * on the school feed is not something to go and put in front of a search engine on their behalf.
+ * ASSOCIATION posts and not every post, which is deliberate: submitting a URL to a search engine
+ * is not the same act as not blocking it. An association's post is a communication its authors
+ * want found; a student's personal post on the school feed is not something to go and put in
+ * front of a search engine on their behalf.
+ *
+ * THIS READ USED TO BE `/api/posts?feed=associations`, AND IT ANSWERED 401 ON EVERY BUILD. The
+ * comment here claimed that feed was "readable without a session"; `FeedAudienceGuard` made that
+ * false on 2026-09-10 and nothing re-read the sentence. The failure is silent by construction - an
+ * empty list is a short sitemap, not an error - so production advertised `8 static + 75
+ * associations + 0 posts` to every crawler for ten days, measured 2026-09-20.
+ *
+ * `/api/public/posts` applies that same association-only rule in SQL, on the one service that owns
+ * it, and is the same surface the link previews read. A claim about who can read something now
+ * lives next to the code enforcing it.
  */
 async function postEntries(): Promise<SitemapEntry[]> {
   const rows = await fetchJson<PostRow[]>(
-    `${SOCIAL_URL()}/api/posts?feed=associations&limit=${SITEMAP_MAX_POSTS}&offset=0`,
+    `${SOCIAL_URL()}/api/public/posts?limit=${SITEMAP_MAX_POSTS}`,
     {},
     SITEMAP_FETCH_TIMEOUT_MS
   );

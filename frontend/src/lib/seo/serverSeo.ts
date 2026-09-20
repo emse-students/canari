@@ -14,6 +14,7 @@ import {
   buildSiteJsonLd,
   type JsonLdNode,
 } from '$lib/seo/jsonLd';
+import { m } from '$lib/paraglide/messages';
 import { mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
 import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
 import { SITE, siteOrigin } from '$lib/seo/site';
@@ -84,36 +85,69 @@ function publicMediaUrl(pathOrUrl: string | null | undefined): string | undefine
   return `${siteOrigin()}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
-interface PostPayload {
+interface PostPreviewPayload {
   markdown?: string;
   createdAt?: string;
   updatedAt?: string;
   association?: { name?: string; slug?: string; logoUrl?: string | null } | null;
-  authorDisplayName?: string | null;
-  authorFirstName?: string | null;
-  authorLastName?: string | null;
+  /** Present, with the stored dimensions, when the post carries an image worth showing. */
+  image?: { width?: number | null; height?: number | null } | null;
 }
 
+/**
+ * THE POST ENRICHER, AND WHY IT NO LONGER ASKS `/api/posts/:id`.
+ *
+ * It did, from the day this file was written until 2026-09-20, and on production it never once got
+ * an answer: `FeedAudienceGuard` shipped on 2026-09-10 and that route has refused every
+ * session-less caller since - **22 `answered 401` lines in 72 hours of `frontend-ssr` log**. The
+ * fallback is silent by design (a failed enrichment degrades a preview, it never fails a page), so
+ * every post link shared outside Canari previewed as `Publication - Canari` with the site logo,
+ * and nothing said so.
+ *
+ * `/api/public/posts/:id/preview` is the door built beside that gate rather than through it. It
+ * answers for ASSOCIATION posts only - see `PostPreviewService` in social-service, which owns that
+ * rule - so a student's personal post still gets the generic card, deliberately. No secret is sent
+ * with this call and none is needed: the endpoint is public because what it returns is.
+ */
 async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> | null> {
-  const post = await fetchJson<PostPayload>(
-    `${SOCIAL_URL()}/api/posts/${encodeURIComponent(postId)}`
+  const post = await fetchJson<PostPreviewPayload>(
+    `${SOCIAL_URL()}/api/public/posts/${encodeURIComponent(postId)}/preview`
   );
   if (!post) return null;
 
   const plain = markdownToPlainText(post.markdown ?? '');
-  const author =
-    post.association?.name ||
-    [post.authorFirstName, post.authorLastName].filter(Boolean).join(' ') ||
-    post.authorDisplayName ||
-    null;
+  const author = post.association?.name?.trim() || null;
 
-  // The title is the post's opening words and the description its body, so an author line in
-  // front of the description is the only place the card can say WHO posted without repeating it.
-  const title = plain ? truncateForMeta(plain, 70) : 'Publication';
+  // The title is the post's opening words, and the association's name when it has none - a photo
+  // post used to title itself "Publication", which is the word the whole feed shares.
+  const title = plain
+    ? truncateForMeta(plain, 70)
+    : author
+      ? m.seo_post_title_from({ association: author })
+      : SITE.name;
+  // An author line in front of the description is the only place the card says WHO posted without
+  // spending the title on it.
   const description = plain
-    ? truncateForMeta(author ? `${author} : ${plain}` : plain, 200)
-    : `Publication sur le fil social ${SITE.name}.`;
-  const image = publicMediaUrl(post.association?.logoUrl);
+    ? truncateForMeta(author ? m.seo_post_byline({ author, text: plain }) : plain, 200)
+    : author
+      ? m.seo_post_description_fallback({ association: author })
+      : `${SITE.name}.`;
+
+  // THE POST'S OWN PHOTO FIRST, AND THE LOGO ONLY WHEN THERE IS NONE. The logo was the only thing
+  // this ever offered, so an album of twelve photos unfurled as a 200px crest - which is the half
+  // of a card that decides whether anybody clicks. The bytes are served by the same service, on
+  // their own URL, because an unfurler fetches `og:image` as a second request.
+  const hasOwnImage = !!post.image;
+  const image = hasOwnImage
+    ? `${siteOrigin()}/api/public/posts/${encodeURIComponent(postId)}/preview-image`
+    : publicMediaUrl(post.association?.logoUrl);
+  const imageAlt = hasOwnImage
+    ? author
+      ? m.seo_post_image_alt({ association: author })
+      : undefined
+    : author
+      ? m.seo_logo_alt({ name: author })
+      : undefined;
   const url = pageUrl(path);
 
   return {
@@ -121,7 +155,11 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
     description,
     ogType: 'article',
     image,
-    imageAlt: post.association?.name ? `Logo ${post.association.name}` : undefined,
+    imageAlt,
+    // Declared only for the post's own photo: those numbers are stored beside it. A logo's are
+    // nobody's here - see `renderSeoTags`.
+    imageWidth: post.image?.width ?? undefined,
+    imageHeight: post.image?.height ?? undefined,
     publishedAt: post.createdAt,
     authorName: author ?? undefined,
     jsonLd: [
@@ -131,7 +169,7 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
         description,
         image,
         authorName: author,
-        authorIsOrganization: !!post.association?.name,
+        authorIsOrganization: !!author,
         publishedAt: post.createdAt,
         modifiedAt: post.updatedAt,
       }),
@@ -260,12 +298,14 @@ async function communityInviteSeo(token: string): Promise<Partial<SeoMeta> | nul
   );
   if (!invite?.valid || !invite.workspaceName?.trim()) return null;
 
+  const name = invite.workspaceName.trim();
   return {
-    title: `Rejoindre ${invite.workspaceName.trim()}`,
-    description: `Invitation à rejoindre la communauté ${invite.workspaceName.trim()} sur ${SITE.name}.`,
+    title: m.seo_community_invite_title({ name }),
+    description: m.seo_community_invite_description({ name }),
     image: invite.imageMediaId
       ? publicMediaUrl(`/api/media/public/${invite.imageMediaId}`)
       : undefined,
+    imageAlt: invite.imageMediaId ? m.seo_invite_image_alt({ name }) : undefined,
     noindex: true,
   };
 }
@@ -273,8 +313,16 @@ async function communityInviteSeo(token: string): Promise<Partial<SeoMeta> | nul
 interface GroupInvitePayload {
   valid?: boolean;
   groupName?: string | null;
+  /** The group avatar - a RAW public blob, which is what makes it fetchable with no session. */
+  imageMediaId?: string | null;
 }
 
+/**
+ * The group half of the invite pair, and it had no picture at all until 2026-09-20: a community
+ * invite carried its image while the group beside it showed the site logo, for no reason other
+ * than `resolveGroupInvitePreview` not selecting the column. Groups have avatars, stored the same
+ * public way community images are.
+ */
 async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
   const invite = await fetchJson<GroupInvitePayload>(
     `${DELIVERY_URL()}/api/internal/group-invites/${encodeURIComponent(token)}`,
@@ -282,9 +330,14 @@ async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
   );
   if (!invite?.valid || !invite.groupName?.trim()) return null;
 
+  const name = invite.groupName.trim();
   return {
-    title: `Rejoindre ${invite.groupName.trim()}`,
-    description: `Invitation à rejoindre la discussion ${invite.groupName.trim()} sur ${SITE.name}.`,
+    title: m.seo_group_invite_title({ name }),
+    description: m.seo_group_invite_description({ name }),
+    image: invite.imageMediaId
+      ? publicMediaUrl(`/api/media/public/${invite.imageMediaId}`)
+      : undefined,
+    imageAlt: invite.imageMediaId ? m.seo_invite_image_alt({ name }) : undefined,
     noindex: true,
   };
 }

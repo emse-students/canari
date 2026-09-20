@@ -46,12 +46,23 @@
       : siteAssetUrl(resolved.image ?? SITE.defaultOgImagePath)
   );
   /**
-   * The declared dimensions and the alt text describe the SITE image and nothing else. An entity's
-   * own logo has dimensions nobody here knows, and `defaultOgImageAlt` describes the Canari bird -
-   * printing either over an association's logo is a wrong answer, where none is a correct one.
+   * The alt text describes the SITE image and nothing else: `defaultOgImageAlt` describes the
+   * Canari bird, and printing it over an association's logo is a wrong answer where none is a
+   * correct one.
+   *
+   * Dimensions follow the same discipline but have two sources rather than one - the site image's
+   * constants, and the pair an enricher genuinely looked up (a post's stored photo). An
+   * association's logo still declares none. `renderHead.ts` computes the identical pair; the two
+   * are meant to be comparable line by line, so a tag added here is owed there.
    */
   const isDefaultOgImage = $derived(ogImage === siteAssetUrl(SITE.defaultOgImagePath));
   const ogImageAlt = $derived(isDefaultOgImage ? SITE.defaultOgImageAlt : resolved.imageAlt);
+  const ogImageWidth = $derived(
+    isDefaultOgImage ? SITE.defaultOgImageWidth : (resolved.imageWidth ?? null)
+  );
+  const ogImageHeight = $derived(
+    isDefaultOgImage ? SITE.defaultOgImageHeight : (resolved.imageHeight ?? null)
+  );
   const robotsContent = $derived(resolved.noindex ? 'noindex, nofollow' : 'index, follow');
   const ogType = $derived(resolved.ogType ?? SITE.defaultOgType);
   /**
@@ -97,9 +108,9 @@
   <meta property="og:description" content={resolved.description} />
   <meta property="og:url" content={canonicalUrl} />
   <meta property="og:image" content={ogImage} />
-  {#if isDefaultOgImage}
-    <meta property="og:image:width" content={String(SITE.defaultOgImageWidth)} />
-    <meta property="og:image:height" content={String(SITE.defaultOgImageHeight)} />
+  {#if ogImageWidth && ogImageHeight}
+    <meta property="og:image:width" content={String(ogImageWidth)} />
+    <meta property="og:image:height" content={String(ogImageHeight)} />
   {/if}
   {#if ogImageAlt}
     <meta property="og:image:alt" content={ogImageAlt} />

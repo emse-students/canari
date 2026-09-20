@@ -9,14 +9,17 @@ import {
   ForbiddenException,
   BadRequestException,
   NotFoundException,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import * as crypto from 'crypto';
+import type { Response } from 'express';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
+import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
 
 /**
  * Public projection of an association/list for the read-only showcase.
@@ -75,10 +78,20 @@ function toPublic(
 }
 
 /**
- * Unauthenticated read-only API consumed by the portail-etu showcase.
+ * Ceiling on the shareable-post list, whatever `?limit=` asks for.
+ *
+ * Its one consumer is the sitemap, which caps itself at the same number
+ * (`frontend/src/lib/seo/sitemap.ts`); this one exists so an anonymous caller cannot ask for the
+ * whole table by widening a query parameter.
+ */
+const MAX_PUBLIC_POST_LIST = 500;
+
+/**
+ * Unauthenticated read-only API consumed by the portail-etu showcase, and since 2026-09-20 by the
+ * link previews of shared Canari URLs.
  * Reachable via the nginx `/api/public/` location, which - unlike every other
  * `/api/*` route - is NOT behind `auth_request`. Exposes associations, promo
- * lists and their public members; never any write.
+ * lists, their public members and association-post previews; never any write.
  */
 @Controller('public')
 export class PublicController {
@@ -88,7 +101,8 @@ export class PublicController {
   constructor(
     private readonly associations: AssociationsService,
     private readonly products: ProductsService,
-    private readonly poster: PosterService
+    private readonly poster: PosterService,
+    private readonly postPreviews: PostPreviewService
   ) {}
 
   /** Throws ForbiddenException unless the header matches CERCLE_API_KEY (timing-safe). */
@@ -127,6 +141,75 @@ export class PublicController {
   async listMembers(@Param('id') id: string) {
     this.logger.debug(`public listMembers ${id}`);
     return this.associations.listMembersPublic(id);
+  }
+
+  // ── Link previews for shared posts ───────────────────────────────────────
+  //
+  // THREE ROUTES, ONE PREDICATE, AND NONE OF THEM IS A SECOND FEED. `PostPreviewService` decides
+  // what an association post may show to somebody with no session; these only serve what it
+  // returns. A post it refuses is a 404 here, identical to a post that does not exist - the
+  // refusal must not be readable, or a guessed id becomes a way to ask whether a hidden post
+  // exists. See that service for why the authenticated `/api/posts/:id` cannot answer this.
+
+  /**
+   * Title, text, author and image dimensions behind a shared post link.
+   *
+   * Cached briefly at the edge: one link pasted into a conversation produces a burst of unfurler
+   * hits on this exact path within seconds, and five minutes is short enough that an edited post
+   * does not keep previewing its old text for long.
+   */
+  @Get('posts/:postId/preview')
+  @Header('Cache-Control', 'public, max-age=300')
+  async getPostPreview(@Param('postId') postId: string): Promise<PostSharePreview> {
+    const preview = await this.postPreviews.getSharePreview(postId);
+    if (!preview) throw new NotFoundException('Post not found');
+    this.logger.debug(`public post preview ${postId}`);
+    return preview;
+  }
+
+  /**
+   * The post's first image, decrypted, as `og:image` points at it.
+   *
+   * `@Res()` rather than a returned buffer because the content type is the stored one and Nest
+   * would otherwise serialise the Buffer as JSON. Cached for an hour: unfurlers refetch this far
+   * more often than they refetch the head, and the bytes only change if the post is edited.
+   *
+   * THE ONE THROTTLED PREVIEW ROUTE, because it is the only one that does work: a blob fetch from
+   * media-service and an AES-GCM decrypt of up to 5 MB, for a caller with no session. The edge
+   * cache absorbs the legitimate shape of this traffic - an unfurler fetches one `og:image` per
+   * URL and remembers it for weeks - so 20/min per IP sits far above real use and still bounds
+   * what a cache-busting query string can make this service do. The JSON preview beside it is a
+   * database read and stays unthrottled, where a burst of unfurlers is exactly what is expected.
+   */
+  @UseGuards(ThrottlerGuard)
+  @Get('posts/:postId/preview-image')
+  async getPostPreviewImage(@Param('postId') postId: string, @Res() res: Response): Promise<void> {
+    const image = await this.postPreviews.readShareableImage(postId);
+    if (!image) throw new NotFoundException('Post image not found');
+    this.logger.debug(`public post preview image ${postId} (${image.data.length} bytes)`);
+    res.setHeader('Content-Type', image.contentType);
+    res.setHeader('Content-Length', image.data.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.send(image.data);
+  }
+
+  /**
+   * Recent shareable post ids, newest first - read by the sitemap builder and nothing else.
+   *
+   * It exists because `/api/posts?feed=associations` moved behind the feed gate on 2026-09-10 and
+   * the sitemap has been answering `0 posts` to every crawler ever since, silently: the builder
+   * treats an empty list as a short sitemap rather than a failure, by design.
+   */
+  @Get('posts')
+  @Header('Cache-Control', 'public, max-age=300')
+  async listShareablePosts(@Query('limit') limit?: string) {
+    const parsed = Number.parseInt(limit ?? '', 10);
+    const capped = Number.isFinite(parsed)
+      ? Math.min(Math.max(parsed, 1), MAX_PUBLIC_POST_LIST)
+      : MAX_PUBLIC_POST_LIST;
+    const rows = await this.postPreviews.listShareable(capped);
+    this.logger.debug(`public shareable posts: ${rows.length}`);
+    return rows;
   }
 
   /**

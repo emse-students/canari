@@ -74,7 +74,7 @@ would be impersonation). One seam: `src/lib/seo/internalApi.ts`, shared with the
 
 | Path | Source | Structured data |
 |---|---|---|
-| `/posts/{id}` | social-service `GET /api/posts/:id` | `Article` + `BreadcrumbList` |
+| `/posts/{id}` | social-service `GET /api/public/posts/:id/preview` | `Article` + `BreadcrumbList` |
 | `/associations/{slug}` | social-service `GET /api/public/associations/slug/:slug` | `Organization` + `BreadcrumbList` |
 | `/forms/{id}` | social-service `GET /api/forms/:id` | — |
 | `/profile/{id}` | core-service internal public-profile | — |
@@ -107,6 +107,83 @@ states now that the set is derived.
 `http://localhost:3011` when `window` is undefined — which is exactly the SSR case, so using it here
 would advertise a localhost URL to every unfurler. The absolute URL is composed from the request's
 own origin instead.
+
+### A shared post, and the ten days it previewed as nothing
+
+Until 2026-09-20 the post enricher called `GET /api/posts/:id`, and **on production it had never
+once succeeded**. `FeedAudienceGuard` shipped on 2026-09-10 and closed that route to every caller
+without an ICM session — correctly; the social feed is not public. The head injector has no session
+either. Measured in `frontend-ssr`'s own log on 2026-09-20: **22 `[SEO] .../api/posts/<id> answered
+401` lines in 72 hours**, and `sitemap: 8 static + 75 associations + 0 posts` on every single build.
+Nothing was red, because both consumers fail soft on purpose — a failed enrichment degrades a
+preview and an empty list is a short sitemap. So every post link shared into WhatsApp, Discord or a
+timeline rendered `Publication - Canari`, the site logo and one generic sentence, and the site
+advertised no post at all to any crawler.
+
+**The gate was not widened. A narrower door was opened beside it.**
+`PostPreviewService` (social-service, `src/posts/post-preview.service.ts`) answers for
+**association posts only** — the line the sitemap already drew, for the same reason: an
+association's post is a communication its authors want carried, a student's personal post is not
+something to hand to whoever holds a URL. A personal post still gets the generic card, deliberately.
+
+It is **one predicate**, `findShareable`, and the JSON preview, the image bytes and the sitemap list
+all go through it. It refuses a post with no `associationId`, a `hiddenByModeration` post, a post
+scheduled for later, and one whose association is archived. **Every refusal is the same 404 as a
+post that does not exist**: spelling them apart would turn a guessed id into a way to ask whether a
+hidden post exists. Reactions, comments, poll results, mentions and the author's user id are not in
+the payload at all — the cheapest way not to leak a field is not to select it.
+
+| Route | What it serves |
+|---|---|
+| `GET /api/public/posts/:id/preview` | text, association, image dimensions — `Cache-Control: max-age=300` |
+| `GET /api/public/posts/:id/preview-image` | the decrypted first image — `max-age=3600`, **ThrottlerGuard** |
+| `GET /api/public/posts?limit=` | ids + `updatedAt` for the sitemap, capped at 500 |
+
+### The image an unfurler can actually fetch
+
+A post's photos are encrypted at rest: each `posts.images` entry carries `mediaId`, `key` and `iv`,
+and the client decrypts in the browser. **An unfurler has no session and no key, so `og:image` could
+never point at `/api/media/:id`** — which is why the card used to fall back to the association's
+200px crest even for an album of twelve photos, and the crest is the half of a card that decides
+whether anybody clicks.
+
+The key lives in the post row and media-service has never held it, so the decrypt happens in
+social-service: it fetches the ciphertext from `GET /media/internal/:id` with `X-Internal-Secret`
+and decrypts it there. **This cannot be one more `/media/public/:id`** — the blob is not public, the
+*decision* to publish it is, and that decision is a property of the post.
+
+Two details that are the whole difference between this working and failing:
+
+- **WebCrypto appends the 16-byte GCM tag to the ciphertext; Node's `createDecipheriv` wants it
+  handed to `setAuthTag` separately.** `decryptPostMedia` splits them, and
+  `post-preview.service.spec.ts` reproduces the client's output byte for byte rather than asserting
+  that AES works.
+- **The key and IV are hex**, matching `frontend/src/lib/mediaCrypto.ts` — stated in exactly those
+  two places and nowhere in between.
+
+An image over **5 MB is not offered at all** and the card falls back to the logo: Twitter refuses one
+that size outright and then shows *no* card, which is worse. The client compresses a post image to
+2048px at 0.92 (`IMAGE_COMPRESS_PRESETS.post`), so the ceiling is far above anything the app
+produces; it exists for rows that predate that preset.
+
+**`og:image:width`/`height` are declared only where both are known, and both or neither.** An
+unfurler reserves that box before the bytes arrive, so a guessed pair renders a gap the image never
+fills, and a lone width describes nothing. The site image's dimensions are constants and a post's
+photo carries its own; an association logo declares none. `renderHead.ts` and `SeoHead.svelte`
+compute the identical pair — they are meant to be comparable line by line, so a tag added to one is
+owed to the other.
+
+### The two invite links
+
+Both already had their own session-free preview endpoint and both are `noindex` — previewing for
+whoever holds the link is the point, being listed in a search index is not. Two things changed on
+2026-09-20: the descriptions became sentences somebody might act on, and **the group invite got an
+image**. It had none for no reason other than `resolveGroupInvitePreview` not selecting the column,
+while the community invite beside it carried one; a group avatar is a raw public blob
+(`/api/media/public/:id`), exactly like a community image, so an unfurler can fetch it.
+
+All four strings go through Paraglide (`seo_community_invite_*`, `seo_group_invite_*`,
+`seo_invite_image_alt`) rather than being French literals in a `.ts`.
 
 ### Escaping is the security-critical part
 
@@ -160,10 +237,16 @@ every graph: `parentOrganization` on the site, `memberOf` on each association.
 tells a crawler nothing about the content. It merges the static routes with:
 
 - every non-archived association, via the public projection;
-- recent posts from **`feed=associations`**, not `feed=all`. Both are readable without a session,
-  but submitting a URL to a search engine is not the same act as not blocking it: an association's
-  post is a communication its authors want found, a student's personal post is not something to put
-  in front of a search engine on their behalf.
+- recent **association** posts, via `GET /api/public/posts` — not every post. Submitting a URL to a
+  search engine is not the same act as not blocking it: an association's post is a communication
+  its authors want found, a student's personal post is not something to put in front of a search
+  engine on their behalf.
+
+This read used to be `/api/posts?feed=associations`, and the docblock beside it asserted that feed
+was "readable without a session". **That sentence was true when it was written and false from
+2026-09-10**, and nothing re-read it — see the section above for what it cost. A claim about who may
+read something rots wherever it is not the code doing the enforcing, so the rule now lives in SQL on
+the service that owns posts and both consumers read that one surface.
 
 Both halves run in parallel and are allowed to come back empty — a short sitemap is worth serving,
 a 500 is not.
@@ -192,8 +275,11 @@ outage is the site's default head, which the next crawl repairs; what a 5xx cost
 Everything above is covered by unit tests and was probed against the built server with a stub
 social-service. Four things still need a human, after a deploy, and none of them is a code task:
 
-1. **Paste a real link into Discord and Slack.** A `/posts/{id}` and a `/c/join/{token}`. Their
-   unfurlers are the actual consumers, and they are not curl.
+1. **Paste a real link into Discord, Slack and WhatsApp.** An association post **that has a photo**,
+   a personal post (which must still show the generic card), a `/c/join/{token}` and a
+   `/g/join/{token}`. Their unfurlers are the actual consumers, they are not curl, and the photo
+   path is the one that crosses three services — head injector, social-service, media-service — so
+   it is the one a missing `INTERNAL_SECRET` silently reduces back to a logo.
 2. **Install the Android build and confirm it still boots.** The adapter split means the mobile
    build now goes down a different branch of `svelte.config.js` than the web one.
 3. **Run an association page and the agenda through Google's Rich Results Test.** The JSON-LD is
