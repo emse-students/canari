@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une banniere de salon qui perdait la course contre sa propre graine
+
+La graine d'une session Graine neuve et le message qu'elle ouvre voyagent en DEUX poussees, emises
+la meme seconde par deux services, et FCM ne promet aucun ordre entre elles. Sur materiel, la
+graine arrivait 324 ms trop tard et la banniere restait bloquee sur "Nouveau message dans
+#<salon>" pour toujours. Le gestionnaire Android est desormais independant de l'ordre : une trame
+qu'il ne peut pas ouvrir est retenue dans un registre borne, et l'absorption de la graine la
+redessine sous le meme identifiant en remplacant la ligne aveugle. Aucun delai, aucune horloge.
+[channel-encryption](docs/wiki/protocols/channel-encryption.md#the-seed-then-arrived-324-ms-too-late---fixed-2026-09-21).
+
 ### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
 
 `NOTIF-18` tue l'application, cree un salon dont elle n'a jamais entendu parler - donc une session
