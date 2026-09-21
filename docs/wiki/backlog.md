@@ -67,13 +67,11 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
-| **a second Cloudflare Cache Rule, for `/api/users/*/avatar`** - the first one (2026-09-16) covers `/_app/immutable/*` only, so twenty-four faces still cross to Saint-Etienne on every cold load at 846-946 ms each. The origin already says `public, max-age=86400`; Cloudflare caches by EXTENSION and an API path has none, so only a rule lifts it | 1 rule in the dashboard | [P2 - twenty-four avatars cross the country](#p2---twenty-four-avatars-cross-the-country-on-every-cold-load-and-the-mls-init-waits-behind-them-measured-on-production-2026-09-16) |
+| set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
-| **three legacy rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two whose destroyed accents no directory entry resolves. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | [P2 - the legacy rows are loaded and NOT ONE claim has been observed](#p2---the-legacy-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 
 ## Open defects, in severity order
@@ -459,6 +457,13 @@ nothing to report it. And `promo.csv`, which the 141 accent repairs rest on, is 
 owner from the reference, run the real repair. 599 simulations, 599 refusals, zero wrong person
 accepted; with the owner present, 599 of 599 named correctly.
 
+**THE THREE EXCLUDED ROWS STAY EXCLUDED - decided by the user 2026-09-22**, asked and answered as
+*"Elles restent exclues, ferme la ligne"*. One had an empty `Cotisation` cell between filled
+neighbours, and two carried accents no directory entry resolves; the import refused to guess on all
+three (2026-09-11) and nothing has been learned since that would let it. They are not cotisants, they
+carry no tag, and **no hand-added row is owed** - which is the decision, not a deferral. If one of
+the three ever pays, the ordinary shop path serves them like anybody else.
+
 **The promo-2026 cohort is unserved by design and it is the LARGEST.** 153 of the 396 accounts -
 more than any other promo - are 1A who arrived after both lists were frozen. They appear in neither
 source, so they must pay through the shop, and all three membership products are `isActive = false`.
@@ -672,7 +677,7 @@ path has none. The same fact that kept `.wasm` uncached until 2026-09-16, arrivi
 the first rule does not cover. So every one of the twenty-four is a round trip to Saint-Etienne,
 and a 516 ms floor on a warm browser is that RTT and nothing else.
 
-**THE RULE IS DEPLOYED AND MEASURED, 2026-09-16.** `/api/users/<id>/avatar` now answers
+**CONFIRMED STILL LIVE 2026-09-22**, on production, two reads of one real account: `cf-cache-status: HIT` with an `Age`. **THE RULE IS DEPLOYED AND MEASURED, 2026-09-16.** `/api/users/<id>/avatar` now answers
 `cf-cache-status: HIT` with an `Age` on a real avatar, and an ABSENT avatar answers `404` +
 `public, max-age=600` -> `MISS`, i.e. cacheable. A `BYPASS` read on that path is a `400`: sending
 the literal placeholder `<un-id>` is a bad request, and Cloudflare bypasses an error. **What the
@@ -2231,10 +2236,24 @@ The user asked on 2026-09-10 for the steps to be written out rather than describ
 
 Any external service does this. The requirements are only that it runs **from outside the box** (a
 probe on the host cannot see the host being unreachable), at an interval of 5 minutes or less, and
-that it alerts by mail. Cloudflare's own Health Checks reach the same two paths when a notification
-destination is set on the account. **Two settings to get right**: the check must assert the STATUS
-of the named path rather than follow redirects and report the final 200, and it should require two
-consecutive failures, so a nightly deploy does not page.
+that it alerts by mail. **Two settings to get right**: the check must assert the STATUS of the named
+path rather than follow redirects and report the final 200, and it should require two consecutive
+failures, so a nightly deploy does not page.
+
+**CLOUDFLARE'S OWN HEALTH CHECKS ARE OUT, AND THAT IS MEASURED RATHER THAN ASSUMED (2026-09-22).**
+The user authorised both Cloudflare gestures with the API token on 2026-09-22; one of the two had
+already shipped (the avatar Cache Rule, confirmed live the same day) and this one cannot be made at
+all. `GET /zones/{zone}` answers `plan: Free`, and standalone Health Checks - with the notification
+destination that makes them mail - are **Pro and above**. No token would lift it: the ceiling is the
+plan, not a permission. So the line above says "an account on an external service, or a paid plan",
+and it stays the user's click.
+
+**AND A SCHEDULED GITHUB JOB IS NOT THE WAY ROUND IT.** `scheduled.yml` runs from outside the box
+and could curl both paths, which is why it is worth naming and refusing rather than leaving for
+somebody to rediscover: at the 5-minute interval this needs it is **288 runs a day**, against a
+user who asked for the opposite (*"le moins de workflows differents possibles, ca inonde la console
+github"*). A probe whose own noise buries the Actions list is a probe whose next failure is read as
+one more green row.
 
 **MAIL WAS REFUSED ONCE, ON `mitv`, and this is not a reversal.** There, `MAILADDR` would have
 delivered into a spool nobody opens, on a host with postfix and exim4 both inactive and `monit`
