@@ -995,6 +995,32 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
 }
 
 /**
+ * COLLAPSES THE NAVIGATION DRAWER AND WAITS FOR ITS BACKDROP TO GO, as one precondition.
+ *
+ * PARK FIRST, THEN WAIT - and the two are not the same guard. Parking COLLAPSES a rail a pointer is
+ * resting on; the wait rides out the 300 ms fade the backdrop survives its own `isExpanded` with. A
+ * wait alone cannot end a hover, so against a parked pointer it can only spend its budget and throw.
+ *
+ * THE HOLE IS ALWAYS THE PATH THAT CLICKS NOTHING. `realClick` parks, so any gesture that reaches a
+ * screen BY CLICKING leaves the pointer somewhere harmless - but a client that is ALREADY on that
+ * screen clicks nothing, and whatever the previous runner left on the rail is still there. MSG-5
+ * died exactly there on 2026-09-05 (`until() timed out after 5000ms:
+ * !document.querySelector('[data-nav-backdrop]')`), on its first ever run, against a working
+ * application. `venue.mjs` died the same way on 2026-09-21, one screen over: `reachCommunities`
+ * answered "already there", nothing parked, and the drawer's own label sat on top of
+ * `[aria-label="Ajouter une communaute"]` - reported as `no stable element`, which reads as a
+ * missing button and was a resting pointer. `clearOverlays` cannot see this one: the backdrop is a
+ * `div`, not a dialog and not a full-screen button.
+ *
+ * CALLED IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT, because the backdrop mounts on a timer and a
+ * check made earlier can pass before it has been rendered at all.
+ */
+export async function collapseNavDrawer(cx) {
+  await parkPointer(cx);
+  await until(cx, `!document.querySelector('[data-nav-backdrop]')`, 5000);
+}
+
+/**
  * Puts a client on `/communities` BY CLICKING, on EVERY device - one implementation, two callers.
  *
  * THERE WAS NEVER NO CLICK PATH ON THE PHONE; THE RIG WAS AIMING AT THE WRONG ELEMENT. Two modules
@@ -1130,23 +1156,9 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
   const row = `[data-channel-row="${channel}"]`;
   await awaitListed(cx, `!!document.querySelector('${row}')`, 15000, 'the channel', cx.port);
   const settledAfter = await awaitAppSettled(cx);
-  // PARK FIRST, THEN WAIT - and the two are not the same guard. Parking COLLAPSES a rail a pointer
-  // is resting on; the wait rides out the 300 ms fade the backdrop survives its own `isExpanded`
-  // with. A wait alone cannot end a hover, so against a parked pointer it can only spend its budget
-  // and throw.
-  //
-  // THE HOLE WAS THE PATH THAT CLICKS NOTHING. `realClick` parks, so the `!alreadyOpen` branch above
-  // leaves the pointer somewhere harmless - but when the community is ALREADY open that branch is
-  // skipped, no click happens, and whatever the previous runner left on the rail is still there.
-  // MSG-5 died exactly there on 2026-09-05 (`until() timed out after 5000ms:
-  // !document.querySelector('[data-nav-backdrop]')`), on its first ever run, against a working
-  // application - the community was open from the row before it.
-  //
-  // IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT, because the backdrop mounts on a timer and a check
-  // made earlier can pass before it has been rendered at all - which is exactly how it was still
-  // covering the row three fixes later.
-  await parkPointer(cx);
-  await until(cx, `!document.querySelector('[data-nav-backdrop]')`, 5000);
+  // IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT - see `collapseNavDrawer` for why both halves, and
+  // why this branch in particular cannot inherit the parking a click would have done.
+  await collapseNavDrawer(cx);
   const point = await realClick(cx, row);
 
   // HIT-TEST NOW, NOT AT THE FAILURE. This used to read `elementFromPoint` only inside the catch -
