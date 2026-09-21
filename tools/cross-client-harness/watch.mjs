@@ -13,6 +13,32 @@
 import { evaluate } from './cdp.mjs';
 import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
 
+/**
+ * A console line without the stamp the app writes in front of it.
+ *
+ * THE ONE PLACE THIS SPELLING LIVES, and it used to be four. Every list in this file is `^`-anchored
+ * against the sentence, so a stamp the reader does not recognise is not a cosmetic miss: it leaves
+ * the bracket at position 0 and EVERY anchored rule stops matching at once. That happened. #742
+ * (2026-09-16) gave the console a millisecond field - `[14:11:08.520]` where the reader knew only
+ * `[14:11:08]` - and for five days BENIGN, NOTABLE, SEVERE and STATE_CHANGE were dead against every
+ * line the app stamps. Nothing was hidden, because an unclassified line still breaks `clean`; what
+ * died was the bar itself, every browser client reporting a hundred lines of ordinary narration as
+ * dirt. The same shape as #905, and found the same way: a rig that stopped agreeing with the app and
+ * said nothing.
+ *
+ * The fraction is OPTIONAL rather than required, because both spellings are in flight - a client on
+ * an older build stamps without one - and a reader that insists on the newer format would have the
+ * identical defect pointing backwards.
+ *
+ * `classify-selftest.mjs` runs every fixture twice, bare and stamped, and requires the same
+ * classification of both: that is the property this function exists to hold, and asserting it is
+ * what turns the next stamp change into a red gate instead of five silent days.
+ */
+export const stripStamp = (text) =>
+  String(text)
+    .replace(/^\[\d\d:\d\d:\d\d(?:\.\d+)?\]\s*/, '')
+    .replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s*/, '');
+
 /** Console text that is normal traffic on this app and carries no signal on its own. */
 const BENIGN = [
   /^\[API\] (→|←)/,
@@ -1338,7 +1364,7 @@ export async function report(w) {
   // pair this dedup exists for, which is the one thing it must keep doing.
   const seen = new Set();
   const lines = console_.filter((l) => {
-    const k = `${l.level}|${l.source === 'network' ? l.url : ''}|${l.text.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
+    const k = `${l.level}|${l.source === 'network' ? l.url : ''}|${stripStamp(l.text)}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -1354,10 +1380,7 @@ export async function report(w) {
    * `[CHANNEL] history visibility set to joined` stayed `unexplained` with a rule in `BENIGN` that
    * named it exactly, and turned a COMM-12 run where all ten assertions held into PASS-DIRTY.
    */
-  const strip = (t) =>
-    t
-      .replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')
-      .replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s*/, '');
+  const strip = stripStamp;
   /**
    * A console line about a request whose failure is understood - path AND status both.
    *
@@ -1577,7 +1600,7 @@ export function timelineOf(lines, ws) {
   const lastSeen = new Map();
   const out = [];
   for (const e of merged) {
-    const key = `${e.kind}|${String(e.text).replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
+    const key = `${e.kind}|${stripStamp(e.text)}`;
     const prev = lastSeen.get(key);
     if (prev !== undefined && e.at !== null && e.at - prev < SAME_EVENT_MS) continue;
     if (e.at !== null) lastSeen.set(key, e.at);
@@ -2741,10 +2764,7 @@ export function ignoringExpectedLog(rep, needles) {
   // the app stamps its own lines two different ways; all of it is normalised before anything is
   // compared.
   const sentence = (line) =>
-    line
-      .replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):\s*/, '')
-      .replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')
-      .replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s*/, '');
+    stripStamp(line.replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):\s*/, ''));
   const matched = new Set();
   /** True to KEEP the line - and records, on the way past, which needles claimed it. */
   const keep = (line) => {
