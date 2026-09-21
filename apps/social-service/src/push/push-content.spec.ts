@@ -129,29 +129,38 @@ describe('previewOf', () => {
  * here is not that the picture is right, it is that nothing but an id can ever leave.
  */
 describe('publicMediaIconId', () => {
-  it('reads the id out of the public-media path every association logo has', () => {
-    expect(publicMediaIconId('/api/media/public/7f1e0a44-1111-2222-3333-444455556666')).toBe(
+  it('takes the id column, which is what an association logo already is', () => {
+    expect(publicMediaIconId('7f1e0a44-1111-2222-3333-444455556666')).toBe(
       '7f1e0a44-1111-2222-3333-444455556666'
     );
   });
 
-  it('refuses a URL to somewhere else, however plausible its tail looks', () => {
-    // The whole point: a stored column is read, not trusted.
-    expect(publicMediaIconId('https://example.invalid/api/media/public/abc')).toBeNull();
-    expect(publicMediaIconId('//example.invalid/api/media/public/abc')).toBeNull();
-  });
-
-  it('refuses a traversal, a query and anything else that is not just an id', () => {
-    expect(publicMediaIconId('/api/media/public/../../etc/passwd')).toBeNull();
-    expect(publicMediaIconId('/api/media/public/abc?redirect=https://example.invalid')).toBeNull();
+  it('takes NO path, which is the whole reason this stopped reading logoUrl', () => {
+    // These three ARE association logos as `logoUrl` stores them, and the middle one - a
+    // re-uploaded logo, with the cache-buster the upload path appends - is what 40 of the 91
+    // associations on production carry. Parsing it was how a member's FACE reached the push
+    // instead of the logo, because the pattern that refused the query below refused this too.
+    expect(publicMediaIconId('/api/media/public/7f1e0a44-1111')).toBeNull();
+    expect(publicMediaIconId('/api/media/public/7f1e0a44-1111?v=1781257363644')).toBeNull();
     expect(publicMediaIconId('/api/media/abc')).toBeNull();
   });
 
+  it('refuses a location, a traversal and a query - nothing but an id may leave', () => {
+    // The security floor, unchanged and one level narrower: the device concatenates what comes
+    // out of here into a route it already knows, so a separator of any kind is a refusal.
+    expect(publicMediaIconId('https://example.invalid/abc')).toBeNull();
+    expect(publicMediaIconId('//example.invalid/abc')).toBeNull();
+    expect(publicMediaIconId('../../etc/passwd')).toBeNull();
+    expect(publicMediaIconId('abc?redirect=https://example.invalid')).toBeNull();
+    expect(publicMediaIconId('a'.repeat(65))).toBeNull();
+  });
+
   it('gives nothing rather than a guess when there is no logo at all', () => {
-    // An association with no logo draws initials, which is what every push did until now.
+    // An association with no logo draws initials. One production row, measured 2026-09-21.
     expect(publicMediaIconId(null)).toBeNull();
     expect(publicMediaIconId(undefined)).toBeNull();
     expect(publicMediaIconId('')).toBeNull();
+    expect(publicMediaIconId('   ')).toBeNull();
   });
 });
 

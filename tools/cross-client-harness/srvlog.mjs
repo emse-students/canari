@@ -719,6 +719,14 @@ const NOTABLE = [
   // it settled on.
   /\[ChannelService\] \[CHANNEL\] access granted channel=\S+ private=(?:true|false) announced=\d+/,
   /\[ChannelService\] \[CHANNEL\] access updated channel=\S+ private=(?:true|false) writePolicy=\S+ audience=\d+ mayWrite=\d+/,
+  // THE SALON GOING AWAY, and NOTABLE for the same reason its key group's retirement is: it happens
+  // to everyone in it at once and cannot be undone. It reached `unexplained` on NOTIF-18's window
+  // of 2026-09-21, where `cleanup.mjs` sweeping the salon it had just created is exactly what the
+  // line said - a rule this file had simply never met, since no row had deleted a channel before.
+  // Filing it BENIGN because a teardown produces it would be the mistake: the same sentence from a
+  // run that deleted nothing is a salon a test destroyed by accident, and it must not read as
+  // routine on the way past. `audience=` is pinned because it says how many people just lost it.
+  /\[ChannelService\] \[CHANNEL\] delete channel=\S+ workspace=\S+ private=(?:true|false) group=\S+ by=\S+ audience=\d+/,
   // A send deliberately not persisted because its recipient is offline and its payload would go
   // stale before they returned - the rendezvous TTL. Correct by design, never routine.
   /TRANSPORT_SKIPPED_OFFLINE/,

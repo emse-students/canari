@@ -1040,9 +1040,24 @@ only be concatenated into a route the device already knows:
 
 Which one to call therefore has to SURVIVE THE WIRE rather than be guessed at from the shape of a
 string, which is why `fetchPublicMediaIcon` / `fetchPublicMedia` are separate functions rather than a
-flag on the avatar fetch. `publicMediaIconId` (server) reads the stored `logoUrl` instead of trusting
-it - only the exact public-media shape yields an id - and the natives sanitise again, because that is
-the half that holds if a payload is ever composed somewhere else. **A push naming no picture draws
+flag on the avatar fetch. `publicMediaIconId` (server) validates the id it is handed, and the natives
+sanitise again, because that is the half that holds if a payload is ever composed somewhere else.
+
+**AND IT IS HANDED THE ID COLUMN, BECAUSE THE FIRST VERSION PARSED THE URL BESIDE IT.** `associations`
+stores `logoMediaId`, written only by the upload path from what the media-service answered, and
+`logoUrl`, a display string the same path builds as `/api/media/public/<id>?v=<updatedAt>`. The icon
+read the URL, against a pattern anchored right after the id - so the cache-buster every re-uploaded
+logo carries made it match nothing, and the push fell back to the publishing MEMBER's face. **40 of
+the 91 associations on production, measured 2026-09-21** (`GROUP BY` on the column shape: 50 bare
+paths, 40 with `?v=`, 1 null); a reader on 0.18.17 is who noticed, and no gate here could have.
+
+Widening the pattern would have been the wrong repair, and `push-content.spec.ts` says why: the
+anchor is deliberate and `?redirect=https://...` is what it refuses. The fact was never in the URL -
+**carry the discriminator from where it is already KNOWN**, which is the column next to it. The two
+are not one fact: the URL is what the in-app notification row renders, the id is what a push may
+concatenate, and the announcer now passes both. The remaining fallback logs at `warn` and separates
+its causes - `absent` is a logo nobody uploaded (one production row), `present but refused` is a
+broken column. **A push naming no picture draws
 none**, which is the form reminder's case: it has no actor, and an initials disc would put a letter
 where nobody's name is. The HTTP-to-bitmap block is shared with the avatar path (`cachedRemoteIcon`
 in Kotlin, `cachedRemoteFile` in Swift); on Swift the request is a CLOSURE so that a cache hit does
