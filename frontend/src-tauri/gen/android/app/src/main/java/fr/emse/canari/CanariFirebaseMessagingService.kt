@@ -187,6 +187,58 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         private val NOTIF_ID_LOCK = Any()
 
+        /**
+         * A channel push whose ciphertext this device cannot open YET, held until its seed lands.
+         *
+         * @property data         the push frame verbatim, because the retry asks it the same questions.
+         * @property genericStamp the MessagingStyle instant of the generic line posted in its place,
+         *                        0 while that post is still in flight - which is what tells the
+         *                        drain below to leave this entry to the posting path instead.
+         */
+        private class PendingChannelFrame(val data: Map<String, String>) {
+            var genericStamp: Long = 0L
+        }
+
+        /**
+         * How many unopenable channel frames are held at once.
+         *
+         * CAPACITY, NOT A CLOCK. Nothing here expires: an entry leaves when its seed arrives and it
+         * is redrawn, or when a newer frame pushes it out. A frame whose key material never comes
+         * is a frame the app could never have opened, and holding it costs one small map entry
+         * until the eighth message after it - which is well past any shade, `MAX_NOTIF_MESSAGES`
+         * being 6.
+         */
+        private const val MAX_PENDING_CHANNEL_FRAMES = 8
+
+        /** The registry itself, bounded by insertion order. Every access holds [PENDING_CHANNEL_LOCK]. */
+        private val PENDING_CHANNEL_FRAMES =
+            object : LinkedHashMap<String, PendingChannelFrame>(16, 0.75f, false) {
+                override fun removeEldestEntry(
+                    eldest: MutableMap.MutableEntry<String, PendingChannelFrame>,
+                ): Boolean {
+                    val full = size > MAX_PENDING_CHANNEL_FRAMES
+                    if (full) {
+                        // ACCUSING, because reaching it means eight key frames in a row did not
+                        // arrive: the banner for this message will stay generic for ever.
+                        Log.w(TAG, "pendingChannelFrames: registry full -> dropped ${eldest.key}, its banner stays generic")
+                    }
+                    return full
+                }
+            }
+
+        /**
+         * Held across BOTH the seed lookup and the registry write, which is the whole point.
+         *
+         * The two paths overlap by construction - `handleChannelMessage` runs under
+         * `runWithWakeLock("fcm_channel")` and the absorber under
+         * `runSerializedWithWakeLock("fcm_decrypt")`, and FCM promises no order between the two
+         * sends. A lookup that missed and THEN registered would let the absorber store the seed and
+         * find an empty registry in between, and the message would stay generic for ever. Asking
+         * the mirror inside the lock deletes that window rather than healing it: either the seed is
+         * already there, or the entry is already registered when the absorber looks.
+         */
+        private val PENDING_CHANNEL_LOCK = Any()
+
         /** Android group key to bundle message notifications under a single line. */
         private const val GROUP_KEY_MESSAGES = "canari_messages_group"
 
@@ -1565,6 +1617,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * A single stable ID per conversation: each new message overwrites the previous
          * notification instead of stacking a new one.
          * Suppressed if the app is in the foreground: the WebSocket already delivered the message to the UI.
+         *
+         * @return the MessagingStyle instant the posted line carries, which [supersedes] takes to
+         *         replace it later, or 0 when nothing reached the shade at all.
          */
         internal fun Context.showMessageNotification(
             senderName: String,
@@ -1601,10 +1656,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * throw that answer away and restore the silence the finer predicate exists to prevent.
              */
             suppressInForeground: Boolean = true,
-        ) {
+            /**
+             * The instant of a line already in this conversation's history that THIS post replaces,
+             * dropped from the re-injected messages. 0 - the ordinary case - replaces nothing.
+             *
+             * It exists for the salon banner that had to be built before its key material arrived:
+             * the generic "nouveau message" line is not a message the reader should keep alongside
+             * the decrypted one, it is the same message written twice. The caller names the instant
+             * because it is the instant THIS function handed back when it posted that line, so the
+             * match is an identity rather than a guess about the text - which is what the sibling
+             * `alreadyPosted` comment below already learned the hard way.
+             */
+            supersedes: Long = 0L,
+        ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
-                return
+                return 0L
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(this, manager)
@@ -1658,9 +1725,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 style.isGroupConversation = true
             }
             // Re-inject the previous (bounded) messages, then add the new one.
+            // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
             existingNotif
                 ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
                 ?.messages
+                ?.filter { supersedes == 0L || it.timestamp != supersedes }
                 ?.takeLast(MAX_NOTIF_MESSAGES - 1)
                 ?.forEach { style.addMessage(it) }
             // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
@@ -1707,7 +1776,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
             if (alertedKey != null && !alreadyPosted && hasAlreadyAlerted(alertedKey)) {
                 Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
-                return
+                return 0L
             }
 
             // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
@@ -1736,7 +1805,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
                 // user saw as "the same notification twice".
-                .setOnlyAlertOnce(alreadyPosted)
+                // A SUPERSEDE IS THE SAME MESSAGE, SPELT PROPERLY. The reader was alerted when the
+                // generic line went up; buzzing again to correct its wording would be a second
+                // notification for one message, which is the defect, not the fix.
+                .setOnlyAlertOnce(alreadyPosted || supersedes != 0L)
 
             // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
             // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
@@ -1766,6 +1838,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // not necessarily landed, and a count that missed it cancelled the summary - which took
             // this very notification with it. A reaction passes nothing: it is not in the bundle.
             refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
+
+            // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
+            // has on the line it must replace - see [supersedes].
+            return stamp
         }
 
     }
@@ -3861,6 +3937,77 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * there is no text to scan.
      */
     private fun handleChannelMessage(data: Map<String, String>) {
+        val channelId = data["channelId"] ?: ""
+        if (channelId.isEmpty()) {
+            Log.e(TAG, "handleChannelMessage: channelId missing -> abort")
+            return
+        }
+        val sessionId = data["senderSessionId"] ?: ""
+        val messageIndex = data["messageIndex"]?.toIntOrNull()
+        // A message index of 0 is the first message of every session, so the guard is on `null`
+        // (absent or unparsable) and never on falsiness.
+        val openable = data["ciphertext"]?.isNotEmpty() == true &&
+            data["nonce"]?.isNotEmpty() == true && messageIndex != null
+        // ONE ENTRY PER MESSAGE, NOT PER SESSION. Two messages of the same session can both arrive
+        // before its seed - the first and second line of a salon nobody has spoken in - and each
+        // owns a different generic line to replace, so keying on the session alone would lose one.
+        val pendingKey = "$channelId:$sessionId:$messageIndex"
+
+        val seedB64 = if (!openable) null else synchronized(PENDING_CHANNEL_LOCK) {
+            val seed = lookupGraineSeed(channelId, sessionId)
+            // A COPY: the frame outlives the delivery, and FCM's map is backed by the Bundle the
+            // service was handed. Eight of these at most, a few kB each.
+            if (seed == null) PENDING_CHANNEL_FRAMES[pendingKey] = PendingChannelFrame(data.toMap())
+            seed
+        }
+        if (openable && seedB64 == null) {
+            // A FALLBACK IS A SIGNAL. It says the key frame lost a race it was never ordered to
+            // win, and the line below is how a run tells that apart from a seed that never comes.
+            Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=$channelId session=$sessionId index=$messageIndex")
+        }
+
+        val stamp = postChannelNotification(data, seedB64)
+        if (!openable || seedB64 != null) return
+
+        if (stamp == 0L) {
+            // Nothing reached the shade - a foregrounded app, which the WebSocket already served -
+            // so there is no line for a seed to correct and the entry would never be claimed.
+            synchronized(PENDING_CHANNEL_LOCK) { PENDING_CHANNEL_FRAMES.remove(pendingKey) }
+            return
+        }
+
+        // THE OTHER HALF OF THE OVERLAP, and the reason the entry was registered with a 0 stamp:
+        // the absorber may have stored the seed while the banner above was being built. It skips a
+        // 0-stamped entry precisely so this path can claim it here, with the instant it now knows.
+        val arrivedMeanwhile = synchronized(PENDING_CHANNEL_LOCK) {
+            PENDING_CHANNEL_FRAMES[pendingKey]?.let { frame ->
+                frame.genericStamp = stamp
+                lookupGraineSeed(channelId, sessionId)
+                    ?.also { PENDING_CHANNEL_FRAMES.remove(pendingKey) }
+            }
+        }
+        if (arrivedMeanwhile != null) {
+            Log.i(TAG, "handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=$channelId index=$messageIndex")
+            postChannelNotification(data, arrivedMeanwhile, supersedes = stamp)
+        }
+    }
+
+    /**
+     * Builds and posts the banner for ONE channel push, opening its ciphertext when [seedB64] can.
+     *
+     * Split out of [handleChannelMessage] because the seed can arrive AFTER the message it unlocks,
+     * and the redraw that follows asks the frame exactly the same questions - the same title, the
+     * same avatar, the same mention routing - with a seed in hand.
+     *
+     * @param seedB64    the Graine seed for this session, or null to post the generic body.
+     * @param supersedes the instant of the line this post replaces; see `showMessageNotification`.
+     * @return the instant of the line it posted, or 0 when nothing reached the shade.
+     */
+    private fun postChannelNotification(
+        data: Map<String, String>,
+        seedB64: String?,
+        supersedes: Long = 0L,
+    ): Long {
         val res         = appLocaleContext(this)
         val channelId   = data["channelId"] ?: ""
         val channelName = data["channelName"]?.takeIf { it.isNotEmpty() }
@@ -3872,17 +4019,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
         val mentionsMe  = data["mentioned"] == "true"
-        if (channelId.isEmpty()) {
-            Log.e(TAG, "handleChannelMessage: channelId missing -> abort")
-            return
-        }
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
-        // A message index of 0 is the first message of every session, so the guard is on `null`
-        // (absent or unparsable) and never on falsiness.
-        val seedB64 = if (ciphertext != null && nonce != null && messageIndex != null)
-            lookupGraineSeed(channelId, sessionId) else null
         // Read once: the only id this device can name in a mention token is its own.
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
         val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
@@ -3906,6 +4045,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 buildChannelFallbackText(res, channelName)
             }
         } else {
+            // NO CIPHERTEXT IS NOT NO SEED, and only this branch can tell them apart. A frame the
+            // server could not inline is generic for ever and nothing retries it; a frame whose
+            // seed is merely late was logged as HELD by the caller and will be redrawn.
             Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId")
             buildChannelFallbackText(res, channelName)
         }
@@ -3914,7 +4056,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
         Log.d(TAG, "handleChannelMessage: notification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")
-        showMessageNotification(
+        return showMessageNotification(
             // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
             // conversation title and the Person's name is what the banner shows. A salon has no
             // human sender to name anyway - the server sends only `senderId`, for the avatar.
@@ -3924,6 +4066,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
+            supersedes = supersedes,
         )
     }
 
@@ -3955,11 +4098,60 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
             } else {
                 Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${groupId.take(8)}")
+                // THE OTHER HALF OF THE ORDER-INDEPENDENCE. A seed is only useful against the
+                // messages it unlocks, and some of them may already have gone up generic.
+                drainPendingChannelFrames()
             }
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included: an older native library has no such symbol, and a
             // crash in a push handler takes the whole notification with it.
             Log.e(TAG, "absorbGraineSeeds: ${e.message}")
+        }
+    }
+
+    /**
+     * Re-posts every held channel frame whose seed the mirror can now answer for.
+     *
+     * THE MIRROR IS ASKED, NOT THE PAYLOAD THAT WAS JUST WRITTEN. The frame carried a list of
+     * sessions and the native writer may have kept only some of them; `lookupGraineSeed` is the
+     * same question `handleChannelMessage` asks and its answer is the state that actually exists,
+     * so a retry never runs against a seed that was claimed and not stored.
+     *
+     * IN MESSAGE ORDER, NOT ARRIVAL ORDER, because the shade shows the lines in the order they are
+     * added and two messages of one session have a defined order that FCM did not preserve.
+     *
+     * The posts happen OUTSIDE the lock: each fetches an avatar, and holding a lock the channel
+     * handler needs across a network call would serialise every incoming push behind this one.
+     */
+    private fun drainPendingChannelFrames() {
+        val ready = synchronized(PENDING_CHANNEL_LOCK) {
+            val taken = mutableListOf<Pair<PendingChannelFrame, String>>()
+            val entries = PENDING_CHANNEL_FRAMES.entries.iterator()
+            while (entries.hasNext()) {
+                val frame = entries.next().value
+                // Its generic post is still in flight and does not yet know the instant it will
+                // stamp. That path re-reads the mirror after posting, so leaving it here is not a
+                // deferral - it is the claim being made by the only caller that can make it.
+                if (frame.genericStamp == 0L) continue
+                val seed = lookupGraineSeed(
+                    frame.data["channelId"] ?: "",
+                    frame.data["senderSessionId"] ?: "",
+                ) ?: continue
+                taken.add(frame to seed)
+                entries.remove()
+            }
+            taken.sortedBy { it.first.data["messageIndex"]?.toIntOrNull() ?: 0 }
+        }
+        if (ready.isEmpty()) return
+        Log.i(TAG, "drainPendingChannelFrames: ${ready.size} banner(s) waiting on this key material -> redrawing")
+        for ((frame, seed) in ready) {
+            // PER FRAME, because one that throws must not take the others with it - the loss would
+            // be a banner left reading "nouveau message" with nothing ever to correct it again.
+            try {
+                postChannelNotification(frame.data, seed, supersedes = frame.genericStamp)
+            } catch (e: Exception) {
+                Log.e(TAG, "drainPendingChannelFrames: redraw failed channel=${frame.data["channelId"]}: ${e.message}")
+            }
         }
     }
 
