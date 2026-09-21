@@ -1830,6 +1830,59 @@ backwards.
 *A claim that something is stale must name the mechanism that would honour it and show that
 mechanism gone* - here the mechanism existed, was green, and was testing a string no client sends.
 
+### AND A LINE THAT IS EXPECTED IS NOT THEREFORE BENIGN - THE PAIR IS WHAT DECIDES
+
+The section above is about rules that went blind. This is about the judgement made when writing a
+new one, and getting it wrong is how a classifier stops accusing.
+
+NOTIF-18's second run (2026-09-21, with the stamp reader fixed) came back `PASS-DIRTY` with nine
+lines - down from 105, every assertion held, the server clean on all seven services. Seven were the
+native channel-push path (`type=channel`, `handleChannelMessage`, `absorbGraineSeeds`,
+`decryptProto: graine key material`) and two were the key-package timer's census and its decision.
+**None of them belonged to NOTIF-18**: any push for a salon message raises the first set, and every
+client on a timer raises the second. So they were named in the shared classifier rather than
+forgiven per row - *a runner names the noise IT provokes* cuts both ways, and noise a runner does
+NOT provoke is not its to forgive.
+
+**THE ONE THAT WAS NOT OBVIOUS.** `handleChannelMessage: no seed/ciphertext -> generic notification`
+is expected - the seed travels on a SECOND push, so the banner goes up undecrypted and is redrawn
+when the seed lands. The tempting rule is `BENIGN`. It is wrong: a generic banner IS the undecrypted
+state, the very state the `Fallback notification:` rule treats as an ERROR, and it is legitimate
+here only because of the redraw that follows it. A rule calling it benign would make a banner that
+stayed generic **forever** completely silent - in every row except the one that happens to assert
+the redraw itself.
+
+So both halves are `notable`, deliberately as a pair, and the selftest pins both. The general form:
+**before naming a line benign, ask what it would mean if the line that discharges it never arrived.**
+If the answer is a defect, the line is notable and its discharge is notable beside it. *Never demote
+a line - the cost is real, and a line its reader learns to skip is the one that hides the next
+defect.*
+
+**AND THE RULES ARE WRITTEN FROM THE CALL SITE, NEVER FROM THE CAPTURE.** Each of the nine patterns
+was copied from the `Log.d` / `console.log` that emits it (`CanariFirebaseMessagingService.kt`,
+`WebMlsService.ts`, `TauriMlsService.ts`). A rule written from one observation matches one
+observation: the numbers in a census all move, so they are permissive, while the PROSE is anchored -
+a census whose shape changes stops matching and surfaces, which is the intended behaviour rather
+than a gap.
+
+### A SWEEP THAT CANNOT REACH A PHONE IS NOT A PHONE THAT IS BROKEN
+
+Twice now the end-of-pass sweep has failed for a reason that had nothing to do with debris, and both
+times it accused the handset. First a `goto()` that re-locked the PIN; then, on 2026-09-21,
+`The socket connection was closed unexpectedly`.
+
+A devtools socket is named `webview_devtools_remote_<pid>`, so **any row that kills and relaunches
+the app invalidates the `adb forward` that points at it** - and NOTIF-18, NOTIF-15 and every HEAL
+rung do exactly that, deliberately, because a dead device is what they measure. The sweep runs
+AFTER the row, which is precisely when the binding is stale. The preflight already re-points it; the
+sweep did not, and connected to a socket belonging to a process that had exited.
+
+The repair introduces nothing: it calls the same `reviveThePhone` the preflight uses, in the same
+file. **Worth stating because the alternative is seductive** - a sweep that fails is housekeeping,
+never fatal, so the failure was cheap enough to keep reading as "the phone was in a bad state". It
+was not. A message that names the wrong subject costs more than a missing one, because it is acted
+on.
+
 ### Classify the SITE, not the line - a run finds spellings ONE AT A TIME
 
 Written 2026-08-25, out of GRP x5. Three of its five passes came back `PASS-DIRTY`, on three

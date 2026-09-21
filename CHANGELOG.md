@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le classifieur ne connaissait pas le chemin du push de salon
+
+Neuf lignes ordinaires n'avaient aucune regle : sept sur le push d'un message de salon, deux sur le
+minuteur des key packages. Elles sont nommees depuis leur site d'emission, et le bandeau generique
+et son redessin sont `notable` EN PAIRE - le premier sans le second est un bandeau reste non
+dechiffre. Le balayage de fin de passe re-pointe desormais le `adb forward` avant de se connecter :
+une ligne qui relance l'appli invalide le socket, ce qui se lisait comme un telephone casse.
+[methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - un post ne ressemblait pas a ce qui avait ete ecrit
 
 Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux autres : le preflight

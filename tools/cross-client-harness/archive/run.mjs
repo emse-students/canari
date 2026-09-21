@@ -41,6 +41,7 @@ import { srvReport, srvSummary } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
+import { isPhoneName } from '../device.mjs';
 import { PORTS, VENUE } from '../names.mjs';
 import { channelIdOf, communityMemberIds, workspaceIdOf } from '../grainedb.mjs';
 import { all, clientBuild } from '../results.mjs';
@@ -159,6 +160,24 @@ async function sweepDebris() {
   for (const d of devices) {
     let cx = null;
     try {
+      // THE SWEEP RUNS AFTER THE ROW, WHICH IS EXACTLY WHEN A PHONE'S SOCKET IS STALE. A devtools
+      // socket is named `webview_devtools_remote_<pid>`, so any row that kills and relaunches the
+      // app - NOTIF-18, NOTIF-15 and every HEAL rung do, deliberately - leaves the `adb forward`
+      // bound to a pid that no longer exists. `client()` then reports `The socket connection was
+      // closed unexpectedly`, which reads as a broken phone and is really a stale binding.
+      //
+      // Measured on 2026-09-21: NOTIF-18 answered its question, passed its assertions, and then
+      // left its rows on the handset with `A1 debris NOT swept` - the second time this sweep has
+      // failed for a reason that had nothing to do with debris, after the `goto()` that re-locked
+      // the PIN. The repair is the one that already exists and that the preflight uses, so nothing
+      // new is introduced and no fallback is added: re-point the forward, then connect.
+      // `reviveThePhone` is bound to A1 by `phone.useDevice` at the top of this file, and no phase
+      // names A2 - so `isPhoneName` and that binding describe the same one device. A run that ever
+      // needs a second handset changes both, which is what that declaration already says.
+      if (isPhoneName(d)) {
+        const note = await reviveThePhone();
+        if (note) console.log(`       ${d} ${note}`);
+      }
       cx = await client(PORTS[d], null, { focus: false });
       const r = await sweepDismissed(cx, { tombstoned });
       if (r.dismissed) console.log(`       ${d} dismissed ${r.dismissed} dead conversation row(s)`);

@@ -190,6 +190,18 @@ const BENIGN = [
   // system event, and the `[CHANNEL_INVITE]` pair is the invitation actually being written - so an
   // arrival with no card is now a dispatch line with no card line, which is a location.
   /^\[MLS\] System event '\S*' from [0-9a-f]+ in [0-9a-f]+…$/,
+  // THE KEY-PACKAGE ADDER NARRATING A ROUND IT DECIDED NOT TO RUN. Both lines are written on every
+  // client on a timer, so they belong to no check and arrive in every window - NOTIF-18 landed
+  // `PASS-DIRTY` on 2026-09-21 with these two as its entire web-side dirt. The census is the
+  // measurement the pool question is argued from and the round line is the decision it produced, so
+  // neither is noise to be dropped: they are expected AND necessary, which is what `BENIGN` means.
+  //
+  // The numbers are all permissive because every one of them is expected to move; the PROSE is what
+  // is anchored, and it is copied from the two call sites rather than from a capture
+  // (`WebMlsService.ts` and `TauriMlsService.ts` for the census, `WebMlsService.ts` for the round).
+  // A census whose shape changes stops matching and surfaces, which is the intended behaviour.
+  /^\[MLS\] key package census - \d+ proven \(\d+ one-time, \d+ last-resort\); \d+ expired, \d+ undecodable; \d+ mint instant\(s\)(, largest batch \d+)?$/,
+  /^\[MLS\] key package round: pool full and last-resort valid - nothing to mint$/,
   /^\[CHANNEL_INVITE\] invited to [0-9a-f]+ by [0-9a-f]+ - card channel-invite:\S+ into [0-9a-f]+…$/,
   /^\[CHANNEL_INVITE\] our own invitation of [0-9a-f]+ to [0-9a-f]+, seen from another device - card /,
   // The two silent returns on the inbound path, now audible. A duplicate is ordinary; a
@@ -2226,6 +2238,24 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-received', /^onMessageReceived: type=/],
     ['fcm-foreground-skip', /^App in foreground -> MLS handled by the foreground/],
     ['fcm-decrypt', /^(tryDecrypt|decryptProto): (MLS state loaded|success)/],
+    // ── the channel-push path, which had no rule at all until 2026-09-21 ────────────────────────
+    // Seven lines of it were NOTIF-18's whole native dirt, and not one of them belongs to that row:
+    // any push for a salon message raises them, so they are named here rather than forgiven per-row.
+    // Every pattern is copied from its `Log.` call site in `CanariFirebaseMessagingService.kt`, not
+    // from the capture - a rule written from one observation matches one observation.
+    //
+    // The route line carries a `→` between the type and the group. It is matched as `\S+` rather
+    // than spelt, so this file stays ASCII and the rule survives that arrow being normalised.
+    ['fcm-channel-route', /^type=channel \S+ groupId=\S+ - background channel notification$/],
+    ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S+$/],
+    ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
+    ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
+    // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
+    // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
+    // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
+    // alternation, which would let a failed message decrypt pass as a seed.
+    ['fcm-graine-material', /^decryptProto: graine key material, \d+ seed\(s\)$/],
+    ['fcm-graine-absorb', /^absorbGraineSeeds: stored \d+ seed\(s\) group=[0-9a-f]+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
@@ -2413,7 +2443,16 @@ export function logcatReport(lines, label = 'A1') {
       // refused, and a catch-up that found nothing and handed the work to the worker, are both
       // ordinary AND the first thing a reader wants beside a phone verdict. Explained, reported,
       // and not gating - which is the only honest place for a line that is normal but load-bearing.
-      if (/epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback/i.test(l.msg)) notable.push(text);
+      //
+      // `generic notification` and `redrawing` JOIN THE LIST AS A PAIR, and naming them benign was
+      // the tempting mistake. A generic banner IS the undecrypted state - the same state the
+      // `Fallback notification:` rule below treats as an error - and it is legitimate here only
+      // because the seed rides a SECOND push and the banner is redrawn when it lands. So the two
+      // halves are surfaced together: a run where the first appears without the second has a
+      // permanently generic banner, and that must not be silent in a row which, unlike NOTIF-18,
+      // does not assert the redraw itself. Explained, reported, and not gating.
+      if (/epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback|generic notification|redrawing/i.test(l.msg))
+        notable.push(text);
       continue;
     }
     // An UNCLASSIFIED line carrying a marker still escalates: the rules above are what is known to be
