@@ -271,8 +271,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
 17. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-18. **P2 - A SALON NOTIFICATION IS BLIND FOR EVERY MESSAGE OF A SESSION MINTED WHILE THE APP WAS SHUT** (user, PROD 2026-09-19) - the seed IS pushed and the
-    push service drops it unread on `silent && !CALLS_ENABLED`; nothing is LOST, and the fix is owed its TESTS ([backlog](docs/wiki/backlog.md)).
+18. **P2 - THE SEED A SHUT PHONE IS PUSHED IS NOW READ (Android, #899) AND NOTHING HAS WATCHED IT DO SO.** The push decides on the frame's KIND, named in
+    cleartext by the server. TWO open: the hardware row, and iOS - whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
 19. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE
     reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half. **The BUNDLED
     EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
