@@ -195,6 +195,8 @@ export class PostNotificationsService {
      *  who published) - see `PostNotification`'s own docblock for why they must differ. */
     associationId?: string;
     associationLogoUrl?: string | null;
+    /** The logo's media id, which is what a push icon may carry - NOT derived from the URL above. */
+    associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
   }): Promise<number> {
@@ -222,10 +224,22 @@ export class PostNotificationsService {
     // the member who pressed publish, so keying the picture off it shows a face where the reader
     // expects a logo. An association with no logo, or one whose `logoUrl` is not a public-media
     // path, falls back to the actor rather than to nothing.
-    const logoId = publicMediaIconId(data.associationLogoUrl);
+    const logoId = publicMediaIconId(data.associationLogoMediaId);
     const icon: PushIcon = logoId
       ? { kind: 'publicMedia', mediaId: logoId }
       : { kind: 'user', userId: data.actorId };
+    // A FALLBACK IS A SIGNAL. Showing the member's face for an association's post is wrong on its
+    // face and was wrong for 40 of 91 associations for as long as the icon was parsed out of
+    // `logoUrl` - and nothing said so, which is why it took a reader to find it. The only case
+    // left that is NOT a defect is an association with no logo at all (one row on production), and
+    // the line separates them: an id that is present and refused is a broken column, an absent one
+    // is a logo nobody uploaded.
+    if (data.associationId && !logoId) {
+      this.logger.warn(
+        `[NOTIFY] association ${data.associationId} pushes the actor's face, not its logo - ` +
+          `logoMediaId=${data.associationLogoMediaId ? 'present but refused' : 'absent'}`
+      );
+    }
     const content = this.pushContent(data.type, actorName, data.text, icon);
     if (!content) {
       this.logger.warn(

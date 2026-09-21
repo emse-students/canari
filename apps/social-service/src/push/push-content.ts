@@ -63,16 +63,27 @@ export type PushIcon =
   | { kind: 'publicMedia'; mediaId: string };
 
 /**
- * The media id inside an association's `logoUrl`, or `null` when it does not name one.
+ * An association's logo media id, or `null` when it is not an id this may concatenate.
  *
- * `logoUrl` is a stored string, so it is read rather than trusted: only the exact public-media shape
- * yields an id, and anything else - an absolute URL to somewhere else, an empty column, a legacy
- * path - produces NO icon instead of a guess. The notification then draws initials, which is what it
- * did for every push until now.
+ * IT TAKES THE ID COLUMN, AND THE FIRST VERSION PARSED THE URL BESIDE IT. `associations` stores
+ * both `logoMediaId` - written only by the upload path, from what the media-service answered - and
+ * `logoUrl`, a display string the same path builds as `/api/media/public/<id>?v=<updatedAt>`. The
+ * push icon read the URL and matched it against a `$`-anchored public-media path, so the
+ * cache-buster every re-uploaded logo carries made it match nothing: **40 of the 91 associations on
+ * production, measured 2026-09-21**, and every one of them pushed the publishing member's FACE in
+ * place of the logo. That is what a reader reported on 0.18.17.
+ *
+ * Widening the pattern to tolerate a query is the wrong repair and the spec says why: the anchor
+ * was deliberate, and `?redirect=https://...` is exactly what it refuses. The fact was never in the
+ * URL to begin with - **carry the discriminator from where it is already KNOWN**, which is the
+ * column next to it, written by the server and reachable from no DTO.
+ *
+ * The shape check stays, one level narrower. Nothing but an id may ever leave this service (see
+ * {@link PushIcon}), and an id read from a column is still a string read rather than trusted.
  */
-export function publicMediaIconId(logoUrl: string | null | undefined): string | null {
-  const match = /^\/api\/media\/public\/([A-Za-z0-9_-]{1,64})$/.exec((logoUrl ?? '').trim());
-  return match ? match[1] : null;
+export function publicMediaIconId(mediaId: string | null | undefined): string | null {
+  const id = (mediaId ?? '').trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
 
 /**

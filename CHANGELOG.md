@@ -20,6 +20,18 @@ graine arrivait 324 ms trop tard et la banniere restait bloquee sur "Nouveau mes
 qu'il ne peut pas ouvrir est retenue dans un registre borne, et l'absorption de la graine la
 redessine sous le meme identifiant en remplacant la ligne aveugle. Aucun delai, aucune horloge.
 [channel-encryption](docs/wiki/protocols/channel-encryption.md#the-seed-then-arrived-324-ms-too-late---fixed-2026-09-21).
+### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
+
+Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans
+`unexplained` et salissait le run. Classee NOTABLE et non benigne - un salon qui disparait le fait
+pour tout le monde a la fois. [testing-methodology](docs/wiki/testing-methodology.md).
+
+### Fixed - le post d'une asso poussait le visage du membre, pas le logo
+
+L'icone etait deduite de `logoUrl` avec un motif ancre juste apres l'id, et tout logo reuploade porte
+un `?v=`. **40 des 91 associations de production** etaient dans ce cas. L'id est desormais pris dans
+sa propre colonne `logoMediaId`, jamais derive, et le repli restant s'accuse.
+[mobile](docs/wiki/frontend/mobile.md#push-notification-handling).
 
 ### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
 
