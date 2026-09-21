@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.18] - 2026-09-21
+
 ### Changed - le tableau des reponses ne dessine plus ce qui ne dit rien
 
 Un formulaire gratuit n'affiche plus les colonnes "Statut" et "Montant", constantes sur toute la
