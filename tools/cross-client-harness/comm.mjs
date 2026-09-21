@@ -19,7 +19,6 @@
  * reports what the screen became; deciding whether that is a PASS belongs to the check, which is the
  * only thing that knows what it was asking. See `docs/wiki/testing-methodology.md` rule 19.
  */
-import { readFileSync } from 'node:fs';
 import {
   awaitAppSettled,
   awaitListed,
@@ -33,148 +32,19 @@ import {
 } from './chat.mjs';
 import { answeringDialogs, RESOLVE } from './cdp.mjs';
 
-const LOCALE = process.argv.includes('--locale')
-  ? process.argv[process.argv.indexOf('--locale') + 1]
-  : 'fr';
+// THE MESSAGE-FILE READERS ARE A PURE MODULE, and re-exported here so no caller moved. See
+// `messages.mjs` for why they could not stay in this file.
+export {
+  caption,
+  captionWith,
+  commonTail,
+  control,
+  pluralPattern,
+  saysMessage,
+  wordingsOf,
+} from './messages.mjs';
+import { caption, control, pluralPattern } from './messages.mjs';
 
-/** Every user-visible string the app can render, in the locale the clients are running. */
-const MESSAGES = JSON.parse(
-  readFileSync(new URL(`../../frontend/messages/${LOCALE}.json`, import.meta.url), 'utf8')
-);
-
-/**
- * The text a control actually renders, by its Paraglide key.
- *
- * THROWS ON AN UNKNOWN KEY rather than returning undefined: a `text=undefined` selector matches
- * nothing and fails fifteen seconds later as "the control is missing", which is a diagnosis of the
- * app for a typo in the harness. A key that no longer exists is a harness fault and says so here.
- *
- * Parameterised messages are refused for the same reason. `{count} max` cannot be matched literally,
- * so a check that needs one must match its stable half explicitly and knowingly.
- */
-export function caption(key) {
-  const value = MESSAGES[key];
-  if (typeof value !== 'string') {
-    throw new Error(`caption: no message '${key}' in ${LOCALE}.json - the key was renamed or is a typo`);
-  }
-  if (value.includes('{')) {
-    throw new Error(`caption: '${key}' is parameterised ("${value}") - match its stable half instead`);
-  }
-  return value;
-}
-
-/**
- * A PARAMETERISED message, rendered with the values the app would render it with.
- *
- * {@link caption} refuses these, correctly: `{count} max` cannot be matched literally and a check
- * that tried would fail fifteen seconds later as "the control is missing". But some controls have
- * no other stable name - an unjoined private salon's row is named entirely by
- * `chat_channel_join_as_admin_aria`, placeholder and all - and spelling the French out in the check
- * would mean a reworded string turns the assertion into a silent no-op.
- *
- * So the message is still READ FROM THE APP'S OWN FILE and the placeholders are filled here. A
- * placeholder left over is a throw, not a selector nothing matches: `{name}` surviving into a
- * selector is the exact failure `caption` exists to prevent.
- *
- * @param key Paraglide key.
- * @param values Placeholder name to value, e.g. `{ name: 'c13-abc' }`.
- */
-export function captionWith(key, values) {
-  const value = MESSAGES[key];
-  if (typeof value !== 'string') {
-    throw new Error(`captionWith: no message '${key}' in ${LOCALE}.json - renamed or a typo`);
-  }
-  const filled = Object.entries(values).reduce(
-    (text, [name, v]) => text.split(`{${name}}`).join(String(v)),
-    value
-  );
-  if (filled.includes('{')) {
-    throw new Error(`captionWith: '${key}' still has a placeholder after filling: "${filled}"`);
-  }
-  return filled;
-}
-
-/**
- * The longest ending several messages SHARE, as the app itself spells it.
- *
- * For finding a thing before judging what it says. Several controls have one shape and a wording
- * that varies with the data - an invitation card is worded three ways depending on whether it names
- * the inviter, the invitee, or neither - and a check that looks for the wording it EXPECTS cannot
- * tell an absent card from a card carrying one of the others. Both answer zero, and only one of them
- * is a delivery loss.
- *
- * Derived from the message file rather than spelt here, so a reworded string moves the anchor with
- * it. It THROWS on a tail too short to be a selector: three messages that share only a full stop
- * would otherwise hand back an anchor matching every bubble on screen, which is the vacuous count
- * this exists to prevent.
- *
- * @param keys Paraglide keys, parameterised or not.
- * @returns The shared tail, at least 8 characters.
- */
-export function commonTail(...keys) {
-  const values = keys.map((k) => {
-    const value = MESSAGES[k];
-    if (typeof value !== 'string') {
-      throw new Error(`commonTail: no message '${k}' in ${LOCALE}.json - renamed or a typo`);
-    }
-    return value;
-  });
-
-  let tail = '';
-  for (let i = 1; i <= Math.min(...values.map((v) => v.length)); i++) {
-    const candidate = values[0].slice(-i);
-    if (!values.every((v) => v.endsWith(candidate))) break;
-    tail = candidate;
-  }
-
-  if (tail.trim().length < 8) {
-    throw new Error(
-      `commonTail: ${keys.join(', ')} share only ${JSON.stringify(tail)} - too short to anchor on`
-    );
-  }
-  return tail;
-}
-
-/**
- * Whether `text` is `key` AS RENDERED - its literal parts, in order, anything at its placeholders.
- *
- * {@link captionWith} answers the other question and needs the value the app will interpolate. That
- * is fine for a marker this rig invented and wrong for a DISPLAY NAME: `names.mjs` holds what the
- * sidebar is searched by, a first name, while a card is worded with the name the profile resolves
- * to. Filling the placeholder with the first one builds a sentence the app never renders, and the
- * assertion then reports the card as missing - which is what COMM-4 did on 2026-08-20, twice.
- *
- * Anchored at both ends when the message is: `msg_channel_invite_description_by` and
- * `msg_channel_invite_description` differ only in their opening words, so a check that merely looked
- * for the shared ending would call one the other.
- *
- * @param key Paraglide key.
- * @param text What is on screen.
- */
-export function saysMessage(key, text) {
-  const value = MESSAGES[key];
-  if (typeof value !== 'string') {
-    throw new Error(`saysMessage: no message '${key}' in ${LOCALE}.json - renamed or a typo`);
-  }
-  const parts = value.split(/\{[A-Za-z0-9_]+\}/);
-  const said = String(text ?? '').trim();
-
-  if (parts.length === 1) return said === value;
-  if (parts[0] && !said.startsWith(parts[0])) return false;
-  if (parts[parts.length - 1] && !said.endsWith(parts[parts.length - 1])) return false;
-
-  let at = 0;
-  for (const part of parts) {
-    if (!part) continue;
-    const found = said.indexOf(part, at);
-    if (found === -1) return false;
-    at = found + part.length;
-  }
-  return true;
-}
-
-/** `text=` selector for a control named by a Paraglide key. */
-export const control = (key) => `text=${caption(key)}`;
 
 /**
  * Puts the client on the communities screen with nothing covering it.
@@ -1088,11 +958,11 @@ export async function communityMembers(cx) {
  * as a fact about the community.
  */
 export async function openCommunityMembers(cx) {
-  const count = caption('chat_community_member_count_label');
-  const alreadyOpen = await evaluate(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(count)}) >= 0`
-  );
+  // THE COUNT IS A PLURAL, so it is matched as a pattern and not as a literal - see
+  // `pluralPattern`. Built once and spelt into both probes below rather than derived twice.
+  const count = pluralPattern('chat_community_member_count_label');
+  const saysCount = `new RegExp(${JSON.stringify(count)}).test(document.body.innerText || '')`;
+  const alreadyOpen = await evaluate(cx, saysCount);
   if (alreadyOpen !== 'true' && alreadyOpen !== true) {
     await openCommunitySettings(cx);
   }
@@ -1111,9 +981,7 @@ export async function openCommunityMembers(cx) {
   await until(
     cx,
     `(function () {
-       var t = document.body.innerText || '';
-       var i = t.indexOf(${JSON.stringify(count)});
-       if (i < 0) return false;
+       if (!${saysCount}) return false;
        return document.querySelectorAll('select').length > 1;
      })()`,
     20000
