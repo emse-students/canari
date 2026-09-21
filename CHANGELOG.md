@@ -17,6 +17,16 @@ Cinq des sept causes d'echec avaient deja leur phrase traduite au `throw`, et un
 remplacait toutes. Elles sont desormais typees (`LocalizedError`, `MutedError`), une coupure reseau
 dit qu'elle en est une, et le journal nomme l'etape. Une reaction refusee accusait le lecteur d'etre
 modere quand la radio tombait. [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
+### Fixed - le classifieur du rig ne voyait plus une seule ligne horodatee, depuis cinq jours
+
+#742 (2026-09-16) a ajoute les millisecondes a l'horodatage de la console. Le lecteur du rig ne
+connaissait que `[14:11:08]` : le crochet restait en position 0 et TOUTES les regles ancrees sur
+`^` - benignes, notables, severes - sont mortes d'un coup, en silence. Rien n'a ete cache (une
+ligne non classee casse quand meme `clean`), mais la barre est devenue inatteignable : une centaine
+de lignes de narration ordinaire remontaient comme de la salete. Les quatre copies du normaliseur
+n'en font plus qu'une, et `classify-selftest` rejoue desormais chaque cas horodate - 107 echecs
+contre l'ancienne version.
+[testing-methodology](docs/wiki/testing-methodology.md).
 ### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
 
 Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans

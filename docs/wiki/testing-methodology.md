@@ -1795,6 +1795,41 @@ widened past, so it can never launder the defect. Disjoint spellings get disjoin
 And two rules for one log line, 140 lines apart, go stale together while giving no reason to look for
 each other. One line, one rule, carrying every spelling.
 
+### AND A STAMP IS NOT A SPELLING - #742 KILLED EVERY ANCHORED RULE AT ONCE, FOR FIVE DAYS
+
+The section below is about rules that had never met a sentence. This is its opposite and it is
+worse: every rule had met the sentence, and none of them could see it any more.
+
+`watch.mjs` matches `BENIGN`, `NOTABLE`, `SEVERE` and `STATE_CHANGE` against the line with its
+timestamp removed, and most of those rules are `^`-anchored. On 2026-09-16 `#742` gave the console
+a millisecond field - `[14:11:08.520]` where the reader knew only `[14:11:08]`. The stamp stopped
+being removed, the bracket stayed at position 0, and **every anchored rule in all four lists went
+dead in the same instant**. Found 2026-09-21, by NOTIF-18: the first run in five days whose verdict
+was not already `FAIL` came back `PASS-DIRTY` with 105 unexplained lines on one client, every one
+of them ordinary narration the classifier had known for a month.
+
+**NOTHING WAS HIDDEN, AND THAT IS NOT THE CONSOLATION IT SOUNDS LIKE.** An unclassified line breaks
+`clean` on its own, so a dead `SEVERE` rule demoted a finding into a different bucket that still
+refuses the run. What died was the BAR: `PASS` became unreachable for any check watching a browser
+client, and `PASS-DIRTY` - which this campaign does not accept - became the ceiling. A gate nobody
+can satisfy is a gate nobody reads.
+
+**THE FAILURE IS THAT A FIXTURE LIST WAS THE ONLY WITNESS.** Every case in `classify-selftest.mjs`
+was written with the older stamp, so all of them kept passing while no real client's line matched
+anything. Re-spelling a fixture list by hand whenever the app changes its format is the same
+"somebody will remember" that lost the five days, so the test asserts the PROPERTY instead: a stamp
+carries no meaning, therefore **stamping a line must not move it between buckets**. Every fixture
+runs twice, bare and stamped, and the two classifications must agree - 107 of them disagree against
+the pre-fix reader, so the gate would have gone red the day `#742` landed.
+
+The four copies of the normaliser that made this possible are now one exported `stripStamp`, and it
+accepts the fraction as OPTIONAL: both spellings are in flight while older builds are still in the
+field, and a reader that insisted on the newer one would have the identical defect pointing
+backwards.
+
+*A claim that something is stale must name the mechanism that would honour it and show that
+mechanism gone* - here the mechanism existed, was green, and was testing a string no client sends.
+
 ### Classify the SITE, not the line - a run finds spellings ONE AT A TIME
 
 Written 2026-08-25, out of GRP x5. Three of its five passes came back `PASS-DIRTY`, on three
