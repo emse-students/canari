@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
+
+Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans
+`unexplained` et salissait le run. Classee NOTABLE et non benigne - un salon qui disparait le fait
+pour tout le monde a la fois. [testing-methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - le post d'une asso poussait le visage du membre, pas le logo
 
 L'icone etait deduite de `logoUrl` avec un motif ancre juste apres l'id, et tout logo reuploade porte
