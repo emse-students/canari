@@ -17,6 +17,11 @@ Cinq des sept causes d'echec avaient deja leur phrase traduite au `throw`, et un
 remplacait toutes. Elles sont desormais typees (`LocalizedError`, `MutedError`), une coupure reseau
 dit qu'elle en est une, et le journal nomme l'etape. Une reaction refusee accusait le lecteur d'etre
 modere quand la radio tombait. [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
+### Fixed - le balayage de fin de passe refusait au lieu d'aller sur /chat
+
+Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disait : NOTIF-18
+finit sur `/communities`. `ensureChat` clique la navigation, sur tous les appareils, sans aucun
+rechargement - donc sans re-verrouiller le PIN. Verifie sur W1 et W2.
 ### Fixed - le classifieur du rig ne voyait plus une seule ligne horodatee, depuis cinq jours
 
 #742 (2026-09-16) a ajoute les millisecondes a l'horodatage de la console. Le lecteur du rig ne
