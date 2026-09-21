@@ -209,12 +209,27 @@ export class MembersController {
       where: { groupId: In(activeGroups.map((g) => g.id)) },
     });
     const baseOf = new Map(bases.map((b) => [b.groupId, b.baseEpoch]));
+    // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
+    // asking other members for a past that never existed.
+    //
+    // The scrollback exists to reach BELOW a device's retention window - ninety days in a browser -
+    // by asking a member who kept more. A group created INSIDE that window has nothing below it,
+    // and everything inside it belongs to the reconciliation on connect, not to the scrollback. The
+    // client could not tell the two apart: its oldest held message is always strictly AFTER the
+    // group was created, so "I hold the first message" and "I am missing the past" look identical
+    // from the messages alone. A brand-new conversation therefore asked, found nobody online to
+    // answer - on a first contact the only other member is the person who just wrote - and told the
+    // reader no device could supply older messages, which was the first thing they saw of a new
+    // correspondent. Reproduced on an Android handset 2026-09-21 on a group two minutes old.
+    //
+    // `@CreateDateColumn`, so it exists for every row ever written and never moves.
     return activeGroups.map((g) => ({
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
+      createdAt: g.createdAt ?? null,
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
     }));

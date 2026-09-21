@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une conversation toute neuve annoncait qu'aucun appareil ne pouvait servir son histoire
+
+Un premier contact n'a rien avant son premier message, mais les messages seuls ne peuvent pas le
+dire : le plus ancien detenu est toujours posterieur a la creation du groupe. Le serveur envoie
+desormais l'instant de creation, le client l'inscrit sur la conversation - y compris, par reparation,
+sur celles d'avant - et ne sollicite plus un passe qui ne peut pas exister.
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-group-that-began-inside-the-window-has-nothing-below-it-and-the-messages-cannot-say-so-2026-09-21).
+
 ### Verified - la reponse par glissement fonctionne sur un vrai ecran, et l'atome d'envoi revoit le telephone
 
 APK debug construit depuis `33c064687`, installe sur le Mi 9T, pilote en `adb shell input swipe` :

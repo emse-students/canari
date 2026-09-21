@@ -183,7 +183,7 @@
      * Called when the LOCAL store is exhausted too, to ask a peer for the page below it. Resolves
      * with what happened, which is what the reader is shown - see `scrollbackState`.
      */
-    onRequestOlderFromPeers?: () => Promise<'asked' | 'no-peer' | 'unavailable'>;
+    onRequestOlderFromPeers?: () => Promise<Exclude<ScrollbackState, 'idle' | 'asking'>>;
     /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
     onMessagesScrollEl?: (el: HTMLDivElement | null) => void;
   }
@@ -301,7 +301,12 @@
    * peer answered - see the effect below. `no-peer` is the one state worth showing the reader,
    * because it is the only one they can act on (wait, or open the app where the history is).
    */
-  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'unavailable';
+  // `complete` AND `unavailable` BOTH RENDER NOTHING, AND ARE STILL TWO STATES. One says this
+  // conversation has no past to fetch - it began inside this device's retention window - and the
+  // other says this device cannot fetch. They were one value until 2026-09-21, and a brand-new
+  // conversation was told no device could serve its history because nothing had asked whether
+  // there was any.
+  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'complete' | 'unavailable';
   let scrollbackState = $state<ScrollbackState>('idle');
   /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
   let scrollbackAskedAt = $state<number | null>(null);

@@ -161,6 +161,19 @@ export interface Conversation {
    * `$lib/utils/chat/historyWindow`.
    */
   historyFloor?: number;
+  /**
+   * The instant this conversation came into existence, as the SERVER records the group's creation.
+   *
+   * Distinct from {@link Conversation.historyFloor}, which they are easy to confuse. The floor is
+   * shared, converged and monotone - what the MEMBERS agree the history begins at - and moving it
+   * is irreversible. This is a fixed server fact about the group's row, local, never merged and
+   * never sent. They answer different questions and only this one answers "could anything older
+   * exist at all".
+   *
+   * Absent means unknown - a row written before this shipped, or a server that does not send it -
+   * and unknown ASKS, which is the safe direction.
+   */
+  startedAt?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

@@ -30,6 +30,11 @@ export interface ConversationMeta {
    * message, and both travel in the same reconciliation frames.
    */
   historyFloor?: number;
+  /**
+   * The instant the group was created server-side. Persisted so the first scroll after a reload
+   * does not have to wait for a group sweep to learn that nothing older can exist.
+   */
+  startedAt?: number;
 }
 
 /** A decrypted message as stored in and read from the local database. */
