@@ -432,6 +432,53 @@ restarts in first-setup mode. It costs the local history and is the last resort,
 `classifyStateLoadFailure` has ruled out a recoverable `sealed` state - see
 [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md).
 
+### A damaged local state was called a first connection, and that is what hid the way out - FIXED 2026-09-21
+
+**THE SCREEN SAID TWO THINGS THAT CANNOT BOTH BE TRUE, AND OFFERED NOTHING.** Measured on W2 on
+2026-09-21: the gate announced *"Premiere connexion - choisissez votre PIN"*, accepted a PIN, and
+answered *"Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts ... seule la
+reinitialisation redonne acces a vos conversations"* - with no reset anywhere on it. A reader in
+that state can neither unlock nor reach the one remedy they were just given. Repeating the PIN
+repeats the refusal for ever.
+
+**THE TWO FACTS COME FROM DIFFERENT PLACES, AND NOTHING SAID THEY COULD NOT DISAGREE.**
+
+| | fact | where it is read | what it decides |
+| --- | --- | --- | --- |
+| `isFirstPinSetup` | this account has no `PinVerifier` row | the SERVER, `GET /api/mls/security/pin-status/:uid` | the gate's wording, **and both of its exits** |
+| `local_state_unopenable` | this device's own MLS blob will not open | LOCALLY, the AEAD tag on `mls.bin` | the error the gate shows |
+
+`detectFirstPinSetup` is careful about its half - it defaults to `false` on any failure so the
+"first setup" wording is never shown by mistake - and it is still only evidence for the question it
+was written to answer, which is *has this account ever registered a PIN*. It is not evidence for
+*is this device new*. `PinModal.svelte` gates **both** ways out on it, `{#if !isFirstSetup}`
+around the forgot-PIN disclosure and `{#if !isFirstSetup && onRecoverPin && displayError}` around
+the old-PIN recovery, so the server's answer silently decided a local question.
+
+**IT IS PRODUCTION-REACHABLE, AND THE CONTROL THAT ESCAPES IT IS WHAT PRODUCES IT.**
+`handlePinReset` POSTs `pin-reset` and then runs `resetDeviceAsFresh`. The second half can
+fail on its own - `auth_reset_device_partial` exists for precisely that - and what it leaves
+behind is the server row gone and the local blob still there: this pair, exactly, with the reset
+now off the screen.
+
+**THE FIX, AND WHY THE ASYMMETRY IS THE PROOF IT IS THE RIGHT ONE.** Three handlers in
+`ChatBackgroundService.svelte` receive `onLoginFailed(message, code)`. `onSavedPinFailed`, the
+stored-PIN path, has always cleared `isFirstPinSetup` on a rejection; the two INTERACTIVE
+handlers - the ones a person reaches by typing - never did. They now all dispatch through one
+`applyPinFailure`, which clears the flag when `provesLocalStateExists(code)` and then evaluates
+the recovery as before.
+
+`provesLocalStateExists` is a SECOND predicate over the same codes rather than a reuse of
+`isRecoverableWithOldPin`, and the two part company on `pin_mismatch`: a mismatch against an
+account-wide verifier says nothing about what is on this disk, so reusing the first would call a
+device holding nothing "not a first setup" on a plain typo. Same rule as everywhere else here -
+[a column is only evidence for the question it was written to answer](../../durable-rules.md).
+
+Guarded by `layout/pinFirstSetupRefuted.test.ts` (a source guard, for the reason its sibling
+`sessionExpiredRelease.test.ts` states: what broke is a missing statement in two of three sibling
+handlers) and by the `provesLocalStateExists` cases in `session/loginErrors.test.ts`, whose
+exhaustive case fails the day a code is added to the union and nobody decides which side it is on.
+
 ### Erasing a revoked device, and the 1.25 s that undid it
 
 `wipeRevokedDevice` (`session/sessionAuth.ts`) is the one consequence of one fact - this device is

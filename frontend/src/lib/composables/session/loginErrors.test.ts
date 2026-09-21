@@ -18,6 +18,7 @@ import {
   isRecoverableWithOldPin,
   loginErrorCode,
   type LoginErrorCode,
+  provesLocalStateExists,
 } from './loginErrors';
 import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 
@@ -87,5 +88,28 @@ describe('isExpectedLoginOutcome', () => {
       'keystore_empty',
       'server_unreachable',
     ]);
+  });
+});
+
+describe('provesLocalStateExists - is this device new, which is a different question', () => {
+  it('a state that would not open proves there IS a state', () => {
+    expect(provesLocalStateExists('local_state_unopenable')).toBe(true);
+  });
+
+  it('a PIN mismatch does NOT - the verifier is account-wide and says nothing about this disk', () => {
+    // THE WHOLE REASON THIS IS NOT `isRecoverableWithOldPin`. The two agree on one code and part on
+    // this one, and a caller that reused the first for the second would call a device with nothing
+    // on it "not a first setup" on a plain typo.
+    expect(isRecoverableWithOldPin('pin_mismatch')).toBe(true);
+    expect(provesLocalStateExists('pin_mismatch')).toBe(false);
+  });
+
+  it('a revoked device does NOT - that path WIPES the local state before it reports', () => {
+    expect(provesLocalStateExists('device_revoked')).toBe(false);
+  });
+
+  it('classifies every code the union declares, so a new one cannot arrive undecided', () => {
+    for (const code of EVERY_CODE) expect(typeof provesLocalStateExists(code)).toBe('boolean');
+    expect(EVERY_CODE.filter(provesLocalStateExists)).toEqual(['local_state_unopenable']);
   });
 });
