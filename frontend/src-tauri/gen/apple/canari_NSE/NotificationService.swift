@@ -344,6 +344,11 @@ class NotificationService: UNNotificationServiceExtension {
   private func handleMlsMessage(userInfo: [AnyHashable: Any], content: UNMutableNotificationContent) {
     let groupId = Self.string(userInfo["groupId"]) ?? ""
     let groupName = Self.string(userInfo["groupName"]) ?? ""
+    // THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. An empty name meant a DM, a group
+    // nobody named, and a group row the server could not read - three states as one. `nil` means the
+    // push did not say, and a reader must then keep whatever it did before. Android twin:
+    // `CanariFirebaseMessagingService`, same key.
+    let isGroup: Bool? = Self.string(userInfo["isGroup"]).map { $0 == "true" }
     let senderName = Self.string(userInfo["senderName"]) ?? ""
     let senderId = Self.string(userInfo["senderId"]) ?? ""
     let queuedMessageId = Self.string(userInfo["queuedMessageId"]) ?? ""
@@ -395,7 +400,7 @@ class NotificationService: UNNotificationServiceExtension {
     if let msg = decrypted, msg.type != "call_invite", msg.type != "call_control" {
       writeFcmCache(
         groupId: groupId, senderId: senderId, senderName: senderName, groupName: groupName,
-        result: msg)
+        isGroup: isGroup, result: msg)
     }
 
     applyMessageContent(
@@ -643,7 +648,8 @@ class NotificationService: UNNotificationServiceExtension {
   /// `app_data_dir` copy on the next activation, and `read_and_clear_fcm_cache` pre-injects
   /// it at boot. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
   private func writeFcmCache(
-    groupId: String, senderId: String, senderName: String, groupName: String, result: DecryptResult
+    groupId: String, senderId: String, senderName: String, groupName: String, isGroup: Bool?,
+    result: DecryptResult
   ) {
     guard !result.messageId.isEmpty else {
       NSLog("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
@@ -661,12 +667,16 @@ class NotificationService: UNNotificationServiceExtension {
       "senderName": senderName,
       // The GROUP's name, carried because the app cannot invent it: the web consumer builds a
       // conversation row from this entry, and with nothing here it named the row after the SENDER.
-      // Empty for a DM by the server's own contract. Android twin: `writeFcmCache`.
+      // A LABEL and nothing more since 2026-09-21 - `isGroup` below is the discriminator it used to
+      // double as. Android twin: `writeFcmCache`.
       "groupName": groupName,
       "content": result.text,
       "timestamp": result.sentAt,
       "type": result.type,
     ]
+    // OMITTED WHEN THE PUSH DID NOT SAY: an absent key means "no information", which the consumer
+    // reads differently from `false`.
+    if let isGroup { entry["isGroup"] = isGroup }
     if let replyTo = result.replyTo, !replyTo.isEmpty {
       entry["replyTo"] = replyTo
     }

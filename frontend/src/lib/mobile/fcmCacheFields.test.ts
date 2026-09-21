@@ -101,6 +101,36 @@ describe('fcm_message_cache.ndjson contract (Android + iOS writers vs Rust reade
     }
   });
 
+  /**
+   * THE KIND OF CONVERSATION, WHICH `groupName` WAS ASKED TO CARRY AND COULD NOT.
+   *
+   * An empty name meant a DM, a group nobody named, and a group row the server could not read.
+   * Production, 2026-09-21: 467 of 1433 ordinary groups have no name at all, 374 of them past MLS
+   * epoch 0 - so the middle state is a third of the population, and every push from it built a DM
+   * row with its first sender as the peer.
+   *
+   * It is written CONDITIONALLY on all three writers, because absent and `false` are different
+   * sentences, so the key never appears in a literal and the assertions look for the write itself.
+   */
+  it('all three native writers carry the conversation kind, and only when the push said', () => {
+    expect(kotlinWriteBody).toMatch(/isGroup\?\.let\s*\{\s*put\("isGroup", it\)\s*\}/);
+    expect(swiftWriteBlock).toMatch(/if let isGroup \{ entry\["isGroup"\] = isGroup \}/);
+
+    // The ObjC++ writer is the third one and is not in the pair above: it serves the killed-app and
+    // foregrounded-app iOS paths, and it carried NEITHER field until 2026-09-21.
+    const pushMm = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_push.mm'),
+      'utf8'
+    );
+    const mmWrite = functionBody(
+      pushMm,
+      /static void CanariWriteFcmCache\(/,
+      /\n\/\*\*\n \* Records a message this device SENT/
+    );
+    expect(mmWrite).toContain('@"groupName" : groupName');
+    expect(mmWrite).toMatch(/if \(isGroup != nil\) \{\s*entry\[@"isGroup"\] = isGroup;/);
+  });
+
   it('both writers cap the cache at 50 entries', () => {
     expect(kotlinSource).toMatch(/MAX_FCM_CACHE_ENTRIES\s*=\s*50/);
     // Swift declaration uses `maxFcmCacheEntries = 50` as a static constant.

@@ -377,22 +377,23 @@ async function handleWelcome({
       // (which adds the group to WASM) and the arrival of system messages
       // (a channel invitation card, say) that need handleKnownGroup to find the conversation.
       if (!deps.conversations.has(joinedGroupId)) {
-        const isDirectByPattern = joinedGroupId.includes('::');
-        const directPeerId = isDirectByPattern
-          ? (parseDirectPeerFromName(joinedGroupId, userId) ?? '')
-          : '';
-        const displayName = directPeerId || 'Groupe';
+        // THIS PLACEHOLDER KNOWS NOTHING YET, AND NOW SAYS SO. It used to test the group ID for
+        // `::`, the shape of a DM's NAME - and an MLS group id is a uuid, so the test was dead and
+        // every row came out `group` labelled with the literal `'Groupe'`. Two things wrong at
+        // once: an invented label written to disk (in French, in a `.ts` file, where nothing types
+        // a string as user-visible), and a distinction drawn from a field that cannot carry it.
+        //
+        // The id IS the honest label: `isRawId` recognises it and
+        // `resolveConversationListPresentation` renders "Groupe" from it, through Paraglide, for
+        // exactly as long as this row survives. `buildConversationRow` already defaults the type to
+        // `group`, so saying nothing and saying `'group'` produce the same row - and only one of
+        // them is a claim. The authoritative derivation runs a few lines below and replaces both.
         deps.conversations.set(
           joinedGroupId,
           buildConversationRow({
             id: joinedGroupId,
             lifecycle: 'pending',
-            identity: {
-              conversationType: isDirectByPattern ? 'direct' : 'group',
-              contactName: displayName,
-              displayName,
-              ...(isDirectByPattern && directPeerId ? { directPeerId } : {}),
-            },
+            identity: { contactName: joinedGroupId, displayName: joinedGroupId },
           })
         );
         saveConversation(joinedGroupId).catch(() => {});

@@ -60,7 +60,12 @@
     @{mentionLabel}
   </button>
 {:else if isHashtag}
-  <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">#{hashtagName}</span>
+  <!-- THE MENTION CHIP'S OWN PAIR, and not a fainter cousin of it. `amber-600/80` measured 2.51:1
+       on the light post surface, under the 4.5:1 floor and for no reason: the chip a few lines up
+       has used `amber-700 / dark:amber-400` since it was written, which is 5.02:1 and 11.22:1. A
+       post's surface is FIXED, which is why this one may carry an accent at all - the chat bubble's
+       is not, so its hashtag inherits instead (`MessageTextBody`). -->
+  <span class="font-semibold text-amber-700 dark:text-amber-400">#{hashtagName}</span>
 {:else if isPublicAppLink}
   <AppLink {href} {title} class="hover:text-amber-500">
     {@render children?.()}
