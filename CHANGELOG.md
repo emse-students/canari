@@ -19,6 +19,12 @@ et son redessin sont `notable` EN PAIRE - le premier sans le second est un bande
 dechiffre. Le balayage de fin de passe re-pointe desormais le `adb forward` avant de se connecter :
 une ligne qui relance l'appli invalide le socket, ce qui se lisait comme un telephone casse.
 [methodology](docs/wiki/testing-methodology.md).
+### Fixed - "Impossible de publier le post" disait sept choses a la fois
+
+Cinq des sept causes d'echec avaient deja leur phrase traduite au `throw`, et un seul `catch` les
+remplacait toutes. Elles sont desormais typees (`LocalizedError`, `MutedError`), une coupure reseau
+dit qu'elle en est une, et le journal nomme l'etape. Une reaction refusee accusait le lecteur d'etre
+modere quand la radio tombait. [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
 
 ### Fixed - un post ne ressemblait pas a ce qui avait ete ecrit
 
@@ -26,6 +32,7 @@ Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux aut
 Tailwind retire `list-style` et met toutes les marges a zero, et seul `[&_p+p]` avait ete restaure.
 Les trois surfaces markdown portent desormais `.post-markdown`, dont les regles sont enoncees une
 fois dans `app.css`. [posts](docs/wiki/frontend/modules/posts.md#the-blocks-preflight-erases).
+
 ### Fixed - une banniere de salon qui perdait la course contre sa propre graine
 
 La graine d'une session Graine neuve et le message qu'elle ouvre voyagent en DEUX poussees, emises
@@ -35,11 +42,13 @@ graine arrivait 324 ms trop tard et la banniere restait bloquee sur "Nouveau mes
 qu'il ne peut pas ouvrir est retenue dans un registre borne, et l'absorption de la graine la
 redessine sous le meme identifiant en remplacant la ligne aveugle. Aucun delai, aucune horloge.
 [channel-encryption](docs/wiki/protocols/channel-encryption.md#the-seed-then-arrived-324-ms-too-late---fixed-2026-09-21).
+
 ### Fixed - le balayage de fin de passe refusait au lieu d'aller sur /chat
 
 Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disait : NOTIF-18
 finit sur `/communities`. `ensureChat` clique la navigation, sur tous les appareils, sans aucun
 rechargement - donc sans re-verrouiller le PIN. Verifie sur W1 et W2.
+
 ### Fixed - le classifieur du rig ne voyait plus une seule ligne horodatee, depuis cinq jours
 
 #742 (2026-09-16) a ajoute les millisecondes a l'horodatage de la console. Le lecteur du rig ne
@@ -50,6 +59,7 @@ de lignes de narration ordinaire remontaient comme de la salete. Les quatre copi
 n'en font plus qu'une, et `classify-selftest` rejoue desormais chaque cas horodate - 107 echecs
 contre l'ancienne version.
 [testing-methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
 
 Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans
@@ -92,6 +102,7 @@ exception, et rien ne l'a dit avant qu'une ligne ne l'ouvre. Un `pluralPattern()
 matchable, les quatre lecteurs partagent un seul refus qui nomme la vraie cause, et
 `caption-selftest.mjs` verifie desormais chaque cle du rig contre l'aide qui la consomme -
 [README](tools/cross-client-harness/README.md).
+
 ### Fixed - un membre ajoute a une communaute n'entrait dans aucun groupe de cles
 
 Il voyait la communaute, ouvrait le salon, et n'etait sur aucune liste de distribution : toutes les
@@ -118,6 +129,7 @@ acces - sans porter la moindre reinitialisation. `isFirstSetup` vient du SERVEUR
 deux issues du verrou, l'echec vient du DISQUE, et rien n'interdisait aux deux d'etre vrais en meme
 temps. Les trois gestionnaires d'echec passent desormais par un seul, qui lit le code type.
 [auth](docs/wiki/frontend/modules/auth.md#a-damaged-local-state-was-called-a-first-connection-and-that-is-what-hid-the-way-out---fixed-2026-09-21).
+
 ### Fixed - un onglet pouvait se mettre en file derriere lui-meme et rester en lecture seule
 
 Le verrou de leader est pris une fois et garde jusqu'a la fermeture ; une seconde connexion dans la
@@ -138,6 +150,7 @@ plus en double. Cote natif, personne ne traitait l'appui : Tauri desactive le re
 l'application le reprend en main.
 [chat](docs/wiki/frontend/modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21),
 [mobile](docs/wiki/frontend/mobile.md#the-hardware-back-press-had-no-owner-and-chromium-decided-it-2026-09-21).
+
 ### Fixed - une session creee pendant que l'application etait fermee rendait toutes ses notifications muettes
 
 La graine de la nouvelle session arrivait bien sur le telephone, dans une trame silencieuse que le
@@ -164,6 +177,7 @@ est vivant sur le materiel, ce qu'un DOM simule ne peut pas affirmer. `send.mjs`
 l'estate dans les onglets, absent sur le telephone ou l'app est servie par `tauri.localhost` ; il
 prend le resolveur que `logs.mjs` et `shot.mjs` utilisaient deja.
 [chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
+
 ### Fixed - les # etaient jaunes sur jaune, et sous le seuil de contraste sur cinq surfaces sur six
 
 Un hashtag nommait une couleur ambre sur une bulle dont il ne peut pas connaitre le fond : 1,13:1
@@ -173,6 +187,7 @@ deja prouvee de la puce de mention.
 [design-reference](docs/wiki/frontend/design-reference.md#31-a-hashtag-named-a-colour-on-a-surface-whose-colour-it-could-not-know).
 
 ### Fixed - la reponse par glissement n'a jamais fonctionne : un drapeau que rien n'ecrivait
+
 ### Fixed - un groupe sans nom arrivait par notification comme une conversation privee
 
 Le serveur envoyait `groupName: ''` pour trois choses a la fois - un DM, un groupe que personne n'a
@@ -196,6 +211,7 @@ glissement, qui partagent le meme handler. Tout le module de gestes etait teste 
 ne l'appelait. Le predicat quitte le composant pour le module teste et lit
 `isCoarsePointerDevice()`, qui existait deja.
 [chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
+
 ### Fixed - l'affiche se voit en entier dans l'agenda et dans un partage, et le logo n'a plus de cadre
 
 Le traitement du fil (image entiere, reste peint avec l'image floutee) n'existait que dans
@@ -204,6 +220,7 @@ d'une publication partagee. Le liseret autour du logo etait le degrade de fond d
 le pixel que la bordure laisse ouvert - il n'appartient qu'au cas sans image.
 [letterbox](docs/wiki/frontend/design-reference.md#29-the-letterbox-exists-once-and-three-surfaces-use-it),
 [le liseret](docs/wiki/frontend/design-reference.md#30-the-black-line-around-a-logo-was-the-tiles-own-backdrop-one-pixel-of-it).
+
 ### Added - l'agenda s'arrete la ou l'arrivee du lecteur commence
 
 Un lecteur de la promo X ne remonte plus avant le 1er aout X, exactement comme le fil de
@@ -287,6 +304,7 @@ jamais, ni la, ni dans la carte Open Graph externe. Cote externe la photo reste 
 et rien n'y change ; cote application, l'apercu est deja authentifie avec le meme acces que la
 publication elle-meme, donc il la dechiffre desormais et l'affiche en bandeau sous le logo/texte,
 sans remplacer ce dernier. [architecture](docs/wiki/frontend/architecture.md).
+
 ### Fixed - un lien Canari partage ailleurs n'affichait que "Publication - Canari", et n'a jamais affiche autre chose
 
 Le gate de flux du 2026-09-10 a ferme `/api/posts/:id` a tout appelant sans session, l'injecteur

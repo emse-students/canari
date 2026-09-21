@@ -20,6 +20,7 @@
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
+  import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -246,8 +247,12 @@
     try {
       await assertNotMuted();
     } catch (err) {
-      Log.d('handleReaction failed', err);
-      errorMessage = m.post_action_not_allowed();
+      // NOT ALWAYS MODERATION. This wraps `assertNotMuted()`, which ASKS the server - so a dropped
+      // radio used to tell the reader they are restricted by moderation, which is false and is
+      // about them. `publishFailureMessage` keeps this line for the refusal and says "could not
+      // reach the server" for the transport.
+      console.error('[POST_CARD] reaction refused', err);
+      errorMessage = publishFailureMessage(err, m.post_action_not_allowed());
       return;
     }
 
@@ -319,8 +324,10 @@
       localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';
     } catch (err) {
-      Log.d('handleAddComment failed', err);
-      errorMessage = m.post_unable_to_comment();
+      // Two causes wear this sentence: moderation refusing, and `addComment` failing. Only the
+      // first is about the reader, and only the second is about the comment.
+      console.error('[POST_CARD] comment refused', err);
+      errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
     } finally {
       submittingComment = false;
     }

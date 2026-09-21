@@ -1,7 +1,11 @@
-version: 0.18.17
+version: 0.18.18
 
-Sur telephone, l'agenda part d'aujourd'hui et se deroule au fil du defilement, au lieu d'ouvrir sur le mois en cours.
+Les listes, les tirets et les sauts de ligne d'une publication s'affichent enfin comme ils ont ete ecrits.
 
-La liste des reponses d'un formulaire affiche desormais les reponses elles-memes, et non plus seulement la date et le nom.
+Une publication au nom d'une association montre le logo de l'association dans la notification, et non plus la photo de son auteur.
 
-L'apercu d'un lien vers une publication montre sa propre photo et son propre texte.
+Quand une publication ne part pas, l'application dit pourquoi.
+
+Une notification de salon affiche le message lui-meme au lieu de "Nouveau message".
+
+Modifier une reponse n'efface plus sa citation.

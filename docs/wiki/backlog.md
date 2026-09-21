@@ -1444,6 +1444,37 @@ the composer through the global-admin route alone. Until then this entry is a fi
 plus an open report, and must not be written up as the user's defect closed.
 
 ---
+
+### P2 - ONE MEMBER COULD NOT PUBLISH, SEVEN STAGES COULD HAVE STOPPED THEM, AND BOTH HYPOTHESES ARE REFUTED (user, 2026-09-21)
+
+Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible de publier le
+post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
+establishing that is what this entry is for, so the next session does not re-run the same tests.
+
+**REFUTED BY MEASUREMENT, NOT BY READING** (2026-09-21, both on a full local copy of production):
+
+| hypothesis | how it died |
+| --- | --- |
+| it needs rights the member lacks | `PostsController.createPost` computes `anonymous = !!body.anonymous && !body.associationId` and never consults `isGlobalAdmin`; the composer offers "Anonyme" with no capability check; a non-admin account published anonymously with a `201` |
+| anonymous posting is broken in `0.18.17` | the same drive on A1, `versionName=0.18.17`, the exact build of the report, landed the row with `anonymous = t` |
+| the server refused it | no post creation has ever been refused in any window read - 7 days of prod logs hold exactly one `POST /api/posts`, a `201`, and it was the rig's own |
+
+The second row is the one that makes the rest evidence: a workstation browser is not what failed.
+
+**WHAT IS SHIPPED, AND IT IS NOT A FIX.** Seven stages shared one `catch` and one sentence, so the
+report could not name its own cause. `publishFailure.ts` now maps a typed error to the sentence that
+already existed for it, and the composer logs `[POST_COMPOSER] publish failed at <stage>`
+([posts](frontend/modules/posts.md#one-catch-said-seven-things)). The next occurrence arrives with
+the answer attached.
+
+**WHAT IS OWED, AND IT IS ONE OBSERVATION FROM THE REPORTER** - nothing here can produce it:
+the stage line from a retry, or simply whether the draft carried a media attachment, a poll or a
+form, which eliminates four of the seven stages at once. **Until then this is an open report with
+no reproducible defect behind it, and must not be written up as a defect closed.** Note that the
+evidence for the original attempt is gone for a structural reason, not a procedural one - see the
+Infrastructure entry on a deploy destroying production's only log.
+
+---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
 ### P2 - NOTIF-15 - NOTHING HAS HEARD `canari_reactions` ON A REAL HANDSET
@@ -6863,6 +6894,39 @@ same pass: replace `e instanceof Error ? e.message` with `String(e)` in a log li
 `Error: <message>` rather than `<message>` and keeps the type the old shape threw away.
 
 ## Infrastructure
+
+### P2 - A DEFECT REPORTED AFTER A DEPLOY HAS NO EVIDENCE, BECAUSE A DEPLOY DESTROYS IT (measured on production 2026-09-21)
+
+**FOUND WHILE DIAGNOSING A REPORT, WHICH IS THE ONLY WAY THIS ONE EVER GETS FOUND.** A member could
+not publish a post from their phone; the investigation read `infrastructure-frontend-1` and
+`infrastructure-social-service-1` for the hour, found no `POST /api/posts` and no error, and
+concluded the request had never left the device. **That conclusion was one step further than the
+evidence went**, and the reason is this entry: both containers report `StartedAt` of
+`2026-09-20T21:46:52Z`, so nothing before that moment existed to be read. The hour that was read was
+the hour the REPORT arrived in, not the hour the attempt was made in.
+
+**THE MECHANISM, SHOWN GONE RATHER THAN ASSERTED.** `docker inspect -f '{{.HostConfig.LogConfig.Type}}'`
+returns `json-file` with an empty config on every service; `/etc/docker/daemon.json` sets `dns` and
+nothing else; and no container on the box runs loki, promtail, fluentd, vector or filebeat. So a
+container's own stdout is the whole record, it has no `max-size` and no `max-file`, and a deploy
+RECREATES the container rather than restarting it - which deletes the log file with the container it
+belonged to. Every deploy is therefore a full erasure of production's only observability.
+
+**WHY THIS IS P2 AND NOT P3.** The window it destroys is exactly the window that matters. Reports
+arrive from students hours to days after the fact, and deploys are frequent because the release
+cycle is designed to be; the two together mean the default outcome for a user-reported defect is
+that its evidence is already gone. This one cost a wrong conclusion that was written into a wiki
+page before it was caught - *a claim that something is stale must name the mechanism that would
+honour it and show that mechanism gone*, and here the mechanism was believed to exist.
+
+**WHAT WOULD SETTLE IT.** Any sink that outlives a container recreation. The cheapest is a logging
+driver with rotation writing outside the container's lifetime; the honest one is a collector, since
+the box already hosts the dev estate beside prod and a per-container file answers no
+cross-service question. **Not decided here** - the shape is the open question, not whether it is
+needed. Disk is not the constraint: `/` is 43% used with 69 G free, so an unbounded `json-file` is
+not currently a risk, which is also why nothing has surfaced this.
+
+---
 
 ### P3 - no docker prune runs on `canari` or `mitv`, and 141 dangling volumes say so
 
