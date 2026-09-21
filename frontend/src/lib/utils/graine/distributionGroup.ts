@@ -363,7 +363,12 @@ export async function enterPrivateSalonGroup(
     log: (message: string) => void;
   }
 ): Promise<boolean> {
-  // A public salon's seeds travel on the community's group, which a different call already entered.
+  // A PUBLIC SALON'S SEEDS TRAVEL ON THE COMMUNITY'S GROUP, WHICH EVERY CALLER OF THIS ENTERS
+  // FIRST - and until 2026-09-21 one of them did not. This line used to say "which a different
+  // call already entered", which was true of the startup walk and of community creation, and false
+  // of `registerJoinedChannel`: a member added in-session mapped the channel, skipped this on
+  // `isPrivate`, and joined nothing at all. Naming the precondition rather than assuming it is the
+  // difference, so the next caller added here has to notice it owes one.
   if (!opts.isPrivate) return false;
 
   if (opts.viewerHasAccess && opts.ensureMls) {

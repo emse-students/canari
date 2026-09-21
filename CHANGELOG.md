@@ -19,6 +19,13 @@ exception, et rien ne l'a dit avant qu'une ligne ne l'ouvre. Un `pluralPattern()
 matchable, les quatre lecteurs partagent un seul refus qui nomme la vraie cause, et
 `caption-selftest.mjs` verifie desormais chaque cle du rig contre l'aide qui la consomme -
 [README](tools/cross-client-harness/README.md).
+### Fixed - un membre ajoute a une communaute n'entrait dans aucun groupe de cles
+
+Il voyait la communaute, ouvrait le salon, et n'etait sur aucune liste de distribution : toutes les
+graines emises jusqu'a son prochain redemarrage partaient sans lui, et chaque message s'affichait
+`nouveau message`. Le chemin temps reel entrait bien le groupe d'un salon PRIVE et jamais celui de
+la communaute, seul transport d'un salon public -
+[channel-encryption](docs/wiki/protocols/channel-encryption.md#15-a-member-added-to-a-community-entered-no-key-group-at-all-until-they-restarted---fixed-2026-09-21).
 
 ### Fixed - modifier une reponse effacait la citation pour tout le monde
 

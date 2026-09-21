@@ -2162,3 +2162,60 @@ The hardware row, and iOS. A salon message under a session minted while the app 
 the plaintext in the shade, and only the phone says so. iOS is worse and unmeasured: the NSE runs
 on an alert push and a silent `keyMaterial` frame does not wake it at all. See
 [backlog](../backlog.md).
+
+## 15. A member added to a community entered no key group at all until they restarted - FIXED 2026-09-21
+
+Four moments register a channel against its community, and each owes the community's
+key-distribution group before the first seed travels: the startup walk, creating a community,
+creating a salon inside one already loaded, and **being added to one in-session**. The fourth did
+not.
+
+`registerJoinedChannel` - the `channel.member.joined` handler's half in `useChannelWorkspaces` -
+did two of the three things the startup walk does per community. It wrote the channel-to-community
+map, and it called `enterPrivateSalonGroup`, which returns immediately for a public salon. Nothing
+entered the COMMUNITY's group, which is the only group a public salon's seeds travel on (§4.3).
+
+### What it looked like
+
+Measured on the local estate, 2026-09-21, with the peer's client left running throughout:
+
+    invite lands            the community appears in the peer's sidebar, #general opens
+    owner distributes       [SEND] No message queued after validation - recipients=0 - the
+                            group named no other device
+    roster                  1 device, epoch 0 - the owner's, and nobody else's
+    peer's app RELOADED     [DISTRIBUTION_GROUP] served ... user=<peer> devices=0
+    ~1 s later              roster: 2 devices
+
+So the new member was entitled, visible in `channel_members`, able to open the salon - and on no
+delivery roster. Every seed minted between the invite and their next app start was fanned out to
+everyone except them, and their salon read `nouveau message dans #general` for all of it. **It is a
+STATE, not a window**: nothing else fetches the group, so it lasts until the app is relaunched.
+
+This is the same screen as §14 and a different cause. §14 is a seed that was pushed and dropped;
+this is a seed that was never addressed to the device at all, because the server's roster did not
+name it. **The two are separated by the SERVER's log, not the phone's** - `recipients=0` on the
+distribution send is the discriminator, and it is already written.
+
+### Why the premise held for three callers and not the fourth
+
+`enterPrivateSalonGroup`'s early return carried the reasoning: *"a public salon's seeds travel on
+the community's group, which a different call already entered"*. True of the startup walk, which
+enters the community's group before listing its channels; true of community creation, which enters
+it before listing the channels the backend made; true of salon creation, which cannot happen in a
+community this device has not loaded. **False of the one caller reached from a real-time event**,
+which has no walk around it at all.
+
+The fix is one guarded call in `registerJoinedChannel`, before the private-salon entrance, and the
+comment now NAMES the precondition instead of assuming it. The join is idempotent and coalesced per
+scope by `ensureDistributionGroupFor`, so a second channel joined in the same session shares one
+promise and mints no second external commit. A private salon takes both: its own seeds travel on
+its own group, and the community's still carries every public salon beside it.
+
+### What holds it
+
+Four cases in `useChannelWorkspaces.svelte.test.ts`, two of them red before the change: the
+community's group is entered for a public salon with the community as the scope; it is entered for
+a private salon too; nothing is reached for when the load has no MLS client; and the
+channel-to-community map is written BEFORE the join, so a refused GroupInfo cannot also cost the
+mapping. The rejection is deliberately not caught - `onChannelMemberJoined` already logs it as
+`[GRAINE] could not prepare joined channel`, and a `try` here would make that line unreachable.
