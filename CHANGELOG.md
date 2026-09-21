@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un post ne ressemblait pas a ce qui avait ete ecrit
+
+Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux autres : le preflight
+Tailwind retire `list-style` et met toutes les marges a zero, et seul `[&_p+p]` avait ete restaure.
+Les trois surfaces markdown portent desormais `.post-markdown`, dont les regles sont enoncees une
+fois dans `app.css`. [posts](docs/wiki/frontend/modules/posts.md#the-blocks-preflight-erases).
+
 ### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
 
 `NOTIF-18` tue l'application, cree un salon dont elle n'a jamais entendu parler - donc une session
