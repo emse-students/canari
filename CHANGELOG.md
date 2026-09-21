@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le tableau des reponses ne dessine plus ce qui ne dit rien
+
+Un formulaire gratuit n'affiche plus les colonnes "Statut" et "Montant", constantes sur toute la
+hauteur, et depense leur largeur sur une quatrieme question. Une ligne dont le volet ne ferait que
+repeter ce qu'elle montre deja n'a plus de chevron.
+[forms](docs/wiki/frontend/modules/forms.md#a-column-or-a-control-that-cannot-carry-information-is-not-drawn-2026-09-21).
+
 ### Fixed - le classifieur ne connaissait pas le chemin du push de salon
 
 Neuf lignes ordinaires n'avaient aucune regle : sept sur le push d'un message de salon, deux sur le
@@ -19,6 +26,7 @@ et son redessin sont `notable` EN PAIRE - le premier sans le second est un bande
 dechiffre. Le balayage de fin de passe re-pointe desormais le `adb forward` avant de se connecter :
 une ligne qui relance l'appli invalide le socket, ce qui se lisait comme un telephone casse.
 [methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - "Impossible de publier le post" disait sept choses a la fois
 
 Cinq des sept causes d'echec avaient deja leur phrase traduite au `throw`, et un seul `catch` les

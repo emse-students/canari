@@ -307,6 +307,7 @@
                 {@const subs = submissionsData[form.id] as Submission[]}
                 <FormSubmissionsTable
                   items={form.items ?? []}
+                  requiresPayment={form.requiresPayment ?? false}
                   submissions={subs}
                   deletingId={deletingSubmissionId}
                   onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}

@@ -1,7 +1,14 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, X } from '@lucide/svelte';
   import type { FormItem, Submission } from '$lib/forms/api';
-  import { answerColumns, answeredItems, submitterName } from '$lib/forms/submissionTable';
+  import type { AnsweredItem } from '$lib/forms/submissionTable';
+  import {
+    answerColumns,
+    answeredItems,
+    maxAnswerColumns,
+    panelAddsNothing,
+    submitterName,
+  } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -17,6 +24,12 @@
    * `submissionTable.ts`. Everything a column cannot hold reads in the row's panel, so a form of
    * twenty paragraphs and a form of three short questions both lay themselves out correctly.
    *
+   * THAT RULE DECIDES THE STATUS AND AMOUNT COLUMNS TOO, and since 2026-09-21 it is applied to them:
+   * a FREE form draws neither, because both are one repeated value down the whole table, and the
+   * ~180px each of them cost buys a fourth question instead. For the same reason a row whose panel
+   * would only repeat its own line has no chevron - `panelAddsNothing` - so nothing on screen is a
+   * control that opens a box a reader has already read.
+   *
    * The table is the `sm`-and-up layout only. Below it the same rows are cards: a five-column table
    * already overflowed a phone before any answer was added to it, and a horizontal scrollbar is not
    * a reading of anything. The two layouts share every piece through snippets, so the status pill,
@@ -25,15 +38,22 @@
   interface Props {
     /** The form's questions - the labels every answer is read through. */
     items: FormItem[];
+    /**
+     * Whether this form asks for money, which is what decides the status and amount columns.
+     *
+     * Passed rather than inferred from the submissions: a paid form whose responses are all still
+     * `pending` would infer as free, and a column must not appear the day somebody finally pays.
+     */
+    requiresPayment: boolean;
     submissions: Submission[];
     /** The submission currently being deleted, so its control can say so. */
     deletingId: string | null;
     onDelete: (sub: Submission) => void;
   }
 
-  let { items, submissions, deletingId, onDelete }: Props = $props();
+  let { items, requiresPayment, submissions, deletingId, onDelete }: Props = $props();
 
-  const columns = $derived(answerColumns(items ?? []));
+  const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
 
   /**
    * Every submission's answers, read once per render rather than per cell.
@@ -100,10 +120,12 @@
   </span>
 {/snippet}
 
-{#snippet expandControl(sub: Submission, answerCount: number)}
+<!-- Disabled, rather than absent, when the panel holds nothing new: the control keeps its place in
+     the row, so the columns of a table whose rows differ still line up under their headers. -->
+{#snippet expandControl(sub: Submission, answered: AnsweredItem[], drawn: FormItem[])}
   <button
     onclick={() => toggle(sub.id)}
-    disabled={answerCount === 0}
+    disabled={panelAddsNothing(answered, drawn)}
     class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg transition-colors disabled:opacity-30"
     aria-expanded={expanded[sub.id] === true}
     title={expanded[sub.id] ? m.form_list_answers_hide() : m.form_list_answers_show()}
@@ -161,8 +183,10 @@
         {#each columns as column (column.id)}
           <th class="max-w-48 truncate pr-4 pb-2" title={column.label}>{column.label}</th>
         {/each}
-        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_status()}</th>
-        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_amount()}</th>
+        {#if requiresPayment}
+          <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_status()}</th>
+          <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_amount()}</th>
+        {/if}
         <th class="pb-2"></th>
       </tr>
     </thead>
@@ -170,7 +194,7 @@
       {#each submissions as sub (sub.id)}
         {@const answered = answersById.get(sub.id) ?? []}
         <tr class="text-text-main">
-          <td class="py-2">{@render expandControl(sub, answered.length)}</td>
+          <td class="py-2">{@render expandControl(sub, answered, columns)}</td>
           <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
             >{formatDate(sub.createdAt)}</td
           >
@@ -181,13 +205,18 @@
               {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
             </td>
           {/each}
-          <td class="py-2 pr-4">{@render statusPill(sub)}</td>
-          <td class="py-2 pr-4 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+          {#if requiresPayment}
+            <td class="py-2 pr-4">{@render statusPill(sub)}</td>
+            <td class="py-2 pr-4 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+          {/if}
           <td class="py-2">{@render deleteControl(sub)}</td>
         </tr>
         {#if expanded[sub.id]}
           <tr>
-            <td colspan={columns.length + 6} class="bg-cn-border/10 px-3 py-3">
+            <td
+              colspan={columns.length + (requiresPayment ? 6 : 4)}
+              class="bg-cn-border/10 px-3 py-3"
+            >
               {@render answersPanel(sub)}
             </td>
           </tr>
@@ -206,13 +235,15 @@
         <div class="min-w-0 flex-1">
           <p class="text-text-muted text-2xs font-mono">{formatDate(sub.createdAt)}</p>
           <p class="text-text-main truncate font-semibold">{submitterName(sub)}</p>
-          <p class="mt-1 flex items-center gap-2">
-            {@render statusPill(sub)}
-            <span class="text-text-muted text-xs font-medium">{formatAmount(sub.totalPaid)}</span>
-          </p>
+          {#if requiresPayment}
+            <p class="mt-1 flex items-center gap-2">
+              {@render statusPill(sub)}
+              <span class="text-text-muted text-xs font-medium">{formatAmount(sub.totalPaid)}</span>
+            </p>
+          {/if}
         </div>
         <div class="flex shrink-0 items-center">
-          {@render expandControl(sub, answered.length)}
+          {@render expandControl(sub, answered, [])}
           {@render deleteControl(sub)}
         </div>
       </div>

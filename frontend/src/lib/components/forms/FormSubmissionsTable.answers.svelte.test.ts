@@ -16,6 +16,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { FormItem, Submission } from '$lib/forms/api';
 import FormSubmissionsTable from './FormSubmissionsTable.svelte';
+import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
 
@@ -46,10 +47,10 @@ const submission = (over: Partial<Submission> = {}): Submission => ({
   ...over,
 });
 
-function render(items: FormItem[], submissions: Submission[]) {
+function render(items: FormItem[], submissions: Submission[], requiresPayment = true) {
   const component = mount(FormSubmissionsTable, {
     target: document.body,
-    props: { items, submissions, deletingId: null, onDelete: vi.fn() },
+    props: { items, requiresPayment, submissions, deletingId: null, onDelete: vi.fn() },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -159,6 +160,29 @@ describe('the responses table, rendered', () => {
     expect(control.disabled).toBe(true);
   });
 
+  it('refuses to open a row whose panel would only repeat its own line', () => {
+    render([ASSO], [submission({ answers: { asso: 'o1' } })]);
+    const control = table().querySelector('tbody button') as HTMLButtonElement;
+    expect(control.disabled).toBe(true);
+  });
+
+  // The same row, one answer too wide for its cell: the cell truncates it, so the panel is the only
+  // place it can be read in full and the control comes back.
+  it('opens a row again as soon as one answer is too long for its cell', () => {
+    const libre = item({ id: 'libre', label: 'Ton idee ?', type: 'short_text' });
+    render([libre], [submission({ answers: { libre: 'a'.repeat(60) } })]);
+    const control = table().querySelector('tbody button') as HTMLButtonElement;
+    expect(control.disabled).toBe(false);
+  });
+
+  // Below `sm` NOTHING is a column, so the same answer that costs the table row its chevron is
+  // reachable only through the card's.
+  it('keeps the card control where the table row has none', () => {
+    render([ASSO], [submission({ answers: { asso: 'o1' } })]);
+    const card = document.querySelector('ul.sm\\:hidden > li button') as HTMLButtonElement;
+    expect(card.disabled).toBe(false);
+  });
+
   // Below `sm` the same rows are cards, and they are a separate subtree - a change to one that
   // forgets the other is the drift this asserts against.
   it('renders the same response as a card for a phone', () => {
@@ -166,5 +190,54 @@ describe('the responses table, rendered', () => {
     const cards = document.querySelectorAll('ul.sm\\:hidden > li');
     expect(cards).toHaveLength(1);
     expect(cards[0].textContent).toContain('Mael DEJARDIN');
+  });
+});
+
+/**
+ * A FREE FORM DRAWS NEITHER STATUS NOR AMOUNT, and spends the width on a question instead.
+ *
+ * Both columns are one repeated value when `requiresPayment` is false, and the colspan is the case
+ * neither file shows: it is a number written beside a header list that now has two lengths.
+ */
+describe('the responses table of a form that asks for no money', () => {
+  const questions = Array.from({ length: 6 }, (_, n) =>
+    item({ id: `q${n}`, label: `Question ${n}`, type: 'short_text' })
+  );
+  const answers = Object.fromEntries(questions.map((q, n) => [q.id, `Reponse ${n}`]));
+
+  it('draws neither the status column nor the amount one', () => {
+    render([ASSO], [submission({ answers: { asso: 'o1' } })], false);
+    const headers = [...table().querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers).not.toContain(m.form_list_col_status());
+    expect(headers).not.toContain(m.form_list_col_amount());
+  });
+
+  it('spends the width the two of them cost on a fourth question', () => {
+    render(questions, [submission({ answers })], false);
+    const headers = [...table().querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers).toContain('Question 3');
+    expect(headers).not.toContain('Question 4');
+  });
+
+  it('is the ONLY reason that fourth question is drawn - a paid form stops at three', () => {
+    render(questions, [submission({ answers })], true);
+    const headers = [...table().querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers).toContain('Question 2');
+    expect(headers).not.toContain('Question 3');
+  });
+
+  it('still spans the whole table with the panel, two columns shorter', () => {
+    render([ASSO, WHY], [submission({ answers: { asso: 'o1', why: 'Un texte' } })], false);
+    openFirstPanel();
+
+    const headerCount = table().querySelectorAll('thead th').length;
+    const panelCell = table().querySelector('tbody td[colspan]') as HTMLTableCellElement;
+    expect(panelCell.colSpan).toBe(headerCount);
+  });
+
+  it('shows no payment status on the card either', () => {
+    render([ASSO], [submission({ answers: { asso: 'o1' } })], false);
+    const card = document.querySelector('ul.sm\\:hidden > li')!;
+    expect(card.textContent).not.toContain(m.form_status_free());
   });
 });
