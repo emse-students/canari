@@ -399,7 +399,7 @@
             {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="text-text-main text-sm leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
+              class="post-markdown text-text-main text-sm leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
               !isExpanded
                 ? 'line-clamp-5'
                 : ''}"

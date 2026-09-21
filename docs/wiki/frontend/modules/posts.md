@@ -438,9 +438,25 @@ A member reported on 2026-09-21 that a post would not publish from their phone. 
 them "Impossible de publier le post", and that was everything anyone had.
 
 **The server could add nothing**, and settling that took two log reads: no `POST /api/posts` reached
-nginx in the whole hour, and `social-service` logged no error. The request never left the device, so
-every server-side trail was structurally empty - which is the shape worth recognising before digging
-into one.
+nginx in the hour read, and `social-service` logged no error - so nothing server-side refused a post
+in that window, and the trail was structurally empty.
+
+**AND THE WINDOW IS THE LIMIT OF WHAT THAT PROVES.** Prod's containers restarted 2026-09-20 21:46
+UTC, `docker logs` keeps nothing from before a restart, and the report did not carry a time. So the
+hour read is the hour the report arrived in, not necessarily the hour the attempt was made in: the
+reading rules out a server refusal DURING IT and says nothing whatever about an attempt outside it.
+Stating it as "the request never left the device" is one step further than the evidence goes - the
+same class of claim as one that names a mechanism without showing it gone. What is actually
+established is narrower and still decides the work: **no post creation has ever been refused by this
+server in any window anyone has read** - 7 days of prod logs hold exactly one `POST /api/posts`, a
+`201`, and it was the rig's own.
+
+A rights hypothesis was tested directly on 2026-09-21, because the first report came from an account
+that could post when tried again as an admin. It is REFUTED: `posts.controller.ts` computes
+`anonymous = !!body.anonymous && !body.associationId` and never consults `isGlobalAdmin`, the
+composer offers "Anonyme" to everyone with no capability check, and a non-admin account driving the
+real composer on the local prod copy published anonymously with a `201`. Neither half of the stack
+gates it.
 
 `publishPost` can fail seven ways, and **five of them already carried a translated sentence at the
 throw**:
@@ -479,3 +495,37 @@ pipeline throws - English dev prose, for the console, and no distinction a reade
 
 `publishFailure.test.ts` pins the mapping, including the two sentences that are ABOUT THE READER and
 must not be said when they are not true.
+## The blocks preflight erases
+
+A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not
+appear and the line breaks do not exist". **The markdown pipeline was measured and is not the
+culprit** - `preprocessPostMarkdown` plus marked turn that post into exactly the `<p>`, `<ul><li>`
+and `<hr>` the author meant, hard breaks included. Two lines of Tailwind preflight then erase it:
+
+| preflight | what the reader loses |
+| --- | --- |
+| `ol, ul, menu { list-style: none }` | the dash typed in front of every item, and its indent |
+| `*, ::before, ::after { margin: 0 }` | every gap between blocks - a list after a sentence, a rule after a list |
+
+`[&_p+p]:mt-3` was the only gap anyone had ever restored, and it matches a paragraph after a
+PARAGRAPH. Nothing else had one.
+
+**`ProfileBioMarkdown` was correct by accident**, because it happened to spell `[&_ul]:list-disc
+[&_ul]:pl-5` in its own class string - so the profile bio rendered a list while the post, the
+most-read surface in the app, did not, and neither did a comment. That is the shape worth naming: a
+rule written into one class attribute is a rule the other surfaces cannot inherit, and nothing tells
+the author of the next renderer that it was ever needed.
+
+The rules are now stated ONCE, on `.post-markdown` in `app.css`, and all three renderers
+(`PostContent`, `PostComments`, `ProfileBioMarkdown`) wear it. What a component still owns is what
+legitimately differs: heading sizes, font size, and the comment's `[&_p]:inline`.
+
+`postMarkdownBlocks.test.ts` asserts the half a stylesheet cannot assert about itself. It sweeps
+every `.svelte` under `src` for `<SvelteMarkdown`, requires the class on each, and refuses a
+component that re-spells a block rule inline - so the fourth renderer cannot be born without it.
+Verified red against the pre-fix comment renderer, green after.
+
+An `hr` is the one case where preflight is not the whole story: it keeps `border-top-width: 1px`, so
+the line was always visible. It was the zeroed margin that welded it to the sentences on both sides,
+and `color: inherit` that made it as heavy as body text - hence `var(--cn-border)` rather than
+`currentcolor`.

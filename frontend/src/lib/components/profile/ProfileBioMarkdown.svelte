@@ -47,7 +47,7 @@
 </script>
 
 <div
-  class="post-markdown text-text-main max-w-none text-sm leading-relaxed opacity-90 [&_a]:break-words [&_br]:block [&_ol]:list-decimal [&_ol]:pl-5 [&_p+p]:mt-3 [&_p:first-child]:mt-0 [&_ul]:list-disc [&_ul]:pl-5 {headingClasses} {className}"
+  class="post-markdown text-text-main max-w-none text-sm leading-relaxed opacity-90 [&_a]:break-words [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0 {headingClasses} {className}"
 >
   <SvelteMarkdown source={rendered} {renderers} options={{ gfm: true, breaks: true }} />
 </div>
