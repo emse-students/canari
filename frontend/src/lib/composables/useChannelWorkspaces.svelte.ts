@@ -653,6 +653,29 @@ export function useChannelWorkspaces() {
     if (!channelId || !workspaceId) return;
     registerChannelWorkspace(channelId, workspaceId, isPrivate);
 
+    // A PUBLIC SALON'S SEEDS TRAVEL ON THE COMMUNITY'S GROUP, AND THIS IS WHERE THIS DEVICE ENTERS
+    // IT IN-SESSION. The startup walk does three things per community and this path did two: it
+    // mapped the channel and it entered a PRIVATE salon's own group. Nothing entered the
+    // community's, because `enterPrivateSalonGroup` returns early for a public salon on the
+    // premise - true only at startup - that "a different call already entered" it.
+    //
+    // Measured on the local estate 2026-09-21. The peer was invited, its community appeared in its
+    // sidebar and `#general` opened; the server then logged, for the seed the owner distributed
+    // seconds later, `[SEND] No message queued after validation - recipients=0 - the group named
+    // no other device`. The delivery roster held one device until the peer's app was RELOADED, at
+    // which point the startup walk joined in about a second. So every seed minted in that window
+    // reached everyone except the person who had just been added, and their salon read
+    // `nouveau message` for all of them - the state lasting until they next restarted the app.
+    //
+    // A PRIVATE SALON TAKES BOTH, and that is not a redundancy: its own seeds travel on its own
+    // group, and the community's still carries every public salon of the same community. The join
+    // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
+    // channel joined in the same session costs one shared promise and no second external commit.
+    if (ensureMls) {
+      const mls = await ensureMls();
+      await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
+    }
+
     // A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one
     // loaded at startup does, and nothing else would fetch it until the next full reload - the
     // same window this function was written to close for the channel-to-community map.

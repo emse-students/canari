@@ -161,6 +161,20 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **AN EARLY RETURN JUSTIFIED BY "SOMETHING ELSE ALREADY DID IT" MUST NAME WHO - AND THE CALLER
+  REACHED FROM AN EVENT HAS NO WALK AROUND IT.** `enterPrivateSalonGroup` returned immediately for
+  a public salon because *"a public salon's seeds travel on the community's group, which a
+  different call already entered"*. True of the startup walk, of community creation and of salon
+  creation, all of which enter the community's group a few lines earlier - and false of
+  `registerJoinedChannel`, which is reached from `channel.member.joined` and has nothing around it.
+  So a member added in-session mapped the channel, skipped the entrance on `isPrivate` and joined
+  NO group at all: entitled, visible in the sidebar, on no delivery roster, reading
+  `nouveau message` for every seed until they next restarted the app (measured 2026-09-21; the
+  server said it plainly as `[SEND] ... recipients=0 - the group named no other device`).
+  **A precondition satisfied by a caller's surroundings is not a precondition**; name it at the
+  callee, so the next call site added has to notice it owes one -
+  [channel-encryption](protocols/channel-encryption.md#15-a-member-added-to-a-community-entered-no-key-group-at-all-until-they-restarted---fixed-2026-09-21).
+
 - **A RE-ADMISSION IS A REMOVE FOLLOWED BY AN ADD, SO THE ONE REMOVE COMMIT THAT MEANS THE OPPOSITE
   OF AN EVICTION IS YOUR OWN.** MLS cannot Welcome a leaf still in the tree, so the member answering
   a `welcome_request` removes the asker first. That Remove arrives alone and passes every test a

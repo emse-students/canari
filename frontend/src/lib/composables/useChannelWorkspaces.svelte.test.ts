@@ -69,6 +69,9 @@ vi.mock('$lib/utils/graine/distributionGroup', () => ({
 }));
 
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
+// NOT MOCKED, DELIBERATELY: the channel-to-community map is the fact the send path reads, so the
+// test asserting it survives a failed join has to read the real one.
+import { workspaceForChannel } from '$lib/utils/graine/runtime';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -588,5 +591,93 @@ describe('useChannelWorkspaces - a listing that predates a creation', () => {
     listUserWorkspaces.mockResolvedValueOnce([]);
     await api.loadChannelWorkspacesFromBackend(ctx);
     expect(api.channelWorkspaces.some((w) => w.id === 'partie')).toBe(false);
+  });
+});
+
+/**
+ * A SALON JOINED IN-SESSION AND THE GROUP ITS SEEDS TRAVEL ON.
+ *
+ * `registerJoinedChannel` is the in-session sibling of the per-workspace body of
+ * `executeWorkspaceLoadAttempt`, reached from the real-time `channel.member.joined` event. The walk
+ * at startup does three things per community, and this path used to do two: it mapped the channel
+ * to its community and it entered a PRIVATE salon's own group, and it never entered the COMMUNITY's
+ * key-distribution group - the one a PUBLIC salon's seeds travel on.
+ *
+ * Measured on the local estate 2026-09-21: the peer was invited, its community appeared in its
+ * sidebar, `#general` opened - and the server logged `[SEND] No message queued after validation -
+ * recipients=0 - the group named no other device` for the seed the owner distributed seconds later.
+ * The roster held one device until the peer's app was RELOADED, at which point the startup walk ran
+ * and the join landed in 1 s. So every seed minted in between reached everyone except the person
+ * who had just been added, and the salon read `nouveau message` for all of them.
+ */
+describe('useChannelWorkspaces - a salon joined in-session enters the group its seeds travel on', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ensureCommunityDistributionGroup.mockResolvedValue(true);
+  });
+
+  it("enters the COMMUNITY's distribution group for a public salon", async () => {
+    const api = useChannelWorkspaces();
+    const ensureMls = vi.fn().mockResolvedValue({});
+    const log = vi.fn();
+
+    await api.registerJoinedChannel('ch-public', 'ws1', false, ensureMls, log);
+
+    // THE ARGUMENTS MATTER AS MUCH AS THE CALL: the scope is the COMMUNITY, not the channel, and
+    // the log is the session's - the same one every other GRAINE line lands in.
+    expect(ensureCommunityDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(ensureCommunityDistributionGroup).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'ws1',
+      log
+    );
+  });
+
+  /**
+   * A PRIVATE SALON NEEDS BOTH, and that is not a redundancy. Its own seeds travel on its own
+   * group, and the community's group is still what carries every public salon of the same
+   * community - including the ones this device may join later in the same session.
+   */
+  it("enters the community's group for a private salon too, beside the salon's own", async () => {
+    const api = useChannelWorkspaces();
+    const ensureMls = vi.fn().mockResolvedValue({});
+
+    await api.registerJoinedChannel('ch-private', 'ws1', true, ensureMls, vi.fn());
+
+    expect(ensureCommunityDistributionGroup).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * NO MLS CLIENT IS NOT A JOIN WITH NO CLIENT. The startup walk guards the same call the same way;
+   * a call with an undefined service would throw inside the join and lose the channel-to-community
+   * mapping this function's first line just wrote.
+   */
+  it('does not reach for the group when this load has no MLS client', async () => {
+    const api = useChannelWorkspaces();
+
+    await api.registerJoinedChannel('ch-public', 'ws1', false, undefined, vi.fn());
+
+    expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE MAPPING IS WRITTEN BEFORE THE JOIN, AND A FAILED JOIN STAYS VISIBLE.
+   *
+   * Two statements in one case, because they are the same ordering. The map is what the send path
+   * reads, so losing it would refuse the first message with `GraineUnknownChannelError` on top of
+   * the blind seed - two failures from one cause. And the rejection is NOT caught here: the one
+   * caller (`onChannelMemberJoined`) already logs it as `[GRAINE] could not prepare joined channel`,
+   * and a `try` added here would make that line unreachable and the failure silent.
+   */
+  it('maps the channel before the join, and lets a failed join be seen', async () => {
+    ensureCommunityDistributionGroup.mockRejectedValueOnce(new Error('group-info refused'));
+    const api = useChannelWorkspaces();
+
+    await expect(
+      api.registerJoinedChannel('ch-public', 'ws1', false, vi.fn().mockResolvedValue({}), vi.fn())
+    ).rejects.toThrow('group-info refused');
+
+    expect(workspaceForChannel('ch-public')).toBe('ws1');
   });
 });

@@ -852,15 +852,31 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
   it('every moment that enters a salon goes through this entrance, into a real log', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const src = readFileSync(
-      join(process.cwd(), 'src', 'lib', 'composables', 'useChannelWorkspaces.svelte.ts'),
-      'utf8'
+    const { withoutAnyComments } = await import('$lib/styles/markupSources');
+    // READ WITHOUT ITS COMMENTS, because this is a claim about CODE and a comment is prose. The
+    // assertion below failed on 2026-09-21 for a docblock that NAMED `ensureDistributionGroupFor`
+    // while explaining why the call beside it is safe to repeat - which is the explanation this
+    // guard wants written down, reported as the defect it exists to forbid. A guard that punishes
+    // its own rationale teaches the next author to delete the rationale.
+    const src = withoutAnyComments(
+      readFileSync(
+        join(process.cwd(), 'src', 'lib', 'composables', 'useChannelWorkspaces.svelte.ts'),
+        'utf8'
+      )
     );
 
     // Three moments, one entrance. A fourth that reaches the generic join directly is a fourth copy
     // of the precondition, which is the defect itself.
     expect(src.split('enterPrivateSalonGroup(').length - 1).toBe(3);
     expect(src).not.toContain('ensureDistributionGroupFor');
+
+    // AND THE COMMUNITY'S GROUP IS ENTERED FROM THE SAME THREE, which is the half this guard did
+    // not state and which was therefore missing for one of them. `registerJoinedChannel` mapped
+    // the channel and entered a PRIVATE salon's group, so a member added in-session to a PUBLIC
+    // salon joined nothing at all and read `nouveau message` until the app restarted (measured
+    // 2026-09-21). Creating a salon is the fourth moment and does NOT appear here, deliberately:
+    // a salon cannot be created in a community this device has not already loaded.
+    expect(src.split('ensureCommunityDistributionGroup(').length - 1).toBe(3);
 
     // AND THE THIRD MOMENT LANDS IN THE SESSION LOG. It is the one with no context object to hand,
     // it reached for `console.info`, and its caller is the only thing that can pass the real log.
