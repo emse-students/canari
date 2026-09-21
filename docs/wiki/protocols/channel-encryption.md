@@ -2156,12 +2156,59 @@ Nothing between these files type-checks: three languages, and every seam is a st
   tokens, the four seed field names, the mirror's `seed`/`createdAt` shape against the Kotlin
   reader's own lookup, and the JNI symbol.
 
+### The seed then arrived 324 ms too late - FIXED 2026-09-21
+
+`NOTIF-18` measured the fix above on hardware the same day and found it correct and insufficient.
+A phone dead for twenty seconds woke, recognised the silent frame
+(`decryptProto: graine key material, 1 seed(s)`) and stored it
+(`absorbGraineSeeds: stored 1 seed(s)`) - **after the message it unlocks**:
+
+    11:03:24.421  type=channel -> groupId=<8>          the salon message
+    11:03:24.487  no seed/ciphertext -> generic        the banner is built blind
+    11:03:24.747  absorbGraineSeeds: stored 1 seed(s)  260 ms too late
+
+**THE ORDER CANNOT BE BOUGHT AT THE SENDER.** Both pushes left in the same second, from two
+services nothing sequences - `social-service` sends the salon message, `chat-delivery-service` the
+seed - and FCM promises no order across two sends. The overlap is on the DEVICE:
+`handleChannelMessage` runs under `runWithWakeLock("fcm_channel")` while key material is absorbed
+under `runSerializedWithWakeLock`, and neither waits for the other. Serialising the two sends would
+buy a delivery order FCM does not promise to preserve, which is a fallback dressed as a fix.
+
+**SO THE HANDLER IS ORDER-INDEPENDENT INSTEAD.** A frame whose ciphertext is present and whose seed
+the mirror cannot answer for is HELD in a bounded registry keyed `channelId:sessionId:messageIndex`
+- one entry per message, because two messages of one session can both outrun it and each owns a
+different line to correct. `absorbGraineSeeds` drains it after a successful store: for every held
+frame the mirror can now answer for, it rebuilds the notification with the plaintext and re-posts
+under the same stable id, in `messageIndex` order.
+
+**THE OVERLAP IS DELETED, NOT HEALED.** The registry lock is held across BOTH the seed lookup and
+the registration, so the absorber cannot store a seed in the window between a miss and its entry
+appearing. The reverse window - the absorber running while the generic banner is still being built
+- is closed by the entry's `genericStamp`: it is 0 until the post returns, the drain skips a
+0-stamped entry, and the posting path re-reads the mirror afterwards and claims its own frame.
+Exactly one of the two paths redraws, in every interleaving.
+
+**AND THE CORRECTED LINE REPLACES THE BLIND ONE RATHER THAN JOINING IT.** `showMessageNotification`
+now returns the `MessagingStyle` instant it stamped its line with, and takes a `supersedes` instant
+that is dropped from the re-injected history - an identity, not a guess about the text, which is
+the lesson `alreadyPosted` already carries. The filter runs BEFORE the `MAX_NOTIF_MESSAGES` bound,
+so a redraw never costs the history a real line, and the re-post is `setOnlyAlertOnce`: the reader
+was alerted when the blind banner went up, and buzzing again to correct its wording would be the
+second notification this whole path exists to prevent.
+
+**TERMINATION IS A CAPACITY, NOT A CLOCK.** Nothing expires. A held frame leaves when its seed
+arrives, or when the eighth message after it pushes it out - well past `MAX_NOTIF_MESSAGES`, which
+is 6. A frame the server could not inline is never held at all: no seed can ever open it, so
+waiting for one would never end. `PendingChannelFrameTest` holds the eight cases.
+
 ### What is left
 
-The hardware row, and iOS. A salon message under a session minted while the app is KILLED must put
-the plaintext in the shade, and only the phone says so. iOS is worse and unmeasured: the NSE runs
-on an alert push and a silent `keyMaterial` frame does not wake it at all. See
-[backlog](../backlog.md).
+iOS, and the degradation is still uncounted. The NSE runs on an alert push and a silent
+`keyMaterial` frame does not wake it at all, so nothing above reaches an iPhone;
+`isKeyDistribution` already travels there through `buildApnsRequest`, so what is owed is the wake,
+not the discriminator. On Android the blind banner is now distinguishable in logcat - `seed absent
+-> generic banner, frame HELD` against `no seed/ciphertext`, the frame that can never be retried -
+but nothing counts either. See [backlog](../backlog.md).
 
 ## 15. A member added to a community entered no key group at all until they restarted - FIXED 2026-09-21
 
