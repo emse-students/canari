@@ -23,6 +23,8 @@
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
+  import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
+  import { LocalizedError } from '$lib/utils/localizedError';
   import { getForms, type Form } from '$lib/forms/api';
   import {
     ANONYMOUS_POST_IDENTITY,
@@ -308,25 +310,44 @@
     return FileText;
   }
 
-  /** Upload images, assemble the payload, call createPost, then reset the form. */
+  /**
+   * Upload images, assemble the payload, call createPost, then reset the form.
+   *
+   * EVERY REFUSAL BELOW SAYS WHICH ONE IT IS, and none of them did until 2026-09-21. Five throws
+   * already carried their own translated sentence and one `catch` replaced all five with "could not
+   * publish the post" - which is the whole of what a member on a phone was able to report. Nothing
+   * on the server could add to it: no `POST /api/posts` reached nginx in the hour, and
+   * `social-service` logged nothing, because the failure never left the device.
+   *
+   * So the sentences are typed at the throw (`LocalizedError`, `MutedError`) and `stage` records
+   * how far this got, for the console. See `posts/publishFailure.ts`.
+   */
   async function publishPost() {
+    Log.d('POST_COMPOSER', 'publishPost');
     publishing = true;
     errorMessage = '';
+    // Reassigned in front of each step rather than derived afterwards: `catch` cannot see where it
+    // came from, and the two causes that keep the declared fallback are exactly the two the reader
+    // cannot tell apart without it.
+    let stage: PublishStage = 'moderation';
     try {
       markdown = trimComposerText(markdown);
       await assertNotMuted();
+      stage = 'content';
       if (!markdown.trim() && selectedFiles.length === 0) {
-        throw new Error(m.post_create_content_required());
+        throw new LocalizedError(m.post_create_content_required());
       }
+      stage = 'mediaToken';
       if (selectedFiles.length > 0 && !authToken) {
         try {
           authToken = await getToken();
         } catch {
-          throw new Error(m.post_create_image_token_error());
+          throw new LocalizedError(m.post_create_image_token_error());
         }
       }
 
       // Compress images, upload other files as-is; collect the resulting refs.
+      stage = 'mediaUpload';
       const media = [];
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
@@ -349,6 +370,7 @@
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       };
 
+      stage = 'poll';
       if (includePoll) {
         const options = pollOptionsRaw
           .split('\n')
@@ -356,15 +378,16 @@
           .filter(Boolean)
           .map((label) => ({ label }));
         if (!pollQuestion.trim() || options.length < 2) {
-          throw new Error(m.post_create_poll_requires_options());
+          throw new LocalizedError(m.post_create_poll_requires_options());
         }
         payload.polls = [
           { question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice },
         ];
       }
 
+      stage = 'form';
       if (includeForm) {
-        if (!selectedFormId) throw new Error(m.post_create_form_required());
+        if (!selectedFormId) throw new LocalizedError(m.post_create_form_required());
         payload.attachedFormId = selectedFormId;
       }
 
@@ -373,6 +396,7 @@
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
+      stage = 'createPost';
       await createPost(payload);
 
       // Reset all state after successful creation
@@ -393,8 +417,11 @@
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
-      Log.d('publishPost failed', err);
-      errorMessage = m.post_create_publish_error();
+      // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. This was `Log.d` - debug level - in a file
+      // that already logged `console.error` for a dropdown that would not load, so the one failure
+      // a reader reports was the quietest line in it.
+      console.error(`[POST_COMPOSER] publish failed at ${stage}`, err);
+      errorMessage = publishFailureMessage(err, m.post_create_publish_error());
     } finally {
       publishing = false;
     }

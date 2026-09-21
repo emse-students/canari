@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - "Impossible de publier le post" disait sept choses a la fois
+
+Cinq des sept causes d'echec avaient deja leur phrase traduite au `throw`, et un seul `catch` les
+remplacait toutes. Elles sont desormais typees (`LocalizedError`, `MutedError`), une coupure reseau
+dit qu'elle en est une, et le journal nomme l'etape. Une reaction refusee accusait le lecteur d'etre
+modere quand la radio tombait. [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
+
 ### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
 
 `NOTIF-18` tue l'application, cree un salon dont elle n'a jamais entendu parler - donc une session

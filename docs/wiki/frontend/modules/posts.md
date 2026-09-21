@@ -431,3 +431,51 @@ the console line separates the causes the shared message cannot: a refused conne
 | `/posts` | Main feed |
 | `/post/[postId]` | Single post page |
 | `/posts/new` | Create post form |
+
+## One catch said seven things
+
+A member reported on 2026-09-21 that a post would not publish from their phone. The app had told
+them "Impossible de publier le post", and that was everything anyone had.
+
+**The server could add nothing**, and settling that took two log reads: no `POST /api/posts` reached
+nginx in the whole hour, and `social-service` logged no error. The request never left the device, so
+every server-side trail was structurally empty - which is the shape worth recognising before digging
+into one.
+
+`publishPost` can fail seven ways, and **five of them already carried a translated sentence at the
+throw**:
+
+| stage | cause | the sentence that existed |
+| --- | --- | --- |
+| `moderation` | the account is restricted | `post_action_not_allowed` (via the caller) |
+| `content` | no text and no media | `post_create_content_required` |
+| `mediaToken` | no upload token | `post_create_image_token_error` |
+| `mediaUpload` | compression or upload threw | none - dev prose |
+| `poll` | a poll with no question or under two options | `post_create_poll_requires_options` |
+| `form` | the form attachment with nothing selected | `post_create_form_required` |
+| `createPost` | the API refused | none - dev prose |
+
+One `catch` replaced all five with the blanket line, and logged the cause at `Log.d` - debug - in a
+file that already used `console.error` for a dropdown that would not load. **The one failure a
+reader reports was the quietest line in it.**
+
+The repair is the rule that governs every other seam here: **classify at the THROW, as a type**. The
+five sentences are `LocalizedError`, which `utils/localizedError.ts` already existed for and which
+`muteCheck.ts`'s own docblock had already named as the answer. Moderation is a `MutedError`, because
+its message is dev prose and each screen picks its own line. `posts/publishFailure.ts` maps them,
+and the composer records a `PublishStage` so the console names WHERE - a value, not a stack, because
+the line has to be readable in an in-app log export from a phone.
+
+**A transport failure is not a refusal, and one screen was saying it was.**
+`PostCard.handleReaction` wraps `assertNotMuted()` - which ASKS the server - and showed
+`post_action_not_allowed` for anything it threw. A reader whose radio dropped was told they are
+restricted by moderation: not merely vague, but false and about them. That third call site is why
+the mapping is a shared module rather than three inline ladders, and why its fallback is a required
+parameter: "could not publish", "could not comment" and "action not allowed" are three screens and
+no default is right on all three.
+
+What deliberately keeps the fallback is a refusal from the write itself and anything the media
+pipeline throws - English dev prose, for the console, and no distinction a reader can act on.
+
+`publishFailure.test.ts` pins the mapping, including the two sentences that are ABOUT THE READER and
+must not be said when they are not true.

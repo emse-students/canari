@@ -15,21 +15,39 @@ export async function getMuteStatus(): Promise<{ isMuted: boolean; mutedReason: 
 }
 
 /**
- * Throws when the current user is muted. Call at the start of any write action (post, comment,
- * reaction).
+ * Moderation refused this write, said as a type.
  *
- * THE MESSAGE IS DEV PROSE, NOT THE READER'S SENTENCE, and it says so because the docblock used to
- * claim the opposite. Every caller catches this and renders a Paraglide line of its own
- * (`m.post_action_not_allowed()`, `m.post_create_publish_error()`), so nothing here has ever
- * reached a screen - which is also why the moderator's own `mutedReason` never does. Saying that
- * out loud is the point: an error whose message IS for the reader is a `LocalizedError`, and this
- * is not one. See `utils/localizedError.ts`.
+ * THE MESSAGE IS DEV PROSE, NOT THE READER'S SENTENCE, which is why this is NOT a `LocalizedError`
+ * and why it has to be something: a caller must be able to tell "you are restricted" from "the
+ * server could not be reached to ask", and both used to leave {@link assertNotMuted} as a bare
+ * `Error`. One caller told them apart by not trying - `CreatePostForm` showed the same "could not
+ * publish" for a muted account and for a dead radio, which is the report that produced this type
+ * (2026-09-21). **Classify at the THROW, as a type**, and let each screen map it to its own line.
+ *
+ * `mutedReason` rides along because the moderator wrote it for the reader and no screen has ever
+ * shown it. Nothing renders it yet - a moderator's free text is not a translated sentence and does
+ * not become one by being displayed - but the caller that decides to can now reach it without
+ * splitting a message.
+ */
+export class MutedError extends Error {
+  constructor(readonly mutedReason: string | null) {
+    super(`This account is restricted by moderation${mutedReason ? ` : ${mutedReason}` : '.'}`);
+    this.name = 'MutedError';
+  }
+}
+
+/**
+ * Throws {@link MutedError} when the current user is muted. Call at the start of any write action
+ * (post, comment, reaction).
+ *
+ * IT ASKS THE SERVER, so it can also reject with whatever `apiFetch` rejected with - a transport
+ * failure, an expired session. That is not a refusal and must not be read as one: only
+ * `instanceof MutedError` means "moderation said no".
  */
 export async function assertNotMuted(): Promise<void> {
   const { isMuted, mutedReason } = await getMuteStatus();
   if (!isMuted) return;
-  const suffix = mutedReason ? ` : ${mutedReason}` : '.';
-  throw new Error(`This account is restricted by moderation${suffix}`);
+  throw new MutedError(mutedReason);
 }
 
 /** Resets the cache (call after a moderation status change). */
