@@ -5340,6 +5340,35 @@ running.
 
 ## The harness itself
 
+### P3 - the phone's local debris cannot be swept, so every run ends on a line that says so (measured on A1 2026-09-08, still true 2026-09-21)
+
+`sweepDismissed` (`archive/dismiss.mjs`) clears the client-side half of a deleted throwaway group -
+the conversation a device keeps after the server row is tombstoned. **It cannot reach a Tauri
+client.** Its reader enumerates `indexedDB.databases()` for `CanariDB_<userId>`, and on
+`http://tauri.localhost` the only database is `emoji-picker-element-fr`: the native client keeps no
+conversation store there. So every pass ends with
+
+```
+A1 debris NOT swept: [dismiss] NO Canari conversation store at http://tauri.localhost
+```
+
+**THE MESSAGE IS CORRECT AND THE SITUATION IS NOT.** That sentence was written on 2026-09-08
+precisely because the previous one read as a chooser declining, and nobody asked why - while a group
+deleted seven hours earlier was still in that phone's sidebar, rendering under the PEER's name, which
+made `openConversation` ambiguous and cost NOTIF-1b three verdicts. The wording fixed the
+DIAGNOSIS. The debris is still unreachable, and a line printed on every single run is one its reader
+learns to skip - which is the exact failure the file's own docblock warns about for the 189 rows of
+2026-08-24.
+
+**WHAT CLOSES IT, AND WHY IT IS NOT A ONE-LINER.** The filter is `isGroupDebris(row.name)`, and the
+phone's DOM carries the PEER's name for such a row rather than the group's, so enumerating from the
+sidebar would not recognise the debris either - **the name has to come from somewhere that still has
+it**, which means the server's tombstoned rows, joined to what the phone shows, rather than a
+client-side scan. Until then the phone accumulates exactly what W1 and W2 no longer do.
+
+**IT IS P3 BECAUSE NOTHING HAS COST A VERDICT SINCE THE WORDING CHANGED**, not because the debris is
+harmless: the 2026-09-08 incident is what it costs when it is not read.
+
 ### P2 - the rig can express exactly TWO identities, and the third and fourth accounts now exist (measured 2026-09-10)
 
 `names.mjs` exports `OWNER_NAME` and `PEER_NAME`, and the counterpart helper is
