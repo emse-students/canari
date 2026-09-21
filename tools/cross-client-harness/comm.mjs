@@ -24,6 +24,7 @@ import {
   awaitAppSettled,
   awaitListed,
   clearOverlays,
+  collapseNavDrawer,
   evaluate,
   goto,
   reachCommunities,
@@ -203,6 +204,11 @@ export async function enterCommunities(cx) {
   await reachCommunities(cx);
   const debris = await clearOverlays(cx);
   await awaitAppSettled(cx);
+  // THE RAIL IS THIS PHASE'S FIRST OBSTACLE, and every COMM gesture goes through here - the same
+  // place `ensureChat` holds for the chat phase. LAST, so the client is handed back with the drawer
+  // down: `reachCommunities` answers "already there" without clicking whenever the client is
+  // already on /communities, and then NOTHING has parked the pointer. See `collapseNavDrawer`.
+  await collapseNavDrawer(cx);
   return debris;
 }
 
