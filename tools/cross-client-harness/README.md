@@ -366,7 +366,12 @@ reload that skips the PIN gate initialises before a session can attach, and on t
 line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
 actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
 
-**Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `state.mjs` `results.mjs`
+**Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs`
+
+`navstack.mjs` reads what the BACK button has left to go back to - `location.pathname`,
+`history.length` and the top entry's own state - which no screenshot and no log can give:
+"Back exits the app" and "Back steps to the list" draw the same artefacts. It writes nothing,
+so it is safe to run mid-check.
 operate the rig; `purge-devices.mjs` drives the real device panel (not the database); `ladder.mjs` `wsidle.mjs`
 `navclose.mjs` `synboot.mjs` `synopen.mjs` `synwatch.mjs` `ckpt.mjs` `burn.mjs` are the probes that
 took a specific measurement and were kept because the measurement is repeatable.

@@ -34,6 +34,30 @@ class MainActivity : TauriActivity() {
      */
     private var liveWebView: WebView? = null
 
+    /**
+     * THE HARDWARE BACK PRESS STEPS THE WEBVIEW'S HISTORY, AND WITHOUT THIS LINE NOTHING DECIDED
+     * THAT - Chromium did, when it felt like it.
+     *
+     * `WryActivity` registers an `OnBackPressedCallback` that asks `canGoBack()` and calls
+     * `goBack()`, which is the behaviour this app wants: every mobile overlay is a history entry
+     * (`historyOverlayStack`), so stepping the history IS closing the overlay. `TauriActivity`
+     * turns that callback off (`handleBackNavigation = false`), leaving the press to the system.
+     * With `targetSdk 36` the system back is the predictive-back dispatcher, and the only thing
+     * registered on it is the one Chromium's WebView installs for its own history - registered on
+     * its own schedule, which is not a contract.
+     *
+     * MEASURED ON A Mi 9T, Android 16, 2026-09-21, all three runs with `history.length 3` and an
+     * overlay entry on top, read through CDP at the moment of the press:
+     *
+     *   - one process stepped conversation -> list -> posts -> exit, the journey asked for;
+     *   - another exited on the FIRST press, and did so again at 3 s, 8 s and 20 s after the
+     *     landing, so it is not a settling race.
+     *
+     * Same build, same screen, same history - so the press had no owner. Turning the callback back
+     * on gives it one, in the only layer that can see both the WebView and the activity.
+     */
+    override val handleBackNavigation: Boolean = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         // The web layer reads system-bar insets via env(safe-area-inset-*) everywhere (status

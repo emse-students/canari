@@ -1778,6 +1778,46 @@ conversation is selected, through the SAME `selectConversation` call the notific
 like any other overlay. An initial read of this report suspected that mechanism was entirely absent;
 it is not - re-verify before adding a second, parallel one.
 
+### And the re-verification it asked for says the mechanism is there and the LANDING destroys it (2026-09-21)
+
+The paragraph above is right that nothing is missing, and it is the reason nothing was added. What it
+could not say is that the landing takes the entry away again.
+
+**Measured on an Android handset, app in the FOREGROUND on `/posts`.** The notification tap was
+reproduced exactly - same component, action, data and flags as the `PendingIntent` built in
+`CanariFirebaseMessagingService.kt` - and compared against the same conversation reached by hand:
+
+| journey | BACK 1 | BACK 2 | BACK 3 |
+| --- | --- | --- | --- |
+| by hand: posts -> chat tab -> row | list | posts | app exits |
+| notification tap | **app exits** | - | - |
+
+The route push was never the missing part: `[notifNav] routing to /chat` is in the log of the failing
+run.
+
+**THAT TABLE HAS TWO CAUSES IN IT AND CANNOT SEPARATE THEM**, which is worth knowing before it is
+quoted. The second is native and is not this page's: nothing in the app handled the Back press at
+all, so an intact history stack could still be walked out of the app. It is
+[on the mobile page](../mobile.md#the-hardware-back-press-had-no-owner-and-chromium-decided-it-2026-09-21),
+and the web fix below is necessary on its own - the overlay entry it saves is the one BACK 1 spends.
+
+**THE OVERLAP IS THE LANDING'S OWN.** Selecting pushes the overlay entry; `beforeNavigate` in
+`routes/+layout.svelte` DRAINS the overlay stack. The landing effect did both in one pass, so the
+navigation it had just started drained the entry it had just pushed - the JS stack lost it, the
+`pushState` survived as a ghost, and `onPopState`'s ghost-skip chain walked Back out of the app.
+
+So the overlap is deleted rather than reconciled. `landingStep`
+(`utils/chat/notificationRouting.ts`) makes the three states explicit - `route`, `await-arrival`,
+`select` - and **nothing is selected until the router says this page IS the target's page**. The
+effect reads `$page.url.pathname`, which is reactive, where it read `window.location.pathname`, which
+is not: that is what makes it re-run on arrival rather than waiting for the conversations map to
+mutate again.
+
+**And the second writer is gone.** `hooks.client.ts` routed as well, so one tap drove TWO navigations
+to the same route - one extra Back press for the reader - and its `catch` assigned
+`window.location.href`, a full document load that discards the back stack outright, on the one path
+whose purpose is to leave one behind. It now publishes the target and nothing else.
+
 ## A page read is merged into the list, never assigned over it
 
 `loadHistoryForConversation` used to END by assigning `getMessagesPage(id, key,
