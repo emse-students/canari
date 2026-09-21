@@ -35,6 +35,21 @@ const CASES = [
   [line('D', 'CanariFCM', 'onMessageReceived: type=message action=null groupId=0000'), 'explained'],
   [line('D', 'CanariFCM', 'App in foreground -> MLS handled by the foreground (WS), skip'), 'explained'],
   [line('D', 'CanariFCM', 'decryptProto: success type=text -> "MARKER"'), 'explained'],
+  // ── the channel-push path, named 2026-09-21 after NOTIF-18 landed PASS-DIRTY on it ──────────
+  // The route line's real separator is a U+2192 arrow; it is spelt here so the fixture is the line
+  // the phone actually emits, while the RULE matches it as `\S+` and this file's own source stays
+  // readable either way.
+  [line('D', 'CanariFCM', 'type=channel → groupId=6333a324-72ae-4c76-bf5e-b28ace09bb0c - background channel notification'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProto: graine key material, 1 seed(s)'), 'explained'],
+  [line('D', 'CanariFCM', 'absorbGraineSeeds: stored 1 seed(s) group=2513c207'), 'explained'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: notification title=Venue - #salon body=Nouveau message mentionsMe=false'), 'explained'],
+  // BOTH HALVES OF THE TWO-PUSH SEQUENCE ARE `notable`, NOT `explained`, AND THE PAIR IS THE POINT.
+  // A generic banner is the undecrypted state; it is legitimate only because the seed arrives on a
+  // second push and redraws it. A run showing the first without the second has a banner that stayed
+  // generic, and these two assertions are what keep that visible in a row that does not assert the
+  // redraw itself.
+  [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session=q1JykLP1'), 'notable'],
+  [line('I', 'CanariFCM', 'handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=6333a324 index=0'), 'notable'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
   // THE REACTION ARM'S OWN SUCCESS LINE, which left NOTIF-15 `PASS-DIRTY` over the very thing the
