@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-58 scripts.
+59 scripts.
 
 | script | what it is |
 |---|---|
@@ -53,6 +53,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
+| `messages.mjs` | THE APP'S OWN FRENCH, READ FROM ITS MESSAGE FILE - and nothing else. |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
 | `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
@@ -178,10 +179,11 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-25 scripts.
+26 scripts.
 
 | script | what it is |
 |---|---|
+| `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
@@ -259,4 +261,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-198 scripts in total.
+200 scripts in total.

@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un libelle passe au pluriel cassait le rig depuis douze jours, sans un mot
+
+`caption()` exigeait une chaine unique et accusait la cle d'avoir ete renommee : elle etait bien la,
+simplement devenue un pluriel (#478, 2026-09-09). Tout le panneau des membres levait donc une
+exception, et rien ne l'a dit avant qu'une ligne ne l'ouvre. Un `pluralPattern()` rend le pluriel
+matchable, les quatre lecteurs partagent un seul refus qui nomme la vraie cause, et
+`caption-selftest.mjs` verifie desormais chaque cle du rig contre l'aide qui la consomme -
+[README](tools/cross-client-harness/README.md).
+
 ### Fixed - modifier une reponse effacait la citation pour tout le monde
 
 L'evenement de modification ne transporte que le TEXTE, et la citation vit dans le corps stocke, le
