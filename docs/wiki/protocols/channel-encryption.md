@@ -262,13 +262,11 @@ Two things it does NOT survive unchanged:
   - a generic "new message in #channel" - already covers it, and that is the correct outcome rather
   than a new mechanism.
 
-  **THAT PARAGRAPH DESCRIBES A RACE, AND WHAT PRODUCTION DOES IS A STATE - corrected 2026-09-20.**
-  Only the FOREGROUND writes the mirror. A seed travels silent (`DELIVERY.keyMaterial`) and the
-  Android push service returns on `silent && !CALLS_ENABLED` before decrypting anything, so a
-  session minted while the app was not running is blind for EVERY message it seals, not for the
-  first - measured on a real report, three messages, two blind, 29 seconds apart. The seed IS
-  pushed to the phone; nothing there reads it. See the backlog entry
-  [the seed is pushed and the push service throws it away unread](../backlog.md#p2---the-seed-of-a-new-session-is-pushed-to-the-phone-and-the-push-service-throws-it-away-unread-so-every-notification-of-that-session-is-blind-until-the-app-is-opened-reported-by-the-user-measured-on-production-2026-09-20).
+  **THAT PARAGRAPH DESCRIBED A RACE, AND WHAT PRODUCTION DID IS A STATE - corrected 2026-09-20,
+  fixed on Android 2026-09-21.** The mirror had ONE writer, the foreground, so a session minted
+  while the app was not running was blind for EVERY message it sealed, not for the first. The push
+  service now writes it too, deciding on the frame's KIND rather than on `silent`: see
+  [§14](#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android).
 
 ### 4.10 Seeds must become durable, which they are not today
 
@@ -2083,3 +2081,84 @@ usable. On the server: the base lands under `baseEpoch + 1` in the same transact
 commit with no base advances the epoch alone, and a REJECTED commit stores nothing. On the client: the
 export happens before the merge and travels as the fifth argument, and a mismatched epoch abandons the
 join without submitting.
+
+## 14. The seed was pushed to a shut phone and the push service threw it away unread - FIXED 2026-09-21 (Android)
+
+The defect §4.9 corrected itself about, and its fix. Reported by the USER on Android, measured on
+production 2026-09-20: three messages in one salon in 50 seconds, the first carrying its plaintext
+in the shade and the next two reading `Nouveau message dans #general`. The sender rotated between
+the first and the second; the new session's seed was minted 21 seconds before the message it
+sealed, and never reached the reader's mirror at all.
+
+**NOTHING WAS LOST AND NOTHING WAS RACING.** The frame is durable, the rows render on the next
+foreground load, and the seed IS delivered - `DELIVERY.keyMaterial` is `{silent: true, durable:
+true}`, so `deliverQueuedFrame` arms an FCM push carrying the frame inline. The phone was sent the
+seed and dropped it. That is a STATE, not a window: it lasts until the reader next opens the app,
+so every message of that session is blind, not merely the first.
+
+### The one boolean that stood in for a classification
+
+`CanariFirebaseMessagingService` returned before any decrypt, at `if (silent && !CALLS_ENABLED)`,
+under a comment that was TRUE when it was written - *"nothing a silent frame's plaintext is read
+for is enabled"* - and that Graine falsified: the consumer of a silent frame's plaintext is
+`graine_seeds.json`. Past that return there was nothing to read it with either. `proto_fields.rs`
+recognised `AppMessage` fields 10-12 and answered a bare `{"ok": false}`, which is correct about
+the notification and silent about the contents.
+
+Both halves are the same mistake: **a classification carried as one boolean**. `silent` says "raise
+no banner". It cannot say "and there is nothing in here", and the next useful silent frame would
+have inherited the same silence by accident.
+
+### Deciding on the kind, from where the kind is already known
+
+Decrypting every silent frame instead would put an MLS load and the state lock behind every read
+receipt and every self-read dismissal - roughly 3-5 s each, serialised on the one push lane - to
+discover that the frame had nothing in it. *Never learn by failing what a fact could have told you.*
+
+The fact was already in the database. A distribution group's log carries seeds and NOTHING else
+(`DELIVERY.keyMaterial`'s own reasoning, §4.3), and `dm_groups` says which groups those are in
+`distributionWorkspaceId` / `distributionChannelId`. The push already reads that row for the
+conversation's name, so the discriminator costs one more `select` entry and travels in cleartext as
+`isKeyDistribution` - the same three-state shape as `isGroup`, absent meaning *the server does not
+know*, which is a different sentence from *no*.
+
+### The path, end to end
+
+| where | what it does |
+| --- | --- |
+| `messaging.service.ts` | reads the two `distribution*` columns it was already fetching the row for |
+| `push-payload.ts` | sends `isKeyDistribution`, or OMITS the key when the row could not be read |
+| Kotlin `onMessageReceived` | `silent && !CALLS_ENABLED && isKeyDistribution != true` still returns; a key-material frame goes on |
+| `background.rs` | passes a non-renderable answer through with a `reason` TOKEN instead of collapsing it to one refusal |
+| `proto_fields.rs` | reads fields 10 (one seed) and 12 (a BUNDLE, as a list) and attaches `{channelId, sessionId, seedB64, createdAt}` |
+| Kotlin `decryptProto` | switches on the same token, into `PushDecrypt.KeyMaterial` |
+| `lib.rs` JNI | `nativeStoreGraineSeeds` merges each seed through `merge_graine_seed` - the mirror writer the Tauri command already owned, factored out of it |
+
+**`ok` STAYS FALSE THROUGHOUT.** That is what the notification path reads, and a seed must still
+ring nobody. The seeds ride ON the refusal.
+
+**AND THE PUSH PATH STAYS READ-ONLY.** `decrypt_push_message_with_key` takes an immutable slice and
+no path: it cannot advance `mls.bin`, which the foreground owns. The one file this whole path
+writes is `graine_seeds.json` - a bounded cache of key material the device is already entitled to,
+rebuilt from the group's log whenever the app next runs.
+
+### What holds it
+
+Nothing between these files type-checks: three languages, and every seam is a string.
+
+- `background.rs`: a seed encrypted by one MLS client and opened by its peer through the push path
+  comes back as `reason=graine-key-material` with the seed intact - a real ratchet, not a
+  hand-built buffer. The read-only invariant is asserted by the SIGNATURE, not by a test of it.
+- `proto_fields.rs`: a rotation frame, a catch-up bundle of three (a first-match reader loses its
+  tail in silence), a seed missing what `derive_message_key` needs, a request named rather than
+  lumped with the unrecognised, and an ordinary message acquiring no kind.
+- `grainePushSeeds.test.ts`: the cross-language guardrail - the cleartext key, the two reason
+  tokens, the four seed field names, the mirror's `seed`/`createdAt` shape against the Kotlin
+  reader's own lookup, and the JNI symbol.
+
+### What is left
+
+The hardware row, and iOS. A salon message under a session minted while the app is KILLED must put
+the plaintext in the shade, and only the phone says so. iOS is worse and unmeasured: the NSE runs
+on an alert push and a silent `keyMaterial` frame does not wake it at all. See
+[backlog](../backlog.md).

@@ -126,6 +126,34 @@ describe('buildPushDataFields - the conversation kind, which used to be guessed 
   });
 });
 
+/**
+ * THE FRAME KIND, which `silent` cannot carry.
+ *
+ * `silent: 'true'` covers a read receipt, a self-read dismissal and a Graine seed alike, so the
+ * Android service either drops all three - and a device shut when a session was minted never gets
+ * its seed, leaving every message of that session showing the generic text - or decrypts all
+ * three, paying an MLS load and the state lock for frames with nothing to say. The server already
+ * knows which is which: a distribution group's log carries seeds and nothing else.
+ */
+describe('buildPushDataFields - a silent frame that has something to say', () => {
+  it('names a key-distribution group, so a silent frame from it is worth opening', () => {
+    const data = buildPushDataFields({ ...baseInput, silent: true, isKeyDistribution: true });
+    expect(data.silent).toBe('true');
+    expect(data.isKeyDistribution).toBe('true');
+  });
+
+  it('names an ordinary conversation, so its silent frames stay unopened', () => {
+    expect(
+      buildPushDataFields({ ...baseInput, silent: true, isKeyDistribution: false })
+        .isKeyDistribution
+    ).toBe('false');
+  });
+
+  it('OMITS THE KEY when the server could not read the row - absent is not false', () => {
+    expect('isKeyDistribution' in buildPushDataFields(baseInput)).toBe(false);
+  });
+});
+
 describe('buildApnsRequest', () => {
   it('builds a mutable-content alert for visible messages', () => {
     const data = buildPushDataFields(baseInput);

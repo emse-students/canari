@@ -325,7 +325,27 @@ pub(crate) fn store_graine_seed(
     created_at: i64,
 ) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    merge_graine_seed(&data_dir, &channel_id, &session_id, &seed_b64, created_at)?;
+    Ok(())
+}
+
+/// The merge itself, without a `tauri::AppHandle` - so the BACKGROUND PUSH PATH can reach it.
+///
+/// A seed arriving while the app is shut has no WebView to invoke the command above and no
+/// `AppHandle` to resolve the data directory, but it is the same write, under the same bound, into
+/// the same file: a second implementation would be a second bound, and the one that drifted would
+/// be the one nobody reads. The caller supplies the directory because that is the ONLY thing the
+/// two paths do not share - the foreground asks Tauri, the push service is handed it by Kotlin.
+///
+/// Returns how many older sessions the bound dropped.
+pub(crate) fn merge_graine_seed(
+    data_dir: &std::path::Path,
+    channel_id: &str,
+    session_id: &str,
+    seed_b64: &str,
+    created_at: i64,
+) -> Result<usize, String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("graine_seeds.json");
 
     let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
@@ -338,13 +358,13 @@ pub(crate) fn store_graine_seed(
         .as_object_mut()
         .ok_or("graine_seeds.json is not an object")?;
     let channel_entry = map
-        .entry(channel_id)
+        .entry(channel_id.to_string())
         .or_insert_with(|| serde_json::json!({}));
     let sessions = channel_entry
         .as_object_mut()
         .ok_or("channel entry is not an object")?;
     sessions.insert(
-        session_id,
+        session_id.to_string(),
         serde_json::json!({ "seed": seed_b64, "createdAt": created_at }),
     );
 
@@ -352,7 +372,7 @@ pub(crate) fn store_graine_seed(
 
     std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
     log::debug!("[GRAINE_MIRROR] stored seed, dropped {dropped} older session(s)");
-    Ok(())
+    Ok(dropped)
 }
 
 /// Keeps the newest [`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`] sessions, returning how many were

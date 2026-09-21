@@ -1,5 +1,13 @@
-//! Minimal protobuf helpers extracting the displayable text of a decrypted `AppMessage`.
-//! No external dependency: enough for background push notifications.
+//! Minimal protobuf helpers extracting what a decrypted `AppMessage` carries - the text a
+//! notification shows, and the key material a background push must absorb before it can show one.
+//!
+//! Hand-rolled rather than generated: this runs in the push service, where the WebView and the
+//! generated protobufjs codec do not exist. It reads the few fields a notification turns on and
+//! walks past everything else, so a proto change it does not know about costs it nothing.
+
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
+use crate::mobile::graine::GRAINE_SEED_BYTES;
 
 /// Reads a protobuf varint from `bytes` at position `pos`.
 /// Returns (value, next_position), or None if invalid.
@@ -63,6 +71,64 @@ pub fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u
         }
     }
     None
+}
+
+/// EVERY `field_num` field of wire type 2, in wire order - the repeated sibling of
+/// [`find_length_delimited_field`].
+///
+/// Protobuf spells a repeated message as the same tag written N times, so the "first" reader above
+/// silently answers a one-element view of an N-element list. That is the wrong answer for
+/// `GraineBundleMsg.seeds`, where dropping every seed but the first would lose exactly the history
+/// the bundle exists to carry, and it would lose it QUIETLY.
+///
+/// A malformed tail ends the scan and keeps what was already read: a bundle that was truncated in
+/// transit still holds usable seeds up to the break, and refusing all of them would turn a partial
+/// loss into a total one.
+pub fn find_repeated_length_delimited_field(bytes: &[u8], field_num: u32) -> Vec<Vec<u8>> {
+    let mut found = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let Some((tag, after_tag)) = read_varint(bytes, pos) else {
+            break;
+        };
+        let wire_type = tag & 0x7;
+        let field = (tag >> 3) as u32;
+        pos = after_tag;
+        match wire_type {
+            0 => match read_varint(bytes, pos) {
+                Some((_, next)) => pos = next,
+                None => break,
+            },
+            1 => {
+                if pos + 8 > bytes.len() {
+                    break;
+                }
+                pos += 8;
+            }
+            2 => {
+                let Some((len, after_len)) = read_varint(bytes, pos) else {
+                    break;
+                };
+                pos = after_len;
+                let end = pos + len as usize;
+                if end > bytes.len() {
+                    break;
+                }
+                if field == field_num {
+                    found.push(bytes[pos..end].to_vec());
+                }
+                pos = end;
+            }
+            5 => {
+                if pos + 4 > bytes.len() {
+                    break;
+                }
+                pos += 4;
+            }
+            _ => break,
+        }
+    }
+    found
 }
 
 /// Finds the first `field_num` field of wire type 0 (varint) in `bytes`.
@@ -189,6 +255,65 @@ fn ok_message_json(
 }
 
 /// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
+/// Every Graine seed an `AppMessage` carries, as `[{channelId, sessionId, seedB64, createdAt}]`.
+///
+/// TWO FIELDS, ONE SHAPE. A rotation arrives as a single `GraineMsg` (field 10); a catch-up arrives
+/// as a `GraineBundleMsg` (field 12) whose `seeds` is a repeated `GraineMsg`. They differ only in
+/// how many, so the caller is handed a list either way and never has to know which field it came
+/// from - the alternative is two absorb paths, and the second one is the one that rots.
+///
+/// `None` when the message carries neither field. An EMPTY list is a different answer: the field
+/// was there and held nothing usable, which is a malformed frame rather than an ordinary message.
+///
+/// A seed is skipped when it has no channel, no session, or no 32-byte seed - the three things
+/// without which `derive_message_key` could not be called at all. `created_at` is passed through as
+/// the proto states it, including absent-as-0: the mirror's bound sorts a session with no instant
+/// oldest, which is where a frame that could not date itself belongs.
+fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
+    let single = find_length_delimited_field(bytes, 10);
+    let bundle = find_length_delimited_field(bytes, 12);
+    if single.is_none() && bundle.is_none() {
+        return None;
+    }
+
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    let mut absorb = |graine: &[u8]| {
+        let channel_id = find_length_delimited_field(graine, 1)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let session_id = find_length_delimited_field(graine, 2)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let seed = find_length_delimited_field(graine, 3).unwrap_or_default();
+        let created_at = find_varint_field(graine, 5).unwrap_or(0) as i64;
+        if channel_id.is_empty() || session_id.is_empty() || seed.len() != GRAINE_SEED_BYTES {
+            log::debug!(
+                "[GRAINE_PUSH] unusable seed: channel={} session={} seed_len={}",
+                !channel_id.is_empty(),
+                !session_id.is_empty(),
+                seed.len()
+            );
+            return;
+        }
+        out.push(serde_json::json!({
+            "channelId": channel_id,
+            "sessionId": session_id,
+            "seedB64": BASE64.encode(&seed),
+            "createdAt": created_at,
+        }));
+    };
+
+    if let Some(graine) = &single {
+        absorb(graine);
+    }
+    if let Some(bundle) = &bundle {
+        for graine in find_repeated_length_delimited_field(bundle, 3) {
+            absorb(&graine);
+        }
+    }
+    Some(out)
+}
+
 pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     let message_id = find_length_delimited_field(bytes, 6)
         .and_then(|b| String::from_utf8(b).ok())
@@ -319,11 +444,26 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     // end, because "unrecognised" and "deliberately silent" would otherwise be the same outcome to
     // read - and the next `kind` added to the proto would inherit silence by accident instead of by
     // decision.
-    if find_length_delimited_field(bytes, 10).is_some()
-        || find_length_delimited_field(bytes, 11).is_some()
-        || find_length_delimited_field(bytes, 12).is_some()
-    {
-        return serde_json::json!({ "ok": false });
+    //
+    // SILENT IS NOT THE SAME AS WORTHLESS, and reading it as such is what made a salon notification
+    // blind for every message of a session minted while the app was shut. The seed reaches the
+    // phone inside one of these frames; nothing extracted it, so `lookupGraineSeed` missed and the
+    // banner fell back to "new message in #salon" until the app was next opened. So the frame still
+    // rings nobody - `ok` stays FALSE, which is the whole of what the notification path reads - and
+    // it now also states what it CARRIES, for the one caller whose job is to absorb it.
+    if let Some(seeds) = graine_seeds(bytes) {
+        return serde_json::json!({ "ok": false, "kind": "graine_key_material", "seeds": seeds });
+    }
+    if find_length_delimited_field(bytes, 11).is_some() {
+        // A REQUEST carries no key material - it asks for some. Named rather than lumped in with
+        // the unrecognised fall-through, so that "there was nothing to absorb" and "nobody looked"
+        // stay different readings.
+        return serde_json::json!({ "ok": false, "kind": "graine_request" });
+    }
+    if find_length_delimited_field(bytes, 12).is_some() {
+        // A BUNDLE whose `seeds` list was empty or unreadable. `graine_seeds` above already took
+        // every bundle that held anything.
+        return serde_json::json!({ "ok": false, "kind": "graine_key_material", "seeds": [] });
     }
 
     // CallMsg (field 7, WP-XP-5): WebRTC signaling rides the same AppMessage channel.
@@ -449,6 +589,45 @@ pub fn build_text_app_message(message_id: &str, sent_at: i64, content: &str) -> 
 /// `message_id`/`sent_at` on the envelope are left unset like every other control event
 /// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
 /// caller, so it reaches peers and our own other devices without ringing any of them.
+/// Builds a `GraineMsg` body: channel 1, session 2, seed 3, created_at 5.
+///
+/// TEST-ONLY, AND SHARED, because `background.rs` proves the same seed over a REAL MLS frame and a
+/// second encoder there could drift from this one - which is the whole failure mode a wire test is
+/// meant to catch.
+#[cfg(test)]
+pub(crate) fn build_graine_msg(
+    channel: &str,
+    session: &str,
+    seed: &[u8],
+    created_at: i64,
+) -> Vec<u8> {
+    let mut g = Vec::new();
+    write_string_field(&mut g, 1, channel);
+    write_string_field(&mut g, 2, session);
+    write_bytes_field(&mut g, 3, seed);
+    write_tag(&mut g, 5, 0);
+    write_varint(&mut g, created_at as u64);
+    g
+}
+
+/// Wraps [`build_graine_msg`] as `AppMessage.graine` (field 10) - one rotation seed on the
+/// wire, exactly as `seedDistribution.ts` sends it.
+#[cfg(test)]
+pub(crate) fn build_graine_app_message(
+    channel: &str,
+    session: &str,
+    seed: &[u8],
+    created_at: i64,
+) -> Vec<u8> {
+    let mut msg = Vec::new();
+    write_bytes_field(
+        &mut msg,
+        10,
+        &build_graine_msg(channel, session, seed, created_at),
+    );
+    msg
+}
+
 pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
     let data = serde_json::json!({ "at": at }).to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);
@@ -596,6 +775,105 @@ mod tests {
                 "AppMessage field {field} must be silent"
             );
         }
+    }
+
+    /// THE DEFECT THIS WHOLE PATH EXISTS FOR: the seed reaches the phone inside a frame nothing
+    /// read, so every notification of that session fell back to "new message in #salon". Silent is
+    /// not the same as worthless - the frame must still ring nobody AND state what it carries.
+    #[test]
+    fn a_rotation_frame_hands_over_its_seed_while_still_ringing_nobody() {
+        let seed = [7u8; 32];
+        let msg = build_graine_app_message("ch-1", "sess-1", &seed, 1_700_000_000_000);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], false, "key material must never ring");
+        assert_eq!(info["kind"], "graine_key_material");
+        let seeds = info["seeds"].as_array().expect("seeds array");
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0]["channelId"], "ch-1");
+        assert_eq!(seeds[0]["sessionId"], "sess-1");
+        assert_eq!(seeds[0]["createdAt"], 1_700_000_000_000i64);
+        // Base64 of the raw bytes, because that is the form `lookupGraineSeed` reads back out of
+        // graine_seeds.json and hands to `derive_message_key`.
+        assert_eq!(seeds[0]["seedB64"], BASE64.encode(seed));
+    }
+
+    /// A BUNDLE IS A LIST, AND READING ONLY ITS HEAD WOULD LOSE THE REST IN SILENCE. Three seeds
+    /// in, three seeds out, in wire order - this is what `find_repeated_length_delimited_field`
+    /// buys, and with the first-match reader in its place this test reports one.
+    #[test]
+    fn a_catch_up_bundle_hands_over_every_seed_it_carries() {
+        let mut bundle = Vec::new();
+        for (i, session) in ["s-1", "s-2", "s-3"].iter().enumerate() {
+            write_bytes_field(
+                &mut bundle,
+                3,
+                &build_graine_msg("ch-1", session, &[i as u8; 32], 1_000 + i as i64),
+            );
+        }
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 12, &bundle);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], false);
+        let seeds = info["seeds"].as_array().expect("seeds array");
+        let ids: Vec<&str> = seeds
+            .iter()
+            .map(|s| s["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["s-1", "s-2", "s-3"]);
+    }
+
+    /// A seed that could not be used is dropped HERE rather than written and failing later: the
+    /// three fields checked are exactly the ones `derive_message_key` cannot be called without.
+    #[test]
+    fn a_seed_missing_what_derivation_needs_is_not_handed_over() {
+        let cases: [(&str, Vec<u8>); 3] = [
+            ("no channel", build_graine_msg("", "sess-1", &[1u8; 32], 1)),
+            ("no session", build_graine_msg("ch-1", "", &[1u8; 32], 1)),
+            // 16 bytes is a plausible-looking key and a useless one: HKDF would answer, and the
+            // message would not open. Length is the only thing that separates them here.
+            (
+                "short seed",
+                build_graine_msg("ch-1", "sess-1", &[1u8; 16], 1),
+            ),
+        ];
+        for (what, body) in cases {
+            let mut msg = Vec::new();
+            write_bytes_field(&mut msg, 10, &body);
+            let info = extract_full_message_info(&msg);
+            assert_eq!(info["kind"], "graine_key_material", "{what}");
+            assert_eq!(
+                info["seeds"].as_array().map(|a| a.len()),
+                Some(0),
+                "{what} should have been refused"
+            );
+        }
+    }
+
+    /// A REQUEST carries no key material, and that is a different fact from "nobody looked". The
+    /// absorber reads `kind`, so an unnamed frame and an empty one must not arrive as one answer.
+    #[test]
+    fn a_seed_request_is_named_rather_than_left_unrecognised() {
+        let mut body = Vec::new();
+        write_string_field(&mut body, 1, "ws-1");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 11, &body);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], "graine_request");
+        assert!(info["seeds"].is_null(), "a request has no seeds to absorb");
+    }
+
+    /// An ordinary message must not acquire a `kind` - the absorber would then be handed every
+    /// text frame in the app to look through.
+    #[test]
+    fn an_ordinary_message_carries_no_absorbable_kind() {
+        let msg = build_text_app_message("m-1", 1_700_000_000_000, "bonjour");
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], true);
+        assert!(info["kind"].is_null());
     }
 
     #[test]
