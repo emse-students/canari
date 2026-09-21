@@ -20,6 +20,22 @@ deja prouvee de la puce de mention.
 [design-reference](docs/wiki/frontend/design-reference.md#31-a-hashtag-named-a-colour-on-a-surface-whose-colour-it-could-not-know).
 
 ### Fixed - la reponse par glissement n'a jamais fonctionne : un drapeau que rien n'ecrivait
+### Fixed - un groupe sans nom arrivait par notification comme une conversation privee
+
+Le serveur envoyait `groupName: ''` pour trois choses a la fois - un DM, un groupe que personne n'a
+nomme, et une ligne que la requete n'a pas pu lire - et les quatre lecteurs (web, Kotlin, Swift,
+ObjC++) en deduisaient le type. Mesure en production : **467 groupes sur 1433 n'ont aucun nom, dont
+374 au-dela de l'epoque MLS 0**. Le type voyage desormais dans son propre champ, absent quand le
+serveur ne sait pas.
+[mobile](docs/wiki/frontend/mobile.md#the-kind-of-conversation-is-its-own-field-because-a-name-could-never-carry-it-2026-09-21).
+
+### Fixed - les # etaient jaunes sur jaune, et sous le seuil de contraste sur cinq surfaces sur six
+
+Un hashtag nommait une couleur ambre sur une bulle dont il ne peut pas connaitre le fond : 1,13:1
+dans une bulle sortante en sombre, 1,68:1 en clair, et sous 4,5:1 partout sauf sur deux surfaces.
+Dans un message il prend desormais la couleur de la bulle ; dans une publication il prend la paire
+deja prouvee de la puce de mention.
+[design-reference](docs/wiki/frontend/design-reference.md#31-a-hashtag-named-a-colour-on-a-surface-whose-colour-it-could-not-know).
 
 `MessageBubble` gardait `supportsHover`, initialise a `true` et affecte par rien, donc le garde-fou
 du geste repondait non sur tous les appareils depuis le 2026-03-26 - reponse ET reaction par

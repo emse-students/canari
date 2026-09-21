@@ -822,7 +822,9 @@ notifyInbound (useMessaging)
 Three things the seam carries, each load-bearing:
 
 - **`groupName` is EMPTY for a direct message**, which is the server's own contract in
-  `push-payload.ts`. Both triggers then render identically without being told which they are.
+  `push-payload.ts`. Both triggers then render identically without being told which they are. It is
+  a LABEL and not a discriminator since 2026-09-21 - `isGroup` travels beside it and answers the
+  kind; see *The kind of conversation is its own field* below.
 - **`sentAt` is the SENDER's instant**, and it is what the builder de-duplicates on - the instant
   ALONE, never the instant and the text. `MessagingStyle` re-injects the messages already in the
   shade, so a second trigger for one message recognises it there and refreshes without adding a line
@@ -1107,9 +1109,43 @@ Both platforms write decrypted message previews to `fcm_message_cache.ndjson` af
 
 That extra hop is not optional: an app extension has its own data container, so `app_data_dir` resolved inside the NSE is a directory the app can never read. The App Group is the only storage the two processes share — the same reason `mls.bin` is mirrored there. The NSE also writes with `completeFileProtectionUntilFirstUserAuthentication`, because it runs on a locked device where the default protection class cannot be written.
 
-The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `groupName`, `content`, `timestamp`, `type`, plus optional `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
+The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `groupName`, `content`, `timestamp`, `type`, plus optional `isGroup`, `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
 
-**`groupName` IS THERE BECAUSE THE CONSUMER BUILDS A CONVERSATION ROW, AND A SENDER IS NOT A CONVERSATION (added 2026-09-15).** `consumeFcmCache` writes a placeholder conversation row alongside the message - it has to, the message has a foreign key to `conversations(id)` - and it labelled that row with `senderName`. For a DM the two coincide, which is why it read as correct for as long as it did; for a group it named the conversation after whoever spoke first. Measured on a two-person group: the sidebar then held two rows carrying the same person's name, the DM and the group, with nothing on either to tell them apart. The push had carried the group's name the whole time (`buildPushDataFields.groupName`, empty for a DM by contract, which makes it the discriminator as well as the label) - the two native writers simply did not copy it across. `placeholderNameForPushEntry` is the one place that decides the label now, and it answers the older-file case too: the cache is a file on disk that survives an app update, so an entry queued before this change carries no `groupName` at all and falls back to what it always did.
+**`groupName` IS THERE BECAUSE THE CONSUMER BUILDS A CONVERSATION ROW, AND A SENDER IS NOT A CONVERSATION (added 2026-09-15).** `consumeFcmCache` writes a placeholder conversation row alongside the message - it has to, the message has a foreign key to `conversations(id)` - and it labelled that row with `senderName`. For a DM the two coincide, which is why it read as correct for as long as it did; for a group it named the conversation after whoever spoke first. Measured on a two-person group: the sidebar then held two rows carrying the same person's name, the DM and the group, with nothing on either to tell them apart. The push had carried the group's name the whole time (`buildPushDataFields.groupName`, empty for a DM by contract) - the two native writers simply did not copy it across. `placeholderNameForPushEntry` is the one place that decides the label now, and it answers the older-file case too: the cache is a file on disk that survives an app update, so an entry queued before this change carries no `groupName` at all and falls back to what it always did.
+
+### The kind of conversation is its own field, because a name could never carry it (2026-09-21)
+
+**`groupName` was the label AND the discriminator, and that was recorded here as a virtue** - one
+fact rather than two, `''` meaning DM by the server's own contract. It is wrong, and a `GROUP BY`
+on production settles it in seconds: `''` covers THREE states.
+
+| what the server means | what it sent | what every reader concluded |
+| --- | --- | --- |
+| a DM, which has no name by design | `''` | DM - correct |
+| a group whose `name` column is null | `''` | **DM, with its first sender as the peer** |
+| a group row the query could not read | `''` (the `catch` swallowed it, silently) | **DM, same** |
+
+**Measured on production, 2026-09-21: 467 of 1433 ordinary groups carry no name at all - 33% - and
+374 of those have advanced past MLS epoch 0**, so they are established conversations rather than
+abandoned rows. None had queued traffic at the moment of the count, which is why no user has
+reported it; the state is a third of the population and one message away from being drawn wrong.
+
+The discriminator was never missing. `messaging.service` already SELECTs `isGroup` and threw it
+away in a ternary - *never learn by failing what a fact could have told you*, in its quietest form.
+It travels now as its own key, and **it is OMITTED rather than sent `false` when the server cannot
+read the row**: absent is "no information", which a reader must treat differently from "DM". The
+failed read also logs, where it used to be an empty `catch`.
+
+Four readers took the old inference and all four are updated: the web placeholder builder
+(`placeholderIdentityForPushEntry`, which consults `isGroup` first and keeps the `groupName`
+reading for cache files written by older builds), the Kotlin writer, the Swift NSE writer, and the
+ObjC++ writer - which carried NEITHER field until this change, so the killed-app and
+foregrounded-app iOS paths were writing rows with no group name at all.
+`fcmCacheFields.test.ts` now pins the key on all three writers.
+
+**The notification TITLE still derives `isGroup` from the name**, in Kotlin, Swift and ObjC++
+alike, and that is deliberate: with no group name there is nothing else to title the banner with,
+so knowing the kind would change nothing there.
 
 **The label still has to be REPAIRABLE, which is the other half.** The comment beside the write used to promise that the Welcome would overwrite it - true for a group the device is joining, vacuous for one it is already in, which is every group a push can arrive for. A group's name reaches a device by exactly two routes: the `groupRenamed` system message, which a device offline at the time never sees, and the server's group list. So `ensureConversationForServerGroup` now relabels a group row it finds already present instead of returning `existed` and leaving it alone - groups only, since a DM's server-side name is the canonical `self::peer` key and not a label. **AND THE SWEEP HAS TO REACH THAT BRANCH, WHICH IT DID NOT UNTIL 2026-09-15**: `discoverMissingGroups` called the seam in a loop over the groups MISSING locally, so the only branch it ever took was the one that creates a row, and a second loop below silently adopted the server name for the groups that already had one. It now calls the seam for every active server group - the `existed` branch is a map scan, no round trip - and the loop below carries the avatar only. See [chat-delivery](../services/chat-delivery.md).
 

@@ -2083,6 +2083,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         runSerializedWithWakeLock("fcm_decrypt") {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
+            // THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. Empty meant a DM, a group
+            // nobody named, and a group row the server could not read - three states as one, and
+            // production says the middle one is a third of all groups. Null here means the push did
+            // not say (an older server, or one that logged a failed read), and the consumer must
+            // then fall back to what it did before rather than invent an answer.
+            val isGroup: Boolean? = data["isGroup"]?.let { it == "true" }
             val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
             val senderId        = data["senderId"] ?: ""
             val queuedMessageId = data["queuedMessageId"]
@@ -2282,7 +2288,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
             if (decrypted != null) {
-                writeFcmCache(groupId, senderId, senderName, groupName, decrypted)
+                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
             }
 
             val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -3365,6 +3371,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
         senderName: String,
         groupName: String,
+        isGroup: Boolean?,
         msg: DecryptedMessage,
     ) {
         if (msg.messageId.isEmpty()) {
@@ -3379,9 +3386,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // THE GROUP'S OWN NAME, CARRIED BECAUSE THE APP CANNOT INVENT IT. The web side writes a
             // placeholder conversation row from this entry, and with no group name it labelled the
             // row with the SENDER - so a two-person group sat in the sidebar under the other
-            // member's name, beside the real DM with that same person. Empty for a DM by the
-            // server's own contract, which is what makes it the discriminator as well as the label.
+            // member's name, beside the real DM with that same person. It is a LABEL and nothing
+            // more since 2026-09-21: `isGroup` below is the discriminator it used to double as.
             put("groupName",  groupName)
+            // OMITTED WHEN THE PUSH DID NOT SAY. An absent key means "no information", which is a
+            // different sentence from `false`, and the consumer reads the two differently.
+            isGroup?.let { put("isGroup", it) }
             put("content",    msg.text)
             put("timestamp",  msg.sentAt)
             put("type",       msg.type)

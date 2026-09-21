@@ -2687,6 +2687,7 @@
   "asso_edit_logo_upload_error": "Logo upload failed",
   "asso_edit_color_picker_label": "Custom color",
   "conversation_media_fallback_alt": "media",
+  "conversation_unnamed_group": "Group",
   "brand_subtitle": "The Engineers Network",
   "tag_autocomplete_no_create_hint": "Choose an existing tag from the list.",
   "profile_pref_sounds_aria": "Toggle sound effects",
