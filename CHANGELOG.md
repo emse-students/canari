@@ -38,6 +38,15 @@ acces - sans porter la moindre reinitialisation. `isFirstSetup` vient du SERVEUR
 deux issues du verrou, l'echec vient du DISQUE, et rien n'interdisait aux deux d'etre vrais en meme
 temps. Les trois gestionnaires d'echec passent desormais par un seul, qui lit le code type.
 [auth](docs/wiki/frontend/modules/auth.md#a-damaged-local-state-was-called-a-first-connection-and-that-is-what-hid-the-way-out---fixed-2026-09-21).
+### Fixed - un onglet pouvait se mettre en file derriere lui-meme et rester en lecture seule
+
+Le verrou de leader est pris une fois et garde jusqu'a la fermeture ; une seconde connexion dans la
+meme page le redemandait, s'entendait repondre "pris" par sa propre detention, et se declarait
+suiveur pour toujours - banniere "autre onglet", hors-ligne, aucune conversation, sur un navigateur
+qui n'avait qu'un onglet. "Prendre la main" ne pouvait rien : un BroadcastChannel ne se livre jamais
+a lui-meme. L'election est desormais propre au document, et un onglet qui passe la main se remet
+dans la file.
+[mls-protocol](docs/wiki/protocols/mls-protocol.md#a-tab-queued-behind-itself-and-went-read-only-for-ever---fixed-2026-09-21).
 
 ### Fixed - retour arriere apres une notification quittait l'application au lieu de remonter
 

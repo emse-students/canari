@@ -10,7 +10,6 @@ export {
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
   requestLeadershipTakeover,
-  releaseLeadership,
   type MessageHandlerDeps,
   type ConnectionDeps,
   type SyncAfterConnectDeps,

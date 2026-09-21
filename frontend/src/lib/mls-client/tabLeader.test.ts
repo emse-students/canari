@@ -1,9 +1,11 @@
 import {
   initTabLeadershipAsync,
   getIsTabLeader,
+  releaseLeadership,
   resetTabLeaderStateForTests,
   getTabLeaderElectionIdForTests,
   getTabLeadership,
+  setTabLeaderPromotedHandler,
   whenTabLeadershipDecided,
 } from './tabLeader';
 
@@ -268,6 +270,175 @@ describe('tabLeader: every branch of the election decides', () => {
       } finally {
         restore();
       }
+    }
+  });
+});
+
+/**
+ * A SECOND ELECTION IN THE SAME DOCUMENT MUST NOT QUEUE THE TAB BEHIND ITSELF.
+ *
+ * MEASURED ON W2, 2026-09-21, ON THE RUNNING PRODUCT. `navigator.locks.query()` answered with
+ * `canari-tab-leader` HELD by client `BCDAE226...` and PENDING for client `BCDAE226...` - the
+ * same client id on both sides, in a profile with exactly one page. A `clientId` names a
+ * document, so that document was waiting for a lock it already held, and the only release is
+ * `beforeunload`. The screen said *"Messagerie chiffree active dans un autre onglet"*, the header
+ * said *Hors-ligne*, and no community was ever listed - permanently, on a client with no other tab.
+ *
+ * "Prendre la main" cannot rescue it either, and that is not a second defect but the same one seen
+ * from the other end: `requestLeadershipTakeover` posts `request_takeover` on a
+ * `BroadcastChannel`, and a BroadcastChannel never delivers to the context that posted. The only
+ * tab that could release the lock is the one asking for it.
+ *
+ * HOW A DOCUMENT REQUESTS TWICE. `initTabLeadershipAsync` has one production caller,
+ * `sessionAuth.ts`'s login, and a login runs more than once per document: a PIN refused, a reset,
+ * a new PIN is two. Run 1 takes the lock with `ifAvailable` and holds it until unload; run 2
+ * probes, is told `null` BY ITS OWN HOLD, calls `decide('follower')` - overwriting run 1's
+ * answer - and queues a blocking request that can never be granted.
+ *
+ * THE ELECTION IS A PROPERTY OF THE DOCUMENT, NOT OF A LOGIN, so it runs once and later callers
+ * get the standing answer. The stub below is the only one in this file that MODELS THE LOCK rather
+ * than the two answers: the defect is invisible to a stub that cannot be held twice.
+ */
+describe('tabLeader - the election runs once per document', () => {
+  const logs: string[] = [];
+  const log = (m: string) => logs.push(m);
+
+  beforeEach(() => {
+    logs.length = 0;
+    resetTabLeaderStateForTests();
+  });
+
+  afterEach(() => {
+    resetTabLeaderStateForTests();
+    vi.restoreAllMocks();
+  });
+
+  /** One real lock: whoever holds it makes every later `ifAvailable` probe answer `null`. */
+  function stubRealLock(): {
+    pending: () => number;
+    grantPending: () => void;
+    restore: () => void;
+  } {
+    const orig = navigator.locks;
+    let held = false;
+    let pending = 0;
+    let grant = () => {};
+    const request = (
+      _name: string,
+      opts: { ifAvailable?: boolean },
+      cb: (lock: { mode: string } | null) => unknown
+    ) => {
+      if (opts?.ifAvailable) {
+        if (held) return Promise.resolve(cb(null));
+        held = true;
+        return Promise.resolve(cb({ mode: 'exclusive' }));
+      }
+      // A blocking request against a lock nobody will release is exactly what the defect leaves.
+      pending += 1;
+      grant = () => {
+        pending -= 1;
+        void cb({ mode: 'exclusive' });
+      };
+      return new Promise<void>(() => {});
+    };
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    return {
+      pending: () => pending,
+      grantPending: () => grant(),
+      restore: () => Object.defineProperty(navigator, 'locks', { configurable: true, value: orig }),
+    };
+  }
+
+  it('a second call returns the standing answer instead of re-running the election', async () => {
+    const locks = stubRealLock();
+    try {
+      expect(await initTabLeadershipAsync(log)).toBe(true);
+      expect(await initTabLeadershipAsync(log)).toBe(true);
+      expect(getTabLeadership()).toBe('leader');
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('and never queues the document behind a lock it is already holding', async () => {
+    const locks = stubRealLock();
+    try {
+      await initTabLeadershipAsync(log);
+      await initTabLeadershipAsync(log);
+      await initTabLeadershipAsync(log);
+
+      // THE MEASUREMENT, IN ITS UNIT FORM: held and pending by the same client is the state the
+      // running product was found in, and one pending request is all it takes.
+      expect(locks.pending()).toBe(0);
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('does not demote a leader that is already serving', async () => {
+    const locks = stubRealLock();
+    try {
+      await initTabLeadershipAsync(log);
+      await initTabLeadershipAsync(log);
+
+      // The follower banner and read-only mode both read this, and a leader that calls itself a
+      // follower takes the whole session offline with no other tab to hand it to.
+      expect(getIsTabLeader()).toBe(true);
+      expect(await whenTabLeadershipDecided()).toBe('leader');
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('a tab that hands leadership over gets back in the queue', async () => {
+    // THE SAME END STATE FROM THE OTHER DIRECTION. `releaseLeadership` gave the lock away and
+    // asked for nothing back, so once the tab that took over closed, this one was never told - it
+    // stayed read-only and offline for the rest of its life, with the same banner and the same
+    // absence of any explanation.
+    const locks = stubRealLock();
+    try {
+      await initTabLeadershipAsync(log);
+      expect(getIsTabLeader()).toBe(true);
+      expect(locks.pending()).toBe(0);
+
+      releaseLeadership();
+
+      expect(getTabLeadership()).toBe('follower');
+      expect(locks.pending()).toBe(1);
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('and is promoted when that request is granted, rather than staying a follower', async () => {
+    const locks = stubRealLock();
+    let promoted = 0;
+    setTabLeaderPromotedHandler(() => {
+      promoted += 1;
+    });
+    try {
+      await initTabLeadershipAsync(log);
+      releaseLeadership();
+      locks.grantPending();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(getTabLeadership()).toBe('leader');
+      expect(promoted).toBe(1);
+    } finally {
+      setTabLeaderPromotedHandler(null);
+      locks.restore();
+    }
+  });
+
+  it('two concurrent calls share ONE election rather than racing for the lock', async () => {
+    const locks = stubRealLock();
+    try {
+      const [a, b] = await Promise.all([initTabLeadershipAsync(log), initTabLeadershipAsync(log)]);
+
+      expect([a, b]).toEqual([true, true]);
+      expect(locks.pending()).toBe(0);
+    } finally {
+      locks.restore();
     }
   });
 });
