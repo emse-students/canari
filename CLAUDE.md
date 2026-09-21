@@ -227,9 +227,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    on a clean pass ([backlog](docs/wiki/backlog.md)).
 2. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES; THE PEER-SIDE
    HALF IS SHIPPED AND UNMEASURED.** All three reclaims here are refuted (`0 expired`); `notAfter`
-   and the adder's termination ship, and the 19 pending rows / 2 stuck joins predate BOTH - **one
-   re-measurement on a deployed build is what is left** of the POOL half; the EXPIRY half CLOSED on
-   prod 2026-09-18 - 0 undated rows of 31,636, 3 proven dead and refused, 677 unjudgeable ([backlog](docs/wiki/backlog.md)).
+   and the adder's termination ship, and the 19 pending rows / 2 stuck joins predate BOTH. **One
+   re-measurement on a deployed build is what is left**; the EXPIRY half is CLOSED ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -256,24 +255,28 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's
     width, THREE of the ELEVEN 2026-09-18 REPORTS, and TWO CHANGES SHIPPED 2026-09-20 ON GATES AND
     TESTS AND NEVER ONCE RENDERED - the phone agenda's rolling window, the forms responses table** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it), [forms](docs/wiki/frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)).
-11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+11. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
+    anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE
+    observation from the reporter is owed**. A deploy destroys prod's only log, which is why the
+    original attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
+12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-12. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
     and audit in [backlog](docs/wiki/backlog.md).
-13. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+14. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
-14. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+15. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-15. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
+16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-16. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing
+17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
-17. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
+18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-18. **P2 - THE SEED A SHUT PHONE IS PUSHED IS NOW READ (Android, #899) AND NOTHING HAS WATCHED IT DO SO.** The push decides on the frame's KIND, named in
+19. **P2 - THE SEED A SHUT PHONE IS PUSHED IS NOW READ (Android, #899) AND NOTHING HAS WATCHED IT DO SO.** The push decides on the frame's KIND, named in
     cleartext by the server. TWO open: the hardware row, and iOS - whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-19. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE
+20. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE
     reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half. **The BUNDLED
     EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
 
