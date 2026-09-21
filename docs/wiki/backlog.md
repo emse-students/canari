@@ -3266,7 +3266,7 @@ about any other.
 | --- | --- | --- |
 | DM or group (per-conversation MLS ratchet) | **FAIL** - LIFE-2, no notification at all. **Cause found and fixed 2026-09-05**; owed a re-run | **PASS-DIRTY** - LIFE-3, and it passes *because* a killed app cannot ACK |
 | Community salon (the community's shared key) | **PASS, measured 2026-09-05** - full plaintext in the shade in 2 244 ms, seed mirrored | **UNMEASURED** |
-| Community salon, seed NEVER mirrored | **FAIL, and the cause is found** - the seed IS pushed and the push service drops it unread, so the banner is blind for EVERY message of that session; production 2026-09-20, **FIXED on Android 2026-09-21** and [owed the row that proves it](#p2---the-seed-that-reaches-a-shut-phone-is-now-read-nothing-has-watched-it-do-so-and-ios-still-does-not-wake-for-it-android-half-fixed-2026-09-21) | same cause, same fix, **owed the row** |
+| Community salon, seed NEVER mirrored | **FAIL, and the cause is found** - the seed IS pushed and the push service drops it unread, so the banner is blind for EVERY message of that session; production 2026-09-20, **FIXED on Android 2026-09-21** and [owed the row that proves it](#p2---nothing-has-ever-watched-a-shut-phone-absorb-a-seed-and-on-ios-nothing-wakes-to) | same cause, same fix, **owed the row** |
 
 **THE DM ROW'S CAUSE IS ESTABLISHED AND IS NOT THIS ENTRY'S.** It is
 [the backgrounded-phone P1](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05):
@@ -3310,7 +3310,7 @@ rows with the invitation question in
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
 
-### P2 - THE SEED THAT REACHES A SHUT PHONE IS NOW READ; NOTHING HAS WATCHED IT DO SO, AND iOS STILL DOES NOT WAKE FOR IT (Android half FIXED 2026-09-21)
+### P2 - NOTHING HAS EVER WATCHED A SHUT PHONE ABSORB A SEED, AND ON iOS NOTHING WAKES TO
 
 The defect, its cause, the path that fixes it and the tests that hold it are
 [channel-encryption section 14](protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android),
