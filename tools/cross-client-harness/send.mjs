@@ -21,7 +21,6 @@
  *   --marker  a token to send INSTEAD of composing one, when the caller wants to grep for it later
  */
 import {
-  APP_TAB,
   awaitMessage,
   awaitRequest,
   client,
@@ -30,7 +29,7 @@ import {
   requestsSince,
   send,
 } from './chat.mjs';
-import { armIfPhone, resolveDevice } from './device.mjs';
+import { armIfPhone, resolveDevice, tabMatchFor } from './device.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -52,7 +51,12 @@ const label = `send:${target.device ?? target.port}`;
 
 await armIfPhone(target, label);
 
-const cx = await client(target.port, APP_TAB);
+// THE NEEDLE IS RESOLVED, NEVER SPELT. This said `APP_TAB` - the estate host - which is correct
+// for a browser profile and wrong for the phone, whose app is served from `tauri.localhost`. So
+// `--android` could not reach a target at all and died on "no target on 9333 matching
+// localhost:8081", naming a page that was plainly open. `logs.mjs` and `shot.mjs` already took the
+// resolver; this atom was the one that had not. Measured 2026-09-21 while driving A1.
+const cx = await client(target.port, tabMatchFor(target));
 await ensureChat(cx);
 if (to) {
   console.log(`[${label}] opening ${JSON.stringify(to)}`);

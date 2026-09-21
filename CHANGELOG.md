@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Verified - la reponse par glissement fonctionne sur un vrai ecran, et l'atome d'envoi revoit le telephone
+
+APK debug construit depuis `33c064687`, installe sur le Mi 9T, pilote en `adb shell input swipe` :
+un glissement long remplit le composeur de reponse, un glissement court ne fait rien - donc le seuil
+est vivant sur le materiel, ce qu'un DOM simule ne peut pas affirmer. `send.mjs` cherchait l'hote de
+l'estate dans les onglets, absent sur le telephone ou l'app est servie par `tauri.localhost` ; il
+prend le resolveur que `logs.mjs` et `shot.mjs` utilisaient deja.
+[chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
 ### Fixed - la reponse par glissement n'a jamais fonctionne : un drapeau que rien n'ecrivait
 
 `MessageBubble` gardait `supportsHover`, initialise a `true` et affecte par rien, donc le garde-fou
