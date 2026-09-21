@@ -5,6 +5,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
+    exportLabels,
     exportSubmissions,
     getForms,
     getSubmissions,
@@ -91,7 +92,10 @@
 
   async function handleExport(id: string) {
     try {
-      await downloadDecryptedFile(await exportSubmissions(id), `submissions_${id}.xlsx`);
+      await downloadDecryptedFile(
+        await exportSubmissions(id, exportLabels()),
+        `submissions_${id}.xlsx`
+      );
     } catch {
       showToast(m.form_list_error_export());
     }

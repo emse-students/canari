@@ -1866,6 +1866,8 @@
   "form_list_responses_empty": "Aucune réponse pour l'instant.",
   "form_list_col_date": "Date & heure",
   "form_list_col_name": "Nom",
+  "form_export_col_first_name": "Prénom",
+  "form_export_col_last_name": "Nom de famille",
   "form_list_col_status": "Statut",
   "form_list_col_amount": "Montant",
   "form_list_delete_response_title": "Supprimer cette réponse",

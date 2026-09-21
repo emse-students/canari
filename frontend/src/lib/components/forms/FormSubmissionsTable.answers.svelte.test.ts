@@ -12,7 +12,7 @@
  * header and not to it - and a short colspan does not throw, it silently leaves the panel ending
  * mid-table. It is the arithmetic here that ties the two together.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { FormItem, Submission } from '$lib/forms/api';
 import FormSubmissionsTable from './FormSubmissionsTable.svelte';
@@ -20,9 +20,37 @@ import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
 
+/**
+ * HAPPY-DOM LAYS NOTHING OUT: every element reports width 0, so no cell could ever be clipped and the
+ * control that depends on it would be disabled in every test whatever the text.
+ *
+ * These stubs ARE the browser for this file. A cell is clipped past `CELL_CHARS` characters, which
+ * is a stand-in for the measurement `reportClipped` makes - and it lives HERE, in the test, rather
+ * than in the component, which is the whole point: the app must not know a number like this.
+ */
+const CELL_CHARS = 25;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    }
+  );
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(CELL_CHARS);
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(
+    function (this: HTMLElement) {
+      return (this.textContent ?? '').trim().length;
+    }
+  );
+});
+
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const item = (over: Partial<FormItem> = {}): FormItem => ({
@@ -37,8 +65,8 @@ const submission = (over: Partial<Submission> = {}): Submission => ({
   id: 's1',
   formId: 'f1',
   userId: 'u1',
-  firstName: 'Mael',
-  lastName: 'DEJARDIN',
+  firstName: 'Ada',
+  lastName: 'LOVELACE',
   email: null,
   answers: {},
   totalPaid: 0,
@@ -166,13 +194,25 @@ describe('the responses table, rendered', () => {
     expect(control.disabled).toBe(true);
   });
 
-  // The same row, one answer too wide for its cell: the cell truncates it, so the panel is the only
-  // place it can be read in full and the control comes back.
-  it('opens a row again as soon as one answer is too long for its cell', () => {
+  // The same row, one answer the cell is clipping: the panel is the only place it can be read in
+  // full, so the control comes back. What decides it is the CELL's report - `scrollWidth >
+  // clientWidth`, stubbed above - and never the answer's length, which is what the component
+  // counted until 2026-09-22 and what gave a reader rows that expanded beside rows that did not.
+  it('opens a row again as soon as its cell cannot show an answer in full', () => {
     const libre = item({ id: 'libre', label: 'Ton idee ?', type: 'short_text' });
     render([libre], [submission({ answers: { libre: 'a'.repeat(60) } })]);
     const control = table().querySelector('tbody button') as HTMLButtonElement;
     expect(control.disabled).toBe(false);
+  });
+
+  // The cell is bounded by a DIV, not by the cell: `max-width` on a `<td>` is a suggestion under
+  // auto table layout and the browser widens it anyway, so the column was never bounded, `truncate`
+  // never fired, and the panel repeated a line the reader could already see in full.
+  it('bounds an answer column inside the cell, where max-width is honoured', () => {
+    render([item({ id: 'asso', label: 'Asso' })], [submission({ answers: { asso: 'BDS' } })]);
+    const cell = table().querySelector('tbody td:nth-child(4)') as HTMLElement;
+    expect(cell.classList.contains('max-w-48')).toBe(false);
+    expect(cell.querySelector('div.max-w-48.truncate')).not.toBeNull();
   });
 
   // Below `sm` NOTHING is a column, so the same answer that costs the table row its chevron is
@@ -189,7 +229,7 @@ describe('the responses table, rendered', () => {
     render([ASSO], [submission({ answers: { asso: 'o2' } })]);
     const cards = document.querySelectorAll('ul.sm\\:hidden > li');
     expect(cards).toHaveLength(1);
-    expect(cards[0].textContent).toContain('Mael DEJARDIN');
+    expect(cards[0].textContent).toContain('Ada LOVELACE');
   });
 });
 

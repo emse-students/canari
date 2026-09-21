@@ -1,5 +1,8 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, X } from '@lucide/svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { reportClipped } from '$lib/actions/reportClipped';
+  import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
   import type { FormItem, Submission } from '$lib/forms/api';
   import type { AnsweredItem } from '$lib/forms/submissionTable';
   import {
@@ -73,31 +76,27 @@
     expanded = { ...expanded, [id]: !expanded[id] };
   }
 
+  /**
+   * The cells that are NOT showing their answer in full, as `<submission id>:<item id>`.
+   *
+   * Filled by the cells themselves through `reportClipped`, because only the browser knows whether a
+   * string fits a box. Nothing else may decide it: a character count stood here until 2026-09-22 and
+   * gave a reader rows that expanded next to rows that did not, on answers of the same length.
+   */
+  const clippedCells = new SvelteSet<string>();
+
+  const cellKey = (submissionId: string, itemId: string) => `${submissionId}:${itemId}`;
+
+  function noteClipped(key: string, clipped: boolean) {
+    if (clipped) clippedCells.add(key);
+    else clippedCells.delete(key);
+  }
+
   /** Formats an ISO date string as "DD/MM/YYYY HH:MM". */
   function formatDate(iso: string): string {
     const d = new Date(iso);
     const p = (n: number) => String(n).padStart(2, '0');
     return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  }
-
-  /** Returns a human-readable label for a payment status. */
-  function statusLabel(s: string): string {
-    if (s === 'free') return m.form_status_free();
-    if (s === 'pending') return m.form_status_pending();
-    if (s === 'pending_cash') return m.form_status_pending_cash();
-    if (s === 'paid') return m.form_status_paid();
-    if (s === 'cancelled') return m.form_status_cancelled();
-    if (s === 'expired') return m.form_status_expired();
-    return s;
-  }
-
-  /** The pill's colours, by what the status MEANS: settled, owed, or refused. */
-  function statusClass(s: string): string {
-    if (s === 'paid') return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-    if (s === 'free') return 'bg-cn-border/40 text-text-muted';
-    if (s === 'pending' || s === 'pending_cash')
-      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-    return 'bg-red-err/20 text-red-err';
   }
 
   /** Formats cents as a currency string, or "-" for zero. */
@@ -125,7 +124,9 @@
 {#snippet expandControl(sub: Submission, answered: AnsweredItem[], drawn: FormItem[])}
   <button
     onclick={() => toggle(sub.id)}
-    disabled={panelAddsNothing(answered, drawn)}
+    disabled={panelAddsNothing(answered, drawn, (itemId) =>
+      clippedCells.has(cellKey(sub.id, itemId))
+    )}
     class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg transition-colors disabled:opacity-30"
     aria-expanded={expanded[sub.id] === true}
     title={expanded[sub.id] ? m.form_list_answers_hide() : m.form_list_answers_show()}
@@ -181,7 +182,12 @@
         <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
         <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
         {#each columns as column (column.id)}
-          <th class="max-w-48 truncate pr-4 pb-2" title={column.label}>{column.label}</th>
+          <!-- The width lives on a DIV, not on the cell: `max-width` on a `<th>` or `<td>` is a
+               suggestion under auto table layout and the browser widens it anyway, so the column was
+               never bounded and `truncate` never fired. A block inside the cell is. -->
+          <th class="pr-4 pb-2">
+            <div class="max-w-48 truncate" title={column.label}>{column.label}</div>
+          </th>
         {/each}
         {#if requiresPayment}
           <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_status()}</th>
@@ -201,8 +207,18 @@
           <td class="py-2 pr-4 whitespace-nowrap">{submitterName(sub)}</td>
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
-            <td class="max-w-48 truncate py-2 pr-4" title={text ?? ''}>
-              {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
+            <td class="py-2 pr-4">
+              <div
+                class="max-w-48 truncate"
+                title={text ?? ''}
+                use:reportClipped={{
+                  key: cellKey(sub.id, column.id),
+                  text: text ?? '',
+                  onMeasure: noteClipped,
+                }}
+              >
+                {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
+              </div>
             </td>
           {/each}
           {#if requiresPayment}

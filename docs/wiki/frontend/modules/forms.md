@@ -449,24 +449,79 @@ is not drawn.
 IT WAS POINTLESS.** The redundancy the report names is not "inline answer AND panel" - for a form
 whose purpose is comparing proposals across rows, the inline answer is the scannable thing, and
 removing it would mean opening every row to read a table. What is redundant is the CONTROL, on the
-rows where it adds nothing. So `panelAddsNothing(answered, columns)` disables it when:
+rows where it adds nothing. So `panelAddsNothing(answered, columns, isClipped)` disables it when:
 
 - every question this person answered is already a column, **and**
-- every one of those answers fits its cell (`COLUMN_CELL_CHARS`, 25: `max-w-48` less its gutter, at
-  `text-sm`). A truncated cell carries a `title`, and a `title` is not a reading of anything on a
-  touch screen.
+- every one of those cells is showing its answer IN FULL.
 
 A form of one short question therefore loses its chevron on every row, which is the outcome the
-report asked for; one paragraph, one conditional question or one long answer brings it back on the
+report asked for; one paragraph, one conditional question or one clipped answer brings it back on the
 rows that have one, which a blanket removal would not have. **The predicate is asked with the columns
 the CALLER draws, never with the ones the form would allow** - the card layout below `sm` draws no
 answer column at all, so it passes an empty list and keeps its control wherever there is an answer.
 The control is disabled rather than removed, so the columns of a table whose rows differ still line
 up under their headers.
 
+#### The second half of that report: what "fits its cell" is, and who is allowed to say it (2026-09-22)
+
+The first implementation answered it with a constant - `COLUMN_CELL_CHARS = 25`, `max-w-48` less its
+gutter divided by an average glyph at `text-sm` - and the user came back with the obvious question:
+
+> *"pourquoi certaines lignes sont depliables et d'autres non ?"*
+
+**There is no character count that is right, because whether a string fits a box is a fact about a
+font, a zoom level and a browser.** Two answers of the same length land on either side of any
+threshold, so the table showed a reader rows that expanded next to rows that did not with no visible
+rule between them. `reportClipped` replaces it with the browser's own answer, `scrollWidth >
+clientWidth`, reported by each cell through a `ResizeObserver` into a `SvelteSet` the control reads.
+It re-measures on mount, on resize **and on text change**, the last because a clipped element's
+border box does NOT move when its content does.
+
+**AND THE CELL WAS NEVER ACTUALLY BOUNDED.** `max-w-48` on a `<td>` is a *suggestion* under auto
+table layout: the browser widens the cell to fit its content anyway, so `truncate` never fired, the
+answer was fully visible on the row, and the panel repeated it word for word - the same doublon the
+report opened, one step removed. The width now lives on a `<div>` inside the cell, where `max-width`
+is honoured, which is also what makes the measurement mean anything.
+
+The lesson generalises past this table: **a threshold that stands in for a measurement the platform
+will make for you is a guess, and it is a guess a user meets before you do.**
+
 The colspan is the case neither file shows on its own: it is a number written beside a header list
 that now has two lengths, and a short one leaves the panel ending mid-table. `answers.svelte.test.ts`
 asserts it equals the rendered header count on both.
+
+### THE XLSX IS WRITTEN IN WORDS THE SERVER DOES NOT HAVE (2026-09-22)
+
+The same report that asked about the chevrons carried a second half:
+
+> *"Au niveau de l'export excel, les en-tetes sont en anglais et Amount Paid et Status apparaissent
+> quand meme sur un formulaire gratuit."*
+
+Both are the same defect seen twice: **the export was built where none of the decisions live.**
+`FormsService.exportSubmissions` runs in a NestJS service with no Paraglide, no locale and no request
+language it could trust, so it wrote its own English - `Timestamp`, `First name`, `Amount paid` - and
+the raw `free` enum into the status column, into a file a French manager opens. And it had never been
+told about `requiresPayment`, so the two columns the table had just learned to drop were still there,
+one repeated value down the whole sheet.
+
+**THE FIX IS NOT A TRANSLATION TABLE ON THE SERVER. It is that the server owns no word at all.** The
+client sends `ExportLabels` - the five fixed headers and every payment status label it knows - as a
+URL-encoded JSON query parameter, built by `exportLabels()` from Paraglide. `parseExportLabels`
+validates it at the boundary and **refuses when it is absent or incomplete**: there is no default,
+because the only thing this side could substitute is the English that was the defect, and a silent
+fallback ships a wrong file that looks right. A status the client had no word for is written AS
+STORED and logged at `warn` - the row is telling the truth about itself, and a blank would hide the
+one case worth seeing.
+
+The free/paid rule is now the same predicate on both sides, `requiresPayment`, the one `summary.ts`
+reads and the one `itemsPayload.ts` zeroes every price modifier on. `forms.service.export.spec.ts`
+asserts it by **parsing the workbook back** rather than by reading a header constant, and
+`export-labels.spec.ts` covers every way the parameter can be wrong.
+
+The payment status labels themselves moved out of `FormSubmissionsTable.svelte` into
+`frontend/src/lib/forms/paymentStatus.ts` on the same day, for the reason the duplicate reader below
+exists: the screen and the file answer one question, and a second copy of the mapping is one added
+status away from them disagreeing about the same row.
 
 ### Configurations the API refuses
 
