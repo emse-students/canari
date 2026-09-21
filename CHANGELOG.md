@@ -17,6 +17,11 @@ Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux aut
 Tailwind retire `list-style` et met toutes les marges a zero, et seul `[&_p+p]` avait ete restaure.
 Les trois surfaces markdown portent desormais `.post-markdown`, dont les regles sont enoncees une
 fois dans `app.css`. [posts](docs/wiki/frontend/modules/posts.md#the-blocks-preflight-erases).
+### Fixed - le balayage de fin de passe refusait au lieu d'aller sur /chat
+
+Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disait : NOTIF-18
+finit sur `/communities`. `ensureChat` clique la navigation, sur tous les appareils, sans aucun
+rechargement - donc sans re-verrouiller le PIN. Verifie sur W1 et W2.
 ### Fixed - le classifieur du rig ne voyait plus une seule ligne horodatee, depuis cinq jours
 
 #742 (2026-09-16) a ajoute les millisecondes a l'horodatage de la console. Le lecteur du rig ne
