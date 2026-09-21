@@ -252,13 +252,12 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's
-    width, THREE of the ELEVEN 2026-09-18 REPORTS, and TWO CHANGES SHIPPED 2026-09-20 ON GATES AND
-    TESTS AND NEVER ONCE RENDERED - the phone agenda's rolling window, the forms responses table** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it), [forms](docs/wiki/frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)).
+10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's width,
+    THREE of the ELEVEN 2026-09-18 REPORTS, and the phone agenda's rolling window - SHIPPED 2026-09-20 ON
+    GATES AND TESTS AND NEVER ONCE RENDERED** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it)).
 11. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
-    anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE
-    observation from the reporter is owed**. A deploy destroys prod's only log, which is why the
-    original attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
+    anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE observation
+    from the reporter is owed**; a deploy destroys prod's only log, so the first attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
@@ -276,9 +275,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
 19. **P2 - THE SEED A SHUT PHONE IS PUSHED IS NOW READ (Android, #899) AND NOTHING HAS WATCHED IT DO SO.** The push decides on the frame's KIND, named in
     cleartext by the server. TWO open: the hardware row, and iOS - whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-20. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE
-    reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half. **The BUNDLED
-    EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
+20. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
+    **THE BUNDLED EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
