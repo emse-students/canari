@@ -17,6 +17,11 @@ Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disa
 finit sur `/communities`. `ensureChat` clique la navigation, sur tous les appareils, sans aucun
 rechargement - donc sans re-verrouiller le PIN. Verifie sur W1 et W2.
 [testing-methodology](docs/wiki/testing-methodology.md).
+### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
+
+Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans
+`unexplained` et salissait le run. Classee NOTABLE et non benigne - un salon qui disparait le fait
+pour tout le monde a la fois. [testing-methodology](docs/wiki/testing-methodology.md).
 
 ### Fixed - le post d'une asso poussait le visage du membre, pas le logo
 
