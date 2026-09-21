@@ -2250,3 +2250,38 @@ grey the lower third of whatever logo it was given.
 **The rule, and it is general:** a decoration on a box that a child covers is invisible except where
 the child does NOT reach - the border, the corner radius, the moment before the bytes arrive. Put it
 on the branch that needs it, not on the box.
+
+## 31. A hashtag named a colour, on a surface whose colour it could not know
+
+*"Les # ne sont pas forcement visibles (jaune sur jaune)"* (user, 2026-09-20). Both places that
+render a hashtag carried the same literal - `font-semibold text-amber-600/80 dark:text-amber-400/70` -
+and the measurement says it was wrong on five surfaces out of six, not just the one that was
+reported:
+
+| surface | fill | hashtag as drawn | contrast |
+| --- | --- | --- | --- |
+| **outgoing bubble, light** | `#f6c232` | `#df860f` | **1.68** |
+| **outgoing bubble, dark** | `#ffd45d` | `#fcc535` | **1.13** |
+| incoming bubble, light | `#e4e6eb` | | **2.14** |
+| incoming bubble, dark | `#2a2a2a` | | 4.97 |
+| post body, light | `#ffffff` | | **2.51** |
+| post body, dark | `#121212` | | 5.96 |
+
+The floor for body text is 4.5:1. Only the two dark non-yellow surfaces cleared it, and the yellow
+bubble - the most identity-carrying surface in the product, and the one whose fill was CHOSEN on
+2026-09-08 - was at 1.13:1, which is a word you cannot see.
+
+**THE RULE IS THE ONE `app.css` ALREADY STATES ABOUT `--color-bubble-out-text`**: what goes on a
+filled surface is a property OF that surface, so it lives with it rather than being remembered at
+each call site. A hashtag inside a bubble cannot know what the bubble is filled with, so it must
+not name a colour - it takes `currentColor`, which is 10.35:1 and 12.10:1 on the yellow and the body
+contrast everywhere else, by construction. It is told apart by weight and by the `#` glyph.
+
+**NO TINT BEHIND IT.** `bg-current/8` was written first and measured out: Tailwind compiles it to a
+`color-mix()` guarded by `@supports`, and the fallback is `currentColor` at FULL opacity - a solid
+block in the text's own colour, behind text of that colour. On a WebView without `color-mix` that
+hides the word completely, which is this defect made worse.
+
+**A POST BODY IS DIFFERENT, AND MAY KEEP AN ACCENT**, because its surface is fixed. It moves to the
+pair the mention chip a few lines above it has always used, `text-amber-700 dark:text-amber-400` -
+5.02:1 and 11.22:1 - rather than staying a fainter cousin of it for no reason anyone recorded.
