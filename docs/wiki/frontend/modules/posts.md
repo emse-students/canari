@@ -431,3 +431,38 @@ the console line separates the causes the shared message cannot: a refused conne
 | `/posts` | Main feed |
 | `/post/[postId]` | Single post page |
 | `/posts/new` | Create post form |
+
+## The blocks preflight erases
+
+A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not
+appear and the line breaks do not exist". **The markdown pipeline was measured and is not the
+culprit** - `preprocessPostMarkdown` plus marked turn that post into exactly the `<p>`, `<ul><li>`
+and `<hr>` the author meant, hard breaks included. Two lines of Tailwind preflight then erase it:
+
+| preflight | what the reader loses |
+| --- | --- |
+| `ol, ul, menu { list-style: none }` | the dash typed in front of every item, and its indent |
+| `*, ::before, ::after { margin: 0 }` | every gap between blocks - a list after a sentence, a rule after a list |
+
+`[&_p+p]:mt-3` was the only gap anyone had ever restored, and it matches a paragraph after a
+PARAGRAPH. Nothing else had one.
+
+**`ProfileBioMarkdown` was correct by accident**, because it happened to spell `[&_ul]:list-disc
+[&_ul]:pl-5` in its own class string - so the profile bio rendered a list while the post, the
+most-read surface in the app, did not, and neither did a comment. That is the shape worth naming: a
+rule written into one class attribute is a rule the other surfaces cannot inherit, and nothing tells
+the author of the next renderer that it was ever needed.
+
+The rules are now stated ONCE, on `.post-markdown` in `app.css`, and all three renderers
+(`PostContent`, `PostComments`, `ProfileBioMarkdown`) wear it. What a component still owns is what
+legitimately differs: heading sizes, font size, and the comment's `[&_p]:inline`.
+
+`postMarkdownBlocks.test.ts` asserts the half a stylesheet cannot assert about itself. It sweeps
+every `.svelte` under `src` for `<SvelteMarkdown`, requires the class on each, and refuses a
+component that re-spells a block rule inline - so the fourth renderer cannot be born without it.
+Verified red against the pre-fix comment renderer, green after.
+
+An `hr` is the one case where preflight is not the whole story: it keeps `border-top-width: 1px`, so
+the line was always visible. It was the zeroed margin that welded it to the sentences on both sides,
+and `color: inherit` that made it as heavy as body text - hence `var(--cn-border)` rather than
+`currentcolor`.

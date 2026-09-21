@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un post ne ressemblait pas a ce qui avait ete ecrit
+
+Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux autres : le preflight
+Tailwind retire `list-style` et met toutes les marges a zero, et seul `[&_p+p]` avait ete restaure.
+Les trois surfaces markdown portent desormais `.post-markdown`, dont les regles sont enoncees une
+fois dans `app.css`. [posts](docs/wiki/frontend/modules/posts.md#the-blocks-preflight-erases).
 ### Fixed - une banniere de salon qui perdait la course contre sa propre graine
 
 La graine d'une session Graine neuve et le message qu'elle ouvre voyagent en DEUX poussees, emises

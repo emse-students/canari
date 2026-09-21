@@ -1573,6 +1573,116 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   }
 }
 
+/* ── Rendered markdown: the blocks Tailwind's preflight leaves invisible ─────
+   WHAT THIS IS FOR, AND WHAT IT IS NOT. A reader reported on 0.18.17 that "the
+   dashes do not appear and the line breaks do not exist" between writing a post
+   and reading it. The markdown pipeline is not the culprit and was measured not
+   to be: `preprocessPostMarkdown` + marked turn that post into exactly the
+   `<p>`/`<ul><li>`/`<hr>` a reader would expect. Two lines of Tailwind preflight
+   then erase it.
+
+   `*, ::before, ::after { margin: 0; padding: 0 }` and `ol, ul, menu {
+   list-style: none }`, both reasonable on the assumption that a component sets
+   what it needs. Rendered markdown has no component to do that, so an `li`
+   arrives with no marker and no indent - the dash the author typed, gone - and
+   every block arrives flush against the last one, which is the whole of "the
+   line breaks do not exist": `[&_p+p]:mt-3` was the only gap anyone had ever
+   restored, and it matches a paragraph after a PARAGRAPH. A list after a
+   sentence, a rule after a list, a sentence after a rule: nothing.
+
+   IT LIVES HERE, ONCE, AND NOT IN A CLASS ATTRIBUTE. Three components mount
+   `SvelteMarkdown` - `PostContent`, `PostComments`, `ProfileBioMarkdown` - and
+   only the last had spelt the two list rules, inline, in its own class string.
+   So the profile bio rendered a list correctly while the post, the most-read
+   surface in the app, did not, and the comment did not either: a rule written
+   into one attribute is a rule the other two cannot inherit, and nothing says
+   they were supposed to. All three now carry `.post-markdown`, which is what
+   makes stating the block rules ONCE possible. Headings, paragraph rhythm and
+   the `[&_br]` rule stay on the components, which size them differently on
+   purpose - a comment sets `[&_p]:inline` and must keep it.
+
+   The vertical rhythm matches `[&_p+p]:mt-3` (0.75rem), so a list reads as one
+   more paragraph rather than as a different kind of thing. */
+.post-markdown :is(ul, ol) {
+  margin-block: 0.75rem;
+  padding-inline-start: 1.5rem;
+}
+
+.post-markdown ul {
+  list-style: disc;
+}
+
+.post-markdown ol {
+  list-style: decimal;
+}
+
+/* A nested level must not repeat its parent's marker, which is the one thing a
+   reader uses to tell the levels apart. Preflight removed the browser default
+   that did this, so it is restated rather than inherited. */
+.post-markdown ul ul {
+  list-style: circle;
+}
+
+.post-markdown ul ul ul {
+  list-style: square;
+}
+
+/* Tighter than the block, because the items belong to each other. */
+.post-markdown :is(ul, ol) :is(ul, ol) {
+  margin-block: 0.25rem;
+}
+
+.post-markdown li {
+  margin-block: 0.125rem;
+}
+
+/* `li::marker` inherits the text colour, and the body is rendered at reduced
+   opacity - so the marker has to be told, or it reads as a different weight
+   from the line it introduces. */
+.post-markdown li::marker {
+  color: currentcolor;
+}
+
+.post-markdown blockquote {
+  margin-block: 0.75rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--cn-border);
+  color: var(--text-muted);
+}
+
+/* `---`. Preflight DOES keep the line (`hr { border-top-width: 1px }` against a
+   global `border: 0 solid`), so this is not about making one appear - it is the
+   margin, zeroed with every other one, that left it welded to the sentences on
+   both sides. The colour is restated for a second reason: `color: inherit` in
+   that same preflight rule makes the line as heavy as the body text, and a
+   separator that reads like a strikethrough is worse than none. */
+.post-markdown hr {
+  margin-block: 1rem;
+  border: 0;
+  border-top: 1px solid var(--cn-border);
+}
+
+/* GFM tables are enabled on the renderer, so they can arrive and must not land
+   as four words run together. */
+.post-markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin-block: 0.75rem;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.post-markdown :is(th, td) {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--cn-border);
+  text-align: start;
+}
+
+.post-markdown th {
+  font-weight: 700;
+}
+
 /* ── Accessibility: skip-to-content ─────────────────────────────────────────
    Visible on keyboard focus only, placed before the main content so the
    repetitive navigation can be skipped (WCAG 2.4.1). */
