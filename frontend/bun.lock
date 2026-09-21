@@ -9,20 +9,20 @@
         "@expo-google-fonts/nunito": "^0.4.2",
         "@fontsource-variable/fredoka": "^5.3.0",
         "@fontsource-variable/nunito": "^5.3.0",
-        "@humanspeak/svelte-markdown": "^1.9.0",
+        "@humanspeak/svelte-markdown": "^1.9.1",
         "@lucide/svelte": "^1.41.0",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-biometric": "^2.3.3",
         "@tauri-apps/plugin-deep-link": "^2.4.10",
         "@tauri-apps/plugin-dialog": "^2.7.3",
         "@tauri-apps/plugin-fs": "^2.5.2",
-        "@tauri-apps/plugin-http": "^2.6.0",
+        "@tauri-apps/plugin-http": "^2.6.1",
         "@tauri-apps/plugin-log": "2.9.1",
         "@tauri-apps/plugin-notification": "^2.4.0",
         "@tauri-apps/plugin-opener": "^2.5.5",
         "@tauri-apps/plugin-os": "^2.3.2",
         "@tauri-apps/plugin-sql": "^2.4.1",
-        "@tauri-apps/plugin-store": "^2.4.4",
+        "@tauri-apps/plugin-store": "^2.4.5",
         "@tauri-apps/plugin-websocket": "^2.4.3",
         "@zumer/snapdom": "^2.24.18",
         "emoji-picker-element": "^1.29.1",
@@ -96,7 +96,7 @@
 
     "@humanspeak/memory-cache": ["@humanspeak/memory-cache@1.1.2", "", {}, "sha512-6kmeqrCVThw4RYZsJ74l9cOdZQ84XHnGIzrv+Po49CZBNNVDEzi0CGsTx+KKmr/Hb6hY6yDGxeWTiz4VHkdsEg=="],
 
-    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@1.9.0", "", { "dependencies": { "@humanspeak/memory-cache": "^1.1.2", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.9" }, "peerDependencies": { "katex": ">=0.16.0", "mermaid": ">=10.0.0", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["katex", "mermaid", "shiki"] }, "sha512-WytdiOhUkUjSgXZNs3a7fg8Dwko/4XhKyDVB3lzkpqFEaotaL1Dtg8fz6Rg+ThVJoM2/UDmEtX3avTQON2IxKw=="],
+    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@1.9.1", "", { "dependencies": { "@humanspeak/memory-cache": "^1.1.2", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.9" }, "peerDependencies": { "katex": ">=0.16.0", "mermaid": ">=10.0.0", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["katex", "mermaid", "shiki"] }, "sha512-2JjpATdZfhGQurV38LtkUkPkyQzM7eXku6LoDBeK6i69qqOe0OLmMwpqtMnhwG3ItdxXOt/3miPbSaNTFqMl5Q=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 
@@ -460,7 +460,7 @@
 
     "@tauri-apps/plugin-fs": ["@tauri-apps/plugin-fs@2.5.2", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-XXvMSnFiob+G1H+YHCDf+bzWVumseQuEIhzpbOJzevUfL4k0U+sTApZWJHpoLiamggnVPJm5dJ5sDsniRyWxlg=="],
 
-    "@tauri-apps/plugin-http": ["@tauri-apps/plugin-http@2.6.0", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-QYXwbGb4hQ9/8Riv/ejU/kPFFnbBIrBcWwV1LIXv2xBKfoj8lkWfGkd9pkCSsBI/pljPtz+IPqfrE3t3bVl3mg=="],
+    "@tauri-apps/plugin-http": ["@tauri-apps/plugin-http@2.6.1", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-9gtfe6eOaVKofASoMZ4Ph8E6vDYnpUTbMXrLt4FkXPzC5+O+wnGqJ9fz2koSPYcQt10bb3cx5qHkU0AU1l8tcQ=="],
 
     "@tauri-apps/plugin-log": ["@tauri-apps/plugin-log@2.9.1", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-8dYNEQOgZcIEqeFtHAsOIGLoptm+j94270Jf2MrGS/zbsYNd4C8DKyOdeYggAyE3ugwr12mTefIfC8lVVEhdlg=="],
 
@@ -472,7 +472,7 @@
 
     "@tauri-apps/plugin-sql": ["@tauri-apps/plugin-sql@2.4.1", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-w9fImJ2XaCLFEj+kLbs8nO/Idq89mpjl//Bm37JZo8AugbaVzaW5iHTjjcozHjtLgjb0IAQjYromv0YpzDOFkA=="],
 
-    "@tauri-apps/plugin-store": ["@tauri-apps/plugin-store@2.4.4", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-oxSMaj/QpVfJcBMYX5aOQV94fWvga0MwQMfD6TLlbK2dh+ShPWAzefd8HWXhvOKjPRJdGVAkW7ZGO76JzzjaDA=="],
+    "@tauri-apps/plugin-store": ["@tauri-apps/plugin-store@2.4.5", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-bVD9riKzf+WKYm1L8uXD1CMDTC/eaFS2Cbjcgq+39ahChtVGnyDCbzug3HpjgpZMw78yoAVMqHOAEjqJ/kD9YQ=="],
 
     "@tauri-apps/plugin-websocket": ["@tauri-apps/plugin-websocket@2.4.3", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-c85ykljg6AzY6Zw4KpYsEBaLirjPIs6m8xxC6hZcdwAchckaBU368US+oSsa5B43PjSLukjwD5vOOqzYYnswWA=="],
 
