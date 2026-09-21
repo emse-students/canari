@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - modifier une reponse effacait la citation pour tout le monde
+
+L'evenement de modification ne transporte que le TEXTE, et la citation vit dans le corps stocke, le
+seul endroit ou elle existe : les quatre points d'application ecrasaient donc le corps entier. Seul
+l'onglet qui modifiait continuait de l'afficher, de memoire, jusqu'au premier rechargement - d'ou
+deux captures du meme message, cite chez son auteur et nu chez le destinataire. Un message deja
+abime retrouve sa citation au prochain rejeu de sa conversation, seule occasion ou sa trame
+d'origine est de nouveau disponible. La citation gagne au passage une marge a droite.
+[chat](docs/wiki/frontend/modules/chat.md#an-edit-carries-a-text-and-the-reply-quote-lived-in-the-body-2026-09-21).
+
 ### Fixed - un etat local endommage etait appele une premiere connexion, et cachait la seule issue
 
 Le verrou de chiffrement annoncait *Premiere connexion*, acceptait un PIN, puis repondait que les

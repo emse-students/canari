@@ -13,6 +13,7 @@ import {
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
+import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
 import {
   appMsgToEnvelope,
   isOwnMessage,
@@ -367,6 +368,29 @@ export function resetSeenCipherCacheForTests(): void {
   pendingSeenFlush.clear();
   pendingReplayMarks.clear();
   seenFlushScheduled = false;
+}
+
+/**
+ * The body a replayed row is stored with, from the two sources that can claim it: the frame just
+ * decrypted from the archive (`pm`) and the row this device already holds (`prev`).
+ *
+ * A deletion wins outright, from either source - a tombstone is final, and writing the row without
+ * it would put the deleted plaintext back on disk.
+ *
+ * An EDIT is the interesting case and it is a split: the TEXT is this device's, because the event
+ * that produced it may already be in `seenCipherHashes` and will never replay again, while the BODY
+ * is the archive's, because only the body carries the reply reference and the media reference.
+ * This used to keep `prev.content` whole, which was right while an edit wrote a whole body - it does
+ * not (`applyEditToBody`), so a row edited before that fix holds a bare text and has lost its quote.
+ * A replay is the one occasion the original frame is in hand again, so it is repaired here.
+ */
+export function replayedRowBody(
+  prev: Pick<StoredMessage, 'content' | 'isDeleted' | 'isEdited'> | undefined,
+  pm: { content: string; isDeleted?: boolean }
+): string {
+  if (prev?.isDeleted || pm.isDeleted) return chat_system_message_deleted();
+  if (prev?.isEdited) return applyEditToBody(pm.content, envelopeBodyText(prev.content));
+  return pm.content;
 }
 
 /**
@@ -1104,12 +1128,7 @@ export async function replayConversationHistory(params: {
           // pm.isDeleted/isEdited   : state carried by the history_bundle.
           // Both sources are combined so fresh installs reflect the deletions/edits
           // without having replayed the MLS events.
-          content:
-            prev?.isDeleted || pm.isDeleted
-              ? chat_system_message_deleted()
-              : prev?.isEdited
-                ? prev.content
-                : pm.content,
+          content: replayedRowBody(prev, pm),
           // No lookup: this path builds rows from the bundle, and what we already hold is read from
           // `prev` above rather than searched for.
           timestamp: resolveMessageTimestamp(
@@ -1184,7 +1203,10 @@ export async function replayConversationHistory(params: {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isEdited: true,
-              content: edit.content,
+              // The accumulator holds the replacement TEXT; the body it replaces is this row's,
+              // and only here is it known. Writing the text itself dropped the reply reference the
+              // body carries - see `applyEditToBody`.
+              content: applyEditToBody((updatesById.get(m.id) ?? m).content, edit.content),
               editedAt: edit.editedAt.getTime(),
             });
           }

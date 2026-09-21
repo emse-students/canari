@@ -22,7 +22,7 @@
 
 <button
   type="button"
-  class="mb-2 w-full rounded-r-lg border-l-4 border-current/60 bg-black/5 pt-2 pb-2 pl-3.5 text-left text-xs opacity-95 transition-opacity hover:opacity-100 dark:bg-white/5"
+  class="mb-2 w-full rounded-r-lg border-l-4 border-current/60 bg-black/5 px-3.5 py-2 text-left text-xs opacity-95 transition-opacity hover:opacity-100 dark:bg-white/5"
   onclick={(e) => {
     e.stopPropagation();
     if (replyId) onNavigateToMessage?.(replyId);

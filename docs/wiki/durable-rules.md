@@ -345,6 +345,18 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   before believing a cause**: the three multipliers here were invisible from the client, and the
   server settled it in three queries - one commit, one membership row, one archive entry.
   [chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted)
+- **A MUTATION EVENT CARRIES A FIELD, SO APPLY IT TO THE RECORD - NEVER WRITE IT AS THE RECORD.**
+  `edit_message` carries the replacement TEXT, and every applier wrote that text into `content`,
+  which is the serialized ENVELOPE. The reply reference lives in that envelope and nowhere else -
+  the at-rest payload has no `replyTo` key - so editing a reply DELETED its quote from the row.
+  **The device that made the edit went on showing the quote, out of an in-memory field the write
+  did not touch, so the loss presented as a peer-side defect and was reported as one** (2026-09-21,
+  two screenshots of one message). Before believing an asymmetry between two clients, ask what each
+  one holds in MEMORY that neither holds on DISK, and reload. `applyEditToBody` is the one
+  implementation; it also forced the tie-break in `editSupersedes` through `envelopeBodyText`,
+  because a rule comparing a wire text against a stored envelope is a rule two devices answer
+  differently - the divergence MUT-18 was written to prevent, re-entered through the storage shape.
+  [chat](frontend/modules/chat.md#an-edit-carries-a-text-and-the-reply-quote-lived-in-the-body-2026-09-21)
 - **STORING A VALUE IN CLEAR IS NOT A LICENCE TO LOG IT.** A group name is in clear on the server
   because the push title is composed where nothing can decrypt - an accepted exposure, now written
   down in `SECURITY.md`. A LOG LINE is not covered by it: it copies the same text into journald,

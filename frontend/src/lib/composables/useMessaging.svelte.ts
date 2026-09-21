@@ -54,7 +54,13 @@ import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { MediaService } from '$lib/media';
-import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
+import {
+  applyEditToBody,
+  getPreviewText,
+  mkMediaEnvelope,
+  parseEnvelope,
+  serializeEnvelope,
+} from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
@@ -1431,7 +1437,11 @@ export function useMessaging() {
         ...msgs[idx],
         isEdited: true,
         editedAt: new SvelteDate(editedAt),
-        content: text,
+        // The edited TEXT goes back into the body this row already holds - see `applyEditToBody`.
+        // Writing `text` straight into `content` dropped the reply reference, which is carried by
+        // that body and by nothing else; this device kept showing the quote from its in-memory
+        // `replyTo` until the first reload, which is why the loss was first seen on the PEER's PC.
+        content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
       await persistLocalMutation(msgs[idx], ctx);

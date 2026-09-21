@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { editSupersedes } from './editPrecedence';
+import { mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 
 /**
  * The property these tests are really about is not any single verdict - it is that TWO devices
@@ -81,6 +82,24 @@ describe('editSupersedes converges - the property, not the verdicts', () => {
       // Device 1 applied x, then y arrived. Device 2 applied y, then x arrived.
       const oneEndsOn = editSupersedes(y, x) ? y.content : x.content;
       const twoEndsOn = editSupersedes(x, y) ? x.content : y.content;
+      expect(oneEndsOn).toBe(twoEndsOn);
+    });
+  }
+
+  // WHAT A DEVICE ACTUALLY HOLDS IS A SERIALIZED ENVELOPE, not the text that travelled - it has to
+  // be, or applying the edit would delete the reply reference the body carries. Read raw, the tie
+  // above becomes `"from-A1" > '{"kind":"text",...}'`, which is false in BOTH directions: each
+  // device refuses the other's frame and keeps its own text, for ever. Same pair, same defect as
+  // MUT-18, re-entered through the storage shape.
+  for (const [x, y] of PAIRS) {
+    it(`agree on that pair with the held body stored as an envelope {@${x.editedAt}} vs {@${y.editedAt}}`, () => {
+      const stored = (content: string) => serializeEnvelope(mkTextEnvelope(content));
+      const oneEndsOn = editSupersedes(y, { ...x, content: stored(x.content) })
+        ? y.content
+        : x.content;
+      const twoEndsOn = editSupersedes(x, { ...y, content: stored(y.content) })
+        ? x.content
+        : y.content;
       expect(oneEndsOn).toBe(twoEndsOn);
     });
   }

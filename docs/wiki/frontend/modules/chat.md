@@ -591,27 +591,51 @@ body, so it cannot diverge two bodies - and it can leave a device showing a pre-
 message content is a different question), so it is recorded in [backlog](../../backlog.md) rather
 than changed.
 
-**THE FOUR APPLIERS, enumerated 2026-08-22**, because an invariant held in one of them is not held.
-Every place a message mutation is written was found by grepping the writes themselves
-(`isEdited: true`, `isDeleted: true`), not by reading the paths one expects:
-
-| Applier | Ordering | Tombstone |
-| --- | --- | --- |
-| `systemMessageHandler` live path | `editSupersedes` | refuses an edit of a deleted row |
-| `historySystemEvents` replay | `editSupersedes`, plus the deletes seen earlier in the page | same |
-| `history.ts` post-save pass | last edit in the page | `if (deletion) ... else if (edit)` - always had it |
-| `systemMessageHandler` `history_bundle` merge | n/a - never writes a body | replaces the body with the tombstone (D5) |
-
-The bundle merge is the interesting row: it takes the `isEdited` FLAG and the `editedAt`, never the
-body, so it cannot diverge two bodies - and it can leave a device showing a pre-edit body marked
-"edited". That is narrower than the other three on purpose (trusting a peer's copy of somebody else's
-message content is a different question), so it is recorded in [backlog](../../backlog.md) rather
-than changed.
-
 `pinStore.supersedes` is the same pattern for the pin register, and predates this: the argument was
 written down there before it was applied here. Covered by `editPrecedence.test.ts` and
 `systemMessageHandler.editPrecedence.test.ts`, the latter asserting the convergence property by
 replaying one pair in both orders.
+
+### An edit carries a TEXT, and the reply quote lived in the BODY (2026-09-21)
+
+`edit_message` carries `{ messageId,
+newContent, editedAt }`, and `newContent` is what the author typed. All four appliers wrote it
+straight into `content` - which is the SERIALIZED ENVELOPE, and the envelope is the only place a
+reply reference exists: `toMessagePayload` has no `replyTo` key and `mapStoredMessagesToChatMessages`
+never rebuilds one, so editing a reply DELETED its quote from the row. The editing tab went on
+showing the quote out of the in-memory `ChatMessage.replyTo` set at send time, so the loss looked
+like a peer-side defect - it was reported as one, two screenshots of one message, quoted on its
+author's PC and bare on the peer's - and one reload would have lost it there too. `applyEditToBody`
+(`envelope.ts`) is the one implementation: it parses the stored body, replaces the text (or a media
+envelope's caption, unreachable from this UI and better than throwing the attachment away), and
+re-serializes, so every field the edit does not carry survives it.
+
+**THAT MADE THE TIE-BREAK READ THE ENVELOPE TOO**, and it is the part worth keeping. `editSupersedes`
+broke a tie on `next.content > held.content`; once the held side is a serialized envelope and the
+incoming side is raw text, the two devices holding one pair compare different kinds of string, both
+refuse, and each keeps its own body for ever - MUT-18 again, re-entered through the storage shape
+instead of the arrival order. Both sides now go through `envelopeBodyText`, so the rule compares two
+replacement BODIES, which is what it always meant. `editPrecedence.test.ts` runs each pair both ways
+round with the held body stored as an envelope, which is the shape a row actually has.
+
+**AND THE ROWS ALREADY DAMAGED ARE REPAIRED ON A REPLAY, which is the only occasion their original
+frame is in hand again.** The batch write of a replay had two claims on a body - the frame just
+decrypted and the row already held - and gave the whole body to the held row whenever it was
+flagged `isEdited`. That was right while an edit wrote a whole body. `replayedRowBody`
+(`history.ts`) splits it instead: the TEXT is this device's, because the event that produced it may
+already be in `seenCipherHashes` and will never replay again, and the BODY is the archive's, which
+is where the reply reference still exists. A row edited before this fix therefore gets its quote
+back the next time its conversation is replayed; nothing repairs one that is never replayed, and
+nothing can - the reference is not in any copy this device holds.
+
+The quote itself also had a left padding and no right one, so its text ran into the bubble's edge;
+`MessageReplyQuote` is now padded on both sides.
+
+Covered by `envelope.editBody.test.ts`, which owns the body rule, and by one case in
+`systemMessageHandler.editPrecedence.test.ts` asserting that an edited reply keeps its quote in
+memory AND at rest - the second half is the one that matters, since the row is all a reload gets.
+`historySystemEvents.test.ts` covers the replay applier and `history.replayedBody.test.ts` the
+repair, including the shape a damaged row actually has.
 
 ### Channel invitation card
 
