@@ -56,6 +56,7 @@ describe('PostAnnounceScheduler', () => {
       followers?: string[];
       associationName?: string | null;
       associationLogoUrl?: string | null;
+      associationLogoMediaId?: string | null;
     }) =>
     (sql: string) => {
       if (sql.includes('FROM users')) return (opts.audience ?? []).map((id) => ({ id }));
@@ -68,6 +69,7 @@ describe('PostAnnounceScheduler', () => {
               {
                 name: opts.associationName ?? 'BDE',
                 logoUrl: opts.associationLogoUrl ?? null,
+                logoMediaId: opts.associationLogoMediaId ?? null,
               },
             ];
       return [];
@@ -122,7 +124,15 @@ describe('PostAnnounceScheduler', () => {
     const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'Soiree' };
     await scheduler(
       [post],
-      tables({ audience: ['u1', 'u2', 'a1'], associationLogoUrl: '/api/media/public/logo1' })
+      tables({
+        audience: ['u1', 'u2', 'a1'],
+        // THE SHAPE PRODUCTION ACTUALLY HAS, cache-buster included: the upload path writes
+        // `?v=<updatedAt>` and 40 of the 91 associations carried it on 2026-09-21. The fixture
+        // used to spell the bare path, which is why nothing here saw the push icon parse it into
+        // nothing and fall back to the publishing member's face.
+        associationLogoUrl: '/api/media/public/logo1?v=1781257363644',
+        associationLogoMediaId: 'logo1',
+      })
     ).announcePosts();
 
     expect(batches).toHaveLength(1);
@@ -136,7 +146,11 @@ describe('PostAnnounceScheduler', () => {
       // The association's OWN identity, distinct from `actorId` above - what fixed the
       // notification showing the publishing member's photo instead of the association's logo.
       associationId: 'asso1',
-      associationLogoUrl: '/api/media/public/logo1',
+      associationLogoUrl: '/api/media/public/logo1?v=1781257363644',
+      // THE ID IS HANDED OVER, NOT DERIVED. It is what the push icon carries, and the URL beside
+      // it is what the in-app row shows - two facts, and reading one out of the other is the
+      // defect this asserts against.
+      associationLogoMediaId: 'logo1',
       text: 'Soiree',
       pushData: { postId: 'p1' },
     });
@@ -146,7 +160,11 @@ describe('PostAnnounceScheduler', () => {
   it('passes a null logo through rather than a placeholder, for an association with none yet', async () => {
     const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'Soiree' };
     await scheduler([post], tables({ audience: ['u1'] })).announcePosts();
-    expect(batches[0]).toMatchObject({ associationId: 'asso1', associationLogoUrl: null });
+    expect(batches[0]).toMatchObject({
+      associationId: 'asso1',
+      associationLogoUrl: null,
+      associationLogoMediaId: null,
+    });
   });
 
   it('tells only the followers about a personal post', async () => {

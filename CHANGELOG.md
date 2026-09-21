@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le post d'une asso poussait le visage du membre, pas le logo
+
+L'icone etait deduite de `logoUrl` avec un motif ancre juste apres l'id, et tout logo reuploade porte
+un `?v=`. **40 des 91 associations de production** etaient dans ce cas. L'id est desormais pris dans
+sa propre colonne `logoMediaId`, jamais derive, et le repli restant s'accuse.
+[mobile](docs/wiki/frontend/mobile.md#push-notification-handling).
+
 ### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
 
 `NOTIF-18` tue l'application, cree un salon dont elle n'a jamais entendu parler - donc une session

@@ -2,6 +2,7 @@
 
 import { Logger } from '@nestjs/common';
 import { PostNotificationsService } from './post-notifications.service';
+import type { PushContent } from '../push/push-content';
 
 /**
  * THE AGENDA'S NOTIFICATIONS ESCAPED THE ONE MAPPING THAT MAKES A PUSH TRANSLATABLE.
@@ -22,7 +23,7 @@ import { PostNotificationsService } from './post-notifications.service';
  */
 describe('PostNotificationsService.createNotifications', () => {
   const saved: unknown[] = [];
-  const pushes: { userId: string; content: { key: string; arg: string; actorName: string } }[] = [];
+  const pushes: { userId: string; content: PushContent }[] = [];
   let warn: jest.SpyInstance;
 
   function service(): PostNotificationsService {
@@ -36,7 +37,7 @@ describe('PostNotificationsService.createNotifications', () => {
       manager: { query: () => Promise.resolve([{ displayName: 'Claire' }]) },
     };
     const push = {
-      notifyContent: (userId: string, content: { key: string; arg: string; actorName: string }) => {
+      notifyContent: (userId: string, content: PushContent) => {
         pushes.push({ userId, content });
         return Promise.resolve();
       },
@@ -185,5 +186,75 @@ describe('PostNotificationsService.createNotifications', () => {
     expect(pushes).toHaveLength(0);
     // And the log names the type, because a silent gap here is a notification class nobody misses.
     expect(String(warn.mock.calls[0][0])).toContain('event_postponed_maybe');
+  });
+
+  /**
+   * AN ASSOCIATION'S POST CARRIES THE ASSOCIATION'S LOGO, AND CARRIED A MEMBER'S FACE.
+   *
+   * `actorId` on an `association_post` is the member who pressed publish, so the icon has to be
+   * told separately - and it was told by parsing `logoUrl`, against a pattern anchored right after
+   * the id. Every re-uploaded logo carries the `?v=<updatedAt>` the upload path appends, so the
+   * parse produced nothing and the push fell back to the actor: 40 of the 91 associations on
+   * production, measured 2026-09-21, and a reader on 0.18.17 is who noticed.
+   *
+   * What is pinned is that the id is HANDED OVER rather than derived, and that the remaining
+   * fallback says so out loud - an association pushing a face is either a broken column or a logo
+   * nobody uploaded, and one line has to separate them or it takes a reader again.
+   */
+  const assoPost = (extra: Record<string, unknown>) => ({
+    recipientIds: ['a'],
+    type: 'association_post' as const,
+    postId: 'p1',
+    actorId: 'the-officer',
+    associationId: 'asso1',
+    text: 'Soiree',
+    actorName: 'BDE',
+    ...extra,
+  });
+
+  it("uses the association's logo, whatever cache-buster its URL happens to carry", async () => {
+    await service().createNotifications(
+      assoPost({
+        associationLogoUrl: '/api/media/public/logo1?v=1781257363644',
+        associationLogoMediaId: 'logo1',
+      })
+    );
+
+    expect(pushes[0].content.icon).toEqual({ kind: 'publicMedia', mediaId: 'logo1' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the actor for an association with no logo, and ACCUSES', async () => {
+    await service().createNotifications(
+      assoPost({ associationLogoUrl: null, associationLogoMediaId: null })
+    );
+
+    expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'the-officer' });
+    // `absent` and `present but refused` are a logo nobody uploaded and a broken column - the two
+    // causes this line exists to separate, since the icon itself cannot.
+    expect(String(warn.mock.calls[0][0])).toContain('asso1');
+    expect(String(warn.mock.calls[0][0])).toContain('absent');
+  });
+
+  it('refuses an id that is not one, rather than concatenating it into the route', async () => {
+    // The security floor: whatever reaches the device is appended to `/api/media/public/`.
+    await service().createNotifications(assoPost({ associationLogoMediaId: '../../etc/passwd' }));
+
+    expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'the-officer' });
+    expect(String(warn.mock.calls[0][0])).toContain('present but refused');
+  });
+
+  it('says nothing for a post no association published - a face is correct there', async () => {
+    await service().createNotifications({
+      recipientIds: ['a'],
+      type: 'followed_post',
+      postId: 'p1',
+      actorId: 'someone',
+      text: 'Coucou',
+      actorName: 'Claire',
+    });
+
+    expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'someone' });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
