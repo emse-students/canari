@@ -207,6 +207,16 @@ export function useConversations() {
     if (!isMobileOverlayLayout() || !selectedContact || mobileConvoHistoryClose) return;
     mobileConvoHistoryClose = () => {
       mobileConvoHistoryClose = null;
+      // IT ENDS THE LANDING, FOR THE REASON `goBackToMenu` ALREADY SPELLS OUT: "or the target would
+      // be re-selected instantly". There are two ways out of a thread - the in-app back control,
+      // which goes through `goBackToMenu`, and the HARDWARE Back press, which arrives here - and
+      // only one of them ended it. So Back out of a notification landing deselected the
+      // conversation and the landing effect immediately put it back.
+      //
+      // MEASURED ON AN ANDROID HANDSET 2026-09-21: after the tap, the first Back press left the app
+      // in the foreground still showing the conversation, and the second exited. Nothing on screen
+      // said a press had been consumed at all.
+      endLandingUnlessTarget(null);
       selectedContact = null;
       isConversationDrawerOpen = false;
     };

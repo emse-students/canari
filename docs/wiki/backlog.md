@@ -1294,46 +1294,6 @@ the type is declared, delete the other.**
 The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
 both, and it is not re-derived here.
 
-### G6 - P2 - BACK after opening a notification has no list and no home behind it
-
-Verbatim: *"quand je fais retour arriere apres avoir clique sur une notification, j'aimerais arriver
-a la liste des discussions, et retour arriere encore une fois devrait m'emmener aux posts (accueil).
-J'imagine que c'est une question d'historique. Et les posts sont l'accueil donc dans le pire des
-cas, le fallback pour tout retour arriere."*
-
-This is a REQUIREMENT, not only a defect, and the last sentence is the part to build against:
-**posts are the home, so they are the terminal answer of any back that has nothing behind it.** A
-deep link that opens a conversation must therefore SEED the stack it did not come through, rather
-than arriving with an empty one.
-
-**THE CHAIN IS NOW READ END TO END, AND IT IS NOT YET ENOUGH TO WRITE A LINE.** Recorded so the next
-session starts here rather than re-deriving it:
-
-- **Back is the WEBVIEW's back-forward list, and exhausting it EXITS THE APP.**
-  `WryActivity.handleBackNavigation` is `true` (Tauri-GENERATED - do not edit it): `canGoBack()` ->
-  `goBack()`, else `onBackPressed()`, which finishes the activity. `pushState` entries count, so the
-  SPA drives it; there is no Kotlin-side home fallback and there should not be one.
-- **The list level already exists.** `ensureMobileConvoHistory` (`useConversations.svelte.ts:204`)
-  pushes a history overlay whenever a conversation is selected on an overlay-width layout, and a
-  notification landing reaches it like any tap: `openNotificationTarget` ->
-  `openConversationFromId` -> `nav.selectConversation(key)`. `isMobileOverlayLayout()` is a pure
-  width query, so it is answerable on the first frame.
-- **The posts level should already exist too, which is the part that does not add up.** `/` redirects
-  to `/posts` (`routes/+page.ts`), SvelteKit's INITIAL navigation replaces rather than pushes, and
-  the cold-start route to the target is `void goto(targetRoute)` in `ChatBackgroundService.svelte`'s
-  landing effect - a PUSH. That gives `/posts` -> `/chat` -> overlay, which is exactly what the user
-  asked for.
-
-**SO THE DEFECT IS IN A PATH THIS READING DID NOT REACH, AND ONE MEASUREMENT SETTLES WHICH.** The two
-candidates are a WARM tap (`onNewIntent` -> `onOpenUrl`, where `window.location.pathname` may already
-be `/chat` so nothing is pushed) and a tap arriving while a conversation is already open (where
-`ensureMobileConvoHistory` returns early on a non-null `mobileConvoHistoryClose`). **Do not write the
-seed before measuring**: if `/posts` is already the bottom entry on the cold path, a
-`history.length <= 1` guard is dead code that ships. The measurement is a handset, a notification
-tap, and `adb logcat` on the `[notifNav]` lines, in each of the three launch states (killed,
-backgrounded, foregrounded on another conversation).
-
-
 ### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
 
 `MediaRef.voiceNote` travels as `true | undefined` and never as `false` (`envelope.ts:238` emits the

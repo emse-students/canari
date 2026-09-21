@@ -2,6 +2,7 @@ import {
   chatDeepLinkRoute,
   landingAfterRefresh,
   landingRecovery,
+  landingStep,
   selectionBelongsToRoute,
 } from './notificationRouting';
 
@@ -120,5 +121,35 @@ describe('landingAfterRefresh', () => {
     // Revoked access or a deleted community: holding the target would keep the selection
     // watchdog off a conversation that is never coming back.
     expect(landingAfterRefresh({ refreshRan: true, targetLoaded: false })).toBe('abandon');
+  });
+});
+
+describe('landingStep', () => {
+  it('asks for the route when the target page is not the one on screen', () => {
+    expect(landingStep({ arrived: false, routeAlreadyRequested: false })).toBe('route');
+  });
+
+  it('NEVER SELECTS WHILE A NAVIGATION IS STILL IN FLIGHT - the Back button is what this protects', () => {
+    // Selecting pushes a history overlay entry, and the root layout drains that stack in
+    // `beforeNavigate`. Selecting here would hand the entry to the very navigation this landing
+    // started, which pops it and leaves the `pushState` behind as a ghost - and Back then walks the
+    // ghost chain out of the app instead of stepping back through it. Measured on a handset: ONE
+    // Back press left the app, where the same conversation opened by hand stepped conversation ->
+    // list -> posts -> exit.
+    expect(landingStep({ arrived: false, routeAlreadyRequested: true })).toBe('await-arrival');
+  });
+
+  it('asks for the route ONCE - a second ask is a second history entry, so a second Back press', () => {
+    const first = landingStep({ arrived: false, routeAlreadyRequested: false });
+    const second = landingStep({ arrived: false, routeAlreadyRequested: true });
+    expect(first).toBe('route');
+    expect(second).not.toBe('route');
+  });
+
+  it('selects the moment the router says this page IS the target page', () => {
+    expect(landingStep({ arrived: true, routeAlreadyRequested: true })).toBe('select');
+    // Already on the right page when the target arrives - a tap while the chat list is open. There
+    // is nothing to navigate to, so there is no navigation to race.
+    expect(landingStep({ arrived: true, routeAlreadyRequested: false })).toBe('select');
   });
 });

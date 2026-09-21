@@ -87,6 +87,7 @@
     chatDeepLinkRoute,
     landingAfterRefresh,
     landingRecovery,
+    landingStep,
     openInvitedChannel,
   } from '$lib/utils/chat/notificationRouting';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -211,14 +212,21 @@
     // no-op, leaving the user on the home feed. This effect runs post-mount (router ready) and
     // re-runs as login completes / conversations load, so it reliably reaches the right route and
     // selects the target. Community channels live under /communities, DMs/groups under /chat.
+    // THE SELECTION WAITS FOR THE ARRIVAL, AND THE BACK BUTTON IS WHAT SAYS SO - the reasoning, and
+    // the handset measurement behind it, are on {@link landingStep}. `$page` is read rather than
+    // `window.location` because it is REACTIVE: that is what re-runs this effect when the route
+    // lands, instead of leaving it waiting for the conversations map to mutate again.
     const targetRoute = chatDeepLinkRoute(id);
-    if (lastNavigatedNotifTarget !== id) {
-      lastNavigatedNotifTarget = id;
-      if (window.location.pathname !== targetRoute) {
-        appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
-        void goto(targetRoute);
-      }
+    const step = landingStep({
+      arrived: $page.url.pathname === targetRoute,
+      routeAlreadyRequested: lastNavigatedNotifTarget === id,
+    });
+    if (step !== 'await-arrival') lastNavigatedNotifTarget = id;
+    if (step === 'route') {
+      appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
+      void goto(targetRoute);
     }
+    if (step !== 'select') return;
     // Already on screen: the landing is done and must stay idle until the target is lost. The
     // selection is a map key and the target is a group id, so they are only ever equal for a
     // channel - matched raw, a landed DM never looked landed, and every mutation of the map

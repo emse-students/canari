@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - retour arriere apres une notification quittait l'application au lieu de remonter
+
+Mesure sur telephone : un seul appui sur Retour sortait de l'app, la ou la meme conversation ouverte
+a la main donne conversation -> liste -> accueil -> sortie. L'atterrissage selectionnait la
+conversation pendant que sa propre navigation etait en vol, et `beforeNavigate` vidait la pile
+d'overlays qu'il venait de remplir ; il attend desormais l'arrivee, et `hooks.client.ts` ne navigue
+plus en double. Cote natif, personne ne traitait l'appui : Tauri desactive le retour de Wry, et
+l'application le reprend en main.
+[chat](docs/wiki/frontend/modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21),
+[mobile](docs/wiki/frontend/mobile.md#the-hardware-back-press-had-no-owner-and-chromium-decided-it-2026-09-21).
+
 ### Fixed - une conversation toute neuve annoncait qu'aucun appareil ne pouvait servir son histoire
 
 Un premier contact n'a rien avant son premier message, mais les messages seuls ne peuvent pas le

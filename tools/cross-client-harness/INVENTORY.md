@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-57 scripts.
+58 scripts.
 
 | script | what it is |
 |---|---|
@@ -55,6 +55,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
+| `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
 | `newgroup.mjs` | Creates a group conversation, and reports the surface that adds a member to it. |
 | `overlay-probe.mjs` | THE ONE EXPRESSION THAT ANSWERS "what is covering the screen right now" - page source, kept PURE. |
 | `phone.mjs` | The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
@@ -258,4 +259,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-197 scripts in total.
+198 scripts in total.

@@ -135,23 +135,25 @@ if (isTauriRuntime()) {
               if (groupId) {
                 Promise.all([
                   import('$lib/stores/notifNav.svelte'),
-                  import('$lib/utils/chat/notificationRouting'),
                   import('$lib/stores/globalChatSingleton.svelte'),
                 ])
-                  .then(([{ notifNav }, { chatDeepLinkRoute }, { appendLog }]) => {
+                  .then(([{ notifNav }, { appendLog }]) => {
                     // The one line that says the native half of a notification tap worked. Without
                     // it the chain - PendingIntent, onNewIntent, the deep-link plugin, this handler -
                     // fails silently and indistinguishably at four different hops.
                     appendLog(`[notifNav] deep link received: ${url} -> target ${groupId}`);
+                    // PUBLISHING THE TARGET IS ALL THIS DOES, AND ROUTING IS SOMEBODY ELSE'S JOB.
+                    // It used to route here as well, so one landing drove TWO navigations to the
+                    // same route: this one, and the landing effect in `ChatBackgroundService`,
+                    // which is the one that can also SELECT the conversation once it arrives. Two
+                    // pushes of `/chat` is one extra Back press for the reader, and the `catch` here
+                    // assigned `window.location.href` - a full document load that discards the back
+                    // stack entirely, on a path whose whole purpose is to leave one behind.
+                    //
+                    // The effect is the survivor because it is the one that works on a COLD start:
+                    // a `goto` from here can fire before the SvelteKit router exists and no-op in
+                    // silence, which is what the effect's own comment has said all along.
                     notifNav.navigate(groupId);
-                    const target = chatDeepLinkRoute(groupId);
-                    if (window.location.pathname !== target) {
-                      import('$app/navigation')
-                        .then(({ goto }) => goto(target))
-                        .catch(() => {
-                          window.location.href = target;
-                        });
-                    }
                   })
                   .catch(() => {});
               }

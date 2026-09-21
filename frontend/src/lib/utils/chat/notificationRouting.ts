@@ -52,6 +52,32 @@ export function landingRecovery(input: {
 }
 
 /**
+ * What the landing may do THIS PASS, before it goes looking for its target.
+ *
+ * - `route`: the page that can display the target is not the one on screen, so ask for it.
+ * - `await-arrival`: that route was already asked for and has not landed yet. **Do nothing.**
+ * - `select`: this page IS the target's page, so the target may now be opened.
+ *
+ * `await-arrival` IS THE WHOLE POINT, and it exists because of the Back button. Selecting pushes a
+ * history overlay entry, and the root layout's `beforeNavigate` DRAINS the overlay stack - so a
+ * landing that selects while its own navigation is still in flight has that navigation destroy the
+ * entry it just created. The `pushState` survives as a ghost, and Back walks the ghost chain out of
+ * the app instead of stepping back through it.
+ *
+ * MEASURED ON AN ANDROID HANDSET, 2026-09-21. From `/posts`, app in the foreground, one Back press
+ * after the landing left the app; the SAME conversation reached by hand gave conversation -> list ->
+ * posts -> exit, all three levels present. The route push was never the missing part - the log for
+ * the failing run carries `[notifNav] routing to /chat`.
+ */
+export function landingStep(input: {
+  arrived: boolean;
+  routeAlreadyRequested: boolean;
+}): 'route' | 'await-arrival' | 'select' {
+  if (input.arrived) return 'select';
+  return input.routeAlreadyRequested ? 'await-arrival' : 'route';
+}
+
+/**
  * What the landing must do once the community refetch it asked for has settled.
  *
  * A refetch that never ran (one was already in flight) has to be retried, or a join racing the
