@@ -3310,7 +3310,7 @@ rows with the invitation question in
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
 
-### P1 - THE SALON BANNER THAT LOST A RACE TO ITS OWN SEED IS FIXED ON ANDROID AND UNTOUCHED ON iOS
+### P1 - NOTHING COUNTS A BLIND SALON BANNER, AND iOS NEVER WAKES FOR THE SEED THAT WOULD FIX ONE
 
 Both halves of the defect, and the order-independent handler that closed the Android one, are
 [channel-encryption section 14](protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android),

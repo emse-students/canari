@@ -250,9 +250,28 @@ try {
   // did, on this row's first run. The salon name carries the run's own stamp, so it cannot match a
   // notification any earlier row left behind.
   const inMs = await phone.awaitNotification(channelName, 120_000, floor).catch(() => null);
+
+  // A BANNER BUILT BEFORE ITS SEED IS OWED A REDRAW, AND THE HANDLER SAYS SO ITSELF. `frame HELD`
+  // is the device stating it could not open this message and has kept it for its key material - a
+  // FACT, so the row waits for the correction only where one was promised, and never guesses.
+  // This is also why the wait below may name the marker where the first one must not: the first
+  // wait runs in the case where the marker is precisely what is missing, this one only where the
+  // device has undertaken to produce it. A correction that does not come is the defect, and the
+  // clause at the bottom names it rather than letting the row time out into "nothing arrived".
+  lines = await logcatSince(killedAt).catch(() => []);
+  const heldAt = firstAt(lines, new RegExp(`seed absent -> generic banner, frame HELD .*channel=${channelId}`));
+  let redrawMs = null;
+  if (heldAt >= 0) {
+    stage('the handset held this frame for its key material - waiting for the redraw it promised');
+    redrawMs = await phone.awaitNotification(marker, 60_000, floor).catch(() => null);
+  }
+
   const hit = phone.notifications().find((n) => n.full.includes(channelName)) ?? null;
   out.notification = {
     inMs,
+    // Null when no redraw was owed, which is the ordinary case: the seed won the race and the very
+    // first banner carried the plaintext.
+    redrawMs,
     channel: hit?.channel ?? null,
     drawn: hit ? phone.bodyIsDrawn(hit) : null,
     // Matched, never quoted: a shade record carries real conversation content and this repository
@@ -263,6 +282,7 @@ try {
   stage(`notification in ${inMs}ms, channel ${out.notification.channel}`);
 
   // ── WHAT THE PUSH SERVICE ACTUALLY DID, OUT OF LOGCAT ───────────────────────────────────────
+  // RE-READ, because the wait above may have run for a minute and the redraw is at its far end.
   lines = await logcatSince(killedAt).catch(() => []);
   const absorbAt = firstAt(lines, /absorbGraineSeeds: stored \d+ seed\(s\)/);
   // KEYED ON THE CHANNEL, NEVER ON THE MARKER - `type=channel ` with the trailing space, so
@@ -283,8 +303,24 @@ try {
     builtBy: lines.some((l) => /CanariFCM: showNotification/.test(l)) ? 'push' : 'websocket',
     keyMaterialRecognised: lines.some((l) => /decryptProto: graine key material/.test(l)),
     seedsStored: storedMatch ? Number(storedMatch[1]) : 0,
+    // AN OBSERVATION, NOT A CLAUSE, SINCE 2026-09-21. FCM promises no order across two sends, so
+    // a seed arriving after the message it unlocks is a legitimate interleaving rather than a
+    // defect - what is graded is whether the handler absorbed it. It stays recorded because it is
+    // what the two clauses below mean, and because a run where it flips is a run worth reading.
     seedBeforeMessage: absorbAt >= 0 && handledAt >= 0 ? absorbAt < handledAt : null,
     fellBackToTheGenericBanner: genericAt >= 0,
+    // THE UNDERTAKING, AND WHETHER IT WAS KEPT. `HELD` says the ciphertext is here and the seed is
+    // not YET, so this message will be redrawn; the generic line with no HELD beside it is the
+    // other case entirely - a ciphertext the server could not inline, which no seed can open.
+    heldForItsKeyMaterial: heldAt >= 0,
+    redrawnWhenTheSeedLanded:
+      heldAt < 0
+        ? null
+        : lines.some(
+            (l) =>
+              /seed landed while the generic banner was going up -> redrawing/.test(l) ||
+              /drainPendingChannelFrames: \d+ banner\(s\) waiting/.test(l)
+          ),
     selfReadCancelled: new RegExp(`type=channel_read .*channel=${channelId}`).test(lines.join('\n')),
     builtNotifId: notifId,
     destroyedBeforeItLanded:
@@ -315,6 +351,7 @@ try {
   stage(
     `push: builtBy=${out.push.builtBy} seeds=${out.push.seedsStored} ` +
       `seedBeforeMessage=${out.push.seedBeforeMessage} generic=${out.push.fellBackToTheGenericBanner} ` +
+      `held=${out.push.heldForItsKeyMaterial} redrawn=${out.push.redrawnWhenTheSeedLanded} ` +
       `| server: ${out.sent.order}`
   );
 
@@ -346,16 +383,22 @@ try {
       'no notification for this salon reached the handset and nothing in the system log says why, ' +
       'so the shade was never measured';
   } else {
-    // THE ORDER IS A CLAUSE, NOT A REFUSAL. A seed absorbed after the message it unlocks leaves a
-    // banner that never redraws, which is the user's report whichever layer chose the order - and
-    // *a race that heals cleanly is still a defect*, while this one does not heal at all. What the
-    // server's own send order was travels in `sent` beside it, so the reader is never left
-    // guessing which end produced it.
+    // THE ORDER IS NOT GRADED, THE OUTCOME IS - changed 2026-09-21, when the handler became
+    // order-independent. FCM promises no order across two sends and no sender-side serialisation
+    // can buy one, so a seed arriving after the message it unlocks is an interleaving the design
+    // must absorb, not a finding. What is owed is that the blind banner be CORRECTED: the handler
+    // says `frame HELD` when it undertakes to do so, and this row holds it to it. The server's own
+    // send order travels in `sent` beside these, so the reader is never left guessing which end
+    // produced the interleaving that was absorbed.
     if (out.push.destroyedBeforeItLanded) unmet.push('theBannerWasCancelledBetweenBeingBuiltAndBeingPosted');
-    if (out.push.seedBeforeMessage === false) unmet.push('theSeedWasAbsorbedAFTERTheMessageItUnlocks');
     if (!out.push.keyMaterialRecognised) unmet.push('theSilentFrameWasNotRecognisedAsKeyMaterial');
     if (out.push.seedsStored < 1) unmet.push('noSeedReachedTheNativeMirror');
-    if (out.push.fellBackToTheGenericBanner) unmet.push('thePushServiceFellBackToTheGenericBanner');
+    // A generic body with nothing held beside it is a message this device can NEVER open, which is
+    // a different defect from a late seed and must not be reported as one.
+    if (out.push.fellBackToTheGenericBanner && !out.push.heldForItsKeyMaterial)
+      unmet.push('theBannerWentUpBlindWithNoKeyMaterialToWaitFor');
+    if (out.push.redrawnWhenTheSeedLanded === false)
+      unmet.push('theFrameWasHeldForItsSeedAndTheBannerWasNEVERREDRAWN');
     // THE SHADE CLAUSES NEED A SHADE RECORD. With the banner destroyed before it landed there is
     // nothing to read, and asking these three anyway turns ONE defect into four findings - the
     // padding that makes a verdict unreadable and hides which of them is the cause.
