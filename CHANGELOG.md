@@ -20,6 +20,16 @@ graine arrivait 324 ms trop tard et la banniere restait bloquee sur "Nouveau mes
 qu'il ne peut pas ouvrir est retenue dans un registre borne, et l'absorption de la graine la
 redessine sous le meme identifiant en remplacant la ligne aveugle. Aucun delai, aucune horloge.
 [channel-encryption](docs/wiki/protocols/channel-encryption.md#the-seed-then-arrived-324-ms-too-late---fixed-2026-09-21).
+### Fixed - le classifieur du rig ne voyait plus une seule ligne horodatee, depuis cinq jours
+
+#742 (2026-09-16) a ajoute les millisecondes a l'horodatage de la console. Le lecteur du rig ne
+connaissait que `[14:11:08]` : le crochet restait en position 0 et TOUTES les regles ancrees sur
+`^` - benignes, notables, severes - sont mortes d'un coup, en silence. Rien n'a ete cache (une
+ligne non classee casse quand meme `clean`), mais la barre est devenue inatteignable : une centaine
+de lignes de narration ordinaire remontaient comme de la salete. Les quatre copies du normaliseur
+n'en font plus qu'une, et `classify-selftest` rejoue desormais chaque cas horodate - 107 echecs
+contre l'ancienne version.
+[testing-methodology](docs/wiki/testing-methodology.md).
 ### Fixed - la suppression d'un salon n'avait jamais rencontre de regle
 
 Le classifieur serveur du rig n'avait jamais vu `[CHANNEL] delete` : la ligne tombait dans
