@@ -473,9 +473,35 @@ pub fn decrypt_push_message_with_key(
 
     let info = extract_full_message_info(&plaintext);
     if info["ok"].as_bool().unwrap_or(false) {
-        info
-    } else {
-        refused("plaintext-not-renderable")
+        return info;
+    }
+    // A FRAME THAT RINGS NOBODY MAY STILL HAVE SOMETHING TO SAY. `ok: false` is the notification
+    // path's answer and stays exactly that; collapsing it to one refusal also threw away the KIND,
+    // and with it the Graine key material the caller is about to write to the mirror. The one
+    // reason this function had to know about that: it is the only place holding the plaintext.
+    //
+    // NAMED AS A `reason`, LIKE EVERY OTHER REFUSAL HERE, so the caller keeps ONE switch. The
+    // absorber's vocabulary is this function's `reason` token, not a second dispatch axis a reader
+    // would have to know to look for.
+    match info["kind"].as_str() {
+        Some("graine_key_material") => {
+            let count = info["seeds"].as_array().map_or(0, Vec::len);
+            log::debug!("[PushBG] key-based: graine key material, seeds={count}");
+            let mut out = refused("graine-key-material");
+            out["seeds"] = info["seeds"].clone();
+            out
+        }
+        Some("graine_request") => {
+            log::debug!("[PushBG] key-based: a peer asks for a seed; the foreground answers those");
+            refused("graine-request")
+        }
+        // A kind this function has not been taught is still not renderable, and saying which one
+        // is the difference between a diagnosis and a mystery the next time one is added.
+        Some(other) => {
+            log::debug!("[PushBG] key-based: nothing to render, kind={other}");
+            refused("plaintext-not-renderable")
+        }
+        None => refused("plaintext-not-renderable"),
     }
 }
 
@@ -733,6 +759,70 @@ mod tests {
             !dir.join("mls.bin").exists(),
             "an empty drain must not touch mls.bin"
         );
+    }
+
+    /// THE DEFECT, OVER A REAL MLS FRAME AND NOT A HAND-BUILT BUFFER.
+    ///
+    /// A Graine seed reaches a killed phone as an ordinary silent push. Everything downstream -
+    /// the Kotlin absorber, `graine_seeds.json`, `lookupGraineSeed`, the banner text - hangs off
+    /// what THIS function answers, and it used to answer `plaintext-not-renderable`: the same
+    /// sentence as a corrupt frame, so the seed was dropped and every message of that session
+    /// showed the generic fallback until the app was next opened.
+    ///
+    /// The frame is encrypted by alice and opened by bob through the push path, so the parse runs
+    /// on bytes that crossed the ratchet rather than on bytes a test wrote and read back.
+    ///
+    /// NOTHING HERE ASSERTS THAT `mls.bin` IS UNTOUCHED, because the signature already does: this
+    /// function takes an immutable slice and no path, and has nowhere to write. The read-only
+    /// invariant is enforced by the type, which is stronger than a test of it.
+    #[test]
+    fn a_graine_seed_survives_the_push_path_that_used_to_drop_it() {
+        let (alice, bob, group_id) = joined_pair("graine");
+        let key = decode_base64_to_32_bytes(&key_b64(11)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let dir = temp_dir("graine");
+
+        let seed = [42u8; 32];
+        let frame = super::super::proto_fields::build_graine_app_message(
+            "ch-salon",
+            "sess-abc",
+            &seed,
+            1_700_000_000_000,
+        );
+        let out = send_messages_background_with_key(
+            &dir,
+            &alice_state,
+            &key_b64(11),
+            "graine-alice",
+            "dev-a",
+            &[entry("seed-1", &group_id, &frame)],
+        )
+        .expect("alice encrypts the seed frame");
+        let ciphertext = &ciphertexts_of(&out)[0];
+
+        // Bob opens it from his own encrypted state, exactly as the push path loads it.
+        let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        let info = decrypt_push_message_with_key(
+            &bob_state,
+            &key_b64(11),
+            "graine-bob",
+            "dev-b",
+            &group_id,
+            ciphertext,
+        );
+
+        assert_eq!(info["ok"], false, "key material must still ring nobody");
+        assert_eq!(
+            info["reason"], "graine-key-material",
+            "the token the Kotlin absorber switches on"
+        );
+        let seeds = info["seeds"]
+            .as_array()
+            .expect("seeds travel with the reason");
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0]["channelId"], "ch-salon");
+        assert_eq!(seeds[0]["sessionId"], "sess-abc");
+        assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
     }
 
     /// The FFI contract is a string on both platforms and nothing type-checks it, so pin the shape

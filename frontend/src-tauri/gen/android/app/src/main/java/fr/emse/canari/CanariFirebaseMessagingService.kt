@@ -1768,6 +1768,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ciphertext: ByteArray
     ): String
 
+    /**
+     * Writes Graine session seeds into `graine_seeds.json`, the mirror [lookupGraineSeed] reads.
+     *
+     * `seedsJson` is the `seeds` array `nativeDecryptMessageWithKey` returns alongside
+     * `reason=graine-key-material`: `[{channelId, sessionId, seedB64, createdAt}, ...]`. Returns
+     * how many entries were stored, or -1 when the payload could not be read at all.
+     *
+     * THE ONE FILE THIS PATH MAY WRITE. The background decrypt is read-only by construction - it
+     * must never advance `mls.bin`, which the foreground owns - and this touches nothing else: the
+     * mirror is a cache of key material the device is already entitled to, bounded per channel,
+     * and rebuilt from the group's log whenever the app next runs.
+     */
+    external fun nativeStoreGraineSeeds(dataDir: String, seedsJson: String): Int
+
     // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS).
     // `seedB64` is the session's 32-byte seed from graine_seeds.json; `sessionId` + `messageIndex`
     // name which message key to derive from it (HKDF, in Rust, the one copy shared by all three
@@ -2089,6 +2103,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // not say (an older server, or one that logged a failed read), and the consumer must
             // then fall back to what it did before rather than invent an answer.
             val isGroup: Boolean? = data["isGroup"]?.let { it == "true" }
+            // Whether this conversation is a Graine KEY-DISTRIBUTION group. Same three states as
+            // `isGroup`, same reason: an absent key says the server did not know, which is not the
+            // same sentence as "no". See `PushMessageInput.isKeyDistribution`.
+            val isKeyDistribution: Boolean? = data["isKeyDistribution"]?.let { it == "true" }
             val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
             val senderId        = data["senderId"] ?: ""
             val queuedMessageId = data["queuedMessageId"]
@@ -2119,11 +2137,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             }
 
-            // NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS NOT READ.
-            // The self-read dismissal above is the only thing a silent push does here, and it runs
-            // on the CLEARTEXT fields. See `CALLS_ENABLED` for the measurement and for what the
-            // calls revival has to flip.
-            if (silent && !CALLS_ENABLED) {
+            // ALMOST NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS ALMOST
+            // NEVER READ. The self-read dismissal above runs on the CLEARTEXT fields, and calls
+            // are off - see `CALLS_ENABLED` for the measurement and for what the revival flips.
+            //
+            // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
+            // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
+            // session it opens has no seed on this device and every one of its salon messages
+            // shows the generic body until the app is next opened. Reading them all instead would
+            // put an MLS load and the state lock behind every read receipt and every self-read
+            // dismissal, for frames with nothing in them - roughly 3-5 s each, serialised on the
+            // one push lane. So the discriminator travels from where it is KNOWN: a distribution
+            // group's log carries seeds and nothing else, and `dm_groups` says which groups those
+            // are. `isKeyDistribution` is that column, in cleartext.
+            //
+            // A `null` - an older server, or a group row it could not read - keeps the old
+            // behaviour. That is not a fallback path: it is the third state saying "not told",
+            // and the seed is still recovered when the app next runs.
+            if (silent && !CALLS_ENABLED && isKeyDistribution != true) {
                 if (silentSkipExplained.compareAndSet(false, true)) {
                     Log.d(TAG, "FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)")
                 }
@@ -2181,6 +2212,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         }
                     }
                 }
+            }
+
+            // KEY MATERIAL IS ABSORBED HERE, NOT IN THE PARSER. `decryptProto` carries it out as a
+            // string so that reading a frame stays reading a frame; this is the handler, and the
+            // only place in this file that may write to the Tauri data directory.
+            (outcome as? PushDecrypt.KeyMaterial)?.let { keyMaterial ->
+                absorbGraineSeeds(keyMaterial.seedsJson, groupId)
+                return@runSerializedWithWakeLock
             }
 
             // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
@@ -2787,6 +2826,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         object Yielded : PushDecrypt
 
         /**
+         * The frame carried Graine key material - one rotation seed, or a catch-up bundle of them.
+         *
+         * **A SILENT FRAME IS NOT A WORTHLESS ONE, AND THIS IS THE ONE THAT PROVED IT.** A seed
+         * minted while this device was shut arrives here and nowhere else: dropped, every message
+         * of that session shows the generic salon body for ever, because [lookupGraineSeed] has
+         * nothing to find and the app only rebuilds the mirror when it is next opened.
+         *
+         * It renders nothing - there is no message in it - so it is NOT [NothingToRender]: that
+         * one says "done, nothing owed", and this one owes a write. `seedsJson` is carried rather
+         * than acted on here so the parse stays a parse; the handler absorbs it.
+         */
+        class KeyMaterial(val seedsJson: String) : PushDecrypt
+
+        /**
          * Nothing could be decrypted - the crypto refused, the state was unreadable, the proto could
          * not be fetched, or the lock was held. **The only outcome the recovery ladder can help**,
          * and the only one that owes the worker a retry.
@@ -3081,6 +3134,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                     "plaintext-not-renderable" -> {
                         Log.d(TAG, "decryptProto: decrypted, nothing renderable in it - no catch-up is owed")
+                        PushDecrypt.NothingToRender
+                    }
+                    "graine-key-material" -> {
+                        // The seeds ride ON the refusal, because `ok: false` is what the
+                        // notification path reads and this frame must still ring nobody.
+                        val seeds = json.optJSONArray("seeds")?.toString() ?: "[]"
+                        Log.d(TAG, "decryptProto: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
+                        PushDecrypt.KeyMaterial(seeds)
+                    }
+                    "graine-request" -> {
+                        // A PEER ASKING, NOT A PEER GIVING. Only the foreground can answer one -
+                        // it needs the group's history and a send - so the background states what
+                        // it saw and stops, rather than retrying a frame no ladder can help.
+                        Log.d(TAG, "decryptProto: a peer asks for a seed - the foreground answers those")
                         PushDecrypt.NothingToRender
                     }
                     else -> {
@@ -3831,6 +3898,35 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * expected and not a fault: the notification degrades to the generic body, which is the correct
      * outcome and the same one an oversized ciphertext already produces.
      */
+    /**
+     * Writes the seeds a silent key-material frame carried into the mirror [lookupGraineSeed] reads.
+     *
+     * BEST EFFORT, AND IT SAYS SO WHEN IT LOSES. Nothing downstream breaks when the write fails -
+     * the app rebuilds the mirror from the distribution group's log the next time it runs - but
+     * the symptom in between is a salon whose notifications all read "nouveau message", which is
+     * indistinguishable from the defect this whole path exists to remove. So every branch logs.
+     *
+     * @param seedsJson The `seeds` array from the decrypt, already a JSON string.
+     * @param groupId   The distribution group the frame came on, for the log only.
+     */
+    private fun absorbGraineSeeds(seedsJson: String, groupId: String) {
+        try {
+            val stored = nativeStoreGraineSeeds(
+                MlsContextLoader.tauriDataDir(this).absolutePath,
+                seedsJson,
+            )
+            if (stored < 0) {
+                Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
+            } else {
+                Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${groupId.take(8)}")
+            }
+        } catch (e: Throwable) {
+            // UnsatisfiedLinkError included: an older native library has no such symbol, and a
+            // crash in a push handler takes the whole notification with it.
+            Log.e(TAG, "absorbGraineSeeds: ${e.message}")
+        }
+    }
+
     private fun lookupGraineSeed(channelId: String, sessionId: String): String? {
         if (sessionId.isEmpty()) return null
         return try {

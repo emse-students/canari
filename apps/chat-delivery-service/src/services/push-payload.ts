@@ -41,6 +41,26 @@ export interface PushMessageInput {
    * it did before rather than invent an answer.
    */
   isGroup?: boolean;
+  /**
+   * Whether this conversation is a Graine KEY-DISTRIBUTION group, or `undefined` when the server
+   * could not read the row to find out.
+   *
+   * **IT SAYS WHAT A SILENT FRAME IS, WHICH IS THE ONE THING `silent` CANNOT.** A device that was
+   * shut when a session was minted never received its seed, so every message of that session shows
+   * the generic fallback text for ever - the seed WAS pushed, and the Android service dropped it
+   * unread because it drops every silent frame. Decrypting them all instead is not the answer: a
+   * read receipt would cost an MLS load and the state lock for a frame with nothing to say.
+   *
+   * The discriminator was never missing. A distribution group's log carries seeds and NOTHING else
+   * (`DELIVERY.keyMaterial`), the `dm_groups` row says so in `distributionWorkspaceId` /
+   * `distributionChannelId`, and the push already reads that row for the name. So the fact travels
+   * from where it is known rather than being learnt by decrypting and looking.
+   *
+   * `undefined` is a third state, exactly as for {@link PushMessageInput.isGroup}: the server does
+   * not know, which is a different sentence from "no". A reader that cannot use it keeps doing what
+   * it did before.
+   */
+  isKeyDistribution?: boolean;
   /** Inline base64 MLS ciphertext, or '' when too large (client fetches it). */
   proto: string;
   /** When true, no notification is shown (read receipts, own-device copies, control frames). */
@@ -122,6 +142,10 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
     // "no information" over a transport whose values are all strings, and every reader already has
     // to cope with an absent key anyway - a device may be running a build older than this one.
     ...(input.isGroup === undefined ? {} : { isGroup: input.isGroup ? 'true' : 'false' }),
+    // OMITTED, NOT FALSE, WHEN THE SERVER DOES NOT KNOW - same third state, same reason.
+    ...(input.isKeyDistribution === undefined
+      ? {}
+      : { isKeyDistribution: input.isKeyDistribution ? 'true' : 'false' }),
     proto: input.proto,
     silent: input.silent ? 'true' : 'false',
     isWelcome: input.isWelcome ? 'true' : 'false',

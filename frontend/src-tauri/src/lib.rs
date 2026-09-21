@@ -184,6 +184,73 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
     ANDROID_JAVA_VM.get()
 }
 
+/// Writes Graine seeds carried by a push into `graine_seeds.json`, so the NEXT salon notification
+/// can be read.
+///
+/// `seeds_json` is the `seeds` array `extract_full_message_info` produced for a
+/// `graine_key_material` frame: `[{channelId, sessionId, seedB64, createdAt}]`. Returns how many
+/// were written.
+///
+/// **This is the only write this path performs, and it is deliberately not MLS state.**
+/// `graine_seeds.json` is a mirror of key material the durable store already owns; the push
+/// service must never become a second writer of `mls.bin`, which is why the decrypt that produced
+/// these seeds is read-only and the queued frame is still processed by the foreground afterwards.
+/// Nothing is consumed by writing here.
+///
+/// The directory comes from Kotlin (`MlsContextLoader.tauriDataDir`) because there is no
+/// `AppHandle` in a process with no WebView; the merge and its per-channel bound are the
+/// foreground's, shared through `commands::push::merge_graine_seed`.
+///
+/// Returns -1 if the argument could not be marshalled or parsed at all, which is a different fact
+/// from "zero seeds were usable" and must not read as the same one.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    seeds_json: jni::objects::JString<'a>,
+) -> i32 {
+    let Ok(dir) = env.get_string(&data_dir) else {
+        log::error!("[GRAINE_PUSH] jni-data-dir");
+        return -1;
+    };
+    let Ok(json) = env.get_string(&seeds_json) else {
+        log::error!("[GRAINE_PUSH] jni-seeds-json");
+        return -1;
+    };
+    let dir: String = dir.into();
+    let json: String = json.into();
+
+    let Ok(seeds) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
+        log::error!("[GRAINE_PUSH] seeds payload is not a JSON array");
+        return -1;
+    };
+
+    let path = std::path::Path::new(&dir);
+    let mut stored = 0i32;
+    for seed in &seeds {
+        let channel_id = seed["channelId"].as_str().unwrap_or_default();
+        let session_id = seed["sessionId"].as_str().unwrap_or_default();
+        let seed_b64 = seed["seedB64"].as_str().unwrap_or_default();
+        let created_at = seed["createdAt"].as_i64().unwrap_or(0);
+        if channel_id.is_empty() || session_id.is_empty() || seed_b64.is_empty() {
+            log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
+            continue;
+        }
+        // PER SEED, so a bundle does not lose its tail to its first bad entry.
+        match commands::push::merge_graine_seed(path, channel_id, session_id, seed_b64, created_at)
+        {
+            Ok(_) => stored += 1,
+            Err(e) => log::error!("[GRAINE_PUSH] merge failed for session {session_id}: {e}"),
+        }
+    }
+    log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
+    stored
+}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptGraineMessage<

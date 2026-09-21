@@ -21,6 +21,15 @@ plus en double. Cote natif, personne ne traitait l'appui : Tauri desactive le re
 l'application le reprend en main.
 [chat](docs/wiki/frontend/modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21),
 [mobile](docs/wiki/frontend/mobile.md#the-hardware-back-press-had-no-owner-and-chromium-decided-it-2026-09-21).
+### Fixed - une session creee pendant que l'application etait fermee rendait toutes ses notifications muettes
+
+La graine de la nouvelle session arrivait bien sur le telephone, dans une trame silencieuse que le
+service de notifications jetait sans la lire : chaque message de cette session s'affichait
+`Nouveau message dans #salon` jusqu'a la prochaine ouverture de l'app. Le serveur dit maintenant en
+clair qu'une conversation est un groupe de distribution de cles - la colonne existait deja - et
+seules ces trames-la sont dechiffrees, ce qui evite de payer un chargement MLS par accuse de
+lecture. Android uniquement ; le chemin reste en lecture seule et n'ecrit que le miroir de graines.
+[channel-encryption](docs/wiki/protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android).
 
 ### Fixed - une conversation toute neuve annoncait qu'aucun appareil ne pouvait servir son histoire
 

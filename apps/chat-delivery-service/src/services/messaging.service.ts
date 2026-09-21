@@ -534,19 +534,28 @@ export class MessagingService {
     // production's groups are the second one. See `PushMessageInput.isGroup`.
     let groupName = '';
     let isGroup: boolean | undefined;
+    let isKeyDistribution: boolean | undefined;
     try {
       const group = await this.groupRepo.findOne({
         where: { id: groupId },
-        select: { name: true, isGroup: true },
+        // The two `distribution*` columns cost this query nothing and answer WHAT THE FRAME IS.
+        // See `PushMessageInput.isKeyDistribution` for why the answer has to travel.
+        select: {
+          name: true,
+          isGroup: true,
+          distributionWorkspaceId: true,
+          distributionChannelId: true,
+        },
       });
       if (group) {
         isGroup = group.isGroup;
         groupName = group.isGroup ? (group.name ?? '') : '';
+        isKeyDistribution = !!(group.distributionWorkspaceId || group.distributionChannelId);
       } else {
         // The queued message names a group that is not there. Nothing here can recover it, and the
         // push still goes out - but a reader must not be told this is a DM.
         this.logger.warn(
-          `[PUSH_SEND][${traceId}] group=${groupId} has no row; the push carries no conversation kind`
+          `[PUSH_SEND][${traceId}] group=${groupId} has no row; the push carries neither conversation kind nor frame kind`
         );
       }
     } catch (error) {
@@ -554,7 +563,7 @@ export class MessagingService {
       // shape of every notification for the message.
       this.logger.warn(
         `[PUSH_SEND][${traceId}] could not read group=${groupId}: ${String(error)}; ` +
-          `the push carries no conversation kind`
+          `the push carries neither conversation kind nor frame kind`
       );
     }
 
@@ -579,6 +588,7 @@ export class MessagingService {
       senderName,
       groupName,
       isGroup,
+      isKeyDistribution,
       // Filled in below once the budget the other fields leave is known.
       proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.

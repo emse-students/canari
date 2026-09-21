@@ -17,9 +17,20 @@ import { describe, expect, it } from 'vitest';
  *   paths never persist state, and `decryptProto` discards commits;
  * - no FCM cache entry - the silent return happens before `writeFcmCache`.
  *
- * **The one and only consumer of a silent frame's plaintext is call signalling** (`call_invite`
- * rings, `call_control` stops a ring), and the whole calling surface is held off. So the decrypt is
- * skipped rather than paid for.
+ * Two things read a silent frame's plaintext, and neither applies to the frame above. **Call
+ * signalling** (`call_invite` rings, `call_control` stops a ring), and the whole calling surface is
+ * held off. And **Graine key material**, which is the exception this guard now carries: a seed
+ * minted while the app was shut arrives silent and nowhere else, and dropping it left every
+ * message of that session showing the generic salon body until the app was next opened.
+ *
+ * **THE EXCEPTION IS NAMED BY THE SERVER, NOT DISCOVERED BY DECRYPTING.** `isKeyDistribution` is a
+ * cleartext field saying the conversation is a key-distribution group, read from the `dm_groups`
+ * columns the push already fetched the row for. Deciding it here rather than after the decrypt is
+ * the whole point: the cost below is the decrypt itself. See
+ * `docs/wiki/protocols/channel-encryption.md` section 14.
+ *
+ * So the decrypt is skipped rather than paid for, everywhere except the one frame that has
+ * something in it.
  *
  * ## What paying for it cost, which is why this test exists
  *
@@ -84,12 +95,25 @@ describe('a silent push is not decrypted while nothing reads its plaintext', () 
       'the guard that skips a silent push has gone. Without it every message on this device is ' +
         'decrypted twice, and the second decrypt can produce nothing - 10.7 s of Argon2 and an ' +
         '8 MB read on the lane the NEXT message is queued behind.'
-    ).toContain('if (silent && !CALLS_ENABLED)');
+    ).toContain('silent && !CALLS_ENABLED');
+  });
+
+  it('the ONE exception is the frame the server named, not a shape found by decrypting', () => {
+    const src = service();
+    expect(
+      src,
+      'the key-material exception has gone or is no longer decided on the cleartext field. ' +
+        'Reading a silent frame to find out what is in it puts an MLS load and the state lock ' +
+        'behind every read receipt, for frames with nothing in them.'
+    ).toContain('if (silent && !CALLS_ENABLED && isKeyDistribution != true)');
+    // `!= true`, never `== false`: an absent key says the server did not know, which is a
+    // different sentence from "no" - and the old behaviour is what an unknown keeps.
+    expect(src).not.toMatch(/isKeyDistribution == false/);
   });
 
   it('and it is decided BEFORE the decrypt, not after it', () => {
     const src = service();
-    const guard = src.indexOf('if (silent && !CALLS_ENABLED)');
+    const guard = src.indexOf('if (silent && !CALLS_ENABLED');
     const decrypt = src.indexOf('var outcome = tryDecrypt(');
     expect(guard).toBeGreaterThan(-1);
     expect(decrypt).toBeGreaterThan(-1);
