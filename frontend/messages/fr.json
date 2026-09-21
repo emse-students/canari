@@ -2712,6 +2712,7 @@
   "asso_edit_logo_upload_error": "Envoi du logo échoué",
   "asso_edit_color_picker_label": "Couleur personnalisée",
   "conversation_media_fallback_alt": "media",
+  "conversation_unnamed_group": "Groupe",
   "brand_subtitle": "Le réseau des Marteaux",
   "tag_autocomplete_no_create_hint": "Choisissez un tag existant dans la liste.",
   "profile_pref_sounds_aria": "Activer ou désactiver les bruitages",

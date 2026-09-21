@@ -1279,24 +1279,6 @@ the type is declared, delete the other.**
 The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
 both, and it is not re-derived here.
 
-### G4 - THE SERVER SAYS `''` FOR THREE DIFFERENT THINGS, AND THE CLIENT NOW READS IT AS ONE
-
-The first-contact row is drawn from its type since 2026-09-18 (`CHANGELOG.md`), and the shape
-followed the widget. Two things did not:
-
-1. **THE AMBIGUITY IS CREATED SERVER-SIDE AND SHOULD BE REMOVED THERE.** `messaging.service.ts`
-   computes `groupName = group?.isGroup ? (group?.name ?? '') : ''`, so `''` covers a DM, a group
-   whose own name is empty, AND a group row that could not be read. The client reads `''` as "DM",
-   which is right for the first and wrong for the other two - such a group is drawn as a DM with its
-   first sender as the peer. The ternary is where the three states collapse into one, and where they
-   should be separated.
-2. **A DEAD TEST PERSISTS AN INVENTED LABEL, AND IT IS A WINDOW RATHER THAN A STATE.** The Welcome
-   handler's early placeholder (`setupMessageHandler.ts:379`) tests the group **ID** for the `::`
-   NAME pattern: `const isDirectByPattern = joinedGroupId.includes('::')`. A group id is a UUID, so
-   the test is dead and the row is always written `conversationType: 'group'` with the label
-   `'Groupe'`. The authoritative derivation runs later in the same file and overwrites it, so nobody
-   has yet been observed inside the window - but it is written to disk while it lasts.
-
 ### G6 - P2 - BACK after opening a notification has no list and no home behind it
 
 Verbatim: *"quand je fais retour arriere apres avoir clique sur une notification, j'aimerais arriver

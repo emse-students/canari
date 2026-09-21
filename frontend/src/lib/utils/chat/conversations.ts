@@ -4,6 +4,7 @@
  * work with Svelte 5's $state without requiring a specific composable wrapper.
  */
 import { SvelteMap } from 'svelte/reactivity';
+import { m } from '$lib/paraglide/messages';
 import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
@@ -601,7 +602,11 @@ export function resolveConversationListPresentation(
   return {
     conversationType: 'group',
     contactId: input.id,
-    displayName: fb && !isRawId(fb) ? fb : 'Groupe',
+    // The last resort, and the ONE place the word is written now that the Welcome handler's early
+    // placeholder no longer invents it: a raw id is not a name, and saying "Groupe" is the honest
+    // answer. Through Paraglide because it reaches a reader's screen - a `.ts` util is not an
+    // exemption, it is just where nothing reminds you.
+    displayName: fb && !isRawId(fb) ? fb : m.conversation_unnamed_group(),
     displayNameResolved: true,
   };
 }

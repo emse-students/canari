@@ -178,3 +178,76 @@ describe('placeholderIdentityForPushEntry reads the type the push already carrie
     expect(id.conversationType).toBeUndefined();
   });
 });
+
+/**
+ * THE STATE AN EMPTY NAME COULD NEVER EXPRESS: A GROUP NOBODY NAMED.
+ *
+ * `groupName` was asked to be the label AND the discriminator, and it cannot be both - `''` is a DM
+ * and also a group whose `name` column is null. Measured on production 2026-09-21: **467 of 1433
+ * ordinary groups have no name, 374 of them past MLS epoch 0**, so the state is a third of the
+ * population and not a curiosity. Each of those pushes produced a DM row with its first sender as
+ * the peer: the wrong avatar, the wrong identity, and a `self::peer` key pointing at a person who
+ * is merely one member of a group.
+ *
+ * The answer now travels as its own field. These cases pin that it is consulted FIRST, that an
+ * older cache file still reads exactly as it did, and that absent still means absent.
+ */
+describe('placeholderIdentityForPushEntry - the kind comes from the wire, not from the label', () => {
+  const entry = (over: Record<string, unknown> = {}) => ({
+    groupId: GROUP_ID,
+    senderId: 'PEER-1',
+    senderName: 'Someone',
+    ...over,
+  });
+
+  it('AN UNNAMED GROUP IS A GROUP, not a DM with whoever spoke first', () => {
+    const id = placeholderIdentityForPushEntry(entry({ groupName: '', isGroup: true }), SELF);
+
+    expect(id.conversationType).toBe('group');
+    // Nothing to label it with, so it keeps the last resort - but it is not given a peer.
+    expect(id.directPeerId).toBeUndefined();
+    expect(id.name).toBe('Someone');
+  });
+
+  it('says group even when the push carried no name key at all', () => {
+    const id = placeholderIdentityForPushEntry(entry({ isGroup: true }), SELF);
+
+    expect(id.conversationType).toBe('group');
+    expect(id.directPeerId).toBeUndefined();
+  });
+
+  it('a DM says so outright now, and still resolves to the sender as peer', () => {
+    const id = placeholderIdentityForPushEntry(entry({ groupName: '', isGroup: false }), SELF);
+
+    expect(id.conversationType).toBe('direct');
+    expect(id.directPeerId).toBe('peer-1');
+    expect(id.name).toBe(`${SELF}::peer-1`);
+  });
+
+  it('the name still wins as the LABEL when there is one', () => {
+    const id = placeholderIdentityForPushEntry(
+      entry({ groupName: 'Les gourmands', isGroup: true }),
+      SELF
+    );
+
+    expect(id.conversationType).toBe('group');
+    expect(id.name).toBe('Les gourmands');
+  });
+
+  it('an entry from an older native build behaves exactly as it did before', () => {
+    // No `isGroup` key: the pre-2026-09-21 readings must be untouched, both of them.
+    expect(placeholderIdentityForPushEntry(entry({ groupName: '' }), SELF).conversationType).toBe(
+      'direct'
+    );
+    expect(placeholderIdentityForPushEntry(entry(), SELF).conversationType).toBeUndefined();
+  });
+
+  it('still refuses to make this device its own peer, whatever the wire says', () => {
+    const id = placeholderIdentityForPushEntry(
+      entry({ groupName: '', isGroup: false, senderId: SELF }),
+      SELF
+    );
+
+    expect(id.conversationType).toBeUndefined();
+  });
+});
