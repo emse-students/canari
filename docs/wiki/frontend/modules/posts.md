@@ -432,6 +432,80 @@ the console line separates the causes the shared message cannot: a refused conne
 | `/post/[postId]` | Single post page |
 | `/posts/new` | Create post form |
 
+## One catch said seven things
+
+A member reported on 2026-09-21 that a post would not publish from their phone. The app had told
+them "Impossible de publier le post", and that was everything anyone had.
+
+**The server could add nothing**, and settling that took two log reads: no `POST /api/posts` reached
+nginx in the hour read, and `social-service` logged no error - so nothing server-side refused a post
+in that window, and the trail was structurally empty.
+
+**AND THE WINDOW IS THE LIMIT OF WHAT THAT PROVES.** Prod's containers restarted 2026-09-20 21:46
+UTC, `docker logs` keeps nothing from before a restart, and the report did not carry a time. So the
+hour read is the hour the report arrived in, not necessarily the hour the attempt was made in: the
+reading rules out a server refusal DURING IT and says nothing whatever about an attempt outside it.
+Stating it as "the request never left the device" is one step further than the evidence goes - the
+same class of claim as one that names a mechanism without showing it gone. What is actually
+established is narrower and still decides the work: **no post creation has ever been refused by this
+server in any window anyone has read** - 7 days of prod logs hold exactly one `POST /api/posts`, a
+`201`, and it was the rig's own.
+
+A rights hypothesis was tested directly on 2026-09-21, because the first report came from an account
+that could post when tried again as an admin. It is REFUTED: `posts.controller.ts` computes
+`anonymous = !!body.anonymous && !body.associationId` and never consults `isGlobalAdmin`, the
+composer offers "Anonyme" to everyone with no capability check, and a non-admin account driving the
+real composer on the local prod copy published anonymously with a `201`. Neither half of the stack
+gates it.
+
+**AND IT WAS RE-RUN ON THE REPORTED SURFACE, WHICH IS THE HALF THAT MAKES IT EVIDENCE.** A browser
+on a workstation is not what failed; an Android phone was. So the same drive was repeated on A1 -
+`versionName=0.18.17`, the exact build of the report, a non-admin account, reversed onto a full copy
+of production - and the row landed with `anonymous = t`. Identical on both surfaces.
+
+So the class is NOT "anonymous posting is broken in 0.18.17", and no fix to the publish path is owed
+or would have anywhere to go. What remains is one member, one attempt, and seven candidate stages -
+which is exactly the shape the typed errors above were written for. **The composer now names its own
+stage, so the next occurrence arrives with the answer attached instead of costing a day of log
+reads that the retention window may no longer cover.**
+
+`publishPost` can fail seven ways, and **five of them already carried a translated sentence at the
+throw**:
+
+| stage | cause | the sentence that existed |
+| --- | --- | --- |
+| `moderation` | the account is restricted | `post_action_not_allowed` (via the caller) |
+| `content` | no text and no media | `post_create_content_required` |
+| `mediaToken` | no upload token | `post_create_image_token_error` |
+| `mediaUpload` | compression or upload threw | none - dev prose |
+| `poll` | a poll with no question or under two options | `post_create_poll_requires_options` |
+| `form` | the form attachment with nothing selected | `post_create_form_required` |
+| `createPost` | the API refused | none - dev prose |
+
+One `catch` replaced all five with the blanket line, and logged the cause at `Log.d` - debug - in a
+file that already used `console.error` for a dropdown that would not load. **The one failure a
+reader reports was the quietest line in it.**
+
+The repair is the rule that governs every other seam here: **classify at the THROW, as a type**. The
+five sentences are `LocalizedError`, which `utils/localizedError.ts` already existed for and which
+`muteCheck.ts`'s own docblock had already named as the answer. Moderation is a `MutedError`, because
+its message is dev prose and each screen picks its own line. `posts/publishFailure.ts` maps them,
+and the composer records a `PublishStage` so the console names WHERE - a value, not a stack, because
+the line has to be readable in an in-app log export from a phone.
+
+**A transport failure is not a refusal, and one screen was saying it was.**
+`PostCard.handleReaction` wraps `assertNotMuted()` - which ASKS the server - and showed
+`post_action_not_allowed` for anything it threw. A reader whose radio dropped was told they are
+restricted by moderation: not merely vague, but false and about them. That third call site is why
+the mapping is a shared module rather than three inline ladders, and why its fallback is a required
+parameter: "could not publish", "could not comment" and "action not allowed" are three screens and
+no default is right on all three.
+
+What deliberately keeps the fallback is a refusal from the write itself and anything the media
+pipeline throws - English dev prose, for the console, and no distinction a reader can act on.
+
+`publishFailure.test.ts` pins the mapping, including the two sentences that are ABOUT THE READER and
+must not be said when they are not true.
 ## The blocks preflight erases
 
 A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not
