@@ -900,7 +900,54 @@ field renamed on one side alone fails the suite as well as `svelte-check`.
 
 ## Multi-tab leadership
 
-`initTabLeadershipAsync()` uses a `BroadcastChannel` + heartbeat to elect a single leader tab. Only the leader tab opens the WebSocket and runs `discoverMissingGroups`. Follower tabs skip `initializeConnection()` entirely.
+`initTabLeadershipAsync()` elects a single leader tab. Only the leader opens the WebSocket and runs
+`discoverMissingGroups`; followers skip `initializeConnection()` entirely, because both tabs load
+their MLS client from ONE snapshot and a send from the tab whose ratchet is behind is encrypted at a
+generation the peer has already consumed, then dropped silently (WP-MULTITAB-1).
+
+**The Web Locks API is the path every real browser takes**: one exclusive `canari-tab-leader` lock,
+held until `beforeunload`, with mutual exclusion guaranteed by the browser rather than by a
+read-modify-write on `localStorage`. The `BroadcastChannel` + heartbeat implementation is the
+fallback for engines without `navigator.locks` (Tauri WebKitGTK, very old browsers), and
+`canari-mls-tab` still carries the takeover and promotion messages on both paths.
+
+### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
+
+**MEASURED ON W2 ON THE RUNNING PRODUCT.** `navigator.locks.query()` answered `canari-tab-leader`
+**held** by client `BCDAE226...` and **pending** for client `BCDAE226...` - the same client id on
+both sides, in a browser profile with exactly one page. A Web Locks `clientId` names a document, so
+that document was waiting for a lock it already held, and the only thing that releases that hold is
+its own `beforeunload`. On screen: *"Messagerie chiffree active dans un autre onglet"*, a
+*Hors-ligne* header, and not one community ever listed - permanently, with no other tab in
+existence.
+
+**"Prendre la main" cannot rescue it**, and that is the same defect seen from the other end rather
+than a second one: `requestLeadershipTakeover` posts `request_takeover` on a `BroadcastChannel`,
+and **a BroadcastChannel never delivers to the context that posted**. The only tab that could
+release the lock is the one asking for it.
+
+**HOW ONE DOCUMENT REQUESTS TWICE.** `initTabLeadershipAsync` has a single production caller -
+`sessionAuth.ts`'s login - and a login runs more than once in a page's life: a PIN refused, a
+reset, a new PIN is two of them, which is exactly the sequence that produced this. Run 1 takes the
+lock with `ifAvailable` and holds it; run 2 probes, is told `null` **by its own hold**, calls
+`decide('follower')` over run 1's answer, and queues a blocking request that can only be granted
+by the release it is itself blocking.
+
+**THE FIX IS THAT THE ELECTION IS A PROPERTY OF THE DOCUMENT, NOT OF A LOGIN.** The promise is
+memoised: the first call runs the election and every later one awaits it and reads the CURRENT
+state - not the first call's boolean, which goes stale the moment a follower is promoted. Two
+concurrent callers therefore share one election instead of racing for the same lock.
+
+**AND THE SAME END STATE HAD A SECOND ROUTE, closed in the same commit.** `releaseLeadership` gave
+the lock away on a takeover and asked for nothing back, so once the tab that took over closed, the
+demoted one was never told: read-only and offline for the rest of its life, same banner, same
+absence of an explanation. Getting back in the queue is the one thing a tab handing over owes, and
+`queueForPromotion` is now the single implementation both the losing candidate and the demoted
+leader use.
+
+Guarded by `mls-client/tabLeader.test.ts`, whose stub for these cases **models the lock** rather
+than the two answers - the defect is invisible to a stub that cannot be held twice, which is why
+fourteen existing cases were green over it.
 
 ## Bugs fixed by the 2026-06 rewrite
 

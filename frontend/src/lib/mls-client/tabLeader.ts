@@ -39,6 +39,14 @@ export type TabLeadership = 'undecided' | 'leader' | 'follower';
 let leadership: TabLeadership = 'undecided';
 
 /**
+ * The election for THIS document: in flight, or settled, or `null` before the first call.
+ *
+ * Holding the promise rather than a boolean is what makes two concurrent callers share one
+ * election instead of racing each other for the same lock.
+ */
+let election: Promise<boolean> | null = null;
+
+/**
  * Resolved the first time the election settles, and never re-armed.
  *
  * A promotion or a demotion afterwards is a TRANSITION between two decided states, not a return to
@@ -89,6 +97,15 @@ let leaderPromotedHandler: (() => void) | null = null;
 let leaderDemotedHandler: (() => void) | null = null;
 /** Stored resolve from holdLeaderLockUntilUnload - allows explicitly releasing the lock. */
 let releaseLeaderLock: (() => void) | null = null;
+/**
+ * How to get back in the queue after handing leadership over - set by whatever took the lock.
+ *
+ * The logger belongs to the election, and `releaseLeadership` is reached from a BroadcastChannel
+ * listener that has none. Storing the CLOSURE rather than the logger keeps the knowledge where it
+ * already is, and pairs it with `releaseLeaderLock`: both are set on acquiring and cleared on
+ * releasing, so there is one state, not two that can disagree.
+ */
+let requeueForPromotion: (() => void) | null = null;
 
 /**
  * Returns true if this tab is the active MLS leader (holds the WebSocket).
@@ -161,8 +178,16 @@ export function releaseLeadership(): void {
   }
   tabChannel?.postMessage({ type: 'leader_closing', tabId: TAB_ID });
   // Release the Web Lock if active (the next tab in the queue acquires it automatically).
+  const requeue = requeueForPromotion;
   releaseLeaderLock?.();
   releaseLeaderLock = null;
+  requeueForPromotion = null;
+  // AND GET BACK IN THE QUEUE. Handing leadership over is not leaving the election: the tab that
+  // took over will close one day, and a tab holding no outstanding request is never told. It then
+  // stays read-only and offline for the rest of its life with nothing on screen to say why, which
+  // is the same end state as the double election above, reached from the other direction. Only on
+  // the Web Locks path, which is what set this - the localStorage fallback has its own poll.
+  requeue?.();
   // Notify the session to close its WebSocket (otherwise the MLS ratchet
   // would advance in two tabs simultaneously).
   leaderDemotedHandler?.();
@@ -216,6 +241,36 @@ function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
 // ── Web Locks implementation ───────────────────────────────────────────────
 
 /**
+ * Queues a blocking request for the leader lock, to be granted when the holder releases it.
+ *
+ * TWO PLACES NEED THIS AND ONLY ONE HAD IT. A tab that lost the election queues here and is
+ * promoted when the leader closes. A tab DEMOTED by a takeover was left with no request at all -
+ * so if the tab that took over then closed, the demoted one stayed read-only and offline for the
+ * rest of its life, with nothing on screen to say why. Same end state as the defect above, reached
+ * from the other direction, so it gets the same answer rather than a second one.
+ *
+ * NOT CALLED WHILE THIS DOCUMENT ALREADY HOLDS THE LOCK. Web Locks are per-document, so a request
+ * made behind our own hold waits for our own `beforeunload` - that is the defect
+ * `initTabLeadershipAsync` is memoised to prevent, and it must not come back in through here.
+ */
+function queueForPromotion(log: (msg: string) => void): void {
+  void navigator.locks
+    .request('canari-tab-leader', { mode: 'exclusive' }, async () => {
+      if (leadership === 'leader') return;
+      decide('leader');
+      log('[TAB] Promoted to leader (Web Locks).');
+      requeueForPromotion = () => queueForPromotion(log);
+      tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+      notifyTabLeaderPromoted();
+
+      await holdLeaderLockUntilUnload();
+    })
+    .catch(() => {
+      /* Tab is closing - ignore. */
+    });
+}
+
+/**
  * Tries to become leader using the Web Locks API.
  * - First tab acquires the exclusive lock and is the leader.
  * - Subsequent tabs queue a non-ifAvailable request; they become leaders
@@ -243,6 +298,7 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
         }
         decide('leader');
         log('[TAB] Leadership acquired (Web Locks).');
+        requeueForPromotion = () => queueForPromotion(log);
         resolveLeadership(true);
         await holdLeaderLockUntilUnload();
       })
@@ -265,19 +321,7 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
     decide('follower');
     log('[TAB] Another tab is active - read-only mode (Web Locks).');
 
-    void navigator.locks
-      .request('canari-tab-leader', { mode: 'exclusive' }, async () => {
-        if (leadership === 'leader') return;
-        decide('leader');
-        log('[TAB] Promoted to leader (Web Locks).');
-        tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
-        notifyTabLeaderPromoted();
-
-        await holdLeaderLockUntilUnload();
-      })
-      .catch(() => {
-        /* Tab is closing - ignore. */
-      });
+    queueForPromotion(log);
   }
 
   return acquired;
@@ -404,7 +448,32 @@ async function initWithLocalStorage(log: (msg: string) => void): Promise<boolean
  * Elects this tab as leader or follower.
  * Uses Web Locks when available (race-free); falls back to localStorage heartbeat.
  */
-export async function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
+/**
+ * Elects this tab, ONCE PER DOCUMENT, and hands every later caller the standing answer.
+ *
+ * **THE ELECTION IS A PROPERTY OF THE DOCUMENT, NOT OF A LOGIN.** It has one production caller -
+ * `sessionAuth.ts`'s login - and a login runs more than once in a page's life: a PIN refused, a
+ * reset, a new PIN is two of them. Run 1 takes the lock with `ifAvailable` and holds it until
+ * unload; run 2 probes, is told `null` BY ITS OWN HOLD, calls `decide('follower')` over run 1's
+ * answer, and queues a blocking request that can only be granted by the release it is blocking.
+ *
+ * Measured on W2, 2026-09-21: `navigator.locks.query()` answered `canari-tab-leader` held by
+ * client `BCDAE226...` AND pending for client `BCDAE226...`, in a profile with exactly one page.
+ * The tab showed "Messagerie chiffree active dans un autre onglet", read *Hors-ligne*, and listed
+ * nothing - permanently. "Prendre la main" cannot rescue it: `requestLeadershipTakeover` posts on
+ * a `BroadcastChannel`, which never delivers to the context that posted, and the only tab that
+ * could release the lock is the one asking.
+ *
+ * So the first call runs the election and every later one awaits it and reads the CURRENT state -
+ * not the first call's boolean, which goes stale the moment a follower is promoted.
+ */
+export function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
+  if (election) return election.then(() => getIsTabLeader());
+  election = runElection(log);
+  return election;
+}
+
+async function runElection(log: (msg: string) => void): Promise<boolean> {
   // Single-tab environments (Tauri desktop, service workers without BroadcastChannel)
   // are always leader.
   if (typeof BroadcastChannel === 'undefined') {
@@ -454,6 +523,10 @@ export function resetTabLeaderStateForTests(): void {
   // and leaving the old one resolved would let the next case await an answer from the previous one.
   leadership = 'undecided';
   decided = armDecided();
+  // The memo goes with them, or the next case would be handed the previous case's election.
+  election = null;
+  releaseLeaderLock = null;
+  requeueForPromotion = null;
   try {
     localStorage.removeItem(LEADER_KEY);
     localStorage.removeItem(HEARTBEAT_KEY);
