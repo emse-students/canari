@@ -39,11 +39,17 @@ const GROUP_ID = 'e4c1f0aa-0000-4000-8000-000000000001';
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000;
 
-/** A conversation holding `times` as its message instants, in the order given. */
-function conversation(times: number[]): Conversation {
+/**
+ * A conversation holding `times` as its message instants, in the order given.
+ *
+ * `startedAt` is left ABSENT unless a case passes one, which is the state every row written before
+ * the group's creation instant was carried is in - and the state that must still ask.
+ */
+function conversation(times: number[], startedAt?: number): Conversation {
   return {
     id: GROUP_ID,
     name: DM,
+    ...(startedAt !== undefined ? { startedAt } : {}),
     messages: times.map((t, i) => ({
       id: `m${i}`,
       senderId: 'u2',
@@ -135,6 +141,58 @@ describe('requestOlderFromPeers', () => {
 
     await convs.requestOlderFromPeers(DM, ctx);
     expect(order).toEqual(['elect', 'range']);
+  });
+
+  // ── A past that cannot exist ────────────────────────────────────────────────
+  //
+  // The scrollback reaches BELOW this device's window. A group created inside that window has
+  // nothing below it, and the messages alone can never say so: the oldest message held is always
+  // strictly AFTER the group was created, so a first contact and a device missing years of history
+  // look identical. It asked, nobody was online to answer, and the reader's first sight of a new
+  // correspondent was "no device is connected to supply older messages".
+
+  it('asks nobody when the group began inside this device own window', async () => {
+    const convs = withConversation(conversation([NOW], NOW - DAY));
+    historyRangeStartFor.mockResolvedValue(NOW - 90 * DAY);
+    const { ctx, mls } = makeCtx();
+
+    expect(await convs.requestOlderFromPeers(DM, ctx)).toBe('complete');
+    // Neither half of the ask goes out. Electing a responder and then discarding the answer would
+    // still put a frame on the wire for a page that cannot exist.
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    expect(sendHistoryRangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('SEPARATES having nothing to fetch from being unable to fetch', async () => {
+    // Both draw nothing on screen, and they are still two answers: one is about the conversation,
+    // the other about this device. They were one value, and that is how a brand-new conversation
+    // came to claim its history was unreachable.
+    const born = withConversation(conversation([NOW], NOW - DAY));
+    historyRangeStartFor.mockResolvedValue(NOW - 90 * DAY);
+    expect(await born.requestOlderFromPeers(DM, makeCtx().ctx)).toBe('complete');
+
+    const noStorage = withConversation(conversation([NOW], NOW - DAY));
+    expect(await noStorage.requestOlderFromPeers(DM, makeCtx({ storage: null }).ctx)).toBe(
+      'unavailable'
+    );
+  });
+
+  it('still asks when the group is OLDER than the window, which is what the scrollback is for', async () => {
+    const convs = withConversation(conversation([NOW - 80 * DAY], NOW - 2 * 365 * DAY));
+    historyRangeStartFor.mockResolvedValue(NOW - 90 * DAY);
+    const { ctx } = makeCtx();
+
+    expect(await convs.requestOlderFromPeers(DM, ctx)).toBe('asked');
+  });
+
+  it('still asks when the group start is UNKNOWN - absent must not read as "nothing exists"', async () => {
+    // A row stored before this shipped, or a server that does not send the field. Over-asking costs
+    // a round trip; under-asking loses a past the reader is entitled to.
+    const convs = withConversation(conversation([NOW - 80 * DAY]));
+    historyRangeStartFor.mockResolvedValue(NOW - 90 * DAY);
+    const { ctx } = makeCtx();
+
+    expect(await convs.requestOlderFromPeers(DM, ctx)).toBe('asked');
   });
 
   it('refuses once the oldest message held already reaches our floor', async () => {

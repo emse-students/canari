@@ -1279,16 +1279,6 @@ the type is declared, delete the other.**
 The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
 both, and it is not re-derived here.
 
-### G3 - P2 - a brand-new conversation claims no device can serve its history, when there is no history
-
-Verbatim: *"Le fait que quelqu'un m'envoie un message alors que nous n'avons pas de conversation
-avant m'envoie bien une notif et je peux bien cliquer dessus, mais alors il peut etre marque le
-message 'Aucun appareil n'est connecte pour...'"*
-
-A first contact has nothing older than its first message. The banner answers a question nobody
-asked, and it is the first thing the user sees of a new correspondent. Whatever decides to solicit
-history must first decide whether there is any to ask for.
-
 ### G4 - THE SERVER SAYS `''` FOR THREE DIFFERENT THINGS, AND THE CLIENT NOW READS IT AS ONE
 
 The first-contact row is drawn from its type since 2026-09-18 (`CHANGELOG.md`), and the shape

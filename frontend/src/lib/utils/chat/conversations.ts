@@ -92,6 +92,7 @@ export function toConversationMeta(
     updatedAt: convo.lastMessageAt ?? Date.now(),
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
+    startedAt: convo.startedAt,
   };
 }
 
@@ -439,6 +440,7 @@ export interface ConversationRowSpec {
   lastMessageAt?: number;
   readWatermarks?: Conversation['readWatermarks'];
   historyFloor?: Conversation['historyFloor'];
+  startedAt?: Conversation['startedAt'];
 }
 
 /**
@@ -476,6 +478,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const lastMessageAt = spec.lastMessageAt ?? existing?.lastMessageAt;
   const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
+  const startedAt = spec.startedAt ?? existing?.startedAt;
   const directPeerId = identity.directPeerId ?? existing?.directPeerId;
 
   return {
@@ -492,6 +495,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     ...(readWatermarks !== undefined ? { readWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
   };
 }
 
@@ -859,6 +863,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         // below would then count messages this user has already read on another device.
         readWatermarks: meta.readWatermarks,
         historyFloor: meta.historyFloor,
+        startedAt: meta.startedAt,
       })
     );
   }

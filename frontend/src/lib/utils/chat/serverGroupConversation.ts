@@ -45,7 +45,22 @@ export type ServerGroupRow = {
   name?: string | null;
   isGroup: boolean;
   imageMediaId?: string | null;
+  /** ISO-8601 instant the group was created server-side - see {@link UserGroupRow.createdAt}. */
+  createdAt?: string | null;
 };
+
+/**
+ * Reads a group's creation instant out of a server row, or `undefined` for anything unusable.
+ *
+ * ONE PLACE, because every caller must reach the same verdict about a missing or malformed value:
+ * `undefined` means UNKNOWN, and unknown asks for the past rather than declaring there is none.
+ * A server that does not send the field and one that sends nonsense are the same situation here.
+ */
+export function groupStartInstant(group: Pick<ServerGroupRow, 'createdAt'>): number | undefined {
+  if (!group.createdAt) return undefined;
+  const at = Date.parse(group.createdAt);
+  return Number.isFinite(at) && at > 0 ? at : undefined;
+}
 
 /** What building the row needs, in the shape both callers already hold. */
 export type EnsureConversationDeps = {
@@ -118,6 +133,39 @@ async function repairGroupLabel(
   await saveConversation?.(key).catch(() => {});
 }
 
+/**
+ * Writes the group's creation instant onto a row that does not carry one yet.
+ *
+ * WHY IT IS A REPAIR AND NOT ONLY A FIELD ON CREATION. Every conversation that existed before this
+ * shipped was stored without it, and a device does not re-create rows it already has - so writing
+ * it only on the `created` path would leave every EXISTING conversation asking peers for a past
+ * that cannot exist, for ever. This sweep already visits every active group on every connection
+ * ({@link discoverMissingGroups}), which makes it the one pass that reaches them all.
+ *
+ * It is write-once and never an update: the value is a fixed fact about the group's row, so a row
+ * that already carries one is left alone and nothing is logged - a line that fires on every group
+ * on every connection is a line its reader learns to skip.
+ *
+ * IT READS THE ROW OUT OF THE MAP RATHER THAN BEING HANDED ONE. {@link repairGroupLabel} runs first
+ * and REPLACES the row when the server renamed the group; a second repair spreading the copy it was
+ * given at the top of the pass would put the old name straight back. Two repairs over one row is a
+ * shape, not an accident - the next one added would meet the same trap - so the row is fetched at
+ * the moment it is written.
+ */
+async function recordGroupStart(
+  key: string,
+  group: ServerGroupRow,
+  conversations: Map<string, Conversation>,
+  saveConversation: ((key: string) => Promise<void>) | undefined
+): Promise<void> {
+  const convo = conversations.get(key);
+  if (!convo || convo.startedAt !== undefined) return;
+  const startedAt = groupStartInstant(group);
+  if (startedAt === undefined) return;
+  conversations.set(key, { ...convo, startedAt });
+  await saveConversation?.(key).catch(() => {});
+}
+
 /** The 8-character prefix every line in this file names a group by. */
 const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;
 
@@ -140,6 +188,7 @@ export async function ensureConversationForServerGroup(
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
   if (known) {
     await repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
+    await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';
   }
 
@@ -209,6 +258,7 @@ export async function ensureConversationForServerGroup(
         ...(directPeer ? { directPeerId: directPeer } : {}),
       },
       imageMediaId: group.imageMediaId ?? null,
+      startedAt: groupStartInstant(group),
     })
   );
   if (saveConversation) {

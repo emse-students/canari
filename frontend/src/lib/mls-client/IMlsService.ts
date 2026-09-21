@@ -186,6 +186,20 @@ export type UserGroupRow = {
   imageMediaId?: string | null;
   deletedAt?: string | null;
   /**
+   * The instant the group was created, server-side, ISO-8601.
+   *
+   * IT ANSWERS "IS THERE ANYTHING OLDER TO ASK FOR", which nothing else here can. The scrollback
+   * reaches BELOW this device's retention window by asking a member who kept more; a group created
+   * INSIDE that window has nothing below it, and everything inside belongs to the reconciliation on
+   * connect. The messages alone cannot separate the two, because the oldest message a device holds
+   * is always strictly after the group was created - so a first contact looked exactly like a
+   * device missing the past, asked, and was told nobody was online to answer.
+   *
+   * Optional because a client may be talking to a server that predates it, and absence must read as
+   * "unknown" - which asks, the safe direction - rather than as "nothing exists".
+   */
+  createdAt?: string | null;
+  /**
    * The epoch the group is at, server-side.
    *
    * Carried so a device that HOLDS the tree can see, on the one read it already makes on every

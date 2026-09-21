@@ -672,12 +672,13 @@ export function useConversations() {
    *
    * @returns `asked` when a peer was elected and the ask went out - the messages arrive later, as an
    *          ordinary bundle; `no-peer` when nobody was online to answer, which is the one outcome
-   *          worth telling the reader about; `unavailable` when this device cannot ask at all.
+   *          worth telling the reader about; `complete` when this conversation has no past to ask
+   *          for; `unavailable` when this device cannot ask at all.
    */
   async function requestOlderFromPeers(
     contactName: string,
     ctx: ConversationContext
-  ): Promise<'asked' | 'no-peer' | 'unavailable'> {
+  ): Promise<'asked' | 'no-peer' | 'complete' | 'unavailable'> {
     if (isChannelConversationId(contactName)) return 'unavailable';
     const convo = conversations.get(contactName);
     if (!convo || !ctx.storage) return 'unavailable';
@@ -695,6 +696,29 @@ export function useConversations() {
     const before = Math.min(...timestamps);
 
     const since = await historyRangeStartFor(convo.id, ctx.storage);
+
+    // NOTHING IS ASKED FOR A PAST THAT CANNOT EXIST, and this is the one fact that settles it.
+    //
+    // The scrollback reaches BELOW this device's retention window by asking a member who kept more.
+    // A group created INSIDE that window has nothing below it: everything it ever held is inside
+    // the range this device claims completeness for, which is the RECONCILIATION's range, not this
+    // one's. The messages alone cannot say so - the oldest message held is always strictly after
+    // the group was created - so a first contact was indistinguishable from a device missing years
+    // of history. It asked, the only other member was the person who had just written and was no
+    // longer online, and the reader's first sight of a new correspondent was a notice that no
+    // device could supply older messages. The user reported exactly that, and it was reproduced on
+    // an Android handset on 2026-09-21 on a group two minutes old.
+    //
+    // `complete` RATHER THAN `unavailable`, though both draw nothing today: one says there is
+    // nothing to fetch, the other says this device cannot fetch. Collapsing them would put the next
+    // reader back where this defect started, with one value standing for two situations.
+    if (convo.startedAt !== undefined && convo.startedAt >= since) {
+      ctx.log(
+        `[HISTORY_RANGE] ${convo.id.slice(0, 8)}… began inside this device's window - nothing older exists`
+      );
+      return 'complete';
+    }
+
     if (before <= since) {
       // We already hold everything down to the floor of our own window. There is nothing below it
       // that anybody is entitled to send us.

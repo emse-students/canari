@@ -33,6 +33,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     isGroup: true,
     imageMediaId: null,
     deletedAt: null,
+    createdAt: new Date(1_000),
     distributionWorkspaceId: null,
     updatedAt: new Date(2_000),
   };
@@ -212,6 +213,34 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       ['g-ordinary', 7, null],
       ['g-other', 3, 3],
     ]);
+  });
+
+  /**
+   * A CLIENT CANNOT DERIVE WHEN A GROUP BEGAN, and without it a brand-new conversation asks other
+   * members for a past that never existed - the oldest message it holds is always strictly AFTER
+   * the group was created, so "I hold the first message" and "I am missing years" are the same
+   * shape. It then finds nobody online to answer, and says so to a reader meeting a new
+   * correspondent for the first time.
+   */
+  it('carries the instant the group was created', async () => {
+    groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
+    groupRepo.find.mockResolvedValue([ORDINARY]);
+
+    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(row.createdAt).toEqual(new Date(1_000));
+  });
+
+  it('answers null rather than undefined for a row with no creation instant', async () => {
+    // The column is `@CreateDateColumn`, so this should not occur - and a key that is absent on the
+    // wire and one that is null are different answers on the client, where absent means UNKNOWN and
+    // unknown ASKS. Pinned so the endpoint keeps saying one of them rather than either.
+    groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
+    groupRepo.find.mockResolvedValue([{ ...ORDINARY, createdAt: null }]);
+
+    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(row.createdAt).toBeNull();
   });
 
   it('asks for the bases of the groups it is about to return, and no others', async () => {

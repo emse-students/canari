@@ -743,9 +743,51 @@ empty.
 The trigger is **automatic, with the state made visible**: reaching the top of a conversation whose
 local store is exhausted asks by itself, and the reader is shown a loading row while the ask is out
 and a message when nobody was online to answer it. That distinction is the whole reason the function
-returns `asked` / `no-peer` / `unavailable` rather than a boolean - a silent nothing would read as
-"there is no more history", which is a different statement and usually a false one. The answer is
-recognised by the list reaching further back than it did when the ask went out, not by a timer.
+returns `asked` / `no-peer` / `complete` / `unavailable` rather than a boolean - a silent nothing
+would read as "there is no more history", which is a different statement and usually a false one.
+The answer is recognised by the list reaching further back than it did when the ask went out, not by
+a timer.
+
+#### A group that BEGAN inside the window has nothing below it, and the messages cannot say so (2026-09-21)
+
+The scrollback exists to reach **below** the device window by asking a member who kept more. A group
+created **inside** that window has nothing below it: everything it ever held is inside the range
+this device already claims completeness for, which belongs to the connection reconciliation, not to
+this ask.
+
+**The messages alone can never establish that**, and this is the part that made the defect
+invisible. The oldest message a device holds is always strictly **after** the group was created, so
+"I hold the first message this conversation ever had" and "I am missing years of past" are the same
+shape at the boundary. A first contact therefore asked; the only other member was the person who had
+just written and was no longer online; and the reader's first sight of a new correspondent was a
+notice that no device could serve their history. Reported by the user, reproduced on an Android
+handset on a group two minutes old.
+
+**So the group's creation instant is carried, and it is the only thing that settles it.**
+`dm_groups.createdAt` is a `@CreateDateColumn`, so it exists for every row ever written and never
+moves; `getUserGroups` returns it, `ensureConversationForServerGroup` writes it onto the
+conversation row, and the ask is refused when `startedAt >= since`. The comparison is against the
+range start, **never** against the page boundary `before` - a comparison against `before` would
+never fire, because the first message is by construction after the creation.
+
+Three things about its shape, each of which was a way to get it wrong:
+
+- **It is NOT the history floor.** The floor is shared, converged, monotone and merged as a `max`,
+  so a wrong value can never be taken back. This is a local, fixed, server-stated fact about one
+  group's row - never merged, never sent.
+- **Absent means UNKNOWN, and unknown ASKS.** A client may be talking to a server that predates the
+  field, and the safe direction is the one that costs a frame rather than the one that hides a past.
+  `groupStartInstant` is the single place that reaches that verdict for a missing or unparseable
+  value.
+- **It is written as a REPAIR on the group sweep, not only on creation.** Every conversation stored
+  before this shipped has no `startedAt`, and a device does not re-create rows it already holds - so
+  a creation-only field would leave every existing conversation asking for an impossible past for
+  ever. The sweep visits every active group on every connection, which makes it the one pass that
+  reaches them all; it is write-once and silent.
+
+`complete` is a fourth state rather than a reuse of `unavailable` although **both draw nothing**: one
+says there is no past to fetch, the other says this device could not fetch it. They were one value
+until this fix, which is where the defect started.
 
 ### The order of the startup walk, and why its LENGTH is not capped
 
