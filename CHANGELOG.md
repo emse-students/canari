@@ -19,6 +19,14 @@ desormais l'instant de creation, le client l'inscrit sur la conversation - y com
 sur celles d'avant - et ne sollicite plus un passe qui ne peut pas exister.
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-group-that-began-inside-the-window-has-nothing-below-it-and-the-messages-cannot-say-so-2026-09-21).
 
+### Verified - la reponse par glissement fonctionne sur un vrai ecran, et l'atome d'envoi revoit le telephone
+
+APK debug construit depuis `33c064687`, installe sur le Mi 9T, pilote en `adb shell input swipe` :
+un glissement long remplit le composeur de reponse, un glissement court ne fait rien - donc le seuil
+est vivant sur le materiel, ce qu'un DOM simule ne peut pas affirmer. `send.mjs` cherchait l'hote de
+l'estate dans les onglets, absent sur le telephone ou l'app est servie par `tauri.localhost` ; il
+prend le resolveur que `logs.mjs` et `shot.mjs` utilisaient deja.
+[chat](docs/wiki/frontend/modules/chat.md#the-swipe-gesture-was-switched-off-by-a-variable-nothing-writes-2026-09-20).
 ### Fixed - les # etaient jaunes sur jaune, et sous le seuil de contraste sur cinq surfaces sur six
 
 Un hashtag nommait une couleur ambre sur une bulle dont il ne peut pas connaitre le fond : 1,13:1

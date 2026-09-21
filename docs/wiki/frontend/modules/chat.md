@@ -1903,10 +1903,22 @@ return `false` - measured by mutating it - so the suite fails the way the origin
 refusals are pinned too: a mouse `pointerType`, a fine-pointer device, a tombstone, a system pill, a
 drag too short, and a vertical drag (scrolling a thread must never answer a message).
 
-**WHAT IS STILL OWED: A FINGER.** Everything above is proven by reading and by tests in a simulated
-DOM. The gesture end to end on a real screen - the bubble travelling under the thumb, the reply
-composer filling - has been verified on no hardware, and an APK embeds its own frontend so the phone
-cannot see this fix until one is built from this tree.
+**THE FINGER IS PAID, 2026-09-21.** A debug APK was built from `33c064687` with a clean tree - the
+build asserts both halves, that the seven `VITE_*` origins reached the packaged chunks and that the
+commit describes the artefact exactly (`tools/cross-client-harness/a1apk.mjs`) - installed on the
+Mi 9T, and driven with `adb shell input swipe`, which enters Chromium through the real touch stack
+rather than through a dispatched event.
+
+**Two gestures, because one of them proves nothing on its own.** A 320 px leftward drag on an own
+bubble (~122 CSS px, above the 56 px trigger) filled the reply composer with that message's author
+and text. A 70 px drag on the same bubble (~27 CSS px, below it) did nothing at all. Without the
+second reading the first would only say that the element takes touches; together they say the
+THRESHOLD is live on hardware, which is the part a simulated DOM cannot claim.
+
+**What this does NOT cover, stated so nobody reads it as more than it is.** The bubble was an OWN
+message, so only the `isOwn` direction was exercised on glass - a peer's bubble swipes the other
+way and is covered by tests alone. Nothing here was measured on iOS, where the engine is WebKit and
+the pointer-event path is its own question.
 
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 
