@@ -13,6 +13,12 @@
  * the first press looked like it had done nothing at all.
  */
 
+// This file imports nothing statically - every module it needs arrives through `vi.mock` or a
+// dynamic `import`, for the isolation reasons given below. Without this line TypeScript reads
+// it as a SCRIPT rather than a module, and a top-level `await` is then an error that only
+// `svelte-check` reports - `vitest` and `oxlint` both run the file happily.
+export {};
+
 /**
  * The overlay stack is replaced rather than driven, for two reasons: `isMobileOverlayLayout` asks a
  * real media query that no test viewport answers the way a phone does, and the close callback is
