@@ -106,7 +106,7 @@ export class PostAnnounceScheduler {
    */
   private async announceAssociationPost(post: Post): Promise<number> {
     const rows: unknown = await this.postRepo.manager.query(
-      `SELECT name, "logoUrl" FROM associations WHERE id = $1`,
+      `SELECT name, "logoUrl", "logoMediaId" FROM associations WHERE id = $1`,
       [post.associationId]
     );
     const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
@@ -126,7 +126,11 @@ export class PostAnnounceScheduler {
       // The association's OWN identity, not `actorId` above (the publishing member) - see
       // `PostNotification`'s docblock for why the row needs both.
       associationId: post.associationId,
+      // BOTH, and they are not the same fact. The URL is what the in-app notification row shows;
+      // the id is what a push may concatenate, and deriving one from the other is what showed a
+      // member's face on 40 of 91 associations - see `publicMediaIconId`.
       associationLogoUrl: row?.logoUrl ?? null,
+      associationLogoMediaId: row?.logoMediaId ?? null,
       text: previewOf(post.markdown ?? ''),
       pushData: { postId: post.id },
     });
