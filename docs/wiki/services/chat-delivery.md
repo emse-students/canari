@@ -1149,7 +1149,8 @@ on push receipt and down on read-state cancel with no separate counter to keep i
   cancels the summary when it hits 0). It is the single source of truth for both the summary and the
   badge, called after every message notification post (`showNotification`) and every cancel
   (`cancelConversationNotification`); `cancelAllMessageNotifications` clears the summary and thus the
-  badge on app open. Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
+  badge on app open. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
+  see [the banner its own badge refresh cancelled](#the-banner-its-own-badge-refresh-cancelled---fixed-2026-09-21). Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
   some older launchers only show a dot (no third-party ShortcutBadger dependency).
 - **iOS** has two writers because the badge owner depends on process state:
   - App alive (`canari_push.mm`): `CanariUpdateAppBadge` recomputes from the delivered chat
@@ -1325,6 +1326,35 @@ group summary, avatar/initials fallback, and sender-name subtitles inside group 
   on `GROUP_KEY_MESSAGES` every time a message notification is posted or cancelled. The summary
   carries the unread-conversation count via `.setNumber(count)` which also serves as the launcher
   badge (WP-XP-2). When the count hits 0 the summary is cancelled.
+
+##### The banner its own badge refresh cancelled - FIXED 2026-09-21
+
+**A SALON NOTIFICATION WAS BUILT AND THE SHADE STAYED EMPTY FOR 120 SECONDS**, on a phone that had
+decrypted the push correctly. Measured on hardware by `NOTIF-18`
+([board](../cross-client-testing.md)).
+
+`NotificationManager.notify` and `cancel` hand the record to `system_server` over a binder queue
+and return; `activeNotifications` is a SECOND binder call, answered from whatever has already been
+processed. `countUnreadConversations` read it microseconds after the post and answered 0 about the
+notification that had just been posted. `refreshBadgeSummary` then took its `count == 0` branch and
+cancelled the group summary - **and cancelling a group summary cancels that group's children, the
+ones still ENQUEUED included**. The banner died between being built and being posted.
+
+Nothing in the app could see it. It logged a successful `showNotification: notifId=N` and finished;
+only the OS said otherwise, with `NotificationService: Cannot find enqueued record for key:
+0|fr.emse.canari|N|...`. *A correct mechanism with no report is found by hand, a day late* - this
+one had no report at all, and the row that found it had to be taught to read the other process's log.
+
+It is ONE defect in two directions, and the second arms the first. On a CANCEL the same stale read
+runs the other way: `activeNotifications` still holds the conversation that was just cancelled, the
+count is one too high, and the summary survives its own last child. That leftover summary is
+exactly what the post-side branch then cancels - with a child of its own attached.
+
+The fix is that neither caller asks a layer that has not caught up about a record it moved itself:
+`refreshBadgeSummary(context, justPosted, justCancelled)` carries the id forward, and
+`countUnreadConversations` adds or removes it from the set it counts. A reaction passes nothing -
+it is deliberately not part of the messages bundle. *Never learn by failing what a fact could have
+told you.*
 - **iOS 15+** — `UNMutableNotificationContent.summaryArgument` is set to the conversation title
   (group name for groups, sender name for DMs, `"Canari"` fallback). The system shows this text in
   the stacked-notification group summary line. Set by both paths:

@@ -20,6 +20,18 @@ ouvre**, et rien ne redessine une banniere. Les deux poussees partent du serveur
 seconde, donc le chevauchement est sur l'appareil.
 [board](docs/wiki/cross-client-testing.md), [backlog](docs/wiki/backlog.md).
 
+### Fixed - une notification annulee par son propre rafraichissement de pastille
+
+Sur Android, la banniere d'un message etait construite puis disparaissait avant d'atteindre le
+volet : `manager.notify` est asynchrone, le comptage des conversations non lues qui le suit
+immediatement lisait donc zero, annulait le resume de groupe - et annuler un resume annule les
+enfants de ce groupe, y compris celui qui venait d'etre mis en file. L'application ne voyait rien,
+seul le systeme le disait (`Cannot find enqueued record for key`). Le meme decalage jouait a
+l'envers sur une annulation, laissant le resume orphelin qui armait le premier cas. Les deux
+appelants transmettent desormais l'identifiant qu'ils viennent de deplacer. Mesure sur materiel par
+`NOTIF-18`.
+[chat-delivery](docs/wiki/services/chat-delivery.md#the-banner-its-own-badge-refresh-cancelled---fixed-2026-09-21).
+
 ### Fixed - un libelle passe au pluriel cassait le rig depuis douze jours, sans un mot
 
 `caption()` exigeait une chaine unique et accusait la cle d'avoir ete renommee : elle etait bien la,

@@ -615,8 +615,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
             // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
-            // drop the summary when no message notification remains.
-            refreshBadgeSummary(context)
+            // drop the summary when no message notification remains. `justCancelled` because the
+            // cancel above is asynchronous too: the shade can still report this conversation as
+            // active, which would keep a summary whose last child has just gone.
+            refreshBadgeSummary(context, justCancelled = notifId)
         }
 
         /**
@@ -869,16 +871,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Counts distinct unread conversations = active message notifications, excluding the group
          * summary and the pending-sync nudge. Backs the launcher app-icon badge (WP-XP-2).
+         *
+         * **[justPosted] AND [justCancelled] ARE NOT AN OPTIMISATION - THEY CORRECT A READ-AFTER-
+         * WRITE.** `NotificationManager.notify` and `cancel` hand the record to system_server over a
+         * binder queue and return; `activeNotifications` is a SECOND binder call, answered from
+         * whatever has already been processed. Asking it about a post made microseconds earlier
+         * therefore routinely answers "not there", and about a cancel "still there". The caller
+         * knows which record it just moved, so it carries that fact here rather than learning the
+         * wrong answer from a layer that has not caught up. 0 means "nothing moved": a conversation
+         * id is never 0 ([getStableNotifId] counts from 1000, and 0 is what a notification with no
+         * conversation gets).
          */
-        internal fun countUnreadConversations(manager: NotificationManager): Int {
+        internal fun countUnreadConversations(
+            manager: NotificationManager,
+            justPosted: Int = 0,
+            justCancelled: Int = 0,
+        ): Int {
             if (android.os.Build.VERSION.SDK_INT < 23) return 0
             return try {
-                manager.activeNotifications.count { sbn ->
+                val ids = manager.activeNotifications.filter { sbn ->
                     sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
                             sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
-                }
+                }.mapTo(mutableSetOf()) { it.id }
+                if (justPosted != 0) ids.add(justPosted)
+                if (justCancelled != 0) ids.remove(justCancelled)
+                ids.size
             } catch (e: Exception) {
                 Log.w(TAG, "countUnreadConversations: ${e.message}")
                 0
@@ -891,10 +910,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * Cancels the summary entirely when nothing is unread. Called after every message
          * notification post or cancel (push receipt + read-state sync) - the single source of
          * truth for both the group summary and the badge.
+         *
+         * **THE CANCEL BRANCH TOOK THE NOTIFICATION THAT HAD JUST BEEN POSTED WITH IT.** Cancelling
+         * a group SUMMARY cancels that group's children, the ones still ENQUEUED included - and
+         * this runs synchronously after `manager.notify`, so on the first message into an empty
+         * shade [countUnreadConversations] answered 0 about the post it had not yet seen, the
+         * summary was cancelled, and the banner died between being built and being posted. The app
+         * logged a successful `showNotification:`; only the OS said otherwise, with
+         * `Cannot find enqueued record for key`. Measured on hardware by NOTIF-18 on 2026-09-21,
+         * where the shade stayed empty for 120 s after a push the phone had decrypted correctly.
+         * [justPosted] is what makes the count right, so this branch no longer runs at that moment.
+         *
+         * @param justPosted The conversation notification id posted immediately before this call,
+         *   or 0. A REACTION passes 0: it is deliberately not part of the messages bundle.
+         * @param justCancelled The conversation notification id cancelled immediately before this
+         *   call, or 0.
          */
-        internal fun refreshBadgeSummary(context: Context) {
+        internal fun refreshBadgeSummary(context: Context, justPosted: Int = 0, justCancelled: Int = 0) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val count = countUnreadConversations(manager)
+            val count = countUnreadConversations(manager, justPosted, justCancelled)
             if (count == 0) {
                 manager.cancel(GROUP_SUMMARY_ID)
                 return
@@ -1728,8 +1762,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             alertedKey?.let { rememberAlerted(it) }
 
             // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
-            // conversation's notification is active.
-            refreshBadgeSummary(this)
+            // conversation's notification is active. IT IS NAMED, not looked up: the post above has
+            // not necessarily landed, and a count that missed it cancelled the summary - which took
+            // this very notification with it. A reaction passes nothing: it is not in the bundle.
+            refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
         }
 
     }
