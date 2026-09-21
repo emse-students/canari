@@ -43,7 +43,7 @@
  * also the only coverage that control has.
  */
 import { pathToFileURL } from 'node:url';
-import { APP_TAB, client, evaluate } from '../chat.mjs';
+import { APP_TAB, client, ensureChat, evaluate } from '../chat.mjs';
 import { isGroupDebris } from '../debris.mjs';
 import { dismissLocally, openGroup } from '../groupnav.mjs';
 import { PORTS } from '../names.mjs';
@@ -151,22 +151,26 @@ export async function sweepDismissed(
   const say = log || (() => {});
 
   /**
-   * NOTHING IS SWEPT BY NAVIGATING, on any device, and the phone is why that is now one path.
+   * NOTHING IS SWEPT BY NAVIGATING, on any device - it is REACHED BY CLICKING, like a user.
    *
-   * `goto` REFUSES A1 outright, for two reasons it documents: a reload re-locks the encryption PIN,
+   * `goto` refuses A1 outright, for two reasons it documents: a reload re-locks the encryption PIN,
    * so the run hangs on a modal it never expected and prints nothing, and it replaces the document
-   * under Tauri's own IPC. So the phone was taken as it was left - which PROVED the sweep needs no
-   * navigation at all, because A1 was swept that way. W1 and W2 kept a `navigate` on the first row
-   * regardless, and it cost exactly what the A1 comment predicted: the user found W2 sitting on the
-   * PIN modal on 2026-08-24, put there by this sweep's own reload. A reload the phone may not have
-   * and the desktops do not need is not a device difference, it is a leftover.
+   * under Tauri's own IPC. W1 and W2 kept a `navigate` on the first row regardless, and it cost
+   * exactly what the A1 comment predicted: the user found W2 sitting on the PIN modal on
+   * 2026-08-24, put there by this sweep's own reload.
    *
-   * A client left somewhere other than `/chat` is therefore said out loud on every device rather
-   * than navigated, since navigating is the same reload wearing a different name.
+   * SO THIS REFUSED INSTEAD, AND A REFUSAL IS NOT A PATH EITHER. A row that ends anywhere but
+   * `/chat` left its debris behind and said so - NOTIF-18 ends on `/communities` and printed
+   * "W1/W2/A1 debris NOT swept" on 2026-09-21, which is a teardown that did not happen wearing the
+   * word "reported". The rows that ended on `/chat` were swept and the ones that did not were not,
+   * which makes the sweep a property of where a check happened to stop.
+   *
+   * `ensureChat` is the third option and it always was: it clicks the nav, on every device, with no
+   * reload anywhere - the same path `openConversation` takes. It refuses a client that is SIGNED
+   * OUT or BEHIND THE PIN, by name and with the command that fixes each, which is a precondition
+   * this sweep could not state before and now inherits for free.
    */
-  const here = await evaluate(cx, 'location.pathname');
-  if (here !== '/chat')
-    throw new Error(`the client is on ${here} rather than /chat, and goto() there re-locks the PIN`);
+  await ensureChat(cx);
 
   const rows = await readStore(cx);
   const eligible = [];

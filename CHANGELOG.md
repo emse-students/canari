@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le balayage de fin de passe refusait au lieu d'aller sur /chat
+
+Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disait : NOTIF-18
+finit sur `/communities`. `ensureChat` clique la navigation, sur tous les appareils, sans aucun
+rechargement - donc sans re-verrouiller le PIN. Verifie sur W1 et W2.
+[testing-methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - le post d'une asso poussait le visage du membre, pas le logo
 
 L'icone etait deduite de `logoUrl` avec un motif ancre juste apres l'id, et tout logo reuploade porte
