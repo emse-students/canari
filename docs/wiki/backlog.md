@@ -3310,18 +3310,28 @@ rows with the invitation question in
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
 
-### P2 - NOTHING HAS EVER WATCHED A SHUT PHONE ABSORB A SEED, AND ON iOS NOTHING WAKES TO
+### P1 - THE FIRST MESSAGE OF A NEW GRAINE SESSION RACES ITS OWN SEED ON THE DEVICE, AND LOSES
 
-The defect, its cause, the path that fixes it and the tests that hold it are
+The defect this entry began as, its cause and the path that fixed it are
 [channel-encryption section 14](protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android),
-the only copy. Two halves are open.
+the only copy. **THE HARDWARE ROW IS DONE AND IT SAYS THE FIX WORKS AND IS NOT ENOUGH**
+(`NOTIF-18`, 2026-09-21, [board](cross-client-testing.md)): a phone dead for twenty seconds
+recognised the silent frame and stored the seed, and the banner still read
+`Nouveau message dans #<salon>` - the seed landed **324 ms after the message it unlocks**, and
+nothing redraws a banner. Three halves are open.
 
-**THE HARDWARE ROW, WHICH IS THE WHOLE POINT.** A salon message under a session minted while the
-app is KILLED must put the plaintext in the shade. Everything asserted so far is a unit test and a
-cross-language string guardrail; *a green gate is not a working system*, and the three iOS defects
-that were invisible to every gate here are the precedent. The row is the unmeasured cell of the
-table in the entry above. It needs the phone, which is
-[owed a human unlock](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+**THE ORDER CANNOT BE FIXED WHERE IT LOOKS LIKE IT COMES FROM.** Both pushes left the server in the
+SAME second, from two services nothing sequences - `social-service` sends the salon message,
+`chat-delivery-service` sends the seed - and FCM promises no order across two sends, so no sender-
+side serialisation can buy one. The overlap is on the DEVICE: `handleChannelMessage` runs under
+`runWithWakeLock("fcm_channel")` while key material is absorbed under `runSerializedWithWakeLock`,
+and neither waits for the other. **So the handler has to be order-INDEPENDENT**, which means
+remembering a channel frame it could not open (bounded, keyed `channelId:sessionId`) and re-posting
+it from `absorbGraineSeeds` when its seed lands, under the same stable id. `repostReplyPending` is
+the shape to copy: it rebuilds the `MessagingStyle` from the notification already in the shade
+rather than stacking a second line, which a plain re-post would do - a salon push carries no
+`sentAt`, so `showMessageNotification`'s own one-message-one-line guard cannot fire on it.
+*A race that heals cleanly is still a defect*, and this one does not heal at all.
 
 **AND NOTHING COUNTS THE DEGRADATION EITHER WAY.** The blind banner is a `Log.d` on the device
 (`handleChannelMessage: no seed/ciphertext -> generic notification`) and the silent skip explains
@@ -3331,7 +3341,7 @@ correct mechanism with no report is found by hand, a day late.*
 **iOS IS WORSE AND UNMEASURED.** The NSE runs on an alert push; a silent `keyMaterial` frame does
 not wake it at all, and iOS throttles silent pushes on its own terms. `isKeyDistribution` travels
 to it already - `buildApnsRequest` spreads the same data map - so what is owed is the wake, not the
-discriminator. One iPhone row, after the Android row above.
+discriminator. One iPhone row; the Android row it was waiting for is done.
 
 ## MLS state, device healing and delivery - the defects the campaign measured
 

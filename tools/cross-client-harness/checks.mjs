@@ -184,6 +184,12 @@ export const PHASES = {
       // it found. `cleanup.mjs` sweeps it, but a row that runs after it would see a sidebar it
       // did not expect - and two NOTIF rows already count sidebar entries.
       'notif17b.mjs',
+      // AFTER 17b, AND THE PAIRING IS THE POINT. 17b mints a GROUP while the phone is dead and
+      // refuses, because a device offline when it is added is on no new group's roster; 18 mints a
+      // public SALON, whose transport is the community group the handset already joined. Read side
+      // by side they say which half of "first contact" the server owes a dead device. It also mints
+      // and SWEEPS its own salon, so it leaves the estate as it found it.
+      'notif18.mjs',
     ],
     needs: ['W1', 'W2', 'A1'],
   },

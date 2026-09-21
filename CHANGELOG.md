@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - une ligne de campagne fait dire au telephone ce que seules trois captures disaient
+
+`NOTIF-18` tue l'application, cree un salon dont elle n'a jamais entendu parler - donc une session
+Graine neuve PAR CONSTRUCTION - et lit la barre de notification. La graine est bien recue et
+stockee par un telephone mort depuis vingt secondes ; elle arrive **324 ms apres le message qu'elle
+ouvre**, et rien ne redessine une banniere. Les deux poussees partent du serveur dans la MEME
+seconde, donc le chevauchement est sur l'appareil.
+[board](docs/wiki/cross-client-testing.md), [backlog](docs/wiki/backlog.md).
+
 ### Fixed - un libelle passe au pluriel cassait le rig depuis douze jours, sans un mot
 
 `caption()` exigeait une chaine unique et accusait la cle d'avoir ete renommee : elle etait bien la,
