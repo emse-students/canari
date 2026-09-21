@@ -17,6 +17,15 @@ Les tirets d'une liste disparaissaient et les blocs se collaient les uns aux aut
 Tailwind retire `list-style` et met toutes les marges a zero, et seul `[&_p+p]` avait ete restaure.
 Les trois surfaces markdown portent desormais `.post-markdown`, dont les regles sont enoncees une
 fois dans `app.css`. [posts](docs/wiki/frontend/modules/posts.md#the-blocks-preflight-erases).
+### Fixed - une banniere de salon qui perdait la course contre sa propre graine
+
+La graine d'une session Graine neuve et le message qu'elle ouvre voyagent en DEUX poussees, emises
+la meme seconde par deux services, et FCM ne promet aucun ordre entre elles. Sur materiel, la
+graine arrivait 324 ms trop tard et la banniere restait bloquee sur "Nouveau message dans
+#<salon>" pour toujours. Le gestionnaire Android est desormais independant de l'ordre : une trame
+qu'il ne peut pas ouvrir est retenue dans un registre borne, et l'absorption de la graine la
+redessine sous le meme identifiant en remplacant la ligne aveugle. Aucun delai, aucune horloge.
+[channel-encryption](docs/wiki/protocols/channel-encryption.md#the-seed-then-arrived-324-ms-too-late---fixed-2026-09-21).
 ### Fixed - le balayage de fin de passe refusait au lieu d'aller sur /chat
 
 Une ligne qui se termine ailleurs que sur `/chat` laissait ses debris et le disait : NOTIF-18
