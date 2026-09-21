@@ -22,6 +22,7 @@ import {
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
   ignoringExpectedLog,
+  stripStamp,
   ignoringExpectedRefusal,
   report,
 } from '../watch.mjs';
@@ -934,12 +935,51 @@ const CASES = [
 ];
 
 let failures = 0;
-for (const [level, text, want] of CASES) {
+
+/**
+ * The same sentence carrying the stamp the app writes TODAY, millisecond field included.
+ *
+ * WHY EVERY CASE IS RUN TWICE. Every list in `watch.mjs` is `^`-anchored against the sentence, so
+ * the reader that removes the stamp decides whether ANY of them can match. On 2026-09-16 #742 gave
+ * the console a millisecond field and the reader knew only `[14:11:08]`; the bracket stayed at
+ * position 0 and BENIGN, NOTABLE, SEVERE and STATE_CHANGE went dead together, for five days,
+ * silently. The fixtures below were all written with the older spelling, so every one of them kept
+ * passing while the rig reported a hundred lines of ordinary narration as dirt on real clients.
+ *
+ * A fixture list cannot be trusted to be re-spelt by hand whenever the app changes its stamp - that
+ * is the same "somebody will remember" that lost the five days. So the PROPERTY is asserted
+ * instead: a stamp carries no meaning, therefore stamping a line must not move it between buckets.
+ * Whatever the next format turns out to be, adding it here is one line and the gate goes red the
+ * day the reader stops recognising it.
+ */
+const stamped = (text) =>
+  /^\[\d\d:\d\d:\d\d\]/.test(text)
+    ? text.replace(/^\[(\d\d:\d\d:\d\d)\]/, '[$1.520]')
+    : `[14:11:08.520] ${text}`;
+
+const BUCKETS = ['severe', 'errors', 'notable', 'stateChanges', 'unexplained'];
+
+/** Which buckets one line lands in. The needle is the sentence, so it matches either spelling. */
+async function bucketsFor(level, text) {
   const rep = await report({ cx: cxOf([[level, text]]), label: 'selftest' });
-  const buckets = ['severe', 'errors', 'notable', 'stateChanges', 'unexplained'];
-  const landed = buckets.filter((b) => rep[b].some((l) => String(l).includes(text.slice(11, 60))));
+  const needle = stripStamp(text).slice(0, 49);
+  return BUCKETS.filter((b) => rep[b].some((l) => String(l).includes(needle)));
+}
+
+for (const [level, text, want] of CASES) {
+  const landed = await bucketsFor(level, text);
   // `benign` is not a bucket - it is the absence of every other one.
   const got = landed.length === 0 ? 'benign' : landed.join('+');
+  // THE STAMP CHANGES NOTHING, and this is the assert that says so. Reported as its own failure
+  // rather than folded into the one below: "this rule is wrong" and "the reader cannot see past
+  // the stamp" are different repairs, and a hundred of the second at once is one defect, not a
+  // hundred.
+  const landedStamped = await bucketsFor(level, stamped(text));
+  if (landed.join('+') !== landedStamped.join('+')) {
+    failures++;
+    console.log(`FAIL stamp        ${text.slice(0, 78)}`);
+    console.log(`       bare: ${got || 'benign'}   stamped: ${landedStamped.join('+') || 'benign'}`);
+  }
   /**
    * MEMBERSHIP, NOT EXCLUSIVITY - the buckets overlap by design and demanding one was the test
    * being wrong rather than the classifier. `[MLS] LOST frame` is `severe` AND `notable`: it is a
