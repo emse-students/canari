@@ -213,6 +213,21 @@ defect is that nothing tells `noFreshStart` that this state is damaged rather th
 run**: the sign-out and reset behaviour above. A run for the sign-out half is still worth having once
 there is a device whose history is expendable - it is the one line in that table taken on trust.
 
+**SEEN ON HARDWARE 2026-09-21, WITHOUT ANY INJECTED DAMAGE, AND THE SCREEN SAID TWO OPPOSITE THINGS
+AT ONCE.** A test account's Android install held a local MLS store sealed before the estate's PIN was
+re-registered - an ordinary path, no corruption, and the `pin_verifier` row's `registeredAt` proves
+the order. The gate then rendered BOTH of these, one above the other:
+
+- `auth_pin_first_heading` - *"Premiere connexion - choisissez votre PIN"*
+- `auth_local_state_unopenable` - *"Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts..."*
+
+The first says this device has never had a PIN; the second says the PIN it had no longer opens what it
+wrote. **They cannot both be true, and a reader has no way to choose.** It is the same root as the
+rest of this entry - nothing tells the gate WHY the state will not open - reaching the screen through
+a path nobody had to break anything to get to. Whatever separates damaged from foreign must also
+decide which heading the gate wears; a fix that only corrects the message body leaves the heading
+contradicting it.
+
 **It is the vault defect one layer down.** `init` reports `MLS_LOCAL_STATE_UNDECRYPTABLE`, and an
 AEAD tag that does not verify has two causes that the blob alone cannot separate: the state was
 sealed under a DIFFERENT device key (a PIN rotated on another device - ordinary, recoverable with the
