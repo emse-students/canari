@@ -38,17 +38,45 @@
  * read out of logcat and a run the WebSocket served records `SETUP-FAILED`, exactly as NOTIF-17b
  * learned to do.
  *
- * **THE ONE ORDERING THE ROW CANNOT GRADE.** The seed frame is armed before the message is sent and
- * both go to an OFFLINE device, so both skip the ten-second deferral and leave in order. FCM does
- * not promise to deliver them in that order, and a seed that lands AFTER the message it unlocks
- * makes the generic banner the CORRECT outcome - the mirror is a bounded cache and a miss is
- * designed to degrade. So the two logcat lines are compared by position, and a message handled
- * before its seed arrived is `SETUP-FAILED` naming the inversion. Grading it `FAIL` would file the
- * push layer's ordering as this application's defect.
+ * **THE ORDER IS THE ANSWER, AND IT IS READ AT BOTH ENDS.** Two independent services push the two
+ * frames this row is about - `social-service` sends the salon message, `chat-delivery-service` sends
+ * the seed - and nothing sequences them. So the row reads the phone's order out of logcat AND the
+ * send order out of both server logs, because *read the other end before filing a client defect*:
+ * a seed handled after its message is a `FAIL` either way (the banner never redraws), and the
+ * server times are what separate "we sent them in that order" from "the transport reordered them".
+ * The first run, 2026-09-21, measured the former.
+ *
+ * **THREE TRAPS THIS ROW WALKED INTO ON ITS FIRST RUN, ALL OF THEM ALREADY WRITTEN DOWN.**
+ *
+ * 1. **IT WAITED ON THE MESSAGE MARKER**, so a shade holding `Nouveau message dans #<salon>` made
+ *    the marker absent, which reads as "nothing arrived" and then as a timeout. That is the exact
+ *    conflation `GENERIC_BODIES` exists for (`phone.mjs`), and it graded a reproduced defect
+ *    `SETUP-FAILED - no notification reached the handset at all` while the banner was on the
+ *    screen. The wait is on the SALON NAME now: it is in the title whether or not the body
+ *    decrypted, which is the only handle that survives the failure being hunted.
+ * 2. **IT LOCATED THE MESSAGE IN LOGCAT BY THAT SAME MARKER**, so the ordering discriminator went
+ *    unbound in precisely the case it exists for. It keys on the channel id now.
+ * 3. **IT LEFT W1 SITTING IN THE SALON IT HAD JUST CREATED.** W1 holds the SAME ACCOUNT as the
+ *    handset, its read receipt is a silent push, and the phone cancels the conversation's
+ *    notifications on one from itself - `leaveConversation`'s own docblock records that costing
+ *    NOTIF-15 a run. The park is a precondition of the verdict rather than tidy-up, and the
+ *    CANCELLATION is read off the phone rather than inferred from what the park returned: a park
+ *    can honestly answer "already outside a conversation" about a pane it read wrong, and this row
+ *    would then believe a shade that had been emptied under it.
+ *
+ * **AND A FOURTH, WHICH IS A PRODUCT DEFECT AND NOT A TRAP AT ALL.** The third run built the banner
+ * (`showNotification: notifId=1002`) and the shade never showed it, for 120 s. The app logged
+ * nothing, because nothing failed on its side: `manager.notify` hands the record to system_server
+ * over a binder queue and returns. The OS is what says so - `NotificationService: Cannot find
+ * enqueued record for key: 0|fr.emse.canari|1002|...`, i.e. the record was cancelled between being
+ * enqueued and being posted. A row that reads only its own app's log cannot tell that from a dead
+ * FCM link, so it reported "no notification reached the handset at all" - a refusal, about an
+ * answer. The system's line is read now, and the silence it explains is a `FAIL` clause.
  */
-import { APP_TAB, client, ensureChat, openChannel, send } from '../chat.mjs';
+import { APP_TAB, client, ensureChat, leaveConversation, openChannel, send } from '../chat.mjs';
 import { createChannel, deleteChannel, enterCommunities, openCommunity } from '../comm.mjs';
 import { channelIdOf, channelSessions, communityDistribution, workspaceIdOf } from '../grainedb.mjs';
+import { srvLines } from '../estate.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { exitOnRecorded, mark, record } from '../results.mjs';
 import * as phone from '../phone.mjs';
@@ -80,6 +108,22 @@ const handsetOn = (dist) => (dist?.devices ?? []).find((d) => d.deviceId.startsW
  * clock would add a timezone to a question that does not have one.
  */
 const firstAt = (lines, re) => lines.findIndex((l) => re.test(l));
+
+/**
+ * The second-of-day a Nest line was written, or null - `09/21/2026, 8:55:16 AM`.
+ *
+ * SECONDS ARE ALL THE SERVICES PRINT, and that is enough for the only question asked of them: did
+ * the two pushes leave in the order their correctness depends on. A sub-second inversion is
+ * invisible here and is reported as "the same second" rather than as an order, so the row never
+ * claims a precision its instrument does not have.
+ */
+function sentAtOf(lines, re) {
+  const line = lines.find((l) => re.test(l));
+  const at = line && /(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)/.exec(line);
+  if (!at) return null;
+  const h = Number(at[1]) % 12 + (at[4] === 'PM' ? 12 : 0);
+  return h * 3600 + Number(at[2]) * 60 + Number(at[3]);
+}
 
 const out = {};
 const unmet = [];
@@ -167,6 +211,13 @@ try {
   await withDeadline(enterCommunities(w1), 60_000, 'W1 enterCommunities');
   await withDeadline(openCommunity(w1, VENUE.community), 60_000, 'W1 openCommunity');
   await withDeadline(createChannel(w1, channelName), 120_000, 'createChannel');
+  // W1 HOLDS THE HANDSET'S OWN ACCOUNT, AND CREATING A SALON LEAVES IT INSIDE ONE. Its read receipt
+  // is a silent push and the phone cancels a conversation's notifications on one from itself, so a
+  // browser left in there deletes the banner this row is about - `leaveConversation`'s docblock
+  // records that costing NOTIF-15 a run. A park that did not park is an unmet precondition, not a
+  // tidy-up that failed.
+  out.w1Parked = await withDeadline(leaveConversation(w1), 60_000, 'W1 leaveConversation');
+  stage(`W1 out of the salon it just created: ${out.w1Parked}`);
 
   const channelId = channelIdOf(workspaceId, channelName);
   out.salonIsInTheDatabase = Boolean(channelId);
@@ -183,10 +234,23 @@ try {
   // notification from hours earlier because the two disagree, and a shade record is timestamped by
   // the phone.
   const floor = phone.deviceNowMs();
+  // THE STATE THAT DECIDES WHETHER THE BANNER SURVIVES BEING POSTED, READ BEFORE THE SEND. The app
+  // rebuilds the messages bundle's summary after every post and CANCELS it when it counts no unread
+  // conversation - and cancelling a group summary cancels that group's children, the ones still
+  // enqueued included. So a summary left in the shade with no child of its own is the loaded gun,
+  // and it is a state an earlier row's teardown produces. Read here, not after the wait, where a
+  // summary the successful post itself created would answer a different question. 9999 is the app's
+  // reserved id for it (`GROUP_SUMMARY_ID`), spelt here because the shade names records by id only.
+  out.summaryInTheShadeBeforeTheSend = phone.notifications().some((n) => /\|9999\|/.test(n.key));
   await withDeadline(send(w2, `${marker} the first thing said under a session A1 never saw minted`), 120_000, 'send');
 
-  const inMs = await phone.awaitNotification(marker, 120_000, floor).catch(() => null);
-  const hit = phone.notifications().find((n) => n.full.includes(marker)) ?? null;
+  // WAITED ON BY THE SALON, NEVER BY THE MARKER. The title is `<community> - #<salon>` whatever the
+  // body turns out to be, and the marker is absent in exactly the case this row exists to catch -
+  // so waiting on it turns a reproduced defect into a timeout that reads as "nothing arrived". It
+  // did, on this row's first run. The salon name carries the run's own stamp, so it cannot match a
+  // notification any earlier row left behind.
+  const inMs = await phone.awaitNotification(channelName, 120_000, floor).catch(() => null);
+  const hit = phone.notifications().find((n) => n.full.includes(channelName)) ?? null;
   out.notification = {
     inMs,
     channel: hit?.channel ?? null,
@@ -201,19 +265,57 @@ try {
   // ── WHAT THE PUSH SERVICE ACTUALLY DID, OUT OF LOGCAT ───────────────────────────────────────
   lines = await logcatSince(killedAt).catch(() => []);
   const absorbAt = firstAt(lines, /absorbGraineSeeds: stored \d+ seed\(s\)/);
-  const handledAt = firstAt(lines, new RegExp(`handleChannelMessage: notification title=.*${marker}`));
+  // KEYED ON THE CHANNEL, NEVER ON THE MARKER - `type=channel ` with the trailing space, so
+  // `type=channel_read` (a silent frame this row's own other device can send) cannot match it.
+  const handledAt = firstAt(lines, new RegExp(`type=channel .*groupId=${channelId}`));
   const genericAt = firstAt(lines, new RegExp(`no seed/ciphertext -> generic notification channel=${channelId}`));
   const storedMatch = absorbAt >= 0 ? /stored (\d+) seed\(s\)/.exec(lines[absorbAt]) : null;
+  // BUILT AND POSTED ARE TWO EVENTS, AND ONLY THE SECOND ONE IS A SHADE. `manager.notify` hands the
+  // record to system_server over a binder queue and returns; the app logs `showNotification:
+  // notifId=N` and considers itself finished. When something cancels N inside that window the app
+  // says NOTHING - nothing failed on its side - and the only witness is the OS's own line,
+  // `Cannot find enqueued record for key: 0|<pkg>|N|...`. Without it this row can say no more than
+  // "no notification arrived", which is the same sentence a dead FCM link writes and a completely
+  // different defect. `logcatSince` is unfiltered, so the system's line is already in hand.
+  const builtLine = lines.find((l) => /CanariFCM: showNotification: notifId=\d+/.test(l));
+  const notifId = builtLine ? Number(/notifId=(\d+)/.exec(builtLine)[1]) : null;
   out.push = {
     builtBy: lines.some((l) => /CanariFCM: showNotification/.test(l)) ? 'push' : 'websocket',
     keyMaterialRecognised: lines.some((l) => /decryptProto: graine key material/.test(l)),
     seedsStored: storedMatch ? Number(storedMatch[1]) : 0,
     seedBeforeMessage: absorbAt >= 0 && handledAt >= 0 ? absorbAt < handledAt : null,
     fellBackToTheGenericBanner: genericAt >= 0,
+    selfReadCancelled: new RegExp(`type=channel_read .*channel=${channelId}`).test(lines.join('\n')),
+    builtNotifId: notifId,
+    destroyedBeforeItLanded:
+      notifId !== null &&
+      lines.some((l) => l.includes(`Cannot find enqueued record for key: 0|${phone.PKG}|${notifId}|`)),
   };
+  // AND WHAT IT LOOKS LIKE AFTERWARDS - a summary here that was absent before the send is the app
+  // rebuilding its own bundle, which is the healthy outcome and NOT the state that destroys a post.
+  out.notification.summaryInTheShade = phone.notifications().some((n) => /\|9999\|/.test(n.key));
+
+  // ── AND WHAT THE SERVER DID, BECAUSE A CLIENT DEFECT IS NOT FILED WITHOUT THE OTHER END ─────
+  // Two services, two pushes, nothing sequencing them: `social-service` sends the salon message,
+  // `chat-delivery-service` sends the seed. The phone's order is the outcome; these two lines say
+  // whether the send order produced it or the transport did.
+  const since = `${Math.ceil((Date.now() - killedAt) / 1000) + 30}s`;
+  out.sent = {
+    messagePushAt: sentAtOf(srvLines('social-service', since), new RegExp(`\\[CHANNEL_PUSH\\] channel=${channelId}`)),
+    seedPushAt: sentAtOf(srvLines('chat-delivery-service', since), /\[PUSH_SEND\].*device=tauri-.*inlineProto=true/),
+  };
+  out.sent.order =
+    out.sent.messagePushAt === null || out.sent.seedPushAt === null
+      ? 'one of the two pushes is not in the log'
+      : out.sent.seedPushAt < out.sent.messagePushAt
+        ? 'the seed left first'
+        : out.sent.seedPushAt > out.sent.messagePushAt
+          ? 'THE MESSAGE LEFT FIRST'
+          : 'the same second - no order to read';
   stage(
     `push: builtBy=${out.push.builtBy} seeds=${out.push.seedsStored} ` +
-      `seedBeforeMessage=${out.push.seedBeforeMessage} generic=${out.push.fellBackToTheGenericBanner}`
+      `seedBeforeMessage=${out.push.seedBeforeMessage} generic=${out.push.fellBackToTheGenericBanner} ` +
+      `| server: ${out.sent.order}`
   );
 
   // ONE SESSION, AND THAT IS THE ARGUMENT RATHER THAN AN ASSERTION ABOUT A CLOCK. The salon was
@@ -222,25 +324,46 @@ try {
   out.sessions = channelSessions(channelId).length;
 
   // ── THE VERDICT ─────────────────────────────────────────────────────────────────────────────
-  if (inMs === null) {
-    setupFailed = 'no notification reached the handset at all, so nothing about the seed was measured';
-  } else if (out.push.builtBy !== 'push') {
+  if (out.push.builtBy !== 'push') {
     setupFailed =
       'the notification was built by the WebSocket plugin, so the app was not really dead and the ' +
       'push path this row exists for never ran';
-  } else if (out.push.seedBeforeMessage === false) {
+  } else if (out.push.selfReadCancelled) {
+    // OBSERVED ON THE PHONE, NOT INFERRED FROM THE PARK'S RETURN STRING. `parkConversation` can
+    // honestly answer "already outside a conversation" about a pane it read wrong, and this row
+    // would then trust a shade the owner's own other device had emptied. The cancellation itself
+    // is a logcat line, so it is read rather than argued about.
     setupFailed =
-      'the seed frame was handled AFTER the message it unlocks - FCM delivered them out of order, ' +
-      'and a mirror miss is designed to degrade to the generic banner, so this run cannot grade it';
+      `a read receipt from this account's own other device cancelled the salon's notifications ` +
+      `(W1 park said: ${out.w1Parked}) - the shade cannot be believed on this run`;
   } else if (out.sessions !== 1) {
     setupFailed = `the salon carries ${out.sessions} sender sessions, so the row cannot say which seed it measured`;
+  } else if (inMs === null && !out.push.destroyedBeforeItLanded) {
+    // A SILENCE NOBODY EXPLAINS IS STILL A REFUSAL. The clause below turns the EXPLAINED silence
+    // into a finding; this is what is left of the other one - and the row does not guess between a
+    // transport that never delivered and a shade it misread.
+    setupFailed =
+      'no notification for this salon reached the handset and nothing in the system log says why, ' +
+      'so the shade was never measured';
   } else {
+    // THE ORDER IS A CLAUSE, NOT A REFUSAL. A seed absorbed after the message it unlocks leaves a
+    // banner that never redraws, which is the user's report whichever layer chose the order - and
+    // *a race that heals cleanly is still a defect*, while this one does not heal at all. What the
+    // server's own send order was travels in `sent` beside it, so the reader is never left
+    // guessing which end produced it.
+    if (out.push.destroyedBeforeItLanded) unmet.push('theBannerWasCancelledBetweenBeingBuiltAndBeingPosted');
+    if (out.push.seedBeforeMessage === false) unmet.push('theSeedWasAbsorbedAFTERTheMessageItUnlocks');
     if (!out.push.keyMaterialRecognised) unmet.push('theSilentFrameWasNotRecognisedAsKeyMaterial');
     if (out.push.seedsStored < 1) unmet.push('noSeedReachedTheNativeMirror');
     if (out.push.fellBackToTheGenericBanner) unmet.push('thePushServiceFellBackToTheGenericBanner');
-    if (!out.notification.carriedThePlaintext) unmet.push('theShadeDidNotCarryTheDecryptedText');
-    if (out.notification.generic) unmet.push('theBodyWasOneOfTheGenericFallbacks');
-    if (!out.notification.drawn) unmet.push('theBodyWasBuiltButNoScreenDrewIt');
+    // THE SHADE CLAUSES NEED A SHADE RECORD. With the banner destroyed before it landed there is
+    // nothing to read, and asking these three anyway turns ONE defect into four findings - the
+    // padding that makes a verdict unreadable and hides which of them is the cause.
+    if (hit) {
+      if (!out.notification.carriedThePlaintext) unmet.push('theShadeDidNotCarryTheDecryptedText');
+      if (out.notification.generic) unmet.push('theBodyWasOneOfTheGenericFallbacks');
+      if (!out.notification.drawn) unmet.push('theBodyWasBuiltButNoScreenDrewIt');
+    }
   }
 } finally {
   // THE SALON THIS ROW MINTED IS SWEPT BY THIS ROW - a per-run salon in a SHARED fixture is debris
