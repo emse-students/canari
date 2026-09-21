@@ -26,13 +26,25 @@ import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 const COLUMN_TYPES = new Set(['short_text', 'single_choice', 'dropdown', 'linear_scale']);
 
 /**
- * How many answer columns the table may add to the four it already carries.
+ * How many answer columns the table may draw, which depends on what ELSE it is drawing.
  *
  * Measured against the `tool` width this page moved to (1024px, `pageWidth.ts`): date, name, status,
  * amount and the delete control take about 470px, leaving room for three columns of ~180px. A fourth
  * is where a cell stops holding a short answer and starts truncating it.
+ *
+ * A FREE FORM DRAWS NEITHER STATUS NOR AMOUNT, so it gets that fourth column. Those two are constant
+ * down the whole table when `requiresPayment` is false - every status reads `free` and every amount
+ * reads `-` - and two columns of one repeated value are ~180px that answer nothing. Handing the
+ * width to a question is the same rule as the one above it: a column is worth its width or it is not
+ * drawn. `requiresPayment` is the one predicate that decides free from paid, the same one `summary.ts`
+ * reads and the one `itemsPayload.ts` zeroes every price modifier on.
  */
-export const MAX_ANSWER_COLUMNS = 3;
+const ANSWER_COLUMNS_PAID = 3;
+const ANSWER_COLUMNS_FREE = 4;
+
+export function maxAnswerColumns(requiresPayment: boolean): number {
+  return requiresPayment ? ANSWER_COLUMNS_PAID : ANSWER_COLUMNS_FREE;
+}
 
 /**
  * The questions that become columns of the table, for this form.
@@ -42,7 +54,7 @@ export const MAX_ANSWER_COLUMNS = 3;
  * values in it - it costs every row its width and answers about almost nobody. Those read in the
  * panel, where an unasked question is simply an absent line.
  */
-export function answerColumns(items: FormItem[], max = MAX_ANSWER_COLUMNS): FormItem[] {
+export function answerColumns(items: FormItem[], max = ANSWER_COLUMNS_PAID): FormItem[] {
   return items
     .filter((item) => COLUMN_TYPES.has(item.type) && !item.dependsOn && !item.showIf)
     .slice(0, max);
@@ -70,6 +82,38 @@ export function answeredItems(
   return items
     .map((item) => ({ item, text: answerText(answers[item.id], item) }))
     .filter((answered) => answered.text !== '');
+}
+
+/**
+ * How many characters of an answer a column cell shows before it truncates.
+ *
+ * The cell is `max-w-48` (192px) less its `pr-4` gutter, read at `text-sm` (14px), where this app's
+ * sans stack averages close to 7px a character - so about twenty-five. It is an approximation and it
+ * is allowed to be one: it decides whether a row keeps the control that shows its answers IN FULL,
+ * so reading low costs a chevron nobody needed while reading high hides an answer. A truncated cell
+ * carries a `title`, and a `title` is not a reading of anything on a touch screen.
+ */
+export const COLUMN_CELL_CHARS = 25;
+
+/**
+ * Whether a row's detail panel would show anything the row's own line does not.
+ *
+ * The chevron exists to open the panel, so a chevron on a row whose panel repeats its line is a
+ * control a reader has to click to discover it was pointless. A panel adds nothing when every
+ * question this person answered is ALREADY a column and every one of those answers fits its cell -
+ * so a form of one short question loses the chevron on every row, and a single paragraph, a single
+ * conditional question or one long answer brings it back on the rows that have one.
+ *
+ * `columns` IS WHAT THE CURRENT LAYOUT DRAWS, never what the form would allow: the card layout below
+ * `sm` draws no answer columns at all, so it passes an empty list and keeps its chevron wherever
+ * there is an answer. A row with no answers at all satisfies this vacuously, which is the case the
+ * control was already disabled for.
+ */
+export function panelAddsNothing(answered: AnsweredItem[], columns: FormItem[]): boolean {
+  const drawn = new Set(columns.map((column) => column.id));
+  return answered.every(
+    (answer) => drawn.has(answer.item.id) && answer.text.length <= COLUMN_CELL_CHARS
+  );
 }
 
 /**

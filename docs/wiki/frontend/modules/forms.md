@@ -406,7 +406,7 @@ paragraph would set the height of every row. **So the layout is derived from the
 
 | | What decides it |
 |---|---|
-| Becomes a column | `short_text`, `single_choice`, `dropdown`, `linear_scale` - the bounded types - capped at `MAX_ANSWER_COLUMNS` (3, measured against the 1024px `tool` width) |
+| Becomes a column | `short_text`, `single_choice`, `dropdown`, `linear_scale` - the bounded types - capped at `maxAnswerColumns()` (3 on a paid form, 4 on a free one, measured against the 1024px `tool` width) |
 | Never becomes a column | anything conditional (`dependsOn`, `showIf`), whatever its type: it is asked of a subset by construction, so its column is blanks with a few values in it |
 | Reads in the row's panel | everything, in the form's own question order |
 
@@ -424,6 +424,49 @@ already used. Below `sm` the rows are cards instead: the table overflowed a phon
 before any answer was added to it, and a horizontal scrollbar is not a reading of anything. The two
 layouts share every piece through snippets, so the status pill, the panel and the two controls have
 one definition each.
+
+### A COLUMN OR A CONTROL THAT CANNOT CARRY INFORMATION IS NOT DRAWN (2026-09-21)
+
+The section above derived the ANSWER columns from the form and left the four fixed ones alone. Two
+reports from the user, a day after it shipped, are the same objection applied to what was left:
+
+> *"Pourquoi mettre 'Statut' et 'montant' pour un formulaire gratuit ? Et le fait de mettre a la
+> fois un volet pour derouler fait doublon si la reponse est deja sur la ligne."*
+
+**A FREE FORM DRAWS NEITHER STATUS NOR AMOUNT.** When `requiresPayment` is false every status reads
+`free` and every amount reads `-`, down the whole table - two columns of one repeated value, costing
+about 180px each out of the 1024 the page has. `requiresPayment` is not a new notion: it is the one
+predicate `summary.ts` already reads to print the free label, and the one `itemsPayload.ts` zeroes
+every price modifier on. **It is passed from the page, never inferred from the submissions** - a paid
+form whose responses are all still `pending` would infer as free, and a column must not appear the
+day somebody finally pays.
+
+The freed width is not left blank: `maxAnswerColumns(false)` is **4**, so a free form draws one more
+question than a paid one. That is the same rule as the cap itself - a column is worth its width or it
+is not drawn.
+
+**AND A CHEVRON THAT OPENS A PANEL HOLDING NOTHING NEW IS A CONTROL A READER MUST CLICK TO DISCOVER
+IT WAS POINTLESS.** The redundancy the report names is not "inline answer AND panel" - for a form
+whose purpose is comparing proposals across rows, the inline answer is the scannable thing, and
+removing it would mean opening every row to read a table. What is redundant is the CONTROL, on the
+rows where it adds nothing. So `panelAddsNothing(answered, columns)` disables it when:
+
+- every question this person answered is already a column, **and**
+- every one of those answers fits its cell (`COLUMN_CELL_CHARS`, 25: `max-w-48` less its gutter, at
+  `text-sm`). A truncated cell carries a `title`, and a `title` is not a reading of anything on a
+  touch screen.
+
+A form of one short question therefore loses its chevron on every row, which is the outcome the
+report asked for; one paragraph, one conditional question or one long answer brings it back on the
+rows that have one, which a blanket removal would not have. **The predicate is asked with the columns
+the CALLER draws, never with the ones the form would allow** - the card layout below `sm` draws no
+answer column at all, so it passes an empty list and keeps its control wherever there is an answer.
+The control is disabled rather than removed, so the columns of a table whose rows differ still line
+up under their headers.
+
+The colspan is the case neither file shows on its own: it is a number written beside a header list
+that now has two lengths, and a short one leaves the panel ending mid-table. `answers.svelte.test.ts`
+asserts it equals the rendered header count on both.
 
 ### Configurations the API refuses
 
