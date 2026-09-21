@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un etat local endommage etait appele une premiere connexion, et cachait la seule issue
+
+Le verrou de chiffrement annoncait *Premiere connexion*, acceptait un PIN, puis repondait que les
+messages de cet appareil n'avaient pas pu etre ouverts et que seule la reinitialisation y rendrait
+acces - sans porter la moindre reinitialisation. `isFirstSetup` vient du SERVEUR et commande les
+deux issues du verrou, l'echec vient du DISQUE, et rien n'interdisait aux deux d'etre vrais en meme
+temps. Les trois gestionnaires d'echec passent desormais par un seul, qui lit le code type.
+[auth](docs/wiki/frontend/modules/auth.md#a-damaged-local-state-was-called-a-first-connection-and-that-is-what-hid-the-way-out---fixed-2026-09-21).
+
 ### Fixed - retour arriere apres une notification quittait l'application au lieu de remonter
 
 Mesure sur telephone : un seul appui sur Retour sortait de l'app, la ou la meme conversation ouverte

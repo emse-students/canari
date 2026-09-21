@@ -24,6 +24,7 @@
   import {
     isRecoverableWithOldPin,
     type LoginErrorCode,
+    provesLocalStateExists,
   } from '$lib/composables/session/loginErrors';
   import {
     getToken,
@@ -338,6 +339,25 @@
     }
   }
 
+  /**
+   * WHAT A FAILED UNLOCK CHANGES ABOUT THE MODAL, in the one place all three attempts pass through.
+   *
+   * A FIRST SETUP CANNOT FAIL ON A STATE IT DOES NOT HAVE. `isFirstPinSetup` is a SERVER fact -
+   * no `PinVerifier` row for this account - and `local_state_unopenable` is a LOCAL one, so the
+   * two can be true at once and the modal had no reading of that pair. It took the server's:
+   * `isFirstSetup` relabels the gate "Premiere connexion", and it is also what hides BOTH exits
+   * the error names - the old-PIN recovery and the reset. The reader was then told that only a
+   * reset restores access, on a screen carrying no reset. Measured on W2, 2026-09-21.
+   *
+   * THE PATHS DISAGREED, WHICH IS THE PROOF. `onSavedPinFailed` has always cleared the flag; the
+   * two interactive handlers never did, and they are the ones a person reaches by typing. One
+   * implementation now, branching on the typed code and never on the message.
+   */
+  function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
+    if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
+    void evaluateRecoverable(uid, code);
+  }
+
   /** Opens the recovery modal (old PIN → new PIN, no data loss). */
   function handleOpenRecover() {
     recoverError = '';
@@ -533,7 +553,7 @@
     pinError = msg;
     isFirstPinSetup = false;
     showPinModal = true;
-    void evaluateRecoverable(globalSession.userId || currentUserId() || '', code);
+    applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 
   /**
@@ -1428,7 +1448,7 @@
         onLoginFailed: (msg: string, code?: LoginErrorCode) => {
           pinError = msg;
           pinLoading = false;
-          void evaluateRecoverable(globalSession.userId || currentUserId() || '', code);
+          applyPinFailure(globalSession.userId || currentUserId() || '', code);
         },
       })
     );
@@ -1497,7 +1517,7 @@
             pinError = msg;
             pinLoading = false;
             pinStep = '';
-            void evaluateRecoverable(globalSession.userId || currentUserId() || '', code);
+            applyPinFailure(globalSession.userId || currentUserId() || '', code);
           },
         })
       )

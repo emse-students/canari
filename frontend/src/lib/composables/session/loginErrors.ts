@@ -79,6 +79,27 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
 }
 
 /**
+ * True when the failure itself PROVES this device already holds a local MLS state.
+ *
+ * **WHY A SECOND PREDICATE OVER THE SAME CODE.** `isRecoverableWithOldPin` answers "is there
+ * something the old PIN could still do"; this answers "is this device new". They agree today on
+ * one code and disagree on the other - a mismatch against the account verifier says nothing about
+ * what is on disk - and a caller that reused the first for the second would be reading a column
+ * written for another question ([durable-rules](../../../../../docs/wiki/durable-rules.md)).
+ *
+ * **WHAT IT IS FOR.** `PinModal`'s `isFirstSetup` is computed from a SERVER fact - no
+ * `PinVerifier` row for this account - and it hides both remedies the modal can offer: the
+ * old-PIN recovery and the reset. `local_state_unopenable` is a LOCAL fact, and the two can be
+ * true at once: a `pin-reset` whose server half lands and whose `resetDeviceAsFresh` half does
+ * not leaves exactly that pair, and `auth_reset_device_partial` exists because that half can
+ * fail. The modal then tells its reader that only a reset restores access, while `isFirstSetup`
+ * keeps the reset off the screen. Measured on W2, 2026-09-21.
+ */
+export function provesLocalStateExists(code: LoginErrorCode): boolean {
+  return code === 'local_state_unopenable';
+}
+
+/**
  * True when a login that did not go through is an ORDINARY OUTCOME rather than a defect HERE.
  *
  * **ONLY ONE KIND OF FAILURE ACCUSES THIS APPLICATION, AND THE LOG LEVEL IS HOW IT SAYS SO.** Every
