@@ -458,6 +458,17 @@ composer offers "Anonyme" to everyone with no capability check, and a non-admin 
 real composer on the local prod copy published anonymously with a `201`. Neither half of the stack
 gates it.
 
+**AND IT WAS RE-RUN ON THE REPORTED SURFACE, WHICH IS THE HALF THAT MAKES IT EVIDENCE.** A browser
+on a workstation is not what failed; an Android phone was. So the same drive was repeated on A1 -
+`versionName=0.18.17`, the exact build of the report, a non-admin account, reversed onto a full copy
+of production - and the row landed with `anonymous = t`. Identical on both surfaces.
+
+So the class is NOT "anonymous posting is broken in 0.18.17", and no fix to the publish path is owed
+or would have anywhere to go. What remains is one member, one attempt, and seven candidate stages -
+which is exactly the shape the typed errors above were written for. **The composer now names its own
+stage, so the next occurrence arrives with the answer attached instead of costing a day of log
+reads that the retention window may no longer cover.**
+
 `publishPost` can fail seven ways, and **five of them already carried a translated sentence at the
 throw**:
 
