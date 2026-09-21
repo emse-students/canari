@@ -300,6 +300,56 @@ export function mkMediaEnvelope(
   return { kind: 'media', media, caption, replyTo };
 }
 
+/**
+ * The body an edit replaces: a text message's own text, a media message's caption, a system line's
+ * text, a poll's question. A legacy plain-text row parses as a text envelope, so it lands in the
+ * first case and comes back unchanged.
+ *
+ * It exists so the edit-precedence rule compares two REPLACEMENT BODIES rather than two storage
+ * representations - see `editSupersedes`, where a raw body measured against a serialized envelope
+ * would answer differently on the two devices holding the pair, which is the divergence that rule
+ * was written to prevent.
+ */
+export function envelopeBodyText(content: string): string {
+  const env = parseEnvelope(content);
+  switch (env.kind) {
+    case 'text':
+      return env.text;
+    case 'media':
+      return env.caption ?? '';
+    case 'system':
+      return env.text;
+    case 'poll':
+      return env.question;
+  }
+}
+
+/**
+ * Apply an edit's replacement text to a stored body, keeping every field the edit does not carry.
+ *
+ * WHY THIS EXISTS. `edit_message` carries the replacement TEXT and nothing else, and the reply
+ * reference lives INSIDE the envelope held in `content` - nowhere else, since `toMessagePayload`
+ * has no `replyTo` key. So writing the bare text into `content`, which all four appliers did,
+ * DELETED the quote from the row. The editing tab went on showing it because the in-memory
+ * `ChatMessage.replyTo` set at send time outlives the write; any device that re-read the row from
+ * disk showed the message bare, and one reload lost it on the editing device too. Reported
+ * 2026-09-21 as one message quoted on its author's PC and bare on the peer's.
+ *
+ * The media case is not reachable from this app's UI, which refuses to edit a media message - it is
+ * here because the alternative for a frame from some other client is throwing the attachment away.
+ */
+export function applyEditToBody(content: string, newText: string): string {
+  const env = parseEnvelope(content);
+  switch (env.kind) {
+    case 'text':
+      return serializeEnvelope({ ...env, text: newText });
+    case 'media':
+      return serializeEnvelope({ ...env, caption: newText });
+    default:
+      return serializeEnvelope(mkTextEnvelope(newText));
+  }
+}
+
 /** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };

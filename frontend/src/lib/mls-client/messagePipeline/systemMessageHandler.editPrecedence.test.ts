@@ -1,4 +1,5 @@
 import { handleSystemEvent } from './systemMessageHandler';
+import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 
 /**
  * An edit is applied only if it is newer than the one the row already carries.
@@ -10,8 +11,18 @@ import { handleSystemEvent } from './systemMessageHandler';
  * text, A1 showing W1's, and neither ever moving again - silent, permanent, no error anywhere.
  */
 
-/** A context holding one message authored by `owner`, optionally already edited at `editedAt`. */
-function makeCtx(senderNorm: string, editedAt?: number) {
+/**
+ * A context holding one message authored by `owner`, optionally already edited at `editedAt`.
+ *
+ * The body is a SERIALIZED ENVELOPE, because that is what a row holds: the reply reference lives
+ * inside it and nowhere else, so an applier that wrote the bare replacement text erased the quote.
+ * `reply` puts one there, for the test that pins it.
+ */
+function makeCtx(
+  senderNorm: string,
+  editedAt?: number,
+  reply?: { id: string; senderId: string; content: string }
+) {
   const conversations = new Map<string, any>();
   conversations.set('g1', {
     id: 'g1',
@@ -20,7 +31,9 @@ function makeCtx(senderNorm: string, editedAt?: number) {
       {
         id: 'm1',
         senderId: 'peer',
-        content: editedAt === undefined ? 'original' : 'held-edit',
+        content: serializeEnvelope(
+          mkTextEnvelope(editedAt === undefined ? 'original' : 'held-edit', reply)
+        ),
         readBy: [],
         ...(editedAt === undefined ? {} : { isEdited: true, editedAt: new Date(editedAt) }),
       },
@@ -49,6 +62,8 @@ function makeCtx(senderNorm: string, editedAt?: number) {
 }
 
 const msgOf = (ctx: ReturnType<typeof makeCtx>) => (ctx.conversations.get('g1') as any).messages[0];
+/** The text on screen, which is what every assertion below is really about. */
+const bodyOf = (ctx: ReturnType<typeof makeCtx>) => envelopeBodyText(msgOf(ctx).content);
 
 describe('handleSystemEvent - edit_message precedence', () => {
   it('applies an edit to a row that carries none', async () => {
@@ -59,7 +74,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('first');
+    expect(bodyOf(ctx)).toBe('first');
     expect(ctx.storage.updateMessage).toHaveBeenCalled();
   });
 
@@ -71,7 +86,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('newer');
+    expect(bodyOf(ctx)).toBe('newer');
   });
 
   it('DROPS an edit older than the one held, and says so in the log', async () => {
@@ -82,7 +97,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('held-edit');
+    expect(bodyOf(ctx)).toBe('held-edit');
     expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped an edit'));
   });
@@ -95,7 +110,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('held-edit');
+    expect(bodyOf(ctx)).toBe('held-edit');
     expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
   });
 
@@ -114,7 +129,26 @@ describe('handleSystemEvent - edit_message precedence', () => {
     await handleSystemEvent('edit_message', w1, asA1 as any);
 
     expect(msgOf(asW1).content).toBe(msgOf(asA1).content);
-    expect(msgOf(asW1).content).toBe('from-A1');
+    expect(bodyOf(asW1)).toBe('from-A1');
+  });
+
+  it('KEEPS THE QUOTE a reply carries - the edit carries a text, not a body', async () => {
+    const quote = { id: 'm0', senderId: 'leon', content: 'je veux bien yes' };
+    const ctx = makeCtx('peer', undefined, quote);
+
+    await handleSystemEvent(
+      'edit_message',
+      { messageId: 'm1', newContent: 'Done', editedAt: 1000 },
+      ctx as any
+    );
+
+    // In memory AND at rest: the row is the only place the quote survives a reload, since
+    // `toMessagePayload` has no `replyTo` key and the stored body is all the reader gets.
+    const applied = parseEnvelope(msgOf(ctx).content);
+    expect(applied.kind === 'text' && applied.text).toBe('Done');
+    expect(applied.kind === 'text' && applied.replyTo).toEqual(quote);
+    const written = ctx.storage.updateMessage.mock.calls[0][1].content;
+    expect(parseEnvelope(written)).toEqual(applied);
   });
 
   it('DROPS an edit of a deleted message - a tombstone is final, whatever the order', async () => {
@@ -161,7 +195,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('held-edit');
+    expect(bodyOf(ctx)).toBe('held-edit');
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Refused an edit'));
   });
 });

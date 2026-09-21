@@ -26,6 +26,7 @@ import {
 } from '$lib/paraglide/messages';
 import {
   serializeEnvelope,
+  applyEditToBody,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
@@ -311,7 +312,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           ...convo,
           messages: convo.messages.map((mm) =>
             mm.id === data.messageId
-              ? { ...mm, isEdited: true, editedAt, content: data.newContent }
+              ? {
+                  ...mm,
+                  isEdited: true,
+                  editedAt,
+                  // The replacement TEXT, applied to the body this row holds, so the reply
+                  // reference inside it survives the edit - see `applyEditToBody`. The accumulator
+                  // below keeps the raw text: the row it will be written to is read in the
+                  // post-save pass, and that is where its own body is known.
+                  content: applyEditToBody(mm.content, data.newContent),
+                }
               : mm
           ),
         });

@@ -24,6 +24,8 @@
  * is all that is asked of it.
  */
 
+import { envelopeBodyText } from '$lib/envelope';
+
 /** An edit as it arrives on the wire, or as a device is about to apply its own. */
 export interface IncomingEdit {
   /** Unix ms, stamped by the device that made the edit. */
@@ -50,7 +52,14 @@ function ms(at: Date | number | null | undefined): number | null {
  *
  * Strictly later wins. An undated held edit loses, because a row that carries no `editedAt` has no
  * edit to defend - and a frame from a client too old to send one is dated on arrival by its caller,
- * which is the best clock that frame has. A tie goes to the greater content string.
+ * which is the best clock that frame has. A tie goes to the greater body text.
+ *
+ * THE TIE IS READ THROUGH THE ENVELOPE, and that is not a detail. `next.content` is the replacement
+ * text as it travels; `held.content` is a stored body, which is a SERIALIZED ENVELOPE - it has to
+ * be, or an edit would delete the reply reference it carries (`applyEditToBody`). Comparing the one
+ * against the other would make the same pair answer differently on the two devices holding it: each
+ * would measure the other's raw text against its own JSON, both would refuse, and the two would sit
+ * on different bodies for ever. That is MUT-18 exactly, re-entered through the storage shape.
  */
 export function editSupersedes(next: IncomingEdit, held: HeldEdit | undefined | null): boolean {
   if (!held) return true;
@@ -59,5 +68,5 @@ export function editSupersedes(next: IncomingEdit, held: HeldEdit | undefined | 
   const nextAt = ms(next.editedAt);
   if (nextAt === null) return false;
   if (nextAt !== heldAt) return nextAt > heldAt;
-  return next.content > held.content;
+  return envelopeBodyText(next.content) > envelopeBodyText(held.content);
 }

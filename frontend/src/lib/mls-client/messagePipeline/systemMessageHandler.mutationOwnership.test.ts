@@ -1,4 +1,5 @@
 import { handleSystemEvent } from './systemMessageHandler';
+import { envelopeBodyText } from '$lib/envelope';
 
 /**
  * Only a message's author may edit or delete it, and the rule is enforced HERE - on receipt - because
@@ -82,7 +83,9 @@ describe('handleSystemEvent - edit_message ownership', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('rewritten');
+    // The stored body is an envelope - an edit replaces the text inside it, never the body
+    // itself, or the reply reference the body carries would go with it (`applyEditToBody`).
+    expect(envelopeBodyText(msgOf(ctx).content)).toBe('rewritten');
     expect(msgOf(ctx).isEdited).toBe(true);
   });
 

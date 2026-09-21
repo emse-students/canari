@@ -2,6 +2,7 @@ import { canari } from '$lib/proto/canari.js';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
+import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 
 /**
  * The replay handlers for mutations, exercised for the first time.
@@ -140,9 +141,29 @@ describe('replaying an edit', () => {
       [message('m1', OWNER)]
     );
 
-    expect(result.convo.messages[0]).toMatchObject({ content: 'corrected', isEdited: true });
+    expect(result.convo.messages[0].isEdited).toBe(true);
+    expect(envelopeBodyText(result.convo.messages[0].content)).toBe('corrected');
     expect(result.convo.messages[0].editedAt?.getTime()).toBe(1_700_000_042_000);
+    // The accumulator keeps the replacement TEXT, not a body: the row it will be written to is read
+    // in the post-save pass of `history.ts`, and only there is that row's own body known.
     expect(result.editedMessages.get('m1')).toMatchObject({ content: 'corrected', by: OWNER });
+  });
+
+  it('KEEPS THE QUOTE a replayed reply carries - the edit carries a text, not a body', async () => {
+    const quote = { id: 'm0', senderId: OTHER, content: 'je veux bien yes' };
+    const result = await replay(
+      systemEvent('edit_message', {
+        messageId: 'm1',
+        newContent: 'Done',
+        editedAt: 1_700_000_042_000,
+      }),
+      OWNER,
+      [message('m1', OWNER, serializeEnvelope(mkTextEnvelope('Doen', quote)))]
+    );
+
+    const applied = parseEnvelope(result.convo.messages[0].content);
+    expect(applied.kind === 'text' && applied.text).toBe('Done');
+    expect(applied.kind === 'text' && applied.replyTo).toEqual(quote);
   });
 
   it("refuses somebody else's edit, and records nothing from it", async () => {

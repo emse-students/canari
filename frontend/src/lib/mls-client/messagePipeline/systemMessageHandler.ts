@@ -2,6 +2,7 @@ import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
 import {
   serializeEnvelope,
+  applyEditToBody,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
@@ -794,7 +795,12 @@ export async function handleSystemEvent(
         // No read state is reset here. It used to clear `readBy`, so an edited message showed as
         // read by nobody - which the watermark cannot express and should not: a watermark is
         // monotone, and a peer that never sees the edit would never agree to move back anyway.
-        const editedMsg = { ...orig, isEdited: true, editedAt, content: data.newContent };
+        // THE EDIT CARRIES A TEXT, NOT A BODY. The reply reference lives inside the envelope in
+        // `content` and nowhere else, so writing the bare text here deleted the quote from the row
+        // - invisibly on the editing device, whose in-memory `replyTo` outlived the write, and
+        // immediately on every device that re-read the row from disk. See `applyEditToBody`.
+        const editedContent = applyEditToBody(orig.content, data.newContent);
+        const editedMsg = { ...orig, isEdited: true, editedAt, content: editedContent };
         conversations.set(convoKey, {
           ...c,
           messages: c.messages.map((m, i) => (i === idx ? editedMsg : m)),
@@ -803,7 +809,7 @@ export async function handleSystemEvent(
           try {
             await storage.updateMessage(
               editedMsg.id,
-              { content: data.newContent, isEdited: true, editedAt: editedAt.getTime() },
+              { content: editedContent, isEdited: true, editedAt: editedAt.getTime() },
               deviceKeyB64
             );
           } catch {
