@@ -1,11 +1,13 @@
 version: 0.18.18
 
-Les listes, les tirets et les sauts de ligne d'une publication s'affichent enfin comme ils ont ete ecrits.
+Les listes, tirets et sauts de ligne d'une publication s'affichent enfin comme ils ont ete ecrits.
 
-Une publication au nom d'une association montre le logo de l'association dans la notification, et non plus la photo de son auteur.
+Une publication au nom d'une association montre son logo dans la notification, et non plus la photo de son auteur.
 
 Quand une publication ne part pas, l'application dit pourquoi.
 
 Une notification de salon affiche le message lui-meme au lieu de "Nouveau message".
 
 Modifier une reponse n'efface plus sa citation.
+
+Le tableau des reponses d'un formulaire n'affiche plus de colonnes vides.
