@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.19] - 2026-09-22
+
 ### Changed - core-service disait ou joindre social-service de trois manieres, dont une que la prod n'a jamais reglee
 
 `SOCIAL_SERVICE_URL`, lu par les chemins de confirmation Stripe et Lydia, n'existe pas sur le
