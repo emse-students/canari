@@ -1,8 +1,8 @@
 /**
  * THE GESTURE, WIRED TO A POINTER - which is the half that was broken for six months.
  *
- * `messageSwipeReply.test.ts` proves the maths: which delta triggers a reply, which one triggers
- * the reaction tray, which direction belongs to which side of the thread. Every one of those tests
+ * `messageSwipeReply.test.ts` proves the maths: which delta triggers a reply and which
+ * direction belongs to which side of the thread (the reaction swipe it also covered is gone). Every one of those tests
  * passed the whole time the feature was dead, because the component gated all of them behind
  * `supportsHover`, a `$state(true)` nothing ever wrote to. A pure function cannot notice that its
  * only caller never calls it.
@@ -190,6 +190,74 @@ describe('MessageBubble - the swipe reaches onReply', () => {
 
     expect(el.getAttribute('style') ?? '').not.toContain('translate3d');
     expect(h.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe('MessageBubble - the outward swipe is a NON-GESTURE, and that is the point', () => {
+  // It used to open the reaction tray. The user cut it on 2026-09-22 - *"swiper pour reagir n'est
+  // pas quelque chose de bien, c'est meme assez bizarre"* - after it was measured against Messenger
+  // 579.0.0.61.91 on the same handset, where an outward drag produces no displacement at all on
+  // either side of the thread. These tests exist because a deleted gesture is exactly the kind of
+  // thing a later refactor quietly restores: they fail the day the bubble moves outward again.
+  it('does not react when a received bubble is dragged AWAY from the centre', () => {
+    const h = mountBubble();
+    swipeWithPointer(300, 300 - REPLY_SWIPE_TRIGGER_PX - 20);
+
+    expect(h.react).not.toHaveBeenCalled();
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('does not react when an OWN bubble is dragged away from the centre either', () => {
+    const h = mountBubble({ isOwn: true, senderId: 'u-me' });
+    swipeWithPointer(100, 100 + REPLY_SWIPE_TRIGGER_PX + 20);
+
+    expect(h.react).not.toHaveBeenCalled();
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('does not even MOVE the bubble outward - the finger meets no affordance at all', () => {
+    mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 300, 200));
+    flushSync();
+    el.dispatchEvent(pointer('pointermove', 300 - REPLY_SWIPE_TRIGGER_PX - 20, 200));
+    flushSync();
+
+    expect(el.getAttribute('style') ?? '').not.toContain('translate3d');
+  });
+});
+
+describe('MessageBubble - the reply hint is revealed, never driven over', () => {
+  // The hint is absolutely positioned and does NOT move; the bubble does. Put it on the side the
+  // bubble travels TOWARD and the message slides underneath it, which is what the user reported:
+  // *"une bulle avec le logo repondre, mais a l'interieur et qui ne bouge pas ... le message passe
+  // dessous"*. `right-full` on a received bubble anchors it past the LEFT edge - the side the drag
+  // comes from, and the space the bubble vacates. Asserting the class is what pins the SIDE; no
+  // jsdom layout is involved, so this is the only honest way to state it.
+  it('anchors past the LEFT edge of a received bubble, which is where the drag came from', () => {
+    mountBubble();
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    flushSync();
+    el.dispatchEvent(pointer('pointermove', 140, 200));
+    flushSync();
+
+    const hint = document.querySelector('[aria-hidden="true"].rounded-full');
+    expect(hint?.className).toContain('right-full');
+    expect(hint?.className).not.toContain('left-full');
+  });
+
+  it('anchors past the RIGHT edge of an own bubble, mirrored for the same reason', () => {
+    mountBubble({ isOwn: true, senderId: 'u-me' });
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 300, 200));
+    flushSync();
+    el.dispatchEvent(pointer('pointermove', 260, 200));
+    flushSync();
+
+    const hint = document.querySelector('[aria-hidden="true"].rounded-full');
+    expect(hint?.className).toContain('left-full');
+    expect(hint?.className).not.toContain('right-full');
   });
 });
 

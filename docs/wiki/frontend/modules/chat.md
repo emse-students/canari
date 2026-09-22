@@ -1984,6 +1984,43 @@ message, so only the `isOwn` direction was exercised on glass - a peer's bubble 
 way and is covered by tests alone. Nothing here was measured on iOS, where the engine is WebKit and
 the pointer-event path is its own question.
 
+### The reaction swipe is gone, and the reply hint moved to the outer edge (2026-09-22)
+
+Two days after the gesture was switched back on, the user met it and cut half of it. *"swiper pour
+reagir n'est pas quelque chose de bien, c'est meme assez bizarre. Tu peux retirer ceci."* And on the
+half that stayed: *"swiper vers l'interieur fait apparaitre une bulle avec le logo repondre, mais a
+l'interieur et qui ne bouge pas, donc c'est un peu bizarre (le message passe dessous, pas
+intuitif)"*.
+
+**BOTH WERE SETTLED BY MEASUREMENT RATHER THAN BY TASTE, ON MESSENGER 579.0.0.61.91, ON THE SAME
+HANDSET.** The rig drives it with `adb shell input swipe` over a long duration and screenshots
+MID-GESTURE, which is the only way to see an affordance that exists solely while a finger is down.
+
+| Gesture | Messenger | Canari before | Canari now |
+| --- | --- | --- | --- |
+| Drag toward the thread centre | reply | reply | reply |
+| Drag away from the centre | **no displacement at all** | reaction tray | **nothing** |
+| Long press | reaction bar on the bubble + action bar docked at the screen bottom | one mobile sheet | one mobile sheet (kept, user) |
+| Double tap | nothing observed | heart | heart (kept, user) |
+| Thread-list row swipe | **none**; every action is the long press | none | none |
+
+**THE HINT IS REVEALED, NOT DRIVEN OVER, AND THAT IS THE WHOLE DEFECT.** The hint is absolutely
+positioned on the wrapper and does not move; the bubble does. It was anchored on the side the bubble
+travels TOWARD (`left-full` on a received bubble), so the message slid straight under an icon sitting
+at `z-20` - announcing an action while being covered by the thing that would perform it. Messenger
+translates the whole row, avatar included, and reveals the reply icon in the space the row VACATES,
+on the outer edge. The fix is that placement: `right-full` for a received bubble, `left-full` for an
+own one, the arrow mirrored to point the way the bubble travels.
+
+**The side is pinned by a test, and the test is proven by reversal**: restoring the old placement
+fails `anchors past the LEFT edge of a received bubble` and its own-message twin. Three more tests
+assert the outward drag now moves nothing and calls neither handler, because a deleted gesture is
+the kind of thing a later refactor restores in good faith.
+
+**`showQuickReactions` went with it.** The tray it guarded was reachable only from the reaction
+swipe, so removing that gesture left a `$state` nothing ever set to `true` and a block that could
+never render - dead the moment the gesture was.
+
 ### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
 
 *"you can only swipe page on no elements (if I swipe on a button, it doesn't click it, but doesn't
