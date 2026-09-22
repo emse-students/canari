@@ -9,7 +9,7 @@
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { Download, GripVertical, UserPlus } from '@lucide/svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
@@ -53,8 +53,7 @@
       members = [...members, member];
       resolvedMemberNames = {
         ...resolvedMemberNames,
-        [member.userId]:
-          getUserDisplayNameSync(member.userId) || member.displayName?.trim() || member.userId,
+        [member.userId]: rosterDisplayName(member),
       };
       resolveUserDisplayName(member.userId).then((resolved) => {
         if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [member.userId]: resolved };
@@ -201,9 +200,7 @@
         <div class="min-w-0 flex-1">
           <AssociationMemberRow
             {member}
-            displayName={resolvedMemberNames[member.userId] ??
-              member.displayName ??
-              getUserDisplayNameSync(member.userId)}
+            displayName={resolvedMemberNames[member.userId] ?? rosterDisplayName(member)}
             manage={true}
             isBDE={asso.isBDE}
             onRoleChange={handleChangeRole}

@@ -22,6 +22,7 @@ import {
   type PushIcon,
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
+import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 
 /**
  * What a notification ABOUT an anonymous post carries instead of the real author - the identity
@@ -109,7 +110,16 @@ export class PostNotificationsService {
     return [...ids].slice(0, 20);
   }
 
-  /** Looks up a user's display name from the shared users table. */
+  /**
+   * Looks up a user's display name from the shared users table.
+   *
+   * The precedence itself is NOT decided here - it is `formatUserDisplayName`'s, the one every
+   * surface of this app and of the client now shares. This method built it inline and preferred
+   * `displayName`, so a post notification could name somebody differently from the post it opened.
+   *
+   * Falls back to the actor id, which is not a name but is addressable: a notification with no
+   * actor at all reads as a fault, and the client resolves an id it recognises.
+   */
   async resolveActorName(actorId: string): Promise<string> {
     try {
       const rows: unknown = await this.postRepo.manager.query(
@@ -119,12 +129,7 @@ export class PostNotificationsService {
       if (!Array.isArray(rows) || rows.length === 0) return actorId;
       const u: unknown = rows[0];
       if (typeof u !== 'object' || u === null) return actorId;
-      const row = u as Record<string, unknown>;
-      const displayName = typeof row.displayName === 'string' ? row.displayName.trim() : '';
-      const firstName = typeof row.firstName === 'string' ? row.firstName : '';
-      const lastName = typeof row.lastName === 'string' ? row.lastName : '';
-      const fromParts = [firstName, lastName].filter((p) => p.length > 0).join(' ');
-      return displayName || fromParts || actorId;
+      return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || actorId;
     } catch {
       /* non-fatal */
     }

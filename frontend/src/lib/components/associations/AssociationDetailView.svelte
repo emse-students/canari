@@ -32,7 +32,7 @@
     isAssociationSuperAdmin,
     isEventValidator,
   } from '$lib/stores/user';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
     Bell,
     BellOff,
@@ -157,7 +157,7 @@
       ]);
       const names: Record<string, string> = {};
       for (const m of members) {
-        names[m.userId] = m.displayName?.trim() || getUserDisplayNameSync(m.userId, m.userId);
+        names[m.userId] = rosterDisplayName(m);
       }
       resolvedMemberNames = names;
       for (const m of members) {
@@ -469,9 +469,7 @@
           {#each members as member (member.id)}
             <AssociationMemberRow
               {member}
-              displayName={resolvedMemberNames[member.userId] ??
-                member.displayName ??
-                getUserDisplayNameSync(member.userId)}
+              displayName={resolvedMemberNames[member.userId] ?? rosterDisplayName(member)}
               isBDE={asso?.isBDE ?? false}
             />
           {/each}

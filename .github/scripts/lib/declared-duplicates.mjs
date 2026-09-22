@@ -97,6 +97,24 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the one name precedence, on the server side',
+    compare: 'exact',
+    why: 'one question - "what is this person called" - answered by a push notification title, a ring banner, a member list and a post notification, across two services. A third implementation exists in the frontend and CANNOT be a copy (different runtime, localized fallback), so the two halves of the guarantee are different mechanisms: identical text here, identical ANSWERS through libs/contracts/user-display-name.cases.json, which all three specs read. The file declares the minimal row shape itself rather than the model on either side, which is what lets the copies be identical.',
+    files: [
+      'apps/chat-delivery-service/src/utils/user-display-name.ts',
+      'apps/social-service/src/utils/user-display-name.ts',
+    ],
+  },
+  {
+    what: 'the contract spec that guards it',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the other only inherits the file',
+    files: [
+      'apps/chat-delivery-service/src/utils/user-display-name.spec.ts',
+      'apps/social-service/src/utils/user-display-name.spec.ts',
+    ],
+  },
+  {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',

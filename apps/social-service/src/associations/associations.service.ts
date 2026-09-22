@@ -33,6 +33,7 @@ import {
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
 import { promoCutoffFor } from '../common/promo-visibility';
+import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
   isDelegating,
   resolvePaymentTarget,
@@ -704,7 +705,9 @@ export class AssociationsService {
       userId: r.m_userId,
       role: r.m_role,
       isAdmin: Number(r.m_permissions ?? 0) > 0,
-      displayName: r.displayName || [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+      // The same precedence every other surface uses - this line built its own, preferring
+      // `displayName`, so the vitrine could name a member differently from the app.
+      displayName: formatUserDisplayNameFromRaw(r as Record<string, unknown>) || null,
       firstName: r.firstName || null,
       lastName: r.lastName || null,
       promo: r.promo ?? null,

@@ -1296,13 +1296,25 @@ Three things outlived that, and the first two are one missing field:
    Android's; `desktop.rs` builds its own notifications and the web builds a third. Neither has been
    looked at for the doubling this item was opened for.
 
-### G2 - ONE DISPLAY NAME, TWO OPPOSITE PRECEDENCES
+### G2 residue - P3 - THE USER SEARCH PROJECTS ONLY `displayName`, SO TWO CACHE SEEDS CANNOT APPLY THE SHARED PRECEDENCE
 
-`formatDisplayName` (`display-name.ts:12`, server) prefers `displayName` over first+last;
-`formatProfileDisplayName` (`displayName.ts:92`, client) prefers first+last over `displayName`. So a
-push and a locally-raised notification can title the same person differently even when both resolve
-correctly. One of the two is wrong and nothing here says which. **Pick a precedence, state it where
-the type is declared, delete the other.**
+**The precedence itself is SETTLED and must not be re-opened**: one contract,
+`libs/contracts/user-display-name.cases.json`, read by a test in chat-delivery-service, in
+social-service and in the frontend ([libs](libs.md#libscontracts), the only copy). `firstName
+lastName` first, `displayName` as the fallback.
+
+What is left is upstream of all three. `GET /api/users/search` projects `id` and `displayName`
+only (`users.service.ts`, `search`), and matches on `NAME_NORM_EXPR` - `unaccent(LOWER(displayName))`
+- so a picked row carries no name PARTS. The two callers that seed the display-name cache from a
+search result (`useMentionAutocomplete.svelte.ts`, `MultiUserSelector.svelte`) therefore seed the
+raw column, and a mention chip can read a name the rest of the app would build differently.
+
+**IT IS LATENT, MEASURED RATHER THAN ASSUMED**: on production, 2026-09-22, `displayName` equals
+`firstName lastName` for **all 436 accounts**, so the two spellings have never differed for anybody.
+That is also why this is not worth a search rewrite on its own - widening the projection means
+widening `NAME_NORM_EXPR`, the ranking and the indexes behind
+[search-contract](search-contract.md), and the honest trigger is the first account whose Authentik
+`name` claim is not its two parts.
 
 The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
 both, and it is not re-derived here.
