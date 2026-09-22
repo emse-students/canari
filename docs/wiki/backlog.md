@@ -1907,37 +1907,6 @@ hardware-blocked items rather than with this one.
 
 ## CI and the chain that runs unattended
 
-### P3 - two wire contracts are written twice, and `libs/proto` is the mechanism that already exists for exactly that (measured 2026-09-10)
-
-Found by scanning the tree for duplicated blocks after a triplicated comment stripper produced
-three CodeQL alerts. **Most of what that scan returned is DELIBERATE and is now asserted** by
-`declared-duplicates.test.mjs` - four copies of the CORS allowlist and its test, four of the
-NestJS framework-boot assertion, and the 636-line Minesweeper engine the server replays to decide
-whether a ranked score is a cheat. Those stay duplicated for the reasons their own docblocks give.
-
-**These two are a different shape and are NOT covered by that gate**, because the copies are not
-copies - they are one contract described twice, in two languages of the same repository:
-
-| the shared block | the two places | lines |
-| --- | --- | --- |
-| the published-carte stage shape | `frontend/src/lib/carte/publish.ts` + `apps/social-service/src/associations/published-carte.ts` | 44 |
-| the backend-storage report shape | `frontend/src/lib/utils/backendStorage.ts` + `apps/chat-delivery-service/src/controllers/admin-storage.controller.ts` | 48 |
-
-The rest of each file legitimately differs - one produces, one consumes - so an identity gate
-would be wrong. What is duplicated is the SHAPE crossing the wire, and a shape that disagrees
-across the wire is a runtime failure no compiler here can see, because the two sides are compiled
-separately.
-
-**The repository already answers this question once**: `libs/proto/canari.proto` is a wire
-contract with ONE definition and generated bindings on both sides. These two predate that habit
-rather than reject it.
-
-**What it owes before anything moves:** whether a `.proto` is proportionate for a 44-line
-presentational shape, or whether the honest cheaper answer is a generated type checked into both
-trees. **Do NOT answer it by creating a shared TypeScript package** - that was tried
-(`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
-of `cors-origins.ts` and it has not changed.
-
 ### P3 - THE ANDROID SUITE TESTS A MIRROR OF THE LADDER, SO IT CANNOT FAIL WHEN THE LADDER CHANGES
 
 The suite runs in CI since 2026-09-10 and the four ways it had of not running are closed
