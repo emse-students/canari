@@ -300,11 +300,20 @@ rollback does the same thing to a real user.
 
 **AND THE USER SET THAT DATE, 2026-09-14: the floor goes up at the 0.18.0 STABLE**, once both stores
 have taken the version - which is the same condition the production deploy already waits on, so it
-is one gate rather than a new one. The reader shipped 2026-09-08 and has been behaviourally inert
-since; step 2 is the one-line writer flip plus the `minClientVersion` bump, and the two causes of
-`MLS_LOCAL_STATE_UNDECRYPTABLE` stop being indistinguishable in the field from that moment. The cost
-is stated and accepted: a client older than 0.18.0 is refused. This also unblocks `DE7`, whose only
-route out currently requires the OLD PIN.
+is one gate rather than a new one. Step 2 is the one-line writer flip plus the `minClientVersion`
+bump, and the two causes of `MLS_LOCAL_STATE_UNDECRYPTABLE` stop being indistinguishable in the field
+from that moment. The cost is stated and accepted: a client older than 0.18.0 is refused. This also
+unblocks `DE7`, whose only route out currently requires the OLD PIN.
+
+**THE READER DID NOT SHIP ON 2026-09-08 - IT MERGED THAT DAY AND REACHED USERS ON 2026-09-21, IN
+`v0.18.18` (#901).** This entry said "shipped 2026-09-08" for thirteen days, which is the repository's
+own trap written down: *a merged fix is not a shipped fix*. `git tag --contains` settles it in one
+command and no other evidence should be accepted for a claim of this shape. **What that means for
+step 2 is that its precondition is younger than it looked**: the reader is the floor only where
+`v0.18.18` is installed, so the writer may not flip until BOTH stores are serving it and enough of
+the fleet has taken it. Play holds the APK; the App Store submission for the same version went in the
+same evening and is a review away. **The next session that wants to flip the writer checks that, not
+this paragraph's date.**
 
 **THE HEADER GOES AT THE STATE LAYER, NEVER IN `security::encrypt_blob`.** That function is shared
 with `mls-wasm/src/pin_crypto.rs`, which seals the PIN-protected BACKUP files, and with the
@@ -318,8 +327,8 @@ and `mls-wasm/src/lib.rs::decrypt_mls_state_blob_with_key` (same bare check). Th
 `src-tauri/src/commands/mls.rs` already writes through `encrypt_state_blob_with_key`, so it inherits
 whatever that does.
 
-**STEP 1 IS DONE (2026-09-08, not yet shipped), MINUS THE HEADER - AND IT WENT FURTHER THAN THE
-TYPED ERROR, BECAUSE THE NAMES WERE THE DEFECT TOO.**
+**STEP 1 IS DONE (merged 2026-09-08, in users' hands since `v0.18.18`), MINUS THE HEADER - AND IT
+WENT FURTHER THAN THE TYPED ERROR, BECAUSE THE NAMES WERE THE DEFECT TOO.**
 
 `MlsError` gained `StateUndecryptable` and `StateIdentityMismatch`, whose `Display` forms lead with
 `STATE_UNDECRYPTABLE:` / `IDENTITY_MISMATCH:` - the same shape as `EVICTED:` and `NO_SUCH_MEMBER:`,
@@ -1625,7 +1634,7 @@ read three things separately - the shade, whether the tap lands on the conversat
 conversation exists in A1's list WITHOUT a restart. The third is the one the report is about and the
 one no existing row reads.
 
-**HALF TWO IS FIXED, AND THE CAUSE WAS ONE LINE (2026-09-08, not yet shipped).** The hypothesis
+**HALF TWO IS FIXED, AND THE CAUSE WAS ONE LINE (merged 2026-09-08, shipped in `v0.18.18`).** The hypothesis
 above was right in shape and wrong about which store: `consumeFcmCache` DOES handle a group joined in
 the background - it writes the message AND a placeholder conversation row (`lifecycle: 'pending'`,
 the sender's name as the label), and its own comment says why. What it did not do is tell the
@@ -1668,7 +1677,7 @@ in its own right, and is not this one.
    replace one another**: Kotlin's `getStableNotifId` hands out a SharedPreferences counter from
    1000, TypeScript's `stableNotifId` returns a 31-hash, so when both fire the user gets two
    notifications for one message, one of which is inert.
-2. **AN ORDERING - AND IT WAS THE ANSWER. FIXED 2026-09-08, NOT YET SHIPPED.** The deep link is
+2. **AN ORDERING - AND IT WAS THE ANSWER. FIXED 2026-09-08, SHIPPED IN `v0.18.18`.** The deep link is
    resolved 174 ms BEFORE the cache is injected:
 
    ```
@@ -3523,10 +3532,10 @@ keep their current behaviour exactly. What is NOT settled is which sites should 
 that is merely wasteful on mobile is not the same as one that loses state, and they want different
 urgency.
 
-### P2 - the false LOST-frame accusation is fixed but UNSHIPPED, and the duplicate delivery inside this entry is still open (2026-09-07)
+### P2 - the false LOST-frame accusation is fixed and shipped, and the duplicate delivery inside this entry is still open (2026-09-07)
 
 **WHAT IS STILL OPEN HERE, SO THIS ENTRY IS NOT A CLOSED ONE.** The false accusation has a cause
-and a fix, and a merged fix is not a shipped fix. The OTHER half - `[QUEUE] delivery ... arrived
+and a fix, and that fix reached users in `v0.18.18` (2026-09-21). The OTHER half - `[QUEUE] delivery ... arrived
 twice`, which alone holds three cells at `PASS-DIRTY` and is forgiven on none of them - was refiled
 on 2026-09-08 with its own measurement as *the pull and the socket hand the SAME row in*. Read that
 one for the current account; what follows is the evidence trail that produced both.
@@ -5193,7 +5202,7 @@ Three separate things, in the order they have to be answered:
    complete, so the user does not know to retry - it needs to know its own expected count and report
    the shortfall, per the standing rule that a correct mechanism with no report is found by hand a
    day late.
-3. **FIXED 2026-09-06, NOT SHIPPED - a local tombstone was treated as a live conversation for
+3. **FIXED 2026-09-06, SHIPPED IN `v0.18.18` - a local tombstone was treated as a live conversation for
    de-duplication.** The peer had deleted the 1v1; locally it sat pending deletion; the NEW
    conversation with that same peer was then dropped as a duplicate of the record that was on its
    way out.
@@ -6130,7 +6139,7 @@ decryptions of the same two frames, one epoch, one sender leaf:
 | 3 | 09:33:30.647 | `recevoir_messages_batch group=2bd5add9... count=2` **again, 83 ms later** | 43, 44 | **`SecretReuseError`** |
 | 4 | 09:33:36.098 | `[PENDING] Fetched 2 pending` -> `[QUEUE] Drain` | 43, 44 | **OK AGAIN** |
 
-**DEFECT A IS FOUND, FIXED AND NOT YET SHIPPED - THE BARRIER WAITED 0 ms ON PURPOSE.** The archive
+**DEFECT A IS FOUND, FIXED AND SHIPPED IN `v0.18.18` - THE BARRIER WAITED 0 ms ON PURPOSE.** The archive
 replay does take a barrier before it reads, and the barrier printed the session it was about to
 overrun: `[QUEUE] mailbox barrier for "archive replay" is waiting behind 1 catch-up session(s) on
 [2bd5add9...]`, then `waited 0ms`. `settleBarrier()` waits for the pull and for the scheduler's
@@ -6324,7 +6333,7 @@ per-process and deliberately not durable - the claim it supports is "this proces
 bytes". Packages minted in an EARLIER session are still purgeable, so a device whose keystore is
 emptied and then RESTARTED would run the loop again with nothing to refuse it.
 
-### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT NAMES THE REMEDY NOW REACHES THE WEB, UNSHIPPED (two production consoles, 2026-09-16)
+### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT NAMES THE REMEDY NOW REACHES THE WEB, SHIPPED IN `v0.18.18` (two production consoles, 2026-09-16)
 
 **DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
 had failed while it was still working; that half is shipped. What remains is bounded growth with no
@@ -7299,7 +7308,7 @@ the release because `CI passed` never ran on the commit - and the wait is for th
 after a failed release run. The bypass bought zero minutes and cost one refused run. Either write
 that down where somebody reaching for it will read it, or build a short path that is actually short.
 
-**5. THE RUN VIEW MISLED, AND IT IS FIXED (2026-09-07) - NOT SHIPPED UNTIL A RELEASE CARRIES IT.**
+**5. THE RUN VIEW MISLED, AND IT IS FIXED (2026-09-07) AND SHIPPED IN `v0.18.18`.**
 Was P3. `deploy.yml` was called twice with a `phase` input and every job inside carried
 `if: inputs.phase == ...`, so the two calls contributed identically-named jobs and half of them were
 `skipped` for reasons the names did not carry - the user read
