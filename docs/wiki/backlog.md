@@ -6484,19 +6484,22 @@ days dead, the join failing on every launch. The shipped half, the one-way bound
 to speak, and why the two tables need opposite answers are on
 [key-package-pool](docs/wiki/protocols/key-package-pool.md).
 
-**What is owed is the half a server cannot do.** `lastResortDeadline` condemns the 3 rows it can
-PROVE dead; the other 680 are honestly unjudgeable and stay that way until their owner re-enrols,
+**What is owed is the half a server cannot do.** `lastResortDeadline` condemns the rows it can
+PROVE dead; the rest are honestly unjudgeable and stay that way until their owner re-enrols,
 because `republishKeyMaterial` refreshes the one-time pool every 30 s and never touches the
-last-resort row. Two shapes, and the choice is a measurement away:
+last-resort row. Two shapes were written down here, and **shape 1 is now REFUTED - see the
+measurement below, and do not re-open it**:
 
-1. **Carry the date on the routine that already runs.** `republishKeyMaterial` reads the package it
-   holds, so it can report `notAfter` without minting anything. Cheapest, and it dates the estate
-   within one connection per device - but it only makes the rows JUDGEABLE, and a device whose
-   last-resort has already elapsed is then correctly refused rather than repaired.
+1. ~~**Carry the date on the routine that already runs.** `republishKeyMaterial` reads the package
+   it holds, so it can report `notAfter` without minting anything.~~ **It would date nothing.** It
+   is CLIENT code, and a device running it is by definition on a build that carries it - which is a
+   build that already sends `notAfter` at `register-device`. The undated rows are defined by NOT
+   being on such a build.
 2. **Re-mint the last-resort when it has elapsed.** The only actual repair, and the only thing that
    makes those devices invitable again. Costs a registration round trip on a path that currently
-   makes none, and `registerDevice` resets `createdAt`, which is what makes the bound in shape 1
-   unusable afterwards - so taking this one means taking it knowingly.
+   makes none, and `registerDevice` resets `createdAt`, which is what makes a bound on `createdAt`
+   unusable afterwards - so taking this one means taking it knowingly. **It has shape 1's problem
+   too**: it is client code, so it reaches only devices that are already judgeable.
 
 **THE FIX IS DEPLOYED AND THE HALVES SEPARATED CLEANLY, measured on production at 15:0x after
 migration 025 applied at 14:52:27 (v0.18.12).** The one-time pool is now TOTAL and stays that way:
@@ -6506,10 +6509,46 @@ create an undated row. The last-resort table is what is left - 724 rows, **3 pro
 refused** rather than served, **677 unjudgeable**. The entry's own prediction held: the 3 close by
 CODE, the 677 do not close at all until something republishes.
 
-**Closes on A MEASUREMENT** - how many devices on production hold a last-resort package that has
-actually elapsed. Still unanswerable: the 677 are unjudgeable BY CONSTRUCTION, not for want of
-looking, and only shape 1 makes the count exist. Shape 1 first, then read the count, then decide
-whether shape 2 is worth its round trip.
+#### THE UNDATED ROWS ARE A CLIENT VERSION, NOT A MYSTERY - AND THEY ARE DRAINING (production, 2026-09-22)
+
+**759 rows, and the split is EXACT on one version boundary with no exception anywhere in the table:**
+
+| `deviceAppVersion` | dated | undated |
+| --- | --- | --- |
+| `>= 0.18.10` | **162** | 0 |
+| `< 0.18.10` | 0 | 134 |
+| none at all (a column older rows predate) | 0 | 463 |
+
+`notAfter` is not derived by the server: `register-device` reads `body.notAfter`, so **the column
+records whether the CLIENT sent one**. 162 of 162 and 597 of 597, across 28 distinct versions - and
+**the cause is confirmed rather than inferred from the correlation**: `git log -S` puts the line that
+sends it (`mlsDeliveryApi.ts`) in `f88a65d0b` (#759, 2026-09-16), and `git tag --contains` makes
+`v0.18.10` the first release carrying it. The boundary in the table and the boundary in the history
+are the same one. So "unjudgeable BY CONSTRUCTION" was the wrong reading - these rows name the
+un-upgraded fleet, and nothing about the package or the protocol is unknowable.
+
+**AND THAT IS WHY BOTH SHAPES ABOVE ARE REFUTED.** Each is code the CLIENT would run, so each can
+only reach a device already on a build that dates its row at `register-device`. **A repair written
+in the client can never be the fix for a population defined by not carrying the client change.**
+
+**THE ROWS DATE THEMSELVES, AND THE RATE IS MEASURED**: 677 undated on 2026-09-18, **597 four days
+later** - about 20 a day, through nothing but people opening an updated app. Of the 246 devices
+that re-registered in the last 7 days, 162 (66%) were already on `>= 0.18.10`. By age since last
+registration the undated residue is 84 under 7 days, 359 at 7-30 days, 76 at 30-60 and 77 at 60-84,
+so most of it is devices that simply have not been opened since the boundary shipped.
+
+**ONE SHAPE IS LEFT AND IT IS A SERVER ONE, WITH A COST THIS ENTRY DOES NOT PAY BLIND.** The date is
+a property of the `keyPackage` bytes the server already stores, so the server could read it without
+any client speaking - which is the only thing that can reach the 597. It would mean decoding an MLS
+KeyPackage's leaf lifetime in `chat-delivery-service`, a TypeScript service whose whole design is
+that it never interprets MLS bytes, and no decoder exists there. **That is the trade to decide, and
+it is the entry - not a count nobody can produce.**
+
+**SO THIS CLOSES ON THE DRAIN, NOT ON A FIX.** Re-measure the table; if the undated count keeps
+falling at ~20/day it reaches zero by itself, and the server-side decoder buys only the tail. The
+one number that would change the disposition is a floor: an undated count that stops falling while
+devices are still registering means a population that never upgrades, and only then is the decoder
+worth its cost.
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
