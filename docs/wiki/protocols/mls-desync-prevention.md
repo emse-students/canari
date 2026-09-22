@@ -186,6 +186,24 @@ one implementation each; `memberRemoved` is simply a site that legitimately does
 `recordEviction.onePolicy.test.ts` drives the six evidences over one table, through the five real
 entry points, for the same reason 6bis does.
 
+**And nothing retracted the notice, on the one evidence that always writes it.** The notice is the
+one statement in a thread the user cannot dismiss, so when a re-admission disproves it
+`retractEvictionNotice` withdraws it - `deleteMessage` rather than a tombstone, because this is a
+message NO OTHER DEVICE EVER HAD. Until 2026-09-22 that withdrawal hung off the
+`readmittedAfterEviction` branch of the Welcome guard, which is `holdsGroupState && !isGroupActive`
+- and `system-event`, the announcement, is the one evidence that makes the FIRST half false: it
+calls `dropGroupState` and only then records the eviction. So a removal its author undid a moment
+later (a moderation slip, a kick-and-re-add) left a permanent "Vous avez ete retire de ce groupe"
+sitting above a conversation that worked perfectly - reported from a real client that day, with
+messages sending and arriving underneath it.
+
+The withdrawal now hangs off the INSTALL, once, keyed on the group that actually came back. Before
+`processWelcome` was the other half of the same mistake: a Welcome that fails to install
+(`NoMatchingKeyPackage`, recovery deferred past the lock) leaves this device evicted, and
+withdrawing on the frame alone retracted a TRUE sentence and left the eviction silent. **The proof
+is the installed group, not the frame that carried it, and not either of the two ways of reaching
+it.** Both directions are gated in `setupMessageHandler.test.ts`.
+
 ### 7. Client - persistence write-if-newer (Web/IndexedDB)
 
 - **Monotonic snapshot version** (**`utils/hex.ts`**) — the encrypted MLS checkpoint is written under a **write-if-newer** guard. Every serialized snapshot is tagged (`tagMlsSnapshot`) with an increasing version at the synchronous capture moment; the version rides with the bytes via a `WeakMap` (`propagateMlsSnapshotVersion` across the plain→encrypted step) so the off-thread Argon2 encryption cannot reorder it. **`saveMlsStateEncrypted`** does an IDB read-modify-write and refuses any blob whose version is not strictly newer than the stored **`MLS_STATE_VERSION_KEY`**. This stops a slow encrypted flush (`mlsStatePersister`, worker Argon2) from overwriting a fresher concurrent write (`generateKeyPackage`, main-thread Argon2) — which would silently regress the persisted epoch on the next reload. The in-memory counter is reseeded from the stored version at load (`seedMlsSnapshotSeq`) so a fresh session never emits a version below what is already on disk. Only a plain integer is stored — no groupId/epoch at rest, so privacy is unchanged. Web-only: Tauri persists to the filesystem under its own `mls_bin_write_lock`.

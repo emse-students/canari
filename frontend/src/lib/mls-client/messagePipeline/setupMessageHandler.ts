@@ -307,15 +307,6 @@ async function handleWelcome({
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… held but EVICTED - this Welcome is a re-admission, not a redelivery`
     );
-    // THE FRAME IN HAND IS THE PROOF THE NOTICE IS FALSE, so it is withdrawn here and nowhere else.
-    // A real eviction correctly recorded, followed by the same member adding us back, leaves a
-    // permanent "you were removed from this group" in the thread that the user cannot dismiss.
-    await retractEvictionNotice({
-      conversations: deps.conversations,
-      groupId: terminalId,
-      storage: deps.storage,
-      log,
-    });
   }
   if (heldLocally && !readmittedAfterEviction) {
     cancelReAdd(terminalId);
@@ -507,6 +498,28 @@ async function handleWelcome({
         }
         statePersister.persistNow();
       }
+
+      // THE INSTALLED GROUP IS THE PROOF THE NOTICE IS FALSE, so it is withdrawn here and nowhere
+      // else. It hung off `readmittedAfterEviction` until 2026-09-22, which is
+      // `holdsGroupState && !isGroupActive` - and the ONE evidence that always posts the notice is
+      // the one that makes the first half false. `memberRemoved` naming this device calls
+      // `dropGroupState` and then `recordEviction` (systemMessageHandler), so a removal the remover
+      // undoes a moment later left a permanent, undismissable "you were removed from this group"
+      // above a conversation that works perfectly. Reported from a real client that day.
+      //
+      // HERE, RATHER THAN BEFORE `processWelcome`, because the frame is not the proof - the install
+      // is. A Welcome that fails (NoMatchingKeyPackage, and the recovery deferred past the lock)
+      // leaves this device evicted, and withdrawing the notice on the frame alone retracted a true
+      // sentence and left the eviction silent. Keyed on `joinedGroupId`, the group that actually
+      // came back, which is the key the conversation row carries.
+      //
+      // Best-effort and idempotent: an ordinary first join has no notice and this returns 0.
+      await retractEvictionNotice({
+        conversations: deps.conversations,
+        groupId: joinedGroupId,
+        storage: deps.storage,
+        log,
+      });
 
       // History: delegated to onWelcomeProcessed (after reinject) to avoid blocking
       // the queue under the MLS lock (createDecryptSession re-acquires the same mutex).
