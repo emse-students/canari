@@ -5956,10 +5956,21 @@ turn it into a defect, are in [design-reference](frontend/design-reference.md) s
   over-wide" is what a sidebar the phone layout does not render looks like too. What settles it is
   the second surface measured the same way at 390, where six of eight leaves clipped; the two that
   did not are an icon box carrying no text and one `text-sm font-medium` label, and neither was
-  over-wide. **So a long channel name truncates and never widens the page.** What a real
-  many-channel community would add on top of that is VERTICAL length - a list that scrolls - which
-  this probe did not exercise, and injection proves the LAYOUT holds, never that real data is shaped
-  this way.
+  over-wide. **So a long channel name truncates and never widens the page.**
+
+  **AND THE VERTICAL HALF IS ANSWERED TOO (2026-09-22), ON THE CHANNEL LIST ITSELF.** The surfaces
+  measured in September were the app rail and a second sidebar, not `MainChatPage`'s channel column;
+  this run cloned its one real row into 41 - the 56-character name among them - and measured
+  `/communities` at 1280 and at 390. At both widths the column's own height does not move (740px at
+  1280, 719 at 390), `scrollHeight` grows past it, the bottom is reachable by scrolling and the
+  DOCUMENT does not grow: `scrollWidth - clientWidth` is 0 and `document.body.scrollHeight` is
+  unchanged. No row exceeds its container at either width. **The long name clips with an ellipsis on
+  this surface at 390 as well** - 233px shown of the 446px it wants - which is the reading the
+  September probe could not take, because it never had this list in front of it. Rendered as well as
+  measured, at 390.
+
+  **WHAT IS STILL NOT ANSWERED IS THE SAME THING AS BEFORE: injection proves the LAYOUT holds, never
+  that real data is shaped this way**, and none of it is real hardware - see the bullet below.
 - **Real hardware.** All of the above is Chrome with a device-metrics override; the phone and the
   iPhone render their own way, and three of three iOS defects were invisible to every gate here
   ([device-verification](device-verification.md)). **The instrument now exists**:

@@ -10,8 +10,11 @@
    * chat ones had neither, so a screen reader was never told the app had gone offline or started
    * synchronising. Harmonising them one call site at a time is how they drifted in the first place.
    *
-   * WHAT IT OWNS: the surface (always opaque - see `--banner-bg` in `app.css`), the live region, and
-   * the row layout. WHAT IT DOES NOT OWN: placement. A banner is `fixed` at the window scale,
+   * WHAT IT OWNS: the surface (always opaque - see `--banner-bg` in `app.css`), the live region, the
+   * row layout, and a SQUARE 0.75rem inset - the same gutter every other card in the floating shell
+   * sits on, so a banner reads as one of them rather than as a strip that happens to be near them.
+   * It was `mx-3 mt-2`, which is three different numbers on four sides (user, 2026-09-22: "si il y
+   * a des marges elles doivent etre egales de tous les cotes"). WHAT IT DOES NOT OWN: placement. A banner is `fixed` at the window scale,
    * `absolute` over a conversation, or in the flow above the content, and only the caller knows
    * which - so position comes in through `class`. Keeping placement out is deliberate: it is the one
    * property that legitimately differs, and pretending otherwise would push every caller to fight
@@ -65,7 +68,7 @@
 </script>
 
 <div
-  class="mx-3 mt-2 flex items-center gap-2 rounded-xl px-4 py-2 text-sm {center
+  class="m-3 flex items-center gap-2 rounded-xl px-4 py-2 text-sm {center
     ? 'justify-center text-center'
     : 'justify-between'} {SURFACE[variant]} {extra}"
   role={tone}

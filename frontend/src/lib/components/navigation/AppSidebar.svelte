@@ -80,7 +80,7 @@
   -->
   <div
     data-nav-backdrop
-    class="fixed inset-0 top-[calc(var(--app-top-bar-height)+env(safe-area-inset-top))] z-(--z-nav-scrim) hidden bg-black/10 md:block dark:bg-black/30"
+    class="fixed inset-0 top-(--app-content-top) z-(--z-nav-scrim) hidden bg-black/10 md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
   ></div>

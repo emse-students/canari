@@ -547,7 +547,21 @@
            at the foot, because those rows are still exactly what they claim to be. -->
       <Card class="space-y-4 p-4 sm:p-5">
         {@render associationFilter()}
-        <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
+        <!-- THE RULE IS DRAWN ONLY WHERE THERE IS SOMETHING UNDER IT.
+
+             `exportActions` holds two controls and a phone reader usually has NEITHER: the PDF
+             export is a right most readers do not have, and the subscribe button is deliberately
+             not drawn below `sm` (d90f06397 - no `webcal://` handler there). So on a 390px screen
+             this row was a 1px rule and 16px of padding over nothing, which is what the first
+             render of the phone agenda showed on 2026-09-22.
+
+             The breakpoint is spelt again here rather than inferred: the button is hidden by CSS,
+             so it is still a child and `:empty` cannot see the difference. -->
+        <div
+          class="border-cn-border/60 {canExportPdf
+            ? 'flex'
+            : 'hidden sm:flex'} flex-wrap justify-end gap-2 border-t pt-4"
+        >
           {@render exportActions()}
         </div>
       </Card>
