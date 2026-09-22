@@ -46,7 +46,7 @@ What changed is not the discovery of a bug but a requirement.
 
 | Suspected reader | What it actually does |
 |---|---|
-| Push | `notifyChannelRecipients` inlines the CIPHERTEXT in the FCM payload under 3 KB and the device decrypts natively; over that it degrades to "new message in #channel". It never composes from the text |
+| Push | `notifyChannelRecipients` inlines the CIPHERTEXT in the FCM payload under 3 KB and the device decrypts natively; over that it degrades to "new message in #channel". It never composes from the text. Since 2026-09-22 it also carries `createdAt`, the row's own instant, so Android's one notification builder recognises a message its two triggers both deliver - the socket frame reads the same column, so nothing is re-derived. It tells FCM nothing it did not already have: a push is timed to the second by its own delivery |
 | Search | No server-side search over content exists. The server returns rows; `decodeChannelMessageRow` decodes client-side and is shared by history loading and search for that reason |
 | Moderation | `deleteChannelMessage` / `channel.moderate` act on an id. A moderator who reads is a member decrypting client-side |
 

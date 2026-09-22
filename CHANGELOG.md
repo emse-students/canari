@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un message de salon arrive par deux chemins et ne s'affiche plus deux fois
+
+La notification etait deja unique, mais son fil doublait la ligne : le push de salon ne portait
+aucun horodatage, et c'est par lui que le constructeur reconnait un message. Il porte desormais
+`createdAt`, la colonne que la trame WebSocket lit deja - une seule valeur, jamais recalculee.
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
+
 ### Changed - plus rien n'excuse une ERREUR du gateway
 
 Le canal ERROR de production mesure **0** sur `v0.18.18`, contre 32 par semaine avant la

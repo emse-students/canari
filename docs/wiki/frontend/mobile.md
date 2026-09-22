@@ -863,8 +863,15 @@ Three things the seam carries, each load-bearing:
   never match; so would the body, because **the two triggers render one message differently** (a push
   runs `renderMentions` over the plaintext, a frame runs `getPreviewText`, which labels a media
   message, a poll and a bare link instead of quoting them) - they agree for plain prose and part
-  company for everything else. **The channel (salon) push carries no timestamp at all**, so that half
-  is open for salons: the notification is still single, but its thread can show one message twice.
+  company for everything else. **The salon push carries the same instant since 2026-09-22**, and it is
+  not a second clock: it is `channel_messages.createdAt`, the stored column the socket half already
+  reads off `channel.message.created`, so the two numbers are equal by construction and the exact
+  comparison is correct rather than lucky. Until then that payload had no timestamp field at all,
+  both triggers reached the builder with `sentAt = 0`, and a salon message that arrived both ways
+  showed its line twice - the notification single, its thread doubled. **A post that SUPERSEDES a
+  line is exempt from the already-announced set**, which is the half that had to move with the
+  field: the generic "nouveau message" banner announces the message, and the redraw that opens it
+  with a late seed would otherwise be refused as a second announcement of something already told.
 - **`suppressInForeground` is FALSE for the WebSocket trigger.** Its caller has already asked a
   strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
   "is the app in front" in the builder would silence a foregrounded app showing another conversation.

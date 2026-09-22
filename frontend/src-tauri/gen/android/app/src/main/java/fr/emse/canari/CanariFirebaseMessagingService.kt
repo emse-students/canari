@@ -1744,10 +1744,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // history re-injected from the notification already in the shade, so this asks the post
             // itself - durable state, not a clock and not a flag this process would lose on a kill.
             //
-            // IT NEEDS A SENT-AT TO WORK, and the channel (salon) push does not carry one: that
-            // payload has no timestamp field at all, so a salon message that arrives BOTH ways can
-            // still show its line twice. The notification is still single - the id is shared - and
-            // the missing field is where that half belongs; see docs/wiki/backlog.md.
+            // IT NEEDS A SENT-AT TO WORK, and since 2026-09-22 the channel (salon) push carries
+            // one too: `createdAt`, the same stored column the socket frame reads, so a salon
+            // message that arrives BOTH ways is recognised here exactly as a DM is. It was the
+            // missing field rather than a missing rule - the notification was always single,
+            // because the id is shared.
             //
             // THE INSTANT ALONE, NOT THE INSTANT AND THE TEXT. This used to compare the body too,
             // which quietly required the two triggers to RENDER a message identically - and they do
@@ -1771,10 +1772,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // something visible, it is a second announcement of something the user already dismissed.
             //
             // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
-            // and for the same reason: a reaction and a salon push both reach here with `sentAt = 0`,
-            // no message of theirs can be identified, and this must never guess.
+            // and for the same reason: a reaction reaches here with `sentAt = 0`, no message of its
+            // own can be identified, and this must never guess. A salon push carried 0 until
+            // 2026-09-22 and now carries `createdAt`.
+            //
+            // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
+            // moment the salon push gained a stamp. A post that replaces a line is by definition a
+            // re-post of something already announced - the generic "nouveau message" banner whose
+            // seed has just landed - so this question is already answered `true` for it, and asking
+            // it would drop the decrypted redraw and leave the generic line standing for ever.
             val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
-            if (alertedKey != null && !alreadyPosted && hasAlreadyAlerted(alertedKey)) {
+            if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
                 Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
                 return 0L
             }
@@ -3970,8 +3978,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (!openable || seedB64 != null) return
 
         if (stamp == 0L) {
-            // Nothing reached the shade - a foregrounded app, which the WebSocket already served -
-            // so there is no line for a seed to correct and the entry would never be claimed.
+            // Nothing reached the shade, so there is no line for a seed to correct and the entry
+            // would never be claimed. TWO causes since this push gained a `createdAt`, and the
+            // disposition is the same for both: a foregrounded app, which the WebSocket already
+            // served, or a message the socket already announced and the reader has since dismissed.
             synchronized(PENDING_CHANNEL_LOCK) { PENDING_CHANNEL_FRAMES.remove(pendingKey) }
             return
         }
@@ -4019,6 +4029,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
         val mentionsMe  = data["mentioned"] == "true"
+        // THE MESSAGE'S OWN INSTANT, AND IT IS WHAT LETS THE TWO TRIGGERS RECOGNISE ONE MESSAGE.
+        // Both this push and the socket frame carry `channel_messages.createdAt` - the same stored
+        // column, to the millisecond - so `showMessageNotification` compares exactly. 0 when the
+        // field is absent or unparsable, which is a push from a server older than 2026-09-22 and
+        // reads exactly as it did before: no de-duplication rather than a wrong one.
+        val createdAt   = data["createdAt"]?.toLongOrNull()?.takeIf { it > 0 } ?: 0L
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
@@ -4066,6 +4082,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
+            sentAt     = createdAt,
             supersedes = supersedes,
         )
     }

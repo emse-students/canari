@@ -1280,19 +1280,28 @@ evidence that stays in the chat. Counts, shapes and widget behaviour are all a d
 
 Android posts ONE builder since 2026-09-18 and the WebSocket frame is a second TRIGGER for it rather
 than a second builder - see `CHANGELOG.md` and [mobile](frontend/mobile.md#one-builder-two-triggers).
-Three things outlived that, and the first two are one missing field:
+**THE DOUBLED LINE IS FIXED, 2026-09-22, AND THE FIX IS A FIELD.** The salon push now carries
+`channel_messages.createdAt` and the socket frame reads the SAME stored column off
+`channel.message.created`, so the two triggers hand the builder one number and it recognises one
+message. Not a clock and not a heuristic: nothing is re-derived at either end, which is why the
+comparison is exact. A post that SUPERSEDES a line is now exempt from the already-announced set,
+the half that had to move with it - the generic "nouveau message" banner announces the message, and
+the redraw a late seed triggers would otherwise be refused as a second announcement. Mirrored in
+`ChannelNotificationDedupTest`, and the whole account is on
+[mobile](frontend/mobile.md#one-builder-two-triggers). **OWED: one look on the Mi 9T** - two
+triggers for one salon message is a race no gate here can run.
 
-1. **A SALON MESSAGE ARRIVING BOTH WAYS CAN SHOW ITS LINE TWICE.** The notification is single - the
-   id is shared - but the builder de-duplicates on the SENDER's `sentAt`, and the channel push
-   payload (`handleChannelMessage`) carries no timestamp field at all. A wall clock cannot stand in:
-   the two triggers reach the builder at different moments, so it would stamp one message twice. The
-   fix is a field on that payload, at `chat-delivery-service`, not a heuristic here.
-2. **A CHANNEL IS TITLED DIFFERENTLY BY THE TWO TRIGGERS.** The push puts `<Communaute> - #<salon>`
+Two things outlive it:
+
+1. **A CHANNEL IS TITLED DIFFERENTLY BY THE TWO TRIGGERS.** The push puts `<Communaute> - #<salon>`
    in the banner and leaves the conversation title empty, because its payload names no human sender;
    the WebSocket trigger knows the sender and titles the conversation with the salon. Both converge
-   on one notification, so this is a wording, not a duplicate - but it is a difference that exists
-   only because the payload is thinner than the socket frame, which is the same cause as (1).
-3. **DESKTOP IS A THIRD IMPLEMENTATION AND NOTHING HAS MEASURED IT.** The collapse to one builder is
+   on one notification, so this is a wording, not a duplicate - and now that the two are recognised
+   as one message, whichever arrives FIRST decides the wording for it, so the difference shows
+   across messages rather than within one. **The payload cannot simply gain a sender NAME**: it is
+   cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
+   locally. That trade-off is the item, not the wording.
+2. **DESKTOP IS A THIRD IMPLEMENTATION AND NOTHING HAS MEASURED IT.** The collapse to one builder is
    Android's; `desktop.rs` builds its own notifications and the web builds a third. Neither has been
    looked at for the doubling this item was opened for.
 

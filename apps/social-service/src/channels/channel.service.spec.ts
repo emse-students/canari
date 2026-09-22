@@ -930,7 +930,12 @@ describe('ChannelService security hardening', () => {
         }
       ).notifyChannelRecipients(
         channel,
-        { id: 'm1', senderSessionId: 'sess-1', messageIndex: 4, createdAt: new Date() },
+        {
+          id: 'm1',
+          senderSessionId: 'sess-1',
+          messageIndex: 4,
+          createdAt: new Date(1758499191859),
+        },
         {
           senderId: 'u1',
           ciphertext: 'c',
@@ -958,13 +963,16 @@ describe('ChannelService security hardening', () => {
       expect(sent[0].data.mentioned).toBe('false');
       expect(sent[1].data.mentioned).toBe('true');
 
-      // And the payload carries nothing a client does not read: workspaceId / messageId / createdAt
-      // were dropped once measured dead on all three clients. A field nobody reads still costs
-      // room under FCM's 4 KB cap, which the inlined ciphertext competes for.
+      // And the payload carries nothing a client does not read: workspaceId and messageId were
+      // dropped once measured dead on all three clients. A field nobody reads still costs room
+      // under FCM's 4 KB cap, which the inlined ciphertext competes for - which is why this asserts
+      // the WHOLE set rather than the fields it cares about, so a field added without a reader
+      // fails here.
       expect(Object.keys(sent[0].data).sort()).toEqual([
         'channelId',
         'channelName',
         'ciphertext',
+        'createdAt',
         'mentioned',
         'messageIndex',
         'nonce',
@@ -979,6 +987,14 @@ describe('ChannelService security hardening', () => {
       // than left on the wire looking like a contract.
       expect(sent[0].data.senderSessionId).toBe('sess-1');
       expect(sent[0].data.messageIndex).toBe('4');
+
+      // THE INSTANT IS THE STORED COLUMN, AS MILLISECONDS, AND IT IS WHY THE FIELD EXISTS. Android
+      // has one notification builder with two triggers - this push and the socket frame - and it
+      // recognises one message by comparing that number. The socket half reads the SAME
+      // `createdAt` off `channel.message.created`, so the comparison is exact; a re-derivation
+      // here (a wall clock, a rounding, a seconds-precision string) would make one message two
+      // lines in the shade, which is the defect the field was added to close.
+      expect(sent[0].data.createdAt).toBe('1758499191859');
 
       // The community is named on the wire because no client can turn a workspace uuid into one,
       // and the title this endpoint carries is the APNs alert - what an iPhone shows when the
