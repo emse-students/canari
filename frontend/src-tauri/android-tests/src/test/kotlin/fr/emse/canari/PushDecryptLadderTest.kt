@@ -1,123 +1,168 @@
 package fr.emse.canari
 
+import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.PushRecoveryLadder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Verifies the intended order of the background MLS decrypt ladder without depending on
- * Android/JNI native code. The real service methods are private and JNI-bound; this suite
- * exercises the ladder as a pure Kotlin state machine with the same branching rules.
+ * THIS SUITE RUNS THE SERVICE'S OWN LADDER, NOT A DESCRIPTION OF IT.
+ *
+ * `PushRecoveryLadder` is compiled from `gen/android/app/src/main/java/fr/emse/canari/push` by this
+ * project AND by the app module (see `build.gradle.kts` at the root of this project). It used to be
+ * restated here as a private `runLadder`, which meant the suite could not fail when
+ * `CanariFirebaseMessagingService` changed - the green tick said only that the mirror still agreed
+ * with itself.
+ *
+ * Nothing here touches Android or JNI, because the ladder does not either: the decrypt, the
+ * catch-up, the locality query and the wait between two retries all arrive as lambdas, and the
+ * outcome is whatever type the caller uses - here an [Outcome], so a run reads as its own trace.
  */
 class PushDecryptLadderTest {
 
-    /** Mirror of the service's `GroupLocality`: the third value is the point of it. */
-    enum class Locality { LOCAL, ABSENT, UNKNOWN }
+    /**
+     * The outcome the fakes pass around. `REFUSED` is the only value the ladder reacts to, which is
+     * exactly what it knows about the service's `PushDecrypt` sealed interface.
+     */
+    private enum class Outcome { REFUSED, DECRYPTED, CAUGHT_UP }
 
-    /** Minimal version of the service ladder to make the order explicit and testable. */
-    private fun runLadder(
-        initialDecryptFails: Boolean,
-        locality: () -> Locality,
-        tryDecrypt: () -> Boolean,
-        tryCatchup: () -> Boolean,
-    ): Result {
-        val steps = mutableListOf<String>()
-        steps.add("tryDecrypt")
-        if (!initialDecryptFails) return Result(success = true, catchupFirst = false, steps = steps)
+    /** A run: what it ended on, and every line the ladder logged, in order. */
+    private data class Run(val outcome: Outcome, val log: List<String>)
 
-        if (tryDecrypt()) {
-            return Result(success = true, catchupFirst = false, steps = steps)
-        }
-
-        return when (locality()) {
-            Locality.UNKNOWN -> {
-                // Neither recovery is an answer to "I could not tell", so neither runs.
-                steps.add("locality=UNKNOWN")
-                Result(success = false, catchupFirst = false, steps = steps)
-            }
-            Locality.LOCAL -> {
-                steps.add("locality=LOCAL")
-                val ok = tryCatchup()
-                if (ok) steps.add("tryCatchup")
-                Result(success = ok, catchupFirst = true, steps = steps)
-            }
-            Locality.ABSENT -> {
-                steps.add("locality=ABSENT")
-                var raceAttempt = 0
-                var ok = false
-                while (raceAttempt < 3 && !ok) {
-                    raceAttempt++
-                    steps.add("raceRetry:$raceAttempt")
-                    ok = tryDecrypt()
-                }
-                if (!ok && locality() == Locality.LOCAL) {
-                    steps.add("locality=LOCAL(afterRace)")
-                    ok = tryCatchup()
-                    if (ok) steps.add("tryCatchup")
-                }
-                Result(success = ok, catchupFirst = false, steps = steps)
-            }
-        }
-    }
-
-    data class Result(
-        val success: Boolean,
-        val catchupFirst: Boolean,
-        val steps: List<String>,
-    )
-
-    @Test
-    fun `local group with lagging epoch runs catch-up before any welcome-race retry`() {
-        val start = System.currentTimeMillis()
-        val r = runLadder(
-            initialDecryptFails = true,
-            locality = { Locality.LOCAL },
-            tryDecrypt = { false },
-            tryCatchup = { true },
+    /**
+     * Drives [PushRecoveryLadder.run] with fakes and collects the log.
+     *
+     * The default [pause] is instantaneous and always succeeds, so no test here waits on a clock or
+     * asserts one.
+     */
+    private fun ladder(
+        initial: Outcome,
+        locality: () -> GroupLocality,
+        retryDecrypt: () -> Outcome = { Outcome.REFUSED },
+        catchUp: () -> Outcome? = { error("catch-up must not be called in this scenario") },
+        pause: () -> Boolean = { true },
+    ): Run {
+        val log = mutableListOf<String>()
+        val outcome = PushRecoveryLadder.run(
+            initial = initial,
+            groupTag = "abcd1234",
+            isRefused = { it == Outcome.REFUSED },
+            locality = locality,
+            retryDecrypt = retryDecrypt,
+            catchUp = catchUp,
+            pause = pause,
+            log = { log.add(it) },
         )
-        val elapsed = System.currentTimeMillis() - start
-
-        assertTrue("catch-up should run first for a local group", r.catchupFirst)
-        assertTrue("should succeed after catch-up", r.success)
-        assertEquals(listOf("tryDecrypt", "locality=LOCAL", "tryCatchup"), r.steps)
-        assertTrue("must finish before 3s", elapsed < 3_000L)
+        return Run(outcome, log)
     }
 
     @Test
-    fun `absent group retries welcome race and falls back to catch-up if group appears`() {
+    fun `local group with lagging epoch runs catch-up and never races a welcome`() {
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.LOCAL },
+            retryDecrypt = { error("a joined group is not racing a Welcome") },
+            catchUp = { Outcome.CAUGHT_UP },
+        )
+
+        assertEquals(Outcome.CAUGHT_UP, r.outcome)
+        assertEquals(listOf("tryDecrypt refused group=abcd1234 locality=LOCAL"), r.log)
+    }
+
+    @Test
+    fun `a local catch-up that produces nothing leaves the outcome refused`() {
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.LOCAL },
+            retryDecrypt = { error("a joined group is not racing a Welcome") },
+            catchUp = { null },
+        )
+
+        assertEquals("a catch-up with no answer must not invent one", Outcome.REFUSED, r.outcome)
+    }
+
+    @Test
+    fun `absent group retries the welcome race and catches up if the group appears`() {
         // The locality is read once before the race (ABSENT) and once after (LOCAL), so the late
         // catch-up runs.
-        val checks = mutableListOf(Locality.ABSENT, Locality.LOCAL)
-        val r = runLadder(
-            initialDecryptFails = true,
-            locality = { checks.removeAt(0) },
-            tryDecrypt = { false },
-            tryCatchup = { true },
+        val answers = mutableListOf(GroupLocality.ABSENT, GroupLocality.LOCAL)
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { answers.removeAt(0) },
+            catchUp = { Outcome.CAUGHT_UP },
         )
 
-        assertTrue("should succeed after late catch-up", r.success)
-        assertTrue(
-            "should have retried before catch-up",
-            r.steps.contains("raceRetry:1") && r.steps.contains("raceRetry:2") && r.steps.contains("raceRetry:3")
+        assertEquals(Outcome.CAUGHT_UP, r.outcome)
+        assertEquals(
+            listOf(
+                "tryDecrypt refused group=abcd1234 locality=ABSENT",
+                "tryDecrypt retry 1/3 (group-join race) group=abcd1234",
+                "tryDecrypt retry 2/3 (group-join race) group=abcd1234",
+                "tryDecrypt retry 3/3 (group-join race) group=abcd1234",
+                "group appeared during welcome-race, attempting catch-up group=abcd1234",
+            ),
+            r.log,
         )
-        assertTrue("late catch-up should be last", r.steps.last() == "tryCatchup")
+    }
+
+    @Test
+    fun `a welcome that lands mid-race stops the retries there`() {
+        var attempts = 0
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.ABSENT },
+            retryDecrypt = {
+                attempts++
+                if (attempts == 2) Outcome.DECRYPTED else Outcome.REFUSED
+            },
+        )
+
+        assertEquals(Outcome.DECRYPTED, r.outcome)
+        assertEquals("the race must stop on the first success", 2, attempts)
+        assertTrue(
+            "no third retry once the frame decrypted",
+            r.log.none { it.startsWith("tryDecrypt retry 3/") },
+        )
     }
 
     @Test
     fun `absent group that stays absent never runs catch-up`() {
-        val r = runLadder(
-            initialDecryptFails = true,
-            locality = { Locality.ABSENT },
-            tryDecrypt = { false },
-            tryCatchup = { error("catch-up must not be called for an absent group") },
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.ABSENT },
         )
 
-        assertTrue("should fail without catch-up", !r.success)
-        assertTrue("catchupFirst must be false", !r.catchupFirst)
+        assertEquals(Outcome.REFUSED, r.outcome)
         assertEquals(
-            listOf("tryDecrypt", "locality=ABSENT", "raceRetry:1", "raceRetry:2", "raceRetry:3"),
-            r.steps
+            listOf(
+                "tryDecrypt refused group=abcd1234 locality=ABSENT",
+                "tryDecrypt retry 1/3 (group-join race) group=abcd1234",
+                "tryDecrypt retry 2/3 (group-join race) group=abcd1234",
+                "tryDecrypt retry 3/3 (group-join race) group=abcd1234",
+            ),
+            r.log,
         )
+    }
+
+    @Test
+    fun `an interrupted wait abandons the race instead of spinning through it`() {
+        // A thread interrupted between two retries has been asked to stop. Continuing the loop
+        // would run the remaining attempts back to back with no wait at all, which is the one
+        // shape the delay exists to prevent.
+        var attempts = 0
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.ABSENT },
+            retryDecrypt = {
+                attempts++
+                Outcome.REFUSED
+            },
+            pause = { false },
+        )
+
+        assertEquals(0, attempts)
+        assertEquals(listOf("tryDecrypt refused group=abcd1234 locality=ABSENT"), r.log)
     }
 
     /**
@@ -133,31 +178,30 @@ class PushDecryptLadderTest {
      */
     @Test
     fun `unknown locality runs no recovery at all`() {
-        val r = runLadder(
-            initialDecryptFails = true,
-            locality = { Locality.UNKNOWN },
-            tryDecrypt = { false },
-            tryCatchup = { error("catch-up must not be called when the locality is unknown") },
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.UNKNOWN },
+            retryDecrypt = { error("no welcome race may run on an unknown locality") },
         )
 
-        assertTrue("should fail, leaving the push to the worker", !r.success)
-        assertEquals(listOf("tryDecrypt", "locality=UNKNOWN"), r.steps)
-        assertTrue(
-            "no welcome-race retry may run on an unknown locality",
-            r.steps.none { it.startsWith("raceRetry") }
+        assertEquals(Outcome.REFUSED, r.outcome)
+        assertEquals(
+            listOf(
+                "tryDecrypt refused group=abcd1234 locality=UNKNOWN",
+                "locality unknown group=abcd1234 -> leaving it to the worker",
+            ),
+            r.log,
         )
     }
 
     @Test
-    fun `successful direct decrypt skips ladder entirely`() {
-        val r = runLadder(
-            initialDecryptFails = false,
-            locality = { error("should not be called") },
-            tryDecrypt = { error("should not be called") },
-            tryCatchup = { error("should not be called") },
+    fun `a successful direct decrypt skips the ladder entirely`() {
+        val r = ladder(
+            initial = Outcome.DECRYPTED,
+            locality = { error("the locality must not even be queried") },
         )
 
-        assertTrue("should succeed directly", r.success)
-        assertEquals(listOf("tryDecrypt"), r.steps)
+        assertEquals(Outcome.DECRYPTED, r.outcome)
+        assertTrue("a decrypted frame logs nothing about recovery", r.log.isEmpty())
     }
 }
