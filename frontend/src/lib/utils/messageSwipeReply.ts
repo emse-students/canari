@@ -77,34 +77,18 @@ export function replySwipeProgress(dragPx: number, _isOwn: boolean): number {
 }
 
 /**
- * Like replySwipeDragOffset but for the reaction direction (opposite of reply).
- * Own messages drag rightward; others' messages drag leftward.
+ * THERE WAS A REACTION SWIPE HERE, AND IT IS GONE ON PURPOSE (user, 2026-09-22).
+ *
+ * Dragging a bubble AWAY from the centre opened the reaction tray. *"swiper pour reagir n'est pas
+ * quelque chose de bien, c'est meme assez bizarre. Tu peux retirer ceci."* It was measured against
+ * Messenger 579.0.0.61.91 on the same handset before it was cut: an outward drag there produces no
+ * displacement at all, on either side of the thread, and no reaction. Reacting is the long press
+ * and the double tap, both of which stay.
+ *
+ * So an outward drag is now a NON-GESTURE - `replySwipeDragOffset` returns `null` for it, the
+ * bubble does not move, and nothing is armed. That is asserted in the tests rather than left to
+ * this comment, because a deleted gesture is exactly the kind of thing a later refactor restores.
  */
-export function reactionSwipeDragOffset(
-  deltaX: number,
-  isOwn: boolean,
-  maxDrag = REPLY_SWIPE_MAX_DRAG_PX
-): number | null {
-  if (isOwn) {
-    if (deltaX < -6) return null; // left = reply direction for own
-    return Math.min(maxDrag, Math.max(0, deltaX));
-  }
-  if (deltaX > 6) return null; // right = reply direction for others
-  return Math.max(-maxDrag, Math.min(0, deltaX));
-}
-
-/** True when the user released a valid reaction swipe (away from thread center). */
-export function shouldTriggerReactionSwipe(
-  deltaX: number,
-  deltaY: number,
-  isOwn: boolean,
-  phase: ReplySwipePhase,
-  threshold = REPLY_SWIPE_TRIGGER_PX
-): boolean {
-  if (phase !== 'horizontal') return false;
-  const awayFromCenter = isOwn ? deltaX > threshold : deltaX < -threshold;
-  return awayFromCenter && Math.abs(deltaY) < threshold * 0.75;
-}
 
 /** What a bubble knows about itself when it is asked whether a swipe may start. */
 export interface ReplySwipeEligibility {
