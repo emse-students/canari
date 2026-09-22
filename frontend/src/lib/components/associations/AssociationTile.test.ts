@@ -73,9 +73,11 @@ describe('the one tile keeps what the copies did not have', () => {
     const countBranch = tile.indexOf('assoc_member_count_many');
     expect(roleBranch).toBeGreaterThan(-1);
     expect(countBranch).toBeGreaterThan(roleBranch);
-    // The count is the ELSE of the role and never its neighbour - `{:else}` sits between the two.
+    // The count is the ELSE of the role and never its neighbour - an `{:else}` sits between the
+    // two. It carries a condition since 2026-09-22, because a LIST prints no count at all, so the
+    // shape to refuse is the count becoming a sibling of the role rather than its alternative.
     const roleFooter = tile.slice(roleBranch, countBranch);
-    expect(roleFooter).toContain('{:else}');
+    expect(/\{:else(?: if [^}]*)?\}/.test(roleFooter)).toBe(true);
     // And the count survives untouched where no role is known: the other wall, the archived fold
     // and both list shelves all draw this same tile, and none of them is told a role.
     expect(tile).toContain('assoc_list_member_badge');

@@ -519,7 +519,16 @@ export class AssociationsController {
     return updated;
   }
 
-  /** Uploads and sets a new logo for the association. */
+  /**
+   * Uploads and sets a logo for the association.
+   *
+   * `?slot=second` writes the list's SECOND theme logo (`logoMediaId2`) instead of the primary one.
+   * A query parameter rather than a second route because everything either one does - the
+   * permission flag, the 2 MB ceiling, the mime allowlist, the media upload, the deletion of what
+   * it replaces - is identical, and the only difference is which column is written. Anything but
+   * the literal `second` is the primary slot: an unknown value must not silently write the other
+   * one.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
@@ -527,7 +536,8 @@ export class AssociationsController {
   uploadLogo(
     @Param('id') id: string,
     @Headers('authorization') authorization: string | undefined,
-    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined
+    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined,
+    @Query('slot') slot?: string
   ) {
     if (!file?.buffer) {
       throw new BadRequestException('Missing file');
@@ -535,16 +545,25 @@ export class AssociationsController {
     return this.service.setLogoFromUpload(
       id,
       { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
-      authorization
+      authorization,
+      slot === 'second' ? 'second' : 'primary'
     );
   }
 
-  /** Removes the stored logo from an association. */
+  /** Removes a stored logo from an association; `?slot=second` clears the second theme's. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
-  deleteLogo(@Param('id') id: string, @Headers('authorization') authorization: string | undefined) {
-    return this.service.clearStoredLogo(id, authorization);
+  deleteLogo(
+    @Param('id') id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Query('slot') slot?: string
+  ) {
+    return this.service.clearStoredLogo(
+      id,
+      authorization,
+      slot === 'second' ? 'second' : 'primary'
+    );
   }
 
   /** Adds a user as a member of the association with the specified role. */

@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - les listes affichent leur second theme, et on peut enfin en definir le logo
+
+*"il se trouve qu'il y a deux themes lors des campagnes... je crois qu'une partie est deja cablee
+mais pas dans le frontend, on ne peut rien faire"* (user). `logoMediaId2` etait cable de bout en
+bout et RIEN ne pouvait l'ecrire : le televersement s'ajoute comme un `slot` sur l'unique
+implementation. La carte d'une liste montre desormais le second logo et le second nom en petit
+sous les principaux. [associations](docs/wiki/frontend/modules/associations.md).
+
+### Changed - la carte d'une liste ne repete plus ce que son rayon dit deja
+
+Suppression de la pastille "Liste 2026" (doublon du titre "Campagnes 2026") et du compteur de
+membres sur les listes seulement ; les rayons sont maintenant divises par association parente a
+l'interieur de chaque annee (user, 2026-09-22).
+[associations](docs/wiki/frontend/modules/associations.md).
 ### Changed - la reponse citee est devenue une bulle empilee, comme sur la reference
 
 *"Pour l'UI des reponses dans les conversations, Messenger fait un truc joli. Tu peux regarder et
