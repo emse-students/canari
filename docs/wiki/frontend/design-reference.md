@@ -2507,3 +2507,40 @@ taking the box away from a panel that needs its own edges.
 that no panel REGION - a scroll body, a tab strip, the sticky footer - sets a horizontal padding by
 hand. A region is separated from a card by not being rounded, which is what it means to span the
 panel. Both halves were proven by regressing one panel and watching them fail.
+
+---
+
+## 36. A sticky aside pinned 16px above where its column starts
+
+`PageContainer`'s row was `py-6 md:py-8`; the feed's conversations panel beside it was
+`sticky top-4`. One distance, written twice, and the two disagreed by 16px.
+
+Measured on the live estate, 2026-09-22, at 1920x945, with the panel at its full height and a
+2882px feed. `panelY` is the panel's viewport y:
+
+| `scrollTop` | 0 | 4 | 8 | 12 | 16 | 24 | 32 | 120 | 600 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| before | 105 | 101 | 97 | 93 | **89** | 89 | 89 | 89 | 89 |
+| after | 105 | 105 | 105 | 105 | 105 | 105 | 105 | 105 | 105 |
+
+The panel tracks its column exactly - gap 0 against the feed - until `scrollTop` reaches the sticky
+offset, then locks. So it travelled `padding-top - top`, 32 - 16 = 16px, up its own column, once,
+on every scroll from the top of the page. Nothing else on the page moves relative to anything,
+which is why 16px reads as a defect rather than as motion; it is also why it needed enough content
+to scroll before it could be seen at all.
+
+**A STICKY OFFSET IS NOT FREE SPACING - IT IS THE PADDING ABOVE THE ELEMENT, OR THE ELEMENT MOVES
+BY THE DIFFERENCE.** `--page-column-top` is now that one number, and it carries its own `md` step
+rather than leaving a `md:` utility on the padding with none on the offset - which is the exact
+shape the defect had. `postsPanelOffset.test.ts` refuses each half separately, because a fix
+applied to one of them is how this comes back; both halves were proven by regressing them one at a
+time and watching the right assertion fail.
+
+WHAT THIS DID NOT TURN OUT TO BE, each refuted by measurement before the cause was found: sticky
+geometry (`max-height` 817 + `top` 16 = 833, inside the 872px scrollport - the `100vh` cap is
+always 55px smaller than the scrollport, so it can never overflow); horizontal drift (x held at
+1530 to sub-pixel); content growth mid-scroll; and the scrollbar appearing (`clientWidth` 1818 in
+both states, shift 0). The panel also declares `transition-all duration-300` whose computed value
+is `background-color, color, border-color / 0.18s` - it is currently inert, eaten by an unlayered
+`transition` rule that a separate branch moves into `base`, and it will come alive when that
+lands - on a `sticky` element that resizes when its data arrives, so it is worth re-measuring then.
