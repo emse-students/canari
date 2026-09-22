@@ -383,16 +383,32 @@ missing** on 2026-09-02 - and three of them (`AUTHENTIK_BASE_URL`, `AUTHENTIK_CL
 
 **That audit is now a GATE, not something to remember to re-run.** The third check of
 `.github/scripts/tests/compose-wiring.test.sh` derives every key production forwards each service
-and fails on any the local file does not - keys only, never values, so it is safe in a public
+and fails on any the target file does not - keys only, never values, so it is safe in a public
 pipeline. Run it directly, or through `make test-ci-scripts`:
 
 ```sh
-bash .github/scripts/tests/compose-wiring.test.sh   # 52 assertions
+bash .github/scripts/tests/compose-wiring.test.sh   # 66 assertions
 ```
 
 Three services production declares are absent locally BY DESIGN and are not drift: `frontend` and
 `frontend-ssr` (the dev server serves the app) and `adminer`. They are named in the script's
 `LOCAL_ABSENT_BY_DESIGN`, so adding a fourth means editing that list and saying why.
+
+**AND IT JUDGES `dev` TOO SINCE 2026-09-22, WHICH IS THE PART THAT HAD TO BE PAID FOR TWICE.** The
+check above was written on 2026-09-02, aimed at the local estate, and the comment it carries says
+plainly that a value in `.env` proves nothing because the compose file has to pass it. Twenty days
+later `social-service` on `dev` was found never to have been given `INTERNAL_SECRET`, with a
+full-length value sitting in that box's `.env` the whole time - the same sentence, the same class,
+the other deployed estate, and the gate could not see it because nothing had pointed it there.
+`FRONTEND_URL` was missing from all four NestJS services in the same file. Both now fail.
+
+The two estates differ in what they may legitimately omit, so `dev` carries a second exception list,
+`DEV_ABSENT_KEYS`, of `<service>:<KEY>` pairs. **Every entry in it is a third-party integration with
+no dev counterpart** - Stripe, Lydia, Sky, MiGallery, TURN, the APNs VoIP certificate - and nothing
+internal to this repository may be added to it, because an internal key missing on dev is precisely
+what the check exists to catch. Both lists are DENYLISTS of known-deliberate absences rather than
+allowlists of what to inspect, so a key added to production tomorrow is owed by every estate by
+default and fails until someone either wires it or writes down why it is not owed.
 
 ### An incomplete `optimizeDeps.include` reloads the page, and a reload is not just slow
 

@@ -327,6 +327,31 @@ every preview silently degrades to the generic one (recorded in `infrastructure/
 dead `frontend-ssr` no longer takes the site down — nginx serves the prerendered shell — but it does
 cost every head, so `X-Canari-Degraded: ssr-unavailable` in the access log is the thing to grep for.
 
+### THE PHOTO PATH, MEASURED ON PRODUCTION EITHER SIDE OF v0.18.19 (2026-09-22)
+
+The user reported it the way an unfurler shows it: a Messenger card with an empty image box. The
+probe is public and needs no credential - list `/api/public/posts`, ask each one's `/preview`
+whether it claims an image, then fetch `/preview-image` for those that do.
+
+| | posts claiming an image | image served | blank |
+|---|---|---|---|
+| production on `v0.18.18`, before | 10 | **0** | 10 |
+| production on `v0.18.19`, after | 10 | **10** | 0 |
+
+Served bodies ran 73 kB to 868 kB, and a fetch as `facebookexternalhit/1.1` found `og:image` on 12
+of 12 share pages, so the tag an unfurler actually reads points at bytes that arrive. Use a
+cache-busting query when re-running this: the 200 path sets `max-age=3600` at the edge, and a stale
+404 would answer for the deploy rather than about it.
+
+**AND THE WARNING TWO PARAGRAPHS UP HAD ALREADY NAMED THIS FAILURE - against the wrong service.** It
+says a missing `INTERNAL_SECRET` reduces the photo path back to a logo, and it says to check
+`frontend-ssr`. On dev, `frontend-ssr` had the secret; `social-service` - the second of the three
+services this page itself lists as being on that path - had never been passed it at all, so the
+route answered `403` and no photo could have rendered whatever else was true. **A hazard written
+down against one service on a path does not cover the path.** Every deployed estate is now held to
+production's key set by `compose-wiring.test.sh`
+([dev-environment](../infrastructure/dev-environment.md#the-consequence-nobody-had-written-down-a-media-path-cannot-be-rehearsed-here-2026-09-22)).
+
 ## Related
 
 - [architecture.md](architecture.md) — the two adapters and the build polarity
