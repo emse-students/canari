@@ -213,7 +213,9 @@
   ways depending on whether it was a channel. `ConversationSidePanel` owns the shell; the subtitle
   that used to sit under the heading is gone with it, because the panel's title bar has one line.
 -->
-<div class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 p-5 @md:p-6">
+<div
+  class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 px-(--side-panel-inset) py-5 @md:py-6"
+>
   <!-- Group/contact identity card -->
   <div
     class="bg-cn-surface flex items-center gap-4 rounded-2xl border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
@@ -462,7 +464,7 @@
   <!-- Leave / delete section (panel footer) -->
   {#if onGroupLeave || onGroupDelete}
     <div
-      class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 p-5 @md:p-6 dark:border-white/10"
+      class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 px-(--side-panel-inset) py-5 @md:py-6 dark:border-white/10"
     >
       {#if onGroupLeave && !confirmLeave && !confirmDelete}
         <button

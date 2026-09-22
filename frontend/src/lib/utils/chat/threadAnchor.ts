@@ -48,3 +48,41 @@ export function shouldFollowThreadBottom(growth: ThreadGrowth): boolean {
   if (growth.isEntering) return false;
   return growth.wasNearBottom;
 }
+
+/**
+ * How far from the bottom the reader may be and still count as "at the bottom".
+ *
+ * NOT A TOLERANCE FOR JITTER - a statement about intent. Between a half-scrolled wheel notch and a
+ * reader who has gone looking for something, roughly one message's height is the line: below it
+ * they have not left the live end of the conversation, above it they have. It lives here, next to
+ * the predicate that reads it, because it was an unexplained `120` inline in a scroll handler and
+ * nothing could test it.
+ */
+export const THREAD_BOTTOM_SLACK_PX = 120;
+
+/** The three numbers `isPinnedToBottom` needs - an `HTMLElement` satisfies it. */
+export interface ThreadScrollMetrics {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+}
+
+/**
+ * **THE ONE BOOLEAN**: is the reader stuck to the bottom of the thread, or have they gone up?
+ *
+ * The user asked for exactly this, 2026-09-22: *"c'est une histoire de 'coller' le bas de la
+ * discussion lorsqu'on n'est pas en train de remonter (j'imagine qu'un True/False pourrait etre
+ * coherent ?)"*. Everything the thread does about position is decided by it, and by nothing else:
+ * whether a new message scrolls the pane or only raises the unread pill, and whether growth
+ * ANYWHERE below - a typing bubble, a taller composer, a reaction chip, the keyboard - is followed.
+ *
+ * **IT IS MEASURED, NEVER REMEMBERED.** A stored flag would have to be invalidated by every path
+ * that moves the pane, which is the bug the `120` inline was one copy of.
+ *
+ * `scrollHeight` INCLUDES `padding-bottom`, which on this scroller is the composer's measured
+ * height (`--chat-composer-height`). That is why growth of the composer and growth of the content
+ * are the same quantity here, and why one predicate answers for both.
+ */
+export function isPinnedToBottom(metrics: ThreadScrollMetrics): boolean {
+  return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) < THREAD_BOTTOM_SLACK_PX;
+}
