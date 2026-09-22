@@ -17,6 +17,12 @@ La notification etait deja unique, mais son fil doublait la ligne : le push de s
 aucun horodatage, et c'est par lui que le constructeur reconnait un message. Il porte desormais
 `createdAt`, la colonne que la trame WebSocket lit deja - une seule valeur, jamais recalculee.
 [mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
+### Documentation - les lignes sans date sont une version de client, pas un mystere
+
+Sur les 759 lignes `key_package` de production, la frontiere est exacte : `>= 0.18.10` porte une
+date, en dessous non. La reparation qui etait prevue cote client ne pouvait donc rien dater, et les
+lignes se datent seules a ~20 par jour.
+[key-package-pool](docs/wiki/protocols/key-package-pool.md#what-this-does-not-fix-and-what-the-undated-rows-turned-out-to-be).
 
 ### Fixed - une personne porte le meme nom partout
 
