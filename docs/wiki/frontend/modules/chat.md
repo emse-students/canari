@@ -2101,6 +2101,64 @@ The single hook lives in the auto-generated `RustWebView.onCreateInputConnection
 patch after a `tauri android` regeneration is one line. Reliable IME `commitContent` needs a recent
 Android WebView; on devices where it is unavailable the in-app GIF picker still works.
 
+### The thread sticks to its own bottom, and ONE boolean says whether it should (2026-09-22)
+
+The user described the whole of it in one sentence: *"c'est une histoire de 'coller' le bas de la
+discussion lorsqu'on n'est pas en train de remonter (j'imagine qu'un True/False pourrait etre
+coherent ?) a ce qu'il y a en dessous, et suivre les mouvements de maniere fluide plutot que de
+cacher involontairement des morceaux de l'interface"*.
+
+**The boolean exists and is `isNearBottom` in `ChatArea.svelte`.** `handleScroll` is its only
+writer, because a scroll is the only thing that can express an intent to leave the live end of a
+conversation. Its predicate is `isPinnedToBottom` in `src/lib/utils/chat/threadAnchor.ts`, with the
+slack it reads named there as `THREAD_BOTTOM_SLACK_PX` - it was an unexplained `120` inline in the
+scroll handler, which nothing could test and nothing could explain.
+
+**Three things can grow the pane under the reader, and before this only one of them was watched.**
+
+| What grows | What sees it | Why it is the same quantity |
+|---|---|---|
+| The content - a row added, a reaction chip, an image settling | `MutationObserver` on the scroller | - |
+| The pane's own box - soft keyboard, window resize, a side panel opening | `ResizeObserver` on the scroller | - |
+| The composer band - a message wrapping onto a third line | `ResizeObserver` on the band | its measured height IS the scroller's `padding-bottom` (`--chat-composer-height`), and `scrollHeight` INCLUDES `padding-bottom` |
+
+That last row is the one that makes a single mechanism correct rather than convenient: **composer
+growth and content growth are literally the same number**, so all three observers call one `follow()`
+closure, which asks `shouldFollowThreadBottom` about one `scrollHeight`. Three copies of this
+judgement could disagree about where the bottom is; one cannot.
+
+Every trigger is the change itself. There is no timer, nothing to tune, and nothing that fires when
+nothing happened.
+
+**Scrolled up, nothing moves.** A message arriving while `isNearBottom` is false raises the unread
+pill on `.chat-scroll-bottom-button` (`unreadBelowCount`) and leaves the pane exactly where it is -
+the behaviour the user chose over auto-scrolling, and it predates this work.
+
+### The typing indicator is a row of the thread, not a band over it (2026-09-22)
+
+It used to be a strip inside `ChatComposer`, above the input. It appeared and disappeared UNDER the
+conversation, so the last message slid out of view and back every time somebody touched their
+keyboard - the *"cacher involontairement des morceaux de l'interface"* above, in its purest form.
+No padding could reach it, because the strip was inside the band whose height the padding reserves,
+and the reservation was published only after the fact.
+
+`ChatTypingBubble.svelte` renders it as an incoming row instead: the same 2rem avatar column, the
+same `--bubble-in` fill and `--radius-bubble` corner as a received message, three bouncing dots.
+Inside the scroller it grows the pane like any other row, so the follow observers raise the thread
+for it and lower it again when it goes - no special case anywhere.
+
+**ONE BUBBLE, HOWEVER MANY PEOPLE** (the user's question, *"A voir comment tu gères plusieurs
+personnes ;)"*). A bubble per typer turns a lively group into a wall of dots. Who is typing is
+carried by up to three stacked avatars, each ringed in `--chat-thread-ground` so they read as a
+stack; past three the rest become a `+N` chip, because a fourth avatar is wider than the bubble.
+
+**Two things outside this app depend on the class name `.chat-typing-indicator`**, which is why the
+wrapper moved intact rather than being rebuilt: the cross-client rig's `state.mjs` tests it for
+EXISTENCE, so it stays permanent with the `{#if}` inside it, and `archive/type.mjs` reads its
+`innerText`, so the localized prose is still RENDERED - `sr-only` clips it, it does not remove it.
+The permanent wrapper is also what makes the `role="status"` announce reliably: assistive technology
+has to be observing a live region BEFORE the mutation that fills it.
+
 ## Routes
 
 | Route | Description |
