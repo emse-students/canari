@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseGuards,
@@ -19,6 +20,7 @@ import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
+import { parseExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -330,17 +332,27 @@ export class FormsController {
     };
   }
 
-  /** Exports all submissions for a form as an XLSX file download. Requires form owner or MANAGE_FORMS flag. */
+  /**
+   * Exports all submissions for a form as an XLSX file download. Requires form owner or MANAGE_FORMS flag.
+   *
+   * `labels` carries every word the file is written with, because this service has none - see
+   * `export-labels.ts`. It is REQUIRED: a client that does not send it is refused rather than served
+   * the English that was the defect.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id/export')
   async export(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
     @Headers('x-user-id') xUserId: string,
+    @Query('labels') rawLabels?: string,
     @Headers('x-global-admin') ga?: string
   ) {
     await this.service.assertFormManager(id, xUserId, ga === 'true');
-    const { buffer, title } = await this.service.exportSubmissions(id);
+    const { buffer, title } = await this.service.exportSubmissions(
+      id,
+      parseExportLabels(rawLabels)
+    );
 
     // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
     const asciiName =

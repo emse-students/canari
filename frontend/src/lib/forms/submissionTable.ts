@@ -85,35 +85,32 @@ export function answeredItems(
 }
 
 /**
- * How many characters of an answer a column cell shows before it truncates.
- *
- * The cell is `max-w-48` (192px) less its `pr-4` gutter, read at `text-sm` (14px), where this app's
- * sans stack averages close to 7px a character - so about twenty-five. It is an approximation and it
- * is allowed to be one: it decides whether a row keeps the control that shows its answers IN FULL,
- * so reading low costs a chevron nobody needed while reading high hides an answer. A truncated cell
- * carries a `title`, and a `title` is not a reading of anything on a touch screen.
- */
-export const COLUMN_CELL_CHARS = 25;
-
-/**
  * Whether a row's detail panel would show anything the row's own line does not.
  *
  * The chevron exists to open the panel, so a chevron on a row whose panel repeats its line is a
  * control a reader has to click to discover it was pointless. A panel adds nothing when every
- * question this person answered is ALREADY a column and every one of those answers fits its cell -
- * so a form of one short question loses the chevron on every row, and a single paragraph, a single
- * conditional question or one long answer brings it back on the rows that have one.
+ * question this person answered is ALREADY a column AND its cell is showing the whole answer - so a
+ * form of one short question loses the chevron on every row, and a paragraph, a conditional question
+ * or one answer too wide for its cell brings it back on the rows that have one.
+ *
+ * `isClipped` IS A MEASUREMENT AND MUST STAY ONE. This took an answer's length against a constant
+ * until 2026-09-22 - twenty-five characters, derived from a cell's width and an average glyph - and
+ * a reader saw rows expand and rows not expand with no rule between them. There is no rule: whether
+ * a string fits a box is a fact about a font, a zoom level and a browser, and only the browser holds
+ * it (`reportClipped`, `scrollWidth > clientWidth`).
  *
  * `columns` IS WHAT THE CURRENT LAYOUT DRAWS, never what the form would allow: the card layout below
  * `sm` draws no answer columns at all, so it passes an empty list and keeps its chevron wherever
  * there is an answer. A row with no answers at all satisfies this vacuously, which is the case the
  * control was already disabled for.
  */
-export function panelAddsNothing(answered: AnsweredItem[], columns: FormItem[]): boolean {
+export function panelAddsNothing(
+  answered: AnsweredItem[],
+  columns: FormItem[],
+  isClipped: (itemId: string) => boolean
+): boolean {
   const drawn = new Set(columns.map((column) => column.id));
-  return answered.every(
-    (answer) => drawn.has(answer.item.id) && answer.text.length <= COLUMN_CELL_CHARS
-  );
+  return answered.every((answer) => drawn.has(answer.item.id) && !isClipped(answer.item.id));
 }
 
 /**

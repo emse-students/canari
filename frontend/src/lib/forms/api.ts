@@ -1,3 +1,6 @@
+import { m } from '$lib/paraglide/messages';
+import { statusLabels } from './paymentStatus';
+
 export interface FormOption {
   label: string;
   /**
@@ -289,8 +292,48 @@ export async function deleteSubmission(submissionId: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete submission');
 }
 
-export async function exportSubmissions(id: string): Promise<Blob> {
-  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export`);
+/**
+ * THE WORDS AN EXPORT IS WRITTEN IN, AND WHY THEY TRAVEL WITH THE REQUEST.
+ *
+ * The xlsx is assembled by `social-service`, and a service has no Paraglide, no locale and no way to
+ * acquire either - so until 2026-09-22 it wrote `Timestamp`, `First name`, `Amount paid` and the raw
+ * `free` enum into a file a French user opens. Giving the server a table of its own would put
+ * user-visible strings somewhere no translator looks, which this repository forbids everywhere else.
+ *
+ * So the discriminator is carried from where it is already KNOWN: the client is the only thing that
+ * has both the locale and the message catalogue, and it sends the words. The server then has no
+ * string of its own to get wrong. `ExportLabels` is mirrored by `forms.service.ts` - the same
+ * hand-kept pairing `answer-text.ts` already has with `answerText.ts` - and a request without it is
+ * refused rather than defaulted, because there is no language to default TO.
+ *
+ * The form's OWN questions are not in here: their labels were written by whoever built the form, in
+ * whatever language they chose, and the server already has them.
+ */
+export interface ExportLabels {
+  date: string;
+  firstName: string;
+  lastName: string;
+  amount: string;
+  status: string;
+  /** Every payment status this client knows, by its stored value. */
+  statuses: Record<string, string>;
+}
+
+/** The labels this client would write an export in, resolved through Paraglide. */
+export function exportLabels(): ExportLabels {
+  return {
+    date: m.form_list_col_date(),
+    firstName: m.form_export_col_first_name(),
+    lastName: m.form_export_col_last_name(),
+    amount: m.form_list_col_amount(),
+    status: m.form_list_col_status(),
+    statuses: statusLabels(),
+  };
+}
+
+export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {
+  const query = encodeURIComponent(JSON.stringify(labels));
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export?labels=${query}`);
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }

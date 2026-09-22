@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'export Excel parle francais, et le chevron mesure au lieu de deviner
+
+L'export ne possede plus un seul mot : le client envoie ses libelles, le serveur refuse la requete
+qui n'en porte pas, et un formulaire gratuit n'exporte ni montant ni statut. Le chevron d'une ligne
+dependait d'un seuil de 25 caracteres - il lit desormais `scrollWidth > clientWidth`, et la cellule
+est enfin reellement bornee.
+[forms](docs/wiki/frontend/modules/forms.md#the-xlsx-is-written-in-words-the-server-does-not-have-2026-09-22).
+
 ## [0.18.18] - 2026-09-21
 
 ### Changed - le tableau des reponses ne dessine plus ce qui ne dit rien

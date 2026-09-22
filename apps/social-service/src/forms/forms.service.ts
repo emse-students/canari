@@ -16,7 +16,8 @@ import { FormReminder } from './entities/form-reminder.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
-import { answerText } from './answer-text';
+import { answerText, type AnswerQuestion } from './answer-text';
+import type { ExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
@@ -67,6 +68,9 @@ function formRequiresStripeReadyAssociation(input: {
 }
 
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
+/** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
+type FormItemLike = AnswerQuestion & { id: string; label: string };
+
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
@@ -1156,8 +1160,22 @@ export class FormsService {
     }));
   }
 
-  /** Generates an Excel workbook (.xlsx) with one row per submission and one column per form item. */
-  async exportSubmissions(formId: string): Promise<{ buffer: Buffer; title: string }> {
+  /**
+   * Generates an Excel workbook (.xlsx) with one row per submission and one column per form item.
+   *
+   * THE WORDS COME FROM THE CALLER AND THIS SERVICE HAS NONE OF ITS OWN. It has no Paraglide, no
+   * locale and no way to acquire either, so until 2026-09-22 it wrote `Timestamp`, `First name`,
+   * `Amount paid` and the raw `free` enum into a file a French user opens. `labels` is validated by
+   * the controller and mirrored by the client's `ExportLabels`.
+   *
+   * A FREE FORM GETS NEITHER THE AMOUNT COLUMN NOR THE STATUS ONE, the same rule the responses table
+   * applies on screen and for the same reason: when `requiresPayment` is false every amount is 0 and
+   * every status is `free`, so both columns are one repeated value down the whole sheet.
+   */
+  async exportSubmissions(
+    formId: string,
+    labels: ExportLabels
+  ): Promise<{ buffer: Buffer; title: string }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
 
@@ -1183,15 +1201,17 @@ export class FormsService {
     const sheetName = form.title.slice(0, 31);
     const sheet = workbook.addWorksheet(sheetName);
 
-    const headers: any[] = [
-      { header: 'Timestamp', key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
-      { header: 'First name', key: 'firstName', width: 20 },
-      { header: 'Last name', key: 'lastName', width: 20 },
-      { header: 'Amount paid', key: 'total', width: 14 },
-      { header: 'Status', key: 'status', width: 14 },
+    const headers: Partial<ExcelJS.Column>[] = [
+      { header: labels.date, key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
+      { header: labels.firstName, key: 'firstName', width: 20 },
+      { header: labels.lastName, key: 'lastName', width: 20 },
     ];
+    if (form.requiresPayment) {
+      headers.push({ header: labels.amount, key: 'total', width: 14 });
+      headers.push({ header: labels.status, key: 'status', width: 14 });
+    }
 
-    form.items.forEach((item: any) => {
+    form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
     });
 
@@ -1199,15 +1219,24 @@ export class FormsService {
 
     submissions.forEach((sub) => {
       const names = nameMap.get(sub.userId) ?? { firstName: null, lastName: null };
-      const row: any = {
+      const row: Record<string, unknown> = {
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
         firstName: names.firstName ?? '',
         lastName: names.lastName ?? '',
-        total: (sub.totalPaid || 0) / 100,
-        status: sub.paymentStatus,
       };
+      if (form.requiresPayment) {
+        row.total = (sub.totalPaid || 0) / 100;
+        // A status the client had no word for is written AS STORED and accused in the log: the file
+        // must not silently read as if this service had translated it.
+        const label = labels.statuses[sub.paymentStatus];
+        if (label === undefined)
+          this.logger.warn(
+            `exportSubmissions: no label for payment status "${sub.paymentStatus}" - writing it raw (form ${formId})`
+          );
+        row.status = label ?? sub.paymentStatus;
+      }
 
-      form.items.forEach((item: any) => {
+      form.items.forEach((item: FormItemLike) => {
         row[item.id] = answerText(sub.answers[item.id], item);
       });
 

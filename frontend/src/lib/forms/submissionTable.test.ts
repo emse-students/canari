@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   answerColumns,
   answeredItems,
-  COLUMN_CELL_CHARS,
   maxAnswerColumns,
   panelAddsNothing,
 } from './submissionTable';
@@ -93,31 +92,49 @@ describe('maxAnswerColumns', () => {
 describe('panelAddsNothing', () => {
   const asso = item({ id: 'asso', type: 'short_text' });
   const why = item({ id: 'why', type: 'long_text' });
+  const nothingClipped = () => false;
+  const everythingClipped = () => true;
 
   it('is true when every answer is already a column and fits its cell', () => {
-    expect(panelAddsNothing([{ item: asso, text: 'BDS' }], [asso])).toBe(true);
+    expect(panelAddsNothing([{ item: asso, text: 'BDS' }], [asso], nothingClipped)).toBe(true);
   });
 
   it('is false for an answer no column holds', () => {
-    expect(panelAddsNothing([{ item: why, text: 'Un paragraphe' }], [asso])).toBe(false);
+    expect(panelAddsNothing([{ item: why, text: 'Un paragraphe' }], [asso], nothingClipped)).toBe(
+      false
+    );
   });
 
-  it('is false for an answer its own column would truncate', () => {
-    const long = 'x'.repeat(COLUMN_CELL_CHARS + 1);
-    expect(panelAddsNothing([{ item: asso, text: long }], [asso])).toBe(false);
-    expect(panelAddsNothing([{ item: asso, text: long.slice(1) }], [asso])).toBe(true);
+  // The LENGTH of the text says nothing here, and saying it was the defect: this took an answer
+  // against a 25-character constant until 2026-09-22 and a reader met rows that expanded beside
+  // rows that did not. Only the cell knows, so only the cell is asked.
+  it('is false for an answer its own column is clipping, whatever its length', () => {
+    const short = [{ item: asso, text: 'BDS' }];
+    expect(panelAddsNothing(short, [asso], everythingClipped)).toBe(false);
+
+    const long = [{ item: asso, text: 'x'.repeat(400) }];
+    expect(panelAddsNothing(long, [asso], nothingClipped)).toBe(true);
+  });
+
+  it('asks only about the answers it is deciding on', () => {
+    const asked: string[] = [];
+    panelAddsNothing([{ item: asso, text: 'BDS' }], [asso], (itemId) => {
+      asked.push(itemId);
+      return false;
+    });
+    expect(asked).toEqual(['asso']);
   });
 
   // The card layout draws no answer column at all, so it asks with an empty list and always keeps
   // its control - the same call that disables the table row's.
   it('is decided by the columns the CALLER draws, not by the form', () => {
     const answered = [{ item: asso, text: 'BDS' }];
-    expect(panelAddsNothing(answered, [asso])).toBe(true);
-    expect(panelAddsNothing(answered, [])).toBe(false);
+    expect(panelAddsNothing(answered, [asso], nothingClipped)).toBe(true);
+    expect(panelAddsNothing(answered, [], nothingClipped)).toBe(false);
   });
 
   it('is true for a response that answered nothing, whatever is drawn', () => {
-    expect(panelAddsNothing([], [])).toBe(true);
-    expect(panelAddsNothing([], [asso])).toBe(true);
+    expect(panelAddsNothing([], [], nothingClipped)).toBe(true);
+    expect(panelAddsNothing([], [asso], everythingClipped)).toBe(true);
   });
 });

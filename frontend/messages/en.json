@@ -1841,6 +1841,8 @@
   "form_list_responses_empty": "No responses yet.",
   "form_list_col_date": "Date & time",
   "form_list_col_name": "Name",
+  "form_export_col_first_name": "First name",
+  "form_export_col_last_name": "Last name",
   "form_list_col_status": "Status",
   "form_list_col_amount": "Amount",
   "form_list_delete_response_title": "Delete this response",
