@@ -1,13 +1,13 @@
-version: 0.18.19
+version: 0.18.20
 
-Un lien partage hors de Canari affiche enfin son affiche, et non plus un cadre vide.
+Repondre a un message affiche la citation juste au-dessus, comme une bulle.
 
-Un message de salon ne s'affiche plus deux fois.
+Une liste affiche ses deux themes et son logo.
 
-Les gestes de balayage ne bloquent plus les appuis, et changer d'onglet ne demande plus de zone vide.
+Le fil reste colle a son dernier message, et "est en train d'ecrire" y prend sa place.
 
-Une notification silencieuse ne transmet plus votre nom ni le titre de la conversation.
+L'agenda du telephone n'affiche plus de jour vide, et son jour suit votre langue.
 
-L'export d'un formulaire est ecrit dans votre langue.
+La visionneuse d'images se deplace de nouveau a la souris.
 
-Votre nom s'affiche de la meme maniere partout.
+Un groupe revenu n'affiche plus "vous avez ete retire".
