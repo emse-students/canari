@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Documentation - une branche fusionnee encore presente n'a pas ete oubliee, elle a ete repoussee
+
+Une seule branche sur 596 fusions, et ses horodatages le disent : poussee trois heures APRES sa
+fusion, donc GitHub l'a recreee. Ce qui est pousse la est commite et non livre.
+[backlog](docs/wiki/backlog.md).
+
 ### Changed - l'echelle de recuperation Android n'est plus recopiee dans son test
 
 `PushRecoveryLadder` est une fonction pure compilee par le module app ET par le projet de tests JVM,
