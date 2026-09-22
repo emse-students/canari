@@ -28,6 +28,15 @@ hors de tout `@layer` - et du CSS non-layered bat tout ce qui est dans un layer,
 specificite. Mesure : 28 elements sur 28 a `/posts`, 22 sur 22 a `/chat`. Le rail de navigation
 s'ouvrait donc d'un coup, ses libelles arrivant en fondu apres. Passee dans `@layer base`.
 [design-reference](docs/wiki/frontend/design-reference.md).
+### Changed - la discussion colle a son bas, et le "est en train d'ecrire" est devenu une bulle du fil
+
+Le bandeau de frappe vivait au-dessus du champ de saisie : il apparaissait et disparaissait SOUS la
+conversation, cachant le dernier message a chaque fois que quelqu'un touchait son clavier. Il est
+maintenant une ligne du fil, comme un message recu (jusqu'a trois avatars empiles, puis un `+N`).
+Et le "coller au bas" a un seul booleen et un seul predicat teste (`isPinnedToBottom`), lu par trois
+observateurs - le contenu, la boite du panneau, la barre de saisie - dont les hauteurs sont le meme
+`scrollHeight`. Le `120` code en dur dans le gestionnaire de scroll a un nom
+([chat](docs/wiki/frontend/modules/chat.md)).
 ### Fixed - le titre du panneau lateral etait decale par rapport a tout ce qu'il annonce
 
 L'en-tete de `SidePanel` est `px-4` depuis toujours ; les cinq panneaux qui s'y affichent
