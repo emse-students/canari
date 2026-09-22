@@ -53,6 +53,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
+import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
@@ -535,6 +536,75 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 0);
     expect(mls.processWelcome).toHaveBeenCalled();
+  });
+
+  it('Welcome after the ANNOUNCEMENT path → the notice is withdrawn although no state is held', async () => {
+    // THE ONE PATH THAT ALWAYS POSTS THE NOTICE WAS THE ONE PATH THAT COULD NEVER WITHDRAW IT.
+    // `memberRemoved` naming this device calls `dropGroupState` and THEN `recordEviction`
+    // (systemMessageHandler.ts), so by the time the re-admission Welcome arrives
+    // `holdsGroupState` is false. The retraction used to hang off `readmittedAfterEviction`,
+    // which is `heldLocally && !isGroupActive` - false here for the first half. The removal
+    // that the remover immediately undoes therefore left a permanent, undismissable
+    // "you were removed from this group" above a conversation that works perfectly.
+    // Reported from a real client, 2026-09-22.
+    //
+    // THE WELCOME IS THE PROOF, and it is the same proof whether or not the old state survived,
+    // so the withdrawal belongs on the install and not on one of the two ways of reaching it.
+    const notice = m.chat_system_removed_from_group();
+    const deps = baseDeps();
+    deps.conversations.set(groupId, {
+      ...deps.conversations.get(groupId)!,
+      lifecycle: 'removed',
+      messages: [
+        { id: 'm1', isSystem: false, content: 'before' },
+        { id: 'm2', isSystem: true, content: notice },
+      ],
+    } as any);
+    const mls = deps.mlsService as any;
+    // The announcement already forgot it: nothing is held.
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+
+    expect(ok).toBe(true);
+    expect(mls.processWelcome).toHaveBeenCalled();
+    expect(deps.conversations.get(groupId)!.messages.map((x) => x.id)).toEqual(['m1']);
+  });
+
+  it('withdraws nothing when the Welcome FAILS to install', async () => {
+    // The retraction used to run before `processWelcome`, so a Welcome that then failed took the
+    // notice with it and left the user evicted in silence. The proof is the install, not the frame.
+    const notice = m.chat_system_removed_from_group();
+    const deps = baseDeps();
+    deps.conversations.set(groupId, {
+      ...deps.conversations.get(groupId)!,
+      lifecycle: 'removed',
+      messages: [{ id: 'm2', isSystem: true, content: notice }],
+    } as any);
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+
+    expect(deps.conversations.get(groupId)!.messages.map((x) => x.id)).toEqual(['m2']);
   });
 
   it('Welcome for a held group whose membership cannot be READ → stays idempotent', async () => {

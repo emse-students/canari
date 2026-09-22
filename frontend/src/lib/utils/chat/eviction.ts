@@ -203,10 +203,20 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
  * true when it was written and is a lie from the Welcome onwards, and it is the one statement in
  * the thread the user cannot dismiss.
  *
- * A RE-ADMISSION WELCOME IS THE PROOF, which is why the retraction lives here and not on a timer:
- * `readmittedAfterEviction` is established from OpenMLS itself (held, and `isGroupActive` false)
- * before the frame is installed, so the caller is holding the only evidence that could ever settle
- * this. Nothing is guessed and nothing expires.
+ * AN INSTALLED RE-ADMISSION IS THE PROOF, which is why the retraction hangs off the Welcome and not
+ * off a timer: the caller has just put a working group where the eviction was, so it is holding the
+ * only evidence that could ever settle this. Nothing is guessed and nothing expires.
+ *
+ * THE PROOF IS THE INSTALL, NOT THE FRAME, and not either of the two ways of reaching it. This used
+ * to be called from the `readmittedAfterEviction` branch of the Welcome guard - `holdsGroupState &&
+ * !isGroupActive` - and `system-event`, the ONE evidence that always posts the notice, is the one
+ * that makes the first half false: `memberRemoved` naming this device drops the group state and
+ * only then records the eviction. A removal its author undid a moment later therefore left a
+ * permanent, undismissable notice above a conversation that worked perfectly (reported from a real
+ * client, 2026-09-22). Running before `processWelcome` was the other half of the same mistake: a
+ * Welcome that fails to install leaves the device evicted, and withdrawing on the frame alone
+ * retracted a TRUE sentence and left the eviction silent. One call site, on the successful
+ * install.
  *
  * `deleteMessage` rather than a tombstone, and the seam's own criterion is met: this is a message
  * NO OTHER DEVICE EVER HAD. This device wrote it locally, from a commit, addressed to its own
