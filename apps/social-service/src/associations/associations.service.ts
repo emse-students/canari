@@ -15,6 +15,7 @@ import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
+import { mediaUrl } from '../internal/service-urls';
 import { Association } from './entities/association.entity';
 import {
   AssociationMember,
@@ -187,9 +188,6 @@ export interface CalendarViewer {
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
-  private readonly mediaBaseUrl = (
-    process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011'
-  ).replace(/\/+$/, '');
   private readonly paymentBaseUrl = (
     process.env.PAYMENT_SERVICE_URL ?? 'http://core-service:3012'
   ).replace(/\/+$/, '');
@@ -448,7 +446,7 @@ export class AssociationsService {
       filename: 'logo',
       contentType: file.mimetype,
     });
-    const url = `${this.mediaBaseUrl}/api/media/upload/public`;
+    const url = mediaUrl('media/upload/public');
     try {
       const { data } = await firstValueFrom(
         this.httpService.post<{ mediaId: string }>(url, fd, {
@@ -486,7 +484,7 @@ export class AssociationsService {
   async deleteMediaBestEffort(mediaId: string, authorization: string): Promise<void> {
     try {
       await firstValueFrom(
-        this.httpService.delete(`${this.mediaBaseUrl}/api/media/${mediaId}`, {
+        this.httpService.delete(mediaUrl(`media/${mediaId}`), {
           headers: {
             Authorization: authorization,
             'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
