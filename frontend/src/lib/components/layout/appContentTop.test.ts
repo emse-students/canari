@@ -35,6 +35,10 @@
  *    the bar - and not inside the content column.
  * 4. The banner inset is square (user, 2026-09-22: "si il y a des marges elles doivent etre egales
  *    de tous les cotes").
+ * 5. The bar RENDERS the height the token names: the height and the border-bottom are on the same
+ *    element. They were not, and the sum was one pixel short of the bar it described.
+ * 6. A card that sticks INSIDE the scrollport subtracts `--app-content-top` rather than carrying
+ *    its own `100vh` arithmetic.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -49,6 +53,7 @@ const LAYOUT = read('../../../routes/+layout.svelte');
 const BANNER = read('../shared/Banner.svelte');
 const SIDEBAR = read('../navigation/AppSidebar.svelte');
 const NAVBAR = read('../navigation/Navbar.svelte');
+const POSTS_PANEL = read('../posts/ConversationsMiniPanel.svelte');
 
 /** Everything that announces an app-wide fact, in the order the shell column renders them. */
 const WINDOW_SCALE_BANNERS = [
@@ -95,6 +100,32 @@ describe('--app-content-top - the one answer to "where does the content start"',
     expect(SIDEBAR).toContain('top-(--app-content-top)');
     // The bar is the one element allowed to read its own height.
     expect(NAVBAR).toContain('h-(--app-top-bar-height)');
+  });
+
+  it('gives the bar its height on the element that carries its border', () => {
+    // THE SUM IS ONLY TRUE IF THE BAR RENDERS THE HEIGHT IT NAMES. The height sat on the inner
+    // row and the hairline on the `<header>` around it, so the bar occupied 73px against a token
+    // saying 72 - measured on the live estate 2026-09-22, the scrollport starting at y=73 - and
+    // every card hanging from `--app-content-top` was one pixel high. `box-sizing: border-box` is
+    // Tailwind's default, so the two utilities on ONE element make the height include the border.
+    const header = NAVBAR.slice(
+      NAVBAR.indexOf('<header'),
+      NAVBAR.indexOf('>', NAVBAR.indexOf('<header'))
+    );
+    expect(header).toContain('h-(--app-top-bar-height)');
+    expect(header).toContain('border-b');
+  });
+
+  it('is what a card inside the scrollport subtracts, rather than a sum of its own', () => {
+    // The feed's conversations panel is the one card that is NOT fixed against the window: it
+    // sticks inside the scrollport, so its ceiling is the viewport MINUS everything above it.
+    // It read `calc(100vh-8rem)` - 817px where the column offered 808 - and lifted by the
+    // difference once enough conversations existed to reach it (measured 1920x945, 2026-09-22).
+    const markup = withoutComments(POSTS_PANEL);
+    expect(markup).toContain('var(--app-content-top)');
+    // A hand-written `100vh` sum is the shape that drifts; the shell's own height token knows
+    // about a phone's dynamic toolbars and this one does not.
+    expect(markup).not.toContain('100vh-');
   });
 
   it('is fed by a measurement, not by its default', () => {

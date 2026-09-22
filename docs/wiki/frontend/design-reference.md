@@ -2419,6 +2419,56 @@ frame in which the tab becomes visible is already correct. **A fallback constant
 fallback path for a condition that cannot be observed** - and would then be the fourth hand-written
 copy of the number this section exists to delete.
 
+### The token was one pixel short of the bar it described (2026-09-22)
+
+A token is only true if the thing it sums RENDERS the size it names, and this one did not. The bar
+is a `<header>` carrying `border-b`; `h-(--app-top-bar-height)` sat on the flex row INSIDE it. With
+`box-sizing: border-box` - Tailwind's preflight default - the row was 72px and the header 72 + its
+own 1px hairline, so the bar occupied **73px against a token saying 72**. Measured on the local
+estate: `.page-scroll-wrap` begins at `y=73`.
+
+Every card hanging from `--app-content-top` was therefore one pixel high, and the fix is one
+utility moved: the height goes on the element that carries the border, the row takes `h-full`. This
+is the same class of defect the token exists to prevent - a distance stated in one place and
+rendered in another - which is why `appContentTop.test.ts` now asserts that the two utilities are on
+the SAME tag rather than merely present in the file.
+
+Re-measured on the estate built from the fix: the bar's own rect is `top=0, height=72` and
+`.page-scroll-wrap` begins at `y=72`.
+
+### A card that sticks INSIDE the scrollport subtracts the same token (2026-09-22)
+
+The feed's conversations panel is the one card in the shell that is not `position: fixed` against
+the window: it is `sticky` inside the scrollport, so its ceiling is the viewport minus everything
+above it. It read `max-h-[calc(100vh-8rem)]` - a sum written before the banner column existed.
+
+Measured at 1920x945 with the panel at its ceiling:
+
+| | |
+|---|---|
+| window | 945px |
+| bar (as rendered, before the fix above) | 73px |
+| scrollport | 872px |
+| column offers, once `--page-column-top` is taken off top **and** bottom | 808px |
+| the panel's own ceiling | **817px** |
+
+So the panel overhangs its column by 9px and lifts by that much on the scroll that pins it -
+latent until a reader has enough conversations to reach the ceiling, which is why it survived the
+top-of-page half of the same defect (section 32). It now states the ceiling from the shell's own
+tokens:
+
+```
+max-h-[calc(var(--app-viewport-height,100dvh)-var(--app-content-top)-2*var(--page-column-top))]
+```
+
+`--page-column-top` appears twice because the column pays it twice, and it carries its own
+breakpoint step - which is the whole reason the number is not written here. `--app-viewport-height`
+rather than `100dvh` for the same reason the rest of the shell reads it: a phone's dynamic toolbars
+are already accounted for there, once.
+
+Re-measured at the same 1920x945: the panel's computed `max-height` is **809px** - 945 - 72 - 2x32,
+the column's offer to the pixel, against the 817 it carried before.
+
 ## 34. One unlayered rule was deleting every `transition-*` utility in the app
 
 Found while looking at the rail for section 33: hovering it SNAPS the panel from 72px to 336px with

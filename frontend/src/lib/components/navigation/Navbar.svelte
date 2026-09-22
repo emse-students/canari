@@ -14,11 +14,24 @@
   }
 </script>
 
+<!--
+  THE HEIGHT IS ON THE ELEMENT THAT CARRIES THE BORDER, and that is the whole of this comment.
+
+  It used to sit on the inner row, so the bar RENDERED 73px - 72 of row plus its own 1px hairline -
+  while `--app-content-top` summed to 72. Every card that hangs below the bar was therefore one
+  pixel too high and one pixel too tall, and the token whose entire claim is "this is where the
+  content starts" was wrong for all of them at once. Measured on the live estate 2026-09-22: the
+  scrollport began at y=73 against a token saying 72.
+
+  `box-sizing: border-box` is Tailwind's default, so naming the height here makes the bar exactly
+  `--app-top-bar-height` INCLUDING the hairline, and the token true by construction rather than by
+  a 1px correction nobody could later explain. The row takes `h-full`.
+-->
 <header
   data-swipe-nav-ignore
-  class="app-top-bar border-cn-border sticky top-0 z-20 hidden shrink-0 border-b bg-(--surface-elevated) md:block"
+  class="app-top-bar border-cn-border sticky top-0 z-20 hidden h-(--app-top-bar-height) shrink-0 border-b bg-(--surface-elevated) md:block"
 >
-  <div class="flex h-(--app-top-bar-height) items-center justify-between gap-3 px-4 py-2 md:px-6">
+  <div class="flex h-full items-center justify-between gap-3 px-4 py-2 md:px-6">
     <!-- Left: Brand -->
     <div class="flex shrink-0 items-center gap-2">
       <CanariBrand compact={true} />

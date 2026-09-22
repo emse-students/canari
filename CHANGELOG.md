@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le token "ou commence le contenu" etait plus court d'un pixel que la barre qu'il decrit
+
+`h-(--app-top-bar-height)` etait sur la rangee INTERIEURE, `border-b` sur le `<header>` autour :
+la barre occupait 73px pour un token qui en annonce 72, et toutes les cartes flottantes pendaient un
+pixel trop haut. Dans la foulee, le panneau "Discussions" du fil deduit son plafond de ces memes
+tokens au lieu d'un `calc(100vh-8rem)` ecrit a la main, qui le faisait remonter de 9px au scroll.
+[design-reference](docs/wiki/frontend/design-reference.md).
 ### Fixed - la notification doublee ne peut pas arriver sur desktop ni sur le web, et un garde-fou le dit
 
 Reste de G1 (2026-09-18). Le doublon demande DEUX constructeurs atteints par DEUX declencheurs :

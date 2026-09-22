@@ -171,8 +171,26 @@
   }
 </script>
 
+<!--
+  THE CEILING IS THE SCROLLPORT'S, NOT THE WINDOW'S.
+
+  It was `max-h-[calc(100vh-8rem)]`: a hand-written sum of the same distances `--app-content-top`
+  now expresses, and 100vh is a WINDOW measurement while this panel lives inside
+  `.page-scroll-wrap`, which begins below the brand bar. Measured on the live estate 2026-09-22 at
+  1920x945: the scrollport is 872px and the column leaves 808 of it once its own
+  `--page-column-top` gutter is taken off the top AND the bottom - against a ceiling of 817. So a
+  panel with enough conversations to reach its maximum stood 9px proud of the column it sticks in,
+  and lifted off the bottom on the way down.
+
+  Stated from the tokens instead, so it cannot drift from the shell again: the scrollport is the
+  viewport minus where the content starts, and the panel may have that minus its gutter twice -
+  once for the sticky offset above it, once for the gutter below. The sticky offset IS
+  `--page-column-top`, which is why the same token appears twice rather than a number appearing
+  once (see the token's own comment: a sticky offset is the same distance as the padding above it,
+  or the element moves by the difference).
+-->
 <aside
-  class="bg-cn-surface sticky top-(--page-column-top) hidden max-h-[calc(100vh-8rem)] w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-2xl shadow-sm transition-all duration-300 xl:flex"
+  class="bg-cn-surface sticky top-(--page-column-top) hidden max-h-[calc(var(--app-viewport-height,100dvh)-var(--app-content-top)-2*var(--page-column-top))] w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-2xl shadow-sm transition-all duration-300 xl:flex"
 >
   <!-- Header. -->
   <div
