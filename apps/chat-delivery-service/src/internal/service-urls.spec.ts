@@ -2,34 +2,20 @@
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join as joinPath, resolve, sep } from 'path';
-import { deliveryUrl, mediaUrl } from './service-urls';
+import { coreUrl, mediaUrl } from './service-urls';
 
 /**
- * FOUR CALLERS IN THIS SERVICE HAVE NOW ADDRESSED ANOTHER SERVICE WITHOUT ITS `/api` PREFIX, and
- * every one of them failed silently - see this module's own docblock for the four and what each
- * cost. Three were fixed by routing them here; the fourth was fixed by noticing that media-service
- * had never been offered at all.
+ * THE LAST TEST IS THE ONE THAT MATTERS: a production source that names an internal service's base
+ * URL fails the suite. It is what turns "remember the prefix" into something the repository checks
+ * rather than something a reviewer has to - and a reviewer did not, four times, in social-service.
  *
- * So the last test is the one that matters: a production source that names an internal service's
- * base URL fails the suite. It is what turns "remember the prefix" into something the repository
- * checks rather than something a reviewer has to.
+ * The three call sites this seam replaced here were all CORRECT. The guard is not defending a
+ * defect, it is defending the absence of one against the next call site.
  */
 const SRC = resolve(__dirname, '..');
 
-/**
- * Base URLs whose prefix is this module's to write, and no caller's.
- *
- * EVERY internal base this service names, not the ones the last defect happened to involve. The
- * first version of this list held two, and four call sites addressing core-service under
- * `PAYMENT_SERVICE_URL` and `USER_SERVICE_URL` sat beside it, unseen, for as long as it took to
- * read the compose files. A guard is only as wide as its list.
- */
-const INTERNAL_BASES = [
-  'MEDIA_SERVICE_URL',
-  'DELIVERY_INTERNAL_URL',
-  'PAYMENT_SERVICE_URL',
-  'USER_SERVICE_URL',
-];
+/** Every internal base this service names - not the ones some past defect happened to involve. */
+const INTERNAL_BASES = ['MEDIA_SERVICE_URL', 'CORE_SERVICE_INTERNAL_URL'];
 
 /** Every PRODUCTION `.ts` under `src/`: no specs, and not this module itself. */
 function productionSources(dir: string): string[] {
@@ -51,10 +37,10 @@ function productionSources(dir: string): string[] {
 describe("service-urls - the prefix is not the caller's to write", () => {
   const saved = { ...process.env };
   afterEach(() => {
-    process.env.MEDIA_SERVICE_URL = saved.MEDIA_SERVICE_URL;
-    process.env.DELIVERY_INTERNAL_URL = saved.DELIVERY_INTERNAL_URL;
-    if (saved.MEDIA_SERVICE_URL === undefined) delete process.env.MEDIA_SERVICE_URL;
-    if (saved.DELIVERY_INTERNAL_URL === undefined) delete process.env.DELIVERY_INTERNAL_URL;
+    for (const name of INTERNAL_BASES) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
   });
 
   it('inserts the global prefix the environment variable does not carry', () => {
@@ -62,18 +48,14 @@ describe("service-urls - the prefix is not the caller's to write", () => {
     expect(mediaUrl('media/internal/abc')).toBe('http://media-service:3011/api/media/internal/abc');
   });
 
-  it('addresses chat-delivery-service the same way', () => {
-    delete process.env.DELIVERY_INTERNAL_URL;
-    expect(deliveryUrl('internal/push/notify')).toBe(
-      'http://chat-delivery-service:3010/api/internal/push/notify'
-    );
+  it('addresses core-service the same way', () => {
+    delete process.env.CORE_SERVICE_INTERNAL_URL;
+    expect(coreUrl('users/abc/avatar')).toBe('http://core-service:3012/api/users/abc/avatar');
   });
 
   it('does not double the prefix when an operator has already appended it', () => {
     process.env.MEDIA_SERVICE_URL = 'http://media-service:3011/api';
-    expect(mediaUrl('media/upload/public')).toBe(
-      'http://media-service:3011/api/media/upload/public'
-    );
+    expect(mediaUrl('media/internal/abc')).toBe('http://media-service:3011/api/media/internal/abc');
   });
 
   it('tolerates a trailing slash on the base and a leading one on the path', () => {

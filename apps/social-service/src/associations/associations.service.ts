@@ -188,10 +188,6 @@ export interface CalendarViewer {
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
-  private readonly paymentBaseUrl = (
-    process.env.PAYMENT_SERVICE_URL ?? 'http://core-service:3012'
-  ).replace(/\/+$/, '');
-
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -2467,7 +2463,7 @@ ${rejectionReason}`
    * pass Lydia's order_ref-shaped idempotency key on a form with no associated club.
    */
   async getActivePaymentProvider(): Promise<PaymentProviderId> {
-    return fetchActivePaymentProvider(this.httpService, this.paymentBaseUrl);
+    return fetchActivePaymentProvider(this.httpService);
   }
 
   /**

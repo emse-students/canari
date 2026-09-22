@@ -2,6 +2,7 @@ import { Controller, Get, ForbiddenException, Inject, Logger, Headers } from '@n
 import { DataSource } from 'typeorm';
 import { promises as fs } from 'fs';
 import Redis from 'ioredis';
+import { mediaUrl } from '../internal/service-urls';
 
 /**
  * Backend counterpart of the client's device-storage panel (WP-DEVICESTORAGE-1): reports what the
@@ -423,14 +424,13 @@ export class AdminStorageController {
 
   /** Server-to-server call to media-service, the only holder of the Garage client. */
   private async measureMedia(): Promise<MediaBucketUsage | null> {
-    const mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
     const internalSecret = process.env.INTERNAL_SECRET ?? '';
     if (!internalSecret) {
       this.logger.warn('[STORAGE] media measurement skipped - INTERNAL_SECRET unset');
       return null;
     }
     try {
-      const upstream = await fetch(`${mediaUrl}/api/media/internal/storage-stats`, {
+      const upstream = await fetch(mediaUrl('media/internal/storage-stats'), {
         headers: { 'x-internal-secret': internalSecret },
         signal: AbortSignal.timeout(10_000),
       });

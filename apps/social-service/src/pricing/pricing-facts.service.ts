@@ -1,6 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { UserTagService } from '../users/user-tag.service';
 import type { PricingFacts } from './audience';
+import { coreUrl } from '../internal/service-urls';
 
 /** What core-service's internal profile route answers with. */
 interface InternalPublicProfile {
@@ -32,7 +33,6 @@ interface InternalPublicProfile {
 @Injectable()
 export class PricingFactsService {
   private readonly logger = new Logger(PricingFactsService.name);
-  private readonly coreUrl = process.env.USER_SERVICE_URL ?? 'http://core-service:3012';
 
   constructor(private readonly userTagService: UserTagService) {}
 
@@ -96,7 +96,7 @@ export class PricingFactsService {
   private async fetchProfile(
     userId: string
   ): Promise<{ promo: number | null; formation: string | null }> {
-    const url = `${this.coreUrl}/api/internal/users/${encodeURIComponent(userId)}/public-profile`;
+    const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
     let res: Response;
     try {
       res = await fetch(url, {
@@ -140,7 +140,7 @@ export class PricingFactsService {
    * matches nobody.
    */
   async listFormations(): Promise<{ value: string; count: number }[]> {
-    const url = `${this.coreUrl}/api/internal/users/formations`;
+    const url = coreUrl('internal/users/formations');
     let res: Response;
     try {
       res = await fetch(url, {
