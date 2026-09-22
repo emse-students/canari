@@ -19,6 +19,13 @@ desormais, partagee comme contrat et verifiee par un test dans chacune des trois
 `firstName`/`lastName` se rafraichissent enfin a chaque connexion, et quatre listes de membres qui
 affichaient "Utilisateur inconnu" a froid lisent la ligne qu'elles avaient deja.
 [libs](docs/wiki/libs.md#libscontracts).
+### Changed - plus rien n'excuse une ERREUR du gateway
+
+Le canal ERROR de production mesure **0** sur `v0.18.18`, contre 32 par semaine avant la
+classification : la liste de pardon `EXPECTED_ERRORS` du banc de test est supprimee en entier, pas
+videe. La fenetre de 168 h que la verification demandait etait impossible - un `json-file` meurt avec
+son conteneur.
+[chat-gateway](docs/wiki/services/chat-gateway.md#the-after-count-2026-09-22---and-the-window-the-prediction-could-not-have).
 
 ### Fixed - l'export Excel parle francais, et le chevron mesure au lieu de deviner
 

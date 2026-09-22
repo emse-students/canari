@@ -120,8 +120,35 @@ All four cases are pinned in `handlers.rs`'s test module, the `Fault` ones as co
 **WHAT READS DIFFERENTLY AFTERWARDS, named before the fix was written** (the rule
 [testing-methodology](../testing-methodology.md) states after a no-op shipped with a CHANGELOG entry
 promising a reduction that never happened): `WebSocket Error from ...` should fall from 32 per week
-to 0 on production, with the same traffic reappearing as the new `info!` line. The before-count above
-is the baseline; the after-count is owed once a release carries this.
+to 0 on production, with the same traffic reappearing as the new `info!` line.
+
+### The after-count, 2026-09-22 - and the window the prediction could not have
+
+**MEASURED ON `v0.18.18` (`d1cdae15a`), the whole log the production container holds:**
+
+| | count |
+| --- | --- |
+| lines total | 626 |
+| at ERROR | **0** |
+| `Client went away without a closing handshake` (at `info!`) | 29 |
+| at WARN | 5, all `No pong from ... after 4 pings` |
+
+The prediction holds in both halves: the ERROR channel is empty, and the traffic it used to carry
+reappears at `info!`, 29 times. **`EXPECTED_ERRORS` was deleted from
+`tools/cross-client-harness/srvlog.mjs` the same day** - the whole bucket with it, not just its one
+member - once all three estates the rig can target were confirmed to serve a build carrying the
+classification (local image built 2026-09-21, dev on `86d345f7f`, prod on `d1cdae15a`). The old
+ERROR spelling is now excused by nothing, which is what a run against an older build should meet.
+
+**THE PREDICTION ASKED FOR A WINDOW THIS BOX CANNOT OFFER, AND THAT IS THE REUSABLE PART.** It was
+written as `docker logs --since 168h`, against the 7-day baseline above. That command can never
+return 7 days here: the gateway's log driver is `json-file`, whose file is **destroyed with the
+container**, and every deploy recreates the container. Production deployed three times in the two
+days before this measurement, so the longest window that has ever existed since the fix shipped is
+**6 h 28 min** - which is what the table above reads, and it is why the after-count is stated as a
+window rather than as a rate per week. The baseline was reachable only because it was taken during
+an unusually long quiet period. Anything wanting a genuinely comparable 7-day count would have to
+name a mechanism that outlives the container, and none is deployed.
 
 ## WebSocket message routing
 

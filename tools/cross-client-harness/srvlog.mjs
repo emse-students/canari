@@ -95,11 +95,13 @@ const BENIGN = [
   // the WebSocket layer without one. Neither is the ERROR below - that is the TCP being reset under
   // a live socket, which is a third thing again.
   /Client closed connection: (Some\(CloseFrame|None)/,
-  // THE SAME EVENT WITHOUT THE COURTESY, and since 2026-09-15 it arrives here rather than in
-  // EXPECTED_ERRORS below. The gateway now reads the tungstenite VARIANT behind axum's error
-  // instead of logging every receive-loop failure at ERROR, so a client that vanished is
-  // recorded beside the client that said goodbye, at the same level. The forgiveness list
-  // that used to hold it is kept for older builds only - see EXPECTED_ERRORS.
+  // THE SAME EVENT WITHOUT THE COURTESY, and since 2026-09-15 it arrives here rather than at ERROR.
+  // The gateway reads the tungstenite VARIANT behind axum's error instead of logging every
+  // receive-loop failure at ERROR, so a client that vanished is recorded beside the client that
+  // said goodbye, at the same level. A forgiveness list held the old ERROR spelling until
+  // 2026-09-22; it was deleted once all three estates served the new build, so that spelling is
+  // now an ERROR nothing excuses - which is the point, since only a build from before the change
+  // can still emit it.
   /Client went away without a closing handshake/,
   // The membership lookup behind every route and every send. High volume by construction.
   /\[MembersController\] \[GET_MEMBERS\] group=\S+ count=\d+/,
@@ -922,27 +924,6 @@ const NOTABLE = [
   /\[ChannelService\] \[CHANNEL_ACCESS\] settings served to manager \S+ outside the allowlist of \S+$/,
 ];
 
-/**
- * ERRORS THAT ARE READ, NAMED, AND STILL NOT DEFECTS - the server's `SEVERE_BUT_EXPECTED`.
- *
- * `Connection reset without closing handshake` is the gateway describing a CLIENT that vanished
- * without sending a close frame: a tab closed, a phone suspended, a network dropped, a container
- * torn down under a live socket. The server did nothing wrong and can do nothing about it. It was
- * logged at ERROR anyway, so without this list every reload the campaign performs made its own
- * window dirty - the instrument reporting about itself again.
- *
- * THIS ENTRY IS NOW A LEGACY PATTERN AND THE LIST IS OTHERWISE EMPTY (2026-09-15). The gateway
- * classifies that reset as the ordinary end of a session and logs it at `info!`, matched by the
- * happy-path pattern above. **That a whole forgiveness mechanism existed for exactly one line is
- * most of why the line was wrong**: an ERROR nobody may act on is not an error. The pattern stays
- * only so a run against a gateway built before that change is not dirtied by it; DELETE IT once no
- * estate the rig targets can serve an older build - the same condition
- * `docs/wiki/legacy-compatibility.md` applies to every other shim kept alive for old clients.
- *
- * Forgiven from the GATE, never from the RECORD: these are still counted and still printed.
- */
-const EXPECTED_ERRORS = [/WebSocket protocol error: Connection reset without closing handshake/];
-
 /** The server asserting a loss or a failure it could not handle. These break `clean` on their own. */
 const SEVERE = [
   /\bpanic(ked)?\b/i,
@@ -969,7 +950,6 @@ export {
   BENIGN as BENIGN_RULES,
   NOTABLE as NOTABLE_RULES,
   SEVERE as SEVERE_RULES,
-  EXPECTED_ERRORS as EXPECTED_ERROR_RULES,
 };
 
 
@@ -1165,8 +1145,7 @@ for (const service of SERVICES) {
 
   const severe = lines.filter((l) => SEVERE.some((r) => r.test(l)));
   const isError = (l) => /\bERROR\b|\bERRO\b|\bERR!\b/.test(l) && !severe.includes(l);
-  const expectedErrors = lines.filter((l) => isError(l) && EXPECTED_ERRORS.some((r) => r.test(l)));
-  const errors = lines.filter((l) => isError(l) && !expectedErrors.includes(l));
+  const errors = lines.filter(isError);
   const warnings = lines.filter((l) => /\bWARN\b/.test(l));
   const notable = lines.filter((l) => NOTABLE.some((r) => r.test(l)));
   const unexplained = lines.filter(
@@ -1174,7 +1153,6 @@ for (const service of SERVICES) {
       !BENIGN.some((r) => r.test(l)) &&
       !severe.includes(l) &&
       !errors.includes(l) &&
-      !expectedErrors.includes(l) &&
       !warnings.includes(l) &&
       !notable.includes(l)
   );
@@ -1197,10 +1175,6 @@ for (const service of SERVICES) {
     ...(dumpLines && { dumpLinesCollapsed: dumpLines }),
     ...(severe.length && { severeCount: severe.length, severe: severe.slice(0, 40) }),
     ...(errors.length && { errorCount: errors.length, errors: errors.slice(0, 40) }),
-    ...(expectedErrors.length && {
-      expectedErrorCount: expectedErrors.length,
-      expectedErrors: expectedErrors.slice(0, 10),
-    }),
     ...(warnings.length && { warningCount: warnings.length, warnings: warnings.slice(0, 20) }),
     ...(notable.length && {
       notableCount: notable.length,
@@ -1286,7 +1260,6 @@ export function srvSummary(rep) {
         : `  ${service.padEnd(24)} ${v.clean ? 'clean' : 'NOT CLEAN'}  ${v.lines} line(s)` +
           `${v.severeCount ? `  severe=${v.severeCount}` : ''}` +
           `${v.errorCount ? `  errors=${v.errorCount}` : ''}` +
-          `${v.expectedErrorCount ? `  expected-errors=${v.expectedErrorCount}` : ''}` +
           `${v.notableCount ? `  notable=${v.notableCount}` : ''}` +
           `${v.unexplainedCount ? `  unexplained=${v.unexplainedCount}` : ''}` +
           `${v.thirdPartyCount ? `  third-party=${v.thirdPartyCount}` : ''}`
