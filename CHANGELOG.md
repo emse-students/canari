@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le panneau "Discussions" de /posts glissait de 16px au premier scroll
+
+*"bouge lors du scroll alors qu'il ne devrait pas. C'est tout petit mais c'est perturbant"* (user).
+La colonne demarrait a `py-8` (32px) et le panneau collait a `top-4` (16px) : deux nombres pour une
+seule distance. Mesure sur l'estate, le panneau suivait exactement sa colonne jusqu'a `scrollTop`
+16 puis se figeait, donc il remontait de 16px a chaque scroll depuis le haut. Les deux moities
+lisent desormais `--page-column-top`, qui porte son propre palier.
+[design-reference](docs/wiki/frontend/design-reference.md).
+
 ### Changed - la discussion colle a son bas, et le "est en train d'ecrire" est devenu une bulle du fil
 
 Le bandeau de frappe vivait au-dessus du champ de saisie : il apparaissait et disparaissait SOUS la

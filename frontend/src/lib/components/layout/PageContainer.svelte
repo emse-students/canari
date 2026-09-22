@@ -43,8 +43,14 @@
   This is a `div` and not a `main` because the shell already renders <main id="main-content">
   around every page - the routes that declared their own were nesting a landmark inside itself,
   which is invalid and leaves a screen reader two "main" regions to choose between.
+
+  THE TOP PADDING IS A TOKEN BECAUSE AN ASIDE STICKS TO IT. `--page-column-top` (app.css) is the
+  distance from the scrollport to where both columns begin, and a `position: sticky` aside must
+  pin at that same number or it slides up its own column by the difference before it locks - which
+  the feed's panel did, by 16px, on every scroll from the top. It carries its own `md` step, so
+  writing one here as a utility would put the number in two places again.
 -->
-<div class="flex gap-6 px-4 py-6 md:px-8 md:py-8">
+<div class="flex gap-6 px-4 py-(--page-column-top) md:px-8">
   <div class="min-w-0 flex-1">
     <div class="mx-auto w-full {PAGE_WIDTHS[width]} {still ? '' : 'animate-rise-in'} {extra}">
       {@render children()}
