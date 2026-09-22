@@ -643,6 +643,22 @@ const NOTABLE = [
   // notable and not benign on purpose: it names the deepest devices on the fleet, and a number that
   // climbs there is the whole point of having written it.
   /\[CRON\] reportQueueDepth:/,
+  // THE OTHER TWO HOURLY REPORTS, AND THEY WERE MISSED FOR THE SAME REASON THE ONE ABOVE WAS.
+  //
+  // `reportQueueDepth` was found landing in `unexplained` once an hour and given the rule above;
+  // `reportStrandedDeviceMemberships` and `reportSingleHolderGroups` run on the same schedule, in
+  // the same controller, and were never added. Measured on 2026-09-22 by NOTIF-15, whose window
+  // happened to cross the top of an hour: both lines were its entire `unexplained` set, and the row
+  // read `SERVER NOT CLEAN` for two reports saying the estate was healthy. **Any row whose window
+  // crosses an hour boundary inherits that**, which is the shape of noise a reader learns to skip.
+  //
+  // MATCHED ON THE CLEAN SENTENCE, NEVER THE TAG - the same design as `[DEVICE_MEMBERSHIPS]` above.
+  // Each report has one prose spelling for "nothing to report" and separate `warn`/`error` spellings
+  // that carry a COUNT (`N pending membership(s)`, `N conversation(s) have exactly ONE user`,
+  // `N conversation(s) have NO holder at all`). Matching the tag would forgive every one of those,
+  // and those lines are the entire reason the reports were written.
+  /\[CRON\] reportStrandedDeviceMemberships: no pending membership older than /,
+  /\[CRON\] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree/,
   // A DEVICE ASKING WHICH GROUPS IT STILL BELONGS TO, AND THE NUMBER THAT DECIDES WHETHER IT IS NEWS.
   //
   // `[DEVICE_MEMBERSHIPS]` was matched by NOTHING and landed in `unexplained` every time a device

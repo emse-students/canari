@@ -24,6 +24,23 @@ reason against the phase's `needs` before believing it names an obstacle.
 `checks-selftest.mjs` now asserts the declaration against the source of every script a phase names,
 and it is proven to fail on this exact case.
 
+**AND A DOOR SPELLED AT RUNTIME WAS INVISIBLE TO IT, WHICH COST NOTIF-15 THREE RUNS (2026-09-22).**
+The gate reads each script for the LITERAL spellings by which a runner reaches a device - `PORTS.W3`,
+`becomeANewDevice`, `PORTS.A1`, `sameAccountAs`, `tauri.localhost`. `notif15.mjs` parks the owner's
+other browsers with `for (const name of ['W1', 'W3'])` and `client(PORTS[name], ...)`: a computed
+member access, so the whole file read as reaching no scratch device. NOTIF declared
+`needs: ['W1','W2','A1']`, the preflight never looked at W3, and the runner recorded `'unreachable'`
+for an absent browser - a value its parked-state list does not accept. The row therefore graded
+`FAIL` on a product question about push notifications because a scratch browser was not running, and
+it discovered that only after killing the phone and taking it back through the PIN gate, three times.
+**A computed `PORTS[...]` together with the device NAME as a string literal in the same file now
+counts as a door.** It can only ever over-report, which costs a preflight; the direction it closes
+cost a verdict. Measured against every script every phase declares, it moves exactly one file. The
+companion rule was already written on this page one defect earlier - *a door is code, not prose*,
+after `tauri.localhost` in a COMMENT made the gate declare that GRP drives the phone. Both are the
+same mistake from opposite sides: **the gate reads source, so it believes whatever source LOOKS
+like, and a spelling it does not know reads as an absence rather than as an unknown.**
+
 **A SELF-TEST INVOKED BY NOTHING IS DOCUMENTATION.** All three of the rig's self-tests - the two log
 classifiers and the phase declarations - existed, passed, and were run by no target and no pipeline;
 the one that would have caught MUT-18 was written the same day the defect was found and would have
@@ -1794,6 +1811,31 @@ widened past, so it can never launder the defect. Disjoint spellings get disjoin
 
 And two rules for one log line, 140 lines apart, go stale together while giving no reason to look for
 each other. One line, one rule, carrying every spelling.
+
+#### 43. A PERIODIC REPORT'S **CLEAN** SENTENCE IS A LINE ONLY THE ROW THAT STRADDLES THE HOUR EVER SEES
+
+`chat-delivery-service` runs three hourly reports in one controller. `reportQueueDepth` was found
+landing in `unexplained` once an hour and given a rule. Its two siblings,
+`reportStrandedDeviceMemberships` and `reportSingleHolderGroups`, were never added - and were still
+unclassified on 2026-09-22, when NOTIF-15 happened to run across the top of an hour and read
+`SERVER NOT CLEAN` for two lines saying *no pending membership older than 60min* and *every
+conversation with members has at least two of them holding its tree*. Two reports announcing good
+news, breaking a verdict.
+
+**The reason it hid is the cadence, not the wording.** A line emitted once an hour is seen by
+whichever row's window happens to contain it, which is a different row every time and no row most
+times. Fixing the one instance that was caught leaves its siblings untouched and nothing points at
+them: the gap is invisible until a row straddles the hour again. **So when a periodic line is
+classified, classify every line that schedule emits** - enumerate the callers of the cron decorator,
+not the line in front of you. A rule written for one member of a schedule is a rule that will be
+written again.
+
+**And match the CLEAN spelling, never the tag.** Each of these reports has one prose sentence for
+"nothing to report" and separate `warn`/`error` spellings carrying a COUNT - `N pending
+membership(s)`, `N conversation(s) have exactly ONE user`, `N conversation(s) have NO holder at
+all`. Matching `[CRON] reportSingleHolderGroups:` would have silenced the findings the report exists
+to deliver, which is how a classifier earns the right to be ignored. The same discipline is already
+written above for `[DEVICE_MEMBERSHIPS] ... stranded=0`.
 
 ### AND A STAMP IS NOT A SPELLING - #742 KILLED EVERY ANCHORED RULE AT ONCE, FOR FIVE DAYS
 

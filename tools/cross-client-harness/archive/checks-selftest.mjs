@@ -33,9 +33,8 @@ import { readFileSync } from "node:fs";
 import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
 
-
 /**
- * Every spelling by which a runner reaches A1.
+ * Every LITERAL spelling by which a runner reaches A1.
  *
  * `PORTS.A1` is the port itself, `sameAccountAs`/`a1SameAccountAs` are the helpers that attach to
  * the phone as a second device of an account, and `tauri.localhost` is the origin only the phone
@@ -44,7 +43,7 @@ import { codeOnly } from "../srcscan.mjs";
 const A1_DOORS = /PORTS\.A1|sameAccountAs|a1SameAccountAs|tauri\.localhost/;
 
 /**
- * Every spelling by which a runner reaches the SCRATCH device.
+ * Every LITERAL spelling by which a runner reaches the SCRATCH device.
  *
  * `becomeANewDevice` is the primitive that wipes it and `PORTS.W3` the port itself. A runner reaching
  * W3 by an unlisted door is invisible here, exactly as it is for the phone - so a new one belongs in
@@ -52,17 +51,43 @@ const A1_DOORS = /PORTS\.A1|sameAccountAs|a1SameAccountAs|tauri\.localhost/;
  */
 const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice");
 
+/**
+ * A COMPUTED PORT LOOKUP IS A DOOR TOO, AND FOR A DAY IT WAS NOT.
+ *
+ * `notif15.mjs` parks the owner's OTHER browsers with `for (const name of ['W1', 'W3'])` and
+ * `client(PORTS[name], ...)`. Every pattern above is a literal member access, so the whole file read
+ * as reaching no scratch device: NOTIF declared `needs: ['W1','W2','A1']`, the preflight never looked
+ * at W3, and an ABSENT scratch browser surfaced as a product `FAIL` on a row about push
+ * notifications - after a phone kill and a PIN restore each time.
+ *
+ * So a computed `PORTS[...]` anywhere in the file, together with the device NAME spelled as a string
+ * literal in that same file, counts as a door. It can only ever over-report, which costs a preflight;
+ * the direction it closes cost a verdict. Measured 2026-09-22 against every declared script: it
+ * changes exactly one verdict, `notif15.mjs`, and no other file in any phase moves.
+ */
+const COMPUTED_PORT = /PORTS\[/;
+
+/**
+ * Whether a runner file contains any door to `device`. Throws if the file is unreadable.
+ *
+ * A DOOR IS CODE, NOT PROSE. `tauri.localhost` in a COMMENT explaining why `publicAppOrigin()`
+ * refuses it made this declare that GRP drives the PHONE - the sentence was right, the gate was
+ * right, only the reading was wrong. `codeOnly` is the one stripper, shared with the origin gate.
+ */
+function drives(file, doors, device) {
+  const src = codeOnly(readFileSync(scriptPath(file), "utf8"));
+  if (doors.test(src)) return true;
+  return COMPUTED_PORT.test(src) && new RegExp(`['"]${device}['"]`).test(src);
+}
+
 /** Whether a runner file contains any door to the phone. Throws if the file is unreadable. */
-// A DOOR IS CODE, NOT PROSE. `tauri.localhost` in a COMMENT explaining why `publicAppOrigin()`
-// refuses it made this declare that GRP drives the PHONE - the sentence was right, the gate was
-// right, only the reading was wrong. `codeOnly` is the one stripper, shared with the origin gate.
 function drivesPhone(file) {
-  return A1_DOORS.test(codeOnly(readFileSync(scriptPath(file), "utf8")));
+  return drives(file, A1_DOORS, "A1");
 }
 
 /** Whether a runner file contains any door to the scratch device. Throws if it is unreadable. */
 function drivesScratch(file) {
-  return W3_DOORS.test(codeOnly(readFileSync(scriptPath(file), "utf8")));
+  return drives(file, W3_DOORS, "W3");
 }
 
 const problems = [];
