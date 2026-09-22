@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la visionneuse ne se deplacait pas a la souris : le navigateur prenait le geste
+
+*"on ne puisse pas (sur PC en tout cas) se deplacer dans la visionneuse (le fait de tenter de drag
+l'image la selectionne)"* (user). Une `<img>` est `draggable` par DEFAUT : appuyer et bouger lance
+le glisser-deposer natif de l'image - le fantome translucide lu comme une selection - et le
+navigateur cesse d'envoyer les mouvements de pointeur, donc le panoramique n'arrive jamais.
+`select-none` ne couvre pas ce geste, mesure a l'appui. Le refus est pose sur l'enveloppe qui porte
+deja le zoom et le panoramique, pas sur l'image : le contenu vient de cinq appelants.
+[posts](docs/wiki/frontend/modules/posts.md).
+
 ### Fixed - une porte epelee a l'execution etait invisible au garde, et NOTIF-15 a paye trois runs
 
 `checks-selftest.mjs` lit chaque script pour les orthographes LITTERALES par lesquelles il atteint un
