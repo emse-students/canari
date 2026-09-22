@@ -252,9 +252,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override), the channel list's width,
-    THREE of the ELEVEN 2026-09-18 REPORTS, and the phone agenda's rolling window - SHIPPED 2026-09-20 ON
-    GATES AND TESTS AND NEVER ONCE RENDERED** ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#below-md-the-unit-is-a-window-not-a-month---and-the-arrows-went-with-it)).
+10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
+    2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
+    its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
 11. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
     anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE observation
     from the reporter is owed**; a deploy destroys prod's only log, so the first attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
