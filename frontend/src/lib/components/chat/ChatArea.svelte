@@ -15,6 +15,7 @@
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
+  import ChatTypingBubble from './ChatTypingBubble.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import PollComposerModal from '../channels/PollComposerModal.svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
@@ -22,7 +23,7 @@
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
-  import { shouldFollowThreadBottom } from '$lib/utils/chat/threadAnchor';
+  import { isPinnedToBottom, shouldFollowThreadBottom } from '$lib/utils/chat/threadAnchor';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -268,6 +269,17 @@
   const NAVIGATE_CONTEXT_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2;
 
   let chatContainer = $state<HTMLDivElement>();
+  /**
+   * The composer band - absolutely positioned OVER the scroller, and the source of its
+   * `padding-bottom`. Bound so the follow effect can watch it grow; nothing else reads it.
+   */
+  let composerBand = $state<HTMLDivElement>();
+  /**
+   * **THE STICK-TO-BOTTOM FLAG, AND THERE IS ONLY ONE.** True while the reader is at the live end
+   * of the conversation, false once they have gone up to read history. `handleScroll` is its only
+   * writer; everything that could move the pane asks it first - the new-message effect, the follow
+   * observers, the unread pill.
+   */
   let isNearBottom = $state(true);
   let _isMobile = $state(false);
   let _composerFocused = $state(false);
@@ -380,9 +392,9 @@
 
   function handleScroll() {
     if (!chatContainer) return;
-    const distanceFromBottom =
-      chatContainer.scrollHeight - (chatContainer.scrollTop + chatContainer.clientHeight);
-    isNearBottom = distanceFromBottom < 120;
+    // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
+    // express the reader's intent to leave the live end, so it is the only thing that revises it.
+    isNearBottom = isPinnedToBottom(chatContainer);
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < 80) {
       void loadOlderGroups();
@@ -486,12 +498,21 @@
       : text || m.chat_pinned_message_default_label();
   }
 
+  /**
+   * The people typing in the active conversation, never the reader themselves. ONE derivation feeds
+   * both halves of the indicator - the avatars it draws and the prose it announces - so the two
+   * cannot disagree about who is typing.
+   */
+  const typingUserIds = $derived.by((): string[] => {
+    const convId = chatView?.conversation.id;
+    if (!convId) return [];
+    const me = currentUserId.trim().toLowerCase();
+    return typingUsersFor(convId).filter((u) => u !== me);
+  });
+
   /** Reactive "X is typing…" label for the active conversation, excluding the current user. */
   const typingLabel = $derived.by(() => {
-    const convId = chatView?.conversation.id;
-    if (!convId) return '';
-    const me = currentUserId.trim().toLowerCase();
-    const typers = typingUsersFor(convId).filter((u) => u !== me);
+    const typers = typingUserIds;
     if (typers.length === 0) return '';
     const names = typers.map((u) => getUserDisplayNameSync(u, u));
     if (names.length === 1) return m.chat_typing_one_person({ names: names[0] });
@@ -803,7 +824,8 @@
   });
 
   /**
-   * THE PANE FOLLOWS ITS OWN BOTTOM WHEN THE CONTENT GROWS, AND A MESSAGE COUNT COULD NOT SEE THAT.
+   * THE PANE FOLLOWS ITS OWN BOTTOM WHEN ANYTHING BELOW THE READER GROWS - and a message count
+   * could see none of it.
    *
    * The re-pin above keys on `messageCount`, which is a proxy for "the thread got taller" - and it
    * is the wrong one. A reaction chip appears, a link preview resolves, an image settles into its
@@ -812,7 +834,16 @@
    * is what the user reported on 2026-09-18 (*"mettre une reaction devrait faire monter la
    * discussion, pas la descendre"* - the same request read from the other end).
    *
-   * A MUTATION, NOT A TIMER. The trigger is the DOM change itself, so there is nothing to tune and
+   * **THREE TRIGGERS, ONE CLOSURE, ONE QUANTITY.** The pane can grow from its content (a row
+   * added or re-laid out), from its own box (the soft keyboard, a resize, a panel opening) or from
+   * the composer band, whose measured height IS this scroller's `padding-bottom` and therefore part
+   * of its `scrollHeight`. Three observers, and all three ask `follow()` the same question about
+   * the same number - which is why a typing bubble, a wrapping composer and a new message cannot
+   * disagree about where the bottom is. That disagreement was the defect (user, 2026-09-22:
+   * *"suivre les mouvements de maniere fluide plutot que de cacher involontairement des morceaux de
+   * l'interface"*).
+   *
+   * AN OBSERVER, NOT A TIMER. Every trigger is the change itself, so there is nothing to tune and
    * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
    * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
    * nothing recomputes it without a scroll event, and content growing under a stationary reader
@@ -827,9 +858,9 @@
     const el = chatContainer;
     if (!el) return;
     let previousHeight = el.scrollHeight;
-    const observer = new MutationObserver(() => {
+    const follow = () => {
       const currentHeight = el.scrollHeight;
-      const follow = shouldFollowThreadBottom({
+      const shouldFollow = shouldFollowThreadBottom({
         previousHeight,
         currentHeight,
         wasNearBottom: isNearBottom,
@@ -837,10 +868,22 @@
         isEntering: entering,
       });
       previousHeight = currentHeight;
-      if (follow) el.scrollTop = currentHeight;
-    });
-    observer.observe(el, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+      if (shouldFollow) el.scrollTop = currentHeight;
+    };
+    const mutations = new MutationObserver(follow);
+    mutations.observe(el, { childList: true, subtree: true, characterData: true });
+    // The pane's OWN box, for everything that changes the geometry without changing the content:
+    // the soft keyboard, a window resize, a side panel opening.
+    const boxes = new ResizeObserver(follow);
+    boxes.observe(el);
+    // And the composer band, whose height IS this scroller's `padding-bottom`. Growing the composer
+    // grows `scrollHeight` by exactly as much as a new row would, so the same closure answers it -
+    // which is what stops a third line of typing from swallowing the last message.
+    if (composerBand) boxes.observe(composerBand);
+    return () => {
+      mutations.disconnect();
+      boxes.disconnect();
+    };
   });
 
   $effect(() => {
@@ -1200,6 +1243,25 @@
             isMobile={_isMobile}
           />
         {/if}
+
+        <!-- THE TYPING INDICATOR IS A ROW OF THE THREAD, NOT A BAND OVER IT (user, 2026-09-22).
+             Above the composer it appeared and vanished UNDER the conversation, hiding the last
+             message each time somebody touched their keyboard. Here it grows the scroller like any
+             other row, so the follow observers raise the thread for it and lower it again when it
+             goes - the movement the user asked to be able to follow.
+
+             THE WRAPPER IS PERMANENT, and deliberately so. A `role="status"` created at the moment
+             it gains text is announced unreliably: assistive technology has to be watching the
+             region BEFORE the mutation. It is also the cross-client rig's only hook on this
+             indicator - `state.mjs` tests its existence and `archive/type.mjs` reads its
+             `innerText` - so the class name is load-bearing beyond this file. -->
+        <div class="chat-typing-indicator" role="status" aria-live="polite">
+          {#if typingUserIds.length > 0}
+            <div transition:slide={{ duration: 150, axis: 'y' }} class="pt-1">
+              <ChatTypingBubble userIds={typingUserIds} label={typingLabel} />
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
 
@@ -1265,7 +1327,7 @@
         </p>
       </div>
     {:else}
-      <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+      <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
         <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on
              <ChatComposer> below - a fourth, undocumented reader of a flag whose three real guards
              are named elsewhere. It had no protocol justification in either venue: a CHANNEL send
@@ -1282,7 +1344,6 @@
           {onTyping}
           {onSendGif}
           onCreatePoll={isChannel && onCreatePoll ? () => (showPollComposer = true) : undefined}
-          {typingLabel}
           onFocusChange={(focused) => (_composerFocused = focused)}
           {onSend}
           {replyingTo}

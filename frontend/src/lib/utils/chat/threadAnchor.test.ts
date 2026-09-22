@@ -1,4 +1,9 @@
-import { shouldFollowThreadBottom, type ThreadGrowth } from './threadAnchor';
+import {
+  isPinnedToBottom,
+  shouldFollowThreadBottom,
+  THREAD_BOTTOM_SLACK_PX,
+  type ThreadGrowth,
+} from './threadAnchor';
 
 const settled: ThreadGrowth = {
   previousHeight: 1000,
@@ -49,5 +54,39 @@ describe('shouldFollowThreadBottom', () => {
   it('is decided by the height alone, never by how much it grew', () => {
     expect(shouldFollowThreadBottom(grew(1))).toBe(true);
     expect(shouldFollowThreadBottom(grew(5000))).toBe(true);
+  });
+});
+
+describe('isPinnedToBottom', () => {
+  /** A pane 600 px tall over 2000 px of thread: 1400 is the bottom. */
+  const at = (scrollTop: number) => ({ scrollHeight: 2000, scrollTop, clientHeight: 600 });
+
+  it('is true at the bottom', () => {
+    expect(isPinnedToBottom(at(1400))).toBe(true);
+  });
+
+  it('is true within the slack, false one pixel past it', () => {
+    expect(isPinnedToBottom(at(1400 - (THREAD_BOTTOM_SLACK_PX - 1)))).toBe(true);
+    expect(isPinnedToBottom(at(1400 - THREAD_BOTTOM_SLACK_PX))).toBe(false);
+  });
+
+  it('is false for a reader who has gone up to read history', () => {
+    expect(isPinnedToBottom(at(0))).toBe(false);
+  });
+
+  it('is true for a thread shorter than its own pane', () => {
+    expect(isPinnedToBottom({ scrollHeight: 300, scrollTop: 0, clientHeight: 600 })).toBe(true);
+  });
+
+  /**
+   * THE COMPOSER AND THE CONTENT ARE THE SAME QUANTITY. `scrollHeight` includes `padding-bottom`,
+   * which is `--chat-composer-height`: a composer growing by one line moves the reader off the
+   * bottom exactly as a new row would, which is what lets one predicate answer for both.
+   */
+  it('reads composer growth as thread growth', () => {
+    const before = { scrollHeight: 2000, scrollTop: 1400, clientHeight: 600 };
+    expect(isPinnedToBottom(before)).toBe(true);
+    const composerGrewByTwoLines = { ...before, scrollHeight: 2000 + THREAD_BOTTOM_SLACK_PX };
+    expect(isPinnedToBottom(composerGrewByTwoLines)).toBe(false);
   });
 });
