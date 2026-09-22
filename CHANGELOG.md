@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Mesure - le rapport horaire des detenteurs a ete lu, dix jours apres, et le levier a fonctionne
+
+Cinq conversations a un seul detenteur sont devenues une, pendant que le parc passait de 58 a 100
+groupes vivants, et le DM a l'epoch 284 a recu ses Welcomes. La seule qui reste n'est pas la forme
+attendue : ses deux appareils actifs appartiennent au meme utilisateur, et l'autre membre occupe un
+siege sans aucun appareil MLS. Un balayage complet en trouve **deux**, dont une seule reelle, prise
+pendant la fenetre ou `userHasMlsDevices` valait toujours `true`.
+[etat MLS](docs/wiki/protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked).
+
 ## [0.18.19] - 2026-09-22
 
 ### Changed - core-service disait ou joindre social-service de trois manieres, dont une que la prod n'a jamais reglee
