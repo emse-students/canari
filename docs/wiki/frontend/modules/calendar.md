@@ -103,6 +103,30 @@ A ROTATION REFETCHES. The two shapes hold different ranges and neither answers t
 turning a phone sideways mid-scroll would hand the grid a September built out of a year of events,
 and turning it back would hand the list one month under a heading that promises twelve.
 
+### WHAT THE FIRST RENDER OF THAT LIST FOUND (2026-09-22)
+
+The rolling window shipped on 2026-09-20 with a mounting test per behaviour and **was never once
+looked at**. It was, at 390x844 against the local estate, with a synthetic feed standing in because
+the estate holds no events at all: the window opens on today with the day pill filled yellow, days
+with nothing are not drawn, the month separator pins at the top of `.page-scroll-wrap` and hands
+over at each boundary, four requests of three months each cover the horizon and stop, and the foot
+then says so in words. **The rolling window itself is exactly what it claims.** Two things around it
+were not.
+
+**A RULE WAS DRAWN OVER NOTHING.** The filter card's action row holds `exportActions`, which on a
+phone is usually EMPTY: the PDF export is a right most readers do not have, and the subscribe button
+is deliberately `hidden` below `sm` (`d90f06397`, June 2026 - no `webcal://` handler there). So the
+row rendered a 1px rule and 16px of padding under the filter, 17px of card spent saying nothing. It
+now carries the button's own breakpoint, spelt again rather than inferred: a CSS-hidden child is
+still a child, so `:empty` cannot tell the difference. Measured after: 126px at 390, 175px at 700
+where the button is real.
+
+**THE GUTTER SPOKE FRENCH TO AN ENGLISH READER.** `monthFormatter` read `getLocale()`; the weekday
+under it was a `new Intl.DateTimeFormat('fr-FR', ...)` built inline, per day, per render. An English
+reader got `mar.` beneath "September 2026" - and the heading is the half anybody looks at, which is
+why it was the half that was right. Both now take one derived `localeTag`, and the weekday formatter
+is built once per locale rather than once per row, which matters on a list that draws a year.
+
 ### THE PAGE IS NOT THE OWNER OF EVERYTHING IT LISTS
 
 `GET /api/associations/:id/events` returns the events that association **co-owns** as well as the

@@ -19,6 +19,23 @@ desktop et web n'ont pas le second - toutes les commandes de `commands/push.rs` 
 tout second constructeur de banniere.
 [mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 
+### Fixed - un bandeau deplacait la barre Canari et cinq cartes flottantes ne l'apprenaient jamais
+
+Avec un second onglet du meme compte ouvert : bandeau a 108px du bord gauche contre 12 a droite, la
+barre Canari poussee de 50px DANS le rail qui ne bouge pas, et l'ombre du rail qui commence 22px
+sous le haut de la barre - la bande blanche vue par le user. Une seule cause : la somme
+`safe-area + hauteur de barre` etait ecrite a la main dans cinq regles, toutes vraies tant que rien
+n'est rendu au-dessus de la barre. Un token `--app-content-top`, nourri par la hauteur MESUREE de la
+colonne de bandeaux, remplace les cinq ; les cinq bandeaux rejoignent cette colonne et s'encadrent
+carre. [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Fixed - une regle hors layer supprimait TOUTES les transitions Tailwind de l'app
+
+La transition de theme est declaree sur `nav, aside, header, button, a, input, textarea, select`
+hors de tout `@layer` - et du CSS non-layered bat tout ce qui est dans un layer, quelle que soit la
+specificite. Mesure : 28 elements sur 28 a `/posts`, 22 sur 22 a `/chat`. Le rail de navigation
+s'ouvrait donc d'un coup, ses libelles arrivant en fondu apres. Passee dans `@layer base`.
+[design-reference](docs/wiki/frontend/design-reference.md).
 ### Added - les listes affichent leur second theme, et on peut enfin en definir le logo
 
 *"il se trouve qu'il y a deux themes lors des campagnes... je crois qu'une partie est deja cablee
@@ -33,6 +50,15 @@ Suppression de la pastille "Liste 2026" (doublon du titre "Campagnes 2026") et d
 membres sur les listes seulement ; les rayons sont maintenant divises par association parente a
 l'interieur de chaque annee (user, 2026-09-22).
 [associations](docs/wiki/frontend/modules/associations.md).
+### Fixed - l'agenda du telephone rendu pour la premiere fois : un trait sur rien, et un jour en francais
+
+Le mois glissant livre le 2026-09-20 avait un test par comportement et n'avait jamais ete regarde.
+Il est juste. Deux choses autour ne l'etaient pas : la barre d'actions de la carte de filtre
+dessinait un trait et 16px de vide quand elle n'avait aucun bouton a montrer (le cas ordinaire sur
+telephone), et le jour de la semaine dans la gouttiere etait code en dur en `fr-FR` sous un titre de
+mois qui, lui, lisait la langue du lecteur.
+[calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22).
+
 ### Changed - la reponse citee est devenue une bulle empilee, comme sur la reference
 
 *"Pour l'UI des reponses dans les conversations, Messenger fait un truc joli. Tu peux regarder et

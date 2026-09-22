@@ -73,12 +73,27 @@
     groups: EventDayGroup[];
   }
 
+  /**
+   * The BCP-47 tag BOTH formatters below take.
+   *
+   * One derivation, because the two halves of a row disagreed: the heading read the locale and the
+   * weekday under it was hard-coded `fr-FR`, so an English reader got "September 2026" over a gutter
+   * of `lun.` / `mar.`. The heading is the half anybody looks at, which is why it was the only half
+   * that was right.
+   */
+  const localeTag = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+
   const monthFormatter = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      month: 'long',
-      year: 'numeric',
-    })
+    new Intl.DateTimeFormat(localeTag, { month: 'long', year: 'numeric' })
   );
+
+  /**
+   * `lun.`, `mar.` - the reference's gutter, short enough not to widen it.
+   *
+   * Built once per LOCALE and not once per row: this list draws a year of days, and a
+   * `new Intl.DateTimeFormat` inside the markup is one construction per day per render.
+   */
+  const weekdayFormatter = $derived(new Intl.DateTimeFormat(localeTag, { weekday: 'short' }));
 
   const groups = $derived(groupEventsByDayInRange(events, rolling.from, rolling.to));
 
@@ -164,11 +179,6 @@
     observer.observe(el);
     return () => observer.disconnect();
   });
-
-  /** `lun.`, `mar.` - the reference's gutter, short enough not to widen it. */
-  function weekdayLabel(date: Date): string {
-    return new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(date);
-  }
 </script>
 
 {#if loading}
@@ -216,7 +226,7 @@
                     {group.day}
                   </div>
                   <div class="text-text-muted text-2xs mt-0.5 lowercase">
-                    {weekdayLabel(group.date)}
+                    {weekdayFormatter.format(group.date)}
                   </div>
                 </div>
 
