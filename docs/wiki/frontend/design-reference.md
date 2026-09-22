@@ -2433,6 +2433,9 @@ is the same class of defect the token exists to prevent - a distance stated in o
 rendered in another - which is why `appContentTop.test.ts` now asserts that the two utilities are on
 the SAME tag rather than merely present in the file.
 
+Re-measured on the estate built from the fix: the bar's own rect is `top=0, height=72` and
+`.page-scroll-wrap` begins at `y=72`.
+
 ### A card that sticks INSIDE the scrollport subtracts the same token (2026-09-22)
 
 The feed's conversations panel is the one card in the shell that is not `position: fixed` against
@@ -2462,6 +2465,9 @@ max-h-[calc(var(--app-viewport-height,100dvh)-var(--app-content-top)-2*var(--pag
 breakpoint step - which is the whole reason the number is not written here. `--app-viewport-height`
 rather than `100dvh` for the same reason the rest of the shell reads it: a phone's dynamic toolbars
 are already accounted for there, once.
+
+Re-measured at the same 1920x945: the panel's computed `max-height` is **809px** - 945 - 72 - 2x32,
+the column's offer to the pixel, against the 817 it carried before.
 
 ## 34. One unlayered rule was deleting every `transition-*` utility in the app
 
