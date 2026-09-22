@@ -629,7 +629,11 @@ back the next time its conversation is replayed; nothing repairs one that is nev
 nothing can - the reference is not in any copy this device holds.
 
 The quote itself also had a left padding and no right one, so its text ran into the bubble's edge;
-`MessageReplyQuote` is now padded on both sides.
+`MessageReplyQuote` was padded on both sides. **That component is no longer a strip inside the
+bubble at all since 2026-09-22** - it is a second, receded bubble stacked flush above the reply,
+under a caption row naming who answered whom, measured off the reference in both themes:
+[design-reference section 37](../design-reference.md). Nothing above changes: an edit still has to
+preserve the envelope's `replyTo`, and the quote is still drawn from it.
 
 Covered by `envelope.editBody.test.ts`, which owns the body rule, and by one case in
 `systemMessageHandler.editPrecedence.test.ts` asserting that an edited reply keeps its quote in

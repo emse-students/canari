@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la reponse citee est devenue une bulle empilee, comme sur la reference
+
+*"Pour l'UI des reponses dans les conversations, Messenger fait un truc joli. Tu peux regarder et
+imiter ?"* (user). La citation etait une bande a l'INTERIEUR de la bulle ; c'est desormais une
+seconde bulle, en retrait, collee au-dessus de la reponse, sous une ligne qui dit qui a repondu a
+qui. Mesure sur la reference dans les DEUX themes : le fond de la citation est une opacite (~62%
+de la bulle sur le fond du fil), sa couleur de texte est deja `--text-muted` ici au pixel pres, et
+le raccord ne laisse aucun interligne.
+[design-reference](docs/wiki/frontend/design-reference.md).
+
 ### Fixed - un "vous avez ete retire de ce groupe" definitif au-dessus d'une conversation qui marche
 
 *"pourquoi j'ai eu ce message systeme ? Tout a l'air de marcher"* (user). Le retrait de l'avis
