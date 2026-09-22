@@ -39,11 +39,11 @@ beforeEach(() => {
     }
   );
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(CELL_CHARS);
-  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(
-    function (this: HTMLElement) {
-      return (this.textContent ?? '').trim().length;
-    }
-  );
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    return (this.textContent ?? '').trim().length;
+  });
 });
 
 afterEach(() => {
