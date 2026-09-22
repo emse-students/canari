@@ -15,6 +15,7 @@
 </script>
 
 <header
+  data-swipe-nav-ignore
   class="app-top-bar border-cn-border sticky top-0 z-20 hidden shrink-0 border-b bg-(--surface-elevated) md:block"
 >
   <div class="flex h-(--app-top-bar-height) items-center justify-between gap-3 px-4 py-2 md:px-6">

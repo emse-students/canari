@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le swipe entre onglets ne s'armait que sur du vide, pas sur les cartes qui remplissent un fil
+
+`shouldIgnoreSwipeTarget` excluait tout `<a>`/`<button>` sans condition - hors la plupart d'un fil
+(publication, formulaire, association) EST un lien, donc seuls les interstices pouvaient demarrer
+le geste. Le tap restait deja protege par la seule chose qui le distingue vraiment, le seuil de
+deplacement - rien n'y changeait en le retirant. Les deux en-tetes restent exclus explicitement
+(`data-swipe-nav-ignore`), une region plutot qu'un type d'element.
+[design-reference](docs/wiki/frontend/design-reference.md#32-a-card-was-excluded-from-the-tab-swipe-gesture-for-being-exactly-what-a-feed-is-made-of).
+
+### Fixed - un doigt qui glissait un peu sur le bouton retour du chat ne cliquait ni ne swipait
+
+`swipeBack.ts` armait le geste sur la seule position horizontale, sans jamais regarder sur quoi le
+doigt s'etait pose - et le bouton retour est l'element le plus a gauche de l'en-tete, donc a
+l'interieur de sa propre zone de bord. Le navigateur annule son propre clic des ~10px de
+deplacement ; le geste, lui, n'engageait rien avant 90px - une zone morte entre les deux ou ni l'un
+ni l'autre ne se declenchait. Verifie desormais localement plutot que de partager le predicat du
+swipe d'onglets voisin, qui repond a la question inverse.
+[chat](docs/wiki/frontend/modules/chat.md#the-edge-swipe-back-gesture-had-no-target-guard-and-the-back-button-sits-inside-its-own-edge-zone-2026-09-22).
+
 ### Changed - une notification silencieuse ne dit plus a Google qui parle ni ou
 
 Le nom de l'expediteur et celui de la conversation sont le seul texte utilisateur non borne de la

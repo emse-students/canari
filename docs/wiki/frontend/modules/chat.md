@@ -1984,6 +1984,37 @@ message, so only the `isOwn` direction was exercised on glass - a peer's bubble 
 way and is covered by tests alone. Nothing here was measured on iOS, where the engine is WebKit and
 the pointer-event path is its own question.
 
+### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
+
+*"you can only swipe page on no elements (if I swipe on a button, it doesn't click it, but doesn't
+swipe either)"* (user). The back button (`ChatHeader.svelte`, and the null-conversation safety net
+in `ChatArea.svelte`) is the LEFTMOST element in the header - well inside `swipeBack.ts`'s default
+28px edge zone - and `onTouchStart` armed the gesture on `clientX` alone, with no check of what the
+touch actually started on.
+
+**Neither outcome fired, and that is the point worth keeping rather than "the swipe was wrong."**
+`swipeBack.ts` never calls `preventDefault()`/`stopPropagation()` anywhere - the browser's OWN
+tap-vs-drag disambiguation cancels the native synthesized `click` once a touch moves roughly 10px
+from its start, independently of any JS here. The gesture's own commit threshold is 90px. A touch
+that starts on the button and drifts even a little - 10 to 90px - therefore lands in a dead zone
+neither side claims: too far for the browser's native click, short of this gesture's own commit.
+
+The fix checks `e.target.closest('button, a[href], [role="button"]')` once at `touchstart`, so
+`tracking` never arms and every later handler's existing `if (!tracking) return` does the rest.
+`swipeBack.test.ts` (new - the action had no test file at all before this) dispatches the same
+minimal touch-event shape `pullToRefresh.test.ts` uses and pins both outcomes: a touch starting on
+a button never sets a transform or calls `onBack`, and a touch starting on plain space inside the
+edge zone still commits.
+
+**THIS IS A LOCAL PREDICATE, NOT `swipeNavigation.ts`'s `shouldIgnoreSwipeTarget`, and the first
+version of this fix reused that one - for a few hours, same day.** The two gestures need OPPOSITE
+answers to "does a button/link arm me": the tab-swipe gesture covers the whole screen, where almost
+everything a reader's thumb lands on IS a card `<a>`, so the user's very next report
+("swipe should occur when starting something else than empty space, not the header though")
+relaxed `shouldIgnoreSwipeTarget` to stop excluding plain buttons/links there. Had `swipeBack.ts`
+kept importing it, that same relaxation would have silently un-fixed the back button. Two questions
+that happen to sound alike get two functions.
+
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 
 **The web had exactly ONE out-of-page unread signal before this, and it is conditional.**

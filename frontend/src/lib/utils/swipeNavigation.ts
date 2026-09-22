@@ -54,8 +54,21 @@ export function isSwipeNavRoute(pathname: string): boolean {
 }
 
 /**
- * Returns true when the touch target lies inside a horizontally scrollable region
- * or an element marked with `data-swipe-nav-ignore`.
+ * Returns true when the touch target lies inside a horizontally scrollable region, a text input,
+ * or an element (or ancestor) marked with `data-swipe-nav-ignore` - which is how a header opts
+ * itself out (`Navbar.svelte`, `MobileHeader.svelte`) rather than this function naming element
+ * TYPES that happen to live there.
+ *
+ * A PLAIN LINK OR BUTTON IS NOT EXCLUDED (2026-09-22, user: *"the swipe should occur when
+ * starting something else than empty space"*). It used to be, which meant almost nothing in a
+ * feed of post/form/association cards - each one an `<a>` - could start the gesture, and "empty
+ * space" was the one region small enough that a reader had to hunt for it. `classifySwipeRelease`
+ * already tells a stationary tap from a real horizontal drag by DISPLACEMENT (`GESTURE_LOCK_PX`,
+ * `SWIPE_THRESHOLD_PX`, the dominance ratio), independent of what element the touch started on -
+ * a tap that never moves enough never reaches `preventDefault`, so a card's own click still fires
+ * exactly as before. Only regions with their OWN horizontal meaning stay excluded: a text field
+ * (dragging to select text), a horizontally-scrollable strip (dragging to scroll it), and anything
+ * carrying its own competing gesture (`data-swipe-reply` message bubbles).
  */
 export function shouldIgnoreSwipeTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -66,8 +79,6 @@ export function shouldIgnoreSwipeTarget(target: EventTarget | null): boolean {
       if (node.dataset.swipeNavIgnore !== undefined) return true;
       if (node.dataset.swipeReply !== undefined) return true;
       const tag = node.tagName;
-      if (tag === 'A' && node.hasAttribute('href')) return true;
-      if (tag === 'BUTTON') return true;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable) {
         return true;
       }

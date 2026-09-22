@@ -75,11 +75,22 @@ describe('shouldIgnoreSwipeTarget', () => {
     expect(shouldIgnoreSwipeTarget(document.getElementById('m'))).toBe(true);
   });
 
-  it('ignores in-app links and buttons', () => {
+  it('does NOT ignore a plain link or button - a feed of card links must stay swipeable', () => {
+    // Used to be excluded outright, which left almost nothing in a card-heavy feed able to start
+    // the gesture. `classifySwipeRelease` is what actually tells a tap from a drag, by
+    // displacement - not this predicate, and not the element's tag.
     document.body.innerHTML =
       '<a id="link" href="/calendar">Agenda</a><button id="btn" type="button">Go</button>';
-    expect(shouldIgnoreSwipeTarget(document.getElementById('link'))).toBe(true);
-    expect(shouldIgnoreSwipeTarget(document.getElementById('btn'))).toBe(true);
+    expect(shouldIgnoreSwipeTarget(document.getElementById('link'))).toBe(false);
+    expect(shouldIgnoreSwipeTarget(document.getElementById('btn'))).toBe(false);
+  });
+
+  it('ignores a link or button inside a data-swipe-nav-ignore region (the app headers)', () => {
+    document.body.innerHTML =
+      '<header data-swipe-nav-ignore><a id="brand" href="/posts">Canari</a>' +
+      '<button id="avatar" type="button">Profile</button></header>';
+    expect(shouldIgnoreSwipeTarget(document.getElementById('brand'))).toBe(true);
+    expect(shouldIgnoreSwipeTarget(document.getElementById('avatar'))).toBe(true);
   });
 });
 
