@@ -172,7 +172,7 @@
 </script>
 
 <aside
-  class="bg-cn-surface sticky top-4 hidden max-h-[calc(100vh-8rem)] w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-2xl shadow-sm transition-all duration-300 xl:flex"
+  class="bg-cn-surface sticky top-(--page-column-top) hidden max-h-[calc(100vh-8rem)] w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-2xl shadow-sm transition-all duration-300 xl:flex"
 >
   <!-- Header. -->
   <div

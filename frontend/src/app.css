@@ -1137,6 +1137,29 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   --side-panel-inset: 1rem;
 }
 
+/* WHERE A PAGE COLUMN STARTS, AND WHERE A STICKY ASIDE BESIDE IT PINS - ONE NUMBER.
+
+   `PageContainer`'s row was `py-6 md:py-8` and the feed's conversations panel was `sticky top-4`.
+   Two numbers for one distance, and they disagreed by 16px: measured on the live estate
+   2026-09-22, the panel tracked the feed exactly (gap 0) until `scrollTop` reached 16, then locked
+   at y=89 while the feed carried on - so it TRAVELLED 16px up its own column before stopping, on
+   every single scroll from the top of the page. Small, and the user reported it as perturbing
+   precisely because nothing else on the page moves relative to anything.
+
+   A sticky offset is not free spacing: it is the SAME distance as the padding above the element,
+   or the element moves by the difference. Stepped here rather than with a `md:` utility so the two
+   can never drift apart again - a step on the padding with none on the offset is exactly the shape
+   of this defect, and `postsPanelOffset.test.ts` refuses both halves separately. */
+:root {
+  --page-column-top: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --page-column-top: 2rem;
+  }
+}
+
 .chat-composer-panel {
   /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
      Kept for the min-height floor `COMPOSER_MIN_HEIGHT` reads (`ChatComposer.svelte`): the padding
