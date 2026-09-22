@@ -32,6 +32,7 @@
     splitTextWithLinks,
     extractFirstUrl,
     getBubbleShapeClass,
+    stackedQuotePosition,
     isGifUrl,
   } from '$lib/utils/chat/messageDisplay';
   import { isEmojiOnlyText } from '$lib/utils/emoji';
@@ -126,7 +127,7 @@
 
   let {
     messageId,
-    senderId: _senderId,
+    senderId,
     content,
     timestamp,
     editedAt,
@@ -281,6 +282,27 @@
       if (resolved && effectiveReplyTo?.senderId === sid) replySenderDisplayName = resolved;
     });
   });
+
+  /**
+   * The author of THIS message, resolved the same way - needed only by the reply caption, which
+   * says who answered whom and therefore names the replier whenever that is not the reader. It is
+   * resolved only while a quote is stacked, so an ordinary bubble asks the directory for nothing.
+   */
+  let senderDisplayName = $state('');
+  $effect(() => {
+    if (!effectiveReplyTo || isOwn) {
+      senderDisplayName = '';
+      return;
+    }
+    const sid = senderId;
+    senderDisplayName = getUserDisplayNameSync(sid, sid);
+    resolveUserDisplayName(sid).then((resolved) => {
+      if (resolved && senderId === sid) senderDisplayName = resolved;
+    });
+  });
+
+  /** True when the quoted message is the reader's own - the caption says "vous" rather than a name. */
+  const quotedIsReader = $derived(!!currentUserId && effectiveReplyTo?.senderId === currentUserId);
 
   // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the
   // removal can reach devices that still hold the placement. Only what still stands is rendered.
@@ -635,113 +657,131 @@
         </div>
       {/if}
 
-      <!-- Main message bubble. -->
+      <!--
+        THE STACK, AND WHY THE DRAG MOVED ONTO IT.
+
+        A quoted message is a second bubble stacked above this one (see `MessageReplyQuote`), so the
+        thing a reply-swipe drags is no longer the bubble alone - the caption and the quote travel
+        with it or the message tears in half mid-gesture. The transform therefore sits here, on the
+        element that holds both, and `message-swipe-reply-active` (`transition: none`, `z-index: 5`)
+        comes with it. The reply hint above stays OUTSIDE this wrapper and does not move, which is
+        the whole point of #966: the icon is revealed in the space the message vacates.
+
+        The bubble keeps `transition-shadow`, which was never transitioning the transform anyway.
+      -->
       <div
-        role="button"
-        tabindex="0"
-        data-swipe-reply
-        data-swipe-nav-ignore
-        use:replySwipeTouchMove
-        onclick={handleBubbleClick}
-        onpointerdown={beginLongPress}
-        onpointermove={handleSwipeReply}
-        onpointerup={endSwipeReply}
-        onpointerleave={endSwipeReply}
-        onpointercancel={endSwipeReply}
-        ontouchstart={beginLongPress}
-        ontouchend={endSwipeReply}
-        ontouchcancel={endSwipeReply}
-        oncontextmenu={(e) => {
-          e.preventDefault();
-          if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
-          showMobileActions = true;
-        }}
-        onkeydown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && !isEditingInline) {
-            e.preventDefault();
-            toggleInfo(e as unknown as MouseEvent);
-          }
-        }}
-        style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
-        class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-          ? 'p-0'
-          : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
-          ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
-          : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-          ? ''
-          : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
+        class="flex w-fit max-w-full flex-col {isOwn ? 'items-end' : 'items-start'} {replyDragPx !==
+        0
           ? 'message-swipe-reply-active'
-          : 'transition-shadow duration-200'} {isMediaOnly ||
-        isLinkOnly ||
-        isGifOnly ||
-        isPollOnly ||
-        isEmojiOnly
-          ? ''
-          : isOwn
-            ? 'text-bubble-out-text bg-bubble-out'
-            : 'text-text-main bg-bubble-in'} {isHighlighted
-          ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
-          : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
+          : ''}"
+        style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
       >
         {#if effectiveReplyTo}
           <MessageReplyQuote
             replyId={effectiveReplyTo.id}
-            senderId={effectiveReplyTo.senderId}
             displayName={replySenderDisplayName}
             content={effectiveReplyTo.content}
+            {isOwn}
+            replierDisplayName={senderDisplayName}
+            {quotedIsReader}
             {onNavigateToMessage}
           />
         {/if}
 
-        {#if pollEnvelope && pollSpec && pollMeta}
-          <ChannelPoll
-            spec={pollSpec}
-            meta={pollMeta}
-            {currentUserId}
-            onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
-            canClose={isOwn && !!onClosePoll}
-            onClose={() => onClosePoll?.(messageId)}
-          />
-        {:else}
-          <MessageMediaRenderer
-            {mediaRef}
-            {blobUrl}
-            {loadError}
-            {mediaPurgedByRetention}
-            {textContent}
-            {isOwn}
-            {textSegments}
-          />
-
-          {#if !mediaRef}
-            <MessageEditForm
-              editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
-              {editText}
-              onEditChange={(text) => (editText = text)}
-              onConfirm={confirmEdit}
-              onCancel={cancelInlineEdit}
+        <!-- Main message bubble. -->
+        <div
+          role="button"
+          tabindex="0"
+          data-swipe-reply
+          data-swipe-nav-ignore
+          use:replySwipeTouchMove
+          onclick={handleBubbleClick}
+          onpointerdown={beginLongPress}
+          onpointermove={handleSwipeReply}
+          onpointerup={endSwipeReply}
+          onpointerleave={endSwipeReply}
+          onpointercancel={endSwipeReply}
+          ontouchstart={beginLongPress}
+          ontouchend={endSwipeReply}
+          ontouchcancel={endSwipeReply}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
+            showMobileActions = true;
+          }}
+          onkeydown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && !isEditingInline) {
+              e.preventDefault();
+              toggleInfo(e as unknown as MouseEvent);
+            }
+          }}
+          class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+            ? 'p-0'
+            : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
+            ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
+            : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+            ? ''
+            : getBubbleShapeClass(
+                effectiveReplyTo ? stackedQuotePosition(groupPosition) : groupPosition,
+                isOwn
+              )} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+            ? ''
+            : isOwn
+              ? 'text-bubble-out-text bg-bubble-out'
+              : 'text-text-main bg-bubble-in'} {isHighlighted
+            ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
+            : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
+        >
+          {#if pollEnvelope && pollSpec && pollMeta}
+            <ChannelPoll
+              spec={pollSpec}
+              meta={pollMeta}
+              {currentUserId}
+              onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
+              canClose={isOwn && !!onClosePoll}
+              onClose={() => onClosePoll?.(messageId)}
+            />
+          {:else}
+            <MessageMediaRenderer
+              {mediaRef}
+              {blobUrl}
+              {loadError}
+              {mediaPurgedByRetention}
+              {textContent}
+              {isOwn}
+              {textSegments}
             />
 
-            {#if !isEditingInline}
-              <MessageTextBody
-                {textSegments}
-                {searchTerm}
-                {isDeleted}
-                {firstLink}
-                jumbo={isEmojiOnly}
+            {#if !mediaRef}
+              <MessageEditForm
+                editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
+                {editText}
+                onEditChange={(text) => (editText = text)}
+                onConfirm={confirmEdit}
+                onCancel={cancelInlineEdit}
               />
+
+              {#if !isEditingInline}
+                <MessageTextBody
+                  {textSegments}
+                  {searchTerm}
+                  {isDeleted}
+                  {firstLink}
+                  jumbo={isEmojiOnly}
+                />
+              {/if}
             {/if}
           {/if}
-        {/if}
 
-        <MessageMetadata
-          {isEdited}
-          {isOwn}
-          {isLastOwn}
-          isReadReceiptAnchor={false}
-          {status}
-          {readBy}
-        />
+          <MessageMetadata
+            {isEdited}
+            {isOwn}
+            {isLastOwn}
+            isReadReceiptAnchor={false}
+            {status}
+            {readBy}
+          />
+        </div>
       </div>
 
       <MessageBubbleToolbar

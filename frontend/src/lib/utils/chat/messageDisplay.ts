@@ -270,6 +270,31 @@ export function splitWithHighlight(
  * The tightened corner is always on the side the bubbles are stacked against - the right for one's
  * own messages, the left for everyone else's - so a column of bubbles reads as one utterance.
  */
+/** Where a bubble sits in a run of messages from the same speaker. */
+export type BubbleGroupPosition = 'single' | 'start' | 'middle' | 'end';
+
+/**
+ * The position a bubble takes once a quoted message is stacked flush above it.
+ *
+ * THE QUOTE IS A BUBBLE FROM THE SAME SPEAKER, so the bubble under it is never the START of
+ * anything - something of that speaker's is already drawn above it, touching it. Measured on
+ * Messenger 579.0.0.61.91 (Mi 9T, 1080px, x2.75): the quote's bottom edge and the reply's top edge
+ * share a pixel row, and the corner where they meet is square on both sides while the three free
+ * corners stay at the full radius. That is exactly what this repository already spells as a
+ * "tail" - `--radius-bubble-tail`, 4px, the corner that says "same speaker, still talking".
+ *
+ * So no new vocabulary is needed: the quote takes `getBubbleShapeClass('start', isOwn)` (tail on
+ * the BOTTOM, facing the reply) and the reply takes this function's answer, which demotes a lone
+ * bubble to an `end` and a group's first bubble to a `middle` - in both cases putting the tail on
+ * the TOP corner facing the quote, and leaving whatever the message group already asked for at the
+ * bottom untouched.
+ */
+export function stackedQuotePosition(position: BubbleGroupPosition): BubbleGroupPosition {
+  if (position === 'single') return 'end';
+  if (position === 'start') return 'middle';
+  return position;
+}
+
 export function getBubbleShapeClass(
   position: 'single' | 'start' | 'middle' | 'end',
   isOwn: boolean

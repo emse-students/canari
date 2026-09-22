@@ -2544,3 +2544,70 @@ both states, shift 0). The panel also declares `transition-all duration-300` who
 is `background-color, color, border-color / 0.18s` - it is currently inert, eaten by an unlayered
 `transition` rule that a separate branch moves into `base`, and it will come alive when that
 lands - on a `sticky` element that resizes when its data arrives, so it is worth re-measuring then.
+
+---
+
+## 37. A quoted message is a second bubble, stacked flush above the reply
+
+The quote was a strip INSIDE the bubble until 2026-09-22: a `border-l-4` bar over `bg-black/5`,
+the author's name in bold above the preview, sharing the reply's background and padding box. The
+user asked for the reference's treatment - *"Pour l'UI des reponses dans les conversations,
+Messenger fait un truc joli. Tu peux regarder et imiter ?"* - and it is a different construction,
+not a restyling.
+
+Measured on Messenger 579.0.0.61.91, Mi 9T, 1080px wide at x2.75 density, reading the SAME thread in
+both themes so the two columns differ only by the theme. The light reading was taken by switching
+the phone with `adb shell cmd uimode night no`, which is what settled the one question a single
+theme cannot answer: whether the quote recedes toward the page or simply darkens.
+
+| | dark | light |
+| --- | --- | --- |
+| thread ground | `#000000` | `#ffffff` |
+| reply bubble | `rgb(51,51,52)` | `rgb(242,244,247)` |
+| quote bubble | `rgb(31,31,31)` | `rgb(247,248,250)` |
+| **quote as a fraction of the bubble, over the ground** | **31/51 = 0.61** | **8/13 = 0.62** |
+| quote text | `rgb(176,179,184)` | `rgb(101,104,108)` |
+| reply text | `rgb(255,255,255)` | `rgb(0,0,0)` |
+| quote text size vs body | same | same |
+| rows of background between quote and reply | **0** | **0** |
+
+**THE QUOTE FILL IS AN OPACITY, NOT A COLOUR.** One number - about 62% of the bubble over the thread
+ground - explains both themes, although one recedes toward black and the other toward white. So it
+needs no token and no hex: `bg-bubble-in/65` and `bg-bubble-out/65`. The 65 rather than the measured
+60-62 is the single deliberate departure and this app's palette forces it: Canari's outgoing bubble
+is `--cn-yellow` carrying DARK text where the reference's is blue carrying white, so receding a
+saturated yellow toward black drags it toward the ink sitting on it. At 60% the dark-theme outgoing
+pair measures 4.45:1, a hair under AA for body text, which this is; 65% is inside the measurement's
+own spread and puts the worst of the four cases at 5.2:1, the other three at 4.6 or better.
+
+**THE QUOTE TEXT WAS ALREADY IN THIS REPOSITORY.** The reference's two values are `rgb(176,179,184)`
+and `rgb(101,104,108)`; `--text-muted` here is `#b0b3b8` and `#65686c` - the same pair exactly, both
+measured from the same reference years apart. An incoming quote is therefore `text-text-muted` at
+full strength, not a dimmed body colour.
+
+**THE SEAM IS A SHARED EDGE, AND IT NEEDED NO NEW VOCABULARY.** The quote's bottom edge and the
+reply's top edge share a pixel row, and the corner where they meet is square on both sides while the
+three free corners stay at the full radius. That is exactly what this repository already spells as a
+tail - `--radius-bubble-tail`, 4px, the corner that says "same speaker, still talking". So the quote
+takes `getBubbleShapeClass('start', isOwn)` and the reply takes `stackedQuotePosition(groupPosition)`,
+which demotes a lone bubble to an `end` and a group's opener to a `middle`: a quote is a bubble from
+the same speaker, so nothing under it is ever the START of anything. Verified on the rendered page,
+both sides: incoming quote `18px 18px 18px 4px` against bubble `4px 18px 18px`, outgoing the mirror,
+and the gap between them 0 in both.
+
+**THE NAME MOVED OUT OF THE QUOTE AND INTO A CAPTION ROW.** The reference does not repeat the author
+inside the quote; it writes one small muted line above the pair - a reply-arrow glyph and "X vous a
+repondu" - inset to the BUBBLE'S TEXT left edge rather than the bubble's own (measured: arrow at
+x=165, quote text at x=160, quote bubble at x=129, so `px-3` matches the bubble's own padding). Four
+phrasings cover it because the caption is the only thing that says who answered whom, and it must
+not lie in the self-reply or third-party cases.
+
+**THE DRAG MOVED WITH IT.** A reply-swipe used to translate the bubble; the quote is now a sibling
+above it, so the transform sits on the wrapper holding both, along with `message-swipe-reply-active`.
+Drag the bubble alone and a reply tears in half mid-gesture. The reply hint stays outside that
+wrapper and still does not move, which is the whole point of section 35.
+
+WHAT THIS DELIBERATELY DID NOT DO: media, link, GIF and poll messages still keep their bubble chrome
+when they carry a quote, where the reference stacks the quote above a naked image. Those four
+already have their own "render naked" paths with their own corner logic, and opening them was beyond
+what was asked.
