@@ -1,13 +1,13 @@
-version: 0.18.18
+version: 0.18.19
 
-Les listes, tirets et sauts de ligne d'une publication s'affichent enfin comme ils ont ete ecrits.
+Un lien partage hors de Canari affiche enfin son affiche, et non plus un cadre vide.
 
-Une publication au nom d'une association montre son logo dans la notification, et non plus la photo de son auteur.
+Un message de salon ne s'affiche plus deux fois.
 
-Quand une publication ne part pas, l'application dit pourquoi.
+Les gestes de balayage ne bloquent plus les appuis, et changer d'onglet ne demande plus de zone vide.
 
-Une notification de salon affiche le message lui-meme au lieu de "Nouveau message".
+Une notification silencieuse ne transmet plus votre nom ni le titre de la conversation.
 
-Modifier une reponse n'efface plus sa citation.
+L'export d'un formulaire est ecrit dans votre langue.
 
-Le tableau des reponses d'un formulaire n'affiche plus de colonnes vides.
+Votre nom s'affiche de la meme maniere partout.
