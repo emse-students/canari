@@ -46,6 +46,7 @@ import {
   type CriteriaContext,
 } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
+import { coreUrl } from '../internal/service-urls';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -782,9 +783,7 @@ export class FormsService {
         },
       ];
 
-      const paymentServiceBase =
-        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
-      const checkoutUrl = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
+      const checkoutUrl = coreUrl('payments/create-checkout-session');
 
       try {
         // If the form belongs to an association, route payment via its connected account
@@ -806,7 +805,7 @@ export class FormsService {
         if (input.userId) {
           try {
             const customerResp = await axios.post<{ customerId: string | null }>(
-              `${paymentServiceBase.replace(/\/$/, '')}/api/payments/internal/customer-id`,
+              coreUrl('payments/internal/customer-id'),
               { userId: input.userId },
               { maxRedirects: 0 }
             );

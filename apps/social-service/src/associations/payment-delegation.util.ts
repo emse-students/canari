@@ -1,6 +1,7 @@
 import type { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import type { Association } from './entities/association.entity';
+import { coreUrl } from '../internal/service-urls';
 
 /** Mirrors core-service's PaymentProviderId - no shared lib crosses this service boundary. */
 export type PaymentProviderId = 'stripe' | 'lydia';
@@ -96,11 +97,10 @@ export function resolvePaymentTarget(
  * the wrong pair of columns.
  */
 export async function fetchActivePaymentProvider(
-  httpService: HttpService,
-  paymentBase: string
+  httpService: HttpService
 ): Promise<PaymentProviderId> {
   const { data } = await firstValueFrom(
-    httpService.get<{ provider: PaymentProviderId }>(`${paymentBase}/api/payments/provider`)
+    httpService.get<{ provider: PaymentProviderId }>(coreUrl('payments/provider'))
   );
   return data.provider === 'lydia' ? 'lydia' : 'stripe';
 }

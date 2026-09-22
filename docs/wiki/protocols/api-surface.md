@@ -27,6 +27,47 @@ the check reported VACUOUS, which is what located it. The internal counterpart b
 called. **A route addressed to users is not an internal API with a longer path**, and a caller that
 guesses a callee's route guesses its guard with it.
 
+### WHO MAY NAME AN INTERNAL BASE URL, AND THE TEST THAT SAYS SO (2026-09-22)
+
+The seam was `internal/service-urls.ts` per service, and on 2026-09-20 a fourth social-service
+caller addressed media-service by hand anyway - because that file offered `deliveryUrl` and nothing
+else. **11 of 11 association posts carrying an image previewed blank in every unfurler** until the
+URL, rather than the status, was read; the story is in
+[seo](../frontend/seo.md#the-api-prefix-is-not-in-the-environment-variable-and-that-cost-the-whole-feature-2026-09-22).
+
+The sweep taken afterwards declared social-service clean. It was not. It had grepped
+`process.env.*_URL`, and **four more call sites reached core-service** - `associations.service.ts`,
+`products.service.ts`, `forms.service.ts` and `pricing-facts.service.ts` - two of them reading the
+base through `ConfigService.get` rather than `process.env`, which is why the grep could not see
+them. All four spelled `/api` correctly, so nothing was broken; what was broken was the belief that
+the convention held.
+
+So the convention is now a test rather than a habit. Each service's `service-urls.spec.ts` walks
+every production `.ts` under its own `src/` and fails if any of them so much as CONTAINS the name of
+an internal base URL - matching the NAME, not the reader, so `ConfigService`, `process.env` and any
+future third way are all caught. The list in each spec is every base that service names:
+
+| Service | Seam | Bases the guard refuses elsewhere |
+|---|---|---|
+| social-service | `deliveryUrl`, `mediaUrl`, `coreUrl` | `DELIVERY_INTERNAL_URL`, `MEDIA_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `USER_SERVICE_URL` |
+| chat-delivery-service | `mediaUrl`, `coreUrl` | `MEDIA_SERVICE_URL`, `CORE_SERVICE_INTERNAL_URL` |
+| core-service | `chatDeliveryUrl`, `socialUrl`, `mediaUrl` | not yet guarded - see below |
+| media-service | none | it calls no other service |
+
+**core-service is the one still half-done**, and deliberately: it reaches social-service two ways,
+through `socialUrl()` and through `getSocialServiceBase()` in `payment/social-internal-client.ts`,
+and its webhook path reads a FOURTH name for the same box. Unifying them touches the Stripe/Lydia
+money path and is its own change.
+
+**ONE SERVICE, FOUR ENVIRONMENT NAMES.** core-service is reached as `PAYMENT_SERVICE_URL` and
+`USER_SERVICE_URL` from social-service and as `CORE_SERVICE_INTERNAL_URL` from
+chat-delivery-service; social-service is reached as `SOCIAL_URL`, `FORM_URL`, `FORM_SERVICE_URL`
+and `SOCIAL_SERVICE_URL`. Every one of them is set to the same Docker hostname, which is exactly
+why the duplication survived - and why `docker-compose.dev.yml` setting `USER_SERVICE_URL` but not
+`PAYMENT_SERVICE_URL` broke nothing and told nobody. The seams read the alternatives in order so
+the three estates behave identically while the compose files disagree. **Unifying the NAMES is a
+deployment change and is deliberately not bundled with a correctness fix.**
+
 ---
 
 ## chat-gateway (port 3000)

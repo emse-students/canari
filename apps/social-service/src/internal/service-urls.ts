@@ -31,6 +31,14 @@
  * three is the worst state a convention can be in. `mediaUrl` exists so media-service stops being
  * the exception this file left out.
  *
+ * AND THE SAME DAY, FOUR MORE CALL SITES WERE FOUND ADDRESSING core-service BY HAND - three
+ * spelling `/api` correctly and one reading the base through `ConfigService` rather than
+ * `process.env`, which is how it stayed invisible: the sweep that found the media-service defect
+ * grepped for `process.env.*_URL` and could not see it. **A convention enforced by a grep is
+ * enforced against the spelling the grep knows.** The guard beside this file therefore matches the
+ * VARIABLE NAME anywhere in a production source, whatever reads it, and lists every internal base
+ * this service names rather than the two that happened to be in the last defect.
+ *
  * AND THE PREFIX WAS ONLY HALF OF THAT THIRD ONE. `mls/devices/<user>` is served behind
  * `HeaderAuthGuard`, so once the URL was right the route answered 401 rather than 404 - a service
  * calling a route addressed to users, with the only credential it has. It fails closed since
@@ -91,4 +99,24 @@ export function deliveryUrl(path: string): string {
  */
 export function mediaUrl(path: string): string {
   return join(process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011', path);
+}
+
+/**
+ * A route on core-service, reachable only over the Docker network.
+ *
+ * TWO ENVIRONMENT NAMES FOR ONE SERVICE, AND BOTH ARE READ ON PURPOSE. `PAYMENT_SERVICE_URL` and
+ * `USER_SERVICE_URL` are set to the same `http://core-service:3012` by the prod and local compose
+ * files; `docker-compose.dev.yml` sets only the second. Nothing broke, because the literal default
+ * below is that same value - which is precisely why the asymmetry survived unnoticed. Reading both
+ * is not decoration: it is what makes the seam behave identically on the three estates while the
+ * compose files disagree. Unifying the NAMES is a deployment change and is deliberately not
+ * bundled here, the same call core-service's own copy made about `SOCIAL_URL`/`FORM_URL`.
+ *
+ * @param path the route as its controller declares it, e.g. `payments/provider`, `internal/users/...`
+ */
+export function coreUrl(path: string): string {
+  return join(
+    process.env.PAYMENT_SERVICE_URL || process.env.USER_SERVICE_URL || 'http://core-service:3012',
+    path
+  );
 }

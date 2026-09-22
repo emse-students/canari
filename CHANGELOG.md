@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - quatre appels internes de plus nommaient une URL de service a la main, et un grep les avait declares propres
+
+Le balayage qui avait trouve l'aperçu blanc cherchait `process.env.*_URL` et ne pouvait pas voir
+les appels lisant la base via `ConfigService`. Tout passe desormais par `internal/service-urls.ts`,
+que chat-delivery-service n'avait pas du tout, et chaque service porte un test qui refuse qu'une
+source de production cite le nom d'une variable de base interne - quel qu'en soit le lecteur.
+[api-surface](docs/wiki/protocols/api-surface.md#who-may-name-an-internal-base-url-and-the-test-that-says-so-2026-09-22).
+
 ### Changed - le swipe entre onglets ne s'armait que sur du vide, pas sur les cartes qui remplissent un fil
 
 `shouldIgnoreSwipeTarget` excluait tout `<a>`/`<button>` sans condition - hors la plupart d'un fil

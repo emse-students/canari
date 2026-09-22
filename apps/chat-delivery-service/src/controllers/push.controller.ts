@@ -35,6 +35,7 @@ import {
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
+import { coreUrl, mediaUrl } from '../internal/service-urls';
 
 /**
  * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
@@ -296,12 +297,10 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
 
-    const coreUrl = process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';
     try {
-      const upstream = await fetch(
-        `${coreUrl}/api/users/${encodeURIComponent(targetUserId)}/avatar`,
-        { signal: AbortSignal.timeout(4_000) }
-      );
+      const upstream = await fetch(coreUrl(`users/${encodeURIComponent(targetUserId)}/avatar`), {
+        signal: AbortSignal.timeout(4_000),
+      });
       if (!upstream.ok) {
         // Core answers 404 for "this user has no photo" and 502 for "the gallery could not be
         // reached"; both are forwarded as they are, because the caller's fallback (Android draws
@@ -356,7 +355,6 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
 
-    const mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
     const internalSecret = process.env.INTERNAL_SECRET ?? '';
     if (!internalSecret) {
       this.logger.warn('getMediaForPush: INTERNAL_SECRET unset - refusing');
@@ -364,10 +362,10 @@ export class PushController {
       return;
     }
     try {
-      const upstream = await fetch(
-        `${mediaUrl}/api/media/internal/${encodeURIComponent(mediaId)}`,
-        { headers: { 'x-internal-secret': internalSecret }, signal: AbortSignal.timeout(5_000) }
-      );
+      const upstream = await fetch(mediaUrl(`media/internal/${encodeURIComponent(mediaId)}`), {
+        headers: { 'x-internal-secret': internalSecret },
+        signal: AbortSignal.timeout(5_000),
+      });
       if (!upstream.ok) {
         res.status(upstream.status).send();
         return;

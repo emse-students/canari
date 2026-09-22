@@ -29,6 +29,7 @@ import {
   type PaymentTarget,
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { coreUrl } from '../internal/service-urls';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -168,14 +169,6 @@ export class ProductsService {
     return { ...product, webhookSecret: null, webhookConfigured: !!product.webhookSecret };
   }
 
-  /** Base URL for calls to core-service (payments), same fallback used by createCheckoutSession below. */
-  private get paymentBase(): string {
-    return (this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012').replace(
-      /\/+$/,
-      ''
-    );
-  }
-
   /**
    * Resolves the payment target for an association, following an approved parent-payment
    * delegation to the parent's account, against the platform's currently active provider
@@ -184,7 +177,7 @@ export class ProductsService {
    */
   private async resolvePaymentTargetFor(asso: Association): Promise<PaymentTarget> {
     const [provider, parent] = await Promise.all([
-      fetchActivePaymentProvider(this.httpService, this.paymentBase),
+      fetchActivePaymentProvider(this.httpService),
       isDelegating(asso)
         ? this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
         : Promise.resolve(null),
@@ -920,7 +913,6 @@ export class ProductsService {
       customAmountCents
     );
 
-    const paymentBase = this.paymentBase;
     const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
 
     // Resolve the Stripe customer ID so the card gets saved after checkout
@@ -928,7 +920,7 @@ export class ProductsService {
     try {
       const resp = await firstValueFrom(
         this.httpService.post<{ customerId: string | null }>(
-          `${paymentBase}/api/payments/internal/customer-id`,
+          coreUrl('payments/internal/customer-id'),
           { userId },
           { maxRedirects: 0 }
         )
@@ -957,7 +949,7 @@ export class ProductsService {
 
     const resp = await firstValueFrom(
       this.httpService.post<{ ok: boolean; url: string; id: string }>(
-        `${paymentBase}/api/payments/create-checkout-session`,
+        coreUrl('payments/create-checkout-session'),
         {
           lineItems: [
             {
