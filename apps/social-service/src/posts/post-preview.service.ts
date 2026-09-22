@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { AssociationsService } from '../associations/associations.service';
+import { mediaUrl } from '../internal/service-urls';
 
 /**
  * WHAT A SHARED `/posts/:id` LINK MAY DISCLOSE TO SOMEBODY WITH NO CANARI SESSION.
@@ -139,11 +140,6 @@ export class PostPreviewService {
     private readonly associations: AssociationsService
   ) {}
 
-  /** Docker-network base URL for media-service, which holds the ciphertext but never the key. */
-  private mediaBaseUrl(): string {
-    return (process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011').replace(/\/$/, '');
-  }
-
   /**
    * THE ONE PREDICATE. Every route on the public surface resolves its post through this, so what a
    * link discloses is decided once rather than restated per endpoint - the shape that left three
@@ -231,12 +227,19 @@ export class PostPreviewService {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), MEDIA_FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(
-        `${this.mediaBaseUrl()}/media/internal/${encodeURIComponent(media.mediaId!)}`,
-        { headers: { 'x-internal-secret': secret }, signal: abort.signal }
-      );
+      const url = mediaUrl(`media/internal/${encodeURIComponent(media.mediaId!)}`);
+      const res = await fetch(url, {
+        headers: { 'x-internal-secret': secret },
+        signal: abort.signal,
+      });
       if (!res.ok) {
-        this.logger.warn(`preview image ${media.mediaId} answered ${res.status}`);
+        // NAMES THE URL, BECAUSE A 404 HAS TWO AUTHORS AND THIS LINE CREDITED THE WRONG ONE.
+        // `preview image <id> answered 404` reads as "media-service holds no such object", and for
+        // two days it meant "Express has no such route" - the request was missing media-service's
+        // global `/api` prefix, and the blob was intact throughout. A status alone cannot separate
+        // this service's own NotFoundException from the framework's unknown-route handler; the
+        // path asked for can, and it is the one thing the reader cannot reconstruct.
+        this.logger.warn(`preview image ${media.mediaId} answered ${res.status} for ${url}`);
         return null;
       }
       const ciphertext = Buffer.from(await res.arrayBuffer());

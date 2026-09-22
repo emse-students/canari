@@ -148,9 +148,45 @@ never point at `/api/media/:id`** — which is why the card used to fall back to
 whether anybody clicks.
 
 The key lives in the post row and media-service has never held it, so the decrypt happens in
-social-service: it fetches the ciphertext from `GET /media/internal/:id` with `X-Internal-Secret`
-and decrypts it there. **This cannot be one more `/media/public/:id`** — the blob is not public, the
+social-service: it fetches the ciphertext from `GET /api/media/internal/:id` with `X-Internal-Secret`
+and decrypts it there. **This cannot be one more `/api/media/public/:id`** — the blob is not public, the
 *decision* to publish it is, and that decision is a property of the post.
+
+
+#### THE `/api` PREFIX IS NOT IN THE ENVIRONMENT VARIABLE, AND THAT COST THE WHOLE FEATURE (2026-09-22)
+
+**This page said `/media/internal/:id` and so did the code, for two days, and not one post preview
+image ever loaded in production.** `MEDIA_SERVICE_URL` names the container; media-service mounts
+every controller under `setGlobalPrefix('api')`. Express answered its own `Cannot GET` 404, which
+social-service logged as `preview image <id> answered 404` - **a sentence that reads as "the object
+is missing"**, sending every reader to the object store, where the blob was intact. The upload log
+for the same id, three minutes earlier, read `Stored encrypted blob: <id> (543364 bytes)`.
+
+Measured on production 2026-09-22, on the probes that separate the causes:
+
+| probe | answer |
+|---|---|
+| association posts with an image, `preview-image` fetched as `facebookexternalhit` | **11 of 11 -> 404** |
+| `og:image` and its declared dimensions, served to that crawler | correct, `1080x1350` |
+| `http://media-service:3011/media/internal/<id>` from inside social-service | **404**, `text/html`, `Cannot GET` |
+| `http://media-service:3011/api/media/internal/<id>`, same call, same secret | **200**, `application/octet-stream`, 543 364 bytes |
+
+So every association post shared into an unfurler since the feature shipped drew a **blank box at
+the declared 1080x1350** - a reserved box being exactly what declaring the dimensions guarantees.
+The card's text half worked throughout, which is why it read as a rendering quirk rather than a
+dead route.
+
+**The fix is not the four missing characters, and the seam for it already existed.**
+`apps/social-service/src/internal/service-urls.ts` was written in August for exactly this class -
+three callers in this service had already addressed chat-delivery-service without its prefix - but
+it only ever offered `deliveryUrl`, so media-service stayed every caller's to address.
+`AssociationsService` spelled `/api/media/...` correctly at both its call sites and
+`PostPreviewService` did not at its one, which is what kept it invisible: **a convention applied in
+two places out of three is the worst state a convention can be in.** `mediaUrl` now sits beside
+`deliveryUrl`, `service-urls.spec.ts` fails if any production source names an internal base URL
+again, and `post-preview.service.spec.ts` pins the URL the preview actually requests - **every
+refusal on that path had been asserted, and the happy path's one outbound call had not.** The
+warning also names the URL now, because a status alone credits the wrong author for a 404.
 
 Two details that are the whole difference between this working and failing:
 

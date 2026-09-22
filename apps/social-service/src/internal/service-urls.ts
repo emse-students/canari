@@ -21,6 +21,16 @@
  * Measured on production 2026-08-14 from the delivery service's own logs, during the MSG phase of
  * the cross-client campaign - which is what a server-side observer buys.
  *
+ * A FOURTH CALLER REPEATED IT ON 2026-09-20, because this file only offered `deliveryUrl` and
+ * media-service was therefore still every caller's to address. `PostPreviewService` fetched
+ * `/media/internal/:id`; Express answered its own `Cannot GET` 404, logged as
+ * `preview image <id> answered 404` - which reads as a missing object, so the intact blob was
+ * never suspected. **11 of 11 association posts carrying an image previewed blank in every
+ * unfurler**, measured on production 2026-09-22. `AssociationsService` had it right at both of its
+ * call sites, which is precisely what kept it invisible: a convention applied in two places out of
+ * three is the worst state a convention can be in. `mediaUrl` exists so media-service stops being
+ * the exception this file left out.
+ *
  * AND THE PREFIX WAS ONLY HALF OF THAT THIRD ONE. `mls/devices/<user>` is served behind
  * `HeaderAuthGuard`, so once the URL was right the route answered 401 rather than 404 - a service
  * calling a route addressed to users, with the only credential it has. It fails closed since
@@ -72,4 +82,13 @@ function join(baseUrl: string, path: string): string {
  */
 export function deliveryUrl(path: string): string {
   return join(process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010', path);
+}
+
+/**
+ * A route on media-service, reachable only over the Docker network.
+ *
+ * @param path the route as its controller declares it, e.g. `media/internal/<id>`, `media/upload/public`
+ */
+export function mediaUrl(path: string): string {
+  return join(process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011', path);
 }

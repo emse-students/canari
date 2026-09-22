@@ -15,7 +15,7 @@ import type { AssociationsService } from '../associations/associations.service';
  * feature request will ever exercise - so they are pinned here, one test each.
  */
 
-const UUID = '41111876-86bd-44c5-af60-d1fc194588a0';
+const UUID = '00000000-0000-4000-8000-0000000000aa';
 
 /** A published association post with no media, the baseline every refusal deviates from. */
 function post(overrides: Partial<Post> = {}): Post {
@@ -206,5 +206,41 @@ describe('PostPreviewService.readShareableImage', () => {
     const media = [{ mediaId: 'm1', key: 'aa', iv: 'bb', mimeType: 'image/webp' }];
     const refused = service(post({ media, hiddenByModeration: true }));
     expect(await refused.readShareableImage(UUID)).toBeNull();
+  });
+
+  /**
+   * THE URL ITSELF, BECAUSE NOTHING HERE ASSERTED IT AND THAT IS HOW THE DEFECT SHIPPED.
+   *
+   * media-service mounts its controllers under a global `/api` prefix; this service fetched
+   * `/media/internal/:id` and Express answered its own `Cannot GET` 404. The service logged
+   * `preview image <id> answered 404`, which reads as a missing object, so the blob - sitting
+   * intact in the bucket - was never suspected. Measured on production 2026-09-22: 11 of 11
+   * association posts with an image, every one of them blank in every unfurler.
+   *
+   * Every refusal above was pinned; the happy path's one outbound call was not.
+   */
+  it('asks media-service under the /api prefix its controllers are mounted on', async () => {
+    const previousSecret = process.env.INTERNAL_SECRET;
+    const previousBase = process.env.MEDIA_SERVICE_URL;
+    process.env.INTERNAL_SECRET = 'secret';
+    process.env.MEDIA_SERVICE_URL = 'http://media-service:3011';
+    const realFetch = global.fetch;
+    const seen: string[] = [];
+    global.fetch = jest.fn((url: unknown) => {
+      seen.push(String(url));
+      return Promise.resolve({ ok: false, status: 404 } as Response);
+    }) as unknown as typeof fetch;
+
+    try {
+      const media = [{ mediaId: 'm1', key: 'aa', iv: 'bb', mimeType: 'image/webp' }];
+      await service(post({ media })).readShareableImage(UUID);
+      expect(seen).toEqual(['http://media-service:3011/api/media/internal/m1']);
+    } finally {
+      global.fetch = realFetch;
+      if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previousSecret;
+      if (previousBase === undefined) delete process.env.MEDIA_SERVICE_URL;
+      else process.env.MEDIA_SERVICE_URL = previousBase;
+    }
   });
 });
