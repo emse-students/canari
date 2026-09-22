@@ -235,9 +235,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
 5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
-   and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
-   reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
-   ([backlog](docs/wiki/backlog.md)).
+   and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
+   WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
+   so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
 6. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
@@ -269,7 +269,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing
+17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
 18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).

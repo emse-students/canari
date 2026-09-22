@@ -1001,6 +1001,29 @@ somebody finally read it.
 **AND WHEN A USER'S QUESTION CONTRADICTS AN ENTRY HERE, THE ENTRY IS THE THING TO CHECK FIRST.**
 They are describing what their phone does; the entry is describing what somebody inferred.
 
+### A CLAIM THAT SOMETHING IS UNSHIPPED NAMES A TAG, OR IT IS NOT A CLAIM
+
+`CLAUDE.md` says it plainly - *a merged fix is not a shipped fix* - and the backlog then wrote the
+opposite eight times. Swept 2026-09-22: eight entries said "not yet shipped", "NOT SHIPPED" or
+"UNSHIPPED" about fixes merged between 2026-09-06 and 2026-09-16, and **every one of them had shipped**,
+some for a fortnight. The `CORRUPT` work package was the expensive one: it said *"the reader shipped
+2026-09-08"* when 2026-09-08 was the MERGE, and the reader actually reached users on 2026-09-21 in
+`v0.18.18` - a claim that was wrong in BOTH directions at once, and it gates a write-path change
+nobody may make until the reader is really the floor.
+
+**The failure is structural, not sloppy.** "Unshipped" is true on the day it is typed and decays
+silently: no gate reads prose, no release rewrites a doc, and the writer has no reason to come back.
+A date decays the same way. So a claim of this shape carries the one thing that does not decay:
+
+- **shipped** -> name the tag, `shipped in v0.18.18`. One command checks it: `git tag --contains <sha>`.
+- **merged, not yet released** -> say so against a tag too, `merged, not in v0.18.17`, so the next
+  reader knows exactly what to compare against rather than re-deriving the question.
+
+And when an entry's WHOLE POINT is a precondition of that shape - "flip the writer once the reader is
+the floor" - the entry says which tag carries the reader and which store still owes it, because a
+later session will otherwise act on the date and ship the downgrade hazard the sequence existed to
+avoid.
+
 ### AN OPEN ITEM WHOSE SUBSTANCE HAS NEVER BEEN IN THE REPOSITORY IS NOT AN OPEN ITEM
 
 `CLAUDE.md` says the repository is the only reference and that nothing may exist solely in a chat
@@ -1617,6 +1640,18 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   must compare the two copies. And prefer the narrow derivation - `-u` (tracked modifications) over
   `-A` (anything present) - because the wide one is a behaviour change wearing a simplification's
   clothes. See [cicd](cicd.md#version-bump).
+
+- **A LOCAL GATE IS ONLY A GATE WHILE `node_modules` MATCHES THE LOCKFILE, AND IT FAILS QUIETLY IN
+  THE REASSURING DIRECTION.** Measured 2026-09-22: `bun run format` on this workstation reported
+  1094 files correctly formatted and CI refused the very same commit on `format:check`, naming one
+  file. The file was not the problem - `frontend/node_modules` held **oxfmt 0.67.0** while `bun.lock`
+  and CI both use **0.68.0**, and the two disagree about where a `function (this: T)` argument
+  breaks. Nothing warned: a stale install has no symptom, and the local run says PASS, which is the
+  worst thing it could say. So when a gate that passes here fails there and the diff is pure
+  formatting or pure lint, the FIRST question is the tool's own version, not the code -
+  `bun install --frozen-lockfile`, then re-run. The general form: a check is a claim about the
+  checker, so **pin it and verify the pin before believing the check**, exactly as `.bun-version` is
+  the one place this repo names a bun.
 
 - **A BOT'S PUSH OBEYS THE SAME RULESET A HUMAN'S DOES, AND THE ACTIONS APP CANNOT BE EXEMPTED FROM
   A REPOSITORY RULESET.** `GITHUB_TOKEN` acts as `github-actions[bot]`, which is not a bypass actor
