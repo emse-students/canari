@@ -18,6 +18,13 @@ la barre occupait 73px pour un token qui en annonce 72, et toutes les cartes flo
 pixel trop haut. Dans la foulee, le panneau "Discussions" du fil deduit son plafond de ces memes
 tokens au lieu d'un `calc(100vh-8rem)` ecrit a la main, qui le faisait remonter de 9px au scroll.
 [design-reference](docs/wiki/frontend/design-reference.md).
+### Fixed - la notification doublee ne peut pas arriver sur desktop ni sur le web, et un garde-fou le dit
+
+Reste de G1 (2026-09-18). Le doublon demande DEUX constructeurs atteints par DEUX declencheurs :
+desktop et web n'ont pas le second - toutes les commandes de `commands/push.rs` sont
+`#[cfg(any(android, ios))]` et le frontend n'embarque aucun service worker. Un test refuse desormais
+tout second constructeur de banniere.
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 
 ### Fixed - un bandeau deplacait la barre Canari et cinq cartes flottantes ne l'apprenaient jamais
 
