@@ -803,9 +803,25 @@ export async function deleteAssociation(id: string): Promise<{ ok: boolean }> {
   });
 }
 
+/**
+ * WHICH LOGO OF A LIST IS BEING WRITTEN.
+ *
+ * A list can run two themes at once - the campaign's public one and the one it is actually called -
+ * so it carries `name2` and `logoMediaId2` beside `name` and `logoUrl`. `second` is a QUERY on the
+ * one endpoint, not a second route: the permission flag, the ceiling, the mime allowlist and the
+ * deletion of what it replaces are identical, and only the column differs.
+ */
+export type LogoSlot = 'primary' | 'second';
+
+/** `?slot=second`, or nothing at all - the server reads anything else as the primary slot. */
+function logoSlotQuery(slot: LogoSlot): string {
+  return slot === 'second' ? '?slot=second' : '';
+}
+
 export async function uploadAssociationLogo(
   associationId: string,
-  file: File
+  file: File,
+  slot: LogoSlot = 'primary'
 ): Promise<Association> {
   const base = socialUrl();
   const token = await getToken().catch(() => '');
@@ -813,11 +829,14 @@ export async function uploadAssociationLogo(
   fd.append('file', file);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${base}/api/associations/${encodeURIComponent(associationId)}/logo`, {
-    method: 'POST',
-    headers,
-    body: fd,
-  });
+  const res = await fetch(
+    `${base}/api/associations/${encodeURIComponent(associationId)}/logo${logoSlotQuery(slot)}`,
+    {
+      method: 'POST',
+      headers,
+      body: fd,
+    }
+  );
   if (!res.ok) {
     const details = await res.text().catch(() => '');
     throw new Error(`associations ${res.status}: ${details || res.statusText}`);
@@ -825,10 +844,27 @@ export async function uploadAssociationLogo(
   return (await res.json()) as Association;
 }
 
-export async function deleteAssociationLogo(associationId: string): Promise<Association> {
-  return request<Association>(`/api/associations/${encodeURIComponent(associationId)}/logo`, {
-    method: 'DELETE',
-  });
+export async function deleteAssociationLogo(
+  associationId: string,
+  slot: LogoSlot = 'primary'
+): Promise<Association> {
+  return request<Association>(
+    `/api/associations/${encodeURIComponent(associationId)}/logo${logoSlotQuery(slot)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/**
+ * The public URL of a list's SECOND theme logo, or `null` when it has none.
+ *
+ * It is built from the media id rather than read from a column, because there is no `logoUrl2`:
+ * `logoUrl` exists only to carry a `?v=` cache-buster for the primary logo, and a media id changes
+ * on every upload, so it is its own buster. ONE derivation, so the two surfaces that render it -
+ * the tile and the detail header - cannot disagree about the path.
+ */
+export function associationSecondLogoSrc(logoMediaId2: string | null | undefined): string | null {
+  const id = logoMediaId2?.trim();
+  return id ? associationLogoSrc(`/api/media/public/${id}`) : null;
 }
 
 /**

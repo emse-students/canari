@@ -41,7 +41,7 @@
    * that header is now optional: `AssociationAvatar` falls back to INITIALS, and an association with
    * no logo showing a generic glyph would lose the one thing that tells it apart.
    */
-  import type { Association } from '$lib/associations/api';
+  import { associationSecondLogoSrc, type Association } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -71,8 +71,29 @@
   const accent = $derived(associationAccent(association));
   const description = $derived(association.description?.trim() ?? '');
   const memberCount = $derived(association.memberCount ?? 0);
-  /** A list's promo, shown as a pill; `promo` is null on a regular association. */
-  const listPromo = $derived(association.type === 'list' ? association.promo : null);
+  const isList = $derived(association.type === 'list');
+
+  /**
+   * A list's SECOND theme - the one it runs beside the campaign's public one.
+   *
+   * Either half may be present without the other: a list can be renamed before its second logo is
+   * uploaded, and a logo can be uploaded before the name is decided. So the block is drawn when
+   * EITHER exists, and the name falls back to the main one for the avatar's initials - never for
+   * the label, which would print the same name twice.
+   */
+  const secondName = $derived(isList ? (association.name2?.trim() ?? '') : '');
+  const secondLogoUrl = $derived(
+    isList ? associationSecondLogoSrc(association.logoMediaId2) : null
+  );
+  const hasSecondTheme = $derived(Boolean(secondName) || Boolean(secondLogoUrl));
+
+  /**
+   * THE COUNT IS FOR ASSOCIATIONS, NOT FOR LISTS (user, 2026-09-22). A list's card is read to find
+   * a campaign, and "0 membres" on a list whose members have not been registered yet says nothing
+   * a reader wants - the shelf it sits on already says what year it belongs to. The archived and
+   * "Membre" notes stay on both, because those answer questions the shelf does not.
+   */
+  const showsMemberCount = $derived(!isList);
 </script>
 
 <a {href} class="block h-full">
@@ -101,19 +122,35 @@
           <h3 class="text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]">
             {association.name}
           </h3>
-          {#if association.type === 'list'}
-            <div class="mt-1 flex flex-wrap items-center gap-1">
-              <span
-                class="text-cn-dark bg-cn-dark/10 rounded-full px-2 py-0.5 text-xs font-semibold"
-              >
-                {listPromo
-                  ? m.assoc_list_promo_badge({ promo: listPromo })
-                  : m.assoc_list_type_badge()}
-              </span>
-            </div>
-          {/if}
         </div>
       </div>
+
+      <!--
+        THE SECOND THEME, SMALL, UNDER BOTH MAIN ONES (user, 2026-09-22: *"affiche, s'ils sont
+        presents, les logos et titres fake en petit en dessous des principaux"*). It is a campaign
+        list's other identity, so it is subordinate on purpose: `sm` is the 24px avatar against the
+        main `lg`'s 48px, and the label takes the muted colour the parent name above already uses.
+
+        NO "LISTE 2026" PILL ANY MORE. It repeated the shelf heading this card sits under
+        (*"c'est deja dans Campagnes 2026, pourquoi doubler ?"*), which is the only place the year
+        needs saying.
+      -->
+      {#if hasSecondTheme}
+        <div class="-mt-1 flex items-center gap-2">
+          <AssociationAvatar
+            name={secondName || association.name}
+            logoUrl={secondLogoUrl}
+            size="sm"
+          />
+          {#if secondName}
+            <span
+              class="text-text-muted line-clamp-2 min-w-0 text-xs font-semibold [overflow-wrap:anywhere]"
+            >
+              {secondName}
+            </span>
+          {/if}
+        </div>
+      {/if}
 
       {#if description}
         <!--
@@ -141,16 +178,27 @@
             {association.role}
           </span>
         </div>
-      {:else}
+      {:else if showsMemberCount || association.archived || isMember}
         <p class="text-text-muted mt-auto pt-1 text-xs">
-          {memberCount !== 1
-            ? m.assoc_member_count_many({ count: memberCount })
-            : m.assoc_member_count_one({ count: memberCount })}
+          {#if showsMemberCount}
+            {memberCount !== 1
+              ? m.assoc_member_count_many({ count: memberCount })
+              : m.assoc_member_count_one({ count: memberCount })}
+          {/if}
+          <!--
+            The separator belongs to the COUNT, not to the note: a list prints no count, so a
+            leading middot would open the line with punctuation standing for nothing.
+          -->
           {#if association.archived}
-            <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
+            <span class="font-semibold">
+              {#if showsMemberCount}&#183;{/if}
+              {m.assoc_list_archived_badge()}
+            </span>
           {:else if isMember}
-            <span class="text-cn-dark ml-1 font-semibold">&#183; {m.assoc_list_member_badge()}</span
-            >
+            <span class="text-cn-dark font-semibold">
+              {#if showsMemberCount}&#183;{/if}
+              {m.assoc_list_member_badge()}
+            </span>
           {/if}
         </p>
       {/if}

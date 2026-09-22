@@ -62,6 +62,17 @@ import { sanitizeLog } from '../common/log.utils';
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+/**
+ * WHICH LOGO OF A LIST IS BEING WRITTEN.
+ *
+ * A list can run two themes at once - the campaign's public one and the one it is actually called
+ * - so it carries `name2` and `logoMediaId2` beside `name` and `logoMediaId`. The second slot has
+ * no `logoUrl2` column on purpose: `logoUrl` exists only because it carries a `?v=` cache-buster
+ * for the PRIMARY logo, which every tile in the app renders; the second is read from its media id
+ * directly by the two surfaces that show it. One upload implementation, one column to choose.
+ */
+export type LogoSlot = 'primary' | 'second';
+
 /** A single public document exposed to a reviewer, with its server-derived CEK. */
 export interface ReviewerDocument {
   id: string;
@@ -492,11 +503,12 @@ export class AssociationsService {
     }
   }
 
-  /** Validates the uploaded file (size ≤ 2 MB, JPEG/PNG/WebP), uploads it to the media-service, then updates logoMediaId/logoUrl and deletes the previous logo if one existed. */
+  /** Validates the uploaded file (size ≤ 2 MB, JPEG/PNG/WebP), uploads it to the media-service, then updates the chosen logo slot and deletes the previous object if one existed. */
   async setLogoFromUpload(
     associationId: string,
     file: { buffer: Buffer; mimetype: string; size: number },
-    authorization: string | undefined
+    authorization: string | undefined,
+    slot: LogoSlot = 'primary'
   ) {
     await this.findById(associationId);
     const bearer = this.requireBearer(authorization);
@@ -510,18 +522,24 @@ export class AssociationsService {
 
     const previous = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: { id: true, logoMediaId: true },
+      select: { id: true, logoMediaId: true, logoMediaId2: true },
     });
-    const oldMediaId = previous?.logoMediaId ?? null;
+    const oldMediaId = (slot === 'second' ? previous?.logoMediaId2 : previous?.logoMediaId) ?? null;
 
     const mediaId = await this.uploadLogoToMedia(file, bearer);
 
-    await this.assoRepo.update(associationId, { logoMediaId: mediaId });
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-    if (!asso) throw new NotFoundException('Association not found');
-    const v = asso.updatedAt instanceof Date ? asso.updatedAt.getTime() : Date.now();
-    const logoUrl = `/api/media/public/${mediaId}?v=${v}`;
-    await this.assoRepo.update(associationId, { logoUrl });
+    if (slot === 'second') {
+      await this.assoRepo.update(associationId, { logoMediaId2: mediaId });
+    } else {
+      await this.assoRepo.update(associationId, { logoMediaId: mediaId });
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      if (!asso) throw new NotFoundException('Association not found');
+      const v = asso.updatedAt instanceof Date ? asso.updatedAt.getTime() : Date.now();
+      // The cache-buster belongs to the column that HAS one. The second slot is read from its media
+      // id, which changes on every upload and is therefore its own buster.
+      const logoUrl = `/api/media/public/${mediaId}?v=${v}`;
+      await this.assoRepo.update(associationId, { logoUrl });
+    }
 
     if (oldMediaId && oldMediaId !== mediaId) {
       await this.deleteMediaBestEffort(oldMediaId, bearer);
@@ -531,22 +549,23 @@ export class AssociationsService {
     return this.findById(associationId);
   }
 
-  /** Removes the association's stored logo: clears the DB columns and attempts to delete the old media object. */
+  /** Removes a stored logo: clears the DB columns for the chosen slot and attempts to delete the old media object. */
   async clearStoredLogo(
     associationId: string,
-    authorization: string | undefined
+    authorization: string | undefined,
+    slot: LogoSlot = 'primary'
   ): Promise<Association> {
     await this.findById(associationId);
     const row = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: { id: true, logoMediaId: true },
+      select: { id: true, logoMediaId: true, logoMediaId2: true },
     });
-    const oldMediaId = row?.logoMediaId ?? null;
+    const oldMediaId = (slot === 'second' ? row?.logoMediaId2 : row?.logoMediaId) ?? null;
 
-    await this.assoRepo.update(associationId, {
-      logoMediaId: null,
-      logoUrl: null,
-    });
+    await this.assoRepo.update(
+      associationId,
+      slot === 'second' ? { logoMediaId2: null } : { logoMediaId: null, logoUrl: null }
+    );
 
     const bearer = authorization?.trim();
     if (oldMediaId && bearer?.startsWith('Bearer ')) {
