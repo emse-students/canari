@@ -113,7 +113,7 @@ one-holder conversations became one, while the estate grew from 58 live groups t
 epoch-284 DM with six pending devices is gone from the list - its Welcomes landed. Zero-holder has
 no population at all and no ERROR line has ever been emitted. Every measurement, the sweep for seats
 with no client behind them, and the queue figures that refuted a second worry are in
-[the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22).
+[the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked).
 
 **What is left is TWO DECISIONS AND NO WORK**, unchanged in substance since 2026-09-12 and now
 resting on a population of one:

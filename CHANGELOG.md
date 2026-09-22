@@ -18,7 +18,7 @@ groupes vivants, et le DM a l'epoch 284 a recu ses Welcomes. La seule qui reste 
 attendue : ses deux appareils actifs appartiennent au meme utilisateur, et l'autre membre occupe un
 siege sans aucun appareil MLS. Un balayage complet en trouve **deux**, dont une seule reelle, prise
 pendant la fenetre ou `userHasMlsDevices` valait toujours `true`.
-[etat MLS](docs/wiki/protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22).
+[etat MLS](docs/wiki/protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked).
 
 ## [0.18.19] - 2026-09-22
 
