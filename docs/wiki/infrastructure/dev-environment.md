@@ -183,6 +183,26 @@ That the platform cannot declare payments disabled is in [backlog](../backlog.md
 column list in (b) from the entity declarations and fails if a payment column is added without being
 stripped, so a schema change cannot disarm the step silently.
 
+### THE CONSEQUENCE NOBODY HAD WRITTEN DOWN: A MEDIA PATH CANNOT BE REHEARSED HERE (2026-09-22)
+
+The copy strips every media REFERENCE as well, and the script verifies it - `COPY_STRIPS_MEDIA_RESIDUE_SQL`
+must answer `0`. Dev's Garage bucket is separate from production's and holds nothing that a copy
+could point at, so the alternative would be a database full of ids resolving to blobs that do not
+exist: a 404 on every image, indistinguishable from the defect one might be looking for. Stripping
+is the right call.
+
+**The consequence is that dev cannot answer a question about media, and this had never been
+recorded.** Measured on 2026-09-22 while trying to confirm the post-preview fix there: dev held 134
+posts, **0 of them carrying an image**, and its bucket held **0 objects**. There was nothing to
+render and no way to tell a working preview from a broken one.
+
+So a fix on a media path is **verified on production after the stable deploys, or it is not
+verified**. That is not a gap to close - closing it would mean copying real students' photographs
+onto a second estate - but it is a precondition to state before planning the verification, because
+the ordinary instinct is "rehearse it on dev first" and here that instinct silently returns nothing.
+The same holds for any path whose evidence is a stored object rather than a row: avatars, post
+images, association logos, document attachments.
+
 ---
 
 ## 4. The version gap, and the one kind of evidence that lifts a ceiling
