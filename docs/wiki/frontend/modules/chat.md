@@ -1999,14 +1999,21 @@ from its start, independently of any JS here. The gesture's own commit threshold
 that starts on the button and drifts even a little - 10 to 90px - therefore lands in a dead zone
 neither side claims: too far for the browser's native click, short of this gesture's own commit.
 
-The fix reuses `shouldIgnoreSwipeTarget` from `swipeNavigation.ts` (the sibling tab-swipe gesture,
-[design-reference](../design-reference.md)) rather than writing a second predicate for the same
-question - it already excludes `BUTTON`, `A[href]`, form controls and horizontally-scrollable
-ancestors, checked once at `touchstart` so `tracking` never arms and every later handler's existing
-`if (!tracking) return` does the rest. `swipeBack.test.ts` (new - the action had no test file at
-all before this) dispatches the same minimal touch-event shape `pullToRefresh.test.ts` uses and
-pins both outcomes: a touch starting on a button never sets a transform or calls `onBack`, and a
-touch starting on plain space inside the edge zone still commits.
+The fix checks `e.target.closest('button, a[href], [role="button"]')` once at `touchstart`, so
+`tracking` never arms and every later handler's existing `if (!tracking) return` does the rest.
+`swipeBack.test.ts` (new - the action had no test file at all before this) dispatches the same
+minimal touch-event shape `pullToRefresh.test.ts` uses and pins both outcomes: a touch starting on
+a button never sets a transform or calls `onBack`, and a touch starting on plain space inside the
+edge zone still commits.
+
+**THIS IS A LOCAL PREDICATE, NOT `swipeNavigation.ts`'s `shouldIgnoreSwipeTarget`, and the first
+version of this fix reused that one - for a few hours, same day.** The two gestures need OPPOSITE
+answers to "does a button/link arm me": the tab-swipe gesture covers the whole screen, where almost
+everything a reader's thumb lands on IS a card `<a>`, so the user's very next report
+("swipe should occur when starting something else than empty space, not the header though")
+relaxed `shouldIgnoreSwipeTarget` to stop excluding plain buttons/links there. Had `swipeBack.ts`
+kept importing it, that same relaxation would have silently un-fixed the back button. Two questions
+that happen to sound alike get two functions.
 
 ### The tab is an unread signal, and it needs no permission (2026-08-31)
 
