@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.20] - 2026-09-22
+
 ### Fixed - le token "ou commence le contenu" etait plus court d'un pixel que la barre qu'il decrit
 
 `h-(--app-top-bar-height)` etait sur la rangee INTERIEURE, `border-b` sur le `<header>` autour :
