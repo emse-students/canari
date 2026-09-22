@@ -16,29 +16,14 @@ import { UsersService } from '../users/users.service';
 import { PaymentService } from './payment.service';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
-  getSocialServiceBase,
   internalSocialRequestConfig,
-  internalSubmissionPath,
-  productPurchaseCompletedPath,
+  internalSubmissionUrl,
+  productPurchaseCompletedUrl,
 } from './social-internal-client';
+import { socialUrl } from '../internal/service-urls';
 import { STRIPE_API_VERSION } from './stripe-api-version';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Parse a service base URL for server-to-server calls: http(s) only, no userinfo, path must be empty or "/". */
-function parseSafeServiceOrigin(raw: string, envName: string): URL {
-  const parsed = new URL(raw);
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error(`${envName} must use http or https`);
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error(`${envName} must not include credentials`);
-  }
-  if (parsed.pathname !== '/' && parsed.pathname !== '') {
-    throw new Error(`${envName} must be an origin only (no path)`);
-  }
-  return parsed;
-}
 
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
@@ -65,10 +50,6 @@ export class PaymentWebhookController {
       : (null as unknown as Stripe);
   }
 
-  private get formServiceOrigin(): string {
-    return getSocialServiceBase();
-  }
-
   /** Marks a form submission as paid via the internal social-service route. */
   private async markSubmissionPaidInternal(
     submissionId: string,
@@ -76,7 +57,7 @@ export class PaymentWebhookController {
   ): Promise<void> {
     assertValidSubmissionId(submissionId);
     await axios.post(
-      `${this.formServiceOrigin}${internalSubmissionPath(submissionId, 'mark-paid')}`,
+      internalSubmissionUrl(submissionId, 'mark-paid'),
       sessionId ? { sessionId } : {},
       {
         ...internalSocialRequestConfig(),
@@ -99,12 +80,8 @@ export class PaymentWebhookController {
     if (!UUID_RE.test(productId)) {
       throw new Error(`Invalid productId: ${productId}`);
     }
-    const socialBase =
-      this.config.get<string>('SOCIAL_SERVICE_URL') || 'http://social-service:3014';
-    const parsedBase = parseSafeServiceOrigin(socialBase, 'SOCIAL_SERVICE_URL');
-    const url = new URL(productPurchaseCompletedPath(productId), `${parsedBase.origin}/`).href;
     await axios.post(
-      url,
+      productPurchaseCompletedUrl(productId),
       { userId, amountCents, paymentIntentId: paymentReference },
       {
         ...internalSocialRequestConfig(),
@@ -119,7 +96,7 @@ export class PaymentWebhookController {
   private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
     assertValidSubmissionId(submissionId);
     await axios.post(
-      `${this.formServiceOrigin}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
+      internalSubmissionUrl(submissionId, 'cancel-pending'),
       {},
       {
         ...internalSocialRequestConfig(),
@@ -304,18 +281,15 @@ export class PaymentWebhookController {
           this.logger.error(`Invalid associationId in webhook metadata: ${associationId}`);
         } else {
           try {
-            const socialServiceBase =
-              this.config.get<string>('SOCIAL_SERVICE_URL') || 'http://social-service:3014';
-            const parsedBase = parseSafeServiceOrigin(socialServiceBase, 'SOCIAL_SERVICE_URL');
-            const url = new URL(
-              `/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
-              `${parsedBase.origin}/`
-            ).href;
-            await axios.post(url, undefined, {
-              ...internalSocialRequestConfig(),
-              timeout: 15_000,
-              validateStatus: (s) => s >= 200 && s < 300,
-            });
+            await axios.post(
+              socialUrl(`associations/${encodeURIComponent(associationId)}/stripe-complete`),
+              undefined,
+              {
+                ...internalSocialRequestConfig(),
+                timeout: 15_000,
+                validateStatus: (s) => s >= 200 && s < 300,
+              }
+            );
             this.logger.log(`Marked association ${associationId} stripe onboarding complete`);
           } catch (err: unknown) {
             const error = err as Error & { response?: { data?: unknown } };

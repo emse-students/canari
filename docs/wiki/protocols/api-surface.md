@@ -51,13 +51,34 @@ future third way are all caught. The list in each spec is every base that servic
 |---|---|---|
 | social-service | `deliveryUrl`, `mediaUrl`, `coreUrl` | `DELIVERY_INTERNAL_URL`, `MEDIA_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `USER_SERVICE_URL` |
 | chat-delivery-service | `mediaUrl`, `coreUrl` | `MEDIA_SERVICE_URL`, `CORE_SERVICE_INTERNAL_URL` |
-| core-service | `chatDeliveryUrl`, `socialUrl`, `mediaUrl` | not yet guarded - see below |
+| core-service | `chatDeliveryUrl`, `socialUrl`, `mediaUrl` | `CHAT_DELIVERY_URL`, `SOCIAL_URL`, `FORM_URL`, `FORM_SERVICE_URL`, `SOCIAL_SERVICE_URL`, `MEDIA_SERVICE_URL` |
 | media-service | none | it calls no other service |
 
-**core-service is the one still half-done**, and deliberately: it reaches social-service two ways,
-through `socialUrl()` and through `getSocialServiceBase()` in `payment/social-internal-client.ts`,
-and its webhook path reads a FOURTH name for the same box. Unifying them touches the Stripe/Lydia
-money path and is its own change.
+**core-service was the one still half-done, and closed the same day.** It reached social-service two
+ways - `socialUrl()` and `getSocialServiceBase()` in `payment/social-internal-client.ts` - and its
+Stripe and Lydia fulfilment paths read a third name, `SOCIAL_SERVICE_URL`, which **production has
+never set for core-service**: measured on the box 2026-09-22, where only `FORM_URL`,
+`FORM_SERVICE_URL` and `MEDIA_SERVICE_URL` exist. Every one of those calls took the literal default
+beside it, which happens to be the same hostname. **A knob an operator can turn that changes
+nothing is worse than no knob**, because it answers a question wrongly.
+
+Twelve call sites moved onto the seam, and nine of them were never in the original sweep at all -
+they spelled `${socialBase}/api/associations/...` inline rather than going through a helper, so a
+grep for the helper's name could not see them either. Because this is the money path, every one was
+built both ways against production's own values before the change landed - **all twelve
+byte-identical**. The helpers in `social-internal-client.ts` now return whole URLs rather than
+`/api/internal/...` fragments: a helper that returns a PATH is what kept the second address alive,
+since every call site had to paste an origin in front of it.
+
+`parseSafeServiceOrigin` was NOT deleted with the two call sites it guarded. It moved into the seam
+as `assertUsableBase` and now runs on every internal URL this service builds, refusing a base that
+is not a URL, one whose scheme is neither http nor https (which is where `media-service:3011` with
+the scheme left off lands), and one carrying credentials the URL would then be logged with. **Its
+third check did not survive**: it refused a base with a path, because it fed `new URL(path,
+origin)`, which silently drops one - while this seam is documented to TOLERATE a base already
+ending in `/api`, so an operator who "fixes" a 404 by appending the prefix does not get
+`/api/api/...`. The two rules contradict each other, the construction the third protected is gone,
+and keeping the rule the file is built around was the only coherent choice.
 
 **ONE SERVICE, FOUR ENVIRONMENT NAMES.** core-service is reached as `PAYMENT_SERVICE_URL` and
 `USER_SERVICE_URL` from social-service and as `CORE_SERVICE_INTERNAL_URL` from

@@ -24,12 +24,12 @@ import Stripe from 'stripe';
 import axios from 'axios';
 import { resolveStripeCallbackUrl } from './stripe-callback-url';
 import {
-  getSocialServiceBase,
   internalSocialRequestConfig,
-  internalProductChargeContextPath,
-  internalSubmissionPath,
-  productPurchaseCompletedPath,
+  internalProductChargeContextUrl,
+  internalSubmissionUrl,
+  productPurchaseCompletedUrl,
 } from './social-internal-client';
+import { socialUrl } from '../internal/service-urls';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A Stripe Checkout session id (`cs_...`) or a Lydia `request_uuid` - retrieveSession() routes to whichever provider issued it. */
@@ -46,18 +46,13 @@ export class PaymentController {
     private readonly usersService: UsersService
   ) {}
 
-  /** Base URL for inter-service calls to social-service. */
-  private get socialBase(): string {
-    return getSocialServiceBase();
-  }
-
   /** Marks a form submission as paid via the internal social-service route. */
   private async markSubmissionPaidInternal(
     submissionId: string,
     sessionId?: string
   ): Promise<void> {
     await axios.post(
-      `${this.socialBase}${internalSubmissionPath(submissionId, 'mark-paid')}`,
+      internalSubmissionUrl(submissionId, 'mark-paid'),
       sessionId ? { sessionId } : {},
       internalSocialRequestConfig()
     );
@@ -66,7 +61,7 @@ export class PaymentController {
   /** Cancels a pending form submission via the internal social-service route. */
   private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
     await axios.post(
-      `${this.socialBase}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
+      internalSubmissionUrl(submissionId, 'cancel-pending'),
       {},
       internalSocialRequestConfig()
     );
@@ -80,7 +75,7 @@ export class PaymentController {
     paymentIntentId: string
   ): Promise<void> {
     await axios.post(
-      `${this.socialBase}${productPurchaseCompletedPath(productId)}`,
+      productPurchaseCompletedUrl(productId),
       { userId, amountCents, paymentIntentId },
       internalSocialRequestConfig()
     );
@@ -91,7 +86,6 @@ export class PaymentController {
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
-    const socialBase = this.socialBase;
     const fwd: Record<string, string> = {
       'X-User-Id': userId,
       'X-Global-Admin': req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
@@ -107,7 +101,7 @@ export class PaymentController {
 
     try {
       const res = await axios.get<{ ok: boolean }>(
-        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/manage-permission`,
+        socialUrl(`associations/${encodeURIComponent(associationId)}/manage-permission`),
         { headers: fwd, validateStatus: () => true }
       );
       if (res.status >= 400 || !res.data?.ok) {
@@ -213,9 +207,8 @@ export class PaymentController {
       const body: Record<string, string> = { [bodyKey]: result.accountId };
       if (providerId === 'lydia' && result.url) body.lydiaDashboardUrl = result.url;
       try {
-        const socialBase = this.socialBase;
         await axios.post(
-          `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/${path}`,
+          socialUrl(`associations/${assocId}/${path}`),
           body,
           internalSocialRequestConfig()
         );
@@ -249,15 +242,13 @@ export class PaymentController {
       };
     }
 
-    const socialBase = this.socialBase;
-
     let stripeAccountId: string | null;
     let dbOnboardingComplete: boolean;
     try {
       const assoRes = await axios.get<{
         stripeAccountId?: string | null;
         stripeOnboardingComplete?: boolean;
-      }>(`${socialBase}/api/associations/${encodeURIComponent(associationId)}`, {
+      }>(socialUrl(`associations/${encodeURIComponent(associationId)}`), {
         validateStatus: () => true,
       });
       if (assoRes.status >= 400) {
@@ -286,7 +277,7 @@ export class PaymentController {
     if (live.status === 'active' && !dbOnboardingComplete) {
       try {
         await axios.post(
-          `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
+          socialUrl(`associations/${encodeURIComponent(associationId)}/stripe-complete`),
           undefined,
           { ...internalSocialRequestConfig(), timeout: 15_000 }
         );
@@ -338,10 +329,9 @@ export class PaymentController {
     }
     await this.assertCanManageAssociation(req, associationId);
 
-    const socialBase = this.socialBase;
     try {
       await axios.post(
-        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-disconnect`,
+        socialUrl(`associations/${encodeURIComponent(associationId)}/stripe-disconnect`),
         undefined,
         internalSocialRequestConfig()
       );
@@ -370,10 +360,9 @@ export class PaymentController {
     }
     await this.assertCanManageAssociation(req, associationId);
 
-    const socialBase = this.socialBase;
     try {
       await axios.post(
-        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/lydia-disconnect`,
+        socialUrl(`associations/${encodeURIComponent(associationId)}/lydia-disconnect`),
         undefined,
         internalSocialRequestConfig()
       );
@@ -408,9 +397,8 @@ export class PaymentController {
       throw new BadRequestException('Stripe not configured');
     }
 
-    const socialBase = this.socialBase;
     const assoRes = await axios.get<{ stripeAccountId?: string | null }>(
-      `${socialBase}/api/associations/${encodeURIComponent(associationId)}`,
+      socialUrl(`associations/${encodeURIComponent(associationId)}`),
       { validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
@@ -715,7 +703,6 @@ export class PaymentController {
     }
 
     // Fetch submission details from social-service
-    const socialBase = this.socialBase;
 
     interface SubmissionData {
       userId: string;
@@ -728,7 +715,7 @@ export class PaymentController {
     let submissionData: SubmissionData;
     try {
       const resp = await axios.get<SubmissionData>(
-        `${socialBase}${internalSubmissionPath(submissionId)}`,
+        internalSubmissionUrl(submissionId),
         internalSocialRequestConfig()
       );
       submissionData = resp.data;
@@ -843,7 +830,7 @@ export class PaymentController {
     let chargeContext: ProductChargeContext;
     try {
       const resp = await axios.post<ProductChargeContext>(
-        `${this.socialBase}${internalProductChargeContextPath()}`,
+        internalProductChargeContextUrl(),
         { associationId, productId, userId, customAmountCents },
         internalSocialRequestConfig()
       );
