@@ -1,13 +1,9 @@
-version: 0.18.18
+version: 0.18.19
 
-Les listes, tirets et sauts de ligne d'une publication s'affichent enfin comme ils ont ete ecrits.
+Les gestes de balayage fonctionnent desormais sur les cartes, pas seulement les espaces vides.
 
-Une publication au nom d'une association montre son logo dans la notification, et non plus la photo de son auteur.
+Un lien partage vers une publication montre enfin sa photo.
 
-Quand une publication ne part pas, l'application dit pourquoi.
+Un message de salon n'arrive plus deux fois.
 
-Une notification de salon affiche le message lui-meme au lieu de "Nouveau message".
-
-Modifier une reponse n'efface plus sa citation.
-
-Le tableau des reponses d'un formulaire n'affiche plus de colonnes vides.
+Le nom affiche dans une notification correspond desormais a celui affiche a l'ecran.
