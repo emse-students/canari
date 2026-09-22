@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une personne porte le meme nom partout
+
+Les deux serveurs preferaient `displayName` la ou le client preferait prenom + nom : une
+notification pouvait titrer quelqu'un autrement que l'ecran qu'elle ouvrait. Une seule regle
+desormais, partagee comme contrat et verifiee par un test dans chacune des trois implementations ;
+`firstName`/`lastName` se rafraichissent enfin a chaque connexion, et quatre listes de membres qui
+affichaient "Utilisateur inconnu" a froid lisent la ligne qu'elles avaient deja.
+[libs](docs/wiki/libs.md#libscontracts).
 ### Changed - plus rien n'excuse une ERREUR du gateway
 
 Le canal ERROR de production mesure **0** sur `v0.18.18`, contre 32 par semaine avant la

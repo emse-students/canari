@@ -150,7 +150,15 @@ export class UsersService implements OnModuleInit {
 
   /**
    * Upsert a user from OIDC provider data (Authentik).
-   * Creates the user if they don't exist, or updates email/displayName/promo if changed.
+   *
+   * EVERY CLAIM THE PROVIDER SENDS IS REFRESHED, AND `firstName`/`lastName` WERE NOT.
+   * They were written once, at creation, and never again - so a member who corrected their name in
+   * the school directory kept the old one here for ever, while `displayName` beside them tracked
+   * the change on the next sign-in. That was invisible only because Authentik's `name` claim is
+   * exactly `firstName lastName` for all 436 production accounts (measured 2026-09-22), which is
+   * also why nothing could be inferred from the two agreeing. Now that the pair is what every
+   * surface PREFERS (`libs/contracts/user-display-name.cases.json`), a column that never updates is
+   * a name that never updates.
    */
   async findOrCreateFromOidc(
     id: string,
@@ -165,6 +173,17 @@ export class UsersService implements OnModuleInit {
       let updated = false;
       if (displayName && user.displayName !== displayName) {
         user.displayName = displayName;
+        updated = true;
+      }
+      // A claim the provider did not send may not ERASE what is stored: `firstName` is an optional
+      // custom claim on this provider, and an Authentik mapping that stops emitting it must leave
+      // the name alone rather than blank it. Same shape as `displayName` above, and as `promo`.
+      if (firstName && user.firstName !== firstName) {
+        user.firstName = firstName;
+        updated = true;
+      }
+      if (lastName && user.lastName !== lastName) {
+        user.lastName = lastName;
         updated = true;
       }
       if (promo !== null && user.promo !== promo) {

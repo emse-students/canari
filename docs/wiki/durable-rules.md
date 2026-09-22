@@ -960,6 +960,31 @@ the moment the paragraph is drafted, never "cleaned up later". Two corollaries w
 An opaque uuid is not an identity and may be written down - it is how a later session finds the same
 group again. A `name` column, a display name and a screenshot caption are identities and may not.
 
+### A RULE TWO ESTATES MUST AGREE ON IS SHARED AS DATA AND ASSERTED - DESCRIBING IT IN BOTH IS HOW THEY DIVERGE
+
+There is no TypeScript package shared between this repository's services and its frontend, and
+[libs](libs.md#libsshared-ts-deleted-2026-08-27) records why that is the right trade. The trap is
+the conclusion people draw from it: that a rule which must hold in several places therefore gets
+written out in several places, with a comment in each saying what the others do.
+
+**A comment is not a mechanism.** `formatDisplayName` in chat-delivery-service preferred
+`displayName`, the frontend's `formatProfileDisplayName` preferred `firstName lastName`, and both
+were correct-looking, documented and tested - separately. The same account could be titled one way
+in a push notification and another way in the screen that notification opened, and the user reported
+it (2026-09-18) before anything here noticed, because nothing here COULD notice: no test asked the
+two the same question.
+
+**What crosses a package boundary with no build step is DATA.** The precedence now lives in
+`libs/contracts/user-display-name.cases.json` and each implementation has one test that reads that
+file from disk and runs every case through its own function. A case added to the file fails in all
+of them at once, and an implementation that does not read it is one nobody is asserting - which is
+the first thing to check when a fourth appears.
+
+**And a divergence nobody has SEEN is still a divergence.** These two disagreed for months with zero
+user-visible effect, because Authentik's `name` claim happens to equal `firstName lastName` for all
+436 production accounts. "It has never been wrong in the field" measures the population, not the
+code: the day one account differs, every surface disagrees at once and nothing is watching.
+
 ### A PROPORTION MEASURED IN ANOTHER BROWSER, ON ANOTHER ROUTE, WITHOUT THE SESSION IS A SHAPE - AND A SHAPE CAN INVERT
 
 A cold-start block was split three times in Chrome on this workstation, on `/login`, with no session
