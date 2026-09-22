@@ -2318,3 +2318,40 @@ means, not an element type excluded because of what it happens to render as.
 predicate**, on purpose: it needs the opposite answer for its own back button, so it keeps a local,
 narrower check instead of sharing this one. Two gestures that both ask "does a button count" is not
 one question asked twice.
+
+## 35. The side panel's heading sat inside the content below it, by a different amount per panel
+
+`SidePanel`'s header has been `px-4` in both of the panel's forms since the shell existed. The five
+bodies rendered into it each chose their own horizontal padding: `p-5 @md:p-6` (group), `p-5 @md:p-8`
+(channel settings), `p-4 @md:p-5` (members), `p-3` (media), `p-4` (community settings). So the title
+and the close button sat INSIDE the cards below them, by a different number per panel and per form.
+
+Measured on the live estate, 2026-09-22, with the group panel open:
+
+| Form | Panel width | Header | Body | Offset |
+| --- | --- | --- | --- | --- |
+| column (>= 1280px) | 320px | 16px | 20px | **4px** |
+| drawer (< 1280px) | 448px | 16px | 24px | **8px** |
+| after, both forms | 320 / 448 | 16px | 16px | **0** |
+
+**THE `@md:` STEPS ONLY EVER WIDENED THE GAP.** They are container queries against the panel body,
+and `@md` is 28rem - which is EXACTLY `.side-panel`'s `max-width`. So in the drawer the step fires or
+not depending on whether a scrollbar is present, and in the 320px column it can never fire at all.
+A horizontal padding decided by whether the content happens to overflow is not a design; the steps
+are gone on that axis and kept on the vertical one, where they are a rhythm and nothing above them
+has a competing value.
+
+**ONE NUMBER, AND NO STEP.** `--side-panel-inset: 1rem` is declared once, on `.side-panel` in
+`app.css`, and the header and all five bodies read it as `px-(--side-panel-inset)`. A second value
+would be a second number to keep in sync with a header that has never had one.
+
+**THE PADDING STAYED ON THE BODIES RATHER THAN MOVING TO THE SHELL**, which is the other way to have
+one owner and the one the backlog proposed. Two of the bodies open with a full-bleed tab strip whose
+bottom border must reach both edges of the panel; padding the shell's scroll wrapper would inset that
+border by 16px and leave a notch at each end. A token every body reads gives one number without
+taking the box away from a panel that needs its own edges.
+
+`sidePanelInset.test.ts` asserts the single declaration, that the header and every body read it, and
+that no panel REGION - a scroll body, a tab strip, the sticky footer - sets a horizontal padding by
+hand. A region is separated from a card by not being rounded, which is what it means to span the
+panel. Both halves were proven by regressing one panel and watching them fail.

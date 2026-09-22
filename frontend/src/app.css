@@ -1118,6 +1118,23 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   z-index: var(--z-side-panel);
   width: 100%;
   max-width: 28rem;
+
+  /* THE ONE HORIZONTAL INSET IN THIS PANEL, AND EVERY BODY IN IT READS IT FROM HERE.
+     The header has been `px-4` in both of the panel's forms since the shell existed, and the four
+     bodies rendered into it each chose their own: `p-5 @md:p-6`, `p-5 @md:p-8`, `p-4 @md:p-5`,
+     `p-3`. Measured 2026-09-22 on the live estate: the title sat 4px inside the content below it in
+     the 320px column and 8px inside it in the 448px drawer, a different number per panel and per
+     form. The `@md:` steps only ever widened that gap, so they are gone on the horizontal axis and
+     kept on the vertical one, where they are a rhythm rather than an alignment.
+
+     NO STEP, DELIBERATELY. A second value would be a second number to keep in sync with a header
+     that has never had one, and `sidePanelWidth.test.ts` exists because a WINDOW query inside this
+     panel answers about the wrong box - the panel is WIDER at 1000px than at 1400px.
+
+     THE PADDING STAYS ON THE BODIES RATHER THAN MOVING TO THE SHELL. Two of them open with a
+     full-bleed tab strip whose bottom border must reach both edges of the panel; padding the shell's
+     scroll wrapper would inset that border by 16px and leave a notch at each end. */
+  --side-panel-inset: 1rem;
 }
 
 .chat-composer-panel {
