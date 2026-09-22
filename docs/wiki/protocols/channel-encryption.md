@@ -46,7 +46,7 @@ What changed is not the discovery of a bug but a requirement.
 
 | Suspected reader | What it actually does |
 |---|---|
-| Push | `notifyChannelRecipients` inlines the CIPHERTEXT in the FCM payload under 3 KB and the device decrypts natively; over that it degrades to "new message in #channel". It never composes from the text |
+| Push | `notifyChannelRecipients` inlines the CIPHERTEXT in the FCM payload under 3 KB and the device decrypts natively; over that it degrades to "new message in #channel". It never composes from the text. Since 2026-09-22 it also carries `createdAt`, the row's own instant, so Android's one notification builder recognises a message its two triggers both deliver - the socket frame reads the same column, so nothing is re-derived. It tells FCM nothing it did not already have: a push is timed to the second by its own delivery |
 | Search | No server-side search over content exists. The server returns rows; `decodeChannelMessageRow` decodes client-side and is shared by history loading and search for that reason |
 | Moderation | `deleteChannelMessage` / `channel.moderate` act on an id. A moderator who reads is a member decrypting client-side |
 
@@ -922,6 +922,17 @@ at the same deploy, so no row loses data it could still have been read with.
   native readers, because `channelPushFields.test.ts` refuses a payload whose keys no client reads -
   which is exactly the drift it was written to catch. Everything else about the notification path is
   unchanged, and that is asserted rather than assumed.
+
+  **AND ON 2026-09-22 IT REFUSED A FIELD THAT WAS RIGHT, WHICH IS WHERE ITS RULE GOT NARROWER.**
+  `createdAt` came back for the Android de-duplication (`backlog.md`, G1) and no iOS handler reads
+  it, so the gate failed - correctly, since `createdAt` is one of the three fields it measured
+  drifting on 2026-08-15. But the reason it has one reader is architectural and checkable: the
+  second trigger is `notifier_message_natif` -> `notifyMessageFromWebSocket`, and that body is
+  `#[cfg(target_os = "android")]`, so iOS posts nothing from the socket and has no two
+  announcements of one salon message to reconcile. So the gate keeps **a key read by NOBODY fails**
+  for every key, and a `PLATFORM_SPECIFIC` table narrows only WHICH readers are owed. Each entry
+  cites the code that makes it true and a test re-reads that code, so the exemption dies with the
+  `cfg` rather than outliving it.
 
 ### Phase 7 - the cut and the record
 

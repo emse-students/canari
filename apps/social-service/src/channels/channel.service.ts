@@ -3094,17 +3094,27 @@ export class ChannelService {
     // contract:
     //  - `workspaceId` was a uuid nobody could render; `workspaceName` replaces it because it is
     //    what the title actually needs.
-    //  - `messageId` / `createdAt` cannot repeat what the MLS path does with them. That path writes
+    //  - `messageId` cannot repeat what the MLS path does with it. That path writes
     //    `fcm_message_cache.ndjson` so a background-decrypted message is already in the local store
     //    at open; a channel message is DELIBERATELY never persisted locally (`useMessaging` skips
     //    the DB save for a `channel_` conversation - channels are server-authoritative and refetched
     //    over HTTP), so the cache has nowhere to inject.
     // Fewer bytes on the wire also buys headroom under the same 4 KB cap the ciphertext competes for.
+    //
+    // `createdAt` CAME BACK ON 2026-09-22, FOR A READER THAT DID NOT EXIST WHEN IT WAS DROPPED. It
+    // was removed with `messageId` above as something no client could use. Since 2026-09-18 Android
+    // has ONE notification builder with TWO triggers - this push and the socket frame - and it
+    // recognises one message by its instant, so a payload without one made a salon message that
+    // arrived BOTH ways show its line twice. The socket half reads
+    // `channel.message.created`'s own `createdAt` (`channelEventHandler`), so this is not a second
+    // clock: both triggers carry THE SAME STORED COLUMN, to the millisecond, which is why the
+    // comparison is exact and needs no tolerance.
     const data: Record<string, string> = {
       type: 'channel',
       channelId: channel.id,
       channelName: channel.name,
       workspaceName,
+      createdAt: String(message.createdAt.getTime()),
       // The session and the index, because they are what derives the key now. `keyVersion` used to
       // sit here and named an epoch the server derived; nothing on any device can do anything with
       // it any more, so it is gone rather than left looking like a contract.

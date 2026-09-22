@@ -39,6 +39,7 @@ const PUSH_PAYLOAD_TS = resolve(
   here,
   '../../../../apps/chat-delivery-service/src/services/push-payload.ts'
 );
+const NOTIFICATIONS_RS = resolve(here, '../../../src-tauri/src/commands/notifications.rs');
 
 /** Unique, sorted capture group 1 of every match of `regex` in `source`. */
 function extractKeys(source: string, regex: RegExp): string[] {
@@ -93,6 +94,25 @@ describe('channel push payload contract (social-service writer vs the three nati
    */
   const DISPATCH_KEY = 'type';
 
+  /**
+   * The keys whose reader is ONE platform BY ARCHITECTURE, each with the fact that makes it so.
+   *
+   * **THIS IS NOT A WAY OUT OF THE CONTRACT, AND THE ASSERTION BELOW STILL BINDS EVERY KEY.** A
+   * field read by NOBODY is the defect this whole file was written for - `createdAt` was one of the
+   * three measured on 2026-08-15 - and it still fails. What an entry here says is narrower: that
+   * one platform cannot read this key because it has nothing to read it FOR, and it names the code
+   * that decides that, which `the exemptions still name a true fact` re-reads on every run. Adding
+   * an entry costs a cited mechanism; letting one go stale fails.
+   */
+  const PLATFORM_SPECIFIC: Record<string, { readers: ('kotlin' | 'swift' | 'objc')[] }> = {
+    // The stamp the two Android triggers recognise one message by. The second trigger is
+    // `notifier_message_natif` -> `notifyMessageFromWebSocket`, whose body is
+    // `#[cfg(target_os = "android")]`: on iOS the socket posts no native notification at all, so
+    // there are no two announcements of one salon message to reconcile. When that changes, this
+    // entry's own assertion fails before the drift does.
+    createdAt: { readers: ['kotlin'] },
+  };
+
   const literal = functionBody(fanOutBody, /const data: Record<string, string> = \{/, /\n {4}\};/);
   // `[:,]` so a shorthand property (`workspaceName,`) counts as a sent key exactly like an explicit
   // one - the wire cannot tell the two apart, and neither may this test.
@@ -105,6 +125,7 @@ describe('channel push payload contract (social-service writer vs the three nati
       'channelId',
       'channelName',
       'ciphertext',
+      'createdAt',
       'messageIndex',
       'nonce',
       'senderId',
@@ -118,10 +139,42 @@ describe('channel push payload contract (social-service writer vs the three nati
   });
 
   it('every key the server sends is read by all three native handlers', () => {
+    const readers = {
+      kotlin: (key: string) => kotlinHandler.includes(`data["${key}"]`),
+      swift: (key: string) => swiftHandler.includes(`userInfo["${key}"]`),
+      objc: (key: string) => objcHandler.includes(`data[@"${key}"]`),
+    };
     for (const key of [...sentKeys.filter((k) => k !== DISPATCH_KEY), 'mentioned']) {
-      expect(kotlinHandler).toContain(`data["${key}"]`);
-      expect(swiftHandler).toContain(`userInfo["${key}"]`);
-      expect(objcHandler).toContain(`data[@"${key}"]`);
+      const expected = PLATFORM_SPECIFIC[key]?.readers ?? (['kotlin', 'swift', 'objc'] as const);
+      // Asserted as an OBJECT so a failure names the key and the platform rather than printing two
+      // booleans - the same shape `every key a native handler reads is still sent` uses below.
+      for (const platform of expected) {
+        expect({ key, platform, read: readers[platform](key) }).toEqual({
+          key,
+          platform,
+          read: true,
+        });
+      }
+    }
+  });
+
+  it('a key exempted on one platform is still read on at least one', () => {
+    // The 2026-08-15 defect in one line: a field sent to every device and read by none. An entry in
+    // PLATFORM_SPECIFIC narrows WHICH readers are owed, never whether any is.
+    for (const [key, { readers }] of Object.entries(PLATFORM_SPECIFIC)) {
+      expect({ key, readers: readers.length }).not.toEqual({ key, readers: 0 });
+    }
+  });
+
+  it('the exemptions still name a true fact, so one cannot outlive its reason', () => {
+    // `createdAt` is Android-only because the second trigger is Android-only. If the WebSocket
+    // handover ever reaches another platform, that `cfg` goes - and this fails on the commit that
+    // removes it, rather than on a duplicate banner somebody reports months later.
+    if (PLATFORM_SPECIFIC.createdAt) {
+      const rust = readFileSync(NOTIFICATIONS_RS, 'utf8');
+      expect(rust).toContain('pub(crate) fn notifier_message_natif(');
+      expect(rust).toContain('#[cfg(target_os = "android")]');
+      expect(rust).toContain('"notifyMessageFromWebSocket"');
     }
   });
 

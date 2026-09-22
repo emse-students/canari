@@ -17,6 +17,19 @@ Deux documents etaient declares des deux cotes du fil sans que rien ne puisse vo
 diverger ; `wireShapes.test.ts` compare les deux declarations, et sa premiere execution a trouve une
 asymetrie non ecrite. [libs](docs/wiki/libs.md#a-shape-is-not-a-rule-and-it-is-pinned-where-it-is-written-2026-09-22).
 
+### Fixed - l'affiche d'une publication partagee hors de Canari ne s'affichait jamais
+
+`og:image` pointait sur une route que social-service demandait sans le prefixe `/api` de
+media-service : Express repondait son propre 404, journalise comme une image manquante alors que le
+blob etait intact. Onze publications d'association sur onze, depuis le 2026-09-20. L'URL est
+desormais construite a un seul endroit. [seo](docs/wiki/frontend/seo.md#the-api-prefix-is-not-in-the-environment-variable-and-that-cost-the-whole-feature-2026-09-22).
+
+### Fixed - un message de salon arrive par deux chemins et ne s'affiche plus deux fois
+
+La notification etait deja unique, mais son fil doublait la ligne : le push de salon ne portait
+aucun horodatage, et c'est par lui que le constructeur reconnait un message. Il porte desormais
+`createdAt`, la colonne que la trame WebSocket lit deja - une seule valeur, jamais recalculee.
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 ### Documentation - une branche fusionnee encore presente n'a pas ete oubliee, elle a ete repoussee
 
 Une seule branche sur 596 fusions, et ses horodatages le disent : poussee trois heures APRES sa
