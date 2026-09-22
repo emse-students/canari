@@ -18,6 +18,11 @@ les appels lisant la base via `ConfigService`. Tout passe desormais par `interna
 que chat-delivery-service n'avait pas du tout, et chaque service porte un test qui refuse qu'une
 source de production cite le nom d'une variable de base interne - quel qu'en soit le lecteur.
 [api-surface](docs/wiki/protocols/api-surface.md#who-may-name-an-internal-base-url-and-the-test-that-says-so-2026-09-22).
+### Added - une forme qui traverse le fil est epinglee la ou elle est ecrite
+
+Deux documents etaient declares des deux cotes du fil sans que rien ne puisse voir un champ
+diverger ; `wireShapes.test.ts` compare les deux declarations, et sa premiere execution a trouve une
+asymetrie non ecrite. [libs](docs/wiki/libs.md#a-shape-is-not-a-rule-and-it-is-pinned-where-it-is-written-2026-09-22).
 
 ### Changed - le swipe entre onglets ne s'armait que sur du vide, pas sur les cartes qui remplissent un fil
 
