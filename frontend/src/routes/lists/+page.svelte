@@ -11,6 +11,7 @@
     AssociationPermissionFlag,
     type Association,
   } from '$lib/associations/api';
+  import { buildCampaignShelves } from '$lib/associations/listShelves';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { ChevronDown } from '@lucide/svelte';
@@ -44,23 +45,11 @@
   const archivedLists = $derived(lists.filter((a) => a.archived));
 
   /**
-   * Active lists grouped into per-campaign-year "shelves": most recent year on
-   * top, lists with no year collected under a trailing "Divers" shelf. Pure page
-   * sections (no accordion) so the whole directory reads like trophy shelves.
+   * Active lists as per-campaign-year "shelves", each divided by parent association. Pure page
+   * sections (no accordion) so the whole directory reads like trophy shelves. The ordering, and
+   * why the parent is the INNER level, are in `listShelves.ts` - which is also where it is tested.
    */
-  const shelves = $derived.by(() => {
-    const byYear: Record<number, Association[]> = {};
-    for (const list of activeLists) {
-      const key = list.promo ?? 0;
-      (byYear[key] ??= []).push(list);
-    }
-    return Object.entries(byYear)
-      .map(([year, items]) => ({
-        year: Number(year),
-        items: items.sort((a, b) => a.name.localeCompare(b.name)),
-      }))
-      .sort((a, b) => b.year - a.year); // recent first; year 0 (Divers) lands last
-  });
+  const shelves = $derived(buildCampaignShelves(activeLists));
 
   /** Lists are created by global admins or BDE members holding MANAGE_ASSO. */
   const canCreate = $derived(
@@ -120,15 +109,29 @@
               </span>
               <span class="bg-cn-border h-px flex-1"></span>
             </h2>
-            <div class={CARD_GRID}>
-              {#each shelf.items as list (list.id)}
-                <AssociationTile
-                  association={list}
-                  href="/lists/{list.slug}"
-                  isMember={myIds.has(list.id)}
-                />
-              {/each}
-            </div>
+            <!--
+              THE PARENT IS A QUIETER HEADING THAN THE YEAR, and the group that has no parent gets
+              none at all: a list belonging to no association is an ordinary case, so a year whose
+              lists all lack a parent renders exactly as it did before parents existed.
+            -->
+            {#each shelf.groups as group (group.parentName ?? '')}
+              <div class="space-y-2">
+                {#if group.parentName}
+                  <h3 class="text-text-muted text-2xs font-bold tracking-wider uppercase">
+                    {group.parentName}
+                  </h3>
+                {/if}
+                <div class={CARD_GRID}>
+                  {#each group.items as list (list.id)}
+                    <AssociationTile
+                      association={list}
+                      href="/lists/{list.slug}"
+                      isMember={myIds.has(list.id)}
+                    />
+                  {/each}
+                </div>
+              </div>
+            {/each}
           </section>
         {/each}
       {/if}

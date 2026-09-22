@@ -4,10 +4,12 @@
     updateAssociation,
     uploadAssociationLogo,
     deleteAssociationLogo,
+    associationSecondLogoSrc,
     listAssociations,
     listAssociationCategories,
     type Association,
     type AssociationCategory,
+    type LogoSlot,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Check } from '@lucide/svelte';
@@ -89,7 +91,14 @@
   let saveSuccess = $state(false);
   let settingsError = $state('');
   let logoBusy = $state(false);
-  let showCropper = $state(false);
+  /**
+   * WHICH LOGO IS BEING CROPPED - `null` when none is.
+   *
+   * A flag per slot would let both cropper panels open at once, over one `logoBusy` and one error
+   * line, and the upload handler would then have to guess which one it was for. A single slot is
+   * the same state and cannot say two things.
+   */
+  let cropping = $state<LogoSlot | null>(null);
 
   async function handleSaveProfile() {
     saving = true;
@@ -129,12 +138,13 @@
   }
 
   async function onLogoExported(blob: Blob) {
+    const slot = cropping ?? 'primary';
     logoBusy = true;
     settingsError = '';
     try {
       const file = new File([blob], 'logo.jpg', { type: 'image/jpeg' });
-      onUpdated(await uploadAssociationLogo(asso.id, file));
-      showCropper = false;
+      onUpdated(await uploadAssociationLogo(asso.id, file, slot));
+      cropping = null;
     } catch (err) {
       settingsError = m.asso_edit_logo_upload_error();
     } finally {
@@ -142,7 +152,7 @@
     }
   }
 
-  async function handleRemoveLogo() {
+  async function handleRemoveLogo(slot: LogoSlot) {
     if (
       !(await showConfirm(m.asso_edit_logo_remove_confirm(), {
         danger: true,
@@ -152,7 +162,7 @@
       return;
     logoBusy = true;
     try {
-      onUpdated(await deleteAssociationLogo(asso.id));
+      onUpdated(await deleteAssociationLogo(asso.id, slot));
     } catch (err) {
       settingsError = m.common_delete_error();
     } finally {
@@ -163,35 +173,50 @@
 
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_edit_profile_title()}</h2>
-  <div class="flex flex-wrap items-start gap-4">
-    <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-    {#if canEdit}
-      <div class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onclick={() => (showCropper = !showCropper)}
-          disabled={logoBusy}
-          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
-          {showCropper ? m.asso_edit_logo_close_cropper() : m.asso_edit_logo_change()}
-        </button>
-        {#if asso.logoUrl}
-          <button
-            type="button"
-            onclick={handleRemoveLogo}
-            disabled={logoBusy}
-            class="text-red-err hover:bg-red-err/10 rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50"
-          >
-            {m.asso_edit_logo_remove()}
-          </button>
+  <!--
+    ONE LOGO CONTROL, CALLED TWICE. The second theme's logo had every half of its plumbing - column,
+    DTO, public projection, frontend type, detail-page rendering - and no way to SET it, so the
+    feature could only ever be turned off (user, 2026-09-22: *"je crois qu'une partie est deja
+    cablee mais pas dans le frontend, on ne peut rien faire"*). Duplicating the block would have
+    been the fifth copy of the same three buttons; the slot is the only thing that differs.
+  -->
+  {#snippet logoControls(slot: LogoSlot, currentLogo: string | null, label: string | null)}
+    <div class="space-y-2">
+      {#if label}
+        <p class="text-text-main ml-1 text-sm font-bold">{label}</p>
+      {/if}
+      <div class="flex flex-wrap items-start gap-4">
+        <AssociationAvatar name={asso.name} logoUrl={currentLogo} size="lg" />
+        {#if canEdit}
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onclick={() => (cropping = cropping === slot ? null : slot)}
+              disabled={logoBusy}
+              class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              {cropping === slot ? m.asso_edit_logo_close_cropper() : m.asso_edit_logo_change()}
+            </button>
+            {#if currentLogo}
+              <button
+                type="button"
+                onclick={() => handleRemoveLogo(slot)}
+                disabled={logoBusy}
+                class="text-red-err hover:bg-red-err/10 rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                {m.asso_edit_logo_remove()}
+              </button>
+            {/if}
+          </div>
         {/if}
       </div>
-    {/if}
-  </div>
+      {#if cropping === slot}
+        <AssociationLogoCropper onExport={onLogoExported} onCancel={() => (cropping = null)} />
+      {/if}
+    </div>
+  {/snippet}
 
-  {#if showCropper}
-    <AssociationLogoCropper onExport={onLogoExported} onCancel={() => (showCropper = false)} />
-  {/if}
+  {@render logoControls('primary', asso.logoUrl ?? null, null)}
 
   <Input label={m.asso_edit_name_label()} bind:value={editName} />
 
@@ -201,6 +226,11 @@
       bind:value={editName2}
       placeholder={m.list_new_name2_placeholder()}
     />
+    {@render logoControls(
+      'second',
+      associationSecondLogoSrc(asso.logoMediaId2),
+      m.list_new_logo2_label()
+    )}
     <Input
       label={m.list_new_promo_label()}
       type="number"
