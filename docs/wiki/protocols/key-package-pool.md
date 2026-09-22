@@ -688,8 +688,26 @@ and it needs no client to speak first.
 A reported date that has **not** elapsed still wins: it is the package's own lifetime, where the
 bound is only a limit on it.
 
-### What this does NOT fix
+### What this does NOT fix, and what the undated rows turned out to be
 
-The 680 unjudgeable rows drain only as their owners re-enrol, because nothing republishes a
-last-resort package's date. **Making `republishKeyMaterial` carry it is the durable repair and is not
-done** - see `docs/wiki/backlog.md`.
+The unjudgeable rows drain only as their owners re-enrol, because nothing republishes a last-resort
+package's date.
+
+**MEASURED ON PRODUCTION 2026-09-22, AND THE SPLIT IS A CLIENT VERSION WITH NO EXCEPTION.** Of 759
+rows, every one whose `deviceAppVersion` is `>= 0.18.10` carries a date (162 of 162) and every one
+below it, or with no version recorded at all, does not (597 of 597). `notAfter` is read from
+`body.notAfter` at `register-device` - the server derives nothing - so the column records whether
+the CLIENT sent a date, and the client began sending one in `0.18.10`.
+
+**Git says the same thing, so the finding rests on two independent readings.** `git log -S`
+on the line that sends the date puts it in `f88a65d0b` (#759, 2026-09-16), and
+`git tag --contains` makes `v0.18.10` the first release carrying it: the boundary in the table
+and the boundary in the history are the same one.
+
+**That refutes the repair this section used to name.** Making `republishKeyMaterial` carry the date
+is client code, so it runs only on a build that already dates the row at `register-device`; it would
+date nothing that is not dated. **A repair written in the client cannot reach a population defined by
+not carrying the client change.** The rows date themselves instead, at about 20 a day measured
+against 2026-09-18 - 677 undated then, 597 four days later. The only shape that could reach the rest
+is the server decoding the `keyPackage` bytes it already holds, which means an MLS decoder in a
+service built never to interpret them; the trade is in `docs/wiki/backlog.md`.
