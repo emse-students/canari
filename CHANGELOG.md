@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un message de salon arrive par deux chemins et ne s'affiche plus deux fois
+
+La notification etait deja unique, mais son fil doublait la ligne : le push de salon ne portait
+aucun horodatage, et c'est par lui que le constructeur reconnait un message. Il porte desormais
+`createdAt`, la colonne que la trame WebSocket lit deja - une seule valeur, jamais recalculee.
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
 ### Documentation - une branche fusionnee encore presente n'a pas ete oubliee, elle a ete repoussee
 
 Une seule branche sur 596 fusions, et ses horodatages le disent : poussee trois heures APRES sa
