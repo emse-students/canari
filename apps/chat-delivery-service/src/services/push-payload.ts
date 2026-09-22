@@ -5,7 +5,8 @@
  * (relayed by FCM) both consume this so the two stay in sync. The server never
  * sees the MLS plaintext, so only
  * metadata it legitimately knows (sender/group display names, the inline
- * ciphertext, timing) ends up in the payload. The client decrypts and rewrites
+ * ciphertext, timing) ends up in the payload - and the two DISPLAY NAMES only on a frame that
+ * draws something, because the payload is cleartext to FCM and to APNs. The client decrypts and rewrites
  * the user-visible text locally (Android background service / iOS NSE).
  */
 export interface PushMessageInput {
@@ -15,9 +16,18 @@ export interface PushMessageInput {
   queuedMessageId: string;
   /** Sender user id. */
   senderId: string;
-  /** Resolved sender display name (empty when unknown). */
+  /**
+   * Resolved sender display name (empty when unknown).
+   *
+   * Travels only on a VISIBLE frame - see {@link buildPushDataFields}, which owns that rule and
+   * the measurement behind it.
+   */
   senderName: string;
-  /** Resolved group name for group chats (empty for DMs, and for a group nobody named). */
+  /**
+   * Resolved group name for group chats (empty for DMs, and for a group nobody named).
+   *
+   * Travels only on a VISIBLE frame, with {@link PushMessageInput.senderName}.
+   */
   groupName: string;
   /**
    * Whether the conversation is a multi-member GROUP, or `undefined` when the server could not
@@ -136,8 +146,31 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
     groupId: input.groupId,
     queuedMessageId: input.queuedMessageId,
     senderId: input.senderId,
-    senderName: input.senderName,
-    groupName: input.groupName,
+    // OMITTED ON A SILENT FRAME, AND THAT IS A CONFIDENTIALITY DECISION, NOT A SIZE ONE.
+    //
+    // These two are the only UNBOUNDED USER TEXT in the payload - a real person's display name and
+    // a conversation's title - and the payload is CLEARTEXT to FCM, and to APNs for an iOS token.
+    // The MLS ciphertext protects what was said; these say who said it and where, to Google and to
+    // Apple, on every frame.
+    //
+    // A silent frame draws nothing, so nothing reads them. Measured on both clients 2026-09-22:
+    // the Android service returns out of `onMessageReceived` before any notification is built
+    // (the self-read dismissal it does run uses `groupId`, `senderId` and `silent` only), and the
+    // iOS NSE is not even woken - it runs on `mutable-content: 1` ALERT pushes, while every silent
+    // frame is sent `content-available: 1` / `apns-push-type: background`. The only reader left
+    // was a `Log.d` line. At least 28% of queued frames are commits alone (4 082 of 14 493 rows on
+    // production, 2026-09-22), before counting read receipts, own-device copies and Graine seeds,
+    // which are silent too.
+    //
+    // ONE CONSUMER WILL NEED THEM BACK, AND IT IS SWITCHED OFF. A `call_invite` arrives as a silent
+    // frame and `showIncomingCallNotification` takes both names from here - unreachable while
+    // `CALLS_ENABLED` is false. Reviving calls must take that name from the device's own store, or
+    // deliver an invite as an alert; it is listed with the other switches that move that day.
+    //
+    // ABSENT, NOT EMPTY: FCM counts key names as well as values, so an absent key costs nothing and
+    // an empty one costs the key. Every reader already coalesces a missing value - the same third
+    // state `isGroup` and `isKeyDistribution` use, for the same reason.
+    ...(input.silent ? {} : { senderName: input.senderName, groupName: input.groupName }),
     // OMITTED, NOT FALSE, WHEN THE SERVER DOES NOT KNOW. An absent key is the only way to say
     // "no information" over a transport whose values are all strings, and every reader already has
     // to cope with an absent key anyway - a device may be running a build older than this one.
