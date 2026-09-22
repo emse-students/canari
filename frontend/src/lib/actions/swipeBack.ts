@@ -3,6 +3,19 @@
  * Activates only when the touch starts within `edgeZonePx` from the left edge.
  */
 
+/**
+ * True when the touch started on a button/link, or inside one.
+ *
+ * DELIBERATELY NOT `swipeNavigation.ts`'s `shouldIgnoreSwipeTarget` - that predicate excludes
+ * buttons/links for a WHOLE-SCREEN gesture where almost everything (feed cards) is one, and
+ * relaxing it there (2026-09-22) means it no longer excludes them at all. This gesture's own bug
+ * is the opposite shape: it only activates within a narrow edge strip that this app's header
+ * happens to put its back button in, so a button/link here still needs its own exclusion.
+ */
+function startsOnInteractiveElement(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('button, a[href], [role="button"]');
+}
+
 export interface SwipeBackOptions {
   /** Called when the gesture is confirmed (swipe right past threshold). */
   onBack: () => void;
@@ -24,6 +37,12 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
 
   function onTouchStart(e: TouchEvent) {
     if (!opts.enabled) return;
+    // The back button lives INSIDE the edge zone by construction (leftmost element in the
+    // header), so a bare clientX check armed the gesture on it too - and this fires before the
+    // browser's own tap-vs-drag distance has been decided, so a touch that starts on the button
+    // and drifts even a few px landed in neither outcome: too far for a native click, short of
+    // this gesture's own 90px commit threshold.
+    if (startsOnInteractiveElement(e.target)) return;
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;

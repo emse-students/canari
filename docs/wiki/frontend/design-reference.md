@@ -2285,3 +2285,36 @@ hides the word completely, which is this defect made worse.
 **A POST BODY IS DIFFERENT, AND MAY KEEP AN ACCENT**, because its surface is fixed. It moves to the
 pair the mention chip a few lines above it has always used, `text-amber-700 dark:text-amber-400` -
 5.02:1 and 11.22:1 - rather than staying a fainter cousin of it for no reason anyone recorded.
+
+## 32. A card was excluded from the tab-swipe gesture for being exactly what a feed is made of
+
+*"you can only swipe page on no elements... at the moment users have to look for an empty space to
+swipe on when they want to swipe between pages"* (user, 2026-09-22). `shouldIgnoreSwipeTarget`
+(section 28) excluded `BUTTON` and `A[href]` unconditionally, on the reasoning that a tap should
+never be hijacked into a swipe. But a post card, a form row, an association row - the bulk of what
+a feed IS - are each an `<a>`. On `/posts` that left only the gaps BETWEEN cards able to start the
+gesture at all, which is what "look for an empty space" describes precisely.
+
+**THE EXCLUSION WAS NEVER WHAT MADE A TAP SAFE.** `classifySwipeRelease` (section 28's own fix)
+already tells a stationary tap from a real horizontal drag by DISPLACEMENT -
+`GESTURE_LOCK_PX`/`SWIPE_THRESHOLD_PX`/the dominance ratio - and `handleTouchMove` only calls
+`preventDefault()` once the gesture is confirmed `'horizontal'`, never at `touchstart`. A touch that
+starts on a card and stays still reaches `touchend` having never left `'pending'` phase, so
+`classifySwipeRelease` returns `null`, `commitSwipeNav` never runs, and the card's own click - never
+prevented - fires exactly as it always did. The element type was answering a question the
+displacement math already answered correctly; removing it changes nothing about what a tap does.
+
+**WHAT STAYS EXCLUDED, AND WHY EACH ONE IS A DIFFERENT QUESTION.** A text input or
+`contentEditable` (dragging there means "place the cursor" or "select text", not "turn the page"); a
+horizontally-scrollable strip (dragging there means "scroll the strip"); `data-swipe-reply` (a
+message bubble's OWN competing horizontal gesture); and now `data-swipe-nav-ignore` on both app
+headers (`Navbar.svelte`, `MobileHeader.svelte`) explicitly, added because the touch listeners are
+bound on `appShell` - which contains the header, not just the page content - and a header holds
+persistent actions (search, compose, the avatar menu) a reader must be able to press without ever
+risking a page change underneath their thumb. That is a REGION excluded because of what it always
+means, not an element type excluded because of what it happens to render as.
+
+**`swipeBack.ts` (chat's edge-swipe-back gesture, [chat](modules/chat.md)) is NOT this same
+predicate**, on purpose: it needs the opposite answer for its own back button, so it keeps a local,
+narrower check instead of sharing this one. Two gestures that both ask "does a button count" is not
+one question asked twice.

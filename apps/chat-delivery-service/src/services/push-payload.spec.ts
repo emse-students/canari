@@ -154,6 +154,53 @@ describe('buildPushDataFields - a silent frame that has something to say', () =>
   });
 });
 
+describe('buildPushDataFields - what a silent frame does NOT say to Google', () => {
+  /**
+   * `senderName` and `groupName` are the only unbounded USER TEXT in the payload - a real person's
+   * display name and a conversation's title - and the payload is cleartext to FCM, and to APNs for
+   * an iOS token. A silent frame draws nothing, so nothing reads them: the Android service returns
+   * before any notification is built, and the iOS NSE is not even woken (it runs on
+   * `mutable-content: 1` alerts, and every silent frame is `content-available: 1`). They were sent
+   * on every frame regardless, and at least 28% of queued frames are commits alone.
+   */
+  it('carries neither display name on a silent frame', () => {
+    const data = buildPushDataFields({ ...baseInput, silent: true });
+    expect('senderName' in data).toBe(false);
+    expect('groupName' in data).toBe(false);
+  });
+
+  it('still carries the three fields the silent path actually decides on', () => {
+    const data = buildPushDataFields({ ...baseInput, silent: true });
+    expect(data).toMatchObject({ groupId: 'group-1', senderId: 'user-sender', silent: 'true' });
+  });
+
+  it('carries both names on a visible frame, which is what draws the banner', () => {
+    const data = buildPushDataFields(baseInput);
+    expect(data).toMatchObject({ senderName: 'Alice', groupName: 'Asso BDE' });
+  });
+
+  it('spends no byte on a name a silent frame will not send, so the ciphertext gets them', () => {
+    const shortNames = { ...baseInput, silent: true, senderName: 'A', groupName: 'B' };
+    const longNames = {
+      ...baseInput,
+      silent: true,
+      senderName: 'A'.repeat(300),
+      groupName: 'B'.repeat(300),
+    };
+    expect(inlineProtoBudget(longNames)).toBe(inlineProtoBudget(shortNames));
+    expect(inlineProtoBudget({ ...longNames, silent: false })).toBeLessThan(
+      inlineProtoBudget(longNames)
+    );
+  });
+
+  it('keeps them out of the APNs payload too, which is the half Apple reads', () => {
+    const input = { ...baseInput, silent: true };
+    const payload = buildApnsRequest(input, buildPushDataFields(input)).payload;
+    expect(JSON.stringify(payload)).not.toContain('Alice');
+    expect(JSON.stringify(payload)).not.toContain('Asso BDE');
+  });
+});
+
 describe('buildApnsRequest', () => {
   it('builds a mutable-content alert for visible messages', () => {
     const data = buildPushDataFields(baseInput);

@@ -56,6 +56,7 @@
   nothing keeps.
 -->
 <header
+  data-swipe-nav-ignore
   class="border-cn-border z-20 flex h-14 shrink-0 items-center justify-between
  border-b bg-(--surface-elevated) px-3 md:hidden"
 >
