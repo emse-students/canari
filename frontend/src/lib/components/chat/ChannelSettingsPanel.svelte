@@ -335,7 +335,7 @@
 <div class="flex h-full min-h-0 flex-col">
   <!-- Tab strip -->
   <div
-    class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 dark:border-white/10"
+    class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
   >
     <h3
       class="text-text-muted text-2xs mb-3 hidden items-center gap-2 px-2 font-bold tracking-widest uppercase"
@@ -369,7 +369,7 @@
   </div>
 
   <!-- Contenu Principal -->
-  <div class="flex-1 overflow-y-auto bg-transparent p-5 @md:p-8">
+  <div class="flex-1 overflow-y-auto bg-transparent px-(--side-panel-inset) py-5 @md:py-8">
     <!-- ================= ONGLET : GÉNÉRAL ================= -->
     {#if activeTab === 'general'}
       <div class="max-w-2xl space-y-6">
