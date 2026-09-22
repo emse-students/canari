@@ -29,6 +29,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.PushRecoveryLadder
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -314,11 +316,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * being fixed. Same reason as [MLS_PUSH_LANE].
          */
         private val silentSkipExplained = AtomicBoolean(false)
-
-        private const val WELCOME_RACE_RETRIES = 3
-
-        /** Delay between two retries (the JNI process_welcome takes ~5s; give it time). */
-        private const val WELCOME_RACE_RETRY_DELAY_MS = 1_800L
 
         /**
          * Cancels every displayed message notification (channel [CHANNEL_MESSAGES] + summary).
@@ -2280,50 +2277,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // "the only plausible reason for a direct failure is an epoch gap". A frame that
             // decrypted and had nothing to render has no epoch gap, and a frame the foreground took
             // is not this thread's business at all. See `PushDecrypt` for what that cost.
+            //
+            // THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that
+            // package is compiled by the standalone JVM test project too, so `PushDecryptLadderTest`
+            // runs THIS branching rather than a copy of it. Everything the ladder cannot have
+            // without Android - the JNI decrypt, the state lock, the clock, the logger - is handed
+            // in from here.
             if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-                val locality = groupLocality(groupId)
-                Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)} locality=$locality")
-                if (locality == GroupLocality.UNKNOWN) {
-                    // NOTHING WAS ESTABLISHED, SO NOTHING IS RETRIED HERE. Both recoveries below
-                    // are answers to a diagnosis, and there is none: the commit catch-up costs a
-                    // fetch and a state load to close an epoch gap nobody saw, and the Welcome race
-                    // waits on a join that is probably not happening. The push falls through to the
-                    // WorkManager fallback, which is where work with no deadline belongs.
-                    Log.d(TAG, "locality unknown group=${groupId.take(8)} -> leaving it to the worker")
-                } else if (locality == GroupLocality.LOCAL) {
-                    // The group exists locally: the only plausible reason for a direct failure is an
-                    // epoch gap (a commit arrived while the app was closed). Catch-up FIRST, before
-                    // any expensive Welcome-race loop that cannot help a group that is already joined.
-                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)?.let {
-                        outcome = PushDecrypt.Message(it)
-                    }
-                } else {
-                    // GroupLocality.ABSENT - the epoch query ran and the group is genuinely not
-                    // joined here. Welcome/message race: the concurrent Welcome push may be joining
-                    // the group when this message arrives. We retry briefly so the 1st message of a
-                    // new conversation produces a real notification instead of a generic fallback,
-                    // rather than showing then correcting the notification.
-                    var raceAttempt = 0
-                    while (outcome is PushDecrypt.Refused && raceAttempt < WELCOME_RACE_RETRIES) {
-                        raceAttempt++
+                outcome = PushRecoveryLadder.run(
+                    initial = outcome,
+                    groupTag = groupId.take(8),
+                    isRefused = { it is PushDecrypt.Refused },
+                    locality = { groupLocality(groupId) },
+                    retryDecrypt = { tryDecrypt(queuedMessageId, groupId, inlineProto) },
+                    catchUp = {
+                        tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                            ?.let { PushDecrypt.Message(it) }
+                    },
+                    pause = {
                         try {
-                            Thread.sleep(WELCOME_RACE_RETRY_DELAY_MS)
+                            Thread.sleep(PushRecoveryLadder.WELCOME_RACE_RETRY_DELAY_MS)
+                            true
                         } catch (e: InterruptedException) {
                             Thread.currentThread().interrupt()
-                            break
+                            false
                         }
-                        Log.d(TAG, "tryDecrypt retry $raceAttempt/$WELCOME_RACE_RETRIES (group-join race) group=${groupId.take(8)}")
-                        outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
-                    }
-                    // The group may have appeared during the race (a Welcome queued ahead of this
-                    // one on the MLS lane). Last-resort catch-up before falling back to the worker.
-                    if (outcome is PushDecrypt.Refused && groupLocality(groupId) == GroupLocality.LOCAL) {
-                        Log.d(TAG, "group appeared during welcome-race, attempting catch-up group=${groupId.take(8)}")
-                        tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)?.let {
-                            outcome = PushDecrypt.Message(it)
-                        }
-                    }
-                }
+                    },
+                    log = { Log.d(TAG, it) },
+                )
             }
 
             // KEY MATERIAL IS ABSORBED HERE, NOT IN THE PARSER. `decryptProto` carries it out as a
@@ -3385,21 +3366,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsStateLock.LOCK.unlock()
         }
     }
-
-    /**
-     * Whether [groupId] is joined in the local MLS state - or whether that could not be established.
-     *
-     * [UNKNOWN] IS NOT [ABSENT], AND COLLAPSING THEM SENT EVERY RECOVERY DOWN THE WRONG BRANCH.
-     * This returned a plain Boolean, and every way of failing to reach the state - lock not
-     * acquired, `mls.bin` unreadable, device key missing, JNI not loaded - came back as `false`,
-     * which the caller reads as "the group is not joined here". So a device that had been in a
-     * conversation for months answered "not mine" whenever another thread happened to hold the
-     * lock, and the message was handed to the Welcome-race retry loop: three more attempts, each
-     * re-entering the same contended lock, for a group that was never racing a Welcome at all.
-     * Measured on device 2026-08-11: twenty `local=false` verdicts from ten epoch queries - half
-     * the answers were given by a timeout, about the main DM.
-     */
-    private enum class GroupLocality { LOCAL, ABSENT, UNKNOWN }
 
     /**
      * Loads push_context + mls.bin, acquires MlsStateLock for up to 5 s and asks
