@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'affiche d'une publication partagee hors de Canari ne s'affichait jamais
+
+`og:image` pointait sur une route que social-service demandait sans le prefixe `/api` de
+media-service : Express repondait son propre 404, journalise comme une image manquante alors que le
+blob etait intact. Onze publications d'association sur onze, depuis le 2026-09-20. L'URL est
+desormais construite a un seul endroit. [seo](docs/wiki/frontend/seo.md#the-api-prefix-is-not-in-the-environment-variable-and-that-cost-the-whole-feature-2026-09-22).
+
 ### Fixed - un message de salon arrive par deux chemins et ne s'affiche plus deux fois
 
 La notification etait deja unique, mais son fil doublait la ligne : le push de salon ne portait
