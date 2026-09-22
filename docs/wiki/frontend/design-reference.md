@@ -2395,6 +2395,30 @@ numbers on four sides (user: *"si il y a des marges elles doivent etre egales de
 stylesheet and expects exactly one - the definition of `--app-content-top`. A sixth card positioning
 itself by hand reads as correct CSS in review and cannot be caught any other way.
 
+### Verified on the user's own reproduction - two tabs of one account (2026-09-22)
+
+Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up:
+
+| | Before | After |
+|---|---|---|
+| Banner card | `x=108, w=1800` - 108px left, 12px right | `x=12, w=1896` - **12 / 12 / 12** |
+| Brand bar | `y=50`, pushed down by an unmeasured banner | `y=66`, exactly the column's height |
+| Nav rail | `y=84`, INSIDE the bar's `66..139` band | `y=150` |
+
+**A HIDDEN TAB READS `--app-banner-height: 0px`, AND THAT IS CORRECT RATHER THAN BROKEN.** The
+measurement above was nearly filed as a defect: the follower tab showed `0px` with the column
+plainly 66px tall, and the rail back at 84. It is not a defect in the observer. `ResizeObserver`
+delivery is a step of the *update the rendering* algorithm, which a browser does not run for a
+backgrounded tab - an independent RO attached by hand to the same element, in the same tab, received
+ZERO callbacks across two real width changes (1500 -> 1200 -> 1500). On `Page.bringToFront` both
+observers fired and the token went to `66px` and the rail to `150` in the same step.
+
+So the reading is wrong only while nothing is rendered, and the only consumers of the token are
+`position: fixed` cards whose geometry nobody can see in that state; RO runs before paint, so the
+frame in which the tab becomes visible is already correct. **A fallback constant here would be a
+fallback path for a condition that cannot be observed** - and would then be the fourth hand-written
+copy of the number this section exists to delete.
+
 ## 34. One unlayered rule was deleting every `transition-*` utility in the app
 
 Found while looking at the rail for section 33: hovering it SNAPS the panel from 72px to 336px with
