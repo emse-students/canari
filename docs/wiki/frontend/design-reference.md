@@ -2319,6 +2319,158 @@ predicate**, on purpose: it needs the opposite answer for its own back button, s
 narrower check instead of sharing this one. Two gestures that both ask "does a button count" is not
 one question asked twice.
 
+---
+
+## 33. The shell had two answers to "where does the content start", and only one was measured
+
+A second tab of the same account raises the "messagerie chiffree active dans un autre onglet"
+banner. With it up, four things were wrong at once on the desktop shell, and every one of them was
+the same defect wearing a different hat.
+
+### What the shell is made of
+
+The window is a flex column: a banner column, then a row. The row holds the navigation rail and the
+content column, and the content column holds the brand bar. **The rail is not in that row.** It is
+`position: fixed` against the WINDOW, and the content column reserves its 6rem gutter by hand
+(`md:pl-[6rem]`); the brand bar then cancels that same inset (`margin-left: -6rem`) to run full
+width. Four more cards do the same thing: the rail's hover scrim, the two right-hand drawers and a
+side panel.
+
+So the shell answers "where does the content start" twice. In the flex column the answer is
+computed by layout, and a banner pushes everything below it down. For every fixed card the answer
+was a hand-written sum:
+
+```css
+top: calc(env(safe-area-inset-top) + var(--app-top-bar-height) + 0.75rem);
+```
+
+Five copies of it. All five true exactly as long as nothing is ever rendered above the brand bar.
+
+### Measured on the local estate, 2026-09-22, at a 958px viewport
+
+| | As shipped | After |
+| --- | --- | --- |
+| banner, gap left / gap right | 108px / 12px | 12px / 12px |
+| brand bar | y=50, subtitle clipped by the rail | y=66, whole |
+| rail card | y=84 - 31px INSIDE the bar | y=150, clear of it |
+| hover scrim top vs bar bottom | 51px SHORT of it | 1px past it |
+
+The banner's 108px is `96 + 12`: it was rendered inside the content column, which reserves the
+rail's gutter, under a comment claiming it was "pleine largeur ... jamais dans la rangee sidebar" -
+the one thing that placement cannot give it. The rail overlap and the scrim's short top edge are the
+same fact seen from two cards: the banner moved the bar and neither of them heard about it.
+
+**THE SCRIM IS THE ONE A READER NOTICES** (user, 2026-09-22: *"l'ombre ne passe pas sur l'interface
+en entier mais laisse un peu de blanc"*). It is `fixed inset-0` with that hand-written `top`, so it
+began 22px BELOW the top of a bar that a banner had displaced: the bar's first 22px stayed bright
+and the rest dimmed, which reads as a white strip under the banner.
+
+`.app-top-bar` also carries `z-index: 25` against the scrim's 22, which looks like a second, working
+statement of the same intent. It is inert: the content column is `relative z-10`, so it is a
+stacking context and the bar's 25 is scoped inside it. The top edge is the only thing holding the
+bar above the scrim, which is why it had to be right.
+
+### The fix - one token, measured
+
+`--app-content-top` in `app.css` is now the single expression, and all five sites read it:
+
+```css
+--app-banner-height: 0px; /* published from +layout.svelte by a ResizeObserver on the column */
+--app-content-top: calc(
+  env(safe-area-inset-top) + var(--app-banner-height) + var(--app-top-bar-height)
+);
+```
+
+The height is MEASURED rather than counted, for the same reason `--chat-composer-height` is: it
+depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
+per banner would be a sixth copy of a number that has already drifted five ways.
+
+The five window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
+`TabFollowerBanner`, `OfflineBanner`) all render in that one column, above the row - so they are
+full width by construction, and `Banner.svelte` insets itself squarely at `m-3`, the same 0.75rem
+gutter grid every other card in the floating shell sits on. It was `mx-3 mt-2`: three different
+numbers on four sides (user: *"si il y a des marges elles doivent etre egales de tous les cotes"*).
+
+`appContentTop.test.ts` counts the readers of `var(--app-top-bar-height)` across the whole
+stylesheet and expects exactly one - the definition of `--app-content-top`. A sixth card positioning
+itself by hand reads as correct CSS in review and cannot be caught any other way.
+
+### Verified on the user's own reproduction - two tabs of one account (2026-09-22)
+
+Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up:
+
+| | Before | After |
+|---|---|---|
+| Banner card | `x=108, w=1800` - 108px left, 12px right | `x=12, w=1896` - **12 / 12 / 12** |
+| Brand bar | `y=50`, pushed down by an unmeasured banner | `y=66`, exactly the column's height |
+| Nav rail | `y=84`, INSIDE the bar's `66..139` band | `y=150` |
+
+**A HIDDEN TAB READS `--app-banner-height: 0px`, AND THAT IS CORRECT RATHER THAN BROKEN.** The
+measurement above was nearly filed as a defect: the follower tab showed `0px` with the column
+plainly 66px tall, and the rail back at 84. It is not a defect in the observer. `ResizeObserver`
+delivery is a step of the *update the rendering* algorithm, which a browser does not run for a
+backgrounded tab - an independent RO attached by hand to the same element, in the same tab, received
+ZERO callbacks across two real width changes (1500 -> 1200 -> 1500). On `Page.bringToFront` both
+observers fired and the token went to `66px` and the rail to `150` in the same step.
+
+So the reading is wrong only while nothing is rendered, and the only consumers of the token are
+`position: fixed` cards whose geometry nobody can see in that state; RO runs before paint, so the
+frame in which the tab becomes visible is already correct. **A fallback constant here would be a
+fallback path for a condition that cannot be observed** - and would then be the fourth hand-written
+copy of the number this section exists to delete.
+
+## 34. One unlayered rule was deleting every `transition-*` utility in the app
+
+Found while looking at the rail for section 33: hovering it SNAPS the panel from 72px to 336px with
+no animation, and the labels then fade in over their own 300ms - so for about 150ms a reader sees a
+blank white sheet that afterwards fills with text.
+
+The rail asks for `transition-all duration-300 ease-out`. Its computed value was
+`background-color, color, border-color | 0.18s`.
+
+### The rule
+
+`app.css` gives the theme a crossfade on a list of bare element selectors, and it was written
+OUTSIDE any layer:
+
+```css
+:root, body, .theme-transition,
+nav, aside, header, button, a, input, textarea, select {
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+```
+
+**Unlayered CSS outranks everything in a layer whatever its specificity**, and Tailwind's utilities
+live in `@layer utilities`. An element selector loses on specificity to a class and wins anyway.
+This file already records that rule twice, used deliberately - here it was costing what it was not
+aimed at.
+
+### Measured on the local estate, 2026-09-22
+
+`getComputedStyle().transitionProperty` on every element matching that selector list:
+
+| Page | carry a `transition-*` class | of those, overridden |
+| --- | --- | --- |
+| `/posts` | 28 | **28** |
+| `/chat` | 22 | **22** |
+
+All of them, on both pages. The rail is only the one that shows, because its labels are `<span>` -
+a tag the rule does not name - so they animate while the panel does not, which is what makes the
+mismatch visible at all.
+
+### The fix
+
+The rule moves into `@layer base`. Verified in the live page by neutralising the unlayered copy and
+re-declaring the identical block inside the layer: 28 overridden became **0**, the rail returned to
+`all / 0.3s`, and 6 of the 9 elements that ask for no transition of their own still took the theme
+crossfade. In `base` the rule is a default every element gets and any element can outrank - which is
+the only ordering in which both of its jobs are true at once.
+
+`appThemeTransition.test.ts` asserts the layer, and that no unlayered copy is left behind. Nothing
+else in the build would notice it moving back out: it reads as ordinary CSS either way.
+
+---
+
 ## 35. The side panel's heading sat inside the content below it, by a different amount per panel
 
 `SidePanel`'s header has been `px-4` in both of the panel's forms since the shell existed. The five

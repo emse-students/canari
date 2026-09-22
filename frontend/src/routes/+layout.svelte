@@ -166,6 +166,38 @@
     }
   });
 
+  // -- The banner column's height, published so the floating cards can follow it ------------
+  let bannerColumn = $state<HTMLDivElement | null>(null);
+
+  /**
+   * Publishes the banner column's measured height as `--app-banner-height`, which `app.css` folds
+   * into `--app-content-top` - the single expression the nav rail, its hover scrim, the right-hand
+   * drawers and the side panels all position against.
+   *
+   * WHY IT IS MEASURED AND NOT COUNTED. Every one of those cards is `position: fixed` against the
+   * window, so none of them can see that a banner has pushed the brand bar down; and the height to
+   * push them by is not derivable - it depends on how many banners are up, on how the text wrapped,
+   * and on the viewport width. A constant per banner would be a fourth copy of a number that has
+   * already drifted five ways. The observer answers with the height that is actually on screen.
+   */
+  $effect(() => {
+    const column = bannerColumn;
+    if (!column) return;
+    const publish = () => {
+      document.documentElement.style.setProperty(
+        '--app-banner-height',
+        `${Math.ceil(column.offsetHeight)}px`
+      );
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(column);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--app-banner-height');
+    };
+  });
+
   // ── Swipe navigation (mobile only) ────────────────────────────────────────
   let appShell = $state<HTMLDivElement | null>(null);
   let pageScrollWrap = $state<HTMLDivElement | null>(null);
@@ -369,7 +401,7 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div class="z-(--z-banner) flex shrink-0 flex-col">
+  <div bind:this={bannerColumn} class="z-(--z-banner) flex shrink-0 flex-col">
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -377,6 +409,17 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
+    <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
+         height. Both were rendered inside the CONTENT column instead, under a comment claiming
+         "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement
+         cannot give them, because that column reserves the rail's 6rem gutter. Measured locally in
+         a second tab of one account: the follower banner sat 108px from the left edge and 12px
+         from the right, and it displaced the brand bar 50px down INTO the rail, which is fixed to
+         the window and does not move - so the bar's subtitle was clipped by the rail's card.
+         Strong first, then the two subtle ones: an interrupting fact is never pushed off by a
+         transient. -->
+    <TabFollowerBanner />
+    <OfflineBanner />
   </div>
 
   <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain
@@ -405,9 +448,6 @@
     <div
       class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-[6rem]'}"
     >
-      <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
-      <TabFollowerBanner />
-      <OfflineBanner />
       {#if !isLoginPage && !isKeyboardOpen}
         <Navbar />
         {#if !isMobileConvoOpen}
