@@ -876,8 +876,13 @@ Three things the seam carries, each load-bearing:
   strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
   "is the app in front" in the builder would silence a foregrounded app showing another conversation.
 
-**The plain builder is not deleted - it is now web-only** (and desktop, a different implementation
-again in `desktop.rs`). They have nothing else.
+**The plain builder is not deleted - it is now web-only** (and desktop, which reaches
+`tauri-plugin-notification` through the same composable). They have nothing else, and they need
+nothing else: neither registers with a push service - every command in `commands/push.rs` is
+`#[cfg(any(target_os = "android", target_os = "ios"))]` and the frontend ships no service worker -
+so on both the socket frame is the only trigger there has ever been. (This paragraph named a
+`desktop.rs` until 2026-09-22; the only file of that name in the tree is a vendored keystore plugin
+patch, and no desktop notification code has ever lived in one.)
 
 #### What the shade cannot remember
 

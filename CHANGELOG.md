@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la notification doublee ne peut pas arriver sur desktop ni sur le web, et un garde-fou le dit
+
+Reste de G1 (2026-09-18). Le doublon demande DEUX constructeurs atteints par DEUX declencheurs :
+desktop et web n'ont pas le second - toutes les commandes de `commands/push.rs` sont
+`#[cfg(any(android, ios))]` et le frontend n'embarque aucun service worker. Un test refuse desormais
+tout second constructeur de banniere.
+[mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
+
 ### Fixed - un bandeau deplacait la barre Canari et cinq cartes flottantes ne l'apprenaient jamais
 
 Avec un second onglet du meme compte ouvert : bandeau a 108px du bord gauche contre 12 a droite, la
