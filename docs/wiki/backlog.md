@@ -73,6 +73,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 | delete the remote branch `perf/le-blob-ne-traverse-plus-le-pont` (#825, merged 2026-09-17). It is left standing on purpose as the evidence for the row beside it; its content is in `main` and nothing depends on it | 1 click | [P3 - a merged branch that is still there](#p3---a-merged-branch-that-is-still-there-was-not-left-behind-it-was-pushed-back-measured-2026-09-22) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
+| **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
 
 ## Open defects, in severity order
 
@@ -115,7 +116,10 @@ with no client behind them, and the queue figures that refuted a second worry ar
 [the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked).
 
 **What is left is TWO DECISIONS AND NO WORK**, unchanged in substance since 2026-09-12 and now
-resting on a population of one:
+resting on a population of one. Both are on
+[the user's list](#owed-to-the-user---decisions-rotations-and-one-off-clicks) since 2026-09-22 -
+they had been waiting on a decision for ten days without appearing on the one page that says what
+is waiting on the user:
 
 - **Tell somebody.** A conversation with one holder is a fact about a USER's own account and nothing
   surfaces it to them. What channel, and whether it is worth surfacing at all, is undecided.
