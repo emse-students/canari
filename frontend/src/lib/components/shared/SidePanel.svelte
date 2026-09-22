@@ -116,7 +116,7 @@
     transition:fly={{ x: 320, duration: 220 }}
   >
     <div
-      class="border-cn-border flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3"
+      class="border-cn-border flex shrink-0 items-center justify-between gap-2 border-b px-(--side-panel-inset) py-3"
     >
       <h2 class="text-text-main truncate text-base font-bold">{title}</h2>
       <div class="flex shrink-0 items-center gap-1">

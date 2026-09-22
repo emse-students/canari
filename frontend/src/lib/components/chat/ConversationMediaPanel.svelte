@@ -162,7 +162,7 @@
 -->
 <div class="flex h-full min-h-0 flex-col">
   <!-- Tabs -->
-  <div class="border-cn-border flex gap-1 border-b px-2 py-2">
+  <div class="border-cn-border flex gap-1 border-b px-(--side-panel-inset) py-2">
     {#each tabs as tab (tab.id)}
       <button
         type="button"
@@ -182,7 +182,7 @@
   </div>
 
   <!-- Content -->
-  <div class="min-h-0 flex-1 overflow-y-auto p-3">
+  <div class="min-h-0 flex-1 overflow-y-auto px-(--side-panel-inset) py-3">
     {#if loading}
       <div class="flex justify-center py-16">
         <div

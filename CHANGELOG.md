@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le titre du panneau lateral etait decale par rapport a tout ce qu'il annonce
+
+L'en-tete de `SidePanel` est `px-4` depuis toujours ; les cinq panneaux qui s'y affichent
+choisissaient chacun leur propre marge horizontale. Le titre se retrouvait 4px a l'interieur des
+cartes en colonne et 8px en tiroir, avec un chiffre different par panneau. Une seule valeur
+(`--side-panel-inset`) declaree une fois et lue par tous, et les paliers `@md:` horizontaux - qui
+tombaient exactement sur la largeur max du panneau, donc decides par la presence d'une barre de
+defilement - sont supprimes ([design-reference](docs/wiki/frontend/design-reference.md)).
+
 ### Fixed - la visionneuse ne se deplacait pas a la souris : le navigateur prenait le geste
 
 *"on ne puisse pas (sur PC en tout cas) se deplacer dans la visionneuse (le fait de tenter de drag
