@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un doigt qui glissait un peu sur le bouton retour du chat ne cliquait ni ne swipait
+
+`swipeBack.ts` armait le geste sur la seule position horizontale, sans jamais regarder sur quoi le
+doigt s'etait pose - et le bouton retour est l'element le plus a gauche de l'en-tete, donc a
+l'interieur de sa propre zone de bord. Le navigateur annule son propre clic des ~10px de
+deplacement ; le geste, lui, n'engageait rien avant 90px - une zone morte entre les deux ou ni l'un
+ni l'autre ne se declenchait. Reutilise `shouldIgnoreSwipeTarget`, deja correct sur le swipe
+d'onglets voisin. [chat](docs/wiki/frontend/modules/chat.md#the-edge-swipe-back-gesture-had-no-target-guard-and-the-back-button-sits-inside-its-own-edge-zone-2026-09-22).
+
 ### Fixed - l'affiche d'une publication partagee hors de Canari ne s'affichait jamais
 
 `og:image` pointait sur une route que social-service demandait sans le prefixe `/api` de

@@ -3,6 +3,8 @@
  * Activates only when the touch starts within `edgeZonePx` from the left edge.
  */
 
+import { shouldIgnoreSwipeTarget } from '$lib/utils/swipeNavigation';
+
 export interface SwipeBackOptions {
   /** Called when the gesture is confirmed (swipe right past threshold). */
   onBack: () => void;
@@ -24,6 +26,13 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
 
   function onTouchStart(e: TouchEvent) {
     if (!opts.enabled) return;
+    // The back button lives INSIDE the edge zone by construction (leftmost element in the
+    // header), so a bare clientX check armed the gesture on it too - and this fires before the
+    // browser's own tap-vs-drag distance has been decided, so a touch that starts on the button
+    // and drifts even a few px landed in neither outcome: too far for a native click, short of
+    // this gesture's own 90px commit threshold. Reusing the same target guard swipeNavigation.ts
+    // already applies to buttons/links/form controls fixes it at the one place it starts.
+    if (shouldIgnoreSwipeTarget(e.target)) return;
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;
