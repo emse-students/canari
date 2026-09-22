@@ -21,6 +21,14 @@ de la bulle sur le fond du fil), sa couleur de texte est deja `--text-muted` ici
 le raccord ne laisse aucun interligne.
 [design-reference](docs/wiki/frontend/design-reference.md).
 
+### Fixed - un "vous avez ete retire de ce groupe" definitif au-dessus d'une conversation qui marche
+
+*"pourquoi j'ai eu ce message systeme ? Tout a l'air de marcher"* (user). Le retrait de l'avis
+etait branche sur `holdsGroupState && !isGroupActive`, et la SEULE preuve qui ecrit toujours l'avis
+- l'annonce de son auteur - efface l'etat du groupe avant de l'enregistrer. Un retrait aussitot
+annule laissait donc une phrase permanente et indeboulonnable au-dessus d'un fil parfaitement
+fonctionnel. Le retrait pend desormais sur l'INSTALLATION du groupe revenu, une seule fois.
+[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md).
 ### Fixed - le panneau "Discussions" de /posts glissait de 16px au premier scroll
 
 *"bouge lors du scroll alors qu'il ne devrait pas. C'est tout petit mais c'est perturbant"* (user).
