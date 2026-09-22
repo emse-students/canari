@@ -13,9 +13,8 @@ import axios from 'axios';
 import * as crypto from 'crypto';
 import { User } from '../users/entities/user.entity';
 import {
-  getSocialServiceBase,
   internalSocialRequestConfig,
-  internalUserAssociationsPath,
+  internalUserAssociationsUrl,
 } from '../payment/social-internal-client';
 
 /** Associations projection returned by social-service for a user. */
@@ -80,7 +79,7 @@ export class ExternalController {
     let associations: SocialAssociations = { current: [], former: [] };
     try {
       const res = await axios.get<SocialAssociations>(
-        getSocialServiceBase() + internalUserAssociationsPath(sub),
+        internalUserAssociationsUrl(sub),
         internalSocialRequestConfig()
       );
       associations = res.data;

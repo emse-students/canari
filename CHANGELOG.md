@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - core-service disait ou joindre social-service de trois manieres, dont une que la prod n'a jamais reglee
+
+`SOCIAL_SERVICE_URL`, lu par les chemins de confirmation Stripe et Lydia, n'existe pas sur le
+conteneur core-service : chaque appel prenait la valeur en dur juste a cote. Douze appels passent
+desormais par `internal/service-urls.ts` - construits dans les deux sens avec les valeurs de la
+prod avant la bascule, les douze identiques au caractere pres. La validation d'origine qui gardait
+deux de ces appels garde maintenant les neuf.
+[api-surface](docs/wiki/protocols/api-surface.md#who-may-name-an-internal-base-url-and-the-test-that-says-so-2026-09-22).
+
 ### Changed - quatre appels internes de plus nommaient une URL de service a la main, et un grep les avait declares propres
 
 Le balayage qui avait trouve l'aperçu blanc cherchait `process.env.*_URL` et ne pouvait pas voir

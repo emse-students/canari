@@ -1,16 +1,8 @@
 import { Logger } from '@nestjs/common';
 import type { AxiosRequestConfig } from 'axios';
+import { socialUrl } from '../internal/service-urls';
 
 const logger = new Logger('SocialInternalClient');
-
-/** Base URL for server-to-server calls to social-service. */
-export function getSocialServiceBase(): string {
-  return (
-    process.env.FORM_URL ||
-    process.env.FORM_SERVICE_URL ||
-    'http://social-service:3014'
-  ).replace(/\/$/, '');
-}
 
 /** Axios config with the shared internal secret for social-service internal routes. */
 export function internalSocialRequestConfig(): Pick<
@@ -27,26 +19,34 @@ export function internalSocialRequestConfig(): Pick<
   };
 }
 
-/** Builds the path for an internal form submission API call. */
-export function internalSubmissionPath(
+/**
+ * The internal form-submission route on social-service, as a whole URL.
+ *
+ * A PATH, NOT A URL, IS WHAT KEPT A SECOND ADDRESS ALIVE HERE. These helpers used to return
+ * `/api/internal/...` and leave the origin to the caller, so every call site pasted
+ * `getSocialServiceBase()` in front of one - a second way to say where social-service is, beside
+ * `socialUrl()`, spelling the prefix by hand in both. Returning the finished URL is what makes the
+ * seam the only answer, and what lets the guard beside it be absolute.
+ */
+export function internalSubmissionUrl(
   submissionId: string,
   suffix?: 'mark-paid' | 'cancel-pending'
 ): string {
-  const base = `/api/internal/forms/submissions/${encodeURIComponent(submissionId)}`;
-  return suffix ? `${base}/${suffix}` : base;
+  const base = `internal/forms/submissions/${encodeURIComponent(submissionId)}`;
+  return socialUrl(suffix ? `${base}/${suffix}` : base);
 }
 
 /** Internal route to resolve boutique product charge details for saved-card PaymentIntents. */
-export function internalProductChargeContextPath(): string {
-  return '/api/internal/products/charge-context';
+export function internalProductChargeContextUrl(): string {
+  return socialUrl('internal/products/charge-context');
 }
 
 /** Internal route listing a user's associations (current + former) for profile display. */
-export function internalUserAssociationsPath(userId: string): string {
-  return `/api/internal/users/${encodeURIComponent(userId)}/associations`;
+export function internalUserAssociationsUrl(userId: string): string {
+  return socialUrl(`internal/users/${encodeURIComponent(userId)}/associations`);
 }
 
 /** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
-export function productPurchaseCompletedPath(productId: string): string {
-  return `/api/associations/products/${encodeURIComponent(productId)}/purchase-completed`;
+export function productPurchaseCompletedUrl(productId: string): string {
+  return socialUrl(`associations/products/${encodeURIComponent(productId)}/purchase-completed`);
 }
