@@ -28,6 +28,19 @@ hors de tout `@layer` - et du CSS non-layered bat tout ce qui est dans un layer,
 specificite. Mesure : 28 elements sur 28 a `/posts`, 22 sur 22 a `/chat`. Le rail de navigation
 s'ouvrait donc d'un coup, ses libelles arrivant en fondu apres. Passee dans `@layer base`.
 [design-reference](docs/wiki/frontend/design-reference.md).
+### Changed - le swipe pour reagir est retire, et l'indicateur de reponse passe du bon cote
+
+*"swiper pour reagir n'est pas quelque chose de bien, c'est meme assez bizarre"* (user). Mesure sur
+Messenger 579.0.0.61.91, meme telephone : un glissement vers l'exterieur n'y deplace rien du tout,
+des deux cotes du fil. C'est desormais un non-geste ici aussi, et le plateau de reactions rapides
+qu'il ouvrait - joignable par lui seul - part avec. L'appui long et le double-tap restent les deux
+chemins vers une reaction (decision du user).
+
+L'indicateur de reponse etait ancre du cote vers lequel la bulle glisse, donc le message lui passait
+dessous. Il est maintenant du cote exterieur, revele dans l'espace que la bulle libere, comme chez
+Messenger. Le cote est fige par un test prouve par renversement.
+[chat](docs/wiki/frontend/modules/chat.md).
+
 
 ### Fixed - une porte epelee a l'execution etait invisible au garde, et NOTIF-15 a paye trois runs
 
