@@ -1984,11 +1984,14 @@ third of the system.
 every application container's `docker logs` over a run's own window into the same buckets, `run.mjs`
 calls it at the end of every pass so the bar is not enforced by somebody remembering to type a
 command, and `bun srvlog.mjs --since <t> --shapes` collapses `unexplained` and `notable` to distinct
-sentences for triage. Its buckets have one addition the client's classifier does not need:
-`expectedErrors`, for errors that are real, named and not defects - `WebSocket protocol error:
-Connection reset without closing handshake` is the gateway describing a *client* that vanished
-without a close frame, which every reload this campaign performs produces. Forgiven from the gate,
-kept in the record, per rule 10.
+sentences for triage. Its buckets are the client classifier's, and **it once had one more**:
+`expectedErrors`, a forgiveness list whose only member was the gateway calling a *client* that
+vanished without a close frame an ERROR - which every reload this campaign performs produced. That
+a whole mechanism existed to excuse exactly one line was the evidence the LINE was wrong, not the
+list; the gateway classifies that reset on the error's type since 2026-09-15, and the bucket was
+deleted on 2026-09-22 once every estate the rig targets served the new build
+([chat-gateway](services/chat-gateway.md#the-after-count-2026-09-22---and-the-window-the-prediction-could-not-have)).
+**Nothing forgives an ERROR here now**, which is the state rule 10 describes.
 
 The first fully classified window, 2026-08-14 12:22-12:45Z: **8 534 lines across seven services, zero
 unexplained**, five notable shapes. Two of those five were open questions rather than noise -

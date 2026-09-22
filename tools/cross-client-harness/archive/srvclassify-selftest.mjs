@@ -29,7 +29,6 @@ import {
   BENIGN_RULES,
   NOTABLE_RULES,
   SEVERE_RULES,
-  EXPECTED_ERROR_RULES,
 } from '../srvlog.mjs';
 
 let failures = 0;
@@ -456,12 +455,21 @@ const replayOk = !matches(BENIGN_RULES, replay) && matches(SEVERE_RULES, replay)
 if (!replayOk) failures++;
 console.log(`${replayOk ? 'ok  ' : 'FAIL'} severe       a revoked session is not the grace window that avoided one`);
 
-// An expected error is still an error - forgiven from the gate, never from the record.
+// THE ORDINARY END OF A WEB SESSION, AND THE SPELLING IT REPLACED. A browser reloading sends no
+// close frame, and until 2026-09-15 the gateway called that an ERROR - so a whole forgiveness list
+// existed to stop the campaign's own reloads dirtying every window. The gateway now classifies the
+// reset and logs it at `info!`, the list was deleted on 2026-09-22 once all three estates served
+// that build, and BOTH halves are asserted here: the new line is benign, and the OLD spelling is
+// forgiven by nothing. Only a build from before the change can emit it, and a run against one must
+// come out dirty rather than quietly clean.
+const wentAway =
+  '2026-09-22T00:19:51.859416Z  INFO chat_gateway::handlers: Client went away without a closing handshake';
 const reset =
   '2026-08-14T12:45:19.892060Z ERROR chat_gateway::handlers: WebSocket Error from aaaaaaaaaaaaaaaa: WebSocket protocol error: Connection reset without closing handshake';
-const resetOk = matches(EXPECTED_ERROR_RULES, reset) && !matches(BENIGN_RULES, reset);
+const resetOk =
+  matches(BENIGN_RULES, wentAway) && !matches(BENIGN_RULES, reset) && !matches(NOTABLE_RULES, reset);
 if (!resetOk) failures++;
-console.log(`${resetOk ? 'ok  ' : 'FAIL'} expected-err an abrupt client disconnection is named, not silenced`);
+console.log(`${resetOk ? 'ok  ' : 'FAIL'} benign       a client that vanished ends a session, and the old ERROR is excused by nothing`);
 
 // THE PUSH FALLBACK IS NOTABLE, AND THE LINE NEXT TO IT IS NOT. `FCM sent` and `PUSH_DEFERRED` say
 // a device was not keeping up; `No push token` says a device never registered one. The first draft
@@ -596,10 +604,7 @@ for (const [name, line, want] of boot) {
 
 // And a line nobody has classified must match nothing at all, or `unexplained` can never fill.
 const stranger = `${NEST}[SomethingService] a sentence no rule has ever seen`;
-const strangerOk =
-  !matches(BENIGN_RULES, stranger) &&
-  !matches(NOTABLE_RULES, stranger) &&
-  !matches(EXPECTED_ERROR_RULES, stranger);
+const strangerOk = !matches(BENIGN_RULES, stranger) && !matches(NOTABLE_RULES, stranger);
 if (!strangerOk) failures++;
 console.log(`${strangerOk ? 'ok  ' : 'FAIL'} unexplained an unknown line matches no rule`);
 
