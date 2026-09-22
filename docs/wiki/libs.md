@@ -38,6 +38,56 @@ files are GENERATED and not in git; `bun run generate` builds them alongside the
 
 ---
 
+## libs/contracts
+
+**Source**: `libs/contracts/`
+
+**A rule three implementations must agree on, shared as DATA rather than as code.** The apps are
+standalone packages - there is no TypeScript workspace here, and the page below records why a shared
+package was deleted rather than kept - so a helper cannot be imported across them. What CAN cross is
+a table of cases, read from disk by one test per implementation. A case added to the file fails
+everywhere at once; an implementation that does not read the file is one nobody is asserting.
+
+### `user-display-name.cases.json`
+
+The one precedence for a person's name, out of the three name columns of the `users` table:
+**`firstName lastName`, then `firstName` alone, then `lastName` alone, then `displayName`.** The
+pair wins because it is the STRUCTURED identity - initials, the trombinoscope's surname sort and the
+chat's first-name-only label are all derived from it, so preferring anything else names a person one
+way and abbreviates them another. `displayName` is Authentik's free-form `name` claim, the fallback
+for an account whose parts never arrived.
+
+Three implementations read it, one per estate that has to name somebody:
+
+| Implementation | Its answer when the row carries no name |
+| --- | --- |
+| `apps/chat-delivery-service/src/utils/user-display-name.ts` | `''` - every caller treats the name as decoration and already falls back from empty |
+| `apps/social-service/src/utils/user-display-name.ts` | `''`, and each caller supplies its own: the actor id for a notification, `null` on a roster row |
+| `frontend/src/lib/utils/users/displayName.ts` | the localized unknown-user label - a person has to read something |
+
+That last column is why the contract pins `expected: null` for the empty row rather than a string:
+the three answers are legitimately different, and only the PRECEDENCE is shared.
+
+**TWO MECHANISMS, BECAUSE THE THREE ARE NOT THE SAME KIND OF COPY.** The two server files are
+BYTE-IDENTICAL and declared in `.github/scripts/lib/declared-duplicates.mjs`, so a change to one
+that is not made to the other fails CI outright. The frontend's cannot be a copy of them - different
+runtime, a localized fallback, and a module full of caching and backoff around it - so what ties it
+in is this contract, read by all three specs. **Identical text on one side, identical ANSWERS on
+the other**, and neither mechanism alone would have caught the divergence that was reported: the
+servers agreed with each other perfectly.
+
+**It was written because the two servers preferred `displayName` and the client preferred the pair**
+(reported by the user 2026-09-18, backlog `G2`), so one account could be titled one way in a push
+notification and another way in the screen that notification opened. The divergence was invisible in
+the field: Authentik's `name` claim is exactly `firstName lastName` for **all 436 production
+accounts** (measured 2026-09-22), so no user has ever seen the two answers differ - which is also
+why nothing could be inferred from them agreeing.
+
+**A FOURTH COPY IS THE SIGNAL TO RECONSIDER THE PACKAGE, not to add a fourth spelling of the rule.**
+The same trade `shared-ts` was deleted over applies here, and it is the same paragraph below.
+
+---
+
 ## libs/shared-ts, deleted 2026-08-27
 
 There was a third library, `@canari/shared-ts`. It exported three Kafka topic names, a Redis envelope

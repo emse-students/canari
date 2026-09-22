@@ -86,14 +86,29 @@ function shouldSkipRetry(userId: string): boolean {
 }
 
 /**
- * Format a user display name with priority: firstName+lastName > displayName > id
- * Returns the parts joined with a space.
+ * The name a person is called, from the three columns that could carry one.
+ *
+ * THE PRECEDENCE IS `firstName lastName` FIRST, AND IT IS NOW THE SAME ON THE SERVERS.
+ * Both chat-delivery-service and social-service preferred `displayName` until 2026-09-22, so the
+ * same account could be titled one way in a push notification and another way in the screen that
+ * notification opened - reported by the user on 2026-09-18. The pair wins because it is the
+ * STRUCTURED identity: {@link getUserInitials}, the trombinoscope's sort and the `firstNameOnly`
+ * chat label are all derived from it, so preferring anything else names a person one way and
+ * abbreviates them another. `displayName` is Authentik's free-form `name` claim.
+ *
+ * The contract is `libs/contracts/user-display-name.cases.json` and this function is asserted
+ * against it by `displayName.contract.test.ts`, as are the two server copies. Exported for that
+ * test and for the callers that already hold a profile and must not seed the cache with a name
+ * built some other way.
+ *
+ * The unknown-user LABEL is this implementation's own answer to "the row carries no name", which
+ * the contract deliberately does not pin: a server returns '' or the raw id, and neither is
+ * something a person should read.
  */
-function formatProfileDisplayName(profile: {
+export function formatProfileDisplayName(profile: {
   firstName?: string | null;
   lastName?: string | null;
   displayName?: string | null;
-  id: string;
 }): string {
   const first = profile.firstName?.trim();
   const last = profile.lastName?.trim();
@@ -198,6 +213,29 @@ export function notificationSenderName(
   const fallback =
     convo.contactName?.trim() || (convo.conversationType === 'direct' ? '' : convo.name?.trim());
   return getUserDisplayNameSync(senderId, fallback);
+}
+
+/**
+ * The name for a ROSTER ROW THAT ALREADY CARRIES ITS OWN NAME COLUMNS.
+ *
+ * Four screens wrote this by hand and every one of them was wrong in the same way:
+ * `getUserDisplayNameSync(id) || member.displayName?.trim() || member.userId`. The first call never
+ * returns a falsy value - it answers with the unknown-user label when it knows nothing - so the two
+ * fallbacks behind it were unreachable and an association's member list read "Utilisateur inconnu"
+ * on a cold load, with the roster's own name sitting unused in the row beside it. The parameter
+ * this needed has existed all along: {@link getUserDisplayNameSync} takes a `fallback` precisely so
+ * that not knowing a name cannot erase one the caller brought.
+ *
+ * The cache still wins, which is what those call sites meant: it is warm on an SPA navigation and
+ * it holds what the profile endpoint actually returned. The row is what answers when it is not.
+ */
+export function rosterDisplayName(member: {
+  userId: string;
+  displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string {
+  return getUserDisplayNameSync(member.userId, formatProfileDisplayName(member));
 }
 
 export async function resolveUserDisplayName(userId: string): Promise<string | null> {

@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une personne porte le meme nom partout
+
+Les deux serveurs preferaient `displayName` la ou le client preferait prenom + nom : une
+notification pouvait titrer quelqu'un autrement que l'ecran qu'elle ouvrait. Une seule regle
+desormais, partagee comme contrat et verifiee par un test dans chacune des trois implementations ;
+`firstName`/`lastName` se rafraichissent enfin a chaque connexion, et quatre listes de membres qui
+affichaient "Utilisateur inconnu" a froid lisent la ligne qu'elles avaient deja.
+[libs](docs/wiki/libs.md#libscontracts).
+
 ### Fixed - l'export Excel parle francais, et le chevron mesure au lieu de deviner
 
 L'export ne possede plus un seul mot : le client envoie ses libelles, le serveur refuse la requete

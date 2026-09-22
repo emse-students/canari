@@ -1,0 +1,75 @@
+{
+  "$comment": [
+    "THE ONE PRECEDENCE FOR A PERSON'S NAME, WRITTEN ONCE AND ASSERTED EVERYWHERE.",
+    "",
+    "Four implementations build a human name out of the three name columns of the `users` table -",
+    "one in chat-delivery-service, one in social-service, one in the frontend, and the initials",
+    "helper beside the last. Until 2026-09-22 the servers preferred `displayName` and the client",
+    "preferred `firstName lastName`, so the same account could be titled one way in a push",
+    "notification and another way in the screen it opened (backlog G2, reported by the user on",
+    "2026-09-18). There is no shared TypeScript package between the four - the apps are standalone",
+    "and the frontend is a separate build - so the CONTRACT is shared instead of the code: this file",
+    "is read by one spec per implementation, and a fifth implementation that does not read it is a",
+    "fifth implementation nobody is asserting.",
+    "",
+    "THE PRECEDENCE IS `firstName lastName` FIRST, and the reason is that the pair is the STRUCTURED",
+    "identity: the initials helper, the trombinoscope's sort and the `firstNameOnly` chat label are",
+    "all derived from it, so preferring anything else names a person one way and abbreviates them",
+    "another. `displayName` is Authentik's free-form `name` claim, kept as the fallback for an",
+    "account whose parts never arrived.",
+    "",
+    "`expected: null` means the row carries no name at all. Each implementation supplies its OWN",
+    "answer for that case - a localized label on the client, the raw id on a server that must return",
+    "something addressable, an empty string where the caller treats the name as decoration - and this",
+    "file deliberately does not pin it.",
+    "",
+    "Every value is trimmed before it is considered, so a column holding only whitespace is absent."
+  ],
+  "cases": [
+    {
+      "name": "both parts present - they win over a display name",
+      "row": { "displayName": "jdupont", "firstName": "Jean", "lastName": "Dupont" },
+      "expected": "Jean Dupont"
+    },
+    {
+      "name": "both parts present, no display name",
+      "row": { "displayName": null, "firstName": "Jean", "lastName": "Dupont" },
+      "expected": "Jean Dupont"
+    },
+    {
+      "name": "first name only",
+      "row": { "displayName": "jdupont", "firstName": "Jean", "lastName": null },
+      "expected": "Jean"
+    },
+    {
+      "name": "last name only",
+      "row": { "displayName": "jdupont", "firstName": null, "lastName": "Dupont" },
+      "expected": "Dupont"
+    },
+    {
+      "name": "no parts at all - the display name is the fallback",
+      "row": { "displayName": "Jean D.", "firstName": null, "lastName": null },
+      "expected": "Jean D."
+    },
+    {
+      "name": "whitespace is not a name",
+      "row": { "displayName": "Jean D.", "firstName": "   ", "lastName": "\t" },
+      "expected": "Jean D."
+    },
+    {
+      "name": "the parts are trimmed, and joined by exactly one space",
+      "row": { "displayName": null, "firstName": "  Jean  ", "lastName": "  Dupont  " },
+      "expected": "Jean Dupont"
+    },
+    {
+      "name": "a display name of whitespace is absent too",
+      "row": { "displayName": "   ", "firstName": null, "lastName": null },
+      "expected": null
+    },
+    {
+      "name": "nothing at all",
+      "row": { "displayName": null, "firstName": null, "lastName": null },
+      "expected": null
+    }
+  ]
+}

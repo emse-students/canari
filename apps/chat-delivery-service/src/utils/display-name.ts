@@ -1,21 +1,24 @@
 import type { EntityManager } from 'typeorm';
+import { formatUserDisplayName, type UserNameRow } from './user-display-name';
 
-/** Shape returned by the users table query. */
-interface UserNameRow {
+/**
+ * READING A NAME OUT OF THE SHARED `users` TABLE - the two queries, and nothing else.
+ *
+ * The RULE deciding which column wins is `user-display-name.ts`, a file this service shares
+ * byte-for-byte with social-service and which the frontend's own implementation is asserted
+ * against. It used to live here, preferring `displayName`, where the client preferred
+ * `firstName lastName` - so one account could be titled one way in a push notification and another
+ * way in the screen that notification opened.
+ */
+
+/** Shape returned by the users table query - the name columns plus the key they are filed under. */
+interface IdentifiedUserNameRow extends UserNameRow {
   id: string;
-  displayName: string | null;
-  firstName: string | null;
-  lastName: string | null;
-}
-
-/** Builds a human-readable display name from the user row fields. */
-function formatDisplayName(row: UserNameRow): string {
-  return row.displayName?.trim() || [row.firstName, row.lastName].filter(Boolean).join(' ') || '';
 }
 
 /**
  * Resolves a user's human-readable display name from the shared `users` table
- * (auth-service schema, same database). Returns '' when the user is unknown or
+ * (core-service schema, same database). Returns '' when the user is unknown or
  * the query fails - callers always treat the name as best-effort decoration
  * (notification titles, call ring banners), never as authorization data.
  */
@@ -24,12 +27,12 @@ export async function resolveUserDisplayName(
   userId: string
 ): Promise<string> {
   try {
-    const rows: UserNameRow[] = await manager.query(
+    const rows: IdentifiedUserNameRow[] = await manager.query(
       `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
     if (!rows[0]) return '';
-    return formatDisplayName(rows[0]);
+    return formatUserDisplayName(rows[0]);
   } catch {
     return '';
   }
@@ -49,12 +52,12 @@ export async function resolveUserDisplayNamesBatch(
   if (unique.length === 0) return result;
 
   try {
-    const rows: UserNameRow[] = await manager.query(
+    const rows: IdentifiedUserNameRow[] = await manager.query(
       `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
       [unique]
     );
     for (const row of rows) {
-      result.set(row.id, formatDisplayName(row));
+      result.set(row.id, formatUserDisplayName(row));
     }
   } catch {
     // Best-effort: return empty map on failure.
