@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un bandeau deplacait la barre Canari et cinq cartes flottantes ne l'apprenaient jamais
+
+Avec un second onglet du meme compte ouvert : bandeau a 108px du bord gauche contre 12 a droite, la
+barre Canari poussee de 50px DANS le rail qui ne bouge pas, et l'ombre du rail qui commence 22px
+sous le haut de la barre - la bande blanche vue par le user. Une seule cause : la somme
+`safe-area + hauteur de barre` etait ecrite a la main dans cinq regles, toutes vraies tant que rien
+n'est rendu au-dessus de la barre. Un token `--app-content-top`, nourri par la hauteur MESUREE de la
+colonne de bandeaux, remplace les cinq ; les cinq bandeaux rejoignent cette colonne et s'encadrent
+carre. [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Fixed - une regle hors layer supprimait TOUTES les transitions Tailwind de l'app
+
+La transition de theme est declaree sur `nav, aside, header, button, a, input, textarea, select`
+hors de tout `@layer` - et du CSS non-layered bat tout ce qui est dans un layer, quelle que soit la
+specificite. Mesure : 28 elements sur 28 a `/posts`, 22 sur 22 a `/chat`. Le rail de navigation
+s'ouvrait donc d'un coup, ses libelles arrivant en fondu apres. Passee dans `@layer base`.
+[design-reference](docs/wiki/frontend/design-reference.md).
+
 ### Fixed - une porte epelee a l'execution etait invisible au garde, et NOTIF-15 a paye trois runs
 
 `checks-selftest.mjs` lit chaque script pour les orthographes LITTERALES par lesquelles il atteint un
