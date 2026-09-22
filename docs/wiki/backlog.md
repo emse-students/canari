@@ -1291,6 +1291,16 @@ the redraw a late seed triggers would otherwise be refused as a second announcem
 [mobile](frontend/mobile.md#one-builder-two-triggers). **OWED: one look on the Mi 9T** - two
 triggers for one salon message is a race no gate here can run.
 
+**THE FIELD IS ANDROID-ONLY BY ARCHITECTURE, AND THE CONTRACT GATE NOW SAYS SO RATHER THAN BEING
+TOLD OFF.** `channelPushFields.test.ts` refused the payload, correctly: `createdAt` is one of the
+three fields measured drifting on 2026-08-15, sent to every device and read by none. It is not that
+now - the second trigger that needs it is `notifier_message_natif` -> `notifyMessageFromWebSocket`,
+whose body is `#[cfg(target_os = "android")]`, so iOS posts nothing from the socket and has no two
+announcements to reconcile. The gate keeps "a key read by NOBODY fails" for every key and gained a
+`PLATFORM_SPECIFIC` table that narrows only WHICH readers are owed; each entry cites the code that
+makes it true, and a test re-reads that code, so the exemption fails on the commit that removes the
+`cfg` rather than on a duplicate banner months later.
+
 Two things outlive it:
 
 1. **A CHANNEL IS TITLED DIFFERENTLY BY THE TWO TRIGGERS.** The push puts `<Communaute> - #<salon>`

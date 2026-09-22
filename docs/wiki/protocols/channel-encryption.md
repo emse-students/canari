@@ -923,6 +923,17 @@ at the same deploy, so no row loses data it could still have been read with.
   which is exactly the drift it was written to catch. Everything else about the notification path is
   unchanged, and that is asserted rather than assumed.
 
+  **AND ON 2026-09-22 IT REFUSED A FIELD THAT WAS RIGHT, WHICH IS WHERE ITS RULE GOT NARROWER.**
+  `createdAt` came back for the Android de-duplication (`backlog.md`, G1) and no iOS handler reads
+  it, so the gate failed - correctly, since `createdAt` is one of the three fields it measured
+  drifting on 2026-08-15. But the reason it has one reader is architectural and checkable: the
+  second trigger is `notifier_message_natif` -> `notifyMessageFromWebSocket`, and that body is
+  `#[cfg(target_os = "android")]`, so iOS posts nothing from the socket and has no two
+  announcements of one salon message to reconcile. So the gate keeps **a key read by NOBODY fails**
+  for every key, and a `PLATFORM_SPECIFIC` table narrows only WHICH readers are owed. Each entry
+  cites the code that makes it true and a test re-reads that code, so the exemption dies with the
+  `cfg` rather than outliving it.
+
 ### Phase 7 - the cut and the record
 
 - **WP-60 SHIPPED.** Two migrations, one deploy, no in-app notice: social-service's `042` deletes
