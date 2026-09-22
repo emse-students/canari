@@ -104,43 +104,47 @@ refusals):
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
 
-### P2 - five conversations rest on ONE holder and one has none, and the report can only say so (measured on production 2026-09-12)
+### P2 - ONE conversation rests on one holder, and the only thing left is a decision nobody has taken (re-measured on production 2026-09-22)
 
-**The measurement.** Of 58 live groups on production: 1 with zero holders, 9 with one, 48 with two
-or more, counting a holder as a DISTINCT USER holding an `active` device membership. Five of the ten
-have fewer than two rows in `dm_group_members` and are one-person groups or orphans rather than
-conversations; the five that remain are real, and one of them is a DM at **epoch 284 with six
-devices sitting `pending` on it**, four of them created the day of the measurement.
+**THE PARKED QUESTION IS ANSWERED AND THE LEVER WORKED.** This entry said *"nothing here is to be
+built before the next report is read"*, and named which lever to read first. Ten hourly reports were
+read on 2026-09-22 and the figure re-derived directly with the report's own query: **five real
+one-holder conversations became one, while the estate grew from 58 live groups to 100**, and the
+epoch-284 DM with six pending devices is gone from the list - its Welcomes landed. Zero-holder has
+no population at all and no ERROR line has ever been emitted. Every measurement, the sweep for seats
+with no client behind them, and the queue figures that refuted a second worry are in
+[the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22).
 
-**AND THE ZERO-HOLDER GROUP WAS NOT ONE, which only opening it could have said (2026-09-14).** It has
-no seats at all - no members, no commits, no published base, no queued frames - so nobody is locked
-out of it. It is a `POST mls/groups` whose row was written and whose creator never enrolled, made
-atomic the same day; `findOrphanGroupIds` is structurally blind to that shape, so it was permanent
-and counted as a live group everywhere. **The DE2 population on production is 0.** The five
-one-holder conversations are untouched by this and remain the whole of what is open below.
+**What is left is TWO DECISIONS AND NO WORK**, unchanged in substance since 2026-09-12 and now
+resting on a population of one:
 
-**What shipped.** `reportSingleHolderGroups`, hourly, beside the other three reports - WARN at one
-holder, ERROR at zero, with the pending count beside each because a pending device is the cheapest
-second holder available. The predicate requires two user-level members, and that requirement came
-out of the measurement rather than out of taste: without it, half of every line is debris.
-
-**What is open, and it is a design decision rather than work.** The report names the population and
-cannot repair it. DE2 is terminal by RFC 9420 construction - every way into a group requires a party
-holding the group secrets, and this server holds only ciphertext - so the only useful moment is
-BEFORE the last holder goes, and the only levers are upstream:
-
-- **Land the Welcomes that are already owed.** Six pending devices on the epoch-284 DM would each
-  become a second holder. Whether they were starved by the background re-add returning 400 (fixed
-  2026-09-12) is measurable from the next report after that fix ships, and that is the first thing
-  to read rather than the first thing to build.
-- **Tell somebody.** A conversation with one holder is a fact about a USER's own account, and
-  nothing surfaces it to them. What channel, and whether it is worth surfacing at all, is undecided.
+- **Tell somebody.** A conversation with one holder is a fact about a USER's own account and nothing
+  surfaces it to them. What channel, and whether it is worth surfacing at all, is undecided.
 - **Refuse the last exit.** A client could decline to forget a group it is the last holder of
-  without warning. This one needs care: a destructive control gated on a server's count is a
-  fallback path, and the count is a proxy.
+  without warning. This needs care: a destructive control gated on a server's count is a fallback
+  path, and the count is a proxy.
 
-Nothing here is to be built before the next report is read. See
-[the state machine](protocols/mls-graine-state-machine.md), section 9 (DE1, DE2) and section 10.
+**DO NOT re-open the repair question.** DE2 is terminal by RFC 9420 construction - every way into a
+group requires a party holding the group secrets and this server holds only ciphertext - so the
+report names and cannot repair, deliberately.
+
+### P3 - one seat on production has no client behind it, and removing it is not the server's to do (measured 2026-09-22)
+
+**The placeholder-seat question finally has production evidence, and it is one seat.** The three
+identities previously cited as instances were this campaign's own mention fixtures. Swept
+estate-wide, **two** seats belong to users with no `key_package` anywhere: one is a real member of a
+real two-person conversation who has never had an MLS device, and one is a brand-new account that
+made a one-member group at epoch 0 and locks nobody out.
+
+**The real one was taken on 2026-08-10, inside the window where `userHasMlsDevices` was a constant
+`true`** - the guard whose whole job is to refuse exactly that invitation, broken until 2026-08-19.
+The sweep finds no real case after the fix, so this is residue and the guard holds. Full table and
+the reasoning in [the state machine](protocols/mls-graine-state-machine.md#a-seat-with-no-client-behind-it---the-first-real-one-and-the-population-is-two-2026-09-22).
+
+**What is open is small and may well close as "leave it".** Whether the MLS tree still carries a
+leaf for that member is a question only a holder's CLIENT can answer, and removing it is a client
+action inside a real student's conversation. The decision is whether one residual seat is worth any
+mechanism at all.
 
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 

@@ -878,6 +878,78 @@ there is still something to do, and ERRORs at zero, where there is not. **It rep
 because nothing can**: DE2 is terminal by RFC 9420 construction, so the only useful moment is before
 it, and the only thing a server can contribute is to say which conversations are near it.
 
+#### THE REPORT WAS READ, TEN DAYS ON (2026-09-22), AND IT SAYS THE LEVER WORKED
+
+The entry that parked this said *"nothing here is to be built before the next report is read"*, and
+named which lever to read first: **land the Welcomes that are already owed**, because the six
+devices sitting `pending` on the epoch-284 DM would each become a second holder, and whether they
+had been starved by the background re-add returning 400 (fixed 2026-09-12) was measurable rather
+than arguable. Ten hourly reports were read on 2026-09-22 and the figure re-derived directly against
+production with the report's own query:
+
+| | 2026-09-12 | 2026-09-22 |
+| --- | --- | --- |
+| live groups | 58 | **100** |
+| zero holders | 1 (refuted - not a group) | **0** |
+| one holder | 9 named, **5 real conversations** | **1** |
+| two or more | 48 | 88 |
+
+**Five real one-holder conversations became one while the estate nearly doubled**, and the epoch-284
+DM is not among them - its pending devices landed. The lever was the right one to read and it needed
+nothing built. No ERROR line has been emitted at all: the zero-holder half has no population.
+
+**AND THE ONE THAT REMAINS IS NOT THE SHAPE THIS SECTION ASSUMED.** It is a two-member group at
+epoch 2, and its two `active` device rows are two BROWSERS OF THE SAME USER - which is what
+"distinct users holding a tree" was written to catch, and does. The other member has a seat in
+`dm_group_members` and **no MLS device anywhere on the estate**: no key package, no device
+membership, no push token. Nobody lost a tree here. Somebody was added to a conversation they could
+never receive a Welcome for.
+
+**So the remaining population of this row is a DIFFERENT defect wearing its clothes**, which is the
+second time that has happened to this row - the zero-holder candidate of 2026-09-12 was also
+something else. A count of holders cannot tell "a member who left" from "a member who never
+arrived", and both render as one holder.
+
+#### A SEAT WITH NO CLIENT BEHIND IT - THE FIRST REAL ONE, AND THE POPULATION IS TWO (2026-09-22)
+
+The placeholder-seat question had never had production evidence: the three identities previously
+cited as its instances were **this campaign's own mention fixtures**, named on 2026-09-07. Swept
+estate-wide - every seat in `dm_group_members` of a live group whose user has no row in
+`key_package` at all - the population is **2**, and they are not the same thing:
+
+| Joined | Group | What it is |
+| --- | --- | --- |
+| 2026-08-10 | 2 members, epoch 2, one other user holding | **A REAL LOCKED-OUT SEAT.** A member of a real two-person conversation who has never had an MLS device, so no Welcome could ever have been produced for them |
+| 2026-09-11 | 1 member, epoch 0, no devices at all | **NOT ONE.** A brand-new account that created a group the same day and never enrolled a device - the failed-creation shape, and it predates the atomicity fix of 2026-09-14 |
+
+**THE DATE ON THE REAL ONE IS THE POINT.** `userHasMlsDevices` - the guard whose entire job is to
+refuse an invitation to a user with no MLS device - was a **constant `true`** until 2026-08-19,
+because the call behind it 404'd and the failure read as success
+([api-surface](api-surface.md#internal-cross-service-calls)). The seat was taken on **2026-08-10**,
+inside that window. Not a proof, but the only candidate cause that fits, and it is checkable: the
+sweep finds **no real case after the guard was fixed**. The 2026-09-11 row is self-inflicted and
+locks nobody out.
+
+So the guard holds, this is residue, and **the residue is one seat**. What it cannot say is whether
+the MLS tree still carries a leaf for that member - only a holder's client can, and a server that
+holds ciphertext never will. Removing it is a client action inside a real student's conversation and
+is nobody's to take from here.
+
+#### AND THE QUEUE IS NOT A BACKLOG OF THE DEAD, WHICH IS WORTH KNOWING BEFORE SOMEBODY SWEEPS IT
+
+Measured the same day, because a month-old frame on the one-holder group invited the question:
+`queued_message` holds **15 087 frames for 204 devices across 90 groups**, oldest 2026-07-28.
+
+- **Every one of them targets a device that still holds a key package.** Not one frame is addressed
+  to a device the estate has forgotten, so there is no retention debris to sweep.
+- **73% of it was written in the last two weeks** - 9 058 in the week of 2026-09-14 and 2 014 in the
+  week of 2026-09-21. Only **461 frames are older than 30 days**.
+- The depth is concentrated rather than uniform: 97 devices carry fewer than ten frames, and 72
+  carry a hundred or more, which is 90% of the total. 4 073 of the frames are commits.
+
+That is what a store-and-forward queue for currently-offline devices looks like, not a stuck one.
+**The worry is refuted, and `cleanup.mjs` continuing not to sweep `queued_message` is correct.**
+
 ### P2 - correctness
 
 - ~~**P2-1. Delete `bootstrap_dead_conversation`**~~ **DONE 2026-09-12.** The command, its module, its `use` and its registration are gone; `ForegroundCritical` and `write_mls_state_blob` each keep other callers and stay. `force_create_group` did NOT - it kept a WASM export and an `MlsManager` method, but no production caller above them, and it was deleted with `drop_group` on 2026-09-12 ([mls-desync-prevention](mls-desync-prevention.md#6-client---there-is-one-way-to-create-a-group-and-it-recovers-orphans-itself)).
