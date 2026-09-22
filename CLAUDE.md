@@ -137,8 +137,8 @@ them anyway and re-stages, so run them first rather than reading a commit you ha
 AND push in the background: the hook sweeps the whole frontend (2-3 min) and a push here routinely
 exceeds a 5-minute foreground timeout.
 
-**Afterwards**: delete the local branch (`git branch -D`, squash merges are invisible to
-`--merged`), update SESSION STATE, and STOP.
+**Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,
+and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update SESSION STATE, STOP.
 
 ## **ARCHITECTURE & CONSTRAINTS**
 
