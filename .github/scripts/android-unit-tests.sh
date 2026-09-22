@@ -16,10 +16,12 @@
 # thirteen times and FAILED the only time a change touched Android files, on `Could not read
 # script 'tauri.settings.gradle' as it does not exist`.
 #
-# The suite imports `org.junit` and nothing else - no Android type, no tauri type, nothing from
-# `:app` - so it never needed any of that. It now lives in a standalone Kotlin/JVM project whose
-# whole toolchain is a JDK; `frontend/src-tauri/android-tests/settings.gradle.kts` carries the
-# full account, including what this still does NOT prove.
+# Nothing the suite runs needs an Android type, a tauri type or the `:app` build, so it never
+# needed any of that. It lives in a standalone Kotlin/JVM project whose whole toolchain is a JDK;
+# `frontend/src-tauri/android-tests/settings.gradle.kts` carries the full account. Since 2026-09-22
+# that project also COMPILES `gen/android/app/src/main/java/fr/emse/canari/push` - the recovery
+# ladder itself, which needs no platform - so the suite drives the service's own code rather than a
+# copy of it, and `ci.yml` triggers this job on a change to either directory.
 #
 # THE RUN IS NOT THE ASSERTION. THE RESULTS ARE. The original version of this script learned that
 # the hard way on the old layout: the obvious `./gradlew testDebugUnitTest` matched NO task in the

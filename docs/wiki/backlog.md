@@ -71,6 +71,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
+| delete the remote branch `perf/le-blob-ne-traverse-plus-le-pont` (#825, merged 2026-09-17). It is left standing on purpose as the evidence for the row beside it; its content is in `main` and nothing depends on it | 1 click | [P3 - a merged branch that is still there](#p3---a-merged-branch-that-is-still-there-was-not-left-behind-it-was-pushed-back-measured-2026-09-22) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 
 ## Open defects, in severity order
@@ -1957,23 +1958,20 @@ trees. **Do NOT answer it by creating a shared TypeScript package** - that was t
 (`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
 of `cors-origins.ts` and it has not changed.
 
-### P3 - THE ANDROID SUITE TESTS A MIRROR OF THE LADDER, SO IT CANNOT FAIL WHEN THE LADDER CHANGES
+### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
-The suite runs in CI since 2026-09-10 and the four ways it had of not running are closed
-(`CHANGELOG.md`; the executable-bit gate is `.github/scripts/tests/executable-bit.test.mjs`).
+**The Android half of this closed on 2026-09-22** and is on
+[mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22): the
+ladder is one pure function in `fr.emse.canari.push`, a source directory of the app module AND of
+the standalone JVM test project, so `PushDecryptLadderTest` drives the code the service runs. The
+cost this entry feared - needing the app module, whose `tauri.settings.gradle` is gitignored and
+whose `google-services.json` is a secret - did not arrive, because the shared package imports no
+Android and a plain source directory carries it.
 
-**THE REMAINDER IS BIGGER THAN IT LOOKS.** `runLadder` in `PushDecryptLadderTest.kt` is the FCM
-service's recovery ladder written out AGAIN in the test file - its docblock says so, because the real
-methods are private and JNI-bound. So it cannot fail when `CanariFirebaseMessagingService` changes,
-which is the one thing a regression test is for; the green tick means "the mirror still agrees with
-itself". Making it exercise the real code means lifting the ladder out of those private methods into
-a pure function the app and the standalone test project can share - and THAT test would legitimately
-need the app module, whose configuration is exactly what moving the suite out escaped
-(`tauri.settings.gradle` holds absolute paths and is gitignored; `google-services.json` lives in a
-secret). So the question of where it runs comes back with it.
-
-**AND EVERY `.swift` IN THE iOS TREE IS UNGUARDED.** The same trap covers it - a test file nobody
-runs reads as coverage - and nothing here has measured whether an equivalent suite even exists.
+**iOS is untouched by that.** The same trap covers it - a test file nobody runs reads as coverage -
+and nothing here has measured whether an equivalent suite even exists. **The Android answer is a
+shape to copy, not a precedent to argue from**: what made it cheap was that the ladder needed no
+platform, and whether any Swift here is in that position has not been looked at.
 
 ### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
 
@@ -2306,34 +2304,46 @@ fails on migrations never reaches them and reports only "migrations failed" - tr
 the estate being down. Reaching them on the failure path, or asserting the datastores before
 migrations, would make the run say what actually happened.
 
-### P3 - one merge out of three did NOT delete its remote branch, and nothing here refused it (observed 2026-09-03)
+### P3 - A MERGED BRANCH THAT IS STILL THERE WAS NOT LEFT BEHIND, IT WAS PUSHED BACK (measured 2026-09-22)
 
-**One occurrence, recorded because it is a measurement and not a theory.** The repository has
-`delete_branch_on_merge: true` (inventoried in
-[MIGRATION.md](../../infrastructure/MIGRATION.md) section 3bis), and on 2026-09-03 three pull
-requests merged within twenty minutes of one another, all squash-merged by the same App through
-GitHub's auto-merge:
+**THE CAUSE IS NO LONGER UNMEASURED, AND IT IS NOT GITHUB.** This row used to record one
+occurrence - #341, 2026-09-03, whose branch was still present twelve minutes after a squash
+auto-merge while #339 and #340 were already 404 - and said the cause was unknown. A second
+specimen settles it.
 
-| Pull request | Branch after the merge |
+On 2026-09-22 exactly ONE branch of a merged pull request was still on the remote out of **596
+merges since that day**: `perf/le-blob-ne-traverse-plus-le-pont`, from #825. Its numbers say what
+happened:
+
+| | |
 | --- | --- |
-| #339 | deleted (404) |
-| #340 | deleted (404) |
-| #341 | **still present**, twelve minutes later |
+| #825 merged (squash, auto-merge) | 2026-09-17 19:09:28 Z |
+| head the merge consumed | `9ff6d0755` |
+| head the branch carries today | `4b4b5862b`, committed **2026-09-17 22:08 Z** |
 
-`DELETE /git/refs/heads/...` then removed it with **no error and no refusal**, so nothing in this
-repository was protecting it - no ruleset, no protection rule, no open pull request pointing at it.
-Whatever happened, happened on GitHub's side, and the cause is UNMEASURED.
+Three hours AFTER the merge. **GitHub re-creates a branch when something pushes to it**, so nothing
+failed to delete anything: the branch was deleted on merge and a workstation pushed it back. That
+also explains #341 without a second theory - the row already records that `DELETE
+/git/refs/heads/...` removed it with **no error and no refusal**, which is exactly what a
+deleted-then-recreated branch looks like from the API.
 
-**Why it is worth a row rather than a shrug:** the remote branch is what tells a workstation its
-local branch is finished. `[origin/x: gone]` after a fetch is the signal a session uses to delete
-its local copies, and a branch that is never marked gone accumulates silently in every clone - the
-exact confusion that had to be explained on 2026-09-03
-([workflow-developpement](../user-guide/workflow-developpement.md) section 3.1).
+**WHAT IT COSTS, AND IT IS NOT THE UNTIDINESS.** The commit pushed there was a CHANGELOG shortening
+the USER had asked for that same evening. It never travelled to `main` on that branch - a pull
+request that has already merged does not carry another commit - and it only reached `main` because
+the same edit was made again later. **Work pushed to a merged branch is committed, pushed, and
+unshipped, and nothing says so**: `git status` is clean, the push succeeds, and the branch exists.
 
-**What retires this row:** either it never recurs - in which case delete the row after a month of
-merges - or it recurs and the pattern says what it depends on. Do not write a workaround for one
-observation: a sweep that deletes leftover branches would be a destructive control built on an
-unmeasured cause, and it would need an allowlist of what it may touch.
+**The prevention already exists and this is why it is there**: THE DEVELOPMENT CYCLE in `CLAUDE.md`
+ends with `git branch -D`. A local branch kept past its merge is the only thing that can be pushed
+back, which is the sentence that line was missing.
+
+**What retires this row:** it is a practice, not a defect, so nothing here can gate it - the push is
+legitimate git against a branch the remote is happy to have. Delete the row when a month of merges
+leaves no merged branch standing. **The specimen is left in place deliberately**; it is the evidence,
+and it costs one click to remove once this is read (see the table at the top of this file).
+
+**NOT an occurrence:** `fix/rig-classifier-blind-to-ms-stamp` is also on the remote, and its #909 was
+CLOSED without merging. `delete_branch_on_merge` is about merges and says nothing about that one.
 
 ### P3 - TWO audit advisories are suppressed because they cannot be reached, and both should stop being
 
@@ -2362,10 +2372,16 @@ assertions are what stop the suppressions outliving their reason: CI fails if mi
 query string, if the `stringify` call site the measurement was taken on disappears, if minio starts
 importing a stream-json FILTER, or if this service starts calling the notification API.
 
-**UPSTREAM RE-CHECKED 2026-09-15 AND NOTHING HAS MOVED**: `minio` is still 8.0.7, published
-2026-02-27, with `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. Both suppressions are
-still correctly refused. Record the date of the next such check here rather than re-deriving it -
-the registry answers in one request and the answer is the whole of this row.
+**UPSTREAM RE-CHECKED 2026-09-22 AND NOTHING HAS MOVED** (previous check 2026-09-15): `minio` is
+still 8.0.7, published 2026-02-27, with `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged.
+Both suppressions are still correctly refused. Record the date of the next such check here rather
+than re-deriving it - the registry answers in one request and the answer is the whole of this row.
+
+**AND ONE OF THE THREE RETIREMENT CONDITIONS ABOVE IS ALREADY SPENT WITHOUT HELPING**, which is
+worth writing down so a later reading does not chase it: `query-string` DOES now depend on a fixed
+`decode-uri-component` - latest is 9.5.1 on `^0.5.0`. It changes nothing, because minio's pin is
+`^7.1.3` and cannot reach a 9.x. **So only minio moving retires either suppression**, and the
+third condition should be read as dead rather than pending.
 
 ---
 

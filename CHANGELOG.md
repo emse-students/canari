@@ -17,6 +17,17 @@ La notification etait deja unique, mais son fil doublait la ligne : le push de s
 aucun horodatage, et c'est par lui que le constructeur reconnait un message. Il porte desormais
 `createdAt`, la colonne que la trame WebSocket lit deja - une seule valeur, jamais recalculee.
 [mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers).
+### Documentation - une branche fusionnee encore presente n'a pas ete oubliee, elle a ete repoussee
+
+Une seule branche sur 596 fusions, et ses horodatages le disent : poussee trois heures APRES sa
+fusion, donc GitHub l'a recreee. Ce qui est pousse la est commite et non livre.
+[backlog](docs/wiki/backlog.md).
+
+### Changed - l'echelle de recuperation Android n'est plus recopiee dans son test
+
+`PushRecoveryLadder` est une fonction pure compilee par le module app ET par le projet de tests JVM,
+donc `PushDecryptLadderTest` execute le code du service au lieu d'une copie qui ne pouvait pas
+echouer. [mobile](docs/wiki/frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22).
 ### Documentation - les lignes sans date sont une version de client, pas un mystere
 
 Sur les 759 lignes `key_package` de production, la frontiere est exacte : `>= 0.18.10` porte une

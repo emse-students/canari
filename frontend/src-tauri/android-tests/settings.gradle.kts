@@ -13,17 +13,16 @@
 // where it is supposed to run is worse than no gate: it blocks every Android change for a reason
 // that has nothing to do with the change.
 //
-// WHY MOVING IT IS THE FIX RATHER THAN A DODGE. The suite imports `org.junit` and NOTHING ELSE -
-// no Android class, no tauri class, not one type from `:app`. Its own docblock says so: it
-// exercises the ladder "as a pure Kotlin state machine" precisely because the real methods are
-// private and JNI-bound. It was never an Android test; it was a JVM test that happened to be
-// filed inside an Android module, and it inherited that module's entire build cost for nothing.
+// WHY MOVING IT IS THE FIX RATHER THAN A DODGE. Nothing the suite runs needs an Android class, a
+// tauri class or the `:app` build. It was never an Android test; it was a JVM test that happened to
+// be filed inside an Android module, and it inherited that module's entire build cost for nothing.
 //
-// WHAT THIS DOES NOT FIX, stated so the green tick is not read as more than it is: the suite
-// tests a MIRROR of the service's ladder, written out again in the test file, so it cannot fail
-// when the real `CanariFirebaseMessagingService` changes. Making it exercise the real code means
-// lifting the ladder out of the private JNI-bound methods into a pure function `:app` and this
-// project can share - and THAT test would legitimately need the app module. It is filed in the
-// backlog; nothing here closes it.
+// AND IT NO LONGER TESTS A MIRROR, WHICH IS WHAT THAT COST WAS FEARED TO BUY BACK. Until
+// 2026-09-22 the suite restated the service's ladder in the test file, so it could not fail when
+// `CanariFirebaseMessagingService` changed; lifting the ladder out was expected to drag the app
+// module back in with it. It did not: `fr.emse.canari.push` needs no platform, so `build.gradle.kts`
+// beside this file adds that directory of the app tree as a `main` source directory and the one
+// function is compiled in both projects. **Which is why nothing with an Android import may be filed
+// there** - see the comment on that `sourceSets` block.
 
 rootProject.name = "canari-android-tests"

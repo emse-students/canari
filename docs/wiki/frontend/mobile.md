@@ -1105,6 +1105,28 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
 
+##### The Android half of it is ONE FUNCTION, COMPILED TWICE (2026-09-22)
+
+Steps 2-5 above are `PushRecoveryLadder.run` in
+`gen/android/app/src/main/java/fr/emse/canari/push/PushRecoveryLadder.kt`, and that package is a
+source directory of TWO Gradle projects: the app module, and the standalone JVM project in
+`frontend/src-tauri/android-tests`. `PushDecryptLadderTest` therefore drives the code the service
+runs.
+
+**IT USED TO DRIVE A COPY, AND A COPY CANNOT FAIL.** The suite held a private `runLadder` that
+restated the branching, because the real methods are private and JNI-bound; its green tick said only
+that the mirror still agreed with itself, which is the one thing a regression test is not for.
+Changing `WELCOME_RACE_RETRIES` from 3 to 4 in the service source now fails two cases - measured
+2026-09-22, and that is the assertion this shape exists to make.
+
+The ladder is generic over the outcome type and knows one thing about it, `isRefused`; the JNI
+decrypt, the commit catch-up, the locality query, the wait between two retries and the logger all
+arrive as lambdas. So the file needs no Android at all - **and an Android import added to that
+package breaks `:compileKotlin` in the JVM project, by design**: the refusal is immediate and names
+the file, where a silent exclusion would leave the ladder untested again under a green tick.
+
+The two constants live there too, so `3 x 1.8 s` has one definition rather than one per reader.
+
 **`UNKNOWN` is step 3 and not a value of "is it local" because the two were the same value until WP-PUSHHERD-1.** Every failure to reach the state answered "not local", so a message in a months-old DM went down the Welcome-race branch, whose retries re-entered the very lock that had just timed out. Twenty such verdicts came from ten epoch queries in one measured run. See [cross-client-testing](../cross-client-testing.md).
 
 #### One lane for everything that touches `mls.bin`
