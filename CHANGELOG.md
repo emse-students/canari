@@ -25,6 +25,15 @@ Suppression de la pastille "Liste 2026" (doublon du titre "Campagnes 2026") et d
 membres sur les listes seulement ; les rayons sont maintenant divises par association parente a
 l'interieur de chaque annee (user, 2026-09-22).
 [associations](docs/wiki/frontend/modules/associations.md).
+### Fixed - l'agenda du telephone rendu pour la premiere fois : un trait sur rien, et un jour en francais
+
+Le mois glissant livre le 2026-09-20 avait un test par comportement et n'avait jamais ete regarde.
+Il est juste. Deux choses autour ne l'etaient pas : la barre d'actions de la carte de filtre
+dessinait un trait et 16px de vide quand elle n'avait aucun bouton a montrer (le cas ordinaire sur
+telephone), et le jour de la semaine dans la gouttiere etait code en dur en `fr-FR` sous un titre de
+mois qui, lui, lisait la langue du lecteur.
+[calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22).
+
 ### Changed - la reponse citee est devenue une bulle empilee, comme sur la reference
 
 *"Pour l'UI des reponses dans les conversations, Messenger fait un truc joli. Tu peux regarder et

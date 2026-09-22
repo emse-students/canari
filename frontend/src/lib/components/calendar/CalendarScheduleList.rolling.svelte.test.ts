@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import type { AgendaRollingWindow } from '$lib/calendar/agendaMonth.svelte';
+import { setLocale } from '$lib/paraglide/runtime';
 import CalendarScheduleList from './CalendarScheduleList.svelte';
 
 /** One stubbed observer, kept so a test can say what the reader's scroll just did. */
@@ -237,5 +238,22 @@ describe('CalendarScheduleList - the rolling window on screen', () => {
     expect(sentinelOf(root)).toBeNull();
     expect(root.textContent).toContain('12');
     expect(watcherOf(sentinel)).toBeUndefined();
+  });
+});
+
+describe('CalendarScheduleList - the gutter speaks the reader language', () => {
+  afterEach(() => setLocale('fr', { reload: false }));
+
+  it('reads the weekday from the same locale as the month above it', () => {
+    setLocale('en', { reload: false });
+    const rolling = stubWindow(new Date(2026, 8, 28), new Date(2026, 8, 30));
+    const root = render([event({ id: 'sep', startsAt: localIso(2026, 9, 29) })], rolling.window);
+
+    // 29 September 2026 is a Tuesday. The heading read the locale and the weekday under it was
+    // hard-coded `fr-FR`, so an English reader got `mar.` beneath "September 2026" - and the
+    // heading is the half anybody looks at, which is why it was the half that was right.
+    expect(root.querySelector('h3')?.textContent?.trim()).toBe('September 2026');
+    expect(root.textContent).toContain('Tue');
+    expect(root.textContent).not.toContain('mar.');
   });
 });
