@@ -18,6 +18,22 @@ repositories {
     mavenCentral()
 }
 
+// THE APP'S OWN SOURCE, COMPILED HERE TOO - THIS IS WHAT STOPS THE SUITE TESTING A MIRROR.
+//
+// `fr.emse.canari.push` is the part of the FCM service that needs nothing from Android: the
+// recovery ladder and the locality it branches on. Compiling it from the app tree rather than
+// copying it means `PushDecryptLadderTest` fails when `CanariFirebaseMessagingService` changes,
+// which a second description of the ladder could never do.
+//
+// **A FILE ADDED TO THAT PACKAGE WITH AN ANDROID IMPORT BREAKS THIS BUILD, AND THAT IS THE GUARD.**
+// There is no Android classpath here; the refusal is immediate and names the file, where a silent
+// exclusion would leave the ladder untested again with a green tick.
+sourceSets {
+    main {
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/push")
+    }
+}
+
 dependencies {
     // JUnit 4, because that is what the suite imports (`org.junit.Test`, `org.junit.Assert`) and
     // what the Android module it came from provided. Nothing here needs anything else.

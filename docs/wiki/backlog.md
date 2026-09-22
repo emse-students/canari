@@ -1938,23 +1938,20 @@ trees. **Do NOT answer it by creating a shared TypeScript package** - that was t
 (`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
 of `cors-origins.ts` and it has not changed.
 
-### P3 - THE ANDROID SUITE TESTS A MIRROR OF THE LADDER, SO IT CANNOT FAIL WHEN THE LADDER CHANGES
+### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
-The suite runs in CI since 2026-09-10 and the four ways it had of not running are closed
-(`CHANGELOG.md`; the executable-bit gate is `.github/scripts/tests/executable-bit.test.mjs`).
+**The Android half of this closed on 2026-09-22** and is on
+[mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22): the
+ladder is one pure function in `fr.emse.canari.push`, a source directory of the app module AND of
+the standalone JVM test project, so `PushDecryptLadderTest` drives the code the service runs. The
+cost this entry feared - needing the app module, whose `tauri.settings.gradle` is gitignored and
+whose `google-services.json` is a secret - did not arrive, because the shared package imports no
+Android and a plain source directory carries it.
 
-**THE REMAINDER IS BIGGER THAN IT LOOKS.** `runLadder` in `PushDecryptLadderTest.kt` is the FCM
-service's recovery ladder written out AGAIN in the test file - its docblock says so, because the real
-methods are private and JNI-bound. So it cannot fail when `CanariFirebaseMessagingService` changes,
-which is the one thing a regression test is for; the green tick means "the mirror still agrees with
-itself". Making it exercise the real code means lifting the ladder out of those private methods into
-a pure function the app and the standalone test project can share - and THAT test would legitimately
-need the app module, whose configuration is exactly what moving the suite out escaped
-(`tauri.settings.gradle` holds absolute paths and is gitignored; `google-services.json` lives in a
-secret). So the question of where it runs comes back with it.
-
-**AND EVERY `.swift` IN THE iOS TREE IS UNGUARDED.** The same trap covers it - a test file nobody
-runs reads as coverage - and nothing here has measured whether an equivalent suite even exists.
+**iOS is untouched by that.** The same trap covers it - a test file nobody runs reads as coverage -
+and nothing here has measured whether an equivalent suite even exists. **The Android answer is a
+shape to copy, not a precedent to argue from**: what made it cheap was that the ladder needed no
+platform, and whether any Swift here is in that position has not been looked at.
 
 ### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
 
