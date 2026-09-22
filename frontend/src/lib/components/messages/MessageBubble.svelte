@@ -39,10 +39,8 @@
     canStartReplySwipe,
     createReplySwipeGesture,
     replySwipeDragOffset,
-    reactionSwipeDragOffset,
     replySwipeProgress,
     shouldTriggerReplySwipe,
-    shouldTriggerReactionSwipe,
     updateReplySwipeGesture,
     type ReplySwipeGestureState,
   } from '$lib/utils/messageSwipeReply';
@@ -192,8 +190,6 @@
   let swipeHandled = $state(false);
   let replyGesture = $state<ReplySwipeGestureState | null>(null);
   let replyDragPx = $state(0);
-  let reactDragPx = $state(0);
-  let showQuickReactions = $state(false);
 
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
@@ -434,10 +430,8 @@
     if (updated.phase === 'horizontal') {
       if ('touches' in e) e.stopPropagation();
       const dx = x - updated.startX;
-      const replyOffset = replySwipeDragOffset(dx, isOwn);
-      const reactOffset = reactionSwipeDragOffset(dx, isOwn);
-      replyDragPx = replyOffset ?? 0;
-      reactDragPx = reactOffset ?? 0;
+      // `null` is an OUTWARD drag, which is no longer a gesture - the bubble simply does not move.
+      replyDragPx = replySwipeDragOffset(dx, isOwn) ?? 0;
       cancelLongPress();
       return;
     }
@@ -469,21 +463,10 @@
       ) {
         navigator.vibrate(12);
       }
-    } else if (shouldTriggerReactionSwipe(dx, dy, isOwn, replyGesture.phase) && onReact) {
-      swipeHandled = true;
-      showQuickReactions = true;
-      if (
-        settings.vibrationsEnabled &&
-        typeof navigator !== 'undefined' &&
-        'vibrate' in navigator
-      ) {
-        navigator.vibrate(12);
-      }
     }
 
     replyGesture = null;
     replyDragPx = 0;
-    reactDragPx = 0;
   }
 
   /** Non-passive `touchmove` so horizontal reply swipes do not bubble to tab navigation. */
@@ -628,25 +611,27 @@
   >
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
+        <!--
+        THE HINT SITS ON THE OUTER EDGE - THE SIDE THE BUBBLE IS LEAVING, NOT THE ONE IT MOVES INTO.
+
+        It was the other way round until 2026-09-22, and the bubble slid straight over it: the icon
+        is `z-20` and does not move, so the message passed UNDERNEATH the thing meant to announce
+        what the message was about to do. *"une bulle avec le logo repondre, mais a l'interieur et
+        qui ne bouge pas, donc c'est un peu bizarre (le message passe dessous, pas intuitif)"*
+        (user). Measured on Messenger 579.0.0.61.91: the row translates toward the centre and the
+        reply icon is REVEALED in the space it vacates, on the outer edge, never covered.
+
+        `right-full` on a received bubble puts the icon past its LEFT edge, `left-full` on an own
+        bubble past its RIGHT edge - in both cases the direction the drag comes FROM. The arrow is
+        mirrored to point the way the bubble travels.
+      -->
         <div
           class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 shadow-md transition-opacity
- {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
+ {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
           style:opacity={replyHintOpacity}
           aria-hidden="true"
         >
-          <CornerDownRight size={18} class={isOwn ? 'rotate-180' : ''} />
-        </div>
-      {/if}
-
-      {#if reactDragPx !== 0 && onReact}
-        <div
-          class="bg-cn-surface pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full shadow-md transition-opacity {isOwn
-            ? 'left-full ml-1.5'
-            : 'right-full mr-1.5'}"
-          style:opacity={Math.min(1, Math.abs(reactDragPx) / 56)}
-          aria-hidden="true"
-        >
-          😊
+          <CornerDownRight size={18} class={isOwn ? '' : 'rotate-180'} />
         </div>
       {/if}
 
@@ -677,9 +662,7 @@
             toggleInfo(e as unknown as MouseEvent);
           }
         }}
-        style:transform={replyDragPx !== 0 || reactDragPx !== 0
-          ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)`
-          : undefined}
+        style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
         class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
           ? 'p-0'
           : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
@@ -820,34 +803,6 @@
         showMobileActions = false;
       }}
     />
-
-    {#if showQuickReactions && onReact}
-      <div
-        class="bg-cn-surface absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg dark:border-white/10 {isOwn
-          ? 'right-0 bottom-full mb-2'
-          : 'bottom-full left-0 mb-2'}"
-        use:clickOutside={() => (showQuickReactions = false)}
-      >
-        {#each ['❤️', '😂', '😮', '😢', '👍', '👎'] as emoji (emoji)}
-          <button
-            type="button"
-            onclick={() => {
-              onReact(messageId, emoji);
-              showQuickReactions = false;
-              if (
-                settings.vibrationsEnabled &&
-                typeof navigator !== 'undefined' &&
-                'vibrate' in navigator
-              ) {
-                navigator.vibrate(12);
-              }
-            }}
-            class="rounded-xl px-1 py-0.5 text-xl leading-none transition-all hover:bg-black/8 active:scale-125 dark:hover:bg-white/10"
-            >{emoji}</button
-          >
-        {/each}
-      </div>
-    {/if}
 
     <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
 
