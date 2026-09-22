@@ -80,6 +80,10 @@ export function createMlsServiceStub(
     // retire every conversation the commit path touches.
     isGroupActive: vi.fn().mockResolvedValue(true),
     forgetGroup: vi.fn(),
+    // Reached whenever a row that is NOT `active` is upserted - a re-admission after an eviction is
+    // exactly that, so the stub owes it or the Welcome path dies in a TypeError the handler then
+    // classifies as an install failure.
+    undismissGroup: vi.fn().mockResolvedValue(undefined),
     forceLeaveGroup: vi.fn().mockResolvedValue(undefined),
     renameGroup: vi.fn().mockResolvedValue(undefined),
     setGroupImage: vi.fn().mockResolvedValue(undefined),

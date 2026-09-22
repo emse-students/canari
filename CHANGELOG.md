@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un "vous avez ete retire de ce groupe" definitif au-dessus d'une conversation qui marche
+
+*"pourquoi j'ai eu ce message systeme ? Tout a l'air de marcher"* (user). Le retrait de l'avis
+etait branche sur `holdsGroupState && !isGroupActive`, et la SEULE preuve qui ecrit toujours l'avis
+- l'annonce de son auteur - efface l'etat du groupe avant de l'enregistrer. Un retrait aussitot
+annule laissait donc une phrase permanente et indeboulonnable au-dessus d'un fil parfaitement
+fonctionnel. Le retrait pend desormais sur l'INSTALLATION du groupe revenu, une seule fois.
+[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md).
+
 ### Fixed - la visionneuse ne se deplacait pas a la souris : le navigateur prenait le geste
 
 *"on ne puisse pas (sur PC en tout cas) se deplacer dans la visionneuse (le fait de tenter de drag
