@@ -22,6 +22,17 @@
 > | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | PushKit tokens (absent = no token, ever) |
 > | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the locked-screen CallStyle ring |
 >
+> **A SIXTH THING MOVED WHILE CALLS WERE OFF, AND IT IS NOT A SWITCH (2026-09-22).** A push payload
+> no longer carries `senderName` or `groupName` on a SILENT frame: those two are unbounded user text,
+> the payload is cleartext to FCM and to APNs, and nothing read them there - measured on both
+> clients. **A `call_invite` is a silent frame**, and `showIncomingCallNotification` takes both names
+> from exactly those fields, so on the day calls come back that banner would be titled with nothing.
+> Reviving them means taking the name from the device's own store (the FCM cache already holds one
+> per conversation) or delivering an invite as an alert push - **not restoring the fields**, which
+> would put every student's name back in front of Google on every read receipt.
+> ([push-payload](../../../../apps/chat-delivery-service/src/services/push-payload.ts),
+> [chat-delivery](../../services/chat-delivery.md#transport--single-gateway-fcm))
+
 > The two platform declarations are the ones a store checks, and each cuts both ways: declared but
 > unused is a rejection, used but undeclared cannot work. **Revival condition: rung 15 CALL and
 > CALL-13 pass on real hardware** ([board](../../cross-client-testing.md),
