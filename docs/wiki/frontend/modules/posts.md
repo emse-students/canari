@@ -339,6 +339,30 @@ instead of competing with it. **It must not steal a text selection**, and `PdfTe
 test honest rather than heuristic: the layer is `pointer-events: none` with `auto` on the spans, so
 a pointer-down whose target is a span is a selection and one anywhere else is a pan.
 
+### The browser took the pan gesture first, on every image in the app (2026-09-22)
+
+Reported from the app: *"on ne puisse pas (sur PC en tout cas) se deplacer dans la visionneuse (le
+fait de tenter de drag l'image la selectionne)"*.
+
+An `<img>` is `draggable` by DEFAULT. Press on one and move, and the browser starts a drag-and-drop
+of the picture: it paints the translucent ghost the reader read as a selection, and it stops
+delivering pointer moves. `handlePointerMove` never runs, so `panTo` never runs, so nothing moves.
+Zooming worked (a wheel event is not a drag), which is what made it read as a broken viewer rather
+than as a missing refusal.
+
+`select-none` on the transform wrapper does NOT cover it. Measured in a live engine 2026-09-22: an
+`<img>` inside a `user-select: none` container computes `user-select: none` and still fires an
+uncancelled `dragstart`. Text selection and the native image drag are two different gestures, and
+only one of them was being refused.
+
+The refusal is `ondragstart` **on the transform wrapper**, not `draggable="false"` on the image. The
+content is `{@render children}` and five call sites pass their own markup — `PostMedia`,
+`PostContent`, `MessageMediaRenderer`, `ConversationMediaPanel`, `ChatComposer` — so an attribute
+each of them has to remember is one of them eventually not remembering it. The wrapper already owns
+the zoom, the pan and the dismiss drag; it owns their competitor too, for whatever is rendered
+inside it. `MediaLightbox.nativeDrag.svelte.test.ts` pins both halves and fails when the handler is
+removed.
+
 ### Rasterising is right; losing the TEXT was not (2026-08-11)
 
 Reported from the app: "avec la visionneuse pdf on ne peut pas selectionner le texte, ni rechercher,

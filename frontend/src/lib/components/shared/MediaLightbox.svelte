@@ -276,6 +276,26 @@
     };
   });
 
+  /**
+   * Refuses the browser's own image drag, which is what made panning impossible with a mouse.
+   *
+   * An `<img>` is `draggable` by DEFAULT. A press and a move over one starts a drag-and-drop of the
+   * picture - the translucent ghost a reader reads as "it selected the image" (user, 2026-09-22:
+   * *"on ne puisse pas se deplacer dans la visionneuse, le fait de tenter de drag l'image la
+   * selectionne"*) - and the browser then stops sending pointer moves, so `handlePointerMove` never
+   * runs and the pan never happens.
+   *
+   * `select-none` on this wrapper does NOT cover it: measured in a live engine, the image computes
+   * `user-select: none` and `dragstart` still fires uncancelled. The two are different gestures.
+   *
+   * IT IS ON THE WRAPPER, NOT ON THE IMAGE, because the content is `{@render children}` - every
+   * call site passes its own markup, and a rule each of them has to remember is a rule one of them
+   * will not. The wrapper already owns the zoom and the pan; it owns their competitor too.
+   */
+  function refuseNativeDrag(e: DragEvent) {
+    e.preventDefault();
+  }
+
   // Mouse drag (pointer events, declarative handlers)
   function handlePointerDown(e: PointerEvent) {
     if (e.pointerType === 'touch' || !isZoomed) return;
@@ -398,6 +418,7 @@
             : 'zoom-in'};"
         onclick={(e) => e.stopPropagation()}
         ondblclick={handleDoubleClick}
+        ondragstart={refuseNativeDrag}
         onpointerdown={handlePointerDown}
         onpointermove={handlePointerMove}
         onpointerup={handlePointerUp}
