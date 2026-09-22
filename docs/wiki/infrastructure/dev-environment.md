@@ -203,6 +203,23 @@ the ordinary instinct is "rehearse it on dev first" and here that instinct silen
 The same holds for any path whose evidence is a stored object rather than a row: avatars, post
 images, association logos, document attachments.
 
+**AND THERE WAS A SECOND REASON, FOUND WHILE ESTABLISHING THE FIRST - a defect, not a property.**
+Probing the preview route from inside dev's `social-service` returned `403`, not the empty render
+the missing media would explain. That service had never been given `INTERNAL_SECRET`: production
+and the local estate both pass it, `infrastructure/docker-compose.dev.yml` did not, and the value
+had been sitting in the dev box's own `.env` at full length the whole time. `assertInternalSecret`
+fails closed, so nothing was exposed - every inbound internal call to that service answered `403`
+instead, which took out the preview-image path, the six other internal controllers, and FCM from
+that service. The estate said so, once: `[PUSH] INTERNAL_SECRET not set - FCM notifications from
+this service are disabled`, three times in seventy-two hours, read by nobody.
+
+The same file omitted `FRONTEND_URL` from all four NestJS services, so none of them named dev's own
+frontend in its CORS allowlist and the aggregated ICS calendar feed emitted `http://localhost/...`
+links. Both are fixed, and both are now asserted: `compose-wiring.test.sh` judges `dev` against
+production key for key, exactly as it has judged the local estate since 2026-09-02. **That check
+existed, was correct, and was pointed at one of the two deployed estates** - which is the whole of
+why a defect its own comment describes word for word could ship to the other one.
+
 ---
 
 ## 4. The version gap, and the one kind of evidence that lifts a ceiling

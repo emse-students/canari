@@ -188,6 +188,7 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from
       # media-service server-to-server, gated by the shared INTERNAL_SECRET.
+      FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
@@ -268,6 +269,7 @@ services:
       PORT: "3011"
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
+      FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -324,6 +326,7 @@ services:
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
+      FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       # CUT, NOT INHERITED. The previous version of this file defaulted this to
@@ -369,6 +372,19 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MEDIA_SERVICE_URL: http://media-service:3011
+      DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
+      PAYMENT_SERVICE_URL: http://core-service:3012
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      # AND THE SAME CLASS AGAIN, MEASURED 2026-09-22: four keys production forwards to this
+      # service and this file did not, `INTERNAL_SECRET` chief among them. `.env` on the dev box
+      # has held a 64-character value the whole time - the compose file simply never passed it.
+      # `assertInternalSecret` fails closed, so nothing was exposed; instead every inbound internal
+      # call to this service answered 403, a post's link-preview image could not be fetched, and
+      # `[PUSH] INTERNAL_SECRET not set - FCM notifications from this service are disabled` was
+      # logged three times in 72 hours with nobody reading it. The guard below this file now covers
+      # THIS estate and not only the local one, which is why the 2026-09-09 comment could be true
+      # and this defect still ship: the check existed and was pointed at the wrong file.
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`

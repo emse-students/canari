@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le dev n'avait jamais recu `INTERNAL_SECRET`, et le garde qui le dit visait l'autre estate
+
+`social-service` sur dev ne recevait pas `INTERNAL_SECRET` : la valeur etait dans le `.env` de la
+machine depuis toujours, seul le fichier compose se taisait. Le garde echoue ferme, donc rien n'etait
+expose - a la place chaque appel interne entrant repondait 403, l'image de previsualisation d'une
+publication ne pouvait pas etre servie, et FCM etait coupe pour ce service. `FRONTEND_URL` manquait
+aux quatre services NestJS du meme fichier. La troisieme verification de `compose-wiring.test.sh`
+disait deja, mot pour mot, que `.env` ne prouve rien : elle ne regardait que l'estate locale, et juge
+desormais les deux.
+[dev](docs/wiki/infrastructure/dev-environment.md#the-consequence-nobody-had-written-down-a-media-path-cannot-be-rehearsed-here-2026-09-22).
+
+### Mesure - l'affiche d'un lien partage arrive, 10 sur 10 la ou c'etait 0 sur 10
+
+Sonde publique sur la prod de part et d'autre de `v0.18.19` : 10 publications annoncent une image,
+0 la servaient avant, 10 la servent apres, et `og:image` est present sur 12 pages de partage sur 12
+vues par le crawler de Messenger. La ligne du backlog qui attendait cette mesure disparait.
+[seo](docs/wiki/frontend/seo.md#the-photo-path-measured-on-production-either-side-of-v01819-2026-09-22).
+
 ### Mesure - le rapport horaire des detenteurs a ete lu, dix jours apres, et le levier a fonctionne
 
 Cinq conversations a un seul detenteur sont devenues une, pendant que le parc passait de 58 a 100

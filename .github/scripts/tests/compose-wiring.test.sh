@@ -312,12 +312,6 @@ printf '\n'
 # how a check like this rots into always passing.
 # ─────────────────────────────────────────────────────────────────────────────
 PROD_COMPOSE=infrastructure/docker-compose.prod.yml
-LOCAL_COMPOSE=infrastructure/local/docker-compose.yml
-
-# Services production declares that the local estate deliberately does not run.
-# `frontend` / `frontend-ssr`: the app is served by `bun run dev` on the host.
-# `adminer`: a database UI nobody needs locally, psql being right there.
-LOCAL_ABSENT_BY_DESIGN="frontend frontend-ssr adminer"
 
 # "<service> <KEY>" for every environment key a compose file forwards, taken by
 # indentation: a service is two spaces, `environment:` four, a key six.
@@ -331,35 +325,129 @@ env_keys() {
   ' "$1"
 }
 
-printf '\nthe local estate forwards what production forwards:\n'
-prod_pairs="$(env_keys "$PROD_COMPOSE")"
-local_pairs="$(env_keys "$LOCAL_COMPOSE")"
+# ─────────────────────────────────────────────────────────────────────────────
+# One estate held against production, key for key.
+#
+#   $1  the compose file to judge
+#   $2  services production runs that this estate deliberately does not
+#   $3  "<service>:<KEY>" pairs this estate deliberately does not forward
+#
+# BOTH exception lists are a DENYLIST of known-deliberate absences, never an
+# allowlist of what to check: a key added to production tomorrow and forgotten
+# in an estate is owed by default and fails. That is the property that makes
+# this survive being edited by someone who has not read it.
+# ─────────────────────────────────────────────────────────────────────────────
+assert_forwards() {
+  local target="$1" absent_services="$2" absent_keys="$3"
+  local prod_pairs target_pairs svc key missing
 
-for svc in $(printf '%s\n' "$prod_pairs" | awk '{print $1}' | sort -u); do
-  case " $LOCAL_ABSENT_BY_DESIGN " in
+  # The exception list is written over several lines for readability, so its
+  # entries are separated by newlines as well as spaces - and the `case` glob
+  # below matches on spaces. Collapse every run of whitespace to one space, or
+  # the last entry on each line silently fails to match and the exception it
+  # states does not exist.
+  absent_keys=" $(printf '%s' "$absent_keys" | tr -s '[:space:]' ' ') "
+
+  prod_pairs="$(env_keys "$PROD_COMPOSE")"
+  target_pairs="$(env_keys "$target")"
+
+  for svc in $(printf '%s\n' "$prod_pairs" | awk '{print $1}' | sort -u); do
+    case " $absent_services " in
     *" $svc "*)
       pass
-      printf '  ok    %s is absent locally by design, so its keys are not owed\n' "$svc"
+      printf '  ok    %s is absent here by design, so its keys are not owed\n' "$svc"
       continue
       ;;
-  esac
-  if ! printf '%s\n' "$local_pairs" | grep -q "^$svc "; then
-    fail "production declares '$svc' with an environment block and the local compose has no such service - wire it, or name it in LOCAL_ABSENT_BY_DESIGN with a reason"
-    continue
-  fi
-  missing=""
-  for key in $(printf '%s\n' "$prod_pairs" | awk -v s="$svc" '$1 == s {print $2}' | sort -u); do
-    if ! printf '%s\n' "$local_pairs" | grep -qx "$svc $key"; then
-      missing="$missing $key"
+    esac
+    if ! printf '%s\n' "$target_pairs" | grep -q "^$svc "; then
+      fail "production declares '$svc' with an environment block and $target has no such service - wire it, or name it as absent by design with a reason"
+      continue
+    fi
+    missing=""
+    for key in $(printf '%s\n' "$prod_pairs" | awk -v s="$svc" '$1 == s {print $2}' | sort -u); do
+      case "$absent_keys" in
+      *" $svc:$key "*) continue ;;
+      esac
+      if ! printf '%s\n' "$target_pairs" | grep -qx "$svc $key"; then
+        missing="$missing $key"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      fail "$svc: production forwards these and $target does not -$missing"
+    else
+      pass
+      printf '  ok    %s forwards every key production does\n' "$svc"
     fi
   done
-  if [ -n "$missing" ]; then
-    fail "$svc: production forwards these and the local estate does not -$missing"
-  else
-    pass
-    printf '  ok    %s forwards every key production does\n' "$svc"
-  fi
-done
+}
+
+# Services production declares that the local estate deliberately does not run.
+# `frontend` / `frontend-ssr`: the app is served by `bun run dev` on the host.
+# `adminer`: a database UI nobody needs locally, psql being right there.
+LOCAL_ABSENT_BY_DESIGN="frontend frontend-ssr adminer"
+
+printf '\nthe local estate forwards what production forwards:\n'
+assert_forwards infrastructure/local/docker-compose.yml "$LOCAL_ABSENT_BY_DESIGN" ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SAME ASSERTION AGAINST `dev`, added 2026-09-22 - and what it closes is the
+# check itself, not a gap beside it. `social-service` on dev was never given
+# `INTERNAL_SECRET`. The value had sat in that box's `.env` at full length the
+# whole time; only the compose file was silent - which is word for word the
+# sentence the 2026-09-02 comment above had already written down.
+# `assertInternalSecret` fails closed, so nothing was exposed: instead every
+# inbound internal call to that service answered 403, a post's link-preview
+# image could not be fetched on dev, and FCM from that service was off,
+# announced by one log line nobody read. `FRONTEND_URL` was missing from all
+# four NestJS services in the same file, so none of them named dev's own
+# frontend in its CORS allowlist and the ICS calendar feed emitted
+# `http://localhost/...` links.
+#
+# Both would have failed on the day the dev file was rewritten, had the check
+# been pointed here. A guard covering one of two deployed estates is not a
+# guard, it is a coincidence about which estate someone was fixing that week.
+#
+# `adminer` is the only service dev does not run: the box is reached over SSH
+# and psql is right there.
+# ─────────────────────────────────────────────────────────────────────────────
+DEV_ABSENT_BY_DESIGN="adminer"
+
+# Keys dev deliberately does not forward. Every one is a THIRD-PARTY integration
+# with no dev counterpart, listed against the service that would read it.
+# Nothing internal to this repository belongs in here: an internal key missing
+# on dev is the defect this check exists for.
+#
+#   STRIPE_*, LYDIA_*   no payment provider is wired to dev; a checkout there
+#                       would move real money through a real account.
+#   SKY_API_*           Sky is a separate estate holding one API key.
+#   EXTERNAL_API_KEY    the credential external consumers present to production.
+#   TURN_*, CLOUDFLARE_CALLS_*, CLOUDFLARE_TURN_*
+#                       calling is held off (`CALLS_ENABLED = false`); prod has
+#                       the TURN credentials and has never used them.
+#   APNS_VOIP_*         a VoIP push certificate for that same held-off feature,
+#                       and no iOS client points at dev.
+#   MIGALLERY_API_*     MiGallery is production-only; dev's core-service is given
+#                       the empty string, so both readers see a falsy value and
+#                       behave identically.
+DEV_ABSENT_KEYS="
+  social-service:STRIPE_CANCEL_URL social-service:STRIPE_SECRET_KEY social-service:STRIPE_SUCCESS_URL
+  core-service:STRIPE_SECRET_KEY core-service:STRIPE_WEBHOOK_SECRET
+  core-service:LYDIA_ENV core-service:LYDIA_PROVIDER_PRIVATE_TOKEN core-service:LYDIA_PROVIDER_TOKEN
+  core-service:SKY_API_KEY core-service:SKY_API_URL core-service:EXTERNAL_API_KEY
+  call-service:TURN_URL call-service:TURN_USERNAME call-service:TURN_CREDENTIAL
+  call-service:CLOUDFLARE_CALLS_API_TOKEN call-service:CLOUDFLARE_TURN_KEY_ID
+  call-service:CLOUDFLARE_TURN_TTL_SECONDS
+  chat-delivery-service:TURN_URL chat-delivery-service:TURN_USERNAME
+  chat-delivery-service:TURN_CREDENTIAL chat-delivery-service:CLOUDFLARE_CALLS_API_TOKEN
+  chat-delivery-service:CLOUDFLARE_TURN_KEY_ID
+  chat-delivery-service:APNS_VOIP_KEY_ID chat-delivery-service:APNS_VOIP_KEY_P8
+  chat-delivery-service:APNS_VOIP_SANDBOX chat-delivery-service:APNS_VOIP_TEAM_ID
+  chat-delivery-service:APNS_VOIP_TOPIC
+  chat-delivery-service:MIGALLERY_API_KEY chat-delivery-service:MIGALLERY_API_URL
+"
+
+printf '\nthe dev estate forwards what production forwards:\n'
+assert_forwards infrastructure/docker-compose.dev.yml "$DEV_ABSENT_BY_DESIGN" "$DEV_ABSENT_KEYS"
 
 printf '\n'
 if [ "$failures" -gt 0 ]; then
