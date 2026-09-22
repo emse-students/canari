@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - une notification silencieuse ne dit plus a Google qui parle ni ou
+
+Le nom de l'expediteur et celui de la conversation sont le seul texte utilisateur non borne de la
+charge, et cette charge est en clair pour FCM comme pour APNs. Une trame silencieuse n'affiche rien
+et personne ne les y lisait - mesure sur les deux clients. Ils ne partent plus, et les octets
+liberes vont au chiffre. [chat-delivery](docs/wiki/services/chat-delivery.md#what-the-payload-tells-google-and-the-half-that-stopped-2026-09-22).
 ### Fixed - l'affiche d'une publication partagee hors de Canari ne s'affichait jamais
 
 `og:image` pointait sur une route que social-service demandait sans le prefixe `/api` de

@@ -1001,6 +1001,36 @@ A size refusal now logs `[PUSH_SIZE]` naming what was actually sent, both repres
 largest single field: FCM's own error names no quantity at all, which is why ten identical refusals
 said only "too large".
 
+##### WHAT THE PAYLOAD TELLS GOOGLE, AND THE HALF THAT STOPPED (2026-09-22)
+
+The MLS ciphertext protects what was SAID. Everything around it is cleartext to FCM, and to APNs for
+an iOS token: `groupId` and `queuedMessageId`, `senderId`, the `silent` / `isWelcome` /
+`isGroup` / `isKeyDistribution` flags, `createdAt` - and, until this date, `senderName` and
+`groupName` on every frame. **Those last two are the only unbounded USER TEXT in the payload**: a
+real student's display name and a conversation's title.
+
+**A silent frame draws nothing, so nothing read them there**, measured on both clients:
+
+- the Android service returns out of `onMessageReceived` before any notification is built. The one
+  decision it does take on a silent frame - the cross-device dismissal - reads `groupId`, `senderId`
+  and `silent` and nothing else. The only other reader was a `Log.d` line;
+- the iOS NSE is **not woken at all**. It runs on `mutable-content: 1` ALERT pushes, and every
+  silent frame is sent `content-available: 1` / `apns-push-type: background`.
+
+At least **28% of queued frames are commits** (4 082 of 14 493 rows on production, 2026-09-22),
+before counting read receipts, own-device copies and Graine seeds, which are silent too. So the two
+keys are now **absent** - not empty, because FCM counts key names as well as values - on any frame
+with `silent: true`, and the bytes they freed go to the inline ciphertext. `push-payload.spec.ts`
+pins both directions, and the one consumer that will want them back is listed with the switches that
+revive calls ([calls](../frontend/modules/calls.md)).
+
+**What still travels, and is not a defect to be fixed quietly.** A VISIBLE message still carries both
+names, because they are what the banner draws before anything is decrypted, and the APNs
+`alert.title` is `senderName || groupName` - what an iPhone shows when the extension cannot run. That
+is a genuine trade: removing it costs a user the ability to tell who a notification is from when
+decryption fails. It is recorded here rather than left implicit, so the next reader knows the
+remaining disclosure is a decision and not an oversight.
+
 #### The one sentence this server still composes, and the column that tells it the language
 
 Every other sentence on the push path is written BY the device: `push-content.ts` sends
