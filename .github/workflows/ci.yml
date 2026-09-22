@@ -228,14 +228,21 @@ jobs:
           fi
 
           # ── TypeScript backend matrix ──
+          #
+          # `libs/contracts/` IS IN TWO OF THESE ENTRIES BECAUSE THEIR SUITES READ IT. A contract
+          # there is a rule several estates must agree on, shared as DATA because no TypeScript
+          # package crosses this repository (see `docs/wiki/libs.md`), and it is honoured by one
+          # test per implementation reading the JSON from disk. A case added to that file with no
+          # job running is the same silent hole the frontend filter below already paid for once:
+          # ASK WHAT THE GATE READS.
           ts=()
           if has '^apps/core-service/'; then
             ts+=('"apps/core-service"')
           fi
-          if has '^apps/social-service/'; then
+          if has '^apps/social-service/' || has '^libs/contracts/'; then
             ts+=('"apps/social-service"')
           fi
-          if has '^apps/chat-delivery-service/'; then
+          if has '^apps/chat-delivery-service/' || has '^libs/contracts/'; then
             ts+=('"apps/chat-delivery-service"')
           fi
           if has '^apps/media-service/'; then
@@ -268,7 +275,7 @@ jobs:
              has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
-             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/'; then
+             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"

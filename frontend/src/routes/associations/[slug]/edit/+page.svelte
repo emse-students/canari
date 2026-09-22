@@ -24,7 +24,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
     Users,
     CreditCard,
@@ -208,8 +208,8 @@
       members = await listMembers(a.id);
       const names: Record<string, string> = {};
       for (const mb of members) {
-        // Prefer the module cache (warm on SPA navigation), then displayName from API.
-        names[mb.userId] = getUserDisplayNameSync(mb.userId) || mb.displayName?.trim() || mb.userId;
+        // Prefer the module cache (warm on SPA navigation), then the roster row's own columns.
+        names[mb.userId] = rosterDisplayName(mb);
       }
       resolvedMemberNames = names;
       // Always resolve asynchronously - API displayName may be stale or be the bare userId.

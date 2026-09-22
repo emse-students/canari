@@ -13,7 +13,7 @@
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isAssociationSuperAdmin, isGlobalAdmin } from '$lib/stores/user';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { Building2, Users, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -71,7 +71,7 @@
       members = await listMembers(a.id);
       const names: Record<string, string> = {};
       for (const m of members) {
-        names[m.userId] = getUserDisplayNameSync(m.userId) || m.displayName?.trim() || m.userId;
+        names[m.userId] = rosterDisplayName(m);
       }
       resolvedMemberNames = names;
       for (const m of members) {
