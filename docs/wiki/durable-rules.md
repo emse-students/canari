@@ -1641,6 +1641,18 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   `-A` (anything present) - because the wide one is a behaviour change wearing a simplification's
   clothes. See [cicd](cicd.md#version-bump).
 
+- **A LOCAL GATE IS ONLY A GATE WHILE `node_modules` MATCHES THE LOCKFILE, AND IT FAILS QUIETLY IN
+  THE REASSURING DIRECTION.** Measured 2026-09-22: `bun run format` on this workstation reported
+  1094 files correctly formatted and CI refused the very same commit on `format:check`, naming one
+  file. The file was not the problem - `frontend/node_modules` held **oxfmt 0.67.0** while `bun.lock`
+  and CI both use **0.68.0**, and the two disagree about where a `function (this: T)` argument
+  breaks. Nothing warned: a stale install has no symptom, and the local run says PASS, which is the
+  worst thing it could say. So when a gate that passes here fails there and the diff is pure
+  formatting or pure lint, the FIRST question is the tool's own version, not the code -
+  `bun install --frozen-lockfile`, then re-run. The general form: a check is a claim about the
+  checker, so **pin it and verify the pin before believing the check**, exactly as `.bun-version` is
+  the one place this repo names a bun.
+
 - **A BOT'S PUSH OBEYS THE SAME RULESET A HUMAN'S DOES, AND THE ACTIONS APP CANNOT BE EXEMPTED FROM
   A REPOSITORY RULESET.** `GITHUB_TOKEN` acts as `github-actions[bot]`, which is not a bypass actor
   unless somebody made it one - and it cannot be made one: GitHub answers `422 Actor GitHub Actions
