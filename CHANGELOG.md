@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - une forme qui traverse le fil est epinglee la ou elle est ecrite
+
+Deux documents etaient declares des deux cotes du fil sans que rien ne puisse voir un champ
+diverger ; `wireShapes.test.ts` compare les deux declarations, et sa premiere execution a trouve une
+asymetrie non ecrite. [libs](docs/wiki/libs.md#a-shape-is-not-a-rule-and-it-is-pinned-where-it-is-written-2026-09-22).
+
 ### Changed - le swipe entre onglets ne s'armait que sur du vide, pas sur les cartes qui remplissent un fil
 
 `shouldIgnoreSwipeTarget` excluait tout `<a>`/`<button>` sans condition - hors la plupart d'un fil

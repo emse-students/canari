@@ -86,6 +86,39 @@ why nothing could be inferred from them agreeing.
 **A FOURTH COPY IS THE SIGNAL TO RECONSIDER THE PACKAGE, not to add a fourth spelling of the rule.**
 The same trade `shared-ts` was deleted over applies here, and it is the same paragraph below.
 
+## A SHAPE IS NOT A RULE, AND IT IS PINNED WHERE IT IS WRITTEN (2026-09-22)
+
+A case table answers "given this input, what is the right answer" - a BEHAVIOUR three
+implementations must agree on. Two things in this repository are not that: they are one DOCUMENT
+crossing the wire, declared as a TypeScript interface on each side, where one file produces it and
+the other consumes it.
+
+| the shape | producer | consumer |
+| --- | --- | --- |
+| the published carte | `frontend/src/lib/carte/publish.ts` | `apps/social-service/src/associations/published-carte.ts` |
+| the backend storage report | `apps/chat-delivery-service/src/controllers/admin-storage.controller.ts` | `frontend/src/lib/utils/backendStorage.ts` |
+
+The two trees compile separately, so a field added on one side and forgotten on the other
+type-checks in both and produces `undefined` in a browser. `declared-duplicates.test.mjs` cannot see
+it - the rest of each file legitimately differs, so an identity gate would be wrong - and neither
+answer above fits: there are no cases to tabulate, and a `.proto` for a presentational shape read by
+two TypeScript trees costs a build step and a checked-in artefact to buy what parsing the
+declarations already proves.
+
+So `frontend/src/lib/contracts/wireShapes.test.ts` reads both declarations and compares the FIELD
+NAMES, interface by interface, from a list spelled out rather than discovered - deleting an
+interface from one side fails instead of quietly shrinking the set. Types are not compared: the two
+sides spell `string | null` and `string | undefined` differently in places that cost nothing, and a
+gate failing on those would be off within a month.
+
+**Its first run found an asymmetry nobody had written down.** `PublishedCarte.version` exists only
+on the server, because `sanitizePublishedCarte` STAMPS it and never reads one off the payload - a
+client claiming `version: 1` would be publishing a document in a schema whose geometry it is not
+producing. That is now an exemption with its own assertion re-reading the sanitizer, so the day the
+stamp becomes a read, the exemption fails before a forged version does.
+
+**Do NOT answer any of this by reviving a shared TypeScript package** - see below.
+
 ---
 
 ## libs/shared-ts, deleted 2026-08-27
