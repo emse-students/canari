@@ -617,7 +617,7 @@
   <div class="flex h-full min-h-0 flex-col">
     <!-- Tab strip -->
     <div
-      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 dark:border-white/10"
+      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
     >
       <button
         onclick={() => (activeTab = 'overview')}
@@ -654,7 +654,7 @@
     </div>
 
     <!-- Tab content. `p-4` is the budget `permissionGridWidth.test.ts` measures the matrix against. -->
-    <div class="bg-cn-bg min-h-0 flex-1 overflow-y-auto p-4">
+    <div class="bg-cn-bg min-h-0 flex-1 overflow-y-auto px-(--side-panel-inset) py-4">
       {#if activeTab === 'overview'}
         <div class="max-w-2xl space-y-6">
           <h2 class="text-text-main text-xl font-bold">{m.chat_community_overview_tab()}</h2>

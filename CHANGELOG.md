@@ -28,6 +28,24 @@ hors de tout `@layer` - et du CSS non-layered bat tout ce qui est dans un layer,
 specificite. Mesure : 28 elements sur 28 a `/posts`, 22 sur 22 a `/chat`. Le rail de navigation
 s'ouvrait donc d'un coup, ses libelles arrivant en fondu apres. Passee dans `@layer base`.
 [design-reference](docs/wiki/frontend/design-reference.md).
+### Fixed - le titre du panneau lateral etait decale par rapport a tout ce qu'il annonce
+
+L'en-tete de `SidePanel` est `px-4` depuis toujours ; les cinq panneaux qui s'y affichent
+choisissaient chacun leur propre marge horizontale. Le titre se retrouvait 4px a l'interieur des
+cartes en colonne et 8px en tiroir, avec un chiffre different par panneau. Une seule valeur
+(`--side-panel-inset`) declaree une fois et lue par tous, et les paliers `@md:` horizontaux - qui
+tombaient exactement sur la largeur max du panneau, donc decides par la presence d'une barre de
+defilement - sont supprimes ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - la visionneuse ne se deplacait pas a la souris : le navigateur prenait le geste
+
+*"on ne puisse pas (sur PC en tout cas) se deplacer dans la visionneuse (le fait de tenter de drag
+l'image la selectionne)"* (user). Une `<img>` est `draggable` par DEFAUT : appuyer et bouger lance
+le glisser-deposer natif de l'image - le fantome translucide lu comme une selection - et le
+navigateur cesse d'envoyer les mouvements de pointeur, donc le panoramique n'arrive jamais.
+`select-none` ne couvre pas ce geste, mesure a l'appui. Le refus est pose sur l'enveloppe qui porte
+deja le zoom et le panoramique, pas sur l'image : le contenu vient de cinq appelants.
+[posts](docs/wiki/frontend/modules/posts.md).
 ### Changed - le swipe pour reagir est retire, et l'indicateur de reponse passe du bon cote
 
 *"swiper pour reagir n'est pas quelque chose de bien, c'est meme assez bizarre"* (user). Mesure sur
