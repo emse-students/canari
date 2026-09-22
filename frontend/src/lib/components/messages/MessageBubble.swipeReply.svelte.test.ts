@@ -92,6 +92,19 @@ function bubble(): HTMLElement {
   return el;
 }
 
+/**
+ * The element the drag actually MOVES, which stopped being the bubble on 2026-09-22.
+ *
+ * A quoted message is now a second bubble stacked above this one, so the transform sits on the
+ * wrapper holding both - drag the bubble alone and a reply tears in half mid-gesture. The gesture
+ * is still listened for on the bubble, which is why `bubble()` above is unchanged.
+ */
+function dragged(): HTMLElement {
+  const el = bubble().parentElement;
+  if (!el) throw new Error('stack wrapper not found');
+  return el;
+}
+
 /** happy-dom may not implement `PointerEvent`; a mouse event carrying the two fields is equivalent. */
 function pointer(type: string, x: number, y: number, pointerType = 'touch'): Event {
   const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
@@ -161,7 +174,7 @@ describe('MessageBubble - the swipe reaches onReply', () => {
     el.dispatchEvent(pointer('pointermove', 140, 200));
     flushSync();
 
-    expect(el.getAttribute('style') ?? '').toContain('translate3d');
+    expect(dragged().getAttribute('style') ?? '').toContain('translate3d');
   });
 
   it('takes an OWN message the other way - a yellow bubble swipes left', () => {
