@@ -1316,9 +1316,28 @@ Two things outlive it:
    across messages rather than within one. **The payload cannot simply gain a sender NAME**: it is
    cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
    locally. That trade-off is the item, not the wording.
-2. **DESKTOP IS A THIRD IMPLEMENTATION AND NOTHING HAS MEASURED IT.** The collapse to one builder is
-   Android's; `desktop.rs` builds its own notifications and the web builds a third. Neither has been
-   looked at for the doubling this item was opened for.
+2. **THE DOUBLING CANNOT HAPPEN ON DESKTOP OR ON THE WEB, AND THAT IS ARCHITECTURE RATHER THAN
+   LUCK (measured 2026-09-22).** It needs two independent builders reached by two independent
+   triggers, and NEITHER surface has the second trigger: every command in
+   `frontend/src-tauri/src/commands/push.rs` is `#[cfg(any(target_os = "android", target_os =
+   "ios"))]`, so a desktop build registers with no push service at all, and the frontend ships **no
+   service worker of any kind** - no `service-worker.*`, no `firebase-messaging-sw.js`, nothing that
+   could receive a Web Push. So on both, the socket frame is the ONLY trigger and
+   `useNotifications.svelte.ts` the only builder (`@tauri-apps/plugin-notification` on desktop,
+   `Notification` on the web), reached from the one `globalNotifs` singleton.
+
+   **AND A GATE NOW HOLDS THE BUILDER HALF**, because that is the half a future commit can undo
+   without touching notification code at all: a service worker added for offline caching that also
+   handles `push`, or a component reaching for `new Notification` because it is two lines.
+   `useNotifications.singleBuilder.test.ts` walks `src/` and `static/` and fails unless the ONE file
+   that raises a banner is `useNotifications.svelte.ts` - verified by dropping a four-line service
+   worker into `static/` and watching it name the file. **The TRIGGER half rests on a `cfg` nothing
+   watches**: were `commands/push.rs` to grow a desktop branch, no test here would say so, and the
+   gate that would lift that is one reading those `#[cfg]` attributes out of the Rust source.
+
+   **WHAT NONE OF IT SETTLES** is the wording: desktop still RENDERS the same event a third way, and
+   nobody has read a desktop banner to see what it says or where a tap lands. That is a different
+   question from the one G1 was opened for, and it is what is left here.
 
 ### G2 residue - P3 - THE USER SEARCH PROJECTS ONLY `displayName`, SO TWO CACHE SEEDS CANNOT APPLY THE SHARED PRECEDENCE
 
