@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Documentation - les lignes sans date sont une version de client, pas un mystere
+
+Sur les 759 lignes `key_package` de production, la frontiere est exacte : `>= 0.18.10` porte une
+date, en dessous non. La reparation qui etait prevue cote client ne pouvait donc rien dater, et les
+lignes se datent seules a ~20 par jour.
+[key-package-pool](docs/wiki/protocols/key-package-pool.md#what-this-does-not-fix-and-what-the-undated-rows-turned-out-to-be).
+
 ### Changed - plus rien n'excuse une ERREUR du gateway
 
 Le canal ERROR de production mesure **0** sur `v0.18.18`, contre 32 par semaine avant la
