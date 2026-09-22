@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une porte epelee a l'execution etait invisible au garde, et NOTIF-15 a paye trois runs
+
+`checks-selftest.mjs` lit chaque script pour les orthographes LITTERALES par lesquelles il atteint un
+appareil. `notif15.mjs` gare les autres navigateurs du proprietaire avec `PORTS[name]` sur
+`['W1','W3']` : acces calcule, donc le fichier se lisait comme n'atteignant aucun appareil de
+brouillon. La phase NOTIF declarait `['W1','W2','A1']`, le preflight ne regardait jamais W3, et un W3
+absent faisait echouer une ligne sur les notifications push - apres un kill du telephone et un
+passage par le PIN a chaque fois. Un `PORTS[...]` calcule avec le NOM de l'appareil en litteral dans
+le meme fichier compte desormais comme une porte ; mesure sur tous les scripts declares, cela ne
+deplace qu'un seul fichier. NOTIF-15 passe depuis ([board](docs/wiki/cross-client-testing.md)).
+[methodologie](docs/wiki/testing-methodology.md).
+
+### Fixed - deux rapports horaires qui annoncent une bonne nouvelle cassaient un verdict
+
+`reportStrandedDeviceMemberships` et `reportSingleHolderGroups` tournent sur le meme horaire que
+`reportQueueDepth`, qui avait recu une regle ; eux non. Toute ligne dont la fenetre franchit le haut
+d'une heure lisait donc `SERVER NOT CLEAN` pour deux rapports disant que le parc va bien. Meme chose
+cote client pour la cinquieme orthographe de `[HISTORY_RANGE]`. Les deux regles matchent la phrase
+PROPRE et jamais le tag, donc les alertes chiffrees restent visibles.
+[methodologie](docs/wiki/testing-methodology.md#43-a-periodic-reports-clean-sentence-is-a-line-only-the-row-that-straddles-the-hour-ever-sees).
+
 ### Fixed - le dev n'avait jamais recu `INTERNAL_SECRET`, et le garde qui le dit visait l'autre estate
 
 `social-service` sur dev ne recevait pas `INTERNAL_SECRET` : la valeur etait dans le `.env` de la

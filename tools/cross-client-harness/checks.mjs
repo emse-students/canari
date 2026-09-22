@@ -191,7 +191,15 @@ export const PHASES = {
       // and SWEEPS its own salon, so it leaves the estate as it found it.
       'notif18.mjs',
     ],
-    needs: ['W1', 'W2', 'A1'],
+    // W3 IS HERE BECAUSE `notif15.mjs` PARKS IT, AND FOR A DAY NOTHING SAID SO. That row kills the
+    // phone and needs every OTHER owner device out of the conversation first - a read receipt from
+    // self cancels the shade it measures - so it parks `['W1', 'W3']`. Declaring only W1/W2/A1 meant
+    // the preflight never looked at the scratch browser: an absent W3 was recorded as `'unreachable'`,
+    // which is not an accepted parked state, and the row graded `FAIL` on a product question about
+    // push notifications. It cost three runs, each paying a phone kill and a PIN restore to discover
+    // it. `checks-selftest.mjs` now sees the door - `PORTS[name]` is a computed access, invisible to
+    // it until 2026-09-22 - and fails this phase if the declaration and the script ever part again.
+    needs: ['W1', 'W2', 'A1', 'W3'],
   },
   HEAL: {
     title: 'does a broken group repair itself',

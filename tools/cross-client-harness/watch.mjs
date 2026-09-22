@@ -522,6 +522,14 @@ const STATE_CHANGE = [
   /^\[HISTORY_RANGE\] Hold nothing before that point in \S+ - staying silent$/,
   /^\[HISTORY_RANGE\] Sent \d+ of \d+ message\(s\) older than \S+ for \S+$/,
   /^\[HISTORY_RANGE\] \S+ already reaches its floor - not asking$/,
+  // AND THE FIFTH SPELLING, MEASURED BY NOTIF-15 ON 2026-09-22 - the only thing standing between a
+  // correct row and a clean run, exactly as the four above were. A conversation that began inside
+  // this device's own retention window has no past to fetch, so the client asks nobody and returns
+  // `complete`. That value is not decoration: `useConversations.svelte.ts` distinguishes it from
+  // `unavailable` on purpose, because collapsing "there is nothing older" into "I cannot fetch it"
+  // is the defect a user reported on a two-minute-old group on 2026-09-21. The line is the trace of
+  // that decision, so it is reported here rather than forgiven as benign.
+  /^\[HISTORY_RANGE\] \S+ began inside this device's window - nothing older exists$/,
   // LEAVING AND JOINING, SEEN LOCALLY. Both are real changes to what this client holds, so they are
   // reported rather than forgiven - and neither is a defect, so neither breaks `clean`. GRP-6 and
   // GRP-4 produce them by design: a member who leaves purges the conversation locally, and a member
