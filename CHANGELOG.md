@@ -11,6 +11,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - le plan du demenagement des trois VMs, puis des noms vers `emse.fr`
+
+Deux phases separees parce qu'une seule est visible : le deplacement se defait en repointant
+le tunnel, le changement de noms ne se defait pas - un lien profond est compile dans le
+binaire et livre par deux stores. Decisions prises avec l'utilisateur le 2026-09-23, dont
+l'abandon total de Cloudflare sur les chemins publics. Le blocage bun est REFUTE.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Fixed - NOTIF-10 ne mesure plus l'ignorance de son propre classificateur
+
+Re-execution de la rangee sur le classificateur reconstruit : plus une seule ligne inexpliquee, ce qui confirme que les 21 lignes enregistrees la veille etaient tout le bruit. Ce qui reste est un vrai defaut produit - trois des cinq messages envoyes telephone eteint sont refuses par le dechiffrement d'arriere-plan a epoque egale, et affichent une banniere generique. [cross-client-testing](docs/wiki/cross-client-testing.md).
+
 ### Fixed - le titre d'une notification de salon depend d'une course, et non d'une cause datee
 
 Onze envois d'une sequence identique : neuf n'ont declenche que le push et affichaient le bon
