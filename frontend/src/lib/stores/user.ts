@@ -1,5 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { setCurrentUserId, setGlobalAdmin } from '$lib/stores/userState.svelte';
+import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
@@ -64,10 +64,17 @@ export function saveUserLocally(user: {
   displayName?: string;
   admin?: boolean;
 }): void {
-  localStorage.setItem(USER_STORAGE_KEY, user.id);
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
+  // A REMEMBERED VERDICT BELONGS TO ONE ACCOUNT. Anything derived from the previous session's
+  // `/api/users/me` is about somebody else the moment the id changes, so it is forgotten HERE
+  // rather than left to expire - the whole point of persisting it is that it outlives a reload.
+  if (localStorage.getItem(USER_STORAGE_KEY) !== user.id) {
+    setFeedAudience(null);
+    invalidateMyProfile();
+  }
+  localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
   setCurrentUserId(user.id);
 }
@@ -79,6 +86,8 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
   setGlobalAdmin(false);
+  setFeedAudience(null);
+  invalidateMyProfile();
   setCurrentUserId(null);
 }
 
@@ -110,13 +119,56 @@ export function isAbsentUserError(e: unknown): boolean {
   return e instanceof UserProfileFetchError && e.status === 404;
 }
 
-/** Fetches the authenticated user's own profile from the core service. */
-export async function fetchMyProfile(): Promise<UserProfile> {
+async function requestMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`${coreUrl()}/api/users/me`);
   if (!res.ok) {
     throw new UserProfileFetchError(res.status);
   }
   return (await res.json()) as UserProfile;
+}
+
+/**
+ * The caller's own profile, shared for `MY_PROFILE_TTL_MS` and deduplicated while in flight.
+ *
+ * WHY IT IS CACHED AT ALL, when `fetchUserProfile` already was and this one was not. Its three
+ * callers are all on interactive paths - the feed audience gate, opening a post, and the profile
+ * screen - and none of them needs a reading fresher than the others. Without this, tapping the Fil
+ * tab, then a post, then back cost three identical `GET /api/users/me`, each one a full round trip
+ * ahead of any paint. The window matches `profileCache`'s, for the same reason: it is long enough
+ * to cover one navigation burst and short enough that nobody reasons about staleness.
+ *
+ * EVERY FAILURE EVICTS, unlike the by-id cache. A 404 there is an answer - that account does not
+ * exist - and can be held. A 404 here would mean the caller's own account vanished mid-session,
+ * which is not a steady state worth remembering.
+ */
+const MY_PROFILE_TTL_MS = 30_000;
+
+let myProfileCache: { promise: Promise<UserProfile>; expiresAt: number } | null = null;
+
+/** Fetches the authenticated user's own profile from the core service. */
+export function fetchMyProfile(): Promise<UserProfile> {
+  const now = Date.now();
+  if (myProfileCache && myProfileCache.expiresAt > now) return myProfileCache.promise;
+
+  const promise = requestMyProfile();
+  myProfileCache = { promise, expiresAt: now + MY_PROFILE_TTL_MS };
+  promise.catch(() => {
+    myProfileCache = null;
+  });
+  return promise;
+}
+
+/**
+ * Forgets the cached own-profile, or replaces it with one the caller already holds.
+ *
+ * `updateMyProfile` hands back the row the server just wrote, so the edit path SEEDS rather than
+ * evicts: dropping it would make the very next read pay a round trip to learn what the response in
+ * hand already said.
+ */
+export function invalidateMyProfile(profile?: UserProfile): void {
+  myProfileCache = profile
+    ? { promise: Promise.resolve(profile), expiresAt: Date.now() + MY_PROFILE_TTL_MS }
+    : null;
 }
 
 /** In-flight / short-lived cache for user profiles. TTL: 30 s. Deduplicates simultaneous fetches. */
@@ -258,7 +310,9 @@ export async function updateMyProfile(data: {
   if (!res.ok) {
     throw new Error(`Failed to update profile (${res.status})`);
   }
-  return (await res.json()) as UserProfile;
+  const profile = (await res.json()) as UserProfile;
+  invalidateMyProfile(profile);
+  return profile;
 }
 
 /** Fetches the caller's private personal notepad (markdown). Returns "" when unset. */
