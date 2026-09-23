@@ -18,6 +18,7 @@ DEUX notifications et la fonction le journalise deux fois. `watch.mjs` ne nommai
 anciennes branches : deux lignes attendues ET necessaires comptaient comme inexpliquees, et deux
 rangees dont les assertions passaient ont ete enregistrees `FAIL`.
 [testing-methodology](docs/wiki/testing-methodology.md).
+## [0.18.20] - 2026-09-22
 
 ### Fixed - le token "ou commence le contenu" etait plus court d'un pixel que la barre qu'il decrit
 
