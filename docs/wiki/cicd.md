@@ -106,10 +106,32 @@ Runs on every pull request to `main`, and again on every push to `main`:
 | Job | What it checks |
 |---|---|
 | **Rust tests** | `cargo test` across all crates (`chat-gateway`, `call-service`, `mls-core`) |
-| **TypeScript tests** | NestJS tests in `chat-delivery-service` |
+| **TypeScript tests** | for each of the four NestJS services: `lint`, `format:check`, `typecheck`, `build`, `test` |
 | **Frontend tests** | `vitest` in `frontend/` |
 | **Frontend lint** | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required) |
 | **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
+
+**THE HARNESS SELF-TESTS ARE TRIGGERED BY THE APP'S MESSAGE FILE TOO, AND FOR TWELVE DAYS THEY WERE
+NOT.** `changes` said the rig "reads its own sources and nothing else", so `tools/cross-client-harness/`
+was the whole trigger. Two of those self-tests read the APP: `caption-selftest` resolves every
+Paraglide key the rig spells against `frontend/messages/fr.json`, and `selector-selftest` imports
+`frontend/src/lib/styles/markupSources.ts`. Both exist to catch a renamed key - so the one pull
+request they had to run on, the one doing the renaming, is the one they were skipped on. #1006
+rebuilt the poll composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went
+with it, and the rig could not compose a poll until 2026-09-24, when an unrelated workflow edit
+made CI run everything and said so. The trigger now names the two app paths those tests read.
+
+**`typecheck` IS A SEPARATE STEP FROM `build`, AND THE DIFFERENCE IS THE TESTS.** `bun run build`
+is `nest build`, which reads `tsconfig.build.json`; every service excludes `*.spec.ts` there. Jest
+does not make up the difference - ts-jest transpiles without checking once `isolatedModules` is
+set, which all four set - so until 2026-09-24 a service's own tests were typechecked by NOTHING
+before the merge. One thing did check them, by accident:
+`infrastructure/local/Dockerfile.social-service` compiled `tsconfig.json` where its three siblings
+compile `tsconfig.build.json`. That is a gate on the wrong side of the merge. A type error in a
+poll spec merged with #1006, `CI passed` went green on it, and the first thing to notice was the
+`v0.18.22-alpha.1` release, whose `social-service` image build failed and stopped the pre-release.
+The Dockerfile now matches its siblings, and `bun run typecheck` (`tsc -p tsconfig.json --noEmit`)
+runs in CI for all four - unguarded, because a service that forgot the script is the very hole.
 
 **The generated sources are not in git** (`frontend/src/lib/wasm/`, `src/lib/proto/canari.{js,d.ts}`),
 so EVERY pipeline that ships a client builds them: `build.yml`, the three release workflows, and

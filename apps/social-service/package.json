@@ -5,6 +5,7 @@
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
     "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --passWithNoTests",
     "test:boot": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./jest-boot.json --runInBand",
