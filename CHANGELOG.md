@@ -134,10 +134,11 @@ mesurable faute d'un avatar sur un compte de test.
 
 ### Changed - la machine cible est videe avant le demenagement
 
-1813 paquets ramenes a 1187 : neuf versions de PHP dont une seule servait, apache2, phpMyAdmin et
-MySQL. Les onze bases heritees sont archivees et verifiees en quatre exemplaires avant d'etre
-supprimees - la derniere ecriture datait de juin 2026, le reste etait une traine. AIDE ne rapportait
-plus rien depuis fevrier 2024 et rapporte de nouveau ; trois questions ouvertes du plan se referment.
+1813 paquets ramenes a 796 : neuf versions de PHP dont une seule servait, apache2, phpMyAdmin,
+MySQL et les 144 paquets node de Debian. Les onze bases heritees sont archivees et verifiees avant
+d'etre supprimees - la derniere ecriture datait de juin 2026, le reste etait une traine. AIDE ne
+rapportait plus rien depuis fevrier 2024 : trois defauts separes le tenaient muet, dont un alias
+mort qui jetait la moitie des alertes de la machine. Trois questions ouvertes du plan se referment.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Added - le plan du demenagement des trois VMs, puis des noms vers `emse.fr`

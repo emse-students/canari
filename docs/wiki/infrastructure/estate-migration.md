@@ -227,7 +227,7 @@ mark rather than the lowest free one.
 ### THE HOST WAS EMPTIED BEFORE THE MOVE - 2026-09-24
 
 The survey above found a shared box carrying years of other people's leftovers. It now carries
-**1187 packages where it carried 1813**, and the difference is the surface this project would
+**796 packages where it carried 1813**, and the difference is the surface this project would
 otherwise have inherited.
 
 | Removed | What it was |
@@ -256,16 +256,46 @@ a tail. Confirmed by the user: it is `ssh cercle` that replaced it.
 
 The dump is verified in four places - `/var/backups`, `/var/lib/automysqlbackup` (234 M),
 `/export/mysqlbackup` (96 M on the filer) and the user's workstation, md5 checked against the host.
-**What would have talked to a MySQL that is gone was neutralised in the same breath**, because a
-daily cron failing into a mailbox is the noise nobody reads: two backup crons and one Zabbix
-`userparameter_mysql.conf`.
+**What would have talked to a MySQL that is gone was DELETED in the same breath**, because a daily
+cron failing into a mailbox is the noise nobody reads: two backup crons and one Zabbix
+`userparameter_mysql.conf`. Renaming them aside was the first instinct and it was wrong - a
+disabled thing is a thing a later reader has to re-decide.
 
-**AIDE reported nothing for two and a half years and now does.** `/var/lib/aide/aide.db` was absent
-and `aide.db.new` dated 2024-02-12 had never been promoted; the daily unit was in `failed`. The
-rebuild also exposed the noise that would have followed it - thirteen warnings per run on
-`/run/rpc_pipefs`, the NFS client's pseudo-filesystem, whose entries declare a null size and return
-content - so `99_aide_local_volatile` excludes it. A monitor whose report is thirteen lines of
-nothing is a monitor its reader learns to skip.
+### AIDE reported nothing for two and a half years, and three separate defects stood between it and a report
+
+`/var/lib/aide/aide.db` was absent and the `aide.db.new` dated 2024-02-12 had never been promoted;
+the daily unit sat in `failed`. Rebuilding the baseline was the easy part, and it was not enough.
+
+**The exclusion syntax was wrong twice, and only a 9317-line run said so.** AIDE's `!<regex>` is a
+RECURSIVE negative rule: the manual says the children of matching directories *are recursed into*
+and merely not added to the database. So `!/export` excluded the NetApp filer from the baseline
+while still walking every `.snapshot` tree the filer recreates daily. `-<regex>`, added in AIDE
+0.19, is the one that prunes. **`--path-check` settles which rule wins for a given path in one
+second**, against twelve minutes for a rebuild, and it is how each exclusion below was verified
+rather than assumed:
+
+| Pruned | Why |
+| --- | --- |
+| `/run/rpc_pipefs` | the NFS client's pseudo-filesystem; its entries declare a null size and return content, so every run warned on them |
+| `/run/docker`, `/run/containerd` | container network namespaces, whose id is random per start - on a Docker host that is a permanent report of files appearing and vanishing |
+| `/export` | the NetApp mount and its daily `.snapshot` trees |
+| `/var/lib/docker`, `/var/lib/containerd` | 51007 entries that every build and every deploy rewrites |
+
+`/etc`, `/usr/bin` and `/etc/shadow` remain watched - checked, not assumed.
+
+**And the report reached nobody.** Debian runs AIDE as `_aide` with `CAP_DAC_READ_SEARCH`, and that
+capability disables the suid bit the traditional `sendmail` interface needs; the package's own
+README says a non-root AIDE on systemd can only mail through `s-nail`, which was absent. **Worse,
+`/etc/aliases` sent root's mail to an address that no longer exists** - the Rootz address is dead,
+and `/var/log/mail.log` shows system mail still being sent to it hours before this was found. Half
+of every alert this machine has raised, for however long, went into the void. The alias now names a
+live Rootz mailbox beside the DSI's, and delivery was proven end to end: a report sent AS `_aide`
+arrived.
+
+**This is the durable rule about a correct mechanism with no report, met three times in one
+afternoon**: a baseline that was never promoted, a monitor whose output would have been unreadable,
+and a delivery path that silently dropped half its recipients. None of the three would have shown
+up in a green check.
 
 ## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
 
