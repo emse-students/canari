@@ -102,6 +102,37 @@ the growth observer keeps the topmost rendered row and asks how far it moved (`a
 covers all three mechanisms without knowing which one ran, and it needs no `overflow-anchor`, which
 WebKit does not implement.
 
+## 3ter. Sixty downloads in one frame (2026-09-23)
+
+Every media component fetched its object **on mount**, for every row the page rendered - and the
+originals, not thumbnails. `ConversationMediaPanel` mounts its grid in a window of 60, which the
+code called a way to keep "the number of concurrent decryptions reasonable"; sixty is a BOUND, not
+a concurrency limit. A chat scroll steps the render window by 140 groups and did the same for every
+media row in the step. A feed card with a four-image gallery is four downloads, whether or not
+anybody scrolls to it.
+
+Nothing was cancelled either: a teardown released the blob and let the bytes keep arriving, holding
+one of the browser's connections for a row nobody can see.
+
+TWO MECHANISMS, AND THE CAP IS THE ONE THAT MATTERS. A cap does not reduce the work - it decides
+the ORDER, which is the only thing that was ever wrong: sixty downloads on a narrow link all finish
+last, three at a time means the visible ones finish first, and the page of history or the feed the
+reader IS waiting for keeps a share of the link. `mediaRequestGate` (`requestGate.ts`) is that cap,
+placed on the network fetch inside `mediaBlobCache` so that a cache hit still answers instantly and
+every caller is covered without knowing the gate exists.
+
+The viewport gate is the second: `nearViewport` already existed and `LinkPreviewCard` already used
+it - the browser applies the same rule to the `<img>` beside these requests (`loading="lazy"`), and
+the request that produces the image did not have it. Where the component has a root to observe it
+gates itself (`SharedMediaThumb`); where it renders a different root per media type, the owner of
+the reserved box does it (`PostContent` for a post attachment, `MessageMediaRenderer` for a chat
+row) and hands the component a `deferred` prop or an `onNear` callback.
+
+ABORT MEANS "NEVER START", NOT "STOP". A request abandoned while still QUEUED is dropped and never
+asks - the whole win for a reader scrolling past thirty rows. One that has already started runs to
+completion on purpose: the fetch behind it is shared with every other holder of the same object
+through the in-flight map, so cancelling it would cancel somebody else's.
+
 ## 4. The ledger - what is fixed, what is not
 
 Audited 2026-09-22/23 across chat, feed, communities, associations, settings and profile. Every
@@ -112,7 +143,7 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 1 | Fil: audience gate, profile cache, per-tab cache, no blanking | 1 | **fixed 2026-09-23** |
 | 2 | Chat scroll yanked to the bottom by any inbound frame, in any conversation | - | **fixed 2026-09-23** |
 | 3 | Prepends with no anchor compensation: peer scrollback, and the render window stepping up | - | **fixed 2026-09-23** |
-| 4 | Post and message media fetched on mount: no viewport gate, no cap, no cancel (`PostMedia.svelte:78`, `MessageBubble.svelte:522`, `SharedMediaThumb.svelte:27`) | 3 | open |
+| 4 | Post and message media fetched on mount: no viewport gate, no cap, no cancel | 3 | **fixed 2026-09-23** |
 | 5 | Optimistic UI missing: poll vote, comment, comment like, follow, unblock, reaction-behind-a-mute-check | 2 | open |
 | 6 | `apiFetch` carries no `AbortSignal` and no timeout, so every await below is unbounded | - | open |
 | 7 | `listAssociations()` uncached across 13 call sites; `listPaymentMethods()` once per product tile | 3 | open |

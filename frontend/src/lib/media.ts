@@ -492,12 +492,18 @@ export class MediaService {
    * The bearer token is resolved per request inside the blob cache, so a long-lived view never
    * downloads with the token it was mounted with.
    *
+   * Concurrency is capped by `mediaRequestGate`, so a view that mounts sixty rows at once asks
+   * for three at a time rather than starving the request the reader is actually waiting for.
+   *
    * @param ref        The `MediaRef` extracted from the MLS message.
+   * @param signal     Abandons the request WHILE IT IS STILL QUEUED - a row scrolled past never
+   *                   asks at all. A download already started runs to completion, because the
+   *                   fetch behind it is shared with every other holder of the same object.
    * @returns          A cached object URL (`blob:…`). Call
    *                   `releaseDecryptedMediaBlobUrl(ref)` when the element unmounts.
    */
-  async downloadAndDecrypt(ref: MediaRef): Promise<string> {
-    return acquireDecryptedMediaBlobUrl(ref, this.baseUrl);
+  async downloadAndDecrypt(ref: MediaRef, signal?: AbortSignal): Promise<string> {
+    return acquireDecryptedMediaBlobUrl(ref, this.baseUrl, signal);
   }
 
   // -------------------------------------------------------------------------
