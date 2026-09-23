@@ -181,6 +181,56 @@ tap on a bad link did nothing, and said nothing either. It logs now.
 **WHAT WAS DELIBERATELY LEFT ALONE.** A destructive control keeps its confirmation and its
 server-first order: deleting a payment method, deleting a comment, granting an admin. The reader is
 not made to watch a row vanish optimistically when the question is whether it may vanish at all.
+## 3quinquies. The same list, asked for again on every mount (2026-09-23)
+
+SHAPE 3. Nothing here is slow on its own; what is wrong is HOW MANY TIMES it is asked for.
+
+**FOURTEEN CALL SITES READ THE ASSOCIATION DIRECTORY** - `/associations`, `/directory`, `/lists`,
+`/shop`, `/calendar`, three admin screens, the co-owner picker, the post composer, both association
+edit tabs - and every one of them asked the server again on mount. Switching between two of those
+tabs was two identical `GET /api/associations` to redraw a list that had not changed. Worse inside
+the association edit screen, whose tab strip UNMOUNTS the panel it is leaving: every switch back to
+"Profil" re-asked for the directory AND the category list.
+
+**A SHOP PAGE WAS N IDENTICAL REQUESTS IN ONE FRAME.** `ProductPurchaseButton` asks for the
+reader's saved cards on mount and the shop renders one button per product, so twelve tiles opened
+twelve `GET /api/payments/payment-methods` - for one answer, all queued behind each other and in
+front of the products the reader was actually waiting to see.
+
+`SharedCache` (`lib/utils/sharedCache.ts`) is the one mechanism under all of it, and it is two
+mechanisms that are easy to mistake for one:
+
+- **the TTL** answers *"I was told this recently, I am not asking again"*, which is what makes a tab
+  switch cost nothing;
+- **the in-flight join** answers *"somebody is already asking"*, which is what collapses twelve
+  tiles mounting together into one request. A TTL alone never covers that - the first caller of
+  every window races itself, and the shop page is entirely first callers.
+
+**THE TTL IS THE FLOOR, NOT THE MECHANISM.** What keeps an answer right is the invalidation at the
+write: creating, editing, deleting or re-logoing an association drops the directory; the four
+category writes drop the categories; adding, re-roling or removing a member drops the caller's
+memberships; deleting or setting up a card drops the cards. The window only bounds how long a
+change made somewhere this client cannot see - another member's browser, a moderator - stays
+invisible. **A caller who finds themselves choosing a window to make correctness work has found a
+write nobody invalidated.**
+
+**A REJECTION IS NEVER HELD.** A cached failure turns one dropped frame into minutes of a screen
+that refuses to load, and a transport failure is not a statement about the data.
+
+**PER-READER STATE IS A REGISTRY, NOT A CHECKLIST.** Three of these answers belong to one account -
+the reader's own profile, their memberships, their saved cards - and the list of them written out
+at the sign-out site is a list that goes stale the first time somebody adds a cache without
+thinking about signing out. A cache declares itself `perReader` where it is BUILT, and
+`forgetReaderCaches()` is what sign-out and sign-in-as-somebody-else call.
+`ensureMyAssociations`'s probe is not a cache but a promise holding three derived flags, so it
+registers a plain callback - both have to go together, or `isAssociationSuperAdmin()` answers for
+the previous account.
+
+**ONE CACHE PER ENDPOINT, NEVER ONE PER CALLER.** `ensureMyAssociations` already carried that
+reasoning in its own comment - *two caches over the same endpoint drift the moment one is forced
+and the other is not* - and was itself a second cache over `listMyAssociations`. It now reads
+THROUGH it. `fetchMyProfile`'s bespoke 30-second cache, written for the Fil tab in #988, became the
+first caller of this class and is now one line.
 
 ## 4. The ledger - what is fixed, what is not
 
@@ -195,12 +245,12 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 4 | Post and message media fetched on mount: no viewport gate, no cap, no cancel | 3 | **fixed 2026-09-23** |
 | 5 | Optimistic UI missing: poll vote, comment, comment like, follow, unblock, reaction-behind-a-mute-check | 2 | **fixed 2026-09-23** |
 | 6 | `apiFetch` carries no `AbortSignal` and no timeout, so every await below is unbounded | - | open |
-| 7 | `listAssociations()` uncached across 13 call sites; `listPaymentMethods()` once per product tile | 3 | open |
+| 7 | `listAssociations()` uncached across 14 call sites; `listPaymentMethods()` once per product tile | 3 | **fixed 2026-09-23** |
 | 8 | Display names re-resolved per row although the payload already carries them (`directory:177`, `AssociationMemberRow:106`, `NotificationRow:166`) | 3 | open |
 | 9 | Channel open deletes the local page **before** awaiting the server (`useConversations.svelte.ts:457`) | 1 | open |
 | 10 | The global MLS mutex is held across `fetchHistory` HTTP calls (`history.ts:830`..`:1270`) | - | open |
 | 11 | Serial page loads: `/calendar` (5 deep), `/documents` (blank until a boolean), `/forms/[id]` (5), `/associations/[slug]` (3) | 1 | open |
-| 12 | Association edit: every tab switch remounts and refetches | 1 | open |
+| 12 | Association edit: every tab switch remounts and refetches | 1 | **partly fixed 2026-09-23** - the directory and the categories were most of what it re-asked for, and row 7's cache covers them. What each tab fetches FOR ITSELF still costs a round trip per switch. |
 | 13 | Polls with no in-flight guard (`admin/status:74`, `SettingsSecuritySection:100`) | - | open |
 | 14 | `pullToRefresh` keeps a non-passive `touchmove` bound for the whole refresh (`pullToRefresh.ts:173`) | - | open |
 | 15 | Forced layout per scroll tick (`ChatArea.svelte:410`), `tick()` + `getElementById` per log line (`MainChatPage.svelte:232`) | - | open |
