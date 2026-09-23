@@ -14,9 +14,10 @@ which is also where every release up to and including v0.13.1 now lives.
 ### Changed - l'export PDF du calendrier reproduit le Canva, et le panneau passe de 20 reglages a 7
 
 Le BDE refaisait le mois a la main dans Canva chaque mois ; la feuille copie desormais ce design
-(geometrie mesuree, titre Leckerli One, jours Chewy, congés estampilles en travers de la case) et
+(geometrie mesuree, titre Leckerli One, jours Chewy, conges estampilles en travers de la case) et
 les couleurs se derivent de l'image de fond importee. Neuf des reglages supprimes n'avaient plus
-rien a peindre.
+rien a peindre. Un jour off s'assombrit d'un cran par raison de l'etre, week-end et vacances
+cumulant ; une case hors du mois n'est plus dessinee du tout.
 [calendar](docs/wiki/frontend/modules/calendar.md#pdf-export).
 
 ### Fixed - un evenement qui tient toute la journee ne prenait que la moitie de sa case

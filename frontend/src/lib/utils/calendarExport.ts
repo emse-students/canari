@@ -69,6 +69,20 @@ const DAY_NUM_SIZE = 15;
 const BREAK_LABEL_SIZE = 22;
 const BREAK_LABEL_ANGLE = -20;
 
+/**
+ * How far a cell is deepened for EACH reason its day is off, and the floor two reasons reach.
+ *
+ * A Saturday is off. A day inside a break is off. A Saturday inside a break is off twice, and
+ * saying so is the whole point of a shade: the eye should be able to find the school weeks without
+ * reading a single word. The two compound rather than override, because a single flat "off" colour
+ * makes the holidays and the weekends the same object.
+ *
+ * The floor exists because `cellBg` can be dark already, and two full steps off a dark grey is a
+ * hole in the sheet rather than a cell.
+ */
+const OFF_DAY_SHADE = 0.24;
+const OFF_DAY_SHADE_MAX = 0.38;
+
 const MAX_SHOW = 3;
 
 /**
@@ -194,6 +208,22 @@ function safe(s: string): string {
 
 /** Line-height shared by the event-title fit computation and the rendered spans (must match). */
 export const EVENT_TITLE_LINE_HEIGHT = 1.25;
+
+/**
+ * How much darker a day's cell is than the ordinary one, from the reasons it is off.
+ *
+ * Exported because it is a RULE about reading the sheet rather than a colour: the screen grid draws
+ * the same seven columns and, the day it is asked to agree with the sheet, it must agree by calling
+ * this rather than by copying a number that then drifts.
+ *
+ * @param isWeekend - the cell sits in the Saturday or Sunday column.
+ * @param hasBreak - a break entry (vacation, no-course) covers this day.
+ * @returns a ratio for {@link darken}, 0 when the day is an ordinary working one.
+ */
+export function offDayShade(isWeekend: boolean, hasBreak: boolean): number {
+  const reasons = (isWeekend ? 1 : 0) + (hasBreak ? 1 : 0);
+  return Math.min(OFF_DAY_SHADE_MAX, OFF_DAY_SHADE * reasons);
+}
 
 /**
  * Picks a font size, line clamp and horizontal padding so an event title fills the available cell
@@ -441,15 +471,10 @@ function buildCalendarHtml(
     )
     .join('');
 
-  const cellBgNormal = hexToRgba(opts.cellBg, opts.cellBgOpacity);
-  // The Canva makes no distinction, but the user asked to keep one, and a shade of the same colour
-  // keeps it a distinction rather than a second palette entry (2026-09-23: *"on peut garder une
-  // distinction de fond quand meme, c'est plus lisible"*).
-  const cellBgWeekend = hexToRgba(darken(opts.cellBg, 0.16), opts.cellBgOpacity);
-  // A day outside the month is an empty card and nothing else - no number, no events. The Canva
-  // fills those squares by hand with September's evenings; the feed this sheet reads is one month
-  // wide, so it could not, and the user chose the empty card over widening the fetch.
-  const cellBgPadding = hexToRgba(opts.cellBg, Math.max(0, opts.cellBgOpacity - 18));
+  // The Canva makes no distinction between a working day and a day off; the user asked to keep one
+  // (2026-09-23: *"on peut garder une distinction de fond quand meme, c'est plus lisible"*), then
+  // asked for more of it (*"le WE et les jours de pause pourraient etre en un peu plus fonce"*).
+  // A shade of the SAME colour keeps that a distinction rather than a second palette entry.
   const emptyDayColor = contrastColor(opts.cellBg);
   const logoAlpha = opts.logoOpacity / 100;
 
@@ -458,8 +483,14 @@ function buildCalendarHtml(
       const isWeekend = i % 7 >= 5;
       const cellBase = `height:${CELL_H}px;overflow:hidden;box-sizing:border-box;`;
 
+      // A SQUARE OUTSIDE THE MONTH IS NOT DRAWN AT ALL (user, 2026-09-23: *"on peut supprimer les
+      // cases qui ne contiennent pas de jour"*). It keeps its place in the grid - dropping the
+      // element would slide the 1st onto the wrong weekday - and paints nothing, so the background
+      // photograph runs through where September's and November's days would have been. The Canva
+      // fills them by hand with the neighbouring month's evenings; the feed here is one month wide,
+      // and widening it was refused before the squares themselves were.
       if (day === null) {
-        return `<div style="${cellBase}background:${cellBgPadding};"></div>`;
+        return `<div style="${cellBase}"></div>`;
       }
 
       // The square this cell paints, and the ONE definition of which events land on it - the 05:00
@@ -467,7 +498,11 @@ function buildCalendarHtml(
       const square = new Date(year, month, day);
       const dayEvents = eventCardsOnDay(events, square, day);
       const dayBreaks = breaksOnDay(events, square, day);
-      const bg = isWeekend ? cellBgWeekend : cellBgNormal;
+      const hasBreak = dayBreaks.length > 0;
+      const bg = hexToRgba(
+        darken(opts.cellBg, offDayShade(isWeekend, hasBreak)),
+        opts.cellBgOpacity
+      );
 
       /*
        * A BREAK IS A WORD WRITTEN ACROSS THE DAY, not a tint under it (user, 2026-09-23). The faint
@@ -479,7 +514,6 @@ function buildCalendarHtml(
        * things unreadable. A busy break day keeps the strip, which says the same thing quietly.
        * October has no such day, so nothing here is claimed to have been seen.
        */
-      const hasBreak = dayBreaks.length > 0;
       const breakStamp =
         hasBreak && dayEvents.length === 0
           ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><span data-pdf-text style="font-size:${BREAK_LABEL_SIZE}px;font-weight:800;color:${opts.textColor};line-height:1.1;white-space:nowrap;transform:rotate(${BREAK_LABEL_ANGLE}deg);${blockShadowCss(BREAK_LABEL_SIZE, opts.accentColor)}">${safe(dayBreaks[0].title)}</span></div>`

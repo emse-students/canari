@@ -369,7 +369,8 @@ toggle in the event modal), and is BDE/association-managed - not tied to the nat
 matches the school's real schedule. Rendering differs:
 - `event`: a card occupying an event slot.
 - `break`: takes no slot and does not prevent other associations' events on those days - purely
-  graphical. On the PDF sheet it is **the title written across the day at an angle** - a stamp, the
+  graphical. On the PDF sheet the day also recedes by one `offDayShade` step, and the break itself
+  is **the title written across the day at an angle** - a stamp, the
   way "Vacances" is written by hand on the sheet this one copies (user, 2026-09-23: *"remplace. Et
   c'est le rendu de tout break"*). The faint full-cell tint it replaced was invisible over a
   photographic background, which is why the hand-made sheet never used one. A break day that ALSO
@@ -401,9 +402,26 @@ at `BREAK_LABEL_ANGLE` -20deg.
 
 | the Canva | this sheet | why |
 | --- | --- | --- |
-| the first row is filled with September's last evenings | those squares are empty | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*) |
+| the first row is filled with September's last evenings | those squares are NOT DRAWN - the background runs through them | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*), then the squares themselves were (*"on peut supprimer les cases qui ne contiennent pas de jour"*) |
 | the day number is large, bottom-right, UNDER the event cards | small, top-left, in a row nothing else may enter | *"tout doit etre lisible et rien ne doit se chevaucher"* |
-| no weekend distinction | weekend cells are the same colour darkened 16% | *"on peut garder une distinction de fond quand meme, c'est plus lisible"* |
+| no distinction for a weekend or a holiday | both recede, and a weekend IN a holiday recedes twice | *"on peut garder une distinction de fond quand meme, c'est plus lisible"*, then *"le WE et les jours de pause pourraient etre en un peu plus fonce"* |
+
+**A SQUARE OUTSIDE THE MONTH KEEPS ITS PLACE AND PAINTS NOTHING.** Dropping the element would slide
+the 1st onto the wrong weekday, so the cell is still emitted - with no background at all, which is
+what lets the photograph run where September and November would have been.
+
+### HOW MANY REASONS THIS DAY HAS TO RECEDE
+
+`offDayShade(isWeekend, hasBreak)` in `calendarExport.ts`, exported rather than inlined. A Saturday
+is off; a day inside a break is off; **a Saturday inside a break is off twice, and the two COMPOUND
+rather than override** - one flat "off" colour would make the holidays and the weekends the same
+object, and the point of the shade is to find the school weeks without reading a word. A floor
+(`OFF_DAY_SHADE_MAX`) stops two full steps from turning a cell into a hole when `cellBg` is already
+dark.
+
+It is a rule about reading the sheet, not a colour, which is why it is exported: the day the screen
+grid is asked to agree with the sheet it must agree by CALLING this, never by copying 0.24 into a
+component where it will drift.
 
 ### TWO FONTS ARE THE CANVA'S AND EVERYTHING ELSE IS CANARI'S
 

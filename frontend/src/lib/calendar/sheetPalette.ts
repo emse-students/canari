@@ -90,11 +90,20 @@ function sample(image: HTMLImageElement): Uint8ClampedArray | null {
  * The dominant hue of a set of pixels, in degrees, or null when the image has no usable hue at all
  * (a black-and-white photograph, which is a real answer rather than a failure).
  *
- * The vote is a SUM OF UNIT VECTORS weighted by saturation, not a histogram of buckets. Hue is
- * circular, and a histogram splits a red subject across the 0 and 359 buckets, so the one colour
- * everybody in the room would name comes last. Vectors add across the seam for free.
+ * The vote is a SUM OF UNIT VECTORS weighted by saturation, which makes this the saturation-weighted
+ * circular MEAN hue rather than the modal one - worth saying plainly, because the name suggests a
+ * mode and a scene of two strong colours answers with the arc between them, not with either.
+ *
+ * Bucketing was the alternative and it is worse twice over. Hue is circular, so a histogram has a
+ * seam: a red subject spread either side of 0 lands in the 350s and the 0s and loses to anything
+ * concentrated, and averaging the hue NUMBERS of those same pixels returns 179 - cyan, a colour not
+ * in the picture at all. Vectors have no origin and no bucket edge, so nothing on the wheel is a
+ * special place; turn the picture and the answer turns with it.
+ *
+ * Exported for its test: it is the one claim in this file a browser cannot be asked to settle, and
+ * it takes raw pixels, so a test can hand it the exact seam case that a histogram gets wrong.
  */
-function dominantHue(pixels: Uint8ClampedArray): number | null {
+export function dominantHue(pixels: Uint8ClampedArray): number | null {
   let x = 0;
   let y = 0;
   let weight = 0;
