@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le titre d'une notification de salon depend d'une course, et non d'une cause datee
+
+Onze envois d'une sequence identique : neuf n'ont declenche que le push et affichaient le bon
+titre, deux ont declenche les deux et affichaient le nom de l'expediteur. La lecture precedente
+- une regression deterministe - reposait sur une seule reproduction. Les deux declencheurs ne
+different pas que par le libelle : l'un poste une conversation de GROUPE, l'autre une
+conversation 1:1, et le second poste gagne. Au passage, le titre ecrit par le socket est un
+identifiant brut, qu'aucun test ne voit parce que sa fixture inverse deux arguments.
+[backlog](docs/wiki/backlog.md).
+
 ## [0.18.21] - 2026-09-23
 
 ### Fixed - l'illustration d'un lien raccourci, resolue contre le mauvais site
