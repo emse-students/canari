@@ -185,7 +185,11 @@
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
-      await getToken().catch(() => {
+      // NOT AWAITED, AND IT NEVER HAD TO BE. The comment below has always said the form loads fine
+      // without a pre-fetched token, so awaiting it put a silent refresh - a full round trip -
+      // in front of the form itself. `refresh()` holds one request in flight for every caller, so
+      // the `apiFetch` right after joins this one rather than starting a second.
+      void getToken().catch(() => {
         // Silently ignore - the form loads fine without a pre-fetched token;
         // apiFetch will retry on the first API call.
       });
@@ -204,19 +208,30 @@
 
       linkedAgendaEvent = null;
       agendaAssociationSlug = '';
-      try {
-        const { linkedEvent } = await getCalendarEventLinkedToForm(f.id);
-        linkedAgendaEvent = linkedEvent;
-        if (linkedEvent) {
-          try {
-            const asso = await getAssociation(linkedEvent.associationId);
+
+      /**
+       * THE BANNER AND THE FORM'S OWN STATE ARE INDEPENDENT, SO THEY ARE ASKED FOR TOGETHER.
+       *
+       * `getCalendarEventLinkedToForm` decides whether a "see the event" banner appears, and it
+       * used to be awaited BEFORE `checkSubmission` - which decides whether the reader may submit
+       * at all, what it costs and which items are hidden. A decoration was holding the form's
+       * controls, and when the banner did exist it held them through a SECOND round trip for the
+       * association's slug. That one still follows its event, because it needs its id - but it
+       * follows it behind the page rather than in front of it.
+       */
+      const [linked, submission] = await Promise.all([
+        getCalendarEventLinkedToForm(f.id).catch(() => ({ linkedEvent: null })),
+        checkSubmission(f.id),
+      ]);
+      linkedAgendaEvent = linked.linkedEvent;
+      if (linked.linkedEvent) {
+        void getAssociation(linked.linkedEvent.associationId)
+          .then((asso) => {
             agendaAssociationSlug = asso.slug;
-          } catch {
+          })
+          .catch(() => {
             agendaAssociationSlug = '';
-          }
-        }
-      } catch {
-        linkedAgendaEvent = null;
+          });
       }
 
       const {
@@ -226,7 +241,7 @@
         pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
-      } = await checkSubmission(f.id);
+      } = submission;
       submitted = hasSubmitted;
       formFull = full;
       pricing = view;
@@ -522,7 +537,7 @@
         }
       } else {
         submitted = true;
-        successMessage = res.message || m.form_view_submission_success();
+        successMessage = m.form_view_submission_success();
         setTimeout(() => goto(redirectTo), 1500);
       }
     } catch (e: any) {

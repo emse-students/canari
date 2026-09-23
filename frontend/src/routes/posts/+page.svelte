@@ -13,6 +13,7 @@
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
@@ -212,24 +213,49 @@
    */
   const activeFeed = $derived(data.feedParams.feed);
 
+  /**
+   * PAINT THE TAB FROM WHAT IT LAST HELD, THEN REPLACE IT WITH THE ANSWER.
+   *
+   * These were two effects and the first of them ran synchronously with the tap: it set
+   * `postsOverride` and `initialPostsResolved` to `null`, so the feed the reader was looking at
+   * became four skeletons before the new request had left the device. Switching tab and back cost
+   * a full round trip each way for a list already in memory.
+   *
+   * The cached entry belongs to THIS tab and this reader ($lib/posts/feedCache), never to the tab
+   * being left, so the highlighted pill and the posts under it cannot disagree. Everything the
+   * reader has done since - a page appended by the infinite scroll, a post deleted - is kept: the
+   * answer only replaces the paint it is replacing, which is what the identity check says.
+   */
   $effect(() => {
-    void page.url.search;
-    postsOverride = null;
-    initialPostsResolved = null;
-    hasMore = true;
-  });
+    const key = feedCacheKey(data.feedParams);
+    const promise = data.posts;
 
-  // Cache the resolved initial posts so the IntersectionObserver can use them
-  // even before postsOverride is set (i.e., on first load).
-  // Also initialise hasMore: the first batch uses limit=20, PAGE_SIZE=10.
-  $effect(() => {
-    initialPostsResolved = null;
-    data.posts
+    const cached = readFeedCache(key);
+    const stale = cached?.posts ?? null;
+    postsOverride = stale;
+    initialPostsResolved = stale;
+    hasMore = cached?.hasMore ?? true;
+
+    let cancelled = false;
+    promise
       .then((posts) => {
+        if (cancelled) return;
+        // The first batch asks for 20 where a page is PAGE_SIZE, so a short answer is the end.
+        const more = posts.length >= 20;
+        writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
-        if (posts.length < 20) hasMore = false;
+        if (postsOverride === stale) {
+          postsOverride = posts;
+          hasMore = more;
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Left to the render: with nothing cached the `{#await}` shows its error state, and with
+        // something cached the reader keeps the feed they had rather than losing it to a timeout.
+      });
+    return () => {
+      cancelled = true;
+    };
   });
 
   /**
@@ -265,8 +291,10 @@
     errorMessage = '';
     hasMore = true;
     try {
-      postsOverride = await listPosts(buildListOptions(0));
-      hasMore = (postsOverride?.length ?? 0) >= PAGE_SIZE;
+      const posts = await listPosts(buildListOptions(0));
+      postsOverride = posts;
+      hasMore = posts.length >= PAGE_SIZE;
+      writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
     } catch (err) {
       Log.d('refreshPosts failed', err);
       errorMessage = m.posts_load_error_title();
@@ -285,6 +313,7 @@
       const existingIds = new Set(currentPosts.map((p) => p.id));
       const newPosts = more.filter((p) => !existingIds.has(p.id));
       postsOverride = [...currentPosts, ...newPosts];
+      writeFeedCache(feedCacheKey(data.feedParams), { posts: postsOverride, hasMore });
     } catch {
       // silent - user can scroll back up and retry
     } finally {
@@ -540,7 +569,11 @@
       </div>
 
       {#snippet feedList(resolvedPosts: PostEntity[])}
-        {#if loading}
+        <!-- A REFRESH DOES NOT BLANK A FEED THAT IS ALREADY ON SCREEN. This was `{#if loading}`,
+             so a pull-to-refresh at post #30 collapsed the list to four skeletons, shrank the
+             document and lost the reader's place - for posts still held in `postsOverride`. Same
+             rule as `ChatArea.svelte`'s `showSkeleton`: the skeleton is for an empty list. -->
+        {#if loading && resolvedPosts.length === 0}
           {@render skeletonCards()}
         {:else if resolvedPosts.length === 0}
           <div
@@ -580,6 +613,10 @@
                 onRefresh={refreshPosts}
                 onDelete={() => {
                   postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
+                  writeFeedCache(feedCacheKey(data.feedParams), {
+                    posts: postsOverride,
+                    hasMore,
+                  });
                 }}
               />
             </div>

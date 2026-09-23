@@ -215,7 +215,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-40 scripts.
+42 scripts.
 
 | script | what it is |
 |---|---|
@@ -241,6 +241,8 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/navclose.mjs` | Does a navigation produce EXACTLY one socket close, and is the document replacement observable? |
 | `archive/net.mjs` | Cutting a client off the network, and proving it was really cut. |
 | `archive/onetab.mjs` | ONE APP TAB PER BROWSER. Reports what is open, and closes every extra. |
+| `archive/photoprev.mjs` | INVESTIGATION - a photo whose bubble reads the NOTIFICATION's caption, for good. |
+| `archive/photorows.mjs` | READS THE PHONE'S OWN MESSAGE TABLE, because the pane cannot be counted. |
 | `archive/pingate.mjs` | The PIN gate as a library: enter the PIN, then PROVE the client came out the other side. |
 | `archive/presence.mjs` | Asks the GATEWAY whether each client's socket is really up - the pre-flight gate MSG-2 was |
 | `archive/rawcheck.mjs` | A BACKSLASH IN A PAGE-SIDE TEMPLATE BELONGS TO NODE, NEVER TO THE PAGE. |
@@ -262,4 +264,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-201 scripts in total.
+203 scripts in total.

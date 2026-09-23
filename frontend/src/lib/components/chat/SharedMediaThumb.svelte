@@ -5,6 +5,7 @@
   import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { Play, ImageOff } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { nearViewport } from '$lib/actions/nearViewport';
 
   interface Props {
     /** Encrypted media reference to decrypt and preview. */
@@ -22,18 +23,28 @@
   /** Purged by the 30-day retention: permanent, and worth saying so rather than showing a gap. */
   let expired = $state(false);
 
-  // Decrypt this single item; released on destroy. Rendering the grid in a bounded
-  // window (see panel) keeps the number of concurrent decryptions reasonable.
+  /**
+   * Whether this tile has come near the viewport. The panel mounts its grid in a window of 60,
+   * and that is a BOUND, not a concurrency limit: every one of the sixty used to fire a full-size
+   * download in the same frame, and they are originals rather than thumbnails. A tile nobody has
+   * scrolled to now asks for nothing at all, and what it does ask for goes through
+   * `mediaRequestGate` three at a time.
+   */
+  let isNear = $state(false);
+
+  // Decrypt this single item; released on destroy.
   $effect(() => {
     const ref = media;
     // Gate on the session being authenticated; the download resolves its own live token.
-    if (!authToken) return;
+    if (!authToken || !isNear) return;
     let destroyed = false;
     let acquired = false;
     failed = false;
     expired = false;
+    // Abandons the request while it is still QUEUED, so a tile scrolled past never asks.
+    const abort = new AbortController();
     new MediaService()
-      .downloadAndDecrypt(ref)
+      .downloadAndDecrypt(ref, abort.signal)
       .then((url) => {
         if (destroyed) releaseDecryptedMediaBlobUrl(ref);
         else {
@@ -48,6 +59,7 @@
       });
     return () => {
       destroyed = true;
+      abort.abort();
       if (acquired) releaseDecryptedMediaBlobUrl(ref);
       blobUrl = null;
     };
@@ -57,6 +69,7 @@
 <button
   type="button"
   onclick={onClick}
+  use:nearViewport={{ onnear: () => (isNear = true) }}
   class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 transition-opacity outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-amber-500 dark:bg-white/10"
   aria-label={expired ? m.msg_media_expired_label() : m.chat_open_media_label()}
   title={expired ? m.msg_media_expired_label() : undefined}

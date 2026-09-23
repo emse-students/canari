@@ -23,15 +23,21 @@ export const load: PageLoad = async ({ url }) => {
   const promo = promoParsed !== undefined && Number.isFinite(promoParsed) ? promoParsed : undefined;
   const formation = url.searchParams.get('formation')?.trim() || undefined;
 
+  // THE REQUEST IS ISSUED BEFORE THE AUDIENCE GATE, NOT BEHIND IT. The gate used to be awaited
+  // here, so the posts promise did not exist - and therefore had not left the device - until a
+  // `GET /api/users/me` came back. Two full latencies to first paint where one was owed, on the
+  // tab a reader switches to most. The gate is a redirect and not an authorization
+  // (`$lib/posts/feedAudience`), so nothing is disclosed by asking early; a reader who does get
+  // sent away leaves one wasted GET behind, once, on the only visit where it can happen.
+  const posts = listPosts({ limit: 20, feed, promo, formation });
+  // Attach a handler so a refused fetch is not an unhandled rejection on the redirect path. The
+  // promise itself is still handed over, so `{#await}` sees the same failure it always did.
+  posts.catch(() => {});
+
   if (await redirectIfNotFeedAudience()) return;
 
   return {
-    posts: listPosts({
-      limit: 20,
-      feed,
-      promo,
-      formation,
-    }),
+    posts,
     feedParams: { feed, promo, formation },
   };
 };

@@ -92,3 +92,39 @@ export function contentModeratorState(): boolean {
 export function setContentModerator(value: boolean): void {
   _isContentModerator = value;
 }
+
+const FEED_AUDIENCE_KEY = 'canari_feed_audience';
+
+const initialFeedAudience =
+  typeof localStorage !== 'undefined'
+    ? { true: true, false: false }[localStorage.getItem(FEED_AUDIENCE_KEY) ?? '']
+    : undefined;
+
+let _feedAudience = $state<boolean | null>(initialFeedAudience ?? null);
+
+/**
+ * Whether this account was last told it may see the social feed, or `null` if it has never been
+ * told at all.
+ *
+ * WHY THE VERDICT IS REMEMBERED AND NOT RE-ASKED. It used to be a `GET /api/users/me` awaited
+ * before the feed route's `load` even created its posts promise, so opening the Fil tab cost a
+ * round trip before anything rendered - measured at 2045 ms to first paint against 262 ms on a
+ * healthy link, on an account whose feed then turned out to be EMPTY. The answer changes when a
+ * registrar changes someone's formation, which is not a per-tab-switch event, so the last answer
+ * is the right thing to render from while a fresh one is fetched behind it.
+ *
+ * It is persisted rather than kept in memory because a cold start is exactly when the network is
+ * least likely to be there, and it is cleared on logout and on a switch of account so a verdict
+ * never outlives the person it was about.
+ */
+export function feedAudienceState(): boolean | null {
+  return _feedAudience;
+}
+
+/** Records the feed-audience verdict, or forgets it when given `null`. */
+export function setFeedAudience(value: boolean | null): void {
+  _feedAudience = value;
+  if (typeof localStorage === 'undefined') return;
+  if (value === null) localStorage.removeItem(FEED_AUDIENCE_KEY);
+  else localStorage.setItem(FEED_AUDIENCE_KEY, value ? 'true' : 'false');
+}

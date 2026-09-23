@@ -519,10 +519,21 @@
     }
   }
 
+  /**
+   * Whether this row has come near the viewport, reported by `MessageMediaRenderer`.
+   *
+   * SCROLLING A THREAD USED TO ISSUE ONE FULL-SIZE DOWNLOAD PER MEDIA ROW IT RENDERED, at once and
+   * uncapped: the render window steps up by 140 groups at a time, so one scroll gesture could put
+   * dozens of originals on the link ahead of the page of history the reader was waiting for. The
+   * browser already applies this rule to the `<img>` beside them (`loading="lazy"`); the request
+   * that produces the image did not have it.
+   */
+  let isNearViewport = $state(false);
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
-    if (!mediaRef || !mediaRef.mediaId || !authToken) return;
+    if (!mediaRef || !mediaRef.mediaId || !authToken || !isNearViewport) return;
 
     let destroyed = false;
     let acquired = false;
@@ -530,9 +541,11 @@
     mediaPurgedByRetention = false;
 
     const ref: MediaRef = mediaRef;
+    // Leaves the gate's queue if the row is torn down before its turn comes.
+    const abort = new AbortController();
 
     new MediaService()
-      .downloadAndDecrypt(ref)
+      .downloadAndDecrypt(ref, abort.signal)
       .then((url) => {
         if (destroyed) {
           releaseDecryptedMediaBlobUrl(ref);
@@ -550,6 +563,7 @@
 
     return () => {
       destroyed = true;
+      abort.abort();
       if (acquired) releaseDecryptedMediaBlobUrl(ref);
       acquired = false;
       blobUrl = null;
@@ -750,6 +764,7 @@
               {textContent}
               {isOwn}
               {textSegments}
+              onNear={() => (isNearViewport = true)}
             />
 
             {#if !mediaRef}

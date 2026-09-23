@@ -56,9 +56,27 @@
      * colours by construction, with the theme holding them.
      */
     letterbox?: boolean;
+    /**
+     * Hold the download until the card comes near the viewport.
+     *
+     * A feed mounts every attachment of every card it renders, including cards well below the
+     * fold, and a four-image gallery is four downloads. On a bad link those queue ahead of the
+     * `listPosts` page the reader is actually waiting for. The OWNER of the box decides, because
+     * the box is what an `IntersectionObserver` can watch: this component renders a different root
+     * per media type and has none of its own. Defaults to `false`, so a lightbox or any other call
+     * site that knows the media is on screen is unaffected.
+     */
+    deferred?: boolean;
   }
 
-  let { media, authToken, onOpen, galleryMode = false, letterbox = false }: Props = $props();
+  let {
+    media,
+    authToken,
+    onOpen,
+    galleryMode = false,
+    letterbox = false,
+    deferred = false,
+  }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
   let loading = $state(true);
@@ -81,6 +99,9 @@
       loadError = m.post_missing_auth_token();
       return;
     }
+    // Still far from the viewport: the placeholder is already the right thing on screen, so the
+    // download waits rather than competing with the page the reader IS looking at.
+    if (deferred) return;
 
     let destroyed = false;
     let acquired = false;
@@ -101,9 +122,11 @@
     };
 
     const mediaService = new MediaService();
+    // Leaves the gate's queue if the card is torn down before its turn comes.
+    const abort = new AbortController();
 
     mediaService
-      .downloadAndDecrypt(mediaRef)
+      .downloadAndDecrypt(mediaRef, abort.signal)
       .then((url) => {
         if (destroyed) {
           releaseDecryptedMediaBlobUrl(mediaRef);
@@ -130,6 +153,7 @@
 
     return () => {
       destroyed = true;
+      abort.abort();
       if (acquired) releaseDecryptedMediaBlobUrl(mediaRef);
       acquired = false;
       blobUrl = null;

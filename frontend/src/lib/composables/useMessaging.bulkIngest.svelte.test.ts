@@ -59,7 +59,6 @@ function makeContext() {
     setAuthToken: vi.fn(),
     getSendError: () => '',
     setSendError: vi.fn(),
-    getChatContainer: () => undefined,
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),
@@ -180,5 +179,129 @@ describe('addMessageToChat during a bulk-ingest window', () => {
 
     expect(idsIn(conversations)).toEqual(['own-1']);
     expect(saveMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * THE PHOTO THAT STAYED A NOTIFICATION (user report, 2026-09-22; reproduced on the Mi 9T
+ * 2026-09-23 with `archive/photoprev.mjs --mode restored`).
+ *
+ * A launch that has an FCM cache entry merges the notification's caption into the conversation
+ * BEFORE the queue drain reaches the frame it previews - same id, deliberately. The drain is a
+ * bulk ingest, and the bulk branch asked only whether the id was known: it logged
+ * `Duplicate ignored during a bulk ingest`, returned, and the handler answered `true`. The frame
+ * was then acknowledged and DELETED server-side, so the bubble read the caption for good - the
+ * queue row gone, the generation spent, and the archive replay skipping the fingerprint for ever.
+ * The upgrade has to happen here, at the instant the envelope arrives, because the ack does.
+ */
+describe('an FCM preview upgraded during a bulk-ingest window', () => {
+  const ENVELOPE = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+  /** The ONE producer of this string is the Rust notification builder - see `proto_fields.rs`. */
+  const PREVIEW = '\u{1F4F7} Photo';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /** The state `mergeFcmMessagesIntoConversations` leaves behind at login. */
+  function withPreview() {
+    const made = makeContext();
+    made.conversations.set(CONVO, {
+      ...(made.conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'photo-1',
+          senderId: PEER,
+          content: PREVIEW,
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ] as never,
+    });
+    return made;
+  }
+
+  it('replaces the caption with the envelope and persists it, without waiting for the flush', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = withPreview();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+
+    // The frame is acked the moment this returns, so the repair may not be owed to the flush.
+    const held = conversations.get(CONVO)?.messages ?? [];
+    expect(held.map((m) => m.id)).toEqual(['photo-1']);
+    expect(held[0].content).toBe(ENVELOPE);
+    expect(held[0].isFcmPreview).toBe(false);
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(saveMessage.mock.calls[0][0]).toMatchObject({
+      id: 'photo-1',
+      content: ENVELOPE,
+      isFcmPreview: false,
+    });
+  });
+
+  it('does not add a second bubble, and the flush adds nothing either', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = withPreview();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    const held = conversations.get(CONVO)?.messages ?? [];
+    expect(held.map((m) => m.id)).toEqual(['photo-1']);
+    expect(held[0].content).toBe(ENVELOPE);
+  });
+
+  /**
+   * The rule is an UPGRADE, not "never dedupe": a second copy of the same envelope is still a
+   * duplicate, and must still be dropped and still say so.
+   */
+  it('still ignores a duplicate once the row is a full envelope', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = withPreview();
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+    saveMessage.mockClear();
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect((conversations.get(CONVO)?.messages ?? []).length).toBe(1);
+    expect(logged).toHaveBeenCalledWith(
+      expect.stringContaining('Duplicate ignored during a bulk ingest')
+    );
+  });
+
+  /**
+   * A preview NEVER overwrites an envelope, whichever order they arrive in - the reverse direction
+   * of the same rule, and the one `isEnvelopeContent` guards in the FCM cache.
+   */
+  it('refuses the reverse: a caption arriving after the envelope is a plain duplicate', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...(conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'photo-1',
+          senderId: PEER,
+          content: ENVELOPE,
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+        },
+      ] as never,
+    });
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, PREVIEW, CONVO, ctx, { messageId: 'photo-1' });
+
+    expect(conversations.get(CONVO)?.messages[0].content).toBe(ENVELOPE);
+    expect(saveMessage).not.toHaveBeenCalled();
   });
 });

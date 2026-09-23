@@ -352,24 +352,4 @@ export class PostInteractionsService {
     });
     return result;
   }
-
-  /**
-   * Submits an embedded form on a post. Validates the post exists and that the
-   * form is actually attached, then returns a stub success response. Full
-   * submission logic lives in FormsService - cross-module wiring requires
-   * extracting PostNotificationsService to break the circular dependency.
-   */
-  async submitForm(
-    postId: string,
-    formId: string,
-    _data: { userId?: string; email?: string; selections: Record<string, any> }
-  ) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException();
-    const hasForm =
-      post.attachedFormId === formId ||
-      (post.forms ?? []).some((f: { id?: string }) => f.id === formId);
-    if (!hasForm) throw new NotFoundException('Form not attached to this post');
-    return { ok: true, requiresPayment: false, message: 'Form submitted.' };
-  }
 }

@@ -19,7 +19,9 @@
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
-  import { assertNotMuted } from '$lib/moderation/muteCheck';
+  import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
+  import { applyPostPollVote } from '$lib/posts/pollVote';
+  import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
@@ -100,6 +102,13 @@
   // own taps on the comment button.
   let showComments = $state(untrack(() => commentsOpen));
   let submittingComment = $state(false);
+  /**
+   * Comments written into the list before the server acknowledged them, by their LOCAL id.
+   *
+   * Handed to `PostComments`, which withholds every control that would name an id to the server
+   * for as long as a row is in here. Emptied in the `finally`, whichever way the write went.
+   */
+  const pendingCommentIds = new SvelteSet<string>();
   let showReactionPicker = $state(false);
 
   // Server-answered, per reader and per control. Never re-derived here: an association post carries
@@ -215,28 +224,20 @@
       errorMessage = m.post_sondage_selectionner();
       return;
     }
+    // THE TALLY IS COMPLETE ON THIS DEVICE, so it moves on the tap rather than on the answer.
+    // This ran AFTER votePoll came back: a reader on a bad link tapped an option and watched
+    // nothing happen for seconds. The channel-poll path had already reached the other conclusion
+    // (applyLocalVote, called before the server); applyPostPollVote is the same decision for the
+    // post shape, and it is pure, so the rollback is the post we came in with.
+    const previousPost = localPost;
+    localPost = applyPostPollVote(localPost, pollId, currentUserId, selectedOptions);
+    actionMessage = selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
     try {
       await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
-      actionMessage =
-        selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
-      // Update the poll locally - track votesByUser + per-option vote arrays
-      const updatedPolls = (localPost.polls ?? []).map((p) => {
-        if (p.id !== pollId) return p;
-        const newVotesByUser = { ...p.votesByUser, [currentUserId]: selectedOptions };
-        const newOptions = (p.options ?? []).map((opt: any) => {
-          const votes = Array.isArray(opt.votes) ? opt.votes : [];
-          const hadVote = votes.includes(currentUserId);
-          const hasVote = selectedOptions.includes(opt.id);
-          if (hadVote && !hasVote)
-            return { ...opt, votes: votes.filter((v: string) => v !== currentUserId) };
-          if (!hadVote && hasVote) return { ...opt, votes: [...votes, currentUserId] };
-          return opt;
-        });
-        return { ...p, votesByUser: newVotesByUser, options: newOptions };
-      });
-      localPost = { ...localPost, polls: updatedPolls };
     } catch (err) {
       Log.d('PostCard.submitVote failed', err);
+      localPost = previousPost;
+      actionMessage = '';
       errorMessage = m.post_unable_to_vote();
     }
   }
@@ -244,15 +245,13 @@
   /** Toggles a reaction on the post with an optimistic update. Rolls back the local state if the API call fails. */
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
-    try {
-      await assertNotMuted();
-    } catch (err) {
-      // NOT ALWAYS MODERATION. This wraps `assertNotMuted()`, which ASKS the server - so a dropped
-      // radio used to tell the reader they are restricted by moderation, which is false and is
-      // about them. `publishFailureMessage` keeps this line for the refusal and says "could not
-      // reach the server" for the transport.
-      console.error('[POST_CARD] reaction refused', err);
-      errorMessage = publishFailureMessage(err, m.post_action_not_allowed());
+
+    // A MUTE ALREADY KNOWN REFUSES WITHOUT MOVING ANYTHING; one that is not known does not hold
+    // the tap. The check used to be `await assertNotMuted()` placed FIRST, so the picker stayed
+    // open and the tally stayed still until `GET /api/moderation/me/mute-status` answered - once
+    // per five-minute window, on a link where that is seconds.
+    if (cachedMuteStatus()?.isMuted) {
+      errorMessage = m.post_action_not_allowed();
       return;
     }
 
@@ -266,14 +265,21 @@
     showReactionPicker = false;
 
     try {
+      // Still never sent to a server certain to refuse it: when nothing is known, this asks -
+      // behind a picker that has already closed and a tally that has already moved.
+      await assertNotMuted();
       const result = wasReacted
         ? await removeReaction(localPost.id)
         : await addReaction(localPost.id, reactionType);
       localPost = { ...localPost, reactions: result.reactions };
     } catch (err) {
+      // NOT ALWAYS MODERATION. `assertNotMuted()` ASKS the server, so a dropped radio used to tell
+      // the reader they are restricted by moderation, which is false and is about them.
+      // `publishFailureMessage` keeps that line for the refusal and says "could not reach the
+      // server" for the transport.
       Log.d('handleReaction failed', err);
       localPost = { ...localPost, reactions: prevReactions };
-      errorMessage = m.post_reaction_error();
+      errorMessage = publishFailureMessage(err, m.post_reaction_error());
     }
   }
 
@@ -317,32 +323,86 @@
     const text = commentText.trim();
     if (!text && !media) return;
     if (!currentUserId.trim()) return;
+
+    // A mute already known refuses before anything is written; see `handleReaction`.
+    if (cachedMuteStatus()?.isMuted) {
+      errorMessage = m.post_action_not_allowed();
+      return;
+    }
+
+    // THE COMMENT IS COMPLETE BEFORE IT IS SENT, so it is shown before it is sent. The box used to
+    // keep the text and the send button stayed disabled for the whole round trip, which on a bad
+    // link reads as an app that ignored the tap. The row carries a LOCAL id and is listed as
+    // pending, which is what stops `PostComments` from offering to edit, delete or like something
+    // the server has never heard of - its row replaces this one, id and all, when it answers.
+    const pendingId = `pending-${crypto.randomUUID()}`;
+    const pending: PostComment = {
+      id: pendingId,
+      userId: currentUserId,
+      text,
+      parentId: parentId ?? null,
+      likes: [],
+      createdAt: new Date().toISOString(),
+      ...(media ? { media } : {}),
+    };
+    pendingCommentIds.add(pendingId);
+    localPost = { ...localPost, comments: [...(localPost.comments ?? []), pending] };
+    commentText = '';
     submittingComment = true;
+
     try {
       await assertNotMuted();
       const result = await addComment(localPost.id, { text, parentId, media });
-      localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
-      commentText = '';
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).map((c) => (c.id === pendingId ? result.comment : c)),
+      };
     } catch (err) {
       // Two causes wear this sentence: moderation refusing, and `addComment` failing. Only the
-      // first is about the reader, and only the second is about the comment.
+      // first is about the reader, and only the second is about the comment. Either way the row
+      // goes, and the text goes back where the reader can send it again.
       console.error('[POST_CARD] comment refused', err);
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).filter((c) => c.id !== pendingId),
+      };
+      if (!commentText.trim()) commentText = text;
       errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
     } finally {
+      pendingCommentIds.delete(pendingId);
       submittingComment = false;
     }
   }
 
   /** Toggles a like on a comment and updates the local comment in-place. Fails silently to avoid disrupting UX. */
   async function handleLikeComment(commentId: string) {
+    // THE HEART IS A MEMBERSHIP TEST ON AN ARRAY THIS DEVICE HOLDS. It used to move only when the
+    // server answered, and a failure was swallowed - so on a bad link a tap did nothing at all and
+    // said nothing either.
+    const previousPost = localPost;
+    localPost = {
+      ...localPost,
+      comments: (localPost.comments ?? []).map((c) =>
+        c.id === commentId
+          ? {
+              ...c,
+              likes: c.likes.includes(currentUserId)
+                ? c.likes.filter((id) => id !== currentUserId)
+                : [...c.likes, currentUserId],
+            }
+          : c
+      ),
+    };
     try {
       const result = await likeCommentApi(localPost.id, commentId);
       localPost = {
         ...localPost,
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
       };
-    } catch {
-      // ignore silently to not disrupt UX
+    } catch (err) {
+      // Put the heart back rather than leaving a count this device invented.
+      Log.d('handleLikeComment failed', err);
+      localPost = previousPost;
     }
   }
 
@@ -603,6 +663,7 @@
       {showComments}
       {commentText}
       {submittingComment}
+      {pendingCommentIds}
       {currentUserId}
       {authToken}
       onToggleComments={() => (showComments = !showComments)}

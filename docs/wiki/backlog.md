@@ -67,6 +67,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
+| **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [P2 - that a photo now survives a restart](#p2---that-a-photo-now-survives-a-restart-is-proven-by-compiling-and-by-nothing-else---one-mi-9t-look-user-2026-09-17) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
@@ -1451,6 +1452,32 @@ is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`, never Pa
 is the app's own label for an envelope it deliberately summarises (a conversation-list line, a reply
 quote). **So `📷 Photo` inside a bubble always means a push row that was never upgraded** - if
 it is ever seen again, that is where to look, and it is a different bug from this one.
+
+**IT WAS SEEN AGAIN ON 2026-09-22, AND IT WAS INDEED A DIFFERENT BUG (fixed 2026-09-23).** The user
+reported two bubbles still reading `📷 Photo` hours later and across a relaunch - persisted, so
+not a boot-ordering artefact - plus a photo that never arrived at all on another member's phone.
+The cause is the FOURTH arrival order, the one the 2026-09-17 fix does not cover: the cache wins,
+the caption is merged in memory at login, and the queue drain - **a bulk ingest** - then dropped the
+real envelope as a duplicate and acked the frame anyway. Reproduced on the Mi 9T with
+`archive/photoprev.mjs --mode restored`, which is the only one of seven orders that produces it.
+Mechanism in [mob](frontend/mobile.md#fcm-message-cache), pinned by
+`useMessaging.bulkIngest.svelte.test.ts`.
+
+**VERIFIED ON THE Mi 9T, 2026-09-23, ON A DEBUG APK BUILT FROM THE FIX: ALL SEVEN MODES PASS.** The
+line that decided it is the one that used to read `Duplicate ignored`:
+`[FCM_CACHE] 1 message(s) merged in memory at login` (05:09:24), then
+`[ADD_MSG] Preview upgrade during a bulk ingest id=bbcda750 - taking the live path` and
+`[ADD_MSG] Message upgraded` (05:09:33), and only THEN `messageCallback -> true`. The pane is read
+twice per mode, the second time after a kill and a cold relaunch, so the picture it shows came off
+DISK: across the ladder the decoded count rises by exactly one per mode, 9 to 16, and the caption
+count never rises at all.
+
+**WHAT IS LEFT IS A DECISION, NOT A MEASUREMENT: the rows ALREADY stuck.** No boot repairs one -
+the queue row is deleted and the replay's consumed ledger is durable - so the only copy left
+anywhere is a peer's. The phone still carries the two captions the pre-fix runs stranded on it, and
+they sat there unchanged through all seven passes; that is the fix's limit, measured rather than
+argued. The user's own two bubbles are in the same state, and repairing them would mean asking a
+member who still holds the envelope for a history bundle.
 
 ### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
 
