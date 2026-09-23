@@ -1324,8 +1324,10 @@ Two things outlive it:
    in the banner and leaves the conversation title empty, because its payload names no human sender;
    the WebSocket trigger knows the sender and titles the conversation with the salon. Both converge
    on one notification, so this is a wording, not a duplicate - and now that the two are recognised
-   as one message, whichever arrives FIRST decides the wording for it, so the difference shows
-   across messages rather than within one. **The payload cannot simply gain a sender NAME**: it is
+   as one message, whichever posts LAST decides the wording for it, so the difference shows
+   across messages rather than within one. (This read FIRST until 2026-09-23, when the builder's
+   own `showNotification` lines were read in order and showed the second post overwriting the
+   first.) **The payload cannot simply gain a sender NAME**: it is
    cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
    locally. That trade-off is the item, not the wording.
 
@@ -1347,12 +1349,57 @@ Two things outlive it:
    correct title is computed and then thrown away.
 
    **EACH TRIGGER WAS MEASURED ALONE, and the push is right on its own**: with the app KILLED the
-   same salon message titles `<community> - #<channel>`, read off the record. The socket alone is
-   **not reachable in this row's premise** - a foregrounded app notifies from neither trigger, and
-   with the radios off the app queues and the push draws the line when they return - so in the
-   backgrounded case both triggers always fire and the socket is always first. **The outcome is
-   therefore determinate, not racy**, which is the opposite of what this entry said before the
-   measurement.
+   same salon message titles `<community> - #<channel>`, read off the record.
+
+   **IT IS A RACE AFTER ALL, AND THE "DETERMINATE" READING WRITTEN HERE ON 2026-09-23 WAS WRONG -
+   refuted the same day by eleven sends of ONE identical sequence** (versionName `0.18.20`,
+   installed 05:07, app alive and backgrounded, the row's own premise, shade cleared between
+   sends). **NINE fired the push ALONE and drew the correct `<community> - #<channel>`; TWO fired
+   both triggers and drew the sender's display name.** So the socket frame is NOT always delivered
+   to a backgrounded WebView, and the wording of a salon notification depends on whether it was -
+   which is the definition of a race, not of a regression with one cause. The earlier reading came
+   from a single reproduction plus a premise argument, and the premise was the part that was wrong:
+   "both triggers always fire" is false 9 times in 11.
+
+   **WHAT THE CAUGHT RUN SHOWS, END TO END** (the one send in the second batch where the socket
+   fired; `showNotification` logs the builder's own `group=` decision, so this is read off the
+   builder rather than inferred):
+
+   ```
+   21.037  socket  notifyMessageFromWebSocket: queued        -> native builder
+   21.214          showNotification: notifId=1011 messages=6 group=true    <- the socket's post
+   21.319  push    onMessageReceived
+   21.415          handleChannelMessage: title=<community> - #<channel>
+   21.504          showNotification: notifId=1011 messages=5 group=false   <- the push's post, wins
+   ```
+
+   The two triggers do not merely word the title differently, **they model the conversation
+   differently**: the socket posts a GROUP conversation authored by the human sender, the push a
+   1:1 conversation authored by the PLACE. The second post wins, its `group=false` drops the
+   conversation title, and Android then titles the shade from a message author - the human name the
+   socket wrote. **The message count also falls, `messages=6` -> `messages=5`**: the push's rebuild
+   drops a line, which nothing here has yet explained.
+
+   **AND THE SOCKET'S CONVERSATION TITLE IS A RAW ID, WHICH NOTHING HAS EVER SEEN ON SCREEN.**
+   `notificationGroupName` returns `contactName || name`, and all three channel builders in
+   `useChannelWorkspaces.svelte.ts` write `contactName: channelConversationId` - the raw
+   `channel_<hex>` - with the salon's name in `displayName`. `Conversation.contactName` is declared
+   as the *"human-readable auxiliary identifier"*, so the channel builders contradict their own
+   type; a group writes its title there. The id is invisible today only because the push's re-post
+   erases the conversation title, and the socket alone draws nothing in this premise. **The unit
+   test does not catch it because its fixture feeds the two fields in the opposite order to every
+   real builder** - `notificationGroupName('channel', 'general', 'channel_1')`, where production
+   passes `('channel', 'channel_<hex>', 'general')`. A guardrail whose fixture contradicts the
+   producers asserts a behaviour the app never exhibits.
+
+   **THE FIX HAS TWO SHAPES AND THEY DIFFER IN BLAST RADIUS, so it is not taken here.** Either the
+   channel builders write the qualified title into `contactName`, honouring the declared contract
+   and fixing every reader at once - but `contactName` may be looked up by other paths, which is
+   unenumerated; or the socket path mirrors the push exactly for a channel (`senderName` = the
+   qualified title, `groupName` = empty), which touches only the notification seam but needs the
+   workspace name where `useMessaging` does not have it. **One spelling of that title already
+   exists on four surfaces** and `channelPushFields.test.ts` holds them together, so whichever
+   shape is taken extracts it rather than adding a fifth.
 
    **AND IT IS THE 2026-09-22 DEDUP THAT EXPOSED IT.** This row passed on 2026-09-08 with both
    titles correct, because the salon push carried no `sent_at` and the two triggers could not
