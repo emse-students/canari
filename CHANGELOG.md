@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les options d'un sondage etaient coupees a l'ellipse, donc impossibles a distinguer
+
+Le libelle portait `truncate`, soit une ligne et rien d'autre. Un libelle est du texte libre, et sur
+un telephone la rangee ne lui laisse pas 200px : un sondage sur huit associations s'affichait
+`Confedera...`, `Gustave R...`, `Action con...`. Il passe desormais a la ligne, sur les deux surfaces
+qui partagent `PostPolls` (post et salon).
+[posts](docs/wiki/frontend/modules/posts.md#a-poll-option-is-free-text-so-it-can-only-wrap-2026-09-23).
+
+
 ### Fixed - une mention sous une photo restait le token brut, que l'app soit relancee ou non
 
 `MessageBubble` ne monte `MessageTextBody` que `{#if !mediaRef}` : la legende d'une piece jointe

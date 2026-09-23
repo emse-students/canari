@@ -208,8 +208,14 @@
                     {/if}
                   </div>
 
-                  <!-- Option label. -->
-                  <span class="text-text-main truncate text-sm font-bold">
+                  <!--
+                    Option label. It WRAPS rather than truncating: an option is an arbitrary
+                    free-text answer (an association name, a date, a sentence), and on a phone the
+                    icon plus the two counters leave it under 200px - which turned every entry of a
+                    real poll into "Confedera...", unreadable and indistinguishable from its
+                    neighbours (2026-09-23).
+                  -->
+                  <span class="text-text-main text-sm leading-snug font-bold wrap-break-word">
                     {option.label}
                   </span>
                 </div>
@@ -217,7 +223,7 @@
                 <!-- Compteurs (Pourcentage & Votes absolus) -->
                 <div class="flex shrink-0 items-center gap-2.5">
                   {#if totalVotes > 0}
-                    <span class="text-text-main/60 min-w-[2.5rem] text-right text-xs font-bold">
+                    <span class="text-text-muted min-w-[2.5rem] text-right text-xs font-bold">
                       {percentage}%
                     </span>
                   {/if}
