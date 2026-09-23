@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la rangee NOTIF-14 disait quel CONSTRUCTEUR avait ecrit la banniere, et ne pouvait repondre qu'une chose
+
+Depuis 2026-09-18 il n'y a plus qu'un constructeur : la trame WebSocket est devenue un second
+DECLENCHEUR du meme. Le discriminant cherchait `CanariFCM: showNotification`, que les deux chemins
+emettent, donc chaque passage repondait "push" - y compris pour un message dont le logcat ne contient
+aucune ligne de push. La rangee enregistre desormais QUEL DECLENCHEUR a tire et DANS QUEL ORDRE, ce
+qui est la question dont un libelle est un fait. [testing-methodology](docs/wiki/testing-methodology.md).
+
+
 ### Fixed - cinq rangees de notification reposaient sur un garage qui ne garait rien
 
 `notif.mjs` sortait W1 de la conversation avec `history.pushState` : l'URL change, le panneau de

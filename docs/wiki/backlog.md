@@ -1321,17 +1321,39 @@ Two things outlive it:
    cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
    locally. That trade-off is the item, not the wording.
 
-   **NOTIF-14 IS THE ROW THAT MEASURES THIS, AND IT CANNOT PASS UNTIL THE WORDING IS ONE (measured
-   2026-09-23, build `00a86a1a8`).** It asks that a salon notification name where it was said; the
-   DM half matched the resolved sender name exactly, and the salon half read the SENDER's display
-   name, naming neither the community nor the channel. That is not a regression and not a second
-   defect: the socket trigger builds with `MessagingStyle`, whose shade title is the PERSON and
-   whose `conversationTitle` is a separate line, so a notification this trigger draws can never
-   satisfy the row - while the push path's `buildChannelPushTitle` produces `<workspace> - #<channel>`
-   and always would. The row therefore records which trigger won the race, which is precisely what
-   the paragraph above says now happens per message. **A row whose verdict depends on a race is not
-   reproducible**, so NOTIF-14 stays open ON THIS ITEM rather than being re-scoped: unify the
-   wording and the row becomes an assertion again.
+   **NOTIF-14 IS THE ROW THAT MEASURES THIS, AND ITS `FAIL` IS A DATED REGRESSION WITH A NAMED
+   CAUSE - NOT A RACE (measured 2026-09-23, build `00a86a1a8`, reproduced twice).** The row asks
+   that a salon notification name where it was said. The DM half matches the resolved sender name
+   exactly; the salon half reads the SENDER's display name and names neither the community nor the
+   channel. The logcat carries the whole chain, 328 ms of it:
+
+   | when | what fired | what it did |
+   | --- | --- | --- |
+   | `+0 ms` | socket - `notifyMessageFromWebSocket: queued` | posts notification `1011` **as a group conversation** (`showNotification: ... group=true`), its one `MessagingStyle` line carrying the human sender as the Person |
+   | `+328 ms` | push - `handleChannelMessage` | logs `notification title=<community> - #<channel>` - **the title the row asks for, computed correctly** |
+   | `+413 ms` | the same push | `already in the shade -> refreshed without alerting`, re-posts `1011` with `groupName = ""` -> `group=false`, `android.isGroupConversation=false` |
+
+   **The second post drops the conversation title and adds no line of its own**, because
+   `alreadyPosted` is true - correctly, it is the same message. So the banner title falls back to
+   the Person of the only line there is, which the socket wrote with the sender's name, and the
+   correct title is computed and then thrown away.
+
+   **EACH TRIGGER WAS MEASURED ALONE, and the push is right on its own**: with the app KILLED the
+   same salon message titles `<community> - #<channel>`, read off the record. The socket alone is
+   **not reachable in this row's premise** - a foregrounded app notifies from neither trigger, and
+   with the radios off the app queues and the push draws the line when they return - so in the
+   backgrounded case both triggers always fire and the socket is always first. **The outcome is
+   therefore determinate, not racy**, which is the opposite of what this entry said before the
+   measurement.
+
+   **AND IT IS THE 2026-09-22 DEDUP THAT EXPOSED IT.** This row passed on 2026-09-08 with both
+   titles correct, because the salon push carried no `sent_at` and the two triggers could not
+   recognise each other: the notification the row read was the PUSH's. Giving the channel push
+   `createdAt` correctly collapsed the salon's two notifications into one - and the survivor is the
+   socket's wording. **The fix is not to undo the dedup**: make the two triggers agree, by giving
+   the socket's `conversationTitle` the qualified salon name and by refusing to let a re-post drop a
+   conversation title the notification already has.
+
 2. **THE DOUBLING CANNOT HAPPEN ON DESKTOP OR ON THE WEB, AND THAT IS ARCHITECTURE RATHER THAN
    LUCK (measured 2026-09-22).** It needs two independent builders reached by two independent
    triggers, and NEITHER surface has the second trigger: every command in

@@ -83,18 +83,38 @@ async function titledNotification(needle, timeoutMs = 60_000) {
 }
 
 /**
- * Which of the two builders produced the notification in this window. READ, never assumed.
+ * WHICH TRIGGER FIRED IN THIS WINDOW, AND IN WHICH ORDER - read, never assumed.
  *
- * `CanariFCM: showNotification` is the Kotlin push builder announcing itself; its absence, with a
- * notification nonetheless on screen, means the WebSocket path's plugin built it. The distinction is
- * the whole reason this row records a builder at all - the two disagree about icon, channel, style
- * and tap, so a title is only a fact about the path that produced it.
+ * THIS REPLACES A DISCRIMINATOR THAT COULD ONLY EVER RETURN ONE ANSWER. It asked whether
+ * `CanariFCM: showNotification` appeared and called its absence "the WebSocket plugin" - but the
+ * WebSocket frame stopped being a second BUILDER on 2026-09-18 and became a second TRIGGER for the
+ * same Kotlin one (`commands/notifications.rs`), which logs that exact line. So every run said
+ * `CanariFirebaseMessagingService (push)` whatever happened, and the run of 2026-09-23 proved it:
+ * the DM half was recorded as a push and its logcat holds no push line at all, only
+ * `notifyMessageFromWebSocket: queued`.
+ *
+ * There is one builder, so the question a title is a fact about is WHICH TRIGGER GOT THERE FIRST -
+ * the two carry different wordings, and the second one re-posts over the first.
  */
-async function builderSince(sinceMs) {
+async function triggersSince(sinceMs) {
   const lines = await logcatSince(sinceMs).catch(() => []);
-  return lines.some((l) => /CanariFCM: showNotification/.test(l))
-    ? 'CanariFirebaseMessagingService (push)'
-    : 'tauri-plugin-notification (WebSocket)';
+  const at = (re) => {
+    const hit = lines.find((l) => re.test(l));
+    return hit ? hit.slice(0, 18) : null;
+  };
+  const socket = at(/CanariFCM: notifyMessageFromWebSocket: queued/);
+  const push = at(/CanariFCM: (onMessageReceived|handleChannelMessage):/);
+  return {
+    socket,
+    push,
+    // The ORDER, because the second post lands on the first one's notification id and the first
+    // one's wording is what survives it.
+    order:
+      socket && push ? (socket <= push ? 'socket-first' : 'push-first')
+      : socket ? 'socket-only'
+      : push ? 'push-only'
+      : 'neither',
+  };
 }
 
 const a1 = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
@@ -140,7 +160,7 @@ try {
   const dm = await titledNotification(dmMark);
   out.dm = {
     ...dm,
-    builtBy: await builderSince(dmSentAt),
+    triggers: await triggersSince(dmSentAt),
     expected: '<peerNameFor(A1), from the out-of-tree names.mjs>',
   };
   stage(`DM notification in ${dm.inMs}ms, title=${JSON.stringify(dm.title)}`);
@@ -181,7 +201,7 @@ try {
     const chSentAt = Date.now();
     await send(w2, `${chMark} a salon message, whose title must name where it was said`);
     const ch = await titledNotification(chMark);
-    out.salon = { ...ch, builtBy: await builderSince(chSentAt) };
+    out.salon = { ...ch, triggers: await triggersSince(chSentAt) };
     stage(`salon notification in ${ch.inMs}ms, title=${JSON.stringify(ch.title)}`);
 
     if (ch.inMs === null) {
