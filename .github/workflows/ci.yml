@@ -638,6 +638,22 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: bun run format:check
 
+      # ADDED 2026-09-24. `bun run build` is `nest build`, which reads `tsconfig.build.json` and
+      # that file excludes `*.spec.ts` - so a service's OWN tests were typechecked by nothing. Not
+      # by jest either: ts-jest transpiles without checking as soon as `isolatedModules` is set,
+      # and all four set it. The single thing that did check them was `Dockerfile.social-service`,
+      # by accident, pointing at `tsconfig.json` where its three siblings point at the build one.
+      # That is a gate that fires AFTER the merge, on a release: a type error from #1006 reached
+      # main, went green, and killed the `v0.18.22-alpha.1` build. The Dockerfile now matches its
+      # siblings and the check moved here, where it can refuse a pull request.
+      #
+      # NOT guarded by a script-presence probe, unlike lint and format above. The failure this
+      # gate exists for IS a service whose types nothing reads; skipping it silently on a service
+      # that forgot the script would rebuild exactly that hole.
+      - name: Typecheck (tests included)
+        working-directory: ${{ matrix.service }}
+        run: bun run typecheck
+
       - name: Build
         working-directory: ${{ matrix.service }}
         run: bun run build

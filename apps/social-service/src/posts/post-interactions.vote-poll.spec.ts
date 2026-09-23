@@ -18,8 +18,25 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  * The client halves are pinned in `pollVote.test.ts` (what a tap produces) and `pollDraft.test.ts`
  * (what may be composed). This file pins the only one that is not advisory.
  */
+/**
+ * The fields of a poll this file builds and then reads back, and nothing else.
+ *
+ * It was `Record<string, unknown>`, which types a fixture WRITE and leaves every READ of it
+ * `unknown` - `post.polls[0].votesByUser.u1` does not compile. Nothing here noticed: ts-jest
+ * transpiles without checking as soon as `isolatedModules` is set, and the service's own build
+ * excludes `*.spec.ts`. The only thing that did was the container build, one merge too late.
+ */
+type PollFixture = {
+  id: string;
+  multipleChoice: boolean;
+  maxSelections?: number;
+  endsAt?: string;
+  options: { id: string; label: string; votes: string[] }[];
+  votesByUser: Record<string, string[]>;
+};
+
 describe('PostInteractionsService.votePoll enforces the poll', () => {
-  function makeService(poll: Record<string, unknown>) {
+  function makeService(poll: PollFixture) {
     const post = { id: 'post-1', polls: [poll] };
     const saved: unknown[] = [];
     const manager = {
@@ -118,11 +135,7 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a', 'ghost'] });
 
     expect(post.polls[0].votesByUser.u1).toEqual(['a']);
-    expect(post.polls[0].options.map((o: { id: string; votes: string[] }) => o.votes)).toEqual([
-      ['u1'],
-      [],
-      [],
-    ]);
+    expect(post.polls[0].options.map((o) => o.votes)).toEqual([['u1'], [], []]);
   });
 
   it('counts a repeated option once, so a duplicate cannot spend the cap', async () => {

@@ -2,6 +2,7 @@
   "name": "chat-delivery-service",
   "version": "0.18.22-alpha.1",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",

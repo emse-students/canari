@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les tests d'un service NestJS n'etaient typecheckes par rien, et une release l'a appris
+
+`nest build` lit `tsconfig.build.json`, qui exclut `*.spec.ts`, et ts-jest transpile sans verifier
+des que `isolatedModules` est pose - les quatre services le posent. Le seul controle existant etait
+`Dockerfile.social-service`, seul des quatre a compiler `tsconfig.json` : une erreur de types
+fusionnee avec #1006 est passee au vert et a tue le build de `v0.18.22-alpha.1`. Le Dockerfile
+rejoint ses trois freres, et `bun run typecheck` passe en CI pour les quatre services, avant la
+fusion.
+[cicd](docs/wiki/cicd.md).
+
 ### Fixed - deux espaces que le compilateur Svelte effacait, et un logo apparie au mauvais nom
 
 Le blanc en fin de bloc `{#if}` et en tete de contenu d'element est supprime a la compilation, et
@@ -21,6 +31,7 @@ desormais avec son nom. Le compteur de membres quitte l'en-tete (demande utilisa
 correction sur Portail-etu, ou le `<h1>` et la rangee de logos se contredisaient en plus sur la
 condition d'affichage.
 [associations](docs/wiki/frontend/modules/associations.md).
+
 ### Security - un identifiant utilisateur devient un nom de propriete, et quatre sites le refusaient differemment
 
 Reactions et reponses de sondage sont stockees dans des maps indexees par id utilisateur. Quatre
