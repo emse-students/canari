@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.21] - 2026-09-23
+
 ### Fixed - l'illustration d'un lien raccourci, resolue contre le mauvais site
 
 La chaine de redirections etait parcourue correctement puis jetee au dernier pas : une `og:image`

@@ -1,6 +1,6 @@
 [package]
 name = "mls-wasm"
-version = "0.18.21-alpha.2"
+version = "0.18.21"
 edition = "2021"
 
 [lib]
