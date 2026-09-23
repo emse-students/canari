@@ -1,13 +1,15 @@
-version: 0.18.21
+version: 0.18.22
 
-Vos medias restent disponibles 90 jours, et ceux du fil ne disparaissent plus.
+Les sondages se composent option par option, avec une date de fin et un maximum de reponses.
 
-Un vote, un commentaire, un coeur ou un abonnement repondent tout de suite, sans attendre le reseau.
+Modifier un post ne remet plus son sondage a zero.
 
-Le fil ne vous ramene plus en bas pendant que vous lisez plus haut.
+Publier vous dit tout de suite ce qui manque.
 
-Une mention sous une photo affiche le nom, et une photo ne reste plus le texte de sa notification.
+L'export du calendrier reprend le visuel du BDE, et un evenement d'une journee entiere occupe toute sa case.
 
-Les options d'un sondage s'affichent en entier.
+Le menu lateral s'ouvre de nouveau au survol.
 
-La confirmation d'un formulaire est en francais.
+Le nom et le logo d'une association vont ensemble.
+
+L'application publiee n'est plus inspectable depuis un ordinateur.
