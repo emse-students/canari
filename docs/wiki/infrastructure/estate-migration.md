@@ -147,13 +147,27 @@ and remember that the source address they see is production's, because the only 
 `ProxyJump canari`. A careless probe bans the estate's own IP. What those agents are is a matter for
 the operator's local notes, not for a public repository.
 
-**The bastion is down, and it is not us.** `bastiono-ssh.emse.fr` answered a full SSH handshake from
-this workstation on the morning of 2026-09-23 and has answered nothing since - measured from four
-distinct source addresses, including one inside `193.49.174.0/24` and a freshly-rented VPN exit with
-no history. **The "we were banned by fail2ban" reading is REFUTED**; a ban cannot silence an address
-that never tried. The working route meanwhile is `portail-etu-direct` in the operator's SSH config,
-which reaches `193.49.175.67` by `ProxyJump canari` - **available only because `canari` is inside
-EMSE**, since the host's port 22 is dropped for every address outside it.
+**THE BASTION KEEPS OFFICE HOURS, AND THAT IS THE WHOLE OF IT.** `bastiono-ssh.emse.fr` is up
+**07:00 to 20:00 only, and accepts French source addresses only** - stated by the DSI on 2026-09-23
+at 22:31, in answer to the question. It is not down, it was never misconfigured, and **nothing about
+it needs reporting**.
+
+Two readings died on the way to that one sentence, and the order matters more than either. The
+first, **that we had been banned by fail2ban after two failed logins, is REFUTED**: a ban cannot
+silence an address that never tried, and the same silence came back from four distinct sources. The
+second, **that the host was therefore DOWN, was right about the symptom and wrong about the cause**
+- and the evidence offered for it was weaker than it looked, because the "freshly-rented VPN exit
+with no history" was almost certainly not French either, so it fell foul of a second rule rather
+than corroborating the first. **The measurement that actually carried the answer was the cheapest
+one: the SAME address answered in the morning and was refused at night.** A probe from a new source
+adds nothing when the variable that moved was the clock.
+
+So the operational rule is a schedule, not a workaround: **through the bastion between 07:00 and
+20:00; outside those hours, `portail-etu-direct`**, which reaches `193.49.175.67` by
+`ProxyJump canari`. That route works at any hour **only because `canari` is inside EMSE** and leaves
+on a private address - the DSI confirms egress in RFC1918 through the school passes - since the
+host's port 22 is dropped for every address outside it. This workstation's home address will NOT be
+allowlisted, and was not asked to be: the school route makes it unnecessary.
 
 ## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
 
@@ -360,11 +374,13 @@ Pointers only. The substance is in
   groups answer 403, so a tunnel is a dashboard gesture ([cloudflare-edge](cloudflare-edge.md));
 - **the rights request, and it BLOCKS EVERYTHING**: `jolan.boudin` into the `docker` group, and a
   `sudo` rule narrow enough to be granted - `nginx -t` and `systemctl reload nginx`, nothing more.
-  Today the account can read and nothing else;
+  Today the account can read and nothing else. **Accepted by the operator on 2026-09-23**, together
+  with deleting the older `boudin` account. **One caveat travels with that deletion**: files owned
+  by uid 1008 exist OUTSIDE `/home/boudin`, so a plain `userdel` leaves them owned by a number
+  nobody answers to. Enumerate them first (`find / -xdev -uid 1008`) and reassign or remove them in
+  the same gesture;
 - **the arbitration on capacity**: 4 vCPU and 11 G against three VMs sized for 8 and 20. Either the
   VM grows, or what moves onto it is cut down. Nobody can decide that here;
-- **reporting `bastiono-ssh.emse.fr` as down** - unreachable from four source addresses since the
-  morning of 2026-09-23, having worked earlier the same day;
 - one FIDO touch per batched round of investigation on the host. **There is no way to buy more than
   one command with one touch from this workstation** - see the refutation in section 2.
 
