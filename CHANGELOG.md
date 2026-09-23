@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'illustration d'un lien raccourci, resolue contre le mauvais site
+
+La chaine de redirections etait parcourue correctement puis jetee au dernier pas : une `og:image`
+relative se resolvait contre le lien ECRIT et non contre la page qui a repondu, d'ou un
+`https://bit.ly/files/event/…jpg` en 404, garde six heures. Et la cascade ne redescendait pas - une
+URL declaree comptait comme une image affichee, donc un carre vide au lieu du favicon juste en
+dessous, lui-meme sonde avant meme que la reponse n'arrive.
+[chat-delivery](docs/wiki/services/chat-delivery.md#a-relative-reference-belongs-to-the-page-that-answered-not-to-the-link-that-was-written-2026-09-23).
+
 ### Changed - la retention passe a 90 jours, et les medias du fil n'expirent plus du tout
 
 La moitie des medias du fil etaient deja perdus : 22 des 44 references, tous des posts de mai

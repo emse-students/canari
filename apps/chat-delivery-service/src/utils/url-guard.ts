@@ -376,8 +376,12 @@ function largestDeclaredSize(sizes?: string): number {
  *
  * Falls back to the conventional `/favicon.ico`, which browsers request whether
  * or not a page declares it. Returns an absolute URL; never throws.
+ *
+ * @param baseUrl - the URL the HTML was SERVED from, which a declared `href` and
+ * the `/favicon.ico` convention both hang off. After a redirect that is not the
+ * link that was written - see `buildLinkPreviewPayload`.
  */
-export function extractIconUrl(html: string, targetUrl: URL): string {
+export function extractIconUrl(html: string, baseUrl: URL): string {
   let best: { href: string; score: number } | null = null;
 
   for (const attrs of extractLinkTags(html)) {
@@ -396,7 +400,7 @@ export function extractIconUrl(html: string, targetUrl: URL): string {
     if (best && score <= best.score) continue;
 
     try {
-      const resolved = new URL(href, targetUrl);
+      const resolved = new URL(href, baseUrl);
       // The href is attacker-controlled markup and this URL is handed straight to
       // an <img src>. `new URL` resolves almost anything against a base rather
       // than throwing - including `javascript:` and `data:`, which stay absolute
@@ -408,15 +412,31 @@ export function extractIconUrl(html: string, targetUrl: URL): string {
     }
   }
 
-  return best?.href ?? new URL('/favicon.ico', targetUrl.origin).toString();
+  return best?.href ?? new URL('/favicon.ico', baseUrl.origin).toString();
 }
 
 /**
  * Extracts Open Graph / standard meta tags from `html` and returns a normalised
  * link-preview payload (url, title, description, image, siteName, icon), each
  * field truncated to a safe display length.
+ *
+ * TWO URLS, BECAUSE A REDIRECT MAKES THEM DIFFER. `targetUrl` is the link as the
+ * message wrote it: it is the payload's identity - what the card shows and what
+ * it opens - and it is the only thing the cache is keyed on. `baseUrl` is where
+ * the HTML actually came from, and it is the ONLY thing a relative reference may
+ * resolve against. They are the same URL for most links and different for every
+ * shortener, every `http` -> `https` hop and every locale redirect; resolving an
+ * `og:image` of `/files/event/1.jpg` against a `bit.ly` link built
+ * `https://bit.ly/files/event/1.jpg`, a 404 this service then cached for six
+ * hours (measured on production 2026-09-23).
+ *
+ * @param baseUrl - defaults to `targetUrl`, which is correct when nothing redirected.
  */
-export function buildLinkPreviewPayload(html: string, targetUrl: URL): LinkPreviewPayload {
+export function buildLinkPreviewPayload(
+  html: string,
+  targetUrl: URL,
+  baseUrl: URL = targetUrl
+): LinkPreviewPayload {
   const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
   const description =
     extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description') || '';
@@ -426,7 +446,7 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL): LinkPrevi
   let image = '';
   if (rawImage) {
     try {
-      image = new URL(rawImage, targetUrl).toString();
+      image = new URL(rawImage, baseUrl).toString();
     } catch {
       image = '';
     }
@@ -438,7 +458,7 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL): LinkPrevi
     description: description.slice(0, 280),
     image,
     siteName: siteName.slice(0, 120),
-    icon: extractIconUrl(html, targetUrl),
+    icon: extractIconUrl(html, baseUrl),
   };
 }
 
@@ -465,8 +485,12 @@ export interface LinkPreviewPayload {
  * The href comes from someone else's markup, so the scheme is checked rather
  * than the parse: `new URL(href, base)` happily resolves `javascript:` and
  * `data:` instead of throwing.
+ *
+ * @param baseUrl - the URL the HTML was SERVED from, for the same reason
+ * `buildLinkPreviewPayload` takes one: a relative `href` means nothing against a
+ * link that redirected elsewhere.
  */
-export function extractOEmbedEndpoint(html: string, targetUrl: URL): string | null {
+export function extractOEmbedEndpoint(html: string, baseUrl: URL): string | null {
   for (const attrs of extractLinkTags(html)) {
     if (attrs.rel?.toLowerCase() !== 'alternate') continue;
 
@@ -475,7 +499,7 @@ export function extractOEmbedEndpoint(html: string, targetUrl: URL): string | nu
     if (!attrs.href) continue;
 
     try {
-      const resolved = new URL(attrs.href, targetUrl);
+      const resolved = new URL(attrs.href, baseUrl);
       if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
       return resolved.toString();
     } catch {
@@ -552,11 +576,18 @@ export async function fetchOEmbedData(
  * safe to apply blindly: a site with good tags is never made worse by it.
  *
  * Returns a new payload; the input is not modified.
+ *
+ * Both URLs, and for the two jobs `buildLinkPreviewPayload` separates: `targetUrl`
+ * is the identity the placeholder title is recognised by, `baseUrl` is what a
+ * relative thumbnail resolves against.
+ *
+ * @param baseUrl - defaults to `targetUrl`, which is correct when nothing redirected.
  */
 export function mergeOEmbedIntoPayload(
   payload: LinkPreviewPayload,
   oembed: OEmbedData | null,
-  targetUrl: URL
+  targetUrl: URL,
+  baseUrl: URL = targetUrl
 ): LinkPreviewPayload {
   if (!oembed) return payload;
 
@@ -574,7 +605,7 @@ export function mergeOEmbedIntoPayload(
   let image = payload.image;
   if (!image && oembed.thumbnailUrl) {
     try {
-      const resolved = new URL(oembed.thumbnailUrl, targetUrl);
+      const resolved = new URL(oembed.thumbnailUrl, baseUrl);
       if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
         image = resolved.toString();
       }

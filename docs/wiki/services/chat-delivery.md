@@ -1580,8 +1580,11 @@ then fetching its illustration in clear gives a good part of that back.
   served from our own origin. `X-Content-Type-Options: nosniff` on the way out.
 - 3 MB ceiling, checked on `content-length` *and* on the received body, because the header can be
   absent or wrong.
-- Unauthenticated, like the preview endpoint it serves: it fetches only public URLs and holds no
-  credential.
+- **Gated by a ticket rather than a guard, since 2026-09-10** - the URL goes into an `<img src>`, so
+  the browser carries no `Authorization` header and `HeaderAuthGuard` would refuse every mobile
+  reader. `utils/previewTicket.ts` is minted by an authenticated call and carried in `&t=`. What
+  being unauthenticated bought anybody, measured, was an image proxy: 5 430 bytes of a Google
+  favicon relayed on Canari's address with no session.
 
 Client-side the rewrite is one helper, `frontend/src/lib/utils/previewImageProxy.ts`, applied to the
 `og:image` and to **every** favicon candidate - the conventional paths are derived in the browser, so
@@ -1590,6 +1593,69 @@ what keeps the MiGallery cover proxy from being proxied twice.
 
 The CSP `img-src` is deliberately **not** tightened to match: Klipy GIFs and other remote sources
 still need auditing, and that is a separate change.
+
+#### A relative reference belongs to the page that answered, not to the link that was written (2026-09-23)
+
+`resolveLinkPreview` walks the redirect chain by hand and keeps the result in `currentUrl` - and then
+built the payload from `targetUrl`, the link as the message wrote it. Every relative reference in the
+markup was therefore resolved against the wrong origin. A shortened link whose destination declares
+`og:image="/files/event/150/1461421.jpg"` produced
+
+```
+GET /api/mls/link-preview/image?url=https://bit.ly/files/event/150/1461421.jpg   404
+```
+
+which the image cache then remembered, so the card stayed illustration-less for six hours. **The
+redirect walk was correct and its result was discarded at the last step**, which is why nothing in
+the SSRF or caching work ever found it: no test in this repo redirected. It affects every shortener,
+every `http` -> `https` hop and every locale redirect, not `bit.ly` in particular.
+
+**Two URLs, and they answer different questions.** `buildLinkPreviewPayload`, `extractIconUrl`,
+`extractOEmbedEndpoint` and `mergeOEmbedIntoPayload` now take a `baseUrl` beside the target:
+
+| | what it is | what it decides |
+| --- | --- | --- |
+| `targetUrl` | the link the message wrote | the payload's `url`, the hostname fallbacks for title and site name, and the cache key |
+| `baseUrl` | where the HTML came from | every relative reference: `og:image`, the declared icon, the `/favicon.ico` convention, the oEmbed href, an oEmbed thumbnail |
+
+It defaults to `targetUrl`, which is what it means when nothing redirected. **The identity of the
+link was never wrong and is deliberately unchanged**: the card still shows and opens what was
+written, and a shortened link still reads as its shortener - making the card open the resolved
+destination instead is a separate decision, not a consequence of this one.
+
+What is NOT fixed by it: the conventional favicon paths are derived in the browser from the URL as
+written (`faviconCandidates(parsed.href, ...)`), so for a shortened link they still hang off the
+shortener's origin. The declared icon - candidate #1, and the one sites actually have - now resolves
+correctly, and closing the rest needs the resolved URL in the payload.
+
+Pinned by `security.controller.link-preview.spec.ts`: a `301` to another host whose page declares a
+relative image and icon, asserted to resolve against the destination while `url` stays the written
+link. Verified by reverting the one argument - the test then reports the production URL exactly.
+
+#### The card's illustration is a cascade, and it has to come back down (2026-09-23)
+
+`og:image` -> declared icon -> conventional favicon paths -> globe. The first rung used to be
+decided by the payload merely CARRYING an `og:image`: `{#if previewImageUrl}` is true of a URL that
+404s, so the defect above left an empty 64 px square on screen **with a usable favicon one rung
+below that nothing ever asked for**. Two independent faults, and the second one is what made the
+first one visible instead of invisible.
+
+`LinkPreviewCard` now proves the image before it counts as drawn, with the same off-screen probe the
+favicon chain already used - an `onerror` on the displayed element cannot be trusted here, because
+that element is reused as the payload arrives and a failure queued for the previous `src` still
+fires against the next one. It costs no second download: the proxy answers `max-age`, so the
+displayed `<img>` reads the probe's cache entry.
+
+**The chain is walked only when it is what the card would draw**, which is the other half of the
+same change. It stays empty for a cover card (as before), while the card is still pending, and while
+the Open Graph image holds - previously the conventional paths were probed on mount, against the
+written URL, before the payload could say which icon the site declares, and every one of those
+answers was discarded the moment it arrived. That early walk is where the `404` on
+`gallery.mitv.fr/favicon.svg` came from.
+
+Pinned by `LinkPreviewCard.cascade.svelte.test.ts`, which stubs `Image` so the verdict is supplied
+rather than awaited: the image decoding means no favicon is probed at all, the image failing means
+the declared icon is drawn, and nothing decoding means the globe rather than an empty square.
 
 #### oEmbed discovery covers Spotify, Vimeo, Bandcamp and X in one path
 

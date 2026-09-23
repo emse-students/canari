@@ -665,6 +665,13 @@ proxy's 415 is it working (`security.controller.ts:694` admits `image/*` and exc
 carry script and would be served from our own origin). That docblock already names these console
 lines, and the cover-card branch was already changed to probe nothing at all.
 
+**The verdict holds and the TIMING no longer does (2026-09-23).** These two were measured during the
+cold start because the chain was walked on mount, against the URL as written, before the payload
+could say which icon the site declares - answers that were then discarded. The chain is now walked
+only when the favicon is what the card would draw, so a probe reaching the network is one the card
+is about to use; it is still a probe's answer when it fails, and still not a defect
+([chat-delivery](services/chat-delivery.md#the-cards-illustration-is-a-cascade-and-it-has-to-come-back-down-2026-09-23)).
+
 **So all seven lines are dispositioned and this item CLOSES**: five are a cached answer about a
 member with no photo, two are a probe reporting a candidate that is not an image. Neither is the
 visible end of something upstream, and neither should be "fixed". Note the resource timeline's own

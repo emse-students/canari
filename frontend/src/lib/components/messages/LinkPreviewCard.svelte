@@ -196,6 +196,51 @@
 
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
 
+  /** Resolves once we know whether `src` decodes as an image. Never rejects. */
+  function loadsAsImage(src: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const probe = new Image();
+      probe.onload = () => resolve(probe.naturalWidth > 0);
+      probe.onerror = () => resolve(false);
+      probe.src = src;
+    });
+  }
+
+  /** The Open Graph image, likewise fetched through the proxy rather than from its host. */
+  const previewImageUrl = $derived(proxiedPreviewImageUrl(externalPreview?.image));
+
+  /**
+   * THE CASCADE HAS TO COME BACK DOWN, AND A URL EXISTING IS NOT AN IMAGE EXISTING.
+   *
+   * `og:image` -> declared icon -> conventional paths -> globe is the intended order, but the
+   * first step used to be tested by `previewImageUrl` being non-empty, which only says the page
+   * DECLARED one. A declaration that 404s left a 64px empty square on screen with a perfectly
+   * good favicon one step below, never reached - measured on production 2026-09-23, where the
+   * declaration was itself built against the wrong base.
+   *
+   * A probe rather than an `onerror` on the displayed element, for the reason the favicon chain
+   * already documents below: that element is reused as the payload arrives, so an error queued
+   * for the previous src still fires against the next one. The probe owns its element, so its
+   * answer can only be about the URL that was asked - and it costs no second download, since the
+   * proxy answers `max-age` and the displayed `<img>` reads the same HTTP cache entry.
+   */
+  let previewImageBroken = $state(false);
+  $effect(() => {
+    const src = previewImageUrl;
+    previewImageBroken = false;
+    if (!src) return;
+    let cancelled = false;
+    void loadsAsImage(src).then((ok) => {
+      if (!cancelled) previewImageBroken = !ok;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  /** Whether the Open Graph image is what the card draws - the first rung of the cascade. */
+  const showsPreviewImage = $derived(Boolean(previewImageUrl) && !previewImageBroken);
+
   /**
    * The site's own icon, as an ordered list of things to try. The preview endpoint
    * resolves the declared one from the page it already downloaded; the conventional
@@ -214,27 +259,24 @@
    * no favicon anywhere. Probing one is a chain of outbound requests whose answer
    * nothing reads - and whose failures are the `404` / `415` console lines a
    * MiGallery album printed on every render.
+   *
+   * Empty for the same reason once the Open Graph image is proven: the icon it
+   * would stand in for is already on screen, so the chain is the same unread
+   * answer. It is rebuilt - and only then walked - if that image turns out not to
+   * decode, which is what makes this a cascade rather than two searches racing.
+   *
+   * And empty while the card is still pending, because the answer to "what icon
+   * does this site declare" has not arrived yet: walking the conventional paths
+   * first asks the network a question the payload is about to answer, and every
+   * one of those requests is thrown away the moment it does.
    */
   const faviconChain = $derived(
-    coverCard
+    coverCard || isPending || showsPreviewImage
       ? []
       : faviconCandidates(parsed.href, externalPreview?.icon)
           .map(proxiedPreviewImageUrl)
           .filter(Boolean)
   );
-
-  /** The Open Graph image, likewise fetched through the proxy rather than from its host. */
-  const previewImageUrl = $derived(proxiedPreviewImageUrl(externalPreview?.image));
-
-  /** Resolves once we know whether `src` decodes as an image. Never rejects. */
-  function loadsAsImage(src: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      const probe = new Image();
-      probe.onload = () => resolve(probe.naturalWidth > 0);
-      probe.onerror = () => resolve(false);
-      probe.src = src;
-    });
-  }
 
   /**
    * The first candidate that actually decodes, or '' while none has been proven.
@@ -322,11 +364,11 @@
       {:else}
         <div
           class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
- {previewImageUrl ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
+ {showsPreviewImage ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
         >
           {#if isPending}
             <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
-          {:else if previewImageUrl}
+          {:else if showsPreviewImage}
             <img src={previewImageUrl} alt="" class="h-full w-full object-cover" loading="lazy" />
           {:else if faviconUrl}
             <!-- No Open Graph image: the site's own favicon stands in for its logo.

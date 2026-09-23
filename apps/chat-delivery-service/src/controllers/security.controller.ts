@@ -595,20 +595,24 @@ export class SecurityController {
     // Reading the body can still fail on the wire (a socket that dies mid-transfer, the body
     // deadline elapsing), and that is the same class as never having connected.
     const html = (await reachOr(() => page.text())).slice(0, 220_000);
-    const payload = buildLinkPreviewPayload(html, targetUrl);
+    // `currentUrl` is where this HTML came from and `targetUrl` is the link the message wrote;
+    // the redirect loop above is exactly what makes them differ. Every relative reference in the
+    // markup - image, icon, oEmbed href - belongs to the page that answered, and resolving one
+    // against the link instead is what built `https://bit.ly/files/event/1461421.jpg`.
+    const payload = buildLinkPreviewPayload(html, targetUrl, currentUrl);
 
     // Follow the page's own oEmbed endpoint when it declares one. It is the
     // contract a site publishes for embedders, so it covers Spotify, Vimeo,
     // Bandcamp and X through one code path - and it only ever fills gaps, so a
     // page with good Open Graph tags is never made worse by it.
-    const oembedEndpoint = extractOEmbedEndpoint(html, targetUrl);
+    const oembedEndpoint = extractOEmbedEndpoint(html, currentUrl);
     if (!oembedEndpoint) return payload;
 
     const oembed = await fetchOEmbedData(oembedEndpoint, signal);
     if (oembed) {
       this.logger.debug(`[LINK_PREVIEW] oEmbed enriched ${targetUrl.hostname}`);
     }
-    return mergeOEmbedIntoPayload(payload, oembed, targetUrl);
+    return mergeOEmbedIntoPayload(payload, oembed, targetUrl, currentUrl);
   }
 
   /**
