@@ -353,6 +353,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/release-shipped.test.sh
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
+	@bun .github/scripts/tests/husky-hookspath.test.mjs
 	@bun .github/scripts/tests/auth-request-coverage.test.mjs
 	@bun .github/scripts/tests/claude-md-cap.test.mjs
 	@bun .github/scripts/tests/control-characters.test.mjs
