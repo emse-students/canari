@@ -224,7 +224,12 @@
           uploadFile = compressed.file;
           dims = { width: compressed.width, height: compressed.height };
         }
-        const ref = await mediaService.encryptAndUpload(uploadFile, currentAuthToken, dims);
+        const ref = await mediaService.encryptAndUpload(
+          uploadFile,
+          currentAuthToken,
+          dims,
+          'archive'
+        );
         const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
       }

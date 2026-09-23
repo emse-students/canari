@@ -9,6 +9,7 @@ import { FollowsService } from '../follows/follows.service';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostMediaRetentionService } from './post-media-retention.service';
 import type { PostInteractionsService } from './post-interactions.service';
 import type { ModerationService } from '../moderation/moderation.service';
 
@@ -65,7 +66,8 @@ describe('the post a publisher gets back carries the rights they actually hold',
       } as unknown as RedisService,
       {} as FollowsService,
       associations as unknown as AssociationsService,
-      { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService
+      { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
+      { release: jest.fn() } as unknown as PostMediaRetentionService
     );
     return { service, associations };
   }

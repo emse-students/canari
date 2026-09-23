@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la retention passe a 90 jours, et les medias du fil n'expirent plus du tout
+
+La moitie des medias du fil etaient deja perdus : 22 des 44 references, tous des posts de mai
+toujours a l'ecran. Une fenetre d'oisivete est la bonne question pour une conversation, pas pour une
+ligne permanente. Le chat passe de 30 a 90 jours ; posts, commentaires et avatars prennent une
+classe `archive` que le balayage ne touche jamais, liberee quand le post est supprime.
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md#6b-reopened-and-moved-2026-09-23-90-days-and-the-feed-leaves-the-clock-entirely),
+[media-service](docs/wiki/services/media-service.md#the-archive-class-the-feed-is-not-a-conversation-2026-09-23).
+
+
 ### Fixed - les options d'un sondage etaient coupees a l'ellipse, donc impossibles a distinguer
 
 Le libelle portait `truncate`, soit une ligne et rien d'autre. Un libelle est du texte libre, et sur

@@ -6,6 +6,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { AssociationsService } from '../associations/associations.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostMediaRetentionService } from './post-media-retention.service';
 
 /**
  * `getById` is the only read that serves a post outside a feed query, and every feed query
@@ -30,7 +31,8 @@ describe('PostsService.getById scheduling', () => {
         mayActOnAny: () => Promise.resolve(new Set<string>()),
         isContentModerator: () => Promise.resolve(false),
       } as unknown as AssociationsService,
-      {} as PostNotificationsService
+      {} as PostNotificationsService,
+      { release: jest.fn() } as unknown as PostMediaRetentionService
     );
     // getById shapes its result through the association-identity helper, which is not what
     // this spec is about: stub it so the assertions are only ever about the gate.

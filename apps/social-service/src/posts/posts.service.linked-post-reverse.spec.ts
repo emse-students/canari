@@ -5,6 +5,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { AssociationsService } from '../associations/associations.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostMediaRetentionService } from './post-media-retention.service';
 
 /**
  * THE REVERSE OF `linkedCalendarEventId`: GIVEN AN EVENT, FIND THE POST THAT NAMES IT.
@@ -35,7 +36,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
       {} as RedisService,
       {} as FollowsService,
       associations as unknown as AssociationsService,
-      {} as PostNotificationsService
+      {} as PostNotificationsService,
+      { release: jest.fn() } as unknown as PostMediaRetentionService
     );
     return { service, calls };
   }

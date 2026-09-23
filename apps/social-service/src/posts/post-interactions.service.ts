@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
+import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import {
   reactionContent,
   commentContent,
@@ -27,7 +28,8 @@ export class PostInteractionsService {
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly notifications: PostNotificationsService,
-    private readonly push: PushService
+    private readonly push: PushService,
+    private readonly mediaRetention: PostMediaRetentionService
   ) {}
 
   /**
@@ -295,8 +297,12 @@ export class PostInteractionsService {
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
     if (!isAdmin && comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    const removed = comments.filter((c: any) => c.id === commentId || c.parentId === commentId);
     post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
     await this.postRepo.save(post);
+    // The replies go with it, so their media do too - taking only the comment's own would leave
+    // every reply's photo archived for ever with nothing left on screen pointing at it.
+    await this.mediaRetention.release(commentMediaIds(removed));
     return { ok: true };
   }
 

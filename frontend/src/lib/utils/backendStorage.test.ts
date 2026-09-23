@@ -28,6 +28,8 @@ function media(overrides: Partial<MediaBucketUsage> = {}): MediaBucketUsage {
     tombstonedBytes: 0,
     publicAssetCount: 0,
     publicAssetBytes: 0,
+    archiveCount: 0,
+    archiveBytes: 0,
     retentionMs: RETENTION_MS,
     sweepIntervalMs: SWEEP_MS,
     ...overrides,

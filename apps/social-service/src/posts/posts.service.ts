@@ -18,6 +18,11 @@ import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
   ANONYMOUS_NOTIFICATION_ACTOR_NAME,
 } from './post-notifications.service';
+import {
+  PostMediaRetentionService,
+  commentMediaIds,
+  postMediaIds,
+} from './post-media-retention.service';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 
@@ -83,7 +88,8 @@ export class PostsService {
     private readonly redis: RedisService,
     private readonly followsService: FollowsService,
     private readonly associationsService: AssociationsService,
-    private readonly notifications: PostNotificationsService
+    private readonly notifications: PostNotificationsService,
+    private readonly mediaRetention: PostMediaRetentionService
   ) {}
 
   private listPostsCacheKey(
@@ -999,7 +1005,13 @@ export class PostsService {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayManage(post, userId, isAdmin);
+    // Read before the row goes: its media ids are only in the row.
+    const orphanedMedia = [...postMediaIds(post), ...commentMediaIds(post.comments)];
     await this.postRepo.remove(post);
+    // After the delete has committed, and never gating it. The post is gone either way; the worst
+    // a failure here costs is objects kept past the moment they stopped being referenced, which
+    // the next `release` or a manual sweep still reaches.
+    await this.mediaRetention.release(orphanedMedia);
     return { ok: true };
   }
 

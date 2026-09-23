@@ -30,6 +30,9 @@ export interface MediaBucketUsage {
   tombstonedBytes: number;
   publicAssetCount: number;
   publicAssetBytes: number;
+  /** Feed media (posts, post comments, avatars) exempt from the idle sweep and kept for ever. */
+  archiveCount: number;
+  archiveBytes: number;
   retentionMs: number;
   sweepIntervalMs: number;
 }

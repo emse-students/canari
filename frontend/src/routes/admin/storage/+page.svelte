@@ -333,6 +333,20 @@
               })}
             </p>
           {/if}
+
+          <!--
+            The archive class has its own line because it is the one nothing else can report: an
+            exempt class folded into a total is a class whose growth is invisible, and "kept for
+            ever" is the policy that never gets re-decided unless a number keeps stating its cost.
+          -->
+          {#if media.archiveCount > 0}
+            <p class="text-text-muted text-sm">
+              {m.admin_storage_media_archive({
+                count: media.archiveCount,
+                size: formatStorageBytes(media.archiveBytes),
+              })}
+            </p>
+          {/if}
         {:else}
           <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}

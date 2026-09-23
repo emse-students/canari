@@ -359,7 +359,7 @@
           uploadFile = compressed.file;
           dims = { width: compressed.width, height: compressed.height };
         }
-        const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims);
+        const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
       }

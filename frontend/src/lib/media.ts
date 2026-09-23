@@ -38,6 +38,16 @@
 
 export type MediaType = 'image' | 'video' | 'audio' | 'file';
 
+/**
+ * Which retention the media service applies to an uploaded object.
+ *
+ * Omitting it is the chat default: the object is deleted once nobody has opened it for the idle
+ * window. `'archive'` is the feed - a post, a post comment or an avatar - where a permanent row
+ * cites the object, so an idle window would rot the row's body rather than reclaim anything. The
+ * server stores ciphertext and has no way to tell the two apart, which is why the caller says so.
+ */
+export type MediaRetentionClass = 'archive';
+
 export interface MediaRef {
   type: MediaType;
   /** Opaque identifier returned by the media service upload endpoint. */
@@ -350,15 +360,21 @@ export class MediaService {
   /**
    * Encrypt `file` client-side and upload the ciphertext to the media service.
    *
-   * @param file       The raw File object selected by the user.
-   * @param authToken  JWT token sent in the Authorization header.
-   * @returns          A `MediaRef` ready to be JSON-serialised and embedded
-   *                   inside the MLS application message.
+   * @param file           The raw File object selected by the user.
+   * @param authToken      JWT token sent in the Authorization header.
+   * @param dimensions     Intrinsic width/height, so a feed can reserve the box before it lands.
+   * @param retentionClass Which retention the object gets. The server holds only ciphertext and
+   *                       cannot tell a post photo from a chat photo, so the surface says it here,
+   *                       where it is already known. Omitted (chat) means the idle sweep applies;
+   *                       `'archive'` means a permanent row cites it and it is never swept.
+   * @returns              A `MediaRef` ready to be JSON-serialised and embedded
+   *                       inside the MLS application message.
    */
   async encryptAndUpload(
     file: File,
     authToken: string,
-    dimensions?: Partial<ImageDimensions>
+    dimensions?: Partial<ImageDimensions>,
+    retentionClass?: MediaRetentionClass
   ): Promise<MediaRef> {
     const plaintext = await file.arrayBuffer();
     const { ciphertext, keyHex, ivHex } = await encryptMediaBuffer(plaintext);
@@ -413,7 +429,11 @@ export class MediaService {
         `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` },
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            ...(retentionClass ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(retentionClass ? { body: JSON.stringify({ retentionClass }) } : {}),
         }
       );
       if (!completeRes.ok) {
@@ -432,6 +452,9 @@ export class MediaService {
         new Blob([ciphertext], { type: 'application/octet-stream' }),
         'encrypted'
       );
+      // A plain text part alongside the blob. Multer parses the whole body before the handler
+      // runs, so it reaches `@Body()` whichever order the parts are in.
+      if (retentionClass) formData.append('retentionClass', retentionClass);
 
       const res = await fetch(`${this.baseUrl}/api/media/upload`, {
         method: 'POST',
@@ -508,6 +531,10 @@ export class MediaService {
    * Upload a file to the media service without client-side encryption.
    * Suitable for group/community avatars that don't require E2E secrecy.
    *
+   * Always `archive`: both callers set a group avatar or a community image, which a durable row
+   * points at for as long as that group exists. Under the idle window a quiet group's avatar
+   * simply disappears one day, and nothing would ever put it back.
+   *
    * @param file        The image File selected by the user.
    * @param authToken   JWT token.
    * @returns           The opaque `mediaId` from the server.
@@ -515,6 +542,7 @@ export class MediaService {
   async uploadRaw(file: File, authToken: string): Promise<string> {
     const formData = new FormData();
     formData.append('file', file, file.name);
+    formData.append('retentionClass', 'archive' satisfies MediaRetentionClass);
 
     const res = await fetch(`${this.baseUrl}/api/media/upload`, {
       method: 'POST',
