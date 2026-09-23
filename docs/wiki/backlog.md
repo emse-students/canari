@@ -66,6 +66,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **dismiss code-scanning alert 2521 as a false positive** - `js/user-controlled-bypass` on the refresh endpoint's own 401; the flagged condition is the REFUSAL, and the sensitive path behind it is verified three ways. A judgement about an auth path is not an agent's to record unilaterally | 1 click, Security tab | [P3 - ONE HIGH-SEVERITY ALERT IS A FALSE POSITIVE](#p3---one-high-severity-code-scanning-alert-is-a-false-positive-and-only-a-click-closes-it) |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [P2 - that a photo now survives a restart](#p2---that-a-photo-now-survives-a-restart-is-proven-by-compiling-and-by-nothing-else---one-mi-9t-look-user-2026-09-17) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
@@ -7682,6 +7683,37 @@ estate and the stores do not need the same lock.
 
 **2026-09-20, from a user's iPhone**, relayed by the user. The first iOS feedback this project has
 ever had, and the ONLY two reports it carries, so neither may be widened into a class.
+
+---
+
+### P3 - one high-severity code-scanning alert is a FALSE POSITIVE, and only a click closes it
+
+**Alert 2521, `js/user-controlled-bypass`, `apps/core-service/src/auth/auth.controller.ts:456`, open
+since 2026-08-27, never dismissed, named by no page here until 2026-09-23.** It fails no gate: the
+`CodeQL` check only refuses a pull request that introduces a NEW alert, so a standing one is
+invisible to every run and was found only by listing the repository's open alerts by hand. That is
+the whole reason this entry exists - **a correct mechanism with no report is found by hand, a day
+late**, and this one was four weeks late.
+
+The flagged line is `if (!refresh_token)` in `refreshToken`. CodeQL reads it as "a user-provided
+value controls a condition guarding a sensitive action", which is the right SHAPE and the wrong
+reading: the branch it controls is the REFUSAL. An absent credential logs the discriminated 401 and
+throws; the sensitive path is the fall-through, and nothing reaches it that has not passed
+`jwt.verify` with `HS256`, a `payload.type !== 'refresh'` check, and the stored-session match that
+makes `logout` and replay detection possible. A caller who controls `refresh_token` controls only
+whether they are refused early or refused late.
+
+**What is owed is a dismissal with a reason, in the Security tab** - one click, on a console the
+user owns, and a judgement about an auth path is not an agent's to record unilaterally. Nothing in
+the repository changes. The alternative - rewriting a correct refusal so a scanner reads it
+differently - is the shape this repo refuses everywhere else, and #1010 is the counter-example worth
+holding beside it: there the guard really was invisible to the scanner AND deletable by the next
+reader, so the code changed. Here neither is true.
+
+**The second half of this entry is the gap it exposes.** No gate lists standing alerts, so a second
+one could sit for four weeks in exactly this way. `gh api repos/emse-students/canari/code-scanning/alerts?state=open`
+is the whole measurement; whether `scheduled.yml` should carry it, and against what threshold, is
+not settled here.
 
 ### 1. The scroll - ONE READING ON THAT iPHONE IS OWED, and nothing here can take it
 
