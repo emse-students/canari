@@ -259,8 +259,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
 12. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
-    path is unbroken for the third time; what the report was about is FIXED - a round trip spent to learn a local fact, and **an error banner that erased itself after 5 s**. He is on `0.18.14` and
-    sees none of it until he updates ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)).
+    path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
+    **ONE OBSERVATION OWED** - he is on `0.18.14` ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
 13. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 14. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
