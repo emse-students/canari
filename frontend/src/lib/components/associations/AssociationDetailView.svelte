@@ -14,6 +14,7 @@
     AssociationPermissionFlag,
     listAssociationProducts,
     listAssociationPartnerships,
+    associationSecondLogoSrc,
     type Association,
     type AssociationMember,
     type AssociationProduct,
@@ -78,6 +79,20 @@
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
   let cardAccentColor = $derived(asso ? associationAccent(asso) : null);
+
+  /**
+   * A LIST'S SECOND THEME - the campaign identity it runs beside its public one.
+   *
+   * Either half may exist without the other (renamed before the logo is uploaded, or the reverse),
+   * so the block is drawn when EITHER is present and the avatar falls back to the main name for its
+   * initials - never for the LABEL, which would print the same name twice. Same rule, same helper
+   * and same subordinate rendering as `AssociationTile`, which is where the decision was taken.
+   */
+  const secondName = $derived(kind === 'list' ? (asso?.name2?.trim() ?? '') : '');
+  const secondLogoUrl = $derived(
+    kind === 'list' ? associationSecondLogoSrc(asso?.logoMediaId2) : null
+  );
+  const hasSecondTheme = $derived(Boolean(secondName) || Boolean(secondLogoUrl));
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
@@ -262,33 +277,56 @@
         second line instead of ending in an ellipsis.
       -->
       <div class="flex flex-wrap items-start gap-4">
-        <div class="flex shrink-0 gap-2">
-          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-          {#if kind === 'list' && asso.logoMediaId2}
-            <AssociationAvatar
-              name={asso.name2 ?? asso.name}
-              logoUrl={`/api/media/public/${asso.logoMediaId2}`}
-              size="lg"
-            />
-          {/if}
-        </div>
+        <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
         <div class="min-w-0 flex-1 basis-64">
           <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
-            {asso.name}{#if kind === 'list' && asso.name2}<span class="text-text-muted font-bold">
-                &amp; {asso.name2}</span
-              >{/if}
+            {asso.name}
           </h1>
-          <p class="text-text-muted text-sm">
-            {#if kind === 'list' && asso.parentName}<span class="text-text-main font-semibold"
-                >{asso.parentName}</span
-              > ·
-            {/if}@{asso.slug} · {m.asso_header_member_count({
-              count: asso.memberCount ?? members.length,
-            })}
-            {#if kind === 'list' && asso.promo}
-              · {m.list_campaigns_heading({ year: asso.promo })}
+          <!--
+            THE META LINE IS A FLEX ROW, NOT A RUN OF TEXT, and the separators are its children.
+            Written as prose it read `{/if}@{asso.slug}`, and Svelte TRIMS the whitespace at the end
+            of an `{#if}` block - so the space that was supposed to follow the middot never reached
+            the DOM and production showed `BDE - Bureau des Eleves ·@minestagnard`. Spacing carried
+            by `gap-*` cannot be trimmed by a compiler, which is the whole reason for the shape.
+
+            NO MEMBER COUNT (user, 2026-09-23). The members tab states it, and on a list it printed
+            "0 membre" for a campaign whose roster is simply not registered yet.
+          -->
+          <p class="text-text-muted flex flex-wrap items-center gap-x-1.5 text-xs">
+            {#if kind === 'list' && asso.parentName}
+              <span class="text-text-main font-semibold">{asso.parentName}</span>
+              <span aria-hidden="true">&#183;</span>
             {/if}
+            <span>@{asso.slug}</span>
           </p>
+          <!--
+            THE SECOND LOGO SITS WITH THE SECOND NAME, not with the first (user, 2026-09-23: *"ce
+            n'est pas logique d'avoir logo1 puis titre1 et titre2 puis logo2"*). Both logos used to
+            share one row at `lg` while both names shared the `<h1>`, so the pairing a reader had to
+            make crossed over itself. This is the subordinate row `AssociationTile` already draws -
+            the `sm` avatar under the main one - so the two surfaces state the same thing the same
+            way, and `& ` in front of a name (whose leading space Svelte also trimmed, giving
+            `Mines'tagnard& Mines'diana Jones`) is gone with the shape that needed it.
+          -->
+          {#if hasSecondTheme}
+            <div class="mt-1.5 flex items-center gap-2">
+              <AssociationAvatar name={secondName || asso.name} logoUrl={secondLogoUrl} size="sm" />
+              {#if secondName}
+                <span
+                  class="text-text-muted min-w-0 text-sm font-semibold [overflow-wrap:anywhere]"
+                >
+                  {secondName}
+                </span>
+              {/if}
+            </div>
+          {/if}
+          {#if kind === 'list' && asso.promo}
+            <span
+              class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+            >
+              {m.list_campaigns_heading({ year: asso.promo })}
+            </span>
+          {/if}
         </div>
         <div
           class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"

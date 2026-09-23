@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - deux espaces que le compilateur Svelte effacait, et un logo apparie au mauvais nom
+
+Le blanc en fin de bloc `{#if}` et en tete de contenu d'element est supprime a la compilation, et
+les deux en-tetes d'association le portaient : prod affichait `Bureau des Eleves ·@minestagnard` et
+`Mines'tagnard& Mines'diana Jones`. L'espacement passe a `gap-*`, qu'aucun compilateur ne rogne. Les
+deux logos partageaient une rangee pendant que les deux noms partageaient le `<h1>` ; chaque logo va
+desormais avec son nom. Le compteur de membres quitte l'en-tete (demande utilisateur). Meme
+correction sur Portail-etu, ou le `<h1>` et la rangee de logos se contredisaient en plus sur la
+condition d'affichage.
+[associations](docs/wiki/frontend/modules/associations.md).
 ### Security - un identifiant utilisateur devient un nom de propriete, et quatre sites le refusaient differemment
 
 Reactions et reponses de sondage sont stockees dans des maps indexees par id utilisateur. Quatre
