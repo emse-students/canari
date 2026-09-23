@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
+import { isUnsafeObjectKey } from '../common/object-keys';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
@@ -35,6 +36,8 @@ export class PostInteractionsService {
   /**
    * Copies a reactions map into a null-prototype object to prevent prototype-pollution
    * attacks where a user ID like "__proto__" could shadow Object properties.
+   *
+   * @see isUnsafeObjectKey - the list this spelled out, which differed from the three other copies.
    */
   private sanitizeReactions(
     raw: Record<string, string> | null | undefined
@@ -42,12 +45,7 @@ export class PostInteractionsService {
     const out = Object.create(null) as Record<string, string>;
     if (!raw || typeof raw !== 'object') return out;
     for (const key of Object.keys(raw)) {
-      if (
-        ['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'].includes(
-          key
-        )
-      )
-        continue;
+      if (isUnsafeObjectKey(key)) continue;
       out[key] = raw[key];
     }
     return out;
@@ -55,7 +53,7 @@ export class PostInteractionsService {
 
   /** Sets or replaces the reaction emoji for a user on a post (one reaction per user). */
   async addReaction(postId: string, userId: string, reactionType: string) {
-    if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
+    if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
     const post = await this.postRepo.findOne({ where: { id: postId } });
@@ -97,7 +95,7 @@ export class PostInteractionsService {
 
   /** Removes the user's reaction from a post. */
   async removeReaction(postId: string, userId: string) {
-    if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
+    if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
     const post = await this.postRepo.findOne({ where: { id: postId } });
@@ -310,6 +308,20 @@ export class PostInteractionsService {
    * Records a poll vote. Clears the user's previous votes across all options first,
    * then adds their new selection. Supports multiple-choice polls via optionIds array.
    * Also persists votesByUser so the frontend can restore the selection on reload.
+   *
+   * IT ENFORCED NOTHING UNTIL 2026-09-23, AND THE RULES IT DID NOT APPLY WERE ALL WRITTEN DOWN.
+   * `multipleChoice: false` was a CLIENT convention - the radio inputs sent one id, so one id was
+   * what arrived, and a request that sent five recorded five votes on a single-choice poll. An
+   * `endsAt` in the past only ever hid the buttons. And an option id belonging to no option of
+   * this poll cast no vote but was still written into `votesByUser`, so it came back to every
+   * reader as part of somebody's selection.
+   *
+   * A CAP ONLY THE CLIENT APPLIES IS A CAP A CRAFTED REQUEST IGNORES. The three rules now live in
+   * `pollDraft.ts` (what may be composed), `pollVote.ts` (what may be selected) and here (what may
+   * be RECORDED), and only this one is not advisory.
+   *
+   * @throws BadRequestException when the poll has closed, or the selection exceeds what the poll
+   *   allows - a refusal, never a silent truncation, because a vote is not a thing to guess at.
    */
   async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
     // Use a pessimistic write lock to prevent two concurrent votes from silently
@@ -326,7 +338,30 @@ export class PostInteractionsService {
       let updated = false;
       for (const poll of (post as any).polls ?? []) {
         if (poll.id !== pollId) continue;
-        const selectedIds = data.optionIds;
+
+        if (poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()) {
+          throw new BadRequestException('Poll closed');
+        }
+        // The channel poll has refused this since CodeQL #2477/#2476; the post poll kept only the
+        // null-prototype map, which stops the shadowing and not the key being CARRIED.
+        if (isUnsafeObjectKey(data.userId)) {
+          throw new BadRequestException('Invalid userId');
+        }
+        // An id this poll does not have is not a refusal, it is nothing: it can only come from a
+        // stale option list, and dropping it leaves the rest of the selection standing.
+        const known = new Set<string>(poll.options.map((o: any) => o.id));
+        const selectedIds = [...new Set<string>(data.optionIds)].filter((id) => known.has(id));
+        // `maxSelections` is only ever consulted alongside `multipleChoice`, exactly as
+        // `normalizeMaxSelections` composes it - a single-choice poll is capped at one and carries
+        // no second number saying so.
+        const allowed = poll.multipleChoice
+          ? typeof poll.maxSelections === 'number'
+            ? poll.maxSelections
+            : poll.options.length
+          : 1;
+        if (selectedIds.length > allowed) {
+          throw new BadRequestException('Too many options selected');
+        }
         for (const opt of poll.options) {
           opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter(
             (v: string) => v !== data.userId

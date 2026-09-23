@@ -14,11 +14,44 @@ export interface PollOption {
   votes: string[];
 }
 
+/**
+ * A poll as it is SENT, which is neither the draft nor the stored shape.
+ *
+ * One type for creation and for the update, because they differed only in which fields each
+ * happened to spell - the create shape had `endsAt` and no `id`, the update shape the reverse, and
+ * neither omission was a rule: the server's `PollInputDto` has always accepted both. Two partial
+ * copies of one contract is how `maxSelections` would have reached one path and not the other.
+ */
+export interface PollPayload {
+  /** Existing poll ID - pass it to preserve vote history when options are unchanged. */
+  id?: string;
+  question: string;
+  options: Array<{ label: string }>;
+  multipleChoice?: boolean;
+  /** How many options one voter may pick; omitted or `null` for no limit. */
+  maxSelections?: number | null;
+  /**
+   * ISO 8601 instant at which the poll closes, or `null` to remove a deadline it had.
+   *
+   * The update path rebuilds the poll from this payload alone, so an omitted field and an explicit
+   * `null` mean the same thing - the edit form sends the explicit one because it is EDITING a
+   * field, and a cleared input is a decision rather than an absence.
+   */
+  endsAt?: string | null;
+}
+
 export interface Poll {
   id: string;
   question: string;
   options: PollOption[];
   multipleChoice: boolean;
+  /**
+   * How many options one voter may pick, or absent/null for no limit.
+   *
+   * Only meaningful alongside `multipleChoice`, and enforced by the SERVER - see
+   * `post-interactions.service.ts`. A poll written before 2026-09-23 has no such field.
+   */
+  maxSelections?: number | null;
   endsAt?: string;
   votesByUser: Record<string, string[]>;
 }
@@ -171,12 +204,7 @@ export interface CreatePostPayload {
   media?: PostMediaRef[];
   /** @deprecated Use `media` instead. */
   images?: PostMediaRef[];
-  polls?: Array<{
-    question: string;
-    options: Array<{ label: string }>;
-    multipleChoice?: boolean;
-    endsAt?: string;
-  }>;
+  polls?: PollPayload[];
   attachedFormId?: string;
   associationId?: string;
   /** Mutually exclusive with `associationId` - the server ignores this whenever both are set. */
@@ -190,13 +218,7 @@ export interface UpdatePostPayload {
   media?: PostMediaRef[];
   /** @deprecated Use `media` instead. */
   images?: PostMediaRef[];
-  polls?: Array<{
-    /** Existing poll ID - pass it to preserve vote history when options are unchanged. */
-    id?: string;
-    question: string;
-    options: Array<{ label: string }>;
-    multipleChoice?: boolean;
-  }>;
+  polls?: PollPayload[];
   attachedFormId?: string | null;
   linkedCalendarEventId?: string | null;
   scheduledAt?: string | null;

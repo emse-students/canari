@@ -3,11 +3,11 @@ import {
   blankEventFormValues,
   eventFormValuesFrom,
   toCreatePayload,
-  toDatetimeLocalValue,
   toUpdatePayload,
   validateEventForm,
   type EventFormValues,
 } from './eventForm';
+import { toDatetimeLocalValue } from '$lib/utils/dates';
 
 /**
  * WHAT A SURFACE MAY DECIDE IS A CAPABILITY, AND THE PAYLOAD IS WHERE IT BECOMES REAL.

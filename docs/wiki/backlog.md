@@ -1709,7 +1709,7 @@ plus an open report, and must not be written up as the user's defect closed.
 
 ---
 
-### P2 - ONE MEMBER COULD NOT PUBLISH, SEVEN STAGES COULD HAVE STOPPED THEM, AND BOTH HYPOTHESES ARE REFUTED (user, 2026-09-21)
+### P2 - THE MEMBER WHO COULD NOT PUBLISH IS STILL ON `0.18.14`, AND OWES ONE OBSERVATION (user, 2026-09-21)
 
 Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible de publier le
 post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
@@ -1731,12 +1731,66 @@ already existed for it, and the composer logs `[POST_COMPOSER] publish failed at
 ([posts](frontend/modules/posts.md#one-catch-said-seven-things)). The next occurrence arrives with
 the answer attached.
 
-**WHAT IS OWED, AND IT IS ONE OBSERVATION FROM THE REPORTER** - nothing here can produce it:
-the stage line from a retry, or simply whether the draft carried a media attachment, a poll or a
-form, which eliminates four of the seven stages at once. **Until then this is an open report with
-no reproducible defect behind it, and must not be written up as a defect closed.** Note that the
-evidence for the original attempt is gone for a structural reason, not a procedural one - see the
-Infrastructure entry on a deploy destroying production's only log.
+**THE REPORTER RETRIED ON 2026-09-23 AND THE EDGE LOG NARROWED SEVEN STAGES TO TWO** - no phone, no
+DB, no rig: `docker logs infrastructure-frontend-1`, which is nginx (there is no `nginx` container),
+read entirely. The whole day holds **four** `GET /api/moderation/me/mute-status`, and
+`assertNotMuted` has exactly three callers - the composer's `publishPost`, and `PostCard`'s reaction
+and comment handlers - so **every one of them is a write about to be attempted, and each is followed
+by its write or by nothing.** Two were followed by a `201`. The other two are one device,
+`2a0d:e487:31ce:cb23::f6:df9f`, `tauri-plugin-http/2.6.0`, on **`0.18.14`** (the client stamps
+`POST /api/auth/refresh?clientVersion=`), at 19:12:32 and 20:03:07 UTC - and **that device sent no
+`POST /api/posts` all day.**
+
+Both are preceded by the composer mounting, which is visible as its two loads together:
+`GET /api/forms` **and** `GET /api/associations/me/list`, at 19:10:34 and 20:02:52. **Both answer
+`[]`** - 2 bytes - so this account owns no form and belongs to no association. The second tap came
+15 s after the mount, which is the draft restoring rather than anyone typing, and that is why it
+fails identically every time: the offending state is PERSISTED by `savePostComposerDraft`.
+
+| stage | how it died, from the wire alone |
+| --- | --- |
+| `moderation` | the response is `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
+| `content` | unreachable: the Publier button is `disabled={publishing \|\| (!markdown.trim() && selectedFiles.length === 0)}`, the same predicate as the throw |
+| `mediaToken` | `authToken` is already set at mount (`CreatePostForm` line 228), so the branch is skipped; and a refresh would have logged |
+| `mediaUpload` | no `/api/media` write from that device all day, and `compressImage` cannot throw - every failure is a typed passthrough (`decode-failed`, `threw`), so the upload would have been attempted and logged |
+| `createPost` | no `POST /api/posts` from that device, ever |
+
+**WHAT IS LEFT IS `poll` OR `form`, AND ONLY ONE OF THEM IS UNSATISFIABLE.** Both toggles are drawn
+with no guard (`CreatePostForm` lines 718 and 732), icon-only below `sm:`, and both are restored
+from the draft. `includePoll` throws only on an empty question, which the reader can fix once they
+see the card. `includeForm` throws on an empty `selectedFormId` - **and `GET /api/forms` returns `[]`
+for this account, so the picker it opens has nothing in it and the post can never be published while
+that toggle is on.** On `0.18.14` both say only "Impossible de publier le post".
+
+**THE REPORTER THEN NAMED THE BRANCH HIMSELF: HE WAS MAKING A SONDAGE.** So the stage is `poll`,
+`!pollQuestion.trim() || options.length < 2`, and the publish path is confirmed unbroken for the
+third time. **What the report was actually about is the two defects around it, and both are fixed**
+(`composerReadiness.ts`, [posts](frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)):
+the composer spent a `mute-status` round trip to reach a refusal it could speak instantly, and the
+error banner **erased itself after five seconds**, which is why the original report could not quote
+its own sentence. A clock decided when a reader had finished reading; on a phone the keyboard can
+still be over the banner when it goes.
+
+**AND THE SURFACE HE WAS USING WAS REBUILT THE SAME DAY.** The options were one newline-separated
+textarea, so `Oui, Non` was ONE option - a structure carried in a label, which is what he ran into.
+Both surfaces now mount the channel composer's per-option editor, with an identity on each row, a
+closing date and a cap on how many answers a voter may give; three defects that were only reachable
+once that code was read are fixed with it (an edit erased every vote, `votePoll` enforced nothing at
+all, and one flat selection array was shared by every poll on a card). See
+[posts](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+
+**WHAT IS LEFT OPEN, AND IT IS SMALL**: `includeForm` is still the one attachment an account can be
+unable to satisfy - this reporter's `GET /api/forms` answers `[]`, which now says so in its own
+sentence rather than asking again for a choice that does not exist - and both toggles are restored
+from the draft, so an abandoned one returns silently at the next composer open. Neither is worth a
+pull request until something is observed. **He is also still on `0.18.14`, seven versions behind and
+before `publishFailure.ts` (`0.18.18`), so he sees none of this until he updates** - which is the
+one observation still owed: whether the composer, on a version that names its stage, still refuses
+him anything.
+
+Note that the evidence for the ORIGINAL 2026-09-21 attempt is gone for a structural reason, not a
+procedural one - see the Infrastructure entry on a deploy destroying production's only log; the
+2026-09-23 retries survived only because the deploy that day landed at ~09:00 UTC.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one

@@ -536,6 +536,49 @@ pipeline throws - English dev prose, for the console, and no distinction a reade
 
 `publishFailure.test.ts` pins the mapping, including the two sentences that are ABOUT THE READER and
 must not be said when they are not true.
+
+### What the next report actually named, and the two defects under it (2026-09-23)
+
+The reporter retried twice and **the edge log settled it without a phone, a database or the rig.**
+`docker logs infrastructure-frontend-1` - nginx runs in the frontend container, there is no `nginx`
+one - holds **four** `GET /api/moderation/me/mute-status` for the whole day, and `assertNotMuted`
+has exactly three callers, so **every one of them is a write about to be attempted.** Two were
+followed by a `201`. The other two are one device on `0.18.14` at 19:12:32 and 20:03:07 UTC, and
+that device sent **no `POST /api/posts` all day.** Each is 15 s to 2 min after the composer mounted,
+which its two loads make visible (`GET /api/forms` **and** `GET /api/associations/me/list`).
+
+That collapses the seven stages to two without any client instrumentation at all:
+
+| stage | how it died, from the wire alone |
+| --- | --- |
+| `moderation` | `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
+| `content` | unreachable: the Publier button is disabled on the identical predicate |
+| `mediaToken` | `authToken` is taken at mount, so the branch is skipped |
+| `mediaUpload` | no `/api/media` write from that device, and `compressImage` cannot throw - every failure it has is a typed passthrough, so an upload would have been attempted and logged |
+| `createPost` | never sent |
+
+**The reporter then named it himself: he was making a poll.** So the cause is `poll`, and the two
+things wrong here were never the publish path - they are the two below.
+
+**FIRST: THE COMPOSER PAID A ROUND TRIP TO LEARN A FACT IT HELD.** `publishPost` opened with
+`await assertNotMuted()` and only afterwards checked content, poll and form - three preconditions
+sitting in its own `$state`. That is the rule this repository states everywhere else: **never learn
+by failing what a fact could have told you.** `posts/composerReadiness.ts` answers all three first,
+and it is the ONE spelling of the button's rule (`hasContent`); the poll's own rules moved to
+`posts/pollDraft.ts` with the editor rewrite below, so the payload builder stopped re-deriving the
+option count a second time.
+
+**SECOND, AND IT IS WHY THE REPORT CARRIED NO SENTENCE: THE ERROR BANNER ERASED ITSELF AFTER FIVE
+SECONDS.** A timer decided when the reader had finished reading, and on a phone the keyboard can
+still be covering the banner when it goes - leaving a composer that does not publish and says
+nothing, which is the whole of what a member is then able to report. It is now cleared by the reader
+(a dismiss button) or by the next attempt, never by a clock.
+
+**WHAT THIS DOES NOT CLOSE**: `includeForm` remains the one attachment an account can be unable to
+satisfy - this reporter's `GET /api/forms` answered `[]`, so a picker with nothing in it - and both
+toggles are restored from the draft, so an abandoned one comes back. The refusal now names itself
+instantly, which is what made that survivable rather than silent.
+
 ## The blocks preflight erases
 
 A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not
@@ -571,6 +614,62 @@ the line was always visible. It was the zeroed margin that welded it to the sent
 and `color: inherit` that made it as heavy as body text - hence `var(--cn-border)` rather than
 `currentcolor`.
 
+## One row per option, an identity on each, and a cap the server applies (2026-09-23)
+
+The composer above named its stage; this is what the stage was ABOUT. The post surface asked for a
+poll's options in ONE textarea, newline separated, labelled "Options (une par ligne)" - so the
+structure of the data lived in the label. A reader who typed `Oui, Non` wrote one option and was
+refused, and **the app already contained the answer**: `PollComposerModal`, the channel composer,
+has had one input per option with a `+` and a bin since it was written.
+
+`PollOptionsEditor.svelte` is now that editor, mounted by both surfaces, and `posts/pollDraft.ts`
+holds the rules it is judged by. Two settings the server had always accepted arrive with it: a
+CLOSING TIME, which `PostPolls` has been able to render and count down for as long as it has
+existed and which nothing on a post could set, and a CAP on how many options one voter may pick.
+
+### An option is an id and a label, and that is what a vote is cast against
+
+The rows were `string[]` for about an hour of this work, with the editor holding a parallel array of
+row ids so `{#each}` could key on something stable. That is two arrays that must stay the same
+length, resynced by an `$effect` - and it made the real defect underneath impossible to fix:
+
+**EDITING A POST EMPTIED ITS POLL.** `EditPostForm` sends the poll's id back under a comment reading
+"preserved to maintain vote history". It preserved the id and nothing else. The tallies live in
+`option.votes` and `votesByUser`; `updatePost` rebuilt each poll from the payload alone; `whitelist:
+true` strips any tally a client tries to send back; and `PollOptionInputDto` had no `id` field, so
+every save minted fresh option ids that could not have matched anything anyway. Correcting one word
+of a question reset the poll to zero, with the id intact to suggest nothing had been lost.
+
+So identity lives on the option (`PollDraftOption`), the DTO accepts it, and
+`PostsService.normalizePolls` - ONE function, where the create and the update path each carried the
+same map - carries votes across an edit BY OPTION ID. A renamed option keeps its votes, a deleted
+one takes them with it, and `votesByUser` is DERIVED from what survived rather than copied beside
+it, because two stored copies of one tally is how they come to disagree.
+
+### Three places state the cap, and only one of them is not advisory
+
+| where | what it decides | what happens if it is wrong |
+| --- | --- | --- |
+| `pollDraft.ts` | what may be COMPOSED | the author writes a poll that contradicts itself |
+| `pollVote.ts` (`nextPollSelection`) | what may be SELECTED on the device | a tap does something the poll does not allow |
+| `post-interactions.service.ts` | what may be RECORDED | anyone with `curl` decides |
+
+`votePoll` enforced NOTHING until this day. `multipleChoice: false` was a rendering convention -
+radio inputs send one id, so one id is what arrived - and a request that sent five recorded five
+votes on a single-choice poll. A closed poll only ever had its buttons hidden. And an option id
+belonging to no option of that poll cast no vote but WAS written into `votesByUser`, so it came back
+to every reader as part of somebody's answer. All three are refusals now
+(`post-interactions.vote-poll.spec.ts`), and the card stops offering a tap it knows will be refused
+rather than learning by the 400.
+
+### One selection array, several polls
+
+`selectedOptions` on `PostCard` is flat across every poll on the card, which was invisible while a
+post could only carry one: a tap on a single-choice poll replaced the whole array - clearing the
+reader's answer to the poll beside it - and `submitVote` then sent that other poll's ids to THIS
+poll's endpoint. `selectionIn(poll)` splits it once, on both sides of the write, which is also what
+makes "two answers max" count the right answers.
+
 ## A poll option is free text, so it can only wrap (2026-09-23)
 
 `PostPolls.svelte` is the ONE presentation for both surfaces that carry a poll: a post's poll card
@@ -578,7 +677,8 @@ and, through `ChannelPoll.svelte`, a community poll. Its option row carried `tru
 which is `white-space: nowrap` - one line, ellipsis, whatever the text is.
 
 That holds only if the label is short, and nothing makes it short. An option is free text typed by
-the author (`PollSection`'s newline-separated textarea), and the real poll that surfaced this asked
+the author (`PollSection`'s textarea, one row per option since later the same day), and the real
+poll that surfaced this asked
 which charity to give to: eight association names, seven of them longer than the box. Measured on
 the component at a 360px-wide container, the label gets what the row leaves it - the 20px selection
 icon, its 12px gap, then the percentage (`min-w-[2.5rem]`) and the count badge on the right - which
