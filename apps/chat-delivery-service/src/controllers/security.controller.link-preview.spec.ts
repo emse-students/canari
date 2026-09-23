@@ -53,6 +53,29 @@ const notHtml = () =>
     text: async () => '',
   }) as never;
 
+/** What a shortener answers: a hop, and nothing else. */
+const redirectTo = (location: string) =>
+  ({
+    status: 301,
+    ok: false,
+    headers: new Map([['location', location]]) as unknown as Headers,
+    text: async () => '',
+  }) as never;
+
+/** An HTML page whose Open Graph references are relative, as most sites write them. */
+const htmlPage = () =>
+  ({
+    status: 200,
+    ok: true,
+    headers: new Map([['content-type', 'text/html; charset=utf-8']]) as unknown as Headers,
+    text: async () =>
+      '<html><head>' +
+      '<meta property="og:title" content="An event">' +
+      '<meta property="og:image" content="/files/event/150/1461421.jpg?v=1789050716">' +
+      '<link rel="icon" href="/assets/icon.png">' +
+      '</head></html>',
+  }) as never;
+
 describe('SecurityController - getLinkPreview classifies what it could not do', () => {
   let controller: SecurityController;
 
@@ -110,5 +133,39 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
     // Asked once: the refusal is a fact about this URL and re-downloading the page to rediscover it
     // is what the cache exists to stop.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A RELATIVE REFERENCE BELONGS TO THE PAGE THAT ANSWERED, NOT TO THE LINK THAT WAS WRITTEN.
+   *
+   * Measured on production 2026-09-23: a shortened link whose destination declares a relative
+   * `og:image` produced `GET .../link-preview/image?url=https://bit.ly/files/event/150/1461421.jpg`
+   * - a 404 the image proxy then cached, so the card stayed illustration-less for six hours. The
+   * redirect chain was walked correctly and its result was thrown away at the last step.
+   */
+  it('resolves relative references against the page that answered, not the link that was written', async () => {
+    const written = 'https://short.example/abc';
+    fetchMock
+      .mockResolvedValueOnce(redirectTo('https://events.example/e/150'))
+      .mockResolvedValueOnce(htmlPage());
+
+    const payload = await controller.getLinkPreview(written, makeRes() as never);
+
+    expect(payload.image).toBe('https://events.example/files/event/150/1461421.jpg?v=1789050716');
+    expect(payload.icon).toBe('https://events.example/assets/icon.png');
+    // The identity of the link is NOT the base: this is what the card shows and opens, and it is
+    // what the cache is keyed on.
+    expect(payload.url).toBe(written);
+  });
+
+  it('keeps resolving against the link itself when nothing redirected', async () => {
+    fetchMock.mockResolvedValueOnce(htmlPage());
+
+    const payload = await controller.getLinkPreview(
+      'https://events.example/direct',
+      makeRes() as never
+    );
+
+    expect(payload.image).toBe('https://events.example/files/event/150/1461421.jpg?v=1789050716');
   });
 });
