@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le composer de post savait deja pourquoi il refusait, et effacait sa reponse au bout de 5 s
+
+Le membre du 2026-09-21 avait ouvert un sondage sans le remplir : le log nginx de ses deux essais du
+2026-09-23 montre deux `mute-status` a `200` et jamais de `POST /api/posts`, donc deux allers-retours
+payes pour apprendre un fait local. Les trois preconditions que le composer peut trancher seul sont
+desormais tranchees AVANT le reseau, en une seule fonction que le bouton Publier lit aussi - et la
+banniere d'erreur ne s'auto-efface plus, ce qui est la raison pour laquelle le rapport d'origine
+n'a jamais pu citer sa propre phrase.
+[posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
+
 ### Fixed - le volet de la navbar ne s'ouvrait plus au survol, et les icones scintillaient
 
 Le rail montait de `z-20` a `--z-nav-rail` en s'ouvrant, et `transition-all` INTERPOLE un z-index :

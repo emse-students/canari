@@ -536,6 +536,48 @@ pipeline throws - English dev prose, for the console, and no distinction a reade
 
 `publishFailure.test.ts` pins the mapping, including the two sentences that are ABOUT THE READER and
 must not be said when they are not true.
+
+### What the next report actually named, and the two defects under it (2026-09-23)
+
+The reporter retried twice and **the edge log settled it without a phone, a database or the rig.**
+`docker logs infrastructure-frontend-1` - nginx runs in the frontend container, there is no `nginx`
+one - holds **four** `GET /api/moderation/me/mute-status` for the whole day, and `assertNotMuted`
+has exactly three callers, so **every one of them is a write about to be attempted.** Two were
+followed by a `201`. The other two are one device on `0.18.14` at 19:12:32 and 20:03:07 UTC, and
+that device sent **no `POST /api/posts` all day.** Each is 15 s to 2 min after the composer mounted,
+which its two loads make visible (`GET /api/forms` **and** `GET /api/associations/me/list`).
+
+That collapses the seven stages to two without any client instrumentation at all:
+
+| stage | how it died, from the wire alone |
+| --- | --- |
+| `moderation` | `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
+| `content` | unreachable: the Publier button is disabled on the identical predicate |
+| `mediaToken` | `authToken` is taken at mount, so the branch is skipped |
+| `mediaUpload` | no `/api/media` write from that device, and `compressImage` cannot throw - every failure it has is a typed passthrough, so an upload would have been attempted and logged |
+| `createPost` | never sent |
+
+**The reporter then named it himself: he was making a poll.** So the cause is `poll`, and the two
+things wrong here were never the publish path - they are the two below.
+
+**FIRST: THE COMPOSER PAID A ROUND TRIP TO LEARN A FACT IT HELD.** `publishPost` opened with
+`await assertNotMuted()` and only afterwards checked content, poll and form - three preconditions
+sitting in its own `$state`. That is the rule this repository states everywhere else: **never learn
+by failing what a fact could have told you.** `posts/composerReadiness.ts` answers all three first,
+and the same module is the ONE spelling of the button's rule (`hasContent`) and of the option count
+(`parsePollOptions`), which the payload builder had been re-deriving a second time.
+
+**SECOND, AND IT IS WHY THE REPORT CARRIED NO SENTENCE: THE ERROR BANNER ERASED ITSELF AFTER FIVE
+SECONDS.** A timer decided when the reader had finished reading, and on a phone the keyboard can
+still be covering the banner when it goes - leaving a composer that does not publish and says
+nothing, which is the whole of what a member is then able to report. It is now cleared by the reader
+(a dismiss button) or by the next attempt, never by a clock.
+
+**WHAT THIS DOES NOT CLOSE**: `includeForm` remains the one attachment an account can be unable to
+satisfy - this reporter's `GET /api/forms` answered `[]`, so a picker with nothing in it - and both
+toggles are restored from the draft, so an abandoned one comes back. The refusal now names itself
+instantly, which is what made that survivable rather than silent.
+
 ## The blocks preflight erases
 
 A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not

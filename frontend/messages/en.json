@@ -715,6 +715,7 @@
   "post_create_poll_requires_options": "A poll needs a question and at least two options.",
   "post_create_form_required": "Please select a form.",
   "post_create_publish_error": "Could not publish the post",
+  "post_create_error_dismiss_label": "Got it",
   "post_create_anonymous_label": "Anonymous",
   "post_create_anonymous_hint": "Your name will not appear on this post. A moderator can still see who published it.",
   "post_create_title": "Create a post",

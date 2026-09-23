@@ -740,6 +740,7 @@
   "post_create_poll_requires_options": "Un sondage nécessite une question et au moins deux options.",
   "post_create_form_required": "Veuillez sélectionner un formulaire.",
   "post_create_publish_error": "Impossible de publier le post",
+  "post_create_error_dismiss_label": "Compris",
   "post_create_anonymous_label": "Anonyme",
   "post_create_anonymous_hint": "Votre nom n'apparaîtra pas sur ce post. Un modérateur peut toujours voir qui l'a publié.",
   "post_create_title": "Créer une publication",
