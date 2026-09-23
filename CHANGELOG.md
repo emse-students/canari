@@ -59,7 +59,11 @@ Deux phases separees parce qu'une seule est visible : le deplacement se defait e
 le tunnel, le changement de noms ne se defait pas - un lien profond est compile dans le
 binaire et livre par deux stores. Decisions prises avec l'utilisateur le 2026-09-23, dont
 l'abandon total de Cloudflare sur les chemins publics. Le blocage bun est REFUTE.
-[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+Premieres mesures SUR la machine cible le meme jour : ce n'est pas un serveur portail-etu mais la
+machine d'hebergement associatif partagee de l'ecole, 4 vCPU et 11 G face a trois VMs taillees pour
+8 et 20, et le compte livre n'a ni docker ni sudo - rien ne peut commencer avant. Deux affirmations
+du plan tombent : le multiplexage SSH ne marche pas sur ce poste, et le bastion muet n'est pas un
+bannissement. [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - NOTIF-10 ne mesure plus l'ignorance de son propre classificateur
 
