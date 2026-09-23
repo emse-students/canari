@@ -728,7 +728,11 @@ can say nothing about either outcome. Reasoning and the evidence behind each cha
 
 Test the **release** artifact from `android.yml`, not a local build: a locally re-signed
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
-re-enrolment and SETUP-4's 2FA. **TWO signed artifacts now exist and the RELEASE one is the target:**
+re-enrolment. **IT DOES NOT COST A 2FA PROMPT, AND THE SENTENCE THAT SAID SO HELD THIS CHECK UP.**
+The campaign's test accounts are Authentik service accounts reached through the "Connexion externe
+(service-account)" link, and they carry no second factor; 2FA is a PRODUCTION-account property
+(user, 2026-09-23). A session declined to start this check on the strength of the old wording, which
+is the cost of a precondition nobody re-measured. **TWO signed artifacts now exist and the RELEASE one is the target:**
 v0.14.5 of 2026-08-26 carries both Android fixes and went to Google Play production, so its attached
 `app-universal-release.apk` (36 MB, beside the 15 MB `.aab`) is the build users actually got - test
 THAT, and note a release asset does not expire. The `workflow_dispatch` of 2026-08-27 (run
@@ -740,6 +744,38 @@ That run also PROVED the gating rather than asserting it: `Upload to Release` an
 Play (production)` both **skipped**, because each is `if: github.event_name == 'workflow_run'`. A
 dispatch therefore attaches nothing to any release, cannot overwrite v0.14.5's assets, and ships
 nothing to users. Use one only to re-check a fix made after the release was cut.
+
+**RUN 2026-09-23 ON THE SHIPPED `v0.18.21` ARTIFACT - FIVE OF SIX PASS, AND STEP 2 IS BLOCKED ON A
+FIXTURE THAT DOES NOT EXIST RATHER THAN ON A DEFECT.** Measured on the Mi 9T against
+`app-universal-release.apk` taken from the release itself. **Download it BY ASSET ID**: `gh release
+download` and `gh release view --json assets` both read a representation that reports zero assets
+minutes after a release is cut, and a session treated that as a regression in the release it had
+just shipped; `gh api repos/{owner}/{repo}/releases/{id}/assets` is the authoritative list. The
+artifact talks to PRODUCTION - that is what makes it the shipped build, and why the rig's estate
+guard correctly refuses to grade a campaign row on it (`pin.mjs` said so, and was right).
+
+| Step | Verdict | The evidence, and not the impression |
+| --- | --- | --- |
+| 1. own background | **PASS** | The APK's own resource table declares `() #fff9fbff` / `(night) #ff070b12`, the two colours this check names, so the assertion is LOSSLESS and not a pixel judgement. A screen recording of the cold launch holds `#060a12` for the first 500 ms - `#070B12` with one LSB of h.264 chroma loss per channel - before anything else drew. No grey flash. |
+| 2. a face in the shade | **BLOCKED, and not by the app** | See below. |
+| 3. French channels | **PASS** | All six survive R8 WITH their descriptions: `canari_messages` "Messages Canari", `canari_mentions` "Mentions Canari", `canari_calls` "Appels Canari", `canari_social` "Activite sociale Canari", `canari_reactions` "Reactions a vos messages", `canari_forms` "Rappels de formulaires". A seventh, `default`, is named **"Default"** in English - it is `tauri-plugin-notification`'s own hardcoded literal, created on plugin load in BOTH build types, and nothing posts to it. Library blemish, not a shrinking regression ([backlog](backlog.md)). |
+| 4. both system bars | **PASS** | `env(safe-area-inset-top)` = `34px`, `env(safe-area-inset-bottom)` = `24px`, left/right `0px`, with `viewport-fit=cover` intact. At `devicePixelRatio` 2.475 that is 84 and 59 physical pixels, matching the status bar and the gesture bar on screen. |
+| 5. picker, dialog, biometric | **PASS, all three** | File picker: `com.android.documentsui/.picker.PickActivity` became the top resumed activity on a real touch. Dialog: a `role=dialog` rendered with its French copy and both actions. **Biometric - the one that broke before**: `ActivityTaskManager: Displayed fr.emse.canari/app.tauri.biometric.BiometricActivity for user 0: +84ms`, no `InflateException`, the system `BiometricPrompt` bound its credential view and animated in, and dismissing it rejected the promise and returned to `MainActivity` with no crash. |
+| 6. refuses a device transfer | **PASS** | `aapt2` on the artifact reads `android:allowBackup=false` AND `android:dataExtractionRules=@0x7f120000`, which resolves in the resource table to `xml/data_extraction_rules -> res/4j.xml`. The shrinker RENAMED the file but kept it, which is why an `unzip | grep data_extraction` finds nothing and reads as absent. `dumpsys` on Android 16 does not print the attribute at all, so the artifact is the only witness. |
+
+**WHY STEP 2 CANNOT BE MEASURED TODAY, AND WHAT WOULD UNBLOCK IT.** The step needs a notification
+carrying a real bitmap, because `decodeSampled` is the line that separates "the avatar arrived" from
+"the fallback looked fine". Its ONLY feeder is `cachedRemoteIcon`, which has exactly two callers: a
+user avatar and an association logo. **No test identity on any estate has an avatar image** - the
+app renders initials for them - and **the frontend exposes no user-avatar upload anywhere**: every
+`input[type=file]` in it belongs to association documents, the association logo cropper, a calendar
+event, the chat composer, the form builder, post create/edit, the settings backup or the community
+admin panel. So no notification the campaign is able to trigger can carry a bitmap, and the log line
+is unreachable by construction. The association-logo path is reachable only by posting AS an
+association on production, which publishes to real students and is therefore not a test. **Unblocking
+it means giving a test account an avatar server-side**, or setting a logo on a test association on
+the LOCAL estate and running step 2 against a release-configured APK built for that estate - the
+minification is identical, so it measures the same R8 output ([backlog](backlog.md)).
 
 1. **The app starts on its own background, not grey.** `windowBackground` is now
    `@color/app_background`, so the gap before SvelteKit hydrates is `#070B12` dark / `#F9FBFF` light
