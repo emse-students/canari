@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - le WebView de la build livree par les stores est inspectable
+
+Check R execute sur l'artefact `v0.18.21` lui-meme : DevTools s'attache au telephone et lit l'etat
+MLS, les messages dechiffres et le jeton en memoire - ce que la regle "jeton en memoire UNIQUEMENT"
+suppose inatteignable. Trois causes candidates, separees une par une : c'est la feature Cargo
+`devtools` qui compile l'appel, pas le manifeste. Cinq des six etapes passent ; l'etape 2 n'est pas
+mesurable faute d'un avatar sur un compte de test.
+[device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
+[backlog](docs/wiki/backlog.md).
+
 ### Added - le plan du demenagement des trois VMs, puis des noms vers `emse.fr`
 
 Deux phases separees parce qu'une seule est visible : le deplacement se defait en repointant

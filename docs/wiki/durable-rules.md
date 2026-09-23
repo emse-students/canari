@@ -1277,6 +1277,20 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A RELEASE BINARY IS INSPECTABLE IF ANY DEPENDENCY COMPILED THE CALL IN, AND THE CALL SITE YOU
+  WILL AUDIT IS NOT THE ONE THAT DECIDES.** `open_devtools()` is `#[cfg(debug_assertions)]`-gated,
+  so a grep for it clears the release - while wry enables
+  `setWebContentsDebuggingEnabled` under `#[cfg(any(debug_assertions, feature = "devtools"))]`, and
+  a Cargo feature in plain `[dependencies]` satisfies that in a build with no `debug_assertions`.
+  **"Nothing opens a panel" and "nothing can attach" are different claims**, and only the second is
+  the security property. Ask what a dependency's FEATURES compile in, never only what this
+  repository's source calls. Measured on the shipped artifact 2026-09-23 ([backlog](backlog.md)).
+- **A CAPABILITY COMPILED INTO AN APK IS NOT REACHED BY A DEPLOY, AND `minClientVersion` CANNOT GATE
+  IT.** The app embeds its frontend (`frontendDist: "../build"`), so every device already holding a
+  build keeps whatever that binary can do until a NEW store version replaces it - and the version
+  floor reasons about a NAME, not about compiled features. Anything of this class is a store
+  submission, and its fix ships on both stores' clock or not at all.
+
 - **ONE FIELD IS NOT ONE FACT: A VALUE IS A DISCRIMINATOR ONLY FOR THE QUESTION IT CAN DISTINGUISH.** A push carried `groupName`, empty for a DM by the server's own contract, and four readers - web, Kotlin, Swift, ObjC++ - each asked it "group or DM". `''` is THREE states: a DM, a group nobody named, and a group row the server's own query could not read (an empty `catch`). A `GROUP BY` on production settled it in seconds: **467 of 1433 ordinary groups have no name, 374 of them past MLS epoch 0** - a third of the population, drawn as a DM with its first sender as the peer. **The discriminator was never missing**: the same query already SELECTed `isGroup` and a ternary threw it away. Carry it, and OMIT it rather than defaulting it when the server does not know - absent and `false` are different sentences, and a reader that cannot tell them apart will guess the one that looks right. The clause this replaces - in the *Outbound delivery* section above, under the placeholder-label rule - argued that a flag beside the name would be one fact written twice; it is kept there, visible and marked refuted. [mobile](frontend/mobile.md)
 
 - **A FLAG THAT SAYS WHAT TO DO WITH A FRAME DOES NOT SAY WHAT IS IN IT - AND A HANDLER THAT READS IT AS IF IT DID GOES DEAF THE DAY A NEW KIND ARRIVES.** `silent` is a PRESENTATION property: raise no banner. The Android push service read it as "and there is nothing in here", returned before any decrypt, and the comment justifying that was true when written - then Graine added a silent frame whose plaintext IS the point, and a seed minted while the phone was shut was delivered and thrown away, leaving every message of that session showing the generic body until the app was next opened. **The next useful silent frame would have inherited the same silence by accident, not by decision.** Decide on the KIND. And do not learn the kind by decrypting to look: that puts an MLS load and the state lock behind every read receipt, 3-5 s each on one serialised lane, to discover the frame was empty. The discriminator was in the database - a distribution group's log carries seeds and nothing else, and `dm_groups` says which groups those are - and the push already read that row, so it travels in cleartext for one more `select` entry. **Ask of every early return what it would have to be told to stop being right.** [channel-encryption](protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android)

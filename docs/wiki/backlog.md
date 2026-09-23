@@ -81,6 +81,80 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## Open defects, in severity order
 
+### P1 - THE SHIPPED STORE BUILD'S WEBVIEW IS INSPECTABLE, AND THE MEMORY-ONLY TOKEN RULE ASSUMES IT IS NOT (measured on the shipped `v0.18.21` artifact, 2026-09-23)
+
+**Anyone who can run `adb` against a phone holding the Play Store build can attach Chrome DevTools
+to it and read the MLS state, decrypted message content and the in-memory access token.** This is
+not inferred from configuration: during [check R](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)
+the release `app-universal-release.apk` was installed on the Mi 9T, `@webview_devtools_remote_<pid>`
+was present in `/proc/net/unix` for the app's OWN pid, and a CDP session read its DOM, its
+`performance` resource timeline and its Tauri IPC. The repository's standing rule is that access
+tokens live *in memory ONLY, never localStorage* - a rule whose entire value is that the memory is
+unreachable. Inside an inspectable WebView it is a `Runtime.evaluate` away.
+
+**THE CAUSAL CHAIN IS SEPARATED, because one observation had three candidate causes and an entry
+naming all three teaches nothing.** Each leg below was measured, not assumed:
+
+1. **`frontend/src-tauri/Cargo.toml:21` - the `devtools` Cargo feature is what compiles the exposure
+   in.** wry gates the call as `#[cfg(any(debug_assertions, feature = "devtools"))]` around
+   `setWebContentsDebuggingEnabled` (`wry-0.55.1/src/android/main_pipe.rs:257`). A release build has
+   no `debug_assertions`, so **without this feature the call is not in the binary at all**. It sits
+   in plain `[dependencies]`, with no `cfg(debug_assertions)` target table and no dev-only feature.
+2. **`frontend/src-tauri/tauri.conf.json:18` - `"devtools": true` supplies that call's argument.**
+   It reaches `webview_attributes.devtools` and is passed as the boolean. The config type is
+   `Option<bool>` and its absent default falls back to `debug_assertions`, so the JSON is what turns
+   a compiled-in call into an enabled one.
+3. **`android:debuggable` is NOT the cause and is correctly absent.** `aapt2 dump badging` on the
+   shipped artifact prints no debuggable flag (and `usesCleartextTraffic=false`). The third
+   candidate is ruled out, so the fix does not belong in the manifest.
+
+**AND THE CALL SITE EVERYONE WILL CHECK IS CLEAN, WHICH IS WHY THIS SURVIVED.** `open_devtools()` at
+`frontend/src-tauri/src/lib.rs:952` *is* wrapped in `#[cfg(debug_assertions)]`. Nothing opens a
+panel by itself, so a reader auditing that one call site concludes the release is fine. **The
+exposure is that the WebView is inspectable, not that a panel appears** - a distinction no grep for
+`open_devtools` can make.
+
+**THE FIX RIDES A STORE BUILD AND NOTHING ELSE.** An APK is not reached by a deploy - the app EMBEDS
+its frontend (`frontendDist: "../build"`) - so every device already holding this build stays
+inspectable until a NEW store version replaces it. `minClientVersion` cannot gate it either, since
+that reasons about a name and not about a binary's compiled features. Removing the Cargo feature is
+the load-bearing half; removing the JSON value alone would leave the call compiled and merely pass
+`false`, which closes the hole by relying on a default rather than by deleting the capability.
+
+**What is owed before this is called closed**: one release build with the feature removed, and the
+same `/proc/net/unix` probe on hardware showing no `@webview_devtools_remote_<pid>` for the app's
+pid. A green build proves nothing here - the whole class was invisible to every gate in this
+repository, which is the point of check R.
+
+### P3 - `login.mjs` calls a login FAILED while the authorization-code exchange is still running (measured 2026-09-23)
+
+Driving A1 through the service-account flow, the atom printed every stage correctly - both fields
+filled, both submits landed - then `session held: false`, `final .../auth/callback?code=...` and a
+non-zero exit with *"the flow completed but no session was written - the app is not logged in"*.
+**The login had succeeded.** Seconds later the app was on `/posts` with the first-connection PIN
+gate up, and the PIN atom then completed normally against it. What the atom caught was the app
+mid-exchange: its own capture holds the words *"Echange du code d'autorisation..."*.
+
+This is the rig's own rule pointed the wrong way - *termination from a PROOF, never from a clock*.
+The poll ends on a deadline and then reports the state it happened to see, so a slow exchange is
+indistinguishable from a refused one, and the atom's docblock is explicit that a non-zero exit means
+the client holds no session. A caller that believes it re-runs a login that already worked, or
+grades a row `SETUP-FAILED` against a healthy app. The end condition should be a fact - the session,
+or the PIN gate, or an error the app itself reports - not the expiry of the wait for one.
+
+### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
+
+`tauri-plugin-notification` creates a channel on plugin load whose name and description are the
+hardcoded literal `"Default"` (`TauriNotificationManager.kt:96`, version 2.4.0) - not a resource, so
+it is not localizable and Paraglide cannot reach it. It appears beside `Messages Canari`,
+`Mentions Canari`, `Appels Canari`, `Activite sociale Canari`, `Reactions a vos messages` and
+`Rappels de formulaires` in the Android notification settings screen. **Nothing posts to it**: the
+manifest points Firebase at `canari_messages`, and every builder in this repository names a
+`canari_*` channel, so it is an empty row rather than a mis-routed notification. It is created in
+BOTH build types, so it is not a shrinking regression. Closing it means deleting the channel after
+the plugin registers it, or carrying a patch upstream.
+
+
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
 **These numbers are the swept ones, not the audit's.** The audit was written by reading the source,

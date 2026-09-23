@@ -308,8 +308,8 @@ THREE times**, so it names no version. `gh release list` is the shipped version,
 **No HEAL-REVOKE verdict about a clean device may be taken on a build older than 0.14.12.** **An
 APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS the frontend, so
 `minClientVersion` and check S reason about a NAME unless a version identifies its content.
-**2.1(a) IS PASSED**; only **check R** is left of the 2026-08-26 mails, and **WP-RESTORE-1** (April
-2027) is ACCEPTED, after the campaign.
+**2.1(a) IS PASSED; CHECK R IS FIVE OF SIX ON SHIPPED `0.18.21` AND FOUND A P1 - THE STORE BUILD'S
+WEBVIEW IS INSPECTABLE** ([backlog](docs/wiki/backlog.md)); **WP-RESTORE-1** (April 2027) ACCEPTED.
 
 **iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
 full parity audit read everything else as symmetric. Four items open in
