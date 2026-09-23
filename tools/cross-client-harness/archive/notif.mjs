@@ -12,7 +12,7 @@
  *
  * Usage: bun notif.mjs 1b|4|4b|9|10|11
  */
-import { APP_TAB, awaitMessage, client, COMPOSER, countMessage, ensureChat, evaluate, openConversation, send } from '../chat.mjs';
+import { APP_TAB, awaitMessage, client, COMPOSER, countMessage, ensureChat, evaluate, leaveConversation, openConversation, send } from '../chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
@@ -119,13 +119,57 @@ await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConv
 // phone's notification survives long enough to be asserted; 4b asks what happens when the other
 // device was ALREADY reading, which is the state parking exists to avoid. So the gesture is
 // conditional and says which row it is for, rather than being commented out by whoever runs that row.
+/**
+ * Send W1 back to the conversation list before asking it to open a conversation.
+ *
+ * THE PARK LANDS ON `/dashboard` WHEN THE LAYOUT KEEPS THE PANE OPEN, and no conversation row is
+ * listed there - `openConversation` then waits 20 s for a row that route will never render and
+ * throws, which reads as "the row was never listed" rather than as "you are on the wrong page".
+ * Every reopening below goes through this, so the park and the reopening cannot disagree.
+ */
+const reopenOnW1 = async (label) => {
+  await withDeadline(ensureChat(w1), 60_000, `W1 ensureChat before ${label}`);
+  return withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, label);
+};
+
+let parkedW1 = 'left in the DM (NOTIF-4b)';
 if (which === '4b') {
   stage('W1 stays IN the DM - that is NOTIF-4b s premise');
 } else {
-  stage('W1 can reach the DM; parking it on the chat list');
-  await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopStateEvent('popstate'))`).catch(() => null);
-  await sleep(2_500);
+  // `leaveConversation`, NOT a raw `pushState`. The history push changes the URL and asks the
+  // router to follow; it does not assert that the conversation PANE closed, and on the two-pane
+  // layout it does not - which is the whole reason `chat.mjs` grew that helper. An unparked W1 is
+  // an owner device still reading, and a read from self cancels the phone's notification, so this
+  // row would then measure the park instead of the notification. It ANSWERS, and the answer is
+  // recorded: anything outside `LEFT` is an unmet precondition rather than a silent assumption.
+  stage('W1 can reach the DM; parking it off the conversation');
+  parkedW1 = await leaveConversation(w1).catch((e) => `park failed: ${e?.message || e}`);
+  stage(`W1 parked: ${parkedW1}`);
+  await sleep(1_000);
 }
+
+// W3 IS AN OWNER DEVICE TOO, AND PARKING ONLY W1 MADE THESE ROWS DEPEND ON W3 BEING OFFLINE.
+// The paragraph above says "the OWNER's other device" in the singular because it was written when
+// there was one; `identity.mjs` reports W1, W3 and A1 all acting as the owner. A read from ANY of
+// them raises `FCM silent from self -> cancelling notification for group=` on the phone, which
+// withdraws the very notification these rows assert.
+//
+// Measured on 2026-09-23, build `00a86a1a8`: with W3 up and sitting in the DM, NOTIF-9 was notified
+// after 2213 ms and then read `shade holds 0`, with `fcm-cancel-self` once in its own logcat
+// report - a FAIL on a row whose message had arrived and whose browser held exactly one copy.
+// NOTIF-11 lost all three of its notifications the same way. Both had passed on runs taken while
+// W3 was not listening, which is a verdict that depends on which devices happen to be up.
+//
+// `notif15.mjs` already learnt this and parks `['W1', 'W3']`; this is that lesson applied to the
+// rows it was not carried to. UNCONDITIONAL, including for 4b: 4b's premise is about W1 having the
+// conversation ALREADY open, and a third device reading in the background is not that premise, it
+// is the noise 4b would otherwise be unable to tell it apart from. W3 unreachable is not a fault -
+// a bench without it is a bench where nothing there can cancel anything.
+const w3 = await client(PORTS.W3, APP_TAB).catch(() => null);
+const parkedW3 = w3
+  ? await leaveConversation(w3).catch((e) => `park failed: ${e?.message || e}`)
+  : 'unreachable';
+stage(`W3 (the owner's third device): ${parkedW3}`);
 
 // THE PUSH TRANSPORT IS A PRECONDITION OF MOST ROWS HERE AND IRRELEVANT TO ONE - and the whole
 // measurement behind the gate, plus the board pattern that had been visible for hours, is in
@@ -151,7 +195,7 @@ phone.clearLogcat();
 const phoneWindowFrom = Date.now();
 const oW2 = await watch(w2, `notif${which}-w2`);
 const oW1 = await watch(w1, `notif${which}-w1`);
-const out = { check: `NOTIF-${which}`, a1SetupFaults };
+const out = { check: `NOTIF-${which}`, a1SetupFaults, parkedW1, parkedW3 };
 
 /**
  * NOTIF-1b - THE CASE THE P1 WAS ABOUT, AND THE ONE THIS BOARD NEVER HAD A ROW FOR.
@@ -375,7 +419,7 @@ if (which === '1b') {
   // reports focused and visible (MainChatPage.svelte:435). That gate is what made this check fail
   // twice before focus emulation existed, so it is asserted rather than assumed: a run where W1 is
   // not focused measures nothing about the product.
-  await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConversation');
+  await reopenOnW1('W1 openConversation');
   out.w1Focus = await evaluate(w1, `JSON.stringify({ hasFocus: document.hasFocus(), vis: document.visibilityState })`);
   stage(`W1 focus gate: ${out.w1Focus}`);
   if (!JSON.parse(out.w1Focus).hasFocus) throw new Error('W1 is not focused - it can never emit a read receipt');
@@ -474,7 +518,7 @@ if (which === '1b') {
   // device and is enough to prove three distinct messages were delivered; the shade above is the
   // part that is this row's actual subject.
   stage('opening the DM on W1 to prove all three were really delivered');
-  await withDeadline(openConversation(w1, peerNameFor('W1')), 60_000, 'openConversation(W1)');
+  await reopenOnW1('openConversation(W1)');
   for (const m of markers) await awaitMessage(w1, m, 60_000).catch(() => null);
   await sleep(2_000);
   out.onW1 = [];
@@ -523,7 +567,7 @@ if (which === '1b') {
   out.undecrypted = undecryptedInShade();
 
   stage(`shade holds ${out.shadeCount}; opening the DM on W1`);
-  await withDeadline(openConversation(w1, peerNameFor('W1')), 60_000, 'openConversation(W1)');
+  await reopenOnW1('openConversation(W1)');
   stage('W1 in the DM; waiting for the message');
   await awaitMessage(w1, m, 30_000).catch(() => null);
   await sleep(2_000);

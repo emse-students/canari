@@ -2293,6 +2293,8 @@ export function logcatReport(lines, label = 'A1') {
       /^cancelConversationNotification: (reaction notif removed|notif removed|no notif for) group=/,
     ],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
+    // The Kotlin half of the handoff named above, at the moment it accepts the work.
+    ['ws-notif-accept', /^notifyMessageFromWebSocket: queued groupId=[0-9a-f]+ mentionsMe=(true|false) sentAt=\d+$/],
     // THE REACTION ARM, WHICH LEFT NOTIF-15 `PASS-DIRTY` OVER ITS OWN SUCCESS PATH - the same way
     // NOTIF-4 landed there in 2026-08-22 for the cancelling half of the line above. This is the
     // handler stating, at DEBUG, that it recognised a reaction push and is about to draw it; the
@@ -2345,6 +2347,13 @@ export function logcatReport(lines, label = 'A1') {
     ['mls-state', /^\[mls_core::(state|messaging)\] /],
     ['mls-commands', /^\[mines_app_lib::commands::mls\] /],
     ['push-commands', /^\[mines_app_lib::commands::push\] /],
+    // THE SOCKET TRIGGER'S OWN SUCCESS PATH, WHICH LEFT NOTIF-1b `PASS-DIRTY` OVER IT. Both halves
+    // of one handoff: Rust says the native builder took the work, Kotlin says it queued it. NOTIF-1b
+    // is THE row whose notification comes from the WebSocket rather than from a push, so these two
+    // lines are the thing it asserts happening - the same reason `fcm-reaction` below is named.
+    // The REFUSAL is deliberately not covered: `native builder refused` means the builder declined
+    // the work and the reader may get nothing, which must keep surfacing.
+    ['ws-notif-queued', /^\[mines_app_lib::commands::notifications\] \[NOTIF\] native builder queued for /],
     ['storage-commands', /^\[mines_app_lib::commands::(storage|cookies)\] /],
     ['background-send', /^\[mines_app_lib::mobile::background\] /],
     // openmls at DEBUG is the key schedule narrating itself - one line per derivation, several per

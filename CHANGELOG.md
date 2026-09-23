@@ -11,13 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Fixed - le classificateur de logs connaissait deux branches sur trois, et NOTIF-9/11 payaient la troisieme
+### Fixed - cinq rangees de notification reposaient sur un garage qui ne garait rien
 
-Une reaction vit sous son propre identifiant depuis le 2026-09-17, donc lire une conversation annule
-DEUX notifications et la fonction le journalise deux fois. `watch.mjs` ne nommait que les deux
-anciennes branches : deux lignes attendues ET necessaires comptaient comme inexpliquees, et deux
-rangees dont les assertions passaient ont ete enregistrees `FAIL`.
+`notif.mjs` sortait W1 de la conversation avec `history.pushState` : l'URL change, le panneau de
+conversation reste monte. W1 continuait donc de lire, et une lecture depuis un appareil du
+proprietaire annule la notification du telephone - d'ou un echec DIFFERENT a chaque passage. Avec
+`leaveConversation`, qui repond `routed away`, NOTIF-9 passe de `shade holds 0` a `shade holds 1`.
+Les cinq rangees passent propres, 4b comprise, dont la premisse est l'inverse.
 [testing-methodology](docs/wiki/testing-methodology.md).
+
 ## [0.18.20] - 2026-09-22
 
 ### Fixed - le token "ou commence le contenu" etait plus court d'un pixel que la barre qu'il decrit

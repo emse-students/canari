@@ -3200,6 +3200,41 @@ openmls, which reports at ERROR - so the same defect costs a `PASS-DIRTY` on the
 LINES on a handset, in a log a user's crash reporter would carry. It is one more reason the overlap
 has to stop existing rather than be reconciled afterwards.
 
+### FIXED 2026-09-23 - FIVE NOTIFICATION ROWS RESTED ON A PARK THAT NEVER PARKED ANYTHING
+
+`notif.mjs` left W1 on the conversation with `history.pushState` + a `popstate` event. That changes
+the URL and asks the router to follow; it does NOT close the conversation pane, and on the two-pane
+layout the pane stays mounted - so W1 went on reading the DM under a stage line saying it had been
+parked. A read from an owner device raises `FCM silent from self -> cancelling notification for
+group=` on the phone, which withdraws the very notification the row is waiting for.
+
+**The symptom was not a failure, it was a DIFFERENT failure each run** - which is what sent this
+looking in three wrong directions before the park was read. On `00a86a1a8`, same row, same bench:
+notified in 2213 ms then `shade holds 0`; then no notification at all for 60 s; then, once W1 left
+through `leaveConversation` - which routes away and ANSWERS `routed away` - `shade holds 1` and a
+clean `PASS`.
+
+`chat.mjs` grew `leaveConversation` for exactly this, and `notif15.mjs` already used it. Three
+things changed so the rows measure what they claim:
+
+1. **Both owner browsers leave through the verifying helper, and the answer is recorded.** W3 acts
+   as the owner too (`identity.mjs` says so), and the comment above the park said "the OWNER's other
+   device" in the singular because it was written when there was one.
+2. **Every reopening of W1 goes through `ensureChat` first.** A verified park lands on `/dashboard`,
+   where no conversation row is listed, so `openConversation` waited 20 s and threw "the row was
+   never listed" - a true sentence naming the wrong cause.
+3. **The classifier learnt three more expected lines**: the third branch of
+   `cancelConversationNotification` (a reaction has had its own notification id since 2026-09-17,
+   so reading a conversation cancels two), and both halves of the socket trigger's handoff, which
+   are NOTIF-1b's own success path. The builder's REFUSAL is deliberately still unexplained.
+
+**NOTIF-1b, NOTIF-4, NOTIF-4b, NOTIF-9 and NOTIF-11 all PASS clean afterwards**, NOTIF-4b included,
+whose premise is the opposite one - W1 deliberately left reading.
+
+**The rule this leaves: a precondition a row states in a log line is not a precondition. Park
+through something that answers, and record the answer** - these rows announced a park for months
+and the verdicts moved with whatever the layout happened to do.
+
 **RE-MEASURED ON `00a86a1a8`, 2026-09-23, AND IT IS STILL THERE - TWO SEVERE LINES WHERE THERE WERE
 SIX.** The same row (NOTIF-7b, killed mode), the same shape: one epoch, `msg_epoch=2 group_epoch=2`,
 `SecretReuseError`, 21 ms apart, on a run that PASSED its own assertions. So the count moved and the
