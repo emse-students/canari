@@ -17,6 +17,7 @@
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import AppLink from '$lib/components/shared/AppLink.svelte';
+  import MessageInlineText from './MessageInlineText.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
   interface Props {
@@ -32,7 +33,11 @@
     textContent: string;
     /** When true, adjusts colours for the amber bubble used on own messages. */
     isOwn?: boolean;
-    /** Pre-split text+link segments used to render the caption with clickable links. */
+    /**
+     * Pre-split text+link segments used to render the caption with clickable links - the text runs
+     * between them go through {@link MessageInlineText}, which is what resolves a mention to a
+     * name. Printing `segment.value` here is what showed a raw `@[64-hex]` under a photo.
+     */
     textSegments?: Array<{ type: 'text' | 'link'; value: string }>;
     /** Called when the user clicks a link inside the caption. */
     onNavigateLink?: (e: MouseEvent) => void;
@@ -354,7 +359,7 @@
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
         {:else}
-          {segment.value}
+          <MessageInlineText text={segment.value} />
         {/if}
       {/each}
     </p>

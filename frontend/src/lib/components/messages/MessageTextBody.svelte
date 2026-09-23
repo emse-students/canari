@@ -1,9 +1,8 @@
 <script lang="ts">
   import { isGifUrl, getGifEmbedUrl, splitWithHighlight } from '$lib/utils/chat/messageDisplay';
-  import { splitTextWithMentions } from '$lib/utils/mentions.parse';
   import AppLink from '../shared/AppLink.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
-  import MessageMentionChip from './MessageMentionChip.svelte';
+  import MessageInlineText from './MessageInlineText.svelte';
 
   import type { TextLinkSegment as TextSegment } from '$lib/utils/chat/messageDisplay';
 
@@ -75,29 +74,7 @@
           {#if part.hit}
             <mark class="rounded bg-amber-300/60 px-0.5 text-inherit">{part.text}</mark>
           {:else}
-            {#each splitTextWithMentions(part.text) as mp (`${mp.type}-${'userId' in mp ? mp.userId : ''}-${'value' in mp ? mp.value : ''}`)}
-              {#if mp.type === 'mention'}
-                <MessageMentionChip userId={mp.userId} />
-              {:else if mp.type === 'hashtag'}
-                <!-- IT TAKES THE BUBBLE'S OWN COLOUR, because the bubble is the only thing that
-                     knows what it is filled with. `text-amber-600/80 dark:text-amber-400/70` was
-                     1.68:1 on the outgoing yellow in light mode and 1.13:1 in dark - *"les # ne sont
-                     pas forcement visibles (jaune sur jaune)"* (user, 2026-09-20), measured against
-                     the four bubble fills. `currentColor` is 10.35:1 and 12.10:1 there and the body
-                     contrast everywhere else, by construction rather than by remembering. The
-                     hashtag is told apart by WEIGHT and by the `#` itself, which is all that
-                     survives any fill this bubble is ever given.
-
-                     NO TINT BEHIND IT, and that is deliberate: `bg-current/8` compiles to
-                     `color-mix(...)` guarded by `@supports`, and its fallback is `currentColor` at
-                     FULL opacity - a solid block in the text's own colour, behind text of that
-                     colour. A WebView without `color-mix` would hide the word completely, which is
-                     the defect being fixed, made worse. -->
-                <span class="font-semibold">#{mp.value}</span>
-              {:else}
-                {mp.value}
-              {/if}
-            {/each}
+            <MessageInlineText text={part.text} />
           {/if}
         {/each}
       {/if}
