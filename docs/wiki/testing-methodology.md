@@ -2919,6 +2919,35 @@ field, `clean: true` - and those are the exact two findings the warm-up exists t
 swallowed setup failure does not make a run fail; it makes a run mean something else without saying
 so.** Recorded in `a1SetupFaults`, announced, and asserted as `theDmWasOpenOnThePhone`.
 
+## THE FIELD THAT NAMED THE BUILDER COULD ONLY EVER NAME ONE
+
+NOTIF-14 records which of the two paths drew the notification it reads, because a title is only a
+fact about the path that produced it. It asked one question:
+
+```js
+lines.some((l) => /CanariFCM: showNotification/.test(l))
+  ? 'CanariFirebaseMessagingService (push)'
+  : 'tauri-plugin-notification (WebSocket)';
+```
+
+**That was true when it was written and stopped being true on 2026-09-18**, when the WebSocket frame
+ceased to be a second BUILDER and became a second TRIGGER for the same Kotlin one
+(`commands/notifications.rs` exists for exactly that). Both paths now reach `showNotification`, so
+the predicate holds whatever happened and the field is a constant wearing a measurement's name. The
+run of 2026-09-23 is the proof: the DM half was recorded as `CanariFirebaseMessagingService (push)`
+and its logcat holds **no push line at all**, only `notifyMessageFromWebSocket: queued`.
+
+Nothing failed. The row kept passing and failing on its real assertions, and every verdict it took
+carried one field that had quietly become a lie - **which is worse than a broken instrument, because
+a broken one is noticed.**
+
+The replacement asks about the TRIGGERS, which is what still differs, and records the ORDER, because
+the second post lands on the first one's notification id and the first one's wording is what survives
+it. The general form is the one this campaign has now paid for three times: **when the thing a field
+discriminates on is unified, the field does not start failing - it starts agreeing with itself.** A
+predicate is only a measurement while both of its branches are still reachable, and nothing in the
+code says which ones are.
+
 ## A PARK THAT NEVER PARKED ANYTHING, AND THE FIVE ROWS THAT RESTED ON IT
 
 `notif.mjs` took its second owner browser off the conversation with `history.pushState({}, '', '/chat')`
