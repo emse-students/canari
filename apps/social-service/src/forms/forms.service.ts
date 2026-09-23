@@ -864,7 +864,7 @@ export class FormsService {
       }
     }
 
-    return { message: 'Form submitted successfully', submissionId: savedSubmission.id };
+    return { submissionId: savedSubmission.id };
   }
 
   /** Deletes a submission. Requires form manager access. */

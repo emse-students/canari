@@ -51,6 +51,30 @@ The single form submission page handles all four payment flows. Key state:
   which tag or tier decides it, which is why swapping that rule server-side needed no change here.
 - Card registration setup: `POST /api/payments/setup-payment-method` (Stripe SetupIntent)
 
+### The submit response names no outcome, because a service with no locale cannot (2026-09-23)
+
+`POST /api/forms/:id/submit` used to answer `{ message: 'Form submitted successfully', submissionId }`
+and the page wrote `successMessage = res.message || m.form_view_submission_success()`. The server set
+`message` on EVERY success, so the `||` never ran: `form_view_submission_success` - "Reponse envoyee !"
+- was dead from the day it was written, and a French interface confirmed a submission in English. That
+was not a fallback, it was an unreachable branch, which is why nothing ever reported it.
+
+The response now only IDENTIFIES the submission (`{ submissionId }`) and the page says what happened.
+The two other success shapes already worked this way and that is exactly why only one path showed
+English: cash returns `{ submissionId, cashPayment: true }` and Stripe returns
+`{ checkoutUrl, submissionId }`, neither carrying prose, so both fell through to Paraglide.
+
+**A response field a client RENDERS cannot be written by a service that has no locale.** The server
+may return a code or an id; the words are the client's.
+
+STILL OPEN on this page, and deliberately not fixed with it: `error = e.message || m.form_view_...`
+at [`+page.svelte`](../../../../frontend/src/routes/forms/[id]/+page.svelte) lines 259 and 529 renders
+whatever prose the server threw - `Form is closed`, `Failed to create checkout session: ...` - so the
+error half of the same screen is still English. A generic translated fallback would lose the reason,
+and picking a translation from the prose is branching on an error message, which
+[durable-rules](../../durable-rules.md) forbids. It needs typed error codes on the submit path, which
+is a design change rather than this cleanup.
+
 ## The admin screens
 
 `forms/create` and `forms/[id]/edit` are two thin pages over one set of components. They were two

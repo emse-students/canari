@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une soumission de formulaire etait confirmee en anglais dans une interface francaise
+
+Le serveur renvoyait toujours `message: 'Form submitted successfully'`, et la page ecrivait
+`res.message || m.form_view_submission_success()` : la clef Paraglide n'a jamais ete atteinte. La
+reponse n'identifie plus que la soumission, et la page dit elle-meme ce qui s'est passe. La route
+`POST /posts/:postId/forms/:formId/submit`, un stub que personne n'appelait, est supprimee des deux
+cotes. [forms](docs/wiki/frontend/modules/forms.md#the-submit-response-names-no-outcome-because-a-service-with-no-locale-cannot-2026-09-23).
+
+
 ### Fixed - les options d'un sondage etaient coupees a l'ellipse, donc impossibles a distinguer
 
 Le libelle portait `truncate`, soit une ligne et rien d'autre. Un libelle est du texte libre, et sur

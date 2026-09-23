@@ -267,19 +267,6 @@ export class VotePollDto {
   optionIds: string[];
 }
 
-export class SubmitFormDto {
-  @IsString()
-  @IsOptional()
-  userId?: string;
-
-  @IsString()
-  @IsOptional()
-  email?: string;
-
-  @IsObject()
-  selections: Record<string, string | string[] | number | Record<string, any>>;
-}
-
 export class AddCommentDto {
   @IsString()
   @IsOptional()

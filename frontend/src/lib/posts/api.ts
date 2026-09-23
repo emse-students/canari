@@ -276,22 +276,6 @@ export async function votePoll(
   });
 }
 
-export async function submitForm(
-  postId: string,
-  formId: string,
-  payload: { selections: Record<string, string>; email?: string }
-): Promise<{
-  ok: boolean;
-  requiresPayment: boolean;
-  checkoutUrl?: string;
-  message: string;
-}> {
-  return request(`/api/posts/${postId}/forms/${formId}/submit`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
 export async function addReaction(
   postId: string,
   reactionType: string
