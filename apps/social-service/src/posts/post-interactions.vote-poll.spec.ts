@@ -156,4 +156,20 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     expect(post.polls[0].votesByUser.u1).toEqual([]);
     expect(post.polls[0].options[0].votes).toEqual([]);
   });
+
+  it('refuses a user id that would shadow a property of the map it is written into', async () => {
+    // `Object.create(null)` stops the shadowing; it does not stop the map CARRYING the key, which
+    // then travels to every reader of the poll and to JSON. The channel poll has refused this
+    // since CodeQL #2477/#2476 and the post poll had only the null prototype.
+    const { service } = makeService({
+      id: 'p1',
+      multipleChoice: true,
+      options: options(),
+      votesByUser: {},
+    });
+
+    await expect(
+      service.votePoll('post-1', 'p1', { userId: '__proto__', optionIds: ['a'] })
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 });

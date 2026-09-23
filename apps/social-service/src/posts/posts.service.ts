@@ -11,6 +11,7 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
+import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import {
@@ -355,10 +356,14 @@ export class PostsService {
         const previousVotes = previous?.options?.find((o: any) => o.id === id)?.votes;
         return { ...opt, id, votes: Array.isArray(previousVotes) ? [...previousVotes] : [] };
       });
-      // Null-prototype, as `votePoll` keeps it: a user id is an arbitrary string key.
+      // Null-prototype, as `votePoll` keeps it: a user id is an arbitrary string key. The
+      // SKIP is the other half - these ids were stored by a `votePoll` that has refused them only
+      // since this same day, so a poll written before it can still carry one, and rebuilding the
+      // map is where it would be handed on.
       const votesByUser: Record<string, string[]> = Object.create(null);
       for (const opt of options) {
         for (const userId of opt.votes as string[]) {
+          if (isUnsafeObjectKey(userId)) continue;
           (votesByUser[userId] ??= []).push(opt.id);
         }
       }

@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - un identifiant utilisateur devient un nom de propriete, et quatre sites le refusaient differemment
+
+Reactions et reponses de sondage sont stockees dans des maps indexees par id utilisateur. Quatre
+gardes existaient, aucune identique : trois noms ici, cinq la. Une seule liste desormais
+(`common/object-keys.ts`), `votePoll` refuse l'identifiant a l'entree comme le fait deja le sondage
+de salon, et la reconstruction d'une map ignore une cle de cette forme deja stockee.
+[social-service](docs/wiki/services/social-service.md#a-user-id-becomes-a-property-name-and-four-sites-spelled-the-refusal-differently-2026-09-23).
+
 ### Fixed - modifier un post remettait son sondage a zero
 
 Le formulaire renvoyait l'id du sondage sous un commentaire disant qu'il preservait l'historique des

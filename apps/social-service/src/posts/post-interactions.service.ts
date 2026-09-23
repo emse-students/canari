@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
+import { isUnsafeObjectKey } from '../common/object-keys';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
@@ -35,6 +36,8 @@ export class PostInteractionsService {
   /**
    * Copies a reactions map into a null-prototype object to prevent prototype-pollution
    * attacks where a user ID like "__proto__" could shadow Object properties.
+   *
+   * @see isUnsafeObjectKey - the list this spelled out, which differed from the three other copies.
    */
   private sanitizeReactions(
     raw: Record<string, string> | null | undefined
@@ -42,12 +45,7 @@ export class PostInteractionsService {
     const out = Object.create(null) as Record<string, string>;
     if (!raw || typeof raw !== 'object') return out;
     for (const key of Object.keys(raw)) {
-      if (
-        ['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'].includes(
-          key
-        )
-      )
-        continue;
+      if (isUnsafeObjectKey(key)) continue;
       out[key] = raw[key];
     }
     return out;
@@ -55,7 +53,7 @@ export class PostInteractionsService {
 
   /** Sets or replaces the reaction emoji for a user on a post (one reaction per user). */
   async addReaction(postId: string, userId: string, reactionType: string) {
-    if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
+    if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
     const post = await this.postRepo.findOne({ where: { id: postId } });
@@ -97,7 +95,7 @@ export class PostInteractionsService {
 
   /** Removes the user's reaction from a post. */
   async removeReaction(postId: string, userId: string) {
-    if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
+    if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
     const post = await this.postRepo.findOne({ where: { id: postId } });
@@ -343,6 +341,11 @@ export class PostInteractionsService {
 
         if (poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()) {
           throw new BadRequestException('Poll closed');
+        }
+        // The channel poll has refused this since CodeQL #2477/#2476; the post poll kept only the
+        // null-prototype map, which stops the shadowing and not the key being CARRIED.
+        if (isUnsafeObjectKey(data.userId)) {
+          throw new BadRequestException('Invalid userId');
         }
         // An id this poll does not have is not a refusal, it is nothing: it can only come from a
         // stale option list, and dropping it leaves the rest of the selection standing.
