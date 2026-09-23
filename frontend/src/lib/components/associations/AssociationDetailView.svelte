@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { Log } from '$lib/utils/Log';
   import { goto } from '$app/navigation';
   import {
     getAssociationBySlug,
@@ -199,16 +200,17 @@
 
   async function toggleFollow() {
     if (!asso || !userId) return;
+    // Same rule as the profile's follow button: the state is local, so it moves on the tap and
+    // goes back if the write is refused.
+    const wasFollowing = following;
+    following = !wasFollowing;
     followLoading = true;
     try {
-      if (following) {
-        await unfollowAssociation(asso.id);
-        following = false;
-      } else {
-        await followAssociation(asso.id);
-        following = true;
-      }
+      if (wasFollowing) await unfollowAssociation(asso.id);
+      else await followAssociation(asso.id);
     } catch (err) {
+      Log.d('AssociationDetailView.toggleFollow failed', err);
+      following = wasFollowing;
       error = m.common_generic_error_label();
     } finally {
       followLoading = false;

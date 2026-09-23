@@ -73,6 +73,14 @@
     onLoadAllComments?: () => Promise<void>;
     /** Optional external keydown handler forwarded after internal shortcuts are processed. */
     onKeyDown?: (e: KeyboardEvent) => void;
+    /**
+     * Comments shown before the server has acknowledged them.
+     *
+     * THEY CARRY A LOCAL ID, WHICH NO ENDPOINT WOULD RECOGNISE, so every control that would name
+     * one to the server is withheld until the real row replaces it. That is the whole contract:
+     * the reader sees their comment immediately and cannot act on an id that does not exist yet.
+     */
+    pendingCommentIds?: ReadonlySet<string>;
   }
 
   let {
@@ -93,6 +101,7 @@
     onReport,
     onLoadAllComments,
     onKeyDown,
+    pendingCommentIds,
   }: Props = $props();
 
   const mediaService = new MediaService();
@@ -335,7 +344,10 @@
 {#snippet commentNode(comment: PostComment, isReply: boolean)}
   {@const isOwn = comment.userId === currentUserId}
   {@const isEditing = editingCommentId === comment.id}
-  <div class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'}">
+  {@const isPending = pendingCommentIds?.has(comment.id) ?? false}
+  <div
+    class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending ? 'opacity-60' : ''}"
+  >
     <a
       href="/profile/{encodeURIComponent(comment.userId)}"
       class="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
@@ -440,55 +452,60 @@
           title={exactDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span
         >
 
-        <button
-          type="button"
-          onclick={() => onLikeComment(comment.id)}
-          class="text-2xs font-bold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
-            currentUserId
-          )
-            ? 'text-red-500'
-            : 'text-text-muted hover:text-text-main'}"
-        >
-          {comment.likes?.length
-            ? m.post_likes_count_label({ count: comment.likes.length })
-            : m.post_like_label()}
-        </button>
+        <!-- WITHHELD WHILE THE ROW IS PENDING: every one of these names the comment's id to
+             the server, and a pending row's id is local. The reader sees the comment; they
+             simply cannot act on it until it exists. -->
+        {#if !isPending}
+          <button
+            type="button"
+            onclick={() => onLikeComment(comment.id)}
+            class="text-2xs font-bold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
+              currentUserId
+            )
+              ? 'text-red-500'
+              : 'text-text-muted hover:text-text-main'}"
+          >
+            {comment.likes?.length
+              ? m.post_likes_count_label({ count: comment.likes.length })
+              : m.post_like_label()}
+          </button>
 
-        <button
-          type="button"
-          onclick={() => initiateReply(comment)}
-          class="text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
-        >
-          {m.post_reply_label()}
-        </button>
+          <button
+            type="button"
+            onclick={() => initiateReply(comment)}
+            class="text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
+          >
+            {m.post_reply_label()}
+          </button>
 
-        {#if isOwn && !isEditing}
-          <button
-            type="button"
-            onclick={() => initiateEdit(comment)}
-            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
-            aria-label={m.common_edit_label()}
-          >
-            <Pencil size={12} strokeWidth={2.5} />
-          </button>
-          <button
-            type="button"
-            onclick={() => onDeleteComment(comment.id)}
-            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
-            aria-label={m.common_delete_button()}
-          >
-            <Trash2 size={12} strokeWidth={2.5} />
-          </button>
-        {:else if !isOwn && onReport}
-          <button
-            type="button"
-            onclick={() => onReport?.(comment.id)}
-            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
-            aria-label={m.post_report_comment_label()}
-            title={m.post_report_label()}
-          >
-            <Flag size={11} strokeWidth={2.5} />
-          </button>
+          {#if isOwn && !isEditing}
+            <button
+              type="button"
+              onclick={() => initiateEdit(comment)}
+              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
+              aria-label={m.common_edit_label()}
+            >
+              <Pencil size={12} strokeWidth={2.5} />
+            </button>
+            <button
+              type="button"
+              onclick={() => onDeleteComment(comment.id)}
+              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
+              aria-label={m.common_delete_button()}
+            >
+              <Trash2 size={12} strokeWidth={2.5} />
+            </button>
+          {:else if !isOwn && onReport}
+            <button
+              type="button"
+              onclick={() => onReport?.(comment.id)}
+              class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
+              aria-label={m.post_report_comment_label()}
+              title={m.post_report_label()}
+            >
+              <Flag size={11} strokeWidth={2.5} />
+            </button>
+          {/if}
         {/if}
       </div>
 
