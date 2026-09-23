@@ -545,6 +545,23 @@ Four properties worth keeping:
 Facts about the instrument that are not guessable from the code, each of which has cost at least one
 run.
 
+**A STALE `uiautomator` SERVER MAKES EVERY SHADE READ FAIL, AND IT SAYS SO AS `attempt 33`.** A
+`uiautomator dump` that was interrupted leaves its `app_process` running under the `shell` user,
+holding UiAutomation - and the next dump is SIGKILLed rather than refused, so the caller sees exit
+137 and an empty stdout. The rig retries, 33 times, then records `SETUP-FAILED`; on 2026-09-22 that
+cost NOTIF-7 and NOTIF-7b one run each, on a pass where the notification had in fact arrived AND
+decrypted in both modes. Nothing in the message names the cause, and the on-device dump file is
+still there with a THREE-WEEK-OLD mtime, which is the tell:
+
+```sh
+adb shell "ps -A | grep app_process"   # a `shell`-owned one parked in futex_wait is the culprit
+adb shell kill -9 <pid>                # the next dump succeeds immediately
+```
+
+It is not the lockscreen, which is the other thing that stops a dump: `mWakefulness=Awake` and
+`mDreamingLockscreen=false` were both true throughout. Check the leftover process FIRST - the lock
+is visible in one command and this is not.
+
 **Bringing A1 back from zero** - HEAL does this repeatedly, and every step below was learnt by it
 failing once. The whole sequence is scripted; it is written out because when one step misbehaves the
 next one's symptom names the wrong cause.

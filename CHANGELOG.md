@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le classificateur de logs connaissait deux branches sur trois, et NOTIF-9/11 payaient la troisieme
+
+Une reaction vit sous son propre identifiant depuis le 2026-09-17, donc lire une conversation annule
+DEUX notifications et la fonction le journalise deux fois. `watch.mjs` ne nommait que les deux
+anciennes branches : deux lignes attendues ET necessaires comptaient comme inexpliquees, et deux
+rangees dont les assertions passaient ont ete enregistrees `FAIL`.
+[testing-methodology](docs/wiki/testing-methodology.md).
+
 ### Fixed - le token "ou commence le contenu" etait plus court d'un pixel que la barre qu'il decrit
 
 `h-(--app-top-bar-height)` etait sur la rangee INTERIEURE, `border-b` sur le `<header>` autour :

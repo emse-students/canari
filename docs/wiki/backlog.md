@@ -1320,6 +1320,18 @@ Two things outlive it:
    across messages rather than within one. **The payload cannot simply gain a sender NAME**: it is
    cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
    locally. That trade-off is the item, not the wording.
+
+   **NOTIF-14 IS THE ROW THAT MEASURES THIS, AND IT CANNOT PASS UNTIL THE WORDING IS ONE (measured
+   2026-09-23, build `00a86a1a8`).** It asks that a salon notification name where it was said; the
+   DM half matched the resolved sender name exactly, and the salon half read the SENDER's display
+   name, naming neither the community nor the channel. That is not a regression and not a second
+   defect: the socket trigger builds with `MessagingStyle`, whose shade title is the PERSON and
+   whose `conversationTitle` is a separate line, so a notification this trigger draws can never
+   satisfy the row - while the push path's `buildChannelPushTitle` produces `<workspace> - #<channel>`
+   and always would. The row therefore records which trigger won the race, which is precisely what
+   the paragraph above says now happens per message. **A row whose verdict depends on a race is not
+   reproducible**, so NOTIF-14 stays open ON THIS ITEM rather than being re-scoped: unify the
+   wording and the row becomes an assertion again.
 2. **THE DOUBLING CANNOT HAPPEN ON DESKTOP OR ON THE WEB, AND THAT IS ARCHITECTURE RATHER THAN
    LUCK (measured 2026-09-22).** It needs two independent builders reached by two independent
    triggers, and NEITHER surface has the second trigger: every command in
@@ -3187,6 +3199,13 @@ every assertion it makes.
 openmls, which reports at ERROR - so the same defect costs a `PASS-DIRTY` on the web and SIX SEVERE
 LINES on a handset, in a log a user's crash reporter would carry. It is one more reason the overlap
 has to stop existing rather than be reconciled afterwards.
+
+**RE-MEASURED ON `00a86a1a8`, 2026-09-23, AND IT IS STILL THERE - TWO SEVERE LINES WHERE THERE WERE
+SIX.** The same row (NOTIF-7b, killed mode), the same shape: one epoch, `msg_epoch=2 group_epoch=2`,
+`SecretReuseError`, 21 ms apart, on a run that PASSED its own assertions. So the count moved and the
+mechanism did not, which is what this entry predicts - the overlap is still reconciled after the
+fact rather than absent, and a handset still pays for it at ERROR. Nothing here is closed by that
+reading; it dates the entry against current code so the next session does not re-derive it.
 
 **THAT HYPOTHESIS IS NOW REFUTED FOR THE PHONE, 2026-09-08, AND THE REAL MECHANISM IS NOT A RACE AT
 ALL.** This entry said the pull/socket overlap was *"not established"* and that what would settle it
