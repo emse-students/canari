@@ -204,4 +204,36 @@ describe('PostsService keeps poll votes across an edit', () => {
     expect(poll.maxSelections).toBe(2);
     expect(poll.endsAt).toBe(endsAt);
   });
+
+  it('drops a stored user id of a shape that must never become a property name', async () => {
+    // `votePoll` has refused this shape only since 2026-09-23, so a poll written before it can
+    // still carry one in its options - and rebuilding the map is where it would be handed on to
+    // every reader of the poll.
+    const stored = STORED_POLL();
+    stored.options[0].votes = ['u1', '__proto__'];
+    const { service, post } = makeService([stored]);
+
+    await service.updatePost(
+      'post-1',
+      'author-1',
+      {
+        markdown: 'apres',
+        polls: [
+          {
+            id: 'poll-1',
+            question: 'On y va ?',
+            options: [
+              { id: 'opt-a', label: 'Oui' },
+              { id: 'opt-b', label: 'Non' },
+            ],
+          },
+        ],
+      },
+      true
+    );
+
+    const poll = (post.polls as Record<string, any>[])[0];
+    expect(Object.keys(poll.votesByUser)).toEqual(['u1', 'u3']);
+    expect(Object.getPrototypeOf(poll.votesByUser)).toBe(Object.prototype);
+  });
 });
