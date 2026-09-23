@@ -356,15 +356,20 @@ export class PostsService {
         const previousVotes = previous?.options?.find((o: any) => o.id === id)?.votes;
         return { ...opt, id, votes: Array.isArray(previousVotes) ? [...previousVotes] : [] };
       });
-      // Null-prototype, as `votePoll` keeps it: a user id is an arbitrary string key. The
-      // SKIP is the other half - these ids were stored by a `votePoll` that has refused them only
-      // since this same day, so a poll written before it can still carry one, and rebuilding the
-      // map is where it would be handed on.
-      const votesByUser: Record<string, string[]> = Object.create(null);
+      // A user id is an arbitrary string, so it is accumulated in a `Map`, which has no property
+      // names to shadow and needs no null prototype to say so. `Object.fromEntries` then defines
+      // own data properties, which is what the column stores and what every client reads.
+      //
+      // The SKIP is the other half: these ids were stored by a `votePoll` that has refused this
+      // shape only since 2026-09-23, so a poll written before it can still carry one, and
+      // rebuilding the map is where it would be handed on to every reader.
+      const votesByUser = new Map<string, string[]>();
       for (const opt of options) {
         for (const userId of opt.votes as string[]) {
           if (isUnsafeObjectKey(userId)) continue;
-          (votesByUser[userId] ??= []).push(opt.id);
+          const cast = votesByUser.get(userId);
+          if (cast) cast.push(opt.id);
+          else votesByUser.set(userId, [opt.id]);
         }
       }
       return {
@@ -375,7 +380,7 @@ export class PostsService {
         // history, and the cap only ever decides what the NEXT voter may do.
         maxSelections: poll.maxSelections ?? null,
         endsAt: poll.endsAt ?? null,
-        votesByUser,
+        votesByUser: Object.fromEntries(votesByUser),
         options,
       };
     });
