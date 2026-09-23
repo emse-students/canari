@@ -1452,6 +1452,32 @@ is the app's own label for an envelope it deliberately summarises (a conversatio
 quote). **So `📷 Photo` inside a bubble always means a push row that was never upgraded** - if
 it is ever seen again, that is where to look, and it is a different bug from this one.
 
+**IT WAS SEEN AGAIN ON 2026-09-22, AND IT WAS INDEED A DIFFERENT BUG (fixed 2026-09-23).** The user
+reported two bubbles still reading `📷 Photo` hours later and across a relaunch - persisted, so
+not a boot-ordering artefact - plus a photo that never arrived at all on another member's phone.
+The cause is the FOURTH arrival order, the one the 2026-09-17 fix does not cover: the cache wins,
+the caption is merged in memory at login, and the queue drain - **a bulk ingest** - then dropped the
+real envelope as a duplicate and acked the frame anyway. Reproduced on the Mi 9T with
+`archive/photoprev.mjs --mode restored`, which is the only one of seven orders that produces it.
+Mechanism in [mob](frontend/mobile.md#fcm-message-cache), pinned by
+`useMessaging.bulkIngest.svelte.test.ts`.
+
+**VERIFIED ON THE Mi 9T, 2026-09-23, ON A DEBUG APK BUILT FROM THE FIX: ALL SEVEN MODES PASS.** The
+line that decided it is the one that used to read `Duplicate ignored`:
+`[FCM_CACHE] 1 message(s) merged in memory at login` (05:09:24), then
+`[ADD_MSG] Preview upgrade during a bulk ingest id=bbcda750 - taking the live path` and
+`[ADD_MSG] Message upgraded` (05:09:33), and only THEN `messageCallback -> true`. The pane is read
+twice per mode, the second time after a kill and a cold relaunch, so the picture it shows came off
+DISK: across the ladder the decoded count rises by exactly one per mode, 9 to 16, and the caption
+count never rises at all.
+
+**WHAT IS LEFT IS A DECISION, NOT A MEASUREMENT: the rows ALREADY stuck.** No boot repairs one -
+the queue row is deleted and the replay's consumed ledger is durable - so the only copy left
+anywhere is a peer's. The phone still carries the two captions the pre-fix runs stranded on it, and
+they sat there unchanged through all seven passes; that is the fix's limit, measured rather than
+argued. The user's own two bubbles are in the same state, and repairing them would mean asking a
+member who still holds the envelope for a history bundle.
+
 ### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
 
 Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une discussion. +1 s'il est

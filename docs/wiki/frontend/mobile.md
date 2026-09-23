@@ -1231,6 +1231,41 @@ so knowing the kind would change nothing there.
 
 **THE INJECTION MAY ONLY EVER MAKE A ROW RICHER, AND UNTIL 2026-09-17 IT COULD MAKE ONE POORER - FOR GOOD.** Everything above reasons about the cache arriving FIRST, which is what it was built for. It is a file on disk, so it also arrives second. The native writers cache every frame that decrypts, with no foreground check - only the notification is suppressed while the app is open - so a message received by a RUNNING app, drawn from its real envelope over the WebSocket and acknowledged, still left an entry behind. The next boot drained it and `saveMessage` (a `put` on the primary key, in both backends) wrote the notification's caption over the envelope, with `isFcmPreview` back to `true`. **And nothing could repair it**: an acknowledged message is deleted from the server queue (`messaging.service.ts`, the one delete site, and only from an authenticated per-device `/ack`), so no envelope is ever delivered for that id again and `shouldUpgradeMessage` never gets its chance. The user reported it as a photo that became the words "📷 Photo" on opening the conversation; it needed no race, only a restart. `consumeFcmCache` now reads the row first and drops the preview when what is already there is a full envelope - `isEnvelopeContent`, the same predicate `shouldUpgradeMessage` uses to decide the opposite - and it does not report a dropped entry as injected, since the in-memory merge would otherwise paint the caption over a message already on screen. `fcmCache.test.ts` covers the three arrival orders.
 
+**AND THERE WAS A FOURTH ORDER, WHICH THE INJECTION WINS AND THE DRAIN THEN THROWS AWAY (fixed
+2026-09-23).** The paragraph above closes the case where the cache arrives second; this one is the
+case where it arrives first and is never relieved. At login `consumeFcmCache` injects the caption
+and `mergeFcmMessagesIntoConversations` puts it in the conversation - correct, that is the point of
+the cache - and the queue drain then reaches the frame it previews. **A boot drain is a BULK
+INGEST**, and `addMessageToChat`'s bulk branch asked one question only, "do I already hold this
+id": the envelope was logged as `Duplicate ignored during a bulk ingest`, dropped, and the handler
+answered `true`. The frame was acknowledged and deleted server-side, and all three recovery routes
+shut in the same instant - the queue row gone, the generation spent, and the archive replay
+skipping the fingerprint for ever because the drain had marked it consumed
+(`saveSeenCipherHashes` is durable). The bubble reads `📷 Photo` for good, on a device that
+never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
+path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
+buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no
+row, it replaces the content of one already on screen. There is no jank to avoid, and there is a
+write to do that only the live path performs before the ack.
+
+**Reproduced on hardware before it was fixed**, because three of the four ordinary lifecycles do
+not produce it: `archive/photoprev.mjs` sends one uncaptioned image and reads the pane across a
+kill and a cold relaunch in seven orders, and only `restored` - preview injected at a boot with no
+estate, estate restored while the app runs, then a cold relaunch - leaves the caption behind.
+`killed`, `background`, `foreground` and `elsewhere` are all clean, and `foreground` writes no
+cache entry at all, a live app having acked the frame before `scheduleDeferredPush` could fire.
+**A row already stuck cannot be repaired by this fix or by any later boot**: the only copy left
+anywhere is a peer's, so it would take a history bundle from a member who still holds the envelope.
+
+**AND THE FIX WAS MEASURED THE SAME WAY IT WAS FOUND - all seven modes PASS on a debug APK built
+from it (Mi 9T, 2026-09-23).** `restored` now logs
+`[ADD_MSG] Preview upgrade during a bulk ingest - taking the live path` and `Message upgraded`
+BEFORE `messageCallback -> true`, where it logged `Duplicate ignored` and acked in the same
+millisecond. Each mode's second read is taken after a kill and a cold relaunch, so the picture it
+counts was read back from disk: the decoded count rises by exactly one per mode across the ladder
+and the caption count never rises. The two captions the PRE-fix runs stranded on that phone are
+still there after all seven passes, which is the paragraph above, measured.
+
 **THE CHECK CANNOT BE MOVED INSIDE THE WRITE, AND THAT IS A PROPERTY OF THE ENGINE RATHER THAN A CHOICE.** An IndexedDB transaction closes on the first `await` of a non-IDB promise, and reading a stored row means awaiting WebCrypto - so no single transaction can both read the existing content and decide on it. The read is a separate step, exactly as in `updateMessage`, which is safe here because the injection runs inside the `fcm_cache` startup phase, after the conversations are loaded and before the MLS sync writes anything. `getMessage` is the primitive that reclaimed it: it was already written twice, inline in the body of each `updateMessage`, and both now delegate to it.
 
 **THE MEDIA REFERENCE IS DELIBERATELY NOT CARRIED, SO DO NOT "FINISH" THIS LATER.** `DecryptedMessage` holds `mediaId`, `mediaKey`, `mediaIv` and `mimeType` - it must, the notification thumbnail decrypts the blob with them - and `writeFcmCache` copies none of the four. Adding them would let a cold boot draw the picture immediately instead of waiting for the sync, and would write an AES-256-GCM content key in CLEARTEXT into a plain `writeText` file, beside an `mls.bin` that is explicitly encrypted at rest. That asymmetry is the point: this file holds a caption, never key material. The latency it would buy is the sync's, and the sync repairs the row correctly now that it cannot be undone.
