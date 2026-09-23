@@ -92,8 +92,10 @@ sous les principaux. [associations](docs/wiki/frontend/modules/associations.md).
 ### Changed - la carte d'une liste ne repete plus ce que son rayon dit deja
 
 Suppression de la pastille "Liste 2026" (doublon du titre "Campagnes 2026") et du compteur de
-membres sur les listes seulement ; les rayons sont maintenant divises par association parente a
-l'interieur de chaque annee (user, 2026-09-22).
+membres sur les listes seulement ; a l'interieur d'une annee les listes sont ORDONNEES par
+association parente, dans une seule grille - le regroupement en sous-sections, essaye le
+2026-09-22, ouvrait une grille par parent et laissait une rangee presque vide (user, 2026-09-23 :
+*"enorme espace vide... c'etait plus les organiser en les ordonnant, pas en les regroupant"*).
 [associations](docs/wiki/frontend/modules/associations.md).
 ### Fixed - l'agenda du telephone rendu pour la premiere fois : un trait sur rien, et un jour en francais
 

@@ -45,9 +45,11 @@
   const archivedLists = $derived(lists.filter((a) => a.archived));
 
   /**
-   * Active lists as per-campaign-year "shelves", each divided by parent association. Pure page
-   * sections (no accordion) so the whole directory reads like trophy shelves. The ordering, and
-   * why the parent is the INNER level, are in `listShelves.ts` - which is also where it is tested.
+   * Active lists as per-campaign-year "shelves". Pure page sections (no accordion) so the whole
+   * directory reads like trophy shelves. ONE grid per year, with the lists of an association next
+   * to one another because they are SORTED that way and not because a sub-section boxes them in -
+   * the ordering, and what a second grouping level cost, are in `listShelves.ts`, where it is
+   * also tested.
    */
   const shelves = $derived(buildCampaignShelves(activeLists));
 
@@ -109,29 +111,15 @@
               </span>
               <span class="bg-cn-border h-px flex-1"></span>
             </h2>
-            <!--
-              THE PARENT IS A QUIETER HEADING THAN THE YEAR, and the group that has no parent gets
-              none at all: a list belonging to no association is an ordinary case, so a year whose
-              lists all lack a parent renders exactly as it did before parents existed.
-            -->
-            {#each shelf.groups as group (group.parentName ?? '')}
-              <div class="space-y-2">
-                {#if group.parentName}
-                  <h3 class="text-text-muted text-2xs font-bold tracking-wider uppercase">
-                    {group.parentName}
-                  </h3>
-                {/if}
-                <div class={CARD_GRID}>
-                  {#each group.items as list (list.id)}
-                    <AssociationTile
-                      association={list}
-                      href="/lists/{list.slug}"
-                      isMember={myIds.has(list.id)}
-                    />
-                  {/each}
-                </div>
-              </div>
-            {/each}
+            <div class={CARD_GRID}>
+              {#each shelf.items as list (list.id)}
+                <AssociationTile
+                  association={list}
+                  href="/lists/{list.slug}"
+                  isMember={myIds.has(list.id)}
+                />
+              {/each}
+            </div>
           </section>
         {/each}
       {/if}

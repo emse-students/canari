@@ -95,14 +95,21 @@ not; the middot separator belongs to the count, so a list prints the note withou
 the count is a CONDITION rather than a deletion, and why `associationTileList.test.ts` reads the
 markup - every one of these was valid markup that rendered without complaint.
 
-### The two orderings of the directory
+### The two orderings of the directory, and the grouping that lasted one day
 
-`/lists` shelves by campaign year, most recent first, `promo`-less lists last under "Divers"; each
-shelf is then divided by parent association, alphabetically, with the parentless lists last and
-unlabelled. **Year outside, parent inside** - a campaign happens in a year and an association runs
-several of them - and it is the reason the per-card year pill was redundant. `buildCampaignShelves`
-(`lib/associations/listShelves.ts`) is the whole of it, with both orderings total so the same data
-cannot render two ways, and both asserted apart in `listShelves.test.ts`.
+`/lists` shelves by campaign year, most recent first, `promo`-less lists last under "Divers". The
+year is the ONLY heading, and inside a shelf the lists are ORDERED by parent association then by
+their own name, the parentless ones last - **one grid per year, never one grid per parent**.
+
+The parent was a second GROUPING level on 2026-09-22 and was undone the next day: with two lists
+per association, each group opened its own `CARD_GRID` and spent a full row on two cards, leaving
+most of the width blank (user: *"enorme espace vide... c'etait plus les organiser en les ordonnant,
+pas en les regroupant"*). A sort buys the same adjacency for nothing, and the sub-heading was a
+duplicate anyway - every card already prints its `parentName` above its title, the same redundancy
+that removed the per-card year pill under the year heading.
+
+`buildCampaignShelves` (`lib/associations/listShelves.ts`) is the whole of it, with both orderings
+total so the same data cannot render two ways, and both asserted apart in `listShelves.test.ts`.
 
 ## Permissions
 
