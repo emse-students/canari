@@ -777,6 +777,28 @@ it means giving a test account an avatar server-side**, or setting a logo on a t
 the LOCAL estate and running step 2 against a release-configured APK built for that estate - the
 minification is identical, so it measures the same R8 output ([backlog](backlog.md)).
 
+**THE P1 THIS RUN FOUND - AND THE READING THAT LOOKED LIKE ITS PROOF AND WAS NOT.** The shipped
+`v0.18.21` library compiles `setWebContentsDebuggingEnabled`, because the `devtools` Cargo feature
+sat in plain `[dependencies]` and wry gates that call as
+`#[cfg(any(debug_assertions, feature = "devtools"))]`; `tauri.conf.json` supplies its argument as
+`true`. On an ordinary phone that is an inspectable WebView, and with it the MLS state, decrypted
+message content and the access token the repository's rule keeps in memory *precisely* because
+memory is supposed to be unreachable. **`open_devtools()` at `src/lib.rs` is correctly
+`#[cfg(debug_assertions)]`-gated, which is why auditing that call site clears a release that is not
+clear** - nothing opens a panel, and that was never the security property. The feature is removed in
+`0.18.22`.
+
+**THE PROOF IS THE BINARY, AND THE PHONE IS DISQUALIFIED FROM GIVING ONE.** `strings | grep -c` on
+`lib/arm64-v8a/libmines_app_lib.so`: **1 in the shipped `v0.18.21` artifact, 0 in the new build**,
+same architecture, same release profile, and 0 in `classes.dex` too. The runtime probe cannot
+corroborate either half, and the reason is a property of the test device rather than of the app:
+**the Mi 9T reports `ro.build.type=userdebug`, a ROM that enables WebView debugging for every
+application on it.** Measured, not assumed - the new APK, which provably contains no enabler
+anywhere, still opened `@webview_devtools_remote_<pid>` for its own pid. So the 2026-09-23 reading
+that first raised this was TRUE and EMPTY: it would have appeared whatever the artifact contained.
+**What is owed is the same `/proc/net/unix` probe on a `user`-build device**, which is the only kind
+that can tell an app's own setting from the ROM's.
+
 1. **The app starts on its own background, not grey.** `windowBackground` is now
    `@color/app_background`, so the gap before SvelteKit hydrates is `#070B12` dark / `#F9FBFF` light
    - the colour the page settles on, where it used to be the parent theme's `colorBackground`.

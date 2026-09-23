@@ -1286,7 +1286,15 @@ What must not be forgotten between the pages:
   a Cargo feature in plain `[dependencies]` satisfies that in a build with no `debug_assertions`.
   **"Nothing opens a panel" and "nothing can attach" are different claims**, and only the second is
   the security property. Ask what a dependency's FEATURES compile in, never only what this
-  repository's source calls. Measured on the shipped artifact 2026-09-23 ([backlog](backlog.md)).
+  repository's source calls. The evidence is a string count in the shipped library against the same
+  count in a control, 2026-09-23 ([device-verification](device-verification.md)).
+- **A DEVICE THAT GRANTS A CAPABILITY TO EVERY APP CANNOT MEASURE WHETHER ONE APP GRANTS IT.** A
+  `userdebug` ROM enables WebView debugging for everything on it, so a `@webview_devtools_remote`
+  socket observed there says NOTHING about the artifact - proven the hard way on the Mi 9T, where an
+  APK carrying zero occurrences of `setWebContentsDebuggingEnabled` in both its native library and
+  its dex was inspectable anyway. It cannot confirm the exposure and it cannot confirm the fix.
+  **Read `ro.build.type` before believing any capability reading taken on a phone**, and prefer the
+  artifact: a count against a control settles what a runtime probe on a development ROM cannot.
 - **A CAPABILITY COMPILED INTO AN APK IS NOT REACHED BY A DEPLOY, AND `minClientVersion` CANNOT GATE
   IT.** The app embeds its frontend (`frontendDist: "../build"`), so every device already holding a
   build keeps whatever that binary can do until a NEW store version replaces it - and the version

@@ -96,12 +96,16 @@ moitie basse vide. Un second defaut, jamais signale, tombait avec : une soiree f
 lisait "matin" faute de rendre la journee de 05:00 a 28:59.
 [calendar](docs/wiki/frontend/modules/calendar.md#a-lone-event-takes-half-the-square-and-which-half-says-when).
 
-### Security - le WebView de la build livree par les stores est inspectable
+### Security - la build livree par les stores compilait l'activation du debogage WebView
 
-Check R execute sur l'artefact `v0.18.21` lui-meme : DevTools s'attache au telephone et lit l'etat
-MLS, les messages dechiffres et le jeton en memoire - ce que la regle "jeton en memoire UNIQUEMENT"
-suppose inatteignable. Trois causes candidates, separees une par une : c'est la feature Cargo
-`devtools` qui compile l'appel, pas le manifeste. Cinq des six etapes passent ; l'etape 2 n'est pas
+`v0.18.21` embarque l'appel `setWebContentsDebuggingEnabled`, que la feature Cargo `devtools`
+compile et que `tauri.conf.json` arme a `true` : sur un telephone ordinaire le WebView est donc
+inspectable, et avec lui l'etat MLS, les messages dechiffres et le jeton "en memoire UNIQUEMENT".
+La feature est retiree - une occurrence de l'appel dans la lib livree, zero dans la nouvelle, a
+architecture et profil identiques, et zero dans le dex. **La mesure faite sur le Mi 9T ne prouvait
+pas l'exposition et ne prouve pas davantage le correctif** : cette ROM est `userdebug`, ce qui rend
+inspectable TOUTE application - y compris une APK ne contenant aucun activateur. La preuve tient au
+binaire, pas au telephone. Cinq des six etapes de check R passent ; l'etape 2 n'est pas
 mesurable faute d'un avatar sur un compte de test.
 [device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
 [backlog](docs/wiki/backlog.md).
