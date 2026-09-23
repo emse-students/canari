@@ -104,13 +104,36 @@
   purpose-written `nav_*_desc` of 131-219px. Fitting that one string would have cost a 384px
   overlay; the outlier was the string, not the width.
 -->
+<!--
+  ONE RUNG, ALWAYS, AND A TRANSITION THAT NAMES WHAT IT ANIMATES. The rail used to climb from a
+  raw `z-20` to `--z-nav-rail` as it opened, which read as "it only needs to beat the scrim while
+  the scrim exists". A z-index is an INTEGER, so `transition-all` interpolates it: measured on the
+  local estate 2026-09-23, the rail computed 20, then 21, then 22 on successive frames instead of
+  30. The scrim mounts at 22 in the same flush, so for the first frames of every open the thing the
+  scrim is one rung UNDER was one rung OVER it - the scrim took the pointer, `mouseleave` fired on
+  the rail, the panel collapsed, the scrim went with it and the pointer came back. Measured at the
+  rail's own coordinates: 6 to 14 `mouseleave`s per hover, a ~190ms cycle, which is the flicker the
+  user reported as "le volet ne s'ouvre plus au survol, les icones scintillent". Pinning the rung
+  took it to 0 of 6 hovers, and removing the pin brought it back.
+
+  IT WAS ALWAYS WRONG AND ONLY SHOWED ON 2026-09-22. Until #967 an unlayered theme rule was
+  overriding `transition-property` on every `aside` in the app, so this `transition-all` animated
+  nothing at all. Fixing that rule did not introduce the defect; it delivered it.
+
+  So neither half is left to be re-derived: the rail carries `--z-nav-rail` whether it is open or
+  shut - nothing in the ladder sits between the scrim's 22 and it - and the transition names its
+  four properties, because `all` is a promise to animate whatever anyone adds next, including the
+  next invariant that happens to be spelled as a number. The colours are named too: a bare
+  `transition-[width]` wins over the `@layer base` crossfade and would drop the rail out of the
+  theme fade that same commit restored.
+-->
 <aside
   aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-all duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
-    ? 'z-(--z-nav-rail) w-[21rem]'
-    : 'z-20 w-[4.5rem]'}"
+  class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 z-(--z-nav-rail) hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-[width,background-color,color,border-color] duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
+    ? 'w-[21rem]'
+    : 'w-[4.5rem]'}"
 >
   <nav class="flex flex-1 flex-col gap-1.5 p-3">
     {#each APP_PLACES as place (place.id)}

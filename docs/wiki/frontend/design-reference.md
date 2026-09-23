@@ -862,7 +862,7 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | rung | value | what it is |
 | --- | --- | --- |
 | `--z-nav-scrim` | 22 | the scrim under the expanded nav rail |
-| `--z-nav-rail` | 30 | the expanded nav rail |
+| `--z-nav-rail` | 30 | the nav rail, open OR shut - see "A rung that is ANIMATED" below |
 | `--z-page-sticky` | 35 | a sticky date pill inside a scroller |
 | `--z-page-overlay` | 40 | the chat's own banner stack, the composer footer |
 | `--z-nav-drawer-scrim` | 42 | |
@@ -925,7 +925,9 @@ one**, because one cutoff cannot express both halves of the boundary:
 
 Either failure names the file, the offending token and every available rung. It also fails on a
 ladder declared out of order (it caught exactly that on the first run), on two rungs sharing a value,
-and on any scrim that is not strictly under the panel it dims.
+on any scrim that is not strictly under the panel it dims, and - since 2026-09-23 - on any element
+that carries TWO different `z-*` values in one class attribute together with `transition-all`, which
+is the subsection below.
 
 **The second branch asserts an ABSENCE, so a sibling test asserts the SWEEP still sees anything at
 all** - more than 500 class attributes read, more than five of them `fixed inset-0`. A regex that
@@ -975,6 +977,36 @@ written to end, reintroduced by the gate meant to prevent it.
 **`CallOverlay` was on the suspect list and is clean** - it already takes `--z-critical` on its
 `fixed inset-0` root. Its class attribute spans lines, which is why a line-oriented sweep could not
 say so; the gate collapses whitespace before reading, so it can.
+
+### A rung that is ANIMATED is not the rung it declares (2026-09-23)
+
+**The nav rail's hover panel stopped opening, and the icons flickered.** The rail climbed from a raw
+`z-20` to `--z-nav-rail` (30) as it opened - a shape that reads as "it only needs to beat the scrim
+while the scrim exists". But `z-index` is an INTEGER, so `transition-all duration-300` INTERPOLATES
+it. Measured on the local estate at the rail's own coordinates: it computed **20, then 21, then 22**
+on successive frames instead of 30, while its scrim - mounted at 22 in the same flush - sat ON TOP of
+the thing it is one rung under. The scrim took the pointer, `mouseleave` fired on the rail,
+`isExpanded` went false, the scrim left with it and the pointer came back to the rail: **6 to 14
+`mouseleave`s per hover, a ~190ms cycle.** Pinning the rung took it to **0 leaves on 6 of 6 hovers**,
+and removing the pin brought it back - reversed twice.
+
+**IT HAD BEEN WRITTEN THAT WAY FOR MONTHS AND BROKE ON A DAY NOTHING IN THE MARKUP CHANGED.** Until
+[#967](https://github.com/emse-students/canari/pull/967) an unlayered theme rule was overriding
+`transition-property` on every `nav`, `aside`, `header`, `button`, `a`, `input`, `textarea` and
+`select` in the app, so this `transition-all` animated nothing at all. Moving that rule into
+`@layer base` did not introduce the defect; it DELIVERED it. That is the whole case for a gate rather
+than a note.
+
+The fix is both halves, because either alone leaves the class of bug: the rail carries
+`--z-nav-rail` **whether it is open or shut** - nothing in the ladder sits between the scrim's 22 and
+it, so the second rung bought nothing - and its transition NAMES its four properties, because `all`
+is a promise to animate whatever anyone adds next. The colours are named too: a bare
+`transition-[width]` beats the `@layer base` crossfade and would drop the rail out of the theme fade
+that same commit restored.
+
+**A SINGLE `z-*` PLUS `transition-all` IS NOT AN OFFENCE and the gate does not report it** - a value
+that never changes never transitions. Three such elements exist in the tree, all local `z-0` / `z-10`
+orderings inside one card, and a gate that accused them is one people learn to silence.
 
 ### The thing a ladder cannot fix
 
