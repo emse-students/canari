@@ -4,6 +4,7 @@ import {
   daySlotLayout,
   eventBgCss,
   fitEventText,
+  breakMark,
   offDayShade,
   splitLogoBands,
   splitLogoWatermark,
@@ -278,5 +279,23 @@ describe('offDayShade', () => {
   it('floors the compounded shade, so a dark cell colour cannot become a hole', () => {
     // Two full steps would be 0.48; the floor is what keeps the cell a cell.
     expect(offDayShade(true, true)).toBeCloseTo(0.38);
+  });
+});
+
+describe('breakMark', () => {
+  it('says nothing at all on a day no break covers', () => {
+    expect(breakMark(false, 0)).toBe('none');
+    expect(breakMark(false, 3)).toBe('none');
+  });
+
+  it('stamps the word across a break day that carries nothing else', () => {
+    expect(breakMark(true, 0)).toBe('stamp');
+  });
+
+  it('falls back to the strip as soon as the day carries one event', () => {
+    // The threshold is ONE, not "a few": a rotated word across a single event card already makes
+    // both unreadable, which is the whole reason the two marks exist rather than one.
+    expect(breakMark(true, 1)).toBe('strip');
+    expect(breakMark(true, 4)).toBe('strip');
   });
 });
