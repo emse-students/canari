@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le fil de discussion etait ramene en bas par le reseau, et celui d'a cote aussi
+
+`useMessaging` terminait chaque message persiste, chaque lot et chaque rattrapage par un
+`scrollTop = scrollHeight` qui ne demandait rien - ni si le lecteur etait remonte lire, ni meme si
+le message appartenait a la conversation ouverte. Le pire des trois tombait a la fin du rattrapage,
+soit exactement au retour d'une mauvaise connexion. `ChatArea` decide seul desormais. Dans l'autre
+sens, une reponse d'historique d'un pair faisait descendre le lecteur de la hauteur exacte de ce
+qu'il venait de demander : une rangee sert d'ancre.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3bis-who-may-move-the-readers-viewport-2026-09-23).
+
+
 ### Fixed - l'onglet Fil attendait le reseau pour afficher ce que le telephone avait deja
 
 Trois mecanismes sur le meme onglet : la porte d'audience etait un aller-retour place DEVANT la

@@ -23,7 +23,12 @@
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
-  import { isPinnedToBottom, shouldFollowThreadBottom } from '$lib/utils/chat/threadAnchor';
+  import {
+    anchorShift,
+    isPinnedToBottom,
+    respondToNewMessage,
+    shouldFollowThreadBottom,
+  } from '$lib/utils/chat/threadAnchor';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -778,29 +783,32 @@
         entering = true;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
-      } else if (hasNewMessage && (entering || catchupActive)) {
-        // Growth while still entering/catching up is the initial page for THIS conversation
-        // still arriving late - e.g. a cold-started app landing here from a notification before
-        // local history finished loading, so `hasConversationChanged` fired on a near-empty
+      } else if (hasNewMessage) {
+        // WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION IS ONE DECISION, AND IT IS NOT HERE.
+        // `respondToNewMessage` holds it, tested on its own; this branch only carries it out.
+        //
+        // `repin-entry` is growth while the conversation is still being entered, or while a
+        // catch-up runs and the reader has not left the bottom: the initial page for THIS
+        // conversation still arriving late - a cold-started app landing here from a notification
+        // before local history finished loading, so `hasConversationChanged` fired on a near-empty
         // list and pinned `windowStart` near 0. Left alone, that stale `windowStart` would go on
-        // pointing at the same small slice forever - nothing ever advances it forward as the
-        // list grows underneath it, only clamps it from going past the end. Re-run the same
-        // entry pin rather than the "only scroll if already near bottom" logic below, which is
-        // for a genuinely new live message arriving while the reader is already settled in.
-        windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-        entering = true;
-        tick().then(() => fillViewportThenPin());
-      } else if (hasNewMessage && !catchupActive) {
-        // Always scroll to bottom for own messages; for others only if already near bottom.
-        const ownMessageAdded = c.messages.at(-1)?.isOwn === true;
-        if (isNearBottom || ownMessageAdded) {
-          // AND BRING THE WINDOW WITH IT. `scrollToBottom` moves the pane, not the slice: with the
-          // window stopped short of the list, it scrolled to the bottom of something that did not
-          // contain the message that had just arrived - so the message was, to the reader, simply
-          // not delivered. `isNearBottom` means "at the bottom of what is rendered", which is
-          // exactly the reader this has to serve.
+        // pointing at the same small slice forever; nothing ever advances it forward as the list
+        // grows underneath it, only clamps it from going past the end.
+        //
+        // `follow-bottom` is the ordinary live message. Either way the WINDOW MOVES WITH THE PANE:
+        // `scrollToBottom` moves the pane, not the slice, and with the window stopped short of the
+        // list it scrolled to the bottom of something that did not contain the message that had
+        // just arrived - so the message was, to the reader, simply not delivered.
+        const response = respondToNewMessage({
+          entering,
+          catchupActive,
+          isNearBottom,
+          ownMessageAdded: c.messages.at(-1)?.isOwn === true,
+        });
+        if (response !== 'stay') {
           windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-          tick().then(() => scrollToBottom(true));
+          if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
+          else tick().then(() => scrollToBottom(true));
         }
       }
 
@@ -858,6 +866,22 @@
     const el = chatContainer;
     if (!el) return;
     let previousHeight = el.scrollHeight;
+    /**
+     * The topmost rendered row, and where it was the last time this fired.
+     *
+     * THE SAME CLOSURE ANSWERS BOTH ENDS OF THE PANE. Growth below the reader is followed; growth
+     * ABOVE them is a prepend and must be undone, and `scrollTop` cannot tell the two apart - both
+     * grow `scrollHeight` and leave `scrollTop` alone. A row can, so the row is what is kept. It
+     * survives a prepend (the window only ever grows upward), which is exactly the case that had
+     * no compensation at all: the render window stepping up by 140 groups, and a PEER scrollback
+     * answer, which does not arrive as a return value but later, as an ordinary bundle.
+     */
+    let anchor: { row: HTMLElement; top: number } | null = null;
+    const captureAnchor = () => {
+      const row = el.querySelector<HTMLElement>('[id^="msg-"]');
+      anchor = row ? { row, top: row.offsetTop } : null;
+    };
+    captureAnchor();
     const follow = () => {
       const currentHeight = el.scrollHeight;
       const shouldFollow = shouldFollowThreadBottom({
@@ -867,8 +891,20 @@
         isLoadingOlder,
         isEntering: entering,
       });
+      const shift = shouldFollow
+        ? 0
+        : anchorShift({
+            previousTop: anchor?.top ?? null,
+            currentTop: anchor?.row.isConnected ? anchor.row.offsetTop : null,
+            isEntering: entering,
+          });
       previousHeight = currentHeight;
       if (shouldFollow) el.scrollTop = currentHeight;
+      // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
+      // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
+      // therefore lands on the same pixel whether or not this ran first - it cannot double-count.
+      else if (shift > 0) el.scrollTop += shift;
+      captureAnchor();
     };
     const mutations = new MutationObserver(follow);
     mutations.observe(el, { childList: true, subtree: true, characterData: true });
