@@ -522,7 +522,7 @@
         }
       } else {
         submitted = true;
-        successMessage = res.message || m.form_view_submission_success();
+        successMessage = m.form_view_submission_success();
         setTimeout(() => goto(redirectTo), 1500);
       }
     } catch (e: any) {
