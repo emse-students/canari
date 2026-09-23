@@ -49,6 +49,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open. **A BREAK HAS BEEN REFUSED IN A REAL RUN, AND IT WAS NOT A MAJOR**: #431, `webrtc 0.17.2 -> 0.20.5`, refused by the `Dependency ceiling` job on 2026-09-07 and still open. Dependabot calls it `semver-minor` and Cargo does not - `^0.17` no longer matches `0.20` - so the ceiling's own label said "(minor)" about a bump that moved every module out of the crate. The label is fixed and self-tested; the MAJOR arm is still unexercised, which is what this row waits for |
+| the release build no longer enables WebView debugging | **HARDWARE, AND NOT THE Mi 9T.** That phone is `ro.build.type=userdebug`, which makes EVERY app's WebView inspectable - shown on it by an APK holding zero occurrences of `setWebContentsDebuggingEnabled` in both its native library and its dex, inspectable anyway. It cannot separate the app's setting from the ROM's, in either direction. The binary comparison is what carries the fix (1 occurrence in the shipped `v0.18.21` library, 0 in the new one, same architecture and profile); what is owed is the same `/proc/net/unix` probe on a `user`-build device ([device-verification](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)) |
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the community settings read as a panel on the phone they were reported from | **ANSWERED ON THE Mi 9T, 2026-09-17, AND THE ROW'S OWN BLOCKER WAS FALSE.** It said this waited on the phone being free because it *"carries the USER'S OWN account behind an encryption PIN that is theirs"*. The user corrected that on 2026-09-17 - the handset holds test accounts only - and `identity.mjs` then read `A1 expected owner / shows owner / acts as owner`, so the run was the rig's to take all along. **A row may not park a check behind a premise nobody re-measures.** Read off a debug APK built from this tree at **436 x 945 CSS px, the device's own width**, no override. **The portal from #802 holds on hardware**: `panel.parentElement === document.body`, the drawer paints full-bleed `0 -> 945` OVER the bottom bar rather than inside `<main>`, and the foot - `Quitter la communaute` ending at 713, `Supprimer la communaute` at 759 - clears the bar's top edge at **873 by 114 px**. That is the half the browser A/B only implied, and it passes. The permission matrix is a `<table>` 519 px wide inside its own `overflow-x-auto` card of 371, which is the correct shape: **`document.documentElement.scrollWidth` is 436, equal to the viewport, so the PAGE never scrolls sideways.** **TWO OBSERVATIONS, NEITHER A FAILURE, BOTH P3**: the tab strip is `overflow-x: auto` at 483 px against 436, so the third tab renders truncated mid-word (`Memb`) on first paint with no affordance - three tabs at the app's primary phone width is where a wrap or tighter padding would fit; and the two danger-zone buttons are 38 px tall where the close button is 44. The tabs also carry **no `role="tab"` and no `role="tablist"`** - they are plain buttons, so nothing announces the strip as a tab set. The A/B that justified the portal is not repeated here: `SidePanel.svelte`'s docblock owns it ([device-verification](device-verification.md)). |
@@ -81,51 +82,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **one FIDO touch on `ssh -fN bastion`**, which opens the master connection the whole survey of the target host waits behind. `ControlPersist 48h` means it is owed ONCE per two days, not once per command - and it is the only thing standing between here and the four measurements section 9 of that page lists as open | 1 touch | [estate-migration](infrastructure/estate-migration.md#9-open-questions) |
 
 ## Open defects, in severity order
-
-### P1 - THE SHIPPED STORE BUILD'S WEBVIEW IS INSPECTABLE, AND THE MEMORY-ONLY TOKEN RULE ASSUMES IT IS NOT (measured on the shipped `v0.18.21` artifact, 2026-09-23)
-
-**Anyone who can run `adb` against a phone holding the Play Store build can attach Chrome DevTools
-to it and read the MLS state, decrypted message content and the in-memory access token.** This is
-not inferred from configuration: during [check R](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)
-the release `app-universal-release.apk` was installed on the Mi 9T, `@webview_devtools_remote_<pid>`
-was present in `/proc/net/unix` for the app's OWN pid, and a CDP session read its DOM, its
-`performance` resource timeline and its Tauri IPC. The repository's standing rule is that access
-tokens live *in memory ONLY, never localStorage* - a rule whose entire value is that the memory is
-unreachable. Inside an inspectable WebView it is a `Runtime.evaluate` away.
-
-**THE CAUSAL CHAIN IS SEPARATED, because one observation had three candidate causes and an entry
-naming all three teaches nothing.** Each leg below was measured, not assumed:
-
-1. **`frontend/src-tauri/Cargo.toml:21` - the `devtools` Cargo feature is what compiles the exposure
-   in.** wry gates the call as `#[cfg(any(debug_assertions, feature = "devtools"))]` around
-   `setWebContentsDebuggingEnabled` (`wry-0.55.1/src/android/main_pipe.rs:257`). A release build has
-   no `debug_assertions`, so **without this feature the call is not in the binary at all**. It sits
-   in plain `[dependencies]`, with no `cfg(debug_assertions)` target table and no dev-only feature.
-2. **`frontend/src-tauri/tauri.conf.json:18` - `"devtools": true` supplies that call's argument.**
-   It reaches `webview_attributes.devtools` and is passed as the boolean. The config type is
-   `Option<bool>` and its absent default falls back to `debug_assertions`, so the JSON is what turns
-   a compiled-in call into an enabled one.
-3. **`android:debuggable` is NOT the cause and is correctly absent.** `aapt2 dump badging` on the
-   shipped artifact prints no debuggable flag (and `usesCleartextTraffic=false`). The third
-   candidate is ruled out, so the fix does not belong in the manifest.
-
-**AND THE CALL SITE EVERYONE WILL CHECK IS CLEAN, WHICH IS WHY THIS SURVIVED.** `open_devtools()` at
-`frontend/src-tauri/src/lib.rs:952` *is* wrapped in `#[cfg(debug_assertions)]`. Nothing opens a
-panel by itself, so a reader auditing that one call site concludes the release is fine. **The
-exposure is that the WebView is inspectable, not that a panel appears** - a distinction no grep for
-`open_devtools` can make.
-
-**THE FIX RIDES A STORE BUILD AND NOTHING ELSE.** An APK is not reached by a deploy - the app EMBEDS
-its frontend (`frontendDist: "../build"`) - so every device already holding this build stays
-inspectable until a NEW store version replaces it. `minClientVersion` cannot gate it either, since
-that reasons about a name and not about a binary's compiled features. Removing the Cargo feature is
-the load-bearing half; removing the JSON value alone would leave the call compiled and merely pass
-`false`, which closes the hole by relying on a default rather than by deleting the capability.
-
-**What is owed before this is called closed**: one release build with the feature removed, and the
-same `/proc/net/unix` probe on hardware showing no `@webview_devtools_remote_<pid>` for the app's
-pid. A green build proves nothing here - the whole class was invisible to every gate in this
-repository, which is the point of check R.
 
 ### P3 - `login.mjs` calls a login FAILED while the authorization-code exchange is still running (measured 2026-09-23)
 
