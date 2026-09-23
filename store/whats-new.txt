@@ -1,13 +1,13 @@
-version: 0.18.20
+version: 0.18.21
 
-Repondre a un message affiche la citation juste au-dessus, comme une bulle.
+Vos medias restent disponibles 90 jours, et ceux du fil ne disparaissent plus.
 
-Une liste affiche ses deux themes et son logo.
+Un vote, un commentaire, un coeur ou un abonnement repondent tout de suite, sans attendre le reseau.
 
-Le fil reste colle a son dernier message, et "est en train d'ecrire" y prend sa place.
+Le fil ne vous ramene plus en bas pendant que vous lisez plus haut.
 
-L'agenda du telephone n'affiche plus de jour vide, et son jour suit votre langue.
+Une mention sous une photo affiche le nom, et une photo ne reste plus le texte de sa notification.
 
-La visionneuse d'images se deplace de nouveau a la souris.
+Les options d'un sondage s'affichent en entier.
 
-Un groupe revenu n'affiche plus "vous avez ete retire".
+La confirmation d'un formulaire est en francais.
