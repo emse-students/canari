@@ -9,7 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
@@ -228,10 +228,25 @@
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
 
+  /**
+   * The frame the log panel's scroll is already scheduled for, or `null`.
+   *
+   * ONE PER FRAME, NOT ONE PER LINE. Every function in this app logs at entry, at each decision and
+   * on each error branch - that is the house rule - so a burst is dozens of `log()` calls inside a
+   * single frame. Each one used to schedule a `tick()`, which FLUSHES Svelte's pending updates, and
+   * then read and wrote layout on an element that is usually not even rendered. The panel can only
+   * be seen once per frame, so it is scrolled once per frame.
+   */
+  let logScrollFrame: number | null = null;
+
   /** Appends a debug message to the global log buffer and scrolls the log panel. */
   function log(msg: string) {
     appendLog(msg);
-    tick().then(() => {
+    if (logScrollFrame !== null) return;
+    logScrollFrame = requestAnimationFrame(() => {
+      logScrollFrame = null;
+      // A frame callback runs after Svelte's microtask flush, so it sees the same DOM `tick()` was
+      // being awaited for - and costs nothing when the panel is closed and this returns null.
       const el = document.getElementById('logContainer');
       if (el) el.scrollTop = el.scrollHeight;
     });

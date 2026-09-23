@@ -266,6 +266,47 @@ the form, next to a comment saying the form loads fine without it. `refresh()` a
 request in flight for every caller, so the `apiFetch` that follows joins it rather than starting a
 second - the await bought nothing and cost a full round trip on a cold session.
 
+## 3septies. The work a scroll does, per tick (2026-09-23)
+
+THE ONLY ITEM IN THIS SWEEP THAT HAS NOTHING TO DO WITH THE NETWORK - and the user's report named
+scrolling first, so it belongs here rather than in a separate document. It is also the one that a
+bad link makes WORSE without causing: everything below is paid per frame, and a device already
+spending its frames on decryption and re-render has none to spare.
+
+**A SCROLL IS NOT AN EVENT, IT IS A STREAM.** A touch drag fires `scroll` far more often than the
+screen redraws, and `ChatArea`'s handler read layout on every one of them: `scrollTop`,
+`scrollHeight`, `clientHeight`, a `getBoundingClientRect` on the pane and one per date separator.
+Reading layout several times per frame is work the reader pays for and cannot see - the frames it
+lengthens are exactly the frames of the drag. It is coalesced onto the frame now, which is not a
+throttle with a number in it: it is the rate at which a result can possibly be visible.
+
+**AND THE SEPARATOR SCAN WAS LINEAR IN THE HISTORY ABOVE THE READER.** It walked from the FIRST
+separator forward, measuring each one until it found one below the line - so a reader at the bottom
+of a three-month thread measured ninety elements, each a forced layout, per measurement. The tops
+are sorted, because the separators are in document order, so the predicate is true for a prefix and
+false after it: `stickyDateIndex` (`utils/chat/stickyDate.ts`, 7 tests) binary-searches it and
+measures nine elements instead of ninety. It takes an ACCESSOR rather than a list of tops, so that
+only the elements the search visits are ever measured - handing it pre-measured tops would put
+every layout read straight back.
+
+**ONE LOG PANEL SCROLL PER FRAME, NOT ONE PER LINE.** Every function in this app logs at entry, at
+each decision and on each error branch - that is the house rule - so a burst is dozens of `log()`
+calls inside one frame. Each one scheduled a `tick()`, which FLUSHES Svelte's pending updates, and
+then read and wrote layout on a panel that is usually not even rendered. A frame callback runs
+after the same microtask flush `tick()` was being awaited for, so it sees the same DOM and costs
+nothing when the panel is closed.
+
+**A NON-PASSIVE `touchmove` COSTS ITS SCROLLER WHETHER OR NOT IT DOES ANYTHING**, which
+`pullToRefresh` already knew: the listener was confined to `scrollTop === 0` on 2026-09-20 after an
+iPhone reported unpainted bands. It was still held across the whole of a REFRESH - and no gesture
+can be served during one, because `onTouchStart` and `onTouchMove` both refuse while `refreshing`.
+So it was bound and declining for the seconds a refresh takes on a bad link, which is precisely
+when the reader gives up and scrolls away. What that binding was really protecting is that nothing
+re-asks the question afterwards: a reader sitting at the top having just refreshed produces no
+scroll event, so the next pull would find nothing bound. **The answer is to ask where the answer
+changes** - when the refresh settles, and when the gesture ends - not to hold the binding until
+something happens to ask.
+
 ## 4. The ledger - what is fixed, what is not
 
 Audited 2026-09-22/23 across chat, feed, communities, associations, settings and profile. Every
@@ -286,8 +327,8 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 11 | Serial page loads: `/calendar` (5 deep), `/documents` (blank until a boolean), `/forms/[id]` (5), `/associations/[slug]` (3) | 1 | **fixed 2026-09-23** |
 | 12 | Association edit: every tab switch remounts and refetches | 1 | **partly fixed 2026-09-23** - the directory and the categories were most of what it re-asked for, and row 7's cache covers them. What each tab fetches FOR ITSELF still costs a round trip per switch. |
 | 13 | Polls with no in-flight guard (`admin/status:74`, `SettingsSecuritySection:100`) | - | open |
-| 14 | `pullToRefresh` keeps a non-passive `touchmove` bound for the whole refresh (`pullToRefresh.ts:173`) | - | open |
-| 15 | Forced layout per scroll tick (`ChatArea.svelte:410`), `tick()` + `getElementById` per log line (`MainChatPage.svelte:232`) | - | open |
+| 14 | `pullToRefresh` keeps a non-passive `touchmove` bound for the whole refresh | - | **fixed 2026-09-23** |
+| 15 | Forced layout per scroll tick, and a linear separator scan; `tick()` + `getElementById` per log line | - | **fixed 2026-09-23** |
 
 ## 5. The tools, and where they live
 

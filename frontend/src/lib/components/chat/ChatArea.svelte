@@ -29,6 +29,7 @@
     respondToNewMessage,
     shouldFollowThreadBottom,
   } from '$lib/utils/chat/threadAnchor';
+  import { stickyDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -395,7 +396,27 @@
     setTimeout(() => scrollToBottom(false), 600);
   }
 
+  /**
+   * The frame a scroll measurement is already scheduled for, or `null`.
+   *
+   * ONE MEASUREMENT PER FRAME, BECAUSE A SCROLL IS NOT AN EVENT, IT IS A STREAM. A touch drag
+   * fires `scroll` far more often than the screen redraws, and everything below reads layout -
+   * `scrollTop`, `scrollHeight`, a `getBoundingClientRect` per date separator. Reading layout in a
+   * handler that runs several times per frame is work the reader pays for and cannot see: the
+   * frames it lengthens are exactly the frames of the drag. Coalescing onto the frame is not a
+   * throttle with a number in it - it is the rate at which a result can possibly be visible.
+   */
+  let scrollFrame: number | null = null;
+
   function handleScroll() {
+    if (scrollFrame !== null) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = null;
+      measureScroll();
+    });
+  }
+
+  function measureScroll() {
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
@@ -420,16 +441,15 @@
     if (dates.length === 0) return;
 
     const containerTop = chatContainer.getBoundingClientRect().top;
-    let currentDate = dates[0].dataset.chatDateSeparator ?? '';
-
-    for (const item of dates) {
-      const y = item.getBoundingClientRect().top - containerTop;
-      if (y <= 40) {
-        currentDate = item.dataset.chatDateSeparator ?? currentDate;
-      } else {
-        break;
-      }
-    }
+    // A BINARY SEARCH, BECAUSE THE SCAN WAS LINEAR IN THE HISTORY ABOVE THE READER: the old walk
+    // started at the FIRST separator and measured every one above the viewport before reaching the
+    // one it wanted. `stickyDateIndex` measures only what it visits, which is why it takes an
+    // accessor rather than a list of tops.
+    const index = stickyDateIndex(
+      dates.length,
+      (i) => dates[i].getBoundingClientRect().top - containerTop
+    );
+    const currentDate = dates[index].dataset.chatDateSeparator ?? '';
 
     if (!currentDate) return;
     stickyDateLabel = currentDate;
@@ -968,6 +988,9 @@
   $effect(() => {
     return () => {
       clearStickyDateTimer();
+      // A frame scheduled on the way out would measure a container that is being torn down.
+      if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+      scrollFrame = null;
     };
   });
 </script>
