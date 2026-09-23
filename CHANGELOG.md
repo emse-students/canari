@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le travail qu'un scroll fait, a chaque tick
+
+Un scroll n'est pas un evenement mais un flux : le fil de discussion lisait la mise en page a chaque
+`scroll`, plusieurs fois par frame, et cherchait le separateur de date en partant du PREMIER - donc
+quatre-vingt-dix mesures forcees pour un lecteur en bas d'un fil de trois mois. Une mesure par
+frame, et une recherche dichotomique. Le panneau de logs se recalait une fois par ligne avec un
+`tick()` ; une fois par frame suffit. Et le `touchmove` non-passif du tirer-pour-rafraichir n'est
+plus tenu pendant tout le rafraichissement, ou aucun geste ne peut etre servi.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3septies-the-work-a-scroll-does-per-tick-2026-09-23).
+
 ### Fixed - six commandes attendaient qu'on leur dise ce qu'elles savaient deja
 
 Un vote de sondage, un commentaire, son coeur, les deux boutons "Suivre" et "Debloquer" ne
