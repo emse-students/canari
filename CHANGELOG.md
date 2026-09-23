@@ -20,6 +20,14 @@ frame, et une recherche dichotomique. Le panneau de logs se recalait une fois pa
 `tick()` ; une fois par frame suffit. Et le `touchmove` non-passif du tirer-pour-rafraichir n'est
 plus tenu pendant tout le rafraichissement, ou aucun geste ne peut etre servi.
 [local-first-ui](docs/wiki/frontend/local-first-ui.md#3septies-the-work-a-scroll-does-per-tick-2026-09-23).
+### Fixed - une photo restait le texte de sa notification, pour toujours
+
+Quand le cache FCM injecte la legende au demarrage et que la purge de file arrive ensuite, cette
+purge est un INGEST EN MASSE : sa branche ne demandait que "est-ce que je connais cet id", jetait
+l'enveloppe comme un doublon et acquittait quand meme la trame, que le serveur supprimait alors.
+La branche demande maintenant `shouldUpgradeMessage` et laisse la mise a niveau passer par le
+chemin direct. Reproduit sur le Mi 9T (`archive/photoprev.mjs --mode restored`).
+[mobile](docs/wiki/frontend/mobile.md#fcm-message-cache).
 
 ### Fixed - six commandes attendaient qu'on leur dise ce qu'elles savaient deja
 
