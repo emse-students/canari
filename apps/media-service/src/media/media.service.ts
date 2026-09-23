@@ -13,13 +13,28 @@ const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
 // and survive container restarts / redeployments.
 const MEDIA_DATA_DIR = path.join(process.cwd(), 'media_meta');
 const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
-/** Encrypted chat media blobs are purged after this idle period. Public assets are never purged. */
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Encrypted chat media blobs are purged after this idle period.
+ *
+ * Was 30 days until 2026-09-23. The August decision was "keep 30 days and make the clock honest
+ * instead of moving it", because the window then measured *"since the last device that did not
+ * already hold it fetched it"* rather than use - `POST /media/touch` closed that gap, so the
+ * premise of keeping it short is spent. Measured on production before moving it: the bucket held
+ * 66 MB against 73 GB free, and the sweep was taking ~1.5 objects/day, so +60 days costs ~150 MB.
+ *
+ * Two entry classes never reach this clock at all - see {@link isRetentionExempt}.
+ */
+const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
 /** Width of one bucket in the admin panel's growth breakdown. */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Renders a window for a log line, so no message ever spells a duration next to its constant. */
+function msToDays(ms: number): number {
+  return Math.round(ms / (24 * 60 * 60 * 1000));
+}
 
 /**
  * What the media bucket holds, broken down so its size can be EXPLAINED rather than only reported.
@@ -45,15 +60,42 @@ export interface MediaStorageStats {
   /** Metadata says purged, object still present: a delete that failed. */
   tombstonedCount: number;
   tombstonedBytes: number;
-  /** Avatars and logos, exempt from retention by design - so never counted as overdue. */
+  /** Logos and other plaintext branding, exempt from retention by design - never counted as overdue. */
   publicAssetCount: number;
   publicAssetBytes: number;
+  /**
+   * Feed objects (posts, post comments, avatars) held for ever. Reported separately because an
+   * exempt class with no line of its own is a class whose growth nothing can ever see - the same
+   * defect the bucket breakdown was split to fix on 2026-08-18.
+   */
+  archiveCount: number;
+  archiveBytes: number;
   /** Echoed so the reader does not have to know the constants to interpret the numbers. */
   retentionMs: number;
   sweepIntervalMs: number;
 }
 
 type PurgeReason = 'retention_expired' | 'manual_delete';
+
+/**
+ * Why an object is kept, when the answer is not "somebody opened it recently".
+ *
+ * `archive` is the feed: post media, post-comment media and avatars. A conversation scrolls away,
+ * so an idle window is the right question to ask of it; a post is a permanent row in `posts` whose
+ * body would rot under one, and on 2026-09-23 exactly half the feed's media (22 of 44) had already
+ * been swept while their posts remained. The class is set by the CLIENT at upload, which is the
+ * only place that knows which surface it is uploading from.
+ *
+ * It is deliberately NOT `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT) and
+ * is skipped by {@link MediaService.removeAllOwnedBy}, so reusing it would put post ciphertext on
+ * an unauthenticated route AND stop account deletion reaching a departing member's photos.
+ */
+export type RetentionClass = 'archive';
+
+/** Runtime guard for the class name arriving from a request body. */
+export function isRetentionClass(value: unknown): value is RetentionClass {
+  return value === 'archive';
+}
 
 interface MediaMetaEntry {
   createdAt: number;
@@ -62,6 +104,8 @@ interface MediaMetaEntry {
   purgeReason?: PurgeReason;
   /** Plaintext object served at GET /api/media/public/:id without JWT; exempt from retention purge. */
   publicAsset?: boolean;
+  /** Exempt from the idle sweep, still reachable by account deletion. See {@link RetentionClass}. */
+  retentionClass?: RetentionClass;
   contentType?: string;
   /**
    * User who uploaded the blob, from the JWT `sub` of the upload request.
@@ -115,10 +159,14 @@ export class MediaService {
     timer.unref();
   }
 
-  async upload(encryptedBytes: Buffer, ownerId?: string): Promise<string> {
+  async upload(
+    encryptedBytes: Buffer,
+    ownerId?: string,
+    retentionClass?: RetentionClass
+  ): Promise<string> {
     const mediaId = uuidv4();
     await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
-    this.setAccess(mediaId, Date.now(), ownerId);
+    this.setAccess(mediaId, Date.now(), ownerId, retentionClass);
     await this.persistMetadata();
     return mediaId;
   }
@@ -210,12 +258,12 @@ export class MediaService {
    * Refreshes the retention clock for media the client served from its OWN cache.
    *
    * THE CLOCK WAS MEASURING SOMETHING IT COULD NOT SEE. `lastAccessAt` is refreshed by
-   * {@link download}, so the sweep's predicate reads as "30 days since anyone last looked at
-   * this". It is not: the client caches the ciphertext locally and forever
+   * {@link download}, so the sweep's predicate reads as "the window since anyone last looked
+   * at this". It is not: the client caches the ciphertext locally and forever
    * (`canari-media-ciphertext-v1`), so once a device has an object it never asks for it again.
    * A photograph opened every day by everyone in a conversation therefore produced exactly the
    * same server-side trace as one nobody ever opened again - the first download - and both were
-   * deleted on the same day. The clock was, in practice, "30 days since the last device that did
+   * deleted on the same day. The clock was, in practice, "one window since the last device that did
    * not already have it fetched it", while claiming to be about use.
    *
    * This endpoint closes that gap: the client reports a cache hit, and the object is treated as
@@ -244,6 +292,47 @@ export class MediaService {
 
     if (refreshed > 0) await this.persistMetadata();
     return refreshed;
+  }
+
+  /**
+   * Sets or clears the retention class of existing objects.
+   *
+   * Two callers, both social-service. `'archive'` classifies media a post or comment references -
+   * on upload the client says so itself, so this exists for the objects stored BEFORE the class
+   * did, and as the repair after a metadata index loss (the index is a JSON file, and `download()`
+   * silently re-creates a lost entry with no class at all).
+   *
+   * `null` is the release when a post or comment is deleted: the object drops back to the ordinary
+   * idle window and the sweep takes it {@link RETENTION_MS} later. That is deliberately not an
+   * immediate delete - an edit that merely removes an image reaches here too, and a destructive
+   * answer to an ambiguous event is the wrong one. It also means nothing is ever stranded: the
+   * class is a reason to keep, so removing the reason restores the only mechanism that reclaims.
+   *
+   * Unknown and purged ids are skipped rather than rejected - the caller's list comes from post
+   * rows that may well cite an object swept before any of this existed, and reviving a tombstone
+   * would resurrect an entry the retention decision already closed.
+   *
+   * @returns how many entries actually changed, so a no-op backfill logs distinctly from a repair.
+   */
+  async setRetentionClass(
+    mediaIds: string[],
+    retentionClass: RetentionClass | null
+  ): Promise<number> {
+    let changed = 0;
+
+    for (const mediaId of mediaIds) {
+      if (!UUID_REGEX.test(mediaId)) continue;
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) continue;
+      if ((entry.retentionClass ?? null) === retentionClass) continue;
+
+      if (retentionClass) entry.retentionClass = retentionClass;
+      else delete entry.retentionClass;
+      changed += 1;
+    }
+
+    if (changed > 0) await this.persistMetadata();
+    return changed;
   }
 
   async remove(mediaId: string): Promise<void> {
@@ -284,6 +373,10 @@ export class MediaService {
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.ownerId !== ownerId) continue;
       if (entry.purgedAt) continue;
+      // `isPublicAssetEntry`, NOT `isRetentionExempt`: a logo outlives the member who uploaded it,
+      // but an archived post photo is still that member's and must go with the account. Exemption
+      // from the idle sweep is not exemption from erasure, and conflating the two here would have
+      // made account deletion silently stop reaching the feed.
       if (this.isPublicAssetEntry(entry)) continue;
 
       try {
@@ -350,6 +443,8 @@ export class MediaService {
       tombstonedBytes: 0,
       publicAssetCount: 0,
       publicAssetBytes: 0,
+      archiveCount: 0,
+      archiveBytes: 0,
       retentionMs: RETENTION_MS,
       sweepIntervalMs: this.sweepIntervalMs,
     };
@@ -377,6 +472,11 @@ export class MediaService {
       if (entry.purgedAt) {
         stats.tombstonedCount += 1;
         stats.tombstonedBytes += object.size;
+        continue;
+      }
+      if (entry.retentionClass === 'archive') {
+        stats.archiveCount += 1;
+        stats.archiveBytes += object.size;
         continue;
       }
       if (this.isPublicAssetEntry(entry)) {
@@ -462,7 +562,8 @@ export class MediaService {
   async completeChunkedUpload(
     uploadId: string,
     maxBytes: number,
-    ownerId?: string
+    ownerId?: string,
+    retentionClass?: RetentionClass
   ): Promise<string> {
     // Validate uploadId is a UUID to prevent path traversal.
     if (!UUID_REGEX.test(uploadId)) {
@@ -485,7 +586,7 @@ export class MediaService {
 
       await fs.remove(tempFile);
 
-      this.setAccess(mediaId, Date.now(), ownerId);
+      this.setAccess(mediaId, Date.now(), ownerId, retentionClass);
       await this.persistMetadata();
 
       return mediaId;
@@ -570,7 +671,20 @@ export class MediaService {
     return Buffer.concat(chunks);
   }
 
-  /** True for association logos and other plaintext images exempt from the 30-day retention sweep. */
+  /**
+   * True for everything the idle sweep must leave alone, whatever the reason.
+   *
+   * The sweep and `getStorageStats` both call THIS and nothing else, so "exempt" means one thing
+   * and the overdue count stays a verdict on the sweep rather than an estimate of it.
+   * {@link removeAllOwnedBy} deliberately does not: an archived post photo is still its uploader's,
+   * and an account deletion must reach it.
+   */
+  private isRetentionExempt(entry: MediaMetaEntry | undefined): boolean {
+    if (!entry) return false;
+    return entry.retentionClass === 'archive' || this.isPublicAssetEntry(entry);
+  }
+
+  /** True for association logos and other plaintext images exempt from the retention sweep. */
   private isPublicAssetEntry(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
     if (entry.publicAsset) return true;
@@ -603,13 +717,21 @@ export class MediaService {
    * Records an access, and the owner on the FIRST write only - `setAccess` also runs on every
    * download, where no uploader is in scope, so an ownerless call must never erase one.
    */
-  private setAccess(mediaId: string, now: number, ownerId?: string) {
+  private setAccess(
+    mediaId: string,
+    now: number,
+    ownerId?: string,
+    retentionClass?: RetentionClass
+  ) {
     const current = this.meta.items[mediaId];
     this.meta.items[mediaId] = {
       ...current,
       createdAt: current?.createdAt ?? now,
       lastAccessAt: now,
       ...(ownerId ? { ownerId } : {}),
+      // Conditional for the same reason as ownerId: `download()` and `touch()` call this with
+      // neither argument, and an unconditional spread would strip the class on every read.
+      ...(retentionClass ? { retentionClass } : {}),
     };
   }
 
@@ -620,7 +742,7 @@ export class MediaService {
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.purgedAt) continue;
-      if (this.isPublicAssetEntry(entry)) continue;
+      if (this.isRetentionExempt(entry)) continue;
       if (entry.lastAccessAt >= cutoff) continue;
 
       try {
@@ -659,10 +781,17 @@ export class MediaService {
 
     if (purgedCount > 0 || trimmedCount > 0) {
       await this.persistMetadata();
+      // Both windows are interpolated, never spelled: these two lines said "30 days" and
+      // "> 90 days" in prose next to the constants they were meant to report, which is one edit
+      // away from a log that lies about the policy it is enforcing.
       if (purgedCount > 0)
-        this.logger.log(`Purged ${purgedCount} expired media object(s) (retention 30 days)`);
+        this.logger.log(
+          `Purged ${purgedCount} expired media object(s) (retention ${msToDays(RETENTION_MS)} days)`
+        );
       if (trimmedCount > 0)
-        this.logger.log(`Trimmed ${trimmedCount} metadata tombstone(s) > 90 days`);
+        this.logger.log(
+          `Trimmed ${trimmedCount} metadata tombstone(s) > ${msToDays(META_TOMBSTONE_MAX_AGE_MS)} days`
+        );
     }
 
     // Purge orphaned chunked upload temp files older than 24 hours.

@@ -25,7 +25,13 @@ Posts are loaded via `GET /api/posts` (social-service), paginated with infinite 
 ## Post creation (EditPostForm.svelte)
 
 - Markdown content editor.
-- Optional image upload (CEK not used here — public media via `POST /api/media/upload/public`).
+- Optional image upload. **Encrypted like any other media** (`encryptAndUpload`, per-file CEK, the
+  key travelling in the post row) and marked `retentionClass: 'archive'` so the media service's idle
+  sweep never takes it — see
+  [media-service](../../services/media-service.md#the-archive-class-the-feed-is-not-a-conversation-2026-09-23).
+  This line claimed the opposite until 2026-09-23: *"CEK not used here — public media via
+  `POST /api/media/upload/public`"*, a route only `AssociationsService` has ever called. Read
+  literally it said a post image was permanent, which is the one thing it was not.
 - Optional poll (question + options).
 - Optional embedded form (link to an association form).
 - Optional scheduling (publish at a future time).

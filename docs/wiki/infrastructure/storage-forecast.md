@@ -627,7 +627,54 @@ statements in a place that already enumerates the ids.
 
 ---
 
-## 6. The retention policy - DECIDED 2026-08-11
+## 6b. REOPENED AND MOVED 2026-09-23: 90 days, and the feed leaves the clock entirely
+
+**The August decision below is not overturned, its premise is spent.** It was *"keep 30 days and
+make the clock honest instead of moving it"*, on the reasoning that *"lengthening a window that
+measures the wrong thing buys the wrong thing more slowly"*. `POST /media/touch` shipped and the
+window now measures use. The question "how long" was therefore asked again, on its own.
+
+**What production said before anything moved** (2026-09-23, measured not modelled):
+
+| Measurement | Value |
+| --- | --- |
+| `canari` disk | 47 G used of 125 G - **73 G free** |
+| The whole media bucket (`garage_data`) | **66 MB** |
+| Index | 482 entries: 229 sweepable, 120 exempt, 133 tombstones |
+| Purge rate | 133 purges across the 90-day tombstone window = **~1.5 objects/day** |
+
+So +60 days costs `60 x 1.5 x 1.65 MB` **≈ 150 MB**, against 73 G free - and the ×16 backup
+multiplier that dominated this page's original answer has not existed since the restic cutover of
+2026-08-11. **`RETENTION_MS` is 90 days.** The central 400-DAU scenario above triples with it
+(26 GB → ~78 GB), which is the number to re-read if this estate ever reaches that scale; nothing
+about it is near today.
+
+### The feed was the real question, and a longer window does not answer it
+
+Of the **44 media the feed referenced, 22 were already gone** - 26.7 MB of 40.8 MB, every one
+`retention_expired`, every one belonging to a post from May. The posts were all still there: 137
+rows, 43 illustrated, half of them rendering an expired box for ever. The survivors had all been
+touched within 12 days, 18 of them that same day, because they are in the visible feed.
+
+**And 90 days would not have saved them.** Those May media were purged 46 to 87 days ago, having
+survived roughly two months after posting; a 90-day window moves the funeral, it does not cancel it.
+No idle window can, because "nobody has scrolled back two years" is not evidence that nobody wants
+the photo. So the feed leaves the clock: `retentionClass: 'archive'`, never swept. The mechanism,
+the reason it is NOT the `publicAsset` flag, and the release on deletion are in
+[media-service](../services/media-service.md#the-archive-class-the-feed-is-not-a-conversation-2026-09-23).
+
+Three things make "for ever" a decision that can still be re-read rather than one nobody revisits:
+**it has its own line in `/admin/storage`** (`archiveCount`/`archiveBytes`), **deleting the post
+releases the object** back to the idle window, and the rate is known - 40.8 MB over 4.5 months,
+**~110 MB/year**, so a decade costs about a gigabyte.
+
+**The user-visible labels no longer name a window.** `msg_media_expired_label`,
+`msg_video_expired_label` and `post_media_expired_label` said "rétention 30 jours"; the 22 media
+already dead will render that box for ever and they died under a rule that no longer exists, so any
+number shown there is wrong for somebody. The admin strings keep `{days}`, which they read from
+`stats.retentionMs`.
+
+## 6. The retention policy - DECIDED 2026-08-11 (superseded above, kept for its reasoning)
 
 **The 30-day idle media retention is what makes the forecast survivable, and it is also a product
 behaviour, so it was put to the user rather than left as a side effect.** A photo nobody re-opens for

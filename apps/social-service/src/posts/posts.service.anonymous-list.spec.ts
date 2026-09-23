@@ -5,6 +5,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { AssociationsService } from '../associations/associations.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostMediaRetentionService } from './post-media-retention.service';
 
 /**
  * `listPosts` AND `searchPosts` NEVER SELECTED `posts.anonymous`, SO THE MASK NEVER FIRED.
@@ -83,7 +84,8 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
       { get: jest.fn(), setex: jest.fn() } as unknown as RedisService,
       follows as unknown as FollowsService,
       associations as unknown as AssociationsService,
-      {} as PostNotificationsService
+      {} as PostNotificationsService,
+      { release: jest.fn() } as unknown as PostMediaRetentionService
     );
   }
 

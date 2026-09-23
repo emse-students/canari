@@ -57,6 +57,7 @@ a prop, but only as a signal that the session is authenticated.
 | GET | `/api/media/:id` | JWT | Download encrypted blob (no-cache, owner or group member) |
 | DELETE | `/api/media/internal/users/:userId` | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion) |
 | DELETE | `/api/media/:id` | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`) |
+| POST | `/api/media/internal/retention-class` | `INTERNAL_SECRET` | Classify (`archive`) or release (`null`) existing objects - see retention below |
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -65,18 +66,22 @@ carries **no JWT on purpose** - the account is already being destroyed, so there
 present - and it is declared BEFORE the catch-all `:id` for the same reason `internal/:id` precedes
 `GET :id`. **Nothing in the chat or channel paths deletes a blob** - see retention below.
 
-## Retention: a 30-day IDLE sweep, and it is the only thing that deletes chat media
+## Retention: a 90-day IDLE sweep on CHAT media, and nothing else deletes them
 
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any object whose `lastAccessAt` is
-older than **`RETENTION_MS` = 30 days**, leaving a tombstone that is itself trimmed after 90 days. It
+older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself trimmed after 90 days. It
 runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with `MEDIA_RETENTION_SWEEP_MS`) and on every
-`download()`.
+`download()`. **It was 30 days until 2026-09-23** - what moved it, and why moving it is not the same
+decision as the one taken in August, is §6 of
+[storage-forecast](../infrastructure/storage-forecast.md).
 
 Four consequences, all of which matter and none of which are obvious:
 
 - **`lastAccessAt` is refreshed on every download**, so anything still being viewed never expires.
   The window measures *idleness*, not age.
-- **Public assets are exempt** (`isPublicAssetEntry`) and are therefore permanent.
+- **Two classes never reach the clock at all** - `isRetentionExempt`, the ONE predicate the sweep
+  and `getStorageStats` both call. Public assets (`isPublicAssetEntry`), and the archive class
+  below.
 - **Account deletion reaches a user's uploads since 2026-08-11, message deletion deliberately does
   not.** `upload` records the JWT's `sub` as `ownerId` - the only attribution possible on a service
   that sees ciphertext - and `removeAllOwnedBy` deletes those objects, skipping public assets (a logo
@@ -84,16 +89,60 @@ Four consequences, all of which matter and none of which are obvious:
   backfilled. Message deletion is left to the sweep **by design**: forwarding copies the `MediaRef`,
   so a blob can be cited from conversations the deleter cannot see and no reference count is
   computable here. Deleting a community still only archives it.
-- **A user-visible effect:** a photo nobody re-opens for 30 days is gone from the server, so a new
+- **A user-visible effect:** a photo nobody re-opens for the window is gone from the server, so a new
   device or a reinstall can never fetch it. The client says so explicitly since 2026-08-11 - the
   service answers `410` with `purgeReason = retention_expired` and all four media surfaces render an
-  expired state (`isMediaPurgedError`). This is what bounds media storage - see
-  [storage-forecast](../infrastructure/storage-forecast.md), where the RETENTION WINDOW itself is
-  still flagged as a product decision that was never explicitly taken.
+  expired state (`isMediaPurgedError`). **The label names no number**, because a message rendered
+  today may be explaining an object swept under a different window.
 
 The index is a **JSON file** (`media_meta/media_metadata.json`), not a database table. If it is lost,
 `download()`'s `setAccess` re-creates the entry with `createdAt = now`, silently restarting every
-object's 30-day clock.
+object's clock **and losing its class** - which is why the backfill below runs at every boot rather
+than once.
+
+### The archive class: the feed is not a conversation (2026-09-23)
+
+**A post is a permanent row whose body was on an idle clock, and half of them had already rotted.**
+Measured on production the day this shipped: of the 44 media the feed referenced, **22 were already
+`retention_expired`** - 26.7 MB of 40.8 MB - and every one belonged to a post from May, still on
+screen, rendering an expired box. A conversation scrolls away, so idleness is the right question to
+ask of it; a post that nobody has scrolled back to is not a post nobody wants.
+
+`retentionClass: 'archive'` exempts an object from the sweep for ever. **The client sets it at
+upload, because the server holds ciphertext and is the one party that cannot tell which surface a
+blob came from** - `encryptAndUpload(..., 'archive')` at the three post call sites, and `uploadRaw`
+unconditionally (group avatars and community images).
+
+**It is deliberately NOT `publicAsset`, and that is the whole design.** That flag does two other
+things: it opens `GET /media/public/:id` with no JWT, and it is skipped by `removeAllOwnedBy`.
+Reusing it would have put post ciphertext on an unauthenticated route AND silently stopped account
+deletion reaching a departing member's photos. **Exemption from the idle sweep is not exemption from
+erasure**, which is why `removeAllOwnedBy` alone still calls `isPublicAssetEntry` rather than
+`isRetentionExempt`, and why a test asserts exactly that.
+
+Since nothing expires an archived object, whatever deletes the row that cites it must say so:
+
+| Route | Secret | What it does |
+| --- | --- | --- |
+| `POST /api/media/internal/retention-class` | `INTERNAL_SECRET` | `{mediaIds, retentionClass}` - `'archive'` classifies, `null` RELEASES. Batches of 500. |
+
+`PostMediaRetentionService` (social-service) is the only caller and owns both halves:
+
+- **Release**, on `deletePost` and `deleteComment` - the object drops back to the ordinary idle
+  window and the sweep takes it in its own time. Deliberately not an immediate delete: an edit that
+  merely removes an image reaches the same path. `deleteComment` releases the replies' media too,
+  since the replies go with it.
+- **Backfill**, at every boot - one SQL pass over `posts`, which is also the repair after an index
+  loss. Note the two shapes: a post carries an ARRAY under `images`, a comment carries ONE media as
+  an OBJECT under `media`, and reading either with the other's accessor silently finds nothing.
+
+Neither call may fail a user's delete, so both are best-effort **and both log** - a classify that
+fails is re-applied at the next boot; a release that fails only keeps an object longer than needed.
+
+**`archiveCount` / `archiveBytes` are reported separately in `/admin/storage`**, because an exempt
+class folded into a total is a class whose growth nothing can ever see - the same defect the bucket
+breakdown was split to fix on 2026-08-18. At the rate measured on the day it shipped (40.8 MB over
+4.5 months, ~110 MB/year) this is indolent; the line exists so that stays a measurement.
 
 ## Environment variables
 

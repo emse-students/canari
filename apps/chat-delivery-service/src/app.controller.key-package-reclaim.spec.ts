@@ -69,7 +69,11 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
    */
   const estate = (
     deleted: number,
-    stale: { userId: string; deviceId: string; notAfter: Date }[]
+    // The same row shape the job's own `getRawMany` declares. It said `{ userId, deviceId,
+    // notAfter }` while every fixture below passed `createdAt` as well - which the job reads to
+    // tell a REPORTED expiry from a PROVEN one. Only the two literals passed inline were refused;
+    // the 40-row fixture went through `.slice()`, where excess-property checking does not apply.
+    stale: { userId: string; deviceId: string; notAfter: Date | null; createdAt: Date }[]
   ) => {
     otkpBuilder = stubQueryBuilder({ execute: { affected: deleted } });
     fallbackBuilders = [

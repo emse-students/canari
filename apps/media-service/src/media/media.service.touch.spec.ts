@@ -1,5 +1,5 @@
 /**
- * `MediaService.touch` - the write that makes the 30-day retention clock mean what it says.
+ * `MediaService.touch` - the write that makes the idle retention clock mean what it says.
  *
  * The asymmetry these cases are built around: refreshing an entry that did not need it costs
  * nothing, while failing to refresh one deletes somebody's photograph. So the cases that matter

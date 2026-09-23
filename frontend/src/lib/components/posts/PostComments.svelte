@@ -139,7 +139,7 @@
         uploadFile = compressed.file;
         dims = { width: compressed.width, height: compressed.height };
       }
-      const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims);
+      const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims, 'archive');
       const { type: _type, ...mediaFields } = ref;
       clearPendingMedia();
       pendingMedia = mediaFields as PostMediaRef;

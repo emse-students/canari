@@ -33,6 +33,8 @@ export interface MediaBucketUsage {
   tombstonedBytes: number;
   publicAssetCount: number;
   publicAssetBytes: number;
+  archiveCount: number;
+  archiveBytes: number;
   retentionMs: number;
   sweepIntervalMs: number;
 }

@@ -6,6 +6,7 @@
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
+ *   POST /media/internal/retention-class - classify/release objects (X-Internal-Secret)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
  * The token carries `sub` (userId). Deletion additionally requires the shared
@@ -38,7 +39,12 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import sharp from 'sharp';
-import { MediaService, type MediaStorageStats } from './media.service';
+import {
+  MediaService,
+  isRetentionClass,
+  type MediaStorageStats,
+  type RetentionClass,
+} from './media.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -63,6 +69,9 @@ const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/web
 
 /** Upper bound on a single POST /media/touch batch; the client batches well below this. */
 const TOUCH_MAX_IDS = 500;
+
+/** Upper bound on a single POST /media/internal/retention-class batch; social-service chunks to it. */
+const RETENTION_CLASS_MAX_IDS = 500;
 
 @Controller('media')
 export class MediaController {
@@ -130,7 +139,11 @@ export class MediaController {
       storage: undefined,
     })
   )
-  async upload(@UploadedFile() file: unknown, @Req() req: Request): Promise<{ mediaId: string }> {
+  async upload(
+    @UploadedFile() file: unknown,
+    @Body() body: { retentionClass?: unknown },
+    @Req() req: Request
+  ): Promise<{ mediaId: string }> {
     const ownerId = this.verifyToken(req);
 
     let upload: ReturnType<typeof requireUploadedFile>;
@@ -142,8 +155,15 @@ export class MediaController {
       );
     }
 
-    const mediaId = await this.mediaService.upload(upload.buffer, ownerId);
-    this.logger.log(`Stored encrypted blob: ${mediaId} (${upload.size} bytes)`);
+    // The client names the surface it uploaded from, because it is the only party that knows.
+    // Unrecognised values are ignored rather than refused: the field is a retention HINT, an old
+    // client sends none at all, and failing an upload over it would break posting outright.
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+
+    const mediaId = await this.mediaService.upload(upload.buffer, ownerId, retentionClass);
+    this.logger.log(
+      `Stored encrypted blob: ${mediaId} (${upload.size} bytes, retention=${retentionClass ?? 'idle'})`
+    );
     return { mediaId };
   }
 
@@ -226,11 +246,22 @@ export class MediaController {
   @Post('upload/chunk/:id/complete')
   async completeChunkedUpload(
     @Param('id') id: string,
+    @Body() body: { retentionClass?: unknown },
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
     const ownerId = this.verifyToken(req);
-    const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES, ownerId);
-    this.logger.log(`Completed chunked upload: ${id} -> ${mediaId}`);
+    // Same hint as the single-shot upload: a 50 MB+ video posted to the feed is archive too, and
+    // the class has to survive the path the file happened to take.
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const mediaId = await this.mediaService.completeChunkedUpload(
+      id,
+      MAX_BYTES,
+      ownerId,
+      retentionClass
+    );
+    this.logger.log(
+      `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'idle'})`
+    );
     return { mediaId };
   }
 
@@ -265,6 +296,61 @@ export class MediaController {
   ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
     return this.mediaService.getStorageStats();
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/retention-class - classify or release existing objects
+  // ---------------------------------------------------------------------------
+  /**
+   * Sets (`'archive'`) or clears (`null`) the retention class of objects that already exist.
+   *
+   * Sole consumer: social-service, which owns the post rows and is therefore the only party that
+   * can say an object is still cited by one. It classifies what was uploaded before the class
+   * existed, and releases what a deleted post no longer references.
+   *
+   * X-Internal-Secret and NO user JWT, unlike `POST /media/touch`: the backfill runs at boot with
+   * no user in sight, and unlike a touch this can also REMOVE a reason to keep an object - so it
+   * is not something a logged-in client may aim at somebody else's id.
+   */
+  @Post('internal/retention-class')
+  async setRetentionClass(
+    @Body() body: { mediaIds?: unknown; retentionClass?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ changed: number }> {
+    assertInternalSecret(internalSecret);
+
+    const ids = body?.mediaIds;
+    if (!Array.isArray(ids)) {
+      throw new BadRequestException('mediaIds must be an array');
+    }
+    // Bounded like the touch batch, and for the same reason: a body is attacker-controlled even
+    // behind the internal secret, and an unbounded loop here holds the metadata lock.
+    if (ids.length > RETENTION_CLASS_MAX_IDS) {
+      throw new BadRequestException(
+        `mediaIds must hold at most ${RETENTION_CLASS_MAX_IDS} entries`
+      );
+    }
+
+    // Null is the RELEASE and has to stay distinguishable from an absent field, so it is checked
+    // rather than defaulted: a body that forgot the key must not silently unclassify a batch.
+    let retentionClass: RetentionClass | null = null;
+    if (body?.retentionClass != null) {
+      if (!isRetentionClass(body.retentionClass)) {
+        throw new BadRequestException("retentionClass must be 'archive' or null");
+      }
+      retentionClass = body.retentionClass;
+    }
+
+    const changed = await this.mediaService.setRetentionClass(
+      ids.filter((id): id is string => typeof id === 'string'),
+      retentionClass
+    );
+    if (changed > 0) {
+      this.logger.log(
+        `Retention class ${retentionClass ?? 'cleared'} applied to ${changed} object(s)`
+      );
+    }
+    return { changed };
   }
 
   // ---------------------------------------------------------------------------
@@ -304,7 +390,7 @@ export class MediaController {
   /**
    * Marks media as used when the client served them from its own ciphertext cache.
    *
-   * Without this the 30-day retention clock only ever advanced when a device that did NOT already
+   * Without this the retention clock only ever advanced when a device that did NOT already
    * hold an object downloaded it, so an image everyone looks at daily expired on the same schedule
    * as one nobody ever opened again. See {@link MediaService.touch}.
    *
