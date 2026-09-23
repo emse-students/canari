@@ -104,10 +104,14 @@
     void agenda.reload();
   }
 
-  onMount(async () => {
-    filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
-    await loadAssociations();
-    await agenda.reload();
+  /**
+   * The controls the reader may be offered, resolved BEHIND the month rather than in front of it.
+   *
+   * Every one of these decides whether a button exists. None of them decides what the page shows,
+   * so none of them belongs on the path to the first paint - and four of them ran one after
+   * another, each a full round trip on a bad link.
+   */
+  async function loadPermissions() {
     /**
      * THE PDF TOOL IS ADMIN-ONLY, SO THE LINK TO IT IS TOO (user, 2026-09-14). A link that leads to
      * a page which immediately sends the reader back is a dead end offered on purpose, and this is
@@ -122,11 +126,18 @@
       canDepositEvent = true;
       canExportPdf = true;
     } else {
-      if (!canExportPdf) {
-        canExportPdf = await ensureAssociationSuperAdmin().catch(() => false);
-      }
-      try {
-        const mine = await listMyAssociations();
+      // The two probes read the same endpoint and no longer chain: `ensureAssociationSuperAdmin`
+      // derives its flag from the very list beside it, which `listMyAssociations` holds for both.
+      const [superAdmin, mine] = await Promise.all([
+        canExportPdf ? Promise.resolve(true) : ensureAssociationSuperAdmin().catch(() => false),
+        listMyAssociations().catch(() => null),
+      ]);
+      canExportPdf = superAdmin;
+      if (mine === null) {
+        canModerateAgenda = false;
+        canDepositEvent = false;
+        proposeAssocIds = new Set();
+      } else {
         canModerateAgenda = mine.some((a) => a.isAdmin);
         // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
         // any association; we keep their BDE association as the authorisation :id.
@@ -143,10 +154,6 @@
             )
             .map((a) => a.id)
         );
-      } catch {
-        canModerateAgenda = false;
-        canDepositEvent = false;
-        proposeAssocIds = new Set();
       }
     }
     if (canModerateAgenda) {
@@ -157,6 +164,23 @@
         pendingCount = 0;
       }
     }
+  }
+
+  onMount(() => {
+    filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
+    /**
+     * THE MONTH IS WHAT THE READER CAME FOR, SO IT IS ASKED FOR FIRST AND ALONE.
+     *
+     * It used to be THIRD: the association list, awaited, then the month, then four permission
+     * probes one after another. The list fills a filter select and the probes decide which buttons
+     * exist - neither is the page, and on a bad link the reader watched a spinner through both.
+     * Nothing below depends on anything beside it, so nothing below awaits anything beside it.
+     */
+    void agenda.reload();
+    void loadAssociations();
+    // The only one of the three with no catch of its own - and a permission probe that throws
+    // leaves controls hidden, which looks exactly like not being allowed to use them.
+    loadPermissions().catch((err) => Log.d('calendar.loadPermissions failed', err));
   });
 
   afterNavigate((n) => {

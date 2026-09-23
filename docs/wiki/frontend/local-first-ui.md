@@ -181,6 +181,7 @@ tap on a bad link did nothing, and said nothing either. It logs now.
 **WHAT WAS DELIBERATELY LEFT ALONE.** A destructive control keeps its confirmation and its
 server-first order: deleting a payment method, deleting a comment, granting an admin. The reader is
 not made to watch a row vanish optimistically when the question is whether it may vanish at all.
+
 ## 3quinquies. The same list, asked for again on every mount (2026-09-23)
 
 SHAPE 3. Nothing here is slow on its own; what is wrong is HOW MANY TIMES it is asked for.
@@ -232,6 +233,39 @@ and the other is not* - and was itself a second cache over `listMyAssociations`.
 THROUGH it. `fetchMyProfile`'s bespoke 30-second cache, written for the Fil tab in #988, became the
 first caller of this class and is now one line.
 
+## 3sexies. What the reader came for, last in the queue (2026-09-23)
+
+SHAPE 1, AND IT IS NOT ABOUT CACHING. Four screens asked for everything they needed one item at a
+time, and on each of them the thing the reader actually opened the page to see was not first.
+A round trip that is behind another round trip costs both, and a bad link multiplies the whole
+chain rather than the longest link in it.
+
+| screen | the chain, in order | what the reader came for |
+| --- | --- | --- |
+| `/calendar` | the association list -> **the month** -> the super-admin probe -> the membership list -> the pending count | the month, THIRD |
+| `/documents` | `getReviewerAccess()` -> **the documents** | the documents, and the page drew NOTHING - not even its header - until the boolean came back |
+| `/forms/[id]` | a token refresh -> **the form** -> the linked event -> that event's association -> `checkSubmission` | the form and its controls, and `checkSubmission` decides whether they work at all |
+| `/associations/[slug]` | the association -> members + products + partnerships -> the follow status | the page, held at the end by a BUTTON'S LABEL |
+
+**NOTHING BELOW DEPENDS ON ANYTHING BESIDE IT, SO NOTHING BELOW AWAITS ANYTHING BESIDE IT.** That is
+the whole change. `/calendar` starts the month alone and lets the filter select and the four
+permission probes - which decide only which buttons exist - fill in behind it; the two probes that
+read the same endpoint stopped chaining. `/forms/[id]` asks for the linked event and
+`checkSubmission` together, and the association slug for the banner follows its event behind the
+page rather than in front of it. `/associations/[slug]` folds the follow status into the batch it
+used to follow.
+
+**A GATE RUNS BESIDE THE CONTENT, NEVER IN FRONT OF IT** - the same rule #988 applied to the Fil
+tab's audience gate, and `/documents` is the other instance of it. The probe and the documents
+request start together; a reader who may not be there is sent away by the same answer as before,
+and the one wasted request on that rarest path is refused by the server for exactly the same reason
+it refuses the probe. It is not a way in.
+
+**THE TOKEN WARM-UP WAS NEVER A DEPENDENCY.** `/forms/[id]` awaited `getToken()` before asking for
+the form, next to a comment saying the form loads fine without it. `refresh()` already holds one
+request in flight for every caller, so the `apiFetch` that follows joins it rather than starting a
+second - the await bought nothing and cost a full round trip on a cold session.
+
 ## 4. The ledger - what is fixed, what is not
 
 Audited 2026-09-22/23 across chat, feed, communities, associations, settings and profile. Every
@@ -249,7 +283,7 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 8 | Display names re-resolved per row although the payload already carries them (`directory:177`, `AssociationMemberRow:106`, `NotificationRow:166`) | 3 | open |
 | 9 | Channel open deletes the local page **before** awaiting the server (`useConversations.svelte.ts:457`) | 1 | open |
 | 10 | The global MLS mutex is held across `fetchHistory` HTTP calls (`history.ts:830`..`:1270`) | - | open |
-| 11 | Serial page loads: `/calendar` (5 deep), `/documents` (blank until a boolean), `/forms/[id]` (5), `/associations/[slug]` (3) | 1 | open |
+| 11 | Serial page loads: `/calendar` (5 deep), `/documents` (blank until a boolean), `/forms/[id]` (5), `/associations/[slug]` (3) | 1 | **fixed 2026-09-23** |
 | 12 | Association edit: every tab switch remounts and refetches | 1 | **partly fixed 2026-09-23** - the directory and the categories were most of what it re-asked for, and row 7's cache covers them. What each tab fetches FOR ITSELF still costs a round trip per switch. |
 | 13 | Polls with no in-flight guard (`admin/status:74`, `SettingsSecuritySection:100`) | - | open |
 | 14 | `pullToRefresh` keeps a non-passive `touchmove` bound for the whole refresh (`pullToRefresh.ts:173`) | - | open |

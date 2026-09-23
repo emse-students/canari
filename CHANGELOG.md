@@ -20,6 +20,16 @@ et porte un id LOCAL que `PostComments` refuse de nommer au serveur tant qu'il e
 verification de mute reste, mais repond depuis le cache : `cachedMuteStatus()` refuse ce qui est
 deja connu, sinon l'interface bouge et la question part derriere.
 [local-first-ui](docs/wiki/frontend/local-first-ui.md#3quater-six-taps-that-waited-to-be-told-what-they-already-knew-2026-09-23).
+
+### Fixed - ce que le lecteur venait voir, dernier dans la file
+
+Quatre ecrans demandaient tout un element a la fois, et sur chacun la chose ouverte n'etait pas la
+premiere : le mois du calendrier passait TROISIEME, `/documents` ne dessinait rien - pas meme son
+en-tete - tant qu'un booleen n'etait pas revenu, `/forms/[id]` faisait attendre ses controles
+derriere une banniere decorative, et une page d'association finissait suspendue au libelle d'un
+bouton. Rien de ce qui suit ne depend de ce qui est a cote, donc plus rien ne l'attend.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3sexies-what-the-reader-came-for-last-in-the-queue-2026-09-23).
+
 ### Fixed - la meme liste, redemandee au serveur a chaque montage
 
 Quatorze ecrans lisent l'annuaire des associations et chacun le redemandait au montage : passer
