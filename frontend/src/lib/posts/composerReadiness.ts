@@ -26,11 +26,7 @@
  */
 import { m } from '$lib/paraglide/messages';
 import type { PublishStage } from './publishFailure';
-
-/** A poll option as `CreatePostPayload` wants it. */
-export interface PollOption {
-  label: string;
-}
+import { pollDraftIssue, type PollDraft, type PollDraftIssue } from './pollDraft';
 
 /** The composer state that can be judged without asking the network anything. */
 export interface ComposerContents {
@@ -38,12 +34,30 @@ export interface ComposerContents {
   markdown: string;
   /** How many files are staged for upload. */
   fileCount: number;
-  includePoll: boolean;
-  pollQuestion: string;
-  /** The options exactly as typed: one per line. */
-  pollOptionsRaw: string;
-  includeForm: boolean;
+  /** The poll being attached, or `null` when the toggle is off. */
+  poll: PollDraft | null;
+  /**
+   * The deadline the poll already carried, when an EXISTING poll is being edited.
+   *
+   * Left out by the create composer, which has no such thing. See {@link pollDraftIssue}.
+   */
+  storedPollEndsAt?: string;
+  /** The form attachment, or `null` when the toggle is off. */
+  form: FormAttachment | null;
+}
+
+/** The form attachment as the composer holds it. */
+export interface FormAttachment {
   selectedFormId: string;
+  /**
+   * How many forms this account may attach.
+   *
+   * IT IS HERE BECAUSE ZERO IS A DIFFERENT SENTENCE. "Veuillez selectionner un formulaire" asks
+   * the reader to do something they cannot do when the picker is empty - which is the state the
+   * 2026-09-21 reporter's account was in (`GET /api/forms` answered `[]`). A precondition that
+   * cannot be met must say so rather than ask again.
+   */
+  availableCount: number;
 }
 
 /** Why this draft cannot be sent, said as the stage that refuses it and the reader's sentence. */
@@ -52,24 +66,13 @@ export interface PublishBlocker {
   stage: PublishStage;
   /** Already in the reader's language - it travels as a `LocalizedError`. */
   message: string;
-}
-
-/**
- * The poll options as typed, one per line, blanks dropped.
- *
- * Exported because the validator and the payload builder MUST NOT count differently: refusing on
- * "fewer than two" and then sending a third parsing of the same text is two implementations of one
- * rule, and the reader meets the disagreement as a post that vanishes.
- *
- * @param optionsRaw The textarea's contents, newline separated.
- * @returns One entry per non-blank line, trimmed, in the order typed.
- */
-export function parsePollOptions(optionsRaw: string): PollOption[] {
-  return optionsRaw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((label) => ({ label }));
+  /**
+   * Which field of the poll card is at fault, when the stage is `poll`.
+   *
+   * The card renders it beside that field, so the reader is not sent looking: a sentence in the
+   * banner names the attachment, this names the input.
+   */
+  pollIssue?: PollDraftIssue;
 }
 
 /**
@@ -97,15 +100,23 @@ export function localPublishBlocker(contents: ComposerContents): PublishBlocker 
     return { stage: 'content', message: m.post_create_content_required() };
   }
 
-  if (contents.includePoll) {
-    const options = parsePollOptions(contents.pollOptionsRaw);
-    if (!contents.pollQuestion.trim() || options.length < 2) {
-      return { stage: 'poll', message: m.post_create_poll_requires_options() };
+  if (contents.poll) {
+    const pollIssue = pollDraftIssue(contents.poll, contents.storedPollEndsAt);
+    if (pollIssue) {
+      return { stage: 'poll', message: m.post_create_poll_requires_options(), pollIssue };
     }
   }
 
-  if (contents.includeForm && !contents.selectedFormId) {
-    return { stage: 'form', message: m.post_create_form_required() };
+  if (contents.form && !contents.form.selectedFormId) {
+    // Zero forms is not "you have not chosen yet", and asking again for a choice that does not
+    // exist is the shape of refusal this whole module was written against.
+    return {
+      stage: 'form',
+      message:
+        contents.form.availableCount === 0
+          ? m.post_create_form_none_available()
+          : m.post_create_form_required(),
+    };
   }
 
   return null;

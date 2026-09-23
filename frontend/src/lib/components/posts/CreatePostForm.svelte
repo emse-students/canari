@@ -24,7 +24,15 @@
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
-  import { hasContent, localPublishBlocker, parsePollOptions } from '$lib/posts/composerReadiness';
+  import { hasContent, localPublishBlocker } from '$lib/posts/composerReadiness';
+  import {
+    emptyPollOptions,
+    filledPollOptions,
+    normalizeMaxSelections,
+    type PollDraft,
+    type PollDraftOption,
+    type PollDraftIssue,
+  } from '$lib/posts/pollDraft';
   import { LocalizedError } from '$lib/utils/localizedError';
   import { getForms, type Form } from '$lib/forms/api';
   import {
@@ -79,8 +87,25 @@
   // --- Optional sections ---
   let includePoll = $state(false);
   let pollQuestion = $state('');
-  let pollOptionsRaw = $state('Oui\nNon');
+  let pollOptions = $state<PollDraftOption[]>(emptyPollOptions());
   let pollMultipleChoice = $state(false);
+  let pollMaxSelections = $state<number | null>(null);
+  let pollEndsAt = $state('');
+  /** Which poll field the last refused publish was waiting on, shown inside the card. */
+  let pollIssue = $state<PollDraftIssue | null>(null);
+
+  /** The poll as the rules in `pollDraft.ts` want it, or `null` when the toggle is off. */
+  const pollDraft = $derived<PollDraft | null>(
+    includePoll
+      ? {
+          question: pollQuestion,
+          options: pollOptions,
+          multipleChoice: pollMultipleChoice,
+          maxSelections: pollMaxSelections,
+          endsAt: pollEndsAt,
+        }
+      : null
+  );
 
   let includeForm = $state(false);
   let selectedFormId = $state('');
@@ -126,8 +151,10 @@
       imageCaptions: [...mediaCaptions],
       includePoll,
       pollQuestion,
-      pollOptionsRaw,
+      pollOptions: [...pollOptions],
       pollMultipleChoice,
+      pollMaxSelections,
+      pollEndsAt,
       includeForm,
       selectedFormId,
       scheduledAt,
@@ -141,8 +168,11 @@
     mediaCaptions = draft.imageCaptions ?? [];
     includePoll = draft.includePoll;
     pollQuestion = draft.pollQuestion;
-    pollOptionsRaw = draft.pollOptionsRaw;
+    pollOptions = [...draft.pollOptions];
     pollMultipleChoice = draft.pollMultipleChoice;
+    pollMaxSelections = draft.pollMaxSelections;
+    pollEndsAt = draft.pollEndsAt;
+    pollIssue = null;
     includeForm = draft.includeForm;
     selectedFormId = draft.selectedFormId;
     scheduledAt = draft.scheduledAt;
@@ -349,12 +379,10 @@
       const blocker = localPublishBlocker({
         markdown,
         fileCount: selectedFiles.length,
-        includePoll,
-        pollQuestion,
-        pollOptionsRaw,
-        includeForm,
-        selectedFormId,
+        poll: pollDraft,
+        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
       });
+      pollIssue = blocker?.pollIssue ?? null;
       if (blocker) {
         stage = blocker.stage;
         throw new LocalizedError(blocker.message);
@@ -398,11 +426,18 @@
       // Both attachments were validated above, so assembly only reads them - and it reads the
       // options through the SAME parser that counted them, never a second spelling of the rule.
       if (includePoll) {
+        const options = filledPollOptions(pollOptions);
         payload.polls = [
           {
             question: pollQuestion.trim(),
-            options: parsePollOptions(pollOptionsRaw),
+            options,
             multipleChoice: pollMultipleChoice,
+            maxSelections: normalizeMaxSelections(
+              pollMaxSelections,
+              options.length,
+              pollMultipleChoice
+            ),
+            ...(pollEndsAt ? { endsAt: new Date(pollEndsAt).toISOString() } : {}),
           },
         ];
       }
@@ -427,7 +462,10 @@
       mediaCaptions = [];
       includePoll = false;
       pollQuestion = '';
-      pollOptionsRaw = 'Oui\nNon';
+      pollOptions = emptyPollOptions();
+      pollMaxSelections = null;
+      pollEndsAt = '';
+      pollIssue = null;
       includeForm = false;
       scheduledAt = '';
       selectedAssociationId = '';
@@ -662,9 +700,15 @@
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <PollSection
           bind:question={pollQuestion}
-          bind:optionsRaw={pollOptionsRaw}
+          bind:options={pollOptions}
           bind:multipleChoice={pollMultipleChoice}
-          onRemove={() => (includePoll = false)}
+          bind:maxSelections={pollMaxSelections}
+          bind:endsAt={pollEndsAt}
+          issue={pollIssue}
+          onRemove={() => {
+            includePoll = false;
+            pollIssue = null;
+          }}
         />
       </div>
     {/if}

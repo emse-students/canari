@@ -323,6 +323,59 @@ export class PostsService {
    * identity, answered two ways. Reported by the user on 2026-09-17, who guessed the cause in the
    * asking: *"J'ai cree un post mais je ne pouvais pas le supprimer (je suis admin ?)"*.
    */
+
+  /**
+   * THE ONE PLACE A POLL BECOMES A STORED POLL - and the one that decides what an edit KEEPS.
+   *
+   * The create and the update path each carried this map, letter for letter. That is how a new
+   * field reaches one path and not the other, and it is why `maxSelections` and `endsAt` are
+   * spelled here once rather than twice.
+   *
+   * AND AN EDIT USED TO ERASE EVERY VOTE. The edit form sends the poll's id under a comment saying
+   * it is there "to preserve vote history"; it preserved the id and nothing else. The tallies live
+   * in `option.votes` and `votesByUser`, the update rebuilt each poll from the payload alone, and
+   * `whitelist: true` strips any tally a client tries to send back - so correcting one word of a
+   * question reset the poll to zero, silently, with the id intact to prove nothing had been lost.
+   *
+   * Votes are carried over from the STORED poll and matched BY OPTION ID: an option the editor
+   * deleted takes its votes with it, one they kept keeps them, and a relabelled option keeps them
+   * too, because the id is what a vote was cast against. `votesByUser` is then DERIVED from what
+   * survived rather than copied alongside it - two stored copies of one tally is how they come to
+   * disagree, and only one of them is what the options display.
+   *
+   * @param incoming The polls as the client sent them, already validated.
+   * @param existing The polls currently stored on the post, empty on creation.
+   * @returns The polls to store.
+   */
+  private normalizePolls(incoming: any[], existing: any[] = []): any[] {
+    return incoming.map((poll: any) => {
+      const previous = existing.find((p: any) => p?.id && p.id === poll.id);
+      const options = (poll.options || []).map((opt: any) => {
+        const id = opt.id || crypto.randomUUID();
+        const previousVotes = previous?.options?.find((o: any) => o.id === id)?.votes;
+        return { ...opt, id, votes: Array.isArray(previousVotes) ? [...previousVotes] : [] };
+      });
+      // Null-prototype, as `votePoll` keeps it: a user id is an arbitrary string key.
+      const votesByUser: Record<string, string[]> = Object.create(null);
+      for (const opt of options) {
+        for (const userId of opt.votes as string[]) {
+          (votesByUser[userId] ??= []).push(opt.id);
+        }
+      }
+      return {
+        ...poll,
+        id: poll.id || crypto.randomUUID(),
+        multipleChoice: poll.multipleChoice ?? false,
+        // A cap that no longer fits the votes already cast is not rewritten: those votes are
+        // history, and the cap only ever decides what the NEXT voter may do.
+        maxSelections: poll.maxSelections ?? null,
+        endsAt: poll.endsAt ?? null,
+        votesByUser,
+        options,
+      };
+    });
+  }
+
   async createPost(data: any, isGlobalAdmin: boolean) {
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
@@ -331,17 +384,7 @@ export class PostsService {
       );
     }
     if (Array.isArray(data.polls)) {
-      data.polls = data.polls.map((poll: any) => ({
-        ...poll,
-        id: poll.id || crypto.randomUUID(),
-        multipleChoice: poll.multipleChoice ?? false,
-        votesByUser: poll.votesByUser ?? {},
-        options: (poll.options || []).map((opt: any) => ({
-          ...opt,
-          id: opt.id || crypto.randomUUID(),
-          votes: Array.isArray(opt.votes) ? opt.votes : [],
-        })),
-      }));
+      data.polls = this.normalizePolls(data.polls);
     }
     // Extract mentions before saving so we can populate post.mentions
     const markdown: string = typeof data.markdown === 'string' ? data.markdown : '';
@@ -931,17 +974,7 @@ export class PostsService {
     }
 
     if (data.polls !== undefined) {
-      post.polls = data.polls.map((poll: any) => ({
-        ...poll,
-        id: poll.id || crypto.randomUUID(),
-        multipleChoice: poll.multipleChoice ?? false,
-        votesByUser: poll.votesByUser ?? {},
-        options: (poll.options || []).map((opt: any) => ({
-          ...opt,
-          id: opt.id || crypto.randomUUID(),
-          votes: Array.isArray(opt.votes) ? opt.votes : [],
-        })),
-      }));
+      post.polls = this.normalizePolls(data.polls, post.polls ?? []);
     }
 
     if ('attachedFormId' in data) post.attachedFormId = data.attachedFormId ?? null;

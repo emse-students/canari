@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - modifier un post remettait son sondage a zero
+
+Le formulaire renvoyait l'id du sondage sous un commentaire disant qu'il preservait l'historique des
+votes : il preservait l'id et rien d'autre. Les comptes vivent dans `option.votes` et `votesByUser`,
+la mise a jour reconstruisait le sondage a partir du seul payload, et le DTO n'acceptait meme pas
+l'id d'une option - donc corriger un mot de la question effacait tous les votes. L'identite est
+maintenant portee par l'option et les votes suivent, par id.
+[posts](docs/wiki/frontend/modules/posts.md#an-option-is-an-id-and-a-label-and-that-is-what-a-vote-is-cast-against).
+
+### Fixed - le serveur n'appliquait aucune regle de sondage au moment du vote
+
+`votePoll` enregistrait les `optionIds` recus tels quels : `multipleChoice: false` n'etait qu'une
+convention d'affichage (des boutons radio n'envoient qu'un id), un sondage clos n'avait que ses
+boutons caches, et un id inconnu du sondage etait quand meme ecrit dans `votesByUser` puis renvoye a
+tous les lecteurs. Les trois sont des refus, et le client cesse d'offrir un tap qu'il sait refuse.
+[posts](docs/wiki/frontend/modules/posts.md#three-places-state-the-cap-and-only-one-of-them-is-not-advisory).
+
+### Changed - le composer de sondage a une ligne par option, un `+`, une echeance et un maximum
+
+Une seule zone de texte a lignes multiples portait toute la structure dans son libelle ("une par
+ligne"), donc "Oui, Non" etait UNE option - la cause du refus du 2026-09-21. Les deux surfaces
+montent desormais le meme editeur (celui des salons), et deux reglages que le serveur acceptait
+depuis toujours sont enfin accessibles : la date de cloture et le nombre maximum de reponses.
+[posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+
 ### Fixed - le composer de post savait deja pourquoi il refusait, et effacait sa reponse au bout de 5 s
 
 Le membre du 2026-09-21 avait ouvert un sondage sans le remplir : le log nginx de ses deux essais du

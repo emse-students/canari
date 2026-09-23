@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from '@lucide/svelte';
   import type { Poll } from '$lib/posts/api';
+  import { pollSelectionIsFull } from '$lib/posts/pollVote';
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
@@ -10,8 +11,14 @@
     polls: Poll[] | undefined;
     /** Option IDs the current user has selected across all polls. */
     selectedOptions: string[];
-    /** Called when the user clicks a poll option. Single-choice: also submits immediately. */
-    onVoteClick: (pollId: string, optionId: string, multipleChoice: boolean) => void;
+    /**
+     * Called when the user clicks a poll option. Single-choice: also submits immediately.
+     *
+     * It takes the POLL, not its id and one of its fields: `multipleChoice` was passed because it
+     * was the only thing the handler needed, and `maxSelections` then had to be threaded through
+     * as a second scalar. The poll is the thing being voted on.
+     */
+    onVoteClick: (poll: Poll, optionId: string) => void;
     /** Called when the user clicks the "Voter" button (multiple-choice polls only). */
     onSubmitVote: (pollId: string) => void;
     /**
@@ -107,12 +114,26 @@
   function hasVoted(poll: Poll): boolean {
     return poll.options.some((opt) => selectedOptions.includes(opt.id));
   }
+
+  /**
+   * This reader's selection within ONE poll.
+   *
+   * `selectedOptions` is flat across the card's polls, so a cap read off its length would count
+   * answers given to a different poll. See `PostCard.selectionIn`, which splits it the same way
+   * for the write.
+   */
+  function selectionIn(poll: Poll): string[] {
+    const ids = new Set(poll.options.map((o) => o.id));
+    return selectedOptions.filter((id) => ids.has(id));
+  }
 </script>
 
 {#if polls && polls.length > 0}
   <div class="space-y-5 px-5 py-4">
     {#each polls as poll (poll.id)}
       {@const totalVotes = getTotalVotes(poll)}
+      {@const over = isOver(poll)}
+      {@const full = pollSelectionIsFull(selectionIn(poll), poll)}
 
       <div
         class="bg-cn-surface rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
@@ -135,10 +156,18 @@
                 >
                   {m.post_poll_multiple_choice_label()}
                 </span>
+                {#if poll.maxSelections}
+                  <!-- A cap the voter cannot see is a button that stops working for no reason. -->
+                  <span
+                    class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
+                  >
+                    {m.post_poll_max_selections_badge({ count: poll.maxSelections })}
+                  </span>
+                {/if}
               {/if}
               {#if poll.endsAt}
                 <span class="text-2xs font-bold text-amber-600 opacity-90 dark:text-amber-400">
-                  ⏱ {isOver(poll) ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
+                  ⏱ {over ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
                 </span>
               {/if}
               {#if hasVoted(poll)}
@@ -156,6 +185,7 @@
         <div class="space-y-2.5">
           {#each poll.options as option (option.id)}
             {@const isSelected = selectedOptions.includes(option.id)}
+            {@const refuses = over || (full && !isSelected)}
             {@const percentage = getPercentage(option.votes, totalVotes)}
             {@const voteCount = getVoteCount(option.votes)}
             {@const voterIds = getVoterIds(option.votes)}
@@ -164,9 +194,12 @@
               type="button"
               class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
                 ? 'border-amber-500 bg-amber-500/5'
-                : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'}"
-              onclick={() => onVoteClick(poll.id, option.id, poll.multipleChoice)}
+                : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'} {refuses
+                ? 'cursor-default opacity-70 hover:border-black/5 hover:bg-transparent dark:hover:border-white/5 dark:hover:bg-transparent'
+                : ''}"
+              onclick={() => onVoteClick(poll, option.id)}
               aria-pressed={isSelected}
+              aria-disabled={refuses}
             >
               <!-- Visual vote progress bar in the background. -->
               {#if totalVotes > 0}
@@ -265,10 +298,15 @@
               >{m.post_poll_ended_full_label()}</span
             >
           {:else if poll.multipleChoice}
+            {#if full}
+              <span class="text-text-muted text-xs font-bold opacity-70">
+                {m.post_poll_selection_full_hint({ count: poll.maxSelections ?? 0 })}
+              </span>
+            {/if}
             <button
               type="button"
               class="text-cn-ink rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
-              disabled={selectedOptions.length === 0}
+              disabled={selectionIn(poll).length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >
               {m.post_sondage_voter()}

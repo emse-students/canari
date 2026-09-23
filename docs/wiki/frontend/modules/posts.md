@@ -564,8 +564,9 @@ things wrong here were never the publish path - they are the two below.
 `await assertNotMuted()` and only afterwards checked content, poll and form - three preconditions
 sitting in its own `$state`. That is the rule this repository states everywhere else: **never learn
 by failing what a fact could have told you.** `posts/composerReadiness.ts` answers all three first,
-and the same module is the ONE spelling of the button's rule (`hasContent`) and of the option count
-(`parsePollOptions`), which the payload builder had been re-deriving a second time.
+and it is the ONE spelling of the button's rule (`hasContent`); the poll's own rules moved to
+`posts/pollDraft.ts` with the editor rewrite below, so the payload builder stopped re-deriving the
+option count a second time.
 
 **SECOND, AND IT IS WHY THE REPORT CARRIED NO SENTENCE: THE ERROR BANNER ERASED ITSELF AFTER FIVE
 SECONDS.** A timer decided when the reader had finished reading, and on a phone the keyboard can
@@ -613,6 +614,62 @@ the line was always visible. It was the zeroed margin that welded it to the sent
 and `color: inherit` that made it as heavy as body text - hence `var(--cn-border)` rather than
 `currentcolor`.
 
+## One row per option, an identity on each, and a cap the server applies (2026-09-23)
+
+The composer above named its stage; this is what the stage was ABOUT. The post surface asked for a
+poll's options in ONE textarea, newline separated, labelled "Options (une par ligne)" - so the
+structure of the data lived in the label. A reader who typed `Oui, Non` wrote one option and was
+refused, and **the app already contained the answer**: `PollComposerModal`, the channel composer,
+has had one input per option with a `+` and a bin since it was written.
+
+`PollOptionsEditor.svelte` is now that editor, mounted by both surfaces, and `posts/pollDraft.ts`
+holds the rules it is judged by. Two settings the server had always accepted arrive with it: a
+CLOSING TIME, which `PostPolls` has been able to render and count down for as long as it has
+existed and which nothing on a post could set, and a CAP on how many options one voter may pick.
+
+### An option is an id and a label, and that is what a vote is cast against
+
+The rows were `string[]` for about an hour of this work, with the editor holding a parallel array of
+row ids so `{#each}` could key on something stable. That is two arrays that must stay the same
+length, resynced by an `$effect` - and it made the real defect underneath impossible to fix:
+
+**EDITING A POST EMPTIED ITS POLL.** `EditPostForm` sends the poll's id back under a comment reading
+"preserved to maintain vote history". It preserved the id and nothing else. The tallies live in
+`option.votes` and `votesByUser`; `updatePost` rebuilt each poll from the payload alone; `whitelist:
+true` strips any tally a client tries to send back; and `PollOptionInputDto` had no `id` field, so
+every save minted fresh option ids that could not have matched anything anyway. Correcting one word
+of a question reset the poll to zero, with the id intact to suggest nothing had been lost.
+
+So identity lives on the option (`PollDraftOption`), the DTO accepts it, and
+`PostsService.normalizePolls` - ONE function, where the create and the update path each carried the
+same map - carries votes across an edit BY OPTION ID. A renamed option keeps its votes, a deleted
+one takes them with it, and `votesByUser` is DERIVED from what survived rather than copied beside
+it, because two stored copies of one tally is how they come to disagree.
+
+### Three places state the cap, and only one of them is not advisory
+
+| where | what it decides | what happens if it is wrong |
+| --- | --- | --- |
+| `pollDraft.ts` | what may be COMPOSED | the author writes a poll that contradicts itself |
+| `pollVote.ts` (`nextPollSelection`) | what may be SELECTED on the device | a tap does something the poll does not allow |
+| `post-interactions.service.ts` | what may be RECORDED | anyone with `curl` decides |
+
+`votePoll` enforced NOTHING until this day. `multipleChoice: false` was a rendering convention -
+radio inputs send one id, so one id is what arrived - and a request that sent five recorded five
+votes on a single-choice poll. A closed poll only ever had its buttons hidden. And an option id
+belonging to no option of that poll cast no vote but WAS written into `votesByUser`, so it came back
+to every reader as part of somebody's answer. All three are refusals now
+(`post-interactions.vote-poll.spec.ts`), and the card stops offering a tap it knows will be refused
+rather than learning by the 400.
+
+### One selection array, several polls
+
+`selectedOptions` on `PostCard` is flat across every poll on the card, which was invisible while a
+post could only carry one: a tap on a single-choice poll replaced the whole array - clearing the
+reader's answer to the poll beside it - and `submitVote` then sent that other poll's ids to THIS
+poll's endpoint. `selectionIn(poll)` splits it once, on both sides of the write, which is also what
+makes "two answers max" count the right answers.
+
 ## A poll option is free text, so it can only wrap (2026-09-23)
 
 `PostPolls.svelte` is the ONE presentation for both surfaces that carry a poll: a post's poll card
@@ -620,7 +677,8 @@ and, through `ChannelPoll.svelte`, a community poll. Its option row carried `tru
 which is `white-space: nowrap` - one line, ellipsis, whatever the text is.
 
 That holds only if the label is short, and nothing makes it short. An option is free text typed by
-the author (`PollSection`'s newline-separated textarea), and the real poll that surfaced this asked
+the author (`PollSection`'s textarea, one row per option since later the same day), and the real
+poll that surfaced this asked
 which charity to give to: eight association names, seven of them longer than the box. Measured on
 the component at a 360px-wide container, the label gets what the row leaves it - the 20px selection
 icon, its 12px gap, then the percentage (`min-w-[2.5rem]`) and the count badge on the right - which

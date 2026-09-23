@@ -44,6 +44,7 @@
     toUpdatePayload,
     type EventFormValues,
   } from '$lib/calendar/eventForm';
+  import { toDatetimeLocalValue } from '$lib/utils/dates';
   import { daySquareDate, formatEventDateTimeRange } from '$lib/calendar/feedEvents';
   import { createAgendaMonth } from '$lib/calendar/agendaMonth.svelte';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
@@ -149,7 +150,7 @@
   function exportMonthIcs() {
     if (validatedEvents.length === 0) return;
     const y = agenda.focusDate.getFullYear();
-    const mo = pad(agenda.focusDate.getMonth() + 1);
+    const mo = String(agenda.focusDate.getMonth() + 1).padStart(2, '0');
     downloadTextFile(
       `agenda-${associationSlug ?? associationId}-${y}-${mo}.ics`,
       buildIcsCalendar(validatedEvents.map(toAgendaExport)),
@@ -167,15 +168,6 @@
       Log.d('[asso-calendar] link candidates failed', e);
       linkCandidates = { forms: [] };
     }
-  }
-
-  function pad(n: number) {
-    return n < 10 ? `0${n}` : `${n}`;
-  }
-
-  function toDatetimeLocalValue(iso: string): string {
-    const d = new Date(iso);
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   onMount(() => void agenda.reload());

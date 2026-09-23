@@ -1,3 +1,4 @@
+import { toDatetimeLocalValue } from '$lib/utils/dates';
 import { m } from '$lib/paraglide/messages';
 import type {
   AssociationCalendarEventKind,
@@ -104,21 +105,6 @@ export function toUpdatePayload(
     ...(caps.canSetKind ? { kind: values.kind } : {}),
     ...(caps.canLinkForm ? { linkedFormId: values.linkedFormId.trim() || null } : {}),
   };
-}
-
-function pad(n: number): string {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-
-/**
- * An instant as the `datetime-local` text an input shows, in the viewer's own zone.
- *
- * Both surfaces carried this and its `pad` helper verbatim, which is the same duplication one level
- * down: two copies of the rule that decides what an edit's start time LOOKS like.
- */
-export function toDatetimeLocalValue(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**

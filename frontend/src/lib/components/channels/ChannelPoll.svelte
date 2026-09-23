@@ -1,6 +1,7 @@
 <script lang="ts">
   import PostPolls from '$lib/components/posts/PostPolls.svelte';
   import type { Poll } from '$lib/posts/api';
+  import { nextPollSelection } from '$lib/posts/pollVote';
   import type { ChannelPollMeta, ChannelPollSpec } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
@@ -62,18 +63,16 @@
 
   /**
    * Single-choice: toggle then submit immediately. Multiple-choice: just toggle;
-   * the user submits via the "Voter" button (onSubmitVote). Mirrors PostCard.
+   * the user submits via the "Voter" button (onSubmitVote).
+   *
+   * It no longer MIRRORS `PostCard` - both call `nextPollSelection`, which is the rule itself.
+   * The two copies agreed as long as there were two branches; the day a cap added a third they
+   * would have agreed only by coincidence.
    */
-  function handleVoteClick(_pollId: string, optionId: string, multipleChoice: boolean) {
+  function handleVoteClick(votedPoll: Poll, optionId: string) {
     if (isClosed) return;
-    if (!multipleChoice) {
-      selectedOptions = selectedOptions.includes(optionId) ? [] : [optionId];
-      void onVote?.(selectedOptions);
-    } else if (selectedOptions.includes(optionId)) {
-      selectedOptions = selectedOptions.filter((id) => id !== optionId);
-    } else {
-      selectedOptions = [...selectedOptions, optionId];
-    }
+    selectedOptions = nextPollSelection(selectedOptions, optionId, votedPoll);
+    if (!votedPoll.multipleChoice) void onVote?.(selectedOptions);
   }
 
   function submitVote() {

@@ -60,6 +60,17 @@ export class PostMediaDto {
 }
 
 export class PollOptionInputDto {
+  /**
+   * The option's existing id, when a poll is being EDITED.
+   *
+   * It was not here, and `whitelist: true` therefore deleted it from every payload: each save
+   * minted new ids, no stored vote matched an option any more, and fixing a typo in a question
+   * emptied the poll. An option the editor did not touch keeps its id, and with it its votes.
+   */
+  @IsString()
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsNotEmpty()
   label: string;
@@ -83,6 +94,18 @@ export class PollInputDto {
   @IsBoolean()
   @IsOptional()
   multipleChoice?: boolean;
+
+  /**
+   * How many options one voter may pick, or absent/null for no limit.
+   *
+   * `@IsOptional()` passes `null` through untouched, which is how the composer CLEARS a cap: an
+   * omitted field and an explicit `null` must mean the same thing here, because the update path
+   * rebuilds the poll from this payload alone.
+   */
+  @IsInt()
+  @Min(2)
+  @IsOptional()
+  maxSelections?: number | null;
 
   @IsDateString()
   @IsOptional()

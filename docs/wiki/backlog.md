@@ -1709,7 +1709,7 @@ plus an open report, and must not be written up as the user's defect closed.
 
 ---
 
-### P2 - ONE MEMBER COULD NOT PUBLISH: THE STAGE IS `poll`, AND THE TWO DEFECTS UNDER IT ARE FIXED (user, 2026-09-21, closed 2026-09-23)
+### P2 - THE MEMBER WHO COULD NOT PUBLISH IS STILL ON `0.18.14`, AND OWES ONE OBSERVATION (user, 2026-09-21)
 
 Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible de publier le
 post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
@@ -1771,12 +1771,22 @@ error banner **erased itself after five seconds**, which is why the original rep
 its own sentence. A clock decided when a reader had finished reading; on a phone the keyboard can
 still be over the banner when it goes.
 
+**AND THE SURFACE HE WAS USING WAS REBUILT THE SAME DAY.** The options were one newline-separated
+textarea, so `Oui, Non` was ONE option - a structure carried in a label, which is what he ran into.
+Both surfaces now mount the channel composer's per-option editor, with an identity on each row, a
+closing date and a cap on how many answers a voter may give; three defects that were only reachable
+once that code was read are fixed with it (an edit erased every vote, `votePoll` enforced nothing at
+all, and one flat selection array was shared by every poll on a card). See
+[posts](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+
 **WHAT IS LEFT OPEN, AND IT IS SMALL**: `includeForm` is still the one attachment an account can be
-unable to satisfy - this reporter's `GET /api/forms` answers `[]` - and both toggles are restored
+unable to satisfy - this reporter's `GET /api/forms` answers `[]`, which now says so in its own
+sentence rather than asking again for a choice that does not exist - and both toggles are restored
 from the draft, so an abandoned one returns silently at the next composer open. Neither is worth a
-pull request until something is observed; the refusal now names itself instantly. **He is also still
-on `0.18.14`, seven versions behind and before `publishFailure.ts` (`0.18.18`), so he sees none of
-this until he updates.**
+pull request until something is observed. **He is also still on `0.18.14`, seven versions behind and
+before `publishFailure.ts` (`0.18.18`), so he sees none of this until he updates** - which is the
+one observation still owed: whether the composer, on a version that names its stage, still refuses
+him anything.
 
 Note that the evidence for the ORIGINAL 2026-09-21 attempt is gone for a structural reason, not a
 procedural one - see the Infrastructure entry on a deploy destroying production's only log; the
