@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le volet de la navbar ne s'ouvrait plus au survol, et les icones scintillaient
+
+Le rail montait de `z-20` a `--z-nav-rail` en s'ouvrant, et `transition-all` INTERPOLE un z-index :
+il valait 20, 21, 22 image par image, donc son propre scrim (22) passait par-dessus, prenait le
+pointeur et refermait le volet - 6 a 14 `mouseleave` par survol, 0 une fois le rung fige. Ecrit
+ainsi depuis des mois, revele le 2026-09-22 quand #967 a cesse d'ecraser `transition-property`
+partout. Un gate condamne desormais tout element qui anime le rung sur lequel il se tient.
+[design-reference](docs/wiki/frontend/design-reference.md#a-rung-that-is-animated-is-not-the-rung-it-declares-2026-09-23).
+
 ### Changed - l'export PDF du calendrier reproduit le Canva, et le panneau passe de 20 reglages a 7
 
 Le BDE refaisait le mois a la main dans Canva chaque mois ; la feuille copie desormais ce design
