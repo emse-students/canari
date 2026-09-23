@@ -3,15 +3,51 @@ import { getMyMuteStatus } from './api';
 const CACHE_TTL_MS = 5 * 60_000;
 
 let cachedAt = 0;
-let cached: { isMuted: boolean; mutedReason: string | null } | null = null;
+let cached: MuteStatus | null = null;
+/**
+ * The request being made right now, so two taps in the same second are one round trip.
+ *
+ * The cache below covered the SECOND five minutes and never the first tap of each window - and a
+ * reader reacting, then commenting, then reacting again does all three inside it. On a bad link
+ * that was three identical `GET /api/moderation/me/mute-status` racing each other.
+ */
+let inFlight: Promise<MuteStatus> | null = null;
+
+export interface MuteStatus {
+  isMuted: boolean;
+  mutedReason: string | null;
+}
 
 /** Returns the current user's mute status, cached for 5 minutes. */
-export async function getMuteStatus(): Promise<{ isMuted: boolean; mutedReason: string | null }> {
+export async function getMuteStatus(): Promise<MuteStatus> {
+  const fresh = cachedMuteStatus();
+  if (fresh) return fresh;
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    const s = await getMyMuteStatus();
+    cached = { isMuted: s.isMuted, mutedReason: s.mutedReason };
+    cachedAt = Date.now();
+    return cached;
+  })();
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
+}
+
+/**
+ * The mute status ALREADY KNOWN, without asking - or `null` when nothing fresh is held.
+ *
+ * WHAT IT IS FOR. A write path must not be sent to a server that is certain to refuse it, so the
+ * check stays. But it must not put a round trip in front of a tap either, and in the overwhelming
+ * majority of taps the answer is already here. A caller reads this first, moves the interface, and
+ * only awaits when it genuinely has never been told.
+ */
+export function cachedMuteStatus(): MuteStatus | null {
   if (cached && Date.now() - cachedAt < CACHE_TTL_MS) return cached;
-  const s = await getMyMuteStatus();
-  cached = { isMuted: s.isMuted, mutedReason: s.mutedReason };
-  cachedAt = Date.now();
-  return cached;
+  return null;
 }
 
 /**
@@ -54,4 +90,5 @@ export async function assertNotMuted(): Promise<void> {
 export function invalidateMuteCache(): void {
   cached = null;
   cachedAt = 0;
+  inFlight = null;
 }

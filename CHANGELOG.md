@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - six commandes attendaient qu'on leur dise ce qu'elles savaient deja
+
+Un vote de sondage, un commentaire, son coeur, les deux boutons "Suivre" et "Debloquer" ne
+bougeaient qu'au retour du serveur - lien mauvais, tap mort. Le decompte d'un sondage est une
+fonction pure de l'etat local (`applyPostPollVote`), un commentaire est complet avant d'etre envoye
+et porte un id LOCAL que `PostComments` refuse de nommer au serveur tant qu'il est en attente. La
+verification de mute reste, mais repond depuis le cache : `cachedMuteStatus()` refuse ce qui est
+deja connu, sinon l'interface bouge et la question part derriere.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3quater-six-taps-that-waited-to-be-told-what-they-already-knew-2026-09-23).
+
 ### Fixed - le fil de discussion etait ramene en bas par le reseau, et celui d'a cote aussi
 
 `useMessaging` terminait chaque message persiste, chaque lot et chaque rattrapage par un

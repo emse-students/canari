@@ -133,6 +133,55 @@ asks - the whole win for a reader scrolling past thirty rows. One that has alrea
 completion on purpose: the fetch behind it is shared with every other holder of the same object
 through the in-flight map, so cancelling it would cancel somebody else's.
 
+## 3quater. Six taps that waited to be told what they already knew (2026-09-23)
+
+SHAPE 2, AND THE WHOLE OF IT IS ONE QUESTION: does the device already know what the control is
+about to show? For all six of these it did, and all six waited anyway.
+
+| control | what it showed on the tap | what the server adds |
+| --- | --- | --- |
+| a poll option | nothing, until `votePoll` answered | confirmation |
+| the send button under a comment | nothing; the box kept the text and the button stayed disabled | the comment's real id |
+| a comment's heart | nothing, and a failure was swallowed entirely | the authoritative `likes[]` |
+| "Suivre" on a profile | nothing; the button was disabled meanwhile | confirmation |
+| "Suivre" on an association | the same | confirmation |
+| "Debloquer" in the settings | nothing; the row stayed until the round trip finished | confirmation |
+
+**THE TALLY IS ALREADY HERE.** A poll carries `votesByUser` and a `votes[]` per option, so the new
+tally is a pure function of the old one and the tap - `applyPostPollVote`, extracted to
+`lib/posts/pollVote.ts` so it can be tested without a component, and pure so the rollback is nothing
+more than the post the handler came in with. The CHANNEL poll path had reached that conclusion long
+ago (`applyLocalVote`, called before the server); the POST poll path had not, and the two shapes
+had simply never been compared.
+
+**A COMMENT IS COMPLETE BEFORE IT IS SENT.** It is written into the list immediately, carrying a
+LOCAL id - `pending-<uuid>` - and listed in `pendingCommentIds`, which `PostComments` reads to
+withhold every control that would name an id to the server: like, reply, edit, delete, report. That
+is the contract, and it is the reason a pending row is safe: the reader sees their comment and
+cannot act on an id no endpoint would recognise. The server's row REPLACES it, id and all. A
+refusal removes the row and puts the text back in the box, where the reader can send it again.
+
+**THE MUTE CHECK STAYS, AND STOPS BEING A ROUND TRIP IN FRONT OF A TAP.** `assertNotMuted()` ASKS
+the server, and it was the FIRST statement of both the reaction and the comment handler - so every
+tap in a fresh five-minute window waited for `GET /api/moderation/me/mute-status` before anything
+moved. Two changes, and neither removes the check:
+
+- `cachedMuteStatus()` answers from the cache **synchronously** or says it does not know. A mute
+  ALREADY KNOWN refuses before anything is written - *never learn by failing what a fact could have
+  told you*. Anything else lets the interface move and asks behind it.
+- `getMuteStatus()` holds the request in flight, so a reader who reacts, comments and reacts again
+  inside the same window makes ONE request instead of three racing each other. The five-minute
+  cache only ever covered the SECOND window.
+
+**A ROLLBACK IS NOT A FALLBACK.** Nothing here adds a second path: the write is attempted exactly
+once, against exactly one endpoint, and a refusal puts the interface back where it was and says so.
+The one place that had no sentence at all was the comment heart, which swallowed its failure - so a
+tap on a bad link did nothing, and said nothing either. It logs now.
+
+**WHAT WAS DELIBERATELY LEFT ALONE.** A destructive control keeps its confirmation and its
+server-first order: deleting a payment method, deleting a comment, granting an admin. The reader is
+not made to watch a row vanish optimistically when the question is whether it may vanish at all.
+
 ## 4. The ledger - what is fixed, what is not
 
 Audited 2026-09-22/23 across chat, feed, communities, associations, settings and profile. Every
@@ -144,7 +193,7 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 2 | Chat scroll yanked to the bottom by any inbound frame, in any conversation | - | **fixed 2026-09-23** |
 | 3 | Prepends with no anchor compensation: peer scrollback, and the render window stepping up | - | **fixed 2026-09-23** |
 | 4 | Post and message media fetched on mount: no viewport gate, no cap, no cancel | 3 | **fixed 2026-09-23** |
-| 5 | Optimistic UI missing: poll vote, comment, comment like, follow, unblock, reaction-behind-a-mute-check | 2 | open |
+| 5 | Optimistic UI missing: poll vote, comment, comment like, follow, unblock, reaction-behind-a-mute-check | 2 | **fixed 2026-09-23** |
 | 6 | `apiFetch` carries no `AbortSignal` and no timeout, so every await below is unbounded | - | open |
 | 7 | `listAssociations()` uncached across 13 call sites; `listPaymentMethods()` once per product tile | 3 | open |
 | 8 | Display names re-resolved per row although the payload already carries them (`directory:177`, `AssociationMemberRow:106`, `NotificationRow:166`) | 3 | open |

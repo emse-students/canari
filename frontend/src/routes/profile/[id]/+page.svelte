@@ -164,17 +164,18 @@
 
   async function handleFollowToggle() {
     if (!profile?.id || followLoading) return;
+    // THE LABEL IS A LOCAL BOOLEAN AND IT FLIPS ON THE TAP. It used to flip after the round trip
+    // while `followLoading` held the button disabled, so on a bad link the reader pressed
+    // "Suivre", got a dead control, and had nothing to read for seconds. A refusal puts it back.
+    const wasFollowing = following;
+    following = !wasFollowing;
     followLoading = true;
     try {
-      if (following) {
-        await unfollowUser(profile.id);
-        following = false;
-      } else {
-        await followUser(profile.id);
-        following = true;
-      }
+      if (wasFollowing) await unfollowUser(profile.id);
+      else await followUser(profile.id);
     } catch (err) {
       Log.d('profile.handleFollowToggle failed', err);
+      following = wasFollowing;
     } finally {
       followLoading = false;
     }
