@@ -149,6 +149,41 @@ describe('the layer ladder', () => {
     ).toEqual([]);
   });
 
+  it('never lets an element ANIMATE the rung it stands on', () => {
+    // A RUNG COMPARED AGAINST AN INTERPOLATED VALUE IS NOT THE RUNG IT DECLARES, and the three
+    // assertions above cannot see it: they read the ladder, which stays perfectly ordered while the
+    // element on it is somewhere between two rungs. `z-index` is an integer, and `transition-all`
+    // is a promise to animate EVERY property, so an element whose class list carries two different
+    // `z-` values walks between them one frame at a time.
+    //
+    // MEASURED on 2026-09-23: the nav rail climbed from a raw `z-20` to `--z-nav-rail` (30) as it
+    // opened and computed 20, 21, 22 on successive frames, while its own scrim - mounted at 22 in
+    // the same flush - sat ON TOP of it. The scrim took the pointer, `mouseleave` fired on the rail,
+    // and the panel the user was opening collapsed under the cursor: 6 to 14 leaves per hover, 0
+    // once the rung was pinned. It had been written that way for months and only surfaced when #967
+    // stopped an unlayered rule from silently deleting `transition-property` app-wide - which is
+    // the reason this is a gate and not a note: nothing about the markup changed on the day it
+    // broke.
+    //
+    // A SINGLE `z-` PLUS `transition-all` IS NOT AN OFFENCE and is not reported: a value that never
+    // changes never transitions. Three such elements exist in the tree, all of them local `z-0` /
+    // `z-10` orderings inside one card, and a gate that accused them would be silenced.
+    const offenders: string[] = [];
+    for (const { file, value } of classValues()) {
+      if (!/\btransition-all\b/.test(value)) continue;
+      // Every spelling of the utility: `z-20`, `z-[160]` and the named `z-(--z-nav-rail)`.
+      const rungs = new Set(
+        [...value.matchAll(/\bz-(?:\[[^\]]+\]|\([^)]+\)|[\w.-]+)/g)].map((match) => match[0])
+      );
+      if (rungs.size > 1) offenders.push(`${file}: ${[...rungs].join(' <-> ')}`);
+    }
+
+    expect(
+      offenders,
+      'This element changes its z-index AND animates every property, so its rung is interpolated - name the properties that actually animate, or give it one rung for both states.'
+    ).toEqual([]);
+  });
+
   it('has no window-scale z-index written as a number anywhere in the markup', () => {
     const offenders: string[] = [];
     for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {

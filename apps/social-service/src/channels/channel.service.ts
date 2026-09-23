@@ -5,6 +5,7 @@ import {
   Logger,
   BadRequestException,
 } from '@nestjs/common';
+import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, And, LessThan, MoreThanOrEqual } from 'typeorm';
 import * as crypto from 'crypto';
@@ -3360,8 +3361,8 @@ export class ChannelService {
       if (!meta.votesByUser || Object.getPrototypeOf(meta.votesByUser) !== null) {
         meta.votesByUser = Object.assign(Object.create(null), meta.votesByUser);
       }
-      // Security: mitigates CodeQL alerts #2477/#2476 — reject dangerous property keys
-      if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
+      // Security: mitigates CodeQL alerts #2477/#2476 - reject dangerous property keys
+      if (isUnsafeObjectKey(userId)) {
         throw new BadRequestException('Invalid user identifier');
       }
       if (selected.length === 0) {

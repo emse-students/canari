@@ -258,9 +258,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 11. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
-12. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
-    anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE observation
-    from the reporter is owed**; a deploy destroys prod's only log, so the first attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
+12. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
+    path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
+    **ONE OBSERVATION OWED** - he is on `0.18.14` ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
 13. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 14. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
@@ -308,8 +308,8 @@ THREE times**, so it names no version. `gh release list` is the shipped version,
 **No HEAL-REVOKE verdict about a clean device may be taken on a build older than 0.14.12.** **An
 APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS the frontend, so
 `minClientVersion` and check S reason about a NAME unless a version identifies its content.
-**2.1(a) IS PASSED**; only **check R** is left of the 2026-08-26 mails, and **WP-RESTORE-1** (April
-2027) is ACCEPTED, after the campaign.
+**2.1(a) IS PASSED; CHECK R IS FIVE OF SIX ON SHIPPED `0.18.21` AND FOUND A P1 - THE STORE BUILD'S
+WEBVIEW IS INSPECTABLE** ([backlog](docs/wiki/backlog.md)); **WP-RESTORE-1** (April 2027) ACCEPTED.
 
 **iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
 full parity audit read everything else as symmetric. Four items open in

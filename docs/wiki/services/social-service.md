@@ -1029,6 +1029,33 @@ expires. Bounds that would mint a dead link - an expiry already past, a cap belo
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
 
+### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
+
+Reactions and poll answers are both stored as a map KEYED BY USER ID (`reactions`, `votesByUser`),
+so a string off a request becomes a property name. Four sites guarded that, and no two of them
+agreed: `addReaction` and `removeReaction` listed three names, the channel poll's vote listed three,
+`sanitizeReactions` listed five - `__defineGetter__` and `__defineSetter__` in exactly one of the
+four. A list that differs by site is a list that is wrong at every site but one, and nothing would
+have failed if a fifth had been written with two names. It is now `src/common/object-keys.ts`, one
+`isUnsafeObjectKey`, imported by the three services.
+
+`Object.create(null)` answers the other half where a map is written in place: a prototype-less
+object has nothing to walk into, and both vote paths re-establish it on a stored map before writing,
+since a jsonb round trip hands back an ordinary object. **What it does not stop is the map CARRYING
+a key of that shape**, which then travels to every reader of the poll and into JSON - which is why
+`votePoll` now REFUSES the identifier where it enters, as the channel path already did, and why
+`normalizePolls` SKIPS one while rebuilding a map from stored votes: those rows were written by a
+`votePoll` that has refused them only since this same day.
+
+Where a map is BUILT rather than updated, neither is needed: `normalizePolls` accumulates the tally
+in a `Map`, which has no property names to shadow, and `Object.fromEntries` materialises it as own
+data properties at the end. That is also the only form CodeQL accepts - `js/remote-property-injection`
+does not read a predicate in another module as a barrier, and a guard a scanner cannot see is one
+the next reader will delete.
+
+`forms.service.ts` reaches the same conclusion from the other direction and is the better shape
+where it applies: the declared question ids are an allowlist, so nothing else can be a key at all.
+
 ## Environment variables
 
 | Variable | Required | Description |

@@ -33,6 +33,19 @@
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
   import PollSection from './PollSection.svelte';
+  import { localPublishBlocker } from '$lib/posts/composerReadiness';
+  import { publishFailureMessage } from '$lib/posts/publishFailure';
+  import { LocalizedError } from '$lib/utils/localizedError';
+  import {
+    emptyPollOptions,
+    filledPollOptions,
+    normalizeMaxSelections,
+    POLL_MIN_OPTIONS,
+    type PollDraft,
+    type PollDraftOption,
+    type PollDraftIssue,
+  } from '$lib/posts/pollDraft';
+  import { toDatetimeLocalValue } from '$lib/utils/dates';
   import FormSection from './FormSection.svelte';
   import PostMedia from './PostMedia.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -74,14 +87,43 @@
   let existingPollId = $state(untrack(() => _initialPoll?.id ?? ''));
   let includePoll = $state(untrack(() => (post.polls?.length ?? 0) > 0));
   let pollQuestion = $state(untrack(() => _initialPoll?.question ?? ''));
-  let pollOptionsRaw = $state(
-    untrack(() =>
-      (_initialPoll?.options ?? []).length >= 2
-        ? (_initialPoll?.options ?? []).map((o: any) => o.label).join('\n')
-        : 'Oui\nNon'
-    )
+  let pollOptions = $state<PollDraftOption[]>(
+    untrack(() => {
+      // THE STORED IDS COME WITH THEM, and go back out on save: a vote was cast against an option
+      // id, so an option that keeps its id keeps its tally. See `posts.service.ts`.
+      const stored = (_initialPoll?.options ?? []).map((o: { id: string; label: string }) => ({
+        id: o.id,
+        label: o.label,
+      }));
+      return stored.length >= POLL_MIN_OPTIONS ? stored : emptyPollOptions();
+    })
   );
   let pollMultipleChoice = $state(untrack(() => _initialPoll?.multipleChoice ?? false));
+  let pollMaxSelections = $state<number | null>(untrack(() => _initialPoll?.maxSelections ?? null));
+  /**
+   * The deadline as it was STORED, so the rule that a deadline must be in the future can tell a
+   * date the reader just typed from one they merely opened. A poll that closed yesterday is a
+   * perfectly good poll to fix a typo on.
+   */
+  const _initialEndsAt = untrack(() =>
+    _initialPoll?.endsAt ? toDatetimeLocalValue(_initialPoll.endsAt) : ''
+  );
+  let pollEndsAt = $state(_initialEndsAt);
+  /** Which poll field the last refused save was waiting on, shown inside the card. */
+  let pollIssue = $state<PollDraftIssue | null>(null);
+
+  /** The poll as the rules in `pollDraft.ts` want it, or `null` when the toggle is off. */
+  const pollDraft = $derived<PollDraft | null>(
+    includePoll
+      ? {
+          question: pollQuestion,
+          options: pollOptions,
+          multipleChoice: pollMultipleChoice,
+          maxSelections: pollMaxSelections,
+          endsAt: pollEndsAt,
+        }
+      : null
+  );
 
   // --- Form attachment ---
   let includeForm = $state(untrack(() => !!post.attachedFormId));
@@ -244,21 +286,34 @@
         linkedCalendarEventId: selectedLinkedCalendarEventId || null,
       };
 
+      // THE SAME RULE AS THE COMPOSER'S, FROM THE SAME MODULE. This threw
+      // `new Error('A poll requires a question and at least two options.')` - English dev prose
+      // which the catch below then replaced with "Impossible d'enregistrer", so an editor was told
+      // nothing at all. Third call site of the defect `publishFailure.ts` was written for.
+      const blocker = localPublishBlocker({
+        markdown,
+        fileCount: allMedia.length,
+        poll: pollDraft,
+        storedPollEndsAt: _initialEndsAt,
+        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
+      });
+      pollIssue = blocker?.pollIssue ?? null;
+      if (blocker) throw new LocalizedError(blocker.message);
+
       if (includePoll) {
-        const options = pollOptionsRaw
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .map((label) => ({ label }));
-        if (!pollQuestion.trim() || options.length < 2) {
-          throw new Error('A poll requires a question and at least two options.');
-        }
+        const options = filledPollOptions(pollOptions);
         payload.polls = [
           {
             ...(existingPollId ? { id: existingPollId } : {}),
             question: pollQuestion.trim(),
             options,
             multipleChoice: pollMultipleChoice,
+            maxSelections: normalizeMaxSelections(
+              pollMaxSelections,
+              options.length,
+              pollMultipleChoice
+            ),
+            endsAt: pollEndsAt ? new Date(pollEndsAt).toISOString() : null,
           },
         ];
       } else {
@@ -272,7 +327,7 @@
       onSaved(updated);
     } catch (err) {
       Log.d('submitEdit failed', err);
-      errorMessage = m.post_edit_save_error();
+      errorMessage = publishFailureMessage(err, m.post_edit_save_error());
     } finally {
       saving = false;
     }
@@ -442,11 +497,15 @@
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <PollSection
           bind:question={pollQuestion}
-          bind:optionsRaw={pollOptionsRaw}
+          bind:options={pollOptions}
           bind:multipleChoice={pollMultipleChoice}
+          bind:maxSelections={pollMaxSelections}
+          bind:endsAt={pollEndsAt}
+          issue={pollIssue}
           onRemove={() => {
             includePoll = false;
             existingPollId = '';
+            pollIssue = null;
           }}
         />
       </div>

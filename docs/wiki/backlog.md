@@ -66,6 +66,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **dismiss code-scanning alert 2521 as a false positive** - `js/user-controlled-bypass` on the refresh endpoint's own 401; the flagged condition is the REFUSAL, and the sensitive path behind it is verified three ways. A judgement about an auth path is not an agent's to record unilaterally | 1 click, Security tab | [P3 - ONE HIGH-SEVERITY ALERT IS A FALSE POSITIVE](#p3---one-high-severity-code-scanning-alert-is-a-false-positive-and-only-a-click-closes-it) |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [P2 - that a photo now survives a restart](#p2---that-a-photo-now-survives-a-restart-is-proven-by-compiling-and-by-nothing-else---one-mi-9t-look-user-2026-09-17) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
@@ -80,6 +81,80 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **one FIDO touch on `ssh -fN bastion`**, which opens the master connection the whole survey of the target host waits behind. `ControlPersist 48h` means it is owed ONCE per two days, not once per command - and it is the only thing standing between here and the four measurements section 9 of that page lists as open | 1 touch | [estate-migration](infrastructure/estate-migration.md#9-open-questions) |
 
 ## Open defects, in severity order
+
+### P1 - THE SHIPPED STORE BUILD'S WEBVIEW IS INSPECTABLE, AND THE MEMORY-ONLY TOKEN RULE ASSUMES IT IS NOT (measured on the shipped `v0.18.21` artifact, 2026-09-23)
+
+**Anyone who can run `adb` against a phone holding the Play Store build can attach Chrome DevTools
+to it and read the MLS state, decrypted message content and the in-memory access token.** This is
+not inferred from configuration: during [check R](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)
+the release `app-universal-release.apk` was installed on the Mi 9T, `@webview_devtools_remote_<pid>`
+was present in `/proc/net/unix` for the app's OWN pid, and a CDP session read its DOM, its
+`performance` resource timeline and its Tauri IPC. The repository's standing rule is that access
+tokens live *in memory ONLY, never localStorage* - a rule whose entire value is that the memory is
+unreachable. Inside an inspectable WebView it is a `Runtime.evaluate` away.
+
+**THE CAUSAL CHAIN IS SEPARATED, because one observation had three candidate causes and an entry
+naming all three teaches nothing.** Each leg below was measured, not assumed:
+
+1. **`frontend/src-tauri/Cargo.toml:21` - the `devtools` Cargo feature is what compiles the exposure
+   in.** wry gates the call as `#[cfg(any(debug_assertions, feature = "devtools"))]` around
+   `setWebContentsDebuggingEnabled` (`wry-0.55.1/src/android/main_pipe.rs:257`). A release build has
+   no `debug_assertions`, so **without this feature the call is not in the binary at all**. It sits
+   in plain `[dependencies]`, with no `cfg(debug_assertions)` target table and no dev-only feature.
+2. **`frontend/src-tauri/tauri.conf.json:18` - `"devtools": true` supplies that call's argument.**
+   It reaches `webview_attributes.devtools` and is passed as the boolean. The config type is
+   `Option<bool>` and its absent default falls back to `debug_assertions`, so the JSON is what turns
+   a compiled-in call into an enabled one.
+3. **`android:debuggable` is NOT the cause and is correctly absent.** `aapt2 dump badging` on the
+   shipped artifact prints no debuggable flag (and `usesCleartextTraffic=false`). The third
+   candidate is ruled out, so the fix does not belong in the manifest.
+
+**AND THE CALL SITE EVERYONE WILL CHECK IS CLEAN, WHICH IS WHY THIS SURVIVED.** `open_devtools()` at
+`frontend/src-tauri/src/lib.rs:952` *is* wrapped in `#[cfg(debug_assertions)]`. Nothing opens a
+panel by itself, so a reader auditing that one call site concludes the release is fine. **The
+exposure is that the WebView is inspectable, not that a panel appears** - a distinction no grep for
+`open_devtools` can make.
+
+**THE FIX RIDES A STORE BUILD AND NOTHING ELSE.** An APK is not reached by a deploy - the app EMBEDS
+its frontend (`frontendDist: "../build"`) - so every device already holding this build stays
+inspectable until a NEW store version replaces it. `minClientVersion` cannot gate it either, since
+that reasons about a name and not about a binary's compiled features. Removing the Cargo feature is
+the load-bearing half; removing the JSON value alone would leave the call compiled and merely pass
+`false`, which closes the hole by relying on a default rather than by deleting the capability.
+
+**What is owed before this is called closed**: one release build with the feature removed, and the
+same `/proc/net/unix` probe on hardware showing no `@webview_devtools_remote_<pid>` for the app's
+pid. A green build proves nothing here - the whole class was invisible to every gate in this
+repository, which is the point of check R.
+
+### P3 - `login.mjs` calls a login FAILED while the authorization-code exchange is still running (measured 2026-09-23)
+
+Driving A1 through the service-account flow, the atom printed every stage correctly - both fields
+filled, both submits landed - then `session held: false`, `final .../auth/callback?code=...` and a
+non-zero exit with *"the flow completed but no session was written - the app is not logged in"*.
+**The login had succeeded.** Seconds later the app was on `/posts` with the first-connection PIN
+gate up, and the PIN atom then completed normally against it. What the atom caught was the app
+mid-exchange: its own capture holds the words *"Echange du code d'autorisation..."*.
+
+This is the rig's own rule pointed the wrong way - *termination from a PROOF, never from a clock*.
+The poll ends on a deadline and then reports the state it happened to see, so a slow exchange is
+indistinguishable from a refused one, and the atom's docblock is explicit that a non-zero exit means
+the client holds no session. A caller that believes it re-runs a login that already worked, or
+grades a row `SETUP-FAILED` against a healthy app. The end condition should be a fact - the session,
+or the PIN gate, or an error the app itself reports - not the expiry of the wait for one.
+
+### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
+
+`tauri-plugin-notification` creates a channel on plugin load whose name and description are the
+hardcoded literal `"Default"` (`TauriNotificationManager.kt:96`, version 2.4.0) - not a resource, so
+it is not localizable and Paraglide cannot reach it. It appears beside `Messages Canari`,
+`Mentions Canari`, `Appels Canari`, `Activite sociale Canari`, `Reactions a vos messages` and
+`Rappels de formulaires` in the Android notification settings screen. **Nothing posts to it**: the
+manifest points Firebase at `canari_messages`, and every builder in this repository names a
+`canari_*` channel, so it is an empty row rather than a mis-routed notification. It is created in
+BOTH build types, so it is not a shrinking regression. Closing it means deleting the channel after
+the plugin registers it, or carrying a patch upstream.
+
 
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
@@ -1635,7 +1710,7 @@ plus an open report, and must not be written up as the user's defect closed.
 
 ---
 
-### P2 - ONE MEMBER COULD NOT PUBLISH, SEVEN STAGES COULD HAVE STOPPED THEM, AND BOTH HYPOTHESES ARE REFUTED (user, 2026-09-21)
+### P2 - THE MEMBER WHO COULD NOT PUBLISH IS STILL ON `0.18.14`, AND OWES ONE OBSERVATION (user, 2026-09-21)
 
 Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible de publier le
 post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
@@ -1657,12 +1732,66 @@ already existed for it, and the composer logs `[POST_COMPOSER] publish failed at
 ([posts](frontend/modules/posts.md#one-catch-said-seven-things)). The next occurrence arrives with
 the answer attached.
 
-**WHAT IS OWED, AND IT IS ONE OBSERVATION FROM THE REPORTER** - nothing here can produce it:
-the stage line from a retry, or simply whether the draft carried a media attachment, a poll or a
-form, which eliminates four of the seven stages at once. **Until then this is an open report with
-no reproducible defect behind it, and must not be written up as a defect closed.** Note that the
-evidence for the original attempt is gone for a structural reason, not a procedural one - see the
-Infrastructure entry on a deploy destroying production's only log.
+**THE REPORTER RETRIED ON 2026-09-23 AND THE EDGE LOG NARROWED SEVEN STAGES TO TWO** - no phone, no
+DB, no rig: `docker logs infrastructure-frontend-1`, which is nginx (there is no `nginx` container),
+read entirely. The whole day holds **four** `GET /api/moderation/me/mute-status`, and
+`assertNotMuted` has exactly three callers - the composer's `publishPost`, and `PostCard`'s reaction
+and comment handlers - so **every one of them is a write about to be attempted, and each is followed
+by its write or by nothing.** Two were followed by a `201`. The other two are one device,
+`2a0d:e487:31ce:cb23::f6:df9f`, `tauri-plugin-http/2.6.0`, on **`0.18.14`** (the client stamps
+`POST /api/auth/refresh?clientVersion=`), at 19:12:32 and 20:03:07 UTC - and **that device sent no
+`POST /api/posts` all day.**
+
+Both are preceded by the composer mounting, which is visible as its two loads together:
+`GET /api/forms` **and** `GET /api/associations/me/list`, at 19:10:34 and 20:02:52. **Both answer
+`[]`** - 2 bytes - so this account owns no form and belongs to no association. The second tap came
+15 s after the mount, which is the draft restoring rather than anyone typing, and that is why it
+fails identically every time: the offending state is PERSISTED by `savePostComposerDraft`.
+
+| stage | how it died, from the wire alone |
+| --- | --- |
+| `moderation` | the response is `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
+| `content` | unreachable: the Publier button is `disabled={publishing \|\| (!markdown.trim() && selectedFiles.length === 0)}`, the same predicate as the throw |
+| `mediaToken` | `authToken` is already set at mount (`CreatePostForm` line 228), so the branch is skipped; and a refresh would have logged |
+| `mediaUpload` | no `/api/media` write from that device all day, and `compressImage` cannot throw - every failure is a typed passthrough (`decode-failed`, `threw`), so the upload would have been attempted and logged |
+| `createPost` | no `POST /api/posts` from that device, ever |
+
+**WHAT IS LEFT IS `poll` OR `form`, AND ONLY ONE OF THEM IS UNSATISFIABLE.** Both toggles are drawn
+with no guard (`CreatePostForm` lines 718 and 732), icon-only below `sm:`, and both are restored
+from the draft. `includePoll` throws only on an empty question, which the reader can fix once they
+see the card. `includeForm` throws on an empty `selectedFormId` - **and `GET /api/forms` returns `[]`
+for this account, so the picker it opens has nothing in it and the post can never be published while
+that toggle is on.** On `0.18.14` both say only "Impossible de publier le post".
+
+**THE REPORTER THEN NAMED THE BRANCH HIMSELF: HE WAS MAKING A SONDAGE.** So the stage is `poll`,
+`!pollQuestion.trim() || options.length < 2`, and the publish path is confirmed unbroken for the
+third time. **What the report was actually about is the two defects around it, and both are fixed**
+(`composerReadiness.ts`, [posts](frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)):
+the composer spent a `mute-status` round trip to reach a refusal it could speak instantly, and the
+error banner **erased itself after five seconds**, which is why the original report could not quote
+its own sentence. A clock decided when a reader had finished reading; on a phone the keyboard can
+still be over the banner when it goes.
+
+**AND THE SURFACE HE WAS USING WAS REBUILT THE SAME DAY.** The options were one newline-separated
+textarea, so `Oui, Non` was ONE option - a structure carried in a label, which is what he ran into.
+Both surfaces now mount the channel composer's per-option editor, with an identity on each row, a
+closing date and a cap on how many answers a voter may give; three defects that were only reachable
+once that code was read are fixed with it (an edit erased every vote, `votePoll` enforced nothing at
+all, and one flat selection array was shared by every poll on a card). See
+[posts](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+
+**WHAT IS LEFT OPEN, AND IT IS SMALL**: `includeForm` is still the one attachment an account can be
+unable to satisfy - this reporter's `GET /api/forms` answers `[]`, which now says so in its own
+sentence rather than asking again for a choice that does not exist - and both toggles are restored
+from the draft, so an abandoned one returns silently at the next composer open. Neither is worth a
+pull request until something is observed. **He is also still on `0.18.14`, seven versions behind and
+before `publishFailure.ts` (`0.18.18`), so he sees none of this until he updates** - which is the
+one observation still owed: whether the composer, on a version that names its stage, still refuses
+him anything.
+
+Note that the evidence for the ORIGINAL 2026-09-21 attempt is gone for a structural reason, not a
+procedural one - see the Infrastructure entry on a deploy destroying production's only log; the
+2026-09-23 retries survived only because the deploy that day landed at ~09:00 UTC.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
@@ -7554,6 +7683,37 @@ estate and the stores do not need the same lock.
 
 **2026-09-20, from a user's iPhone**, relayed by the user. The first iOS feedback this project has
 ever had, and the ONLY two reports it carries, so neither may be widened into a class.
+
+---
+
+### P3 - one high-severity code-scanning alert is a FALSE POSITIVE, and only a click closes it
+
+**Alert 2521, `js/user-controlled-bypass`, `apps/core-service/src/auth/auth.controller.ts:456`, open
+since 2026-08-27, never dismissed, named by no page here until 2026-09-23.** It fails no gate: the
+`CodeQL` check only refuses a pull request that introduces a NEW alert, so a standing one is
+invisible to every run and was found only by listing the repository's open alerts by hand. That is
+the whole reason this entry exists - **a correct mechanism with no report is found by hand, a day
+late**, and this one was four weeks late.
+
+The flagged line is `if (!refresh_token)` in `refreshToken`. CodeQL reads it as "a user-provided
+value controls a condition guarding a sensitive action", which is the right SHAPE and the wrong
+reading: the branch it controls is the REFUSAL. An absent credential logs the discriminated 401 and
+throws; the sensitive path is the fall-through, and nothing reaches it that has not passed
+`jwt.verify` with `HS256`, a `payload.type !== 'refresh'` check, and the stored-session match that
+makes `logout` and replay detection possible. A caller who controls `refresh_token` controls only
+whether they are refused early or refused late.
+
+**What is owed is a dismissal with a reason, in the Security tab** - one click, on a console the
+user owns, and a judgement about an auth path is not an agent's to record unilaterally. Nothing in
+the repository changes. The alternative - rewriting a correct refusal so a scanner reads it
+differently - is the shape this repo refuses everywhere else, and #1010 is the counter-example worth
+holding beside it: there the guard really was invisible to the scanner AND deletable by the next
+reader, so the code changed. Here neither is true.
+
+**The second half of this entry is the gap it exposes.** No gate lists standing alerts, so a second
+one could sit for four weeks in exactly this way. `gh api repos/emse-students/canari/code-scanning/alerts?state=open`
+is the whole measurement; whether `scheduled.yml` should carry it, and against what threshold, is
+not settled here.
 
 ### 1. The scroll - ONE READING ON THAT iPHONE IS OWED, and nothing here can take it
 

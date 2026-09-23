@@ -14,13 +14,14 @@
     unmaskPost as unmaskPostApi,
     type PostEntity,
     type PostComment,
+    type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
-  import { applyPostPollVote } from '$lib/posts/pollVote';
+  import { applyPostPollVote, nextPollSelection } from '$lib/posts/pollVote';
   import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { getForm, checkSubmission } from '$lib/forms/api';
@@ -89,6 +90,31 @@
   let errorMessage = $state('');
   let editingPost = $state(false);
   let selectedOptions = $state<string[]>([]);
+
+  /**
+   * Whether a poll has closed - ONE spelling, read by the renderer and by the tap handler.
+   *
+   * A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
+   * browser's clock is sound; a channel poll's is not, which is why `PostPolls` takes this as a
+   * prop rather than deciding for every caller (COMM-15).
+   */
+  function pollIsOver(poll: Poll): boolean {
+    return !!poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now();
+  }
+
+  /**
+   * This reader's selection WITHIN one poll.
+   *
+   * `selectedOptions` is flat across every poll on the card, which was invisible while a post
+   * could only carry one: a tap on a single-choice poll replaced the whole array, so it cleared
+   * the reader's answer to the poll next to it, and `submitVote` then sent that poll's ids to
+   * THIS poll's endpoint. A cap makes the same confusion arithmetic - "two answers max" counting
+   * answers given elsewhere - so the split is stated here once.
+   */
+  function selectionIn(poll: Poll): string[] {
+    const ids = new Set(poll.options.map((o) => o.id));
+    return selectedOptions.filter((id) => ids.has(id));
+  }
   // Sync selectedOptions from server data (postProp is reactive; localPost is not).
   $effect(() => {
     const serverVotes = (postProp.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
@@ -200,27 +226,34 @@
    * Handles a click on a poll option.
    * Single-choice: toggles the selection and immediately submits (click = vote, click again = remove).
    * Multiple-choice: toggles selection only; user submits manually with the "Voter" button.
+   *
+   * WHAT A TAP PRODUCES IS `nextPollSelection`, not an `if` written here: the cap has an edge
+   * (a tap on one option too many does nothing) that has to be testable without a component, and
+   * the server refuses the same rule rather than trusting this one.
    */
-  function handleVoteClick(pollId: string, optionId: string, multipleChoice: boolean) {
-    if (!multipleChoice) {
-      selectedOptions = selectedOptions.includes(optionId) ? [] : [optionId];
-      void submitVote(pollId, true);
-    } else {
-      if (selectedOptions.includes(optionId)) {
-        selectedOptions = selectedOptions.filter((id) => id !== optionId);
-      } else {
-        selectedOptions = [...selectedOptions, optionId];
-      }
-    }
+  function handleVoteClick(poll: Poll, optionId: string) {
+    // A closed poll is a fact this card holds. Sending the vote to find out would be answered with
+    // a 400 since 2026-09-23, and before that it was RECORDED - which is why the buttons say so.
+    if (pollIsOver(poll)) return;
+    const mine = selectionIn(poll);
+    const others = selectedOptions.filter((id) => !mine.includes(id));
+    selectedOptions = [...others, ...nextPollSelection(mine, optionId, poll)];
+    if (!poll.multipleChoice) void submitVote(poll.id, true);
   }
 
-  /** Submits the current selectedOptions to the API and updates the local poll vote counts on success. */
+  /** Submits this poll's selection to the API and updates the local vote counts on success. */
   async function submitVote(pollId: string, allowEmpty = false) {
     if (!currentUserId.trim()) {
       errorMessage = m.post_identifier_avant();
       return;
     }
-    if (!allowEmpty && selectedOptions.length === 0) {
+    const poll = (localPost.polls ?? []).find((p) => p.id === pollId);
+    if (!poll) return;
+    // ONLY THIS POLL'S OPTIONS TRAVEL. `votePoll` replaces the reader's whole answer to the poll
+    // it names, so an id belonging to another poll on the same card used to be written into its
+    // `votesByUser` - a selection the server then handed back to every reader of that poll.
+    const optionIds = selectionIn(poll);
+    if (!allowEmpty && optionIds.length === 0) {
       errorMessage = m.post_sondage_selectionner();
       return;
     }
@@ -230,10 +263,10 @@
     // (applyLocalVote, called before the server); applyPostPollVote is the same decision for the
     // post shape, and it is pure, so the rollback is the post we came in with.
     const previousPost = localPost;
-    localPost = applyPostPollVote(localPost, pollId, currentUserId, selectedOptions);
-    actionMessage = selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
+    localPost = applyPostPollVote(localPost, pollId, currentUserId, optionIds);
+    actionMessage = optionIds.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
     try {
-      await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
+      await votePoll(localPost.id, pollId, { optionIds });
     } catch (err) {
       Log.d('PostCard.submitVote failed', err);
       localPost = previousPost;
@@ -641,7 +674,7 @@
       {selectedOptions}
       onVoteClick={handleVoteClick}
       onSubmitVote={submitVote}
-      isOver={(poll) => !!poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()}
+      isOver={pollIsOver}
     />
 
     {#if pendingAttachedFormIds.length > 0}

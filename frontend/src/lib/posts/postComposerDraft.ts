@@ -1,3 +1,5 @@
+import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
+
 /**
  * Sentinel value of `selectedAssociationId`/`PostComposerDraft.selectedAssociationId` meaning "post
  * anonymously" - one more entry in the same "which identity publishes this" choice as a real
@@ -12,8 +14,20 @@ export interface PostComposerDraft {
   imageCaptions: string[];
   includePoll: boolean;
   pollQuestion: string;
-  pollOptionsRaw: string;
+  /**
+   * One entry per option row, blanks included.
+   *
+   * This was `pollOptionsRaw`, a single newline-separated string, until 2026-09-23 - see
+   * `pollDraft.ts` for what that cost a reader. A draft written before that day is migrated on
+   * read rather than discarded, which is why there is no `version: 2`: the shape is still one
+   * object of scalars and arrays, and a reader mid-post must not lose it to a deploy.
+   */
+  pollOptions: PollDraftOption[];
   pollMultipleChoice: boolean;
+  /** How many options one voter may pick, or `null` for no limit. */
+  pollMaxSelections: number | null;
+  /** `datetime-local` value at which the poll closes, or `''`. */
+  pollEndsAt: string;
   includeForm: boolean;
   selectedFormId: string;
   scheduledAt: string;
@@ -48,6 +62,15 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
       if (parsed?.version === 1) {
         let selectedAssociationId =
           typeof parsed.selectedAssociationId === 'string' ? parsed.selectedAssociationId : '';
+        // A draft saved while the options were one newline-separated string (before 2026-09-23)
+        // still restores, split on the separator that was structural at the time. An id is minted
+        // for each restored row: the draft is a poll that has never been saved, so no vote can be
+        // attached to any of them yet.
+        const pollOptions = Array.isArray(parsed.pollOptions)
+          ? parsed.pollOptions.map(readDraftOption)
+          : typeof parsed.pollOptionsRaw === 'string'
+            ? parsed.pollOptionsRaw.split('\n').map((label) => newPollOption(label))
+            : emptyPollOptions();
         // A draft saved before "Anonyme" became an identity option (2026-09-17) carried its own
         // boolean instead - fold it into the same field so an old draft still restores correctly.
         if (!selectedAssociationId && parsed.anonymous === true) {
@@ -61,9 +84,11 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
             : [],
           includePoll: !!parsed.includePoll,
           pollQuestion: typeof parsed.pollQuestion === 'string' ? parsed.pollQuestion : '',
-          pollOptionsRaw:
-            typeof parsed.pollOptionsRaw === 'string' ? parsed.pollOptionsRaw : 'Oui\nNon',
+          pollOptions,
           pollMultipleChoice: !!parsed.pollMultipleChoice,
+          pollMaxSelections:
+            typeof parsed.pollMaxSelections === 'number' ? parsed.pollMaxSelections : null,
+          pollEndsAt: typeof parsed.pollEndsAt === 'string' ? parsed.pollEndsAt : '',
           includeForm: !!parsed.includeForm,
           selectedFormId: typeof parsed.selectedFormId === 'string' ? parsed.selectedFormId : '',
           scheduledAt: typeof parsed.scheduledAt === 'string' ? parsed.scheduledAt : '',
@@ -98,14 +123,28 @@ export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {
     imageCaptions: [],
     includePoll: false,
     pollQuestion: '',
-    pollOptionsRaw: 'Oui\nNon',
+    pollOptions: emptyPollOptions(),
     pollMultipleChoice: false,
+    pollMaxSelections: null,
+    pollEndsAt: '',
     includeForm: false,
     selectedFormId: '',
     scheduledAt: '',
     selectedAssociationId: '',
     selectedLinkedCalendarEventId: '',
   };
+}
+
+/** One persisted option row, whatever shape the draft that holds it was written in. */
+function readDraftOption(raw: unknown): PollDraftOption {
+  if (raw && typeof raw === 'object') {
+    const { id, label } = raw as Partial<PollDraftOption>;
+    return {
+      id: typeof id === 'string' && id ? id : crypto.randomUUID(),
+      label: String(label ?? ''),
+    };
+  }
+  return newPollOption(String(raw ?? ''));
 }
 
 /** ISO string if form is not open yet; null if open or no schedule. */

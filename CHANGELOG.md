@@ -21,6 +21,90 @@ desormais avec son nom. Le compteur de membres quitte l'en-tete (demande utilisa
 correction sur Portail-etu, ou le `<h1>` et la rangee de logos se contredisaient en plus sur la
 condition d'affichage.
 [associations](docs/wiki/frontend/modules/associations.md).
+### Security - un identifiant utilisateur devient un nom de propriete, et quatre sites le refusaient differemment
+
+Reactions et reponses de sondage sont stockees dans des maps indexees par id utilisateur. Quatre
+gardes existaient, aucune identique : trois noms ici, cinq la. Une seule liste desormais
+(`common/object-keys.ts`), `votePoll` refuse l'identifiant a l'entree comme le fait deja le sondage
+de salon, et la reconstruction d'une map ignore une cle de cette forme deja stockee.
+[social-service](docs/wiki/services/social-service.md#a-user-id-becomes-a-property-name-and-four-sites-spelled-the-refusal-differently-2026-09-23).
+
+### Fixed - modifier un post remettait son sondage a zero
+
+Le formulaire renvoyait l'id du sondage sous un commentaire disant qu'il preservait l'historique des
+votes : il preservait l'id et rien d'autre. Les comptes vivent dans `option.votes` et `votesByUser`,
+la mise a jour reconstruisait le sondage a partir du seul payload, et le DTO n'acceptait meme pas
+l'id d'une option - donc corriger un mot de la question effacait tous les votes. L'identite est
+maintenant portee par l'option et les votes suivent, par id.
+[posts](docs/wiki/frontend/modules/posts.md#an-option-is-an-id-and-a-label-and-that-is-what-a-vote-is-cast-against).
+
+### Fixed - le serveur n'appliquait aucune regle de sondage au moment du vote
+
+`votePoll` enregistrait les `optionIds` recus tels quels : `multipleChoice: false` n'etait qu'une
+convention d'affichage (des boutons radio n'envoient qu'un id), un sondage clos n'avait que ses
+boutons caches, et un id inconnu du sondage etait quand meme ecrit dans `votesByUser` puis renvoye a
+tous les lecteurs. Les trois sont des refus, et le client cesse d'offrir un tap qu'il sait refuse.
+[posts](docs/wiki/frontend/modules/posts.md#three-places-state-the-cap-and-only-one-of-them-is-not-advisory).
+
+### Changed - le composer de sondage a une ligne par option, un `+`, une echeance et un maximum
+
+Une seule zone de texte a lignes multiples portait toute la structure dans son libelle ("une par
+ligne"), donc "Oui, Non" etait UNE option - la cause du refus du 2026-09-21. Les deux surfaces
+montent desormais le meme editeur (celui des salons), et deux reglages que le serveur acceptait
+depuis toujours sont enfin accessibles : la date de cloture et le nombre maximum de reponses.
+[posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+
+### Fixed - le composer de post savait deja pourquoi il refusait, et effacait sa reponse au bout de 5 s
+
+Le membre du 2026-09-21 avait ouvert un sondage sans le remplir : le log nginx de ses deux essais du
+2026-09-23 montre deux `mute-status` a `200` et jamais de `POST /api/posts`, donc deux allers-retours
+payes pour apprendre un fait local. Les trois preconditions que le composer peut trancher seul sont
+desormais tranchees AVANT le reseau, en une seule fonction que le bouton Publier lit aussi - et la
+banniere d'erreur ne s'auto-efface plus, ce qui est la raison pour laquelle le rapport d'origine
+n'a jamais pu citer sa propre phrase.
+[posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things).
+
+### Fixed - le volet de la navbar ne s'ouvrait plus au survol, et les icones scintillaient
+
+Le rail montait de `z-20` a `--z-nav-rail` en s'ouvrant, et `transition-all` INTERPOLE un z-index :
+il valait 20, 21, 22 image par image, donc son propre scrim (22) passait par-dessus, prenait le
+pointeur et refermait le volet - 6 a 14 `mouseleave` par survol, 0 une fois le rung fige. Ecrit
+ainsi depuis des mois, revele le 2026-09-22 quand #967 a cesse d'ecraser `transition-property`
+partout. Un gate condamne desormais tout element qui anime le rung sur lequel il se tient.
+[design-reference](docs/wiki/frontend/design-reference.md#a-rung-that-is-animated-is-not-the-rung-it-declares-2026-09-23).
+
+### Changed - la grille /calendar rend les pauses et les cases vides comme la feuille PDF
+
+L'ecran lavait chaque jour de pause a 14% et tassait son titre sur deux lignes en bas, alors que la
+feuille l'estampille en travers depuis le meme jour ; la regle est maintenant partagee (`breakMark`)
+et une case hors du mois n'est plus peinte sur aucune des deux surfaces.
+[calendar](docs/wiki/frontend/modules/calendar.md#entry-kind-event-vs-break).
+
+### Changed - l'export PDF du calendrier reproduit le Canva, et le panneau passe de 20 reglages a 7
+
+Le BDE refaisait le mois a la main dans Canva chaque mois ; la feuille copie desormais ce design
+(geometrie mesuree, titre Leckerli One, jours Chewy, conges estampilles en travers de la case) et
+les couleurs se derivent de l'image de fond importee. Neuf des reglages supprimes n'avaient plus
+rien a peindre. Un jour off s'assombrit d'un cran par raison de l'etre, week-end et vacances
+cumulant ; une case hors du mois n'est plus dessinee du tout.
+[calendar](docs/wiki/frontend/modules/calendar.md#pdf-export).
+
+### Fixed - un evenement qui tient toute la journee ne prenait que la moitie de sa case
+
+`dayOccupancy` ne lisait que l'heure de debut, donc Forum Perspectives (08:00-18:00) laissait la
+moitie basse vide. Un second defaut, jamais signale, tombait avec : une soiree finissant a 02:00 se
+lisait "matin" faute de rendre la journee de 05:00 a 28:59.
+[calendar](docs/wiki/frontend/modules/calendar.md#a-lone-event-takes-half-the-square-and-which-half-says-when).
+
+### Security - le WebView de la build livree par les stores est inspectable
+
+Check R execute sur l'artefact `v0.18.21` lui-meme : DevTools s'attache au telephone et lit l'etat
+MLS, les messages dechiffres et le jeton en memoire - ce que la regle "jeton en memoire UNIQUEMENT"
+suppose inatteignable. Trois causes candidates, separees une par une : c'est la feature Cargo
+`devtools` qui compile l'appel, pas le manifeste. Cinq des six etapes passent ; l'etape 2 n'est pas
+mesurable faute d'un avatar sur un compte de test.
+[device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
+[backlog](docs/wiki/backlog.md).
 
 ### Added - le plan du demenagement des trois VMs, puis des noms vers `emse.fr`
 
@@ -28,7 +112,15 @@ Deux phases separees parce qu'une seule est visible : le deplacement se defait e
 le tunnel, le changement de noms ne se defait pas - un lien profond est compile dans le
 binaire et livre par deux stores. Decisions prises avec l'utilisateur le 2026-09-23, dont
 l'abandon total de Cloudflare sur les chemins publics. Le blocage bun est REFUTE.
-[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+Premieres mesures SUR la machine cible le meme jour : ce n'est pas un serveur portail-etu mais la
+machine d'hebergement associatif partagee de l'ecole, 4 vCPU et 11 G face a trois VMs taillees pour
+8 et 20, et le compte livre n'a ni docker ni sudo - rien ne peut commencer avant. Deux affirmations
+du plan tombent : le multiplexage SSH ne marche pas sur ce poste, et le bastion muet n'est pas un
+bannissement. Le compte a depuis docker et sudo, et les comptes dormants sont supprimes. Trois
+pieges mesures sur la machine : une suppression massive de fichiers y est tuee sans laisser de
+trace, `/export` est un NetApp distinct du disque local, et la reutilisation d'uid a deja fausse
+l'attribution de fichiers trois fois. Le vhost `canari.emse.fr` prepare par la DSI repond deja - en
+servant Portail-etu. [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - NOTIF-10 ne mesure plus l'ignorance de son propre classificateur
 

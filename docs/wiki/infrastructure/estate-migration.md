@@ -76,18 +76,153 @@ on the wrong VM entirely.
 
 `portail-etu.emse.fr`, `193.49.175.67`, reached by `ssh portail-etu` through `ProxyJump bastion`.
 
-- The login is **`jolan.boudin`**, not `boudin`. Proven on the bastion on 2026-09-23: the server
-  answers `Server accepts key`. The account name ON the target host is assumed to match and is not
-  yet proven.
-- The key is `id_ed25519_sk`, a **FIDO authenticator requiring a physical touch**, so no unattended
-  process can SSH there. `ControlPersist 48h` is the lever: one touch opens a master connection and
-  buys two days of unattended access through it.
+- The login is **`jolan.boudin`**, and it is now proven ON THE HOST ITSELF, not just on the
+  bastion: a shell was reached 2026-09-23. **`boudin` is a SEPARATE, older account** that refuses
+  both of this workstation's keys - the FIDO one and `id_ed25519` - tried once each and not again,
+  because the host counts failed authentications (see the security agents below). It is that older
+  account, not ours, that carries the `docker` group: **the rights did not follow the new account.**
+- **THE TOUCH IS GONE, AND THE HARDWARE-BACKED WAY OF REMOVING IT FAILED FIRST.** Access is
+  unattended since 2026-09-23: `id_ed25519` - the ordinary key that already opens `canari`,
+  `cercle`, `miconnect` and GitLab - now sits in the account's own `authorized_keys`, measured at
+  four consecutive connections, ~1.4 s each, no gesture. The FIDO key stays installed and still
+  works, and `bastion` keeps using it because its `authorized_keys` is DSI-managed.
+- **Do not retry the hardware route here.** An `ed25519-sk` key created with `-O no-touch-required`
+  was installed with the matching `authorized_keys` option and the server **ACCEPTED it** -
+  `Server accepts key` is in the trace. Signing then failed on this workstation with
+  `ssh-sk-helper: Signing failed: requested feature not supported` at `flags 0x00`: the FIDO
+  provider will not produce an assertion without user presence. **The blocker is the authenticator
+  chain, not the server**, so the real choice was never "same guarantees, fewer gestures" - it was a
+  software key or one gesture per command, and the software key is the one the rest of this estate
+  already trusts.
+- The FIDO key remains `id_ed25519_sk`, and **`ControlPersist` IS STILL NOT A LEVER** -
+  measured on this workstation 2026-09-23 and REFUTED. The master starts, it daemonises, and
+  `ssh -O check` reports `Master running`; every client that presents itself is nonetheless reset
+  and silently falls back to a fresh connection. The tell is the clock: 7 to 10 seconds and one
+  touch per command, where a reused socket costs about 20 ms. MSYS emulates the Unix domain socket
+  over Windows and multiplexing does not survive the emulation; native Windows OpenSSH does not
+  implement `ControlMaster` at all, so no configuration fixes this. Every connection is therefore a
+  fresh TCP handshake and a fresh authentication, about 1.4 s. That is now a cost in seconds rather
+  than in human gestures, so **batching a survey into one `ssh ... <<'REMOTE'` heredoc is a
+  courtesy, not the constraint it was for the few hours the FIDO key was the only way in.**
 - **This does not constrain CI.** Portail-etu deploys from a self-hosted runner installed ON the
   box, which pulls the code itself. The same shape is what Canari, le Cercle and Authentik will
   use, so no deploy path ever needs SSH.
 - `canari.emse.fr` **already resolves**, to `193.49.175.122`, and serves Portail-etu byte for byte
-  (identical `ETag`). It is a second address of the same machine. The name has to be reclaimed, not
-  created.
+  (identical `ETag`). The name has to be reclaimed, not created. **That it is a second address of
+  the SAME machine is an inference, not a measurement, and one probe now sits against it**: from
+  inside EMSE, `193.49.175.67:22` answers an SSH banner while `193.49.175.122:22` is dropped. A
+  per-address firewall rule explains that as easily as two hosts do, so it refutes nothing - but
+  the claim is not to be repeated as fact until something settles it.
+
+### WHAT THE HOST ACTUALLY IS - MEASURED ON IT, 2026-09-23
+
+Everything above was inferred from the outside. A shell on the box says something different, and it
+changes what this chantier is.
+
+**It is not a Portail-etu server. It is the school's shared association-hosting box**, and it has
+been one for years: `gala.emse.fr`, `handimines.emse.fr` and `mep.emse.fr` are served beside
+Portail-etu from `/etc/nginx/sites-enabled/`, with MySQL, postfix, NFS mounts and **six concurrent
+php-fpm versions** (7.4 through 8.4) underneath, plus roughly a dozen human accounts. **We are
+moving in beside other associations, not onto an empty host**, which is a constraint on every
+decision below and was not priced into section 4.
+
+**Debian 13 (trixie)**, kernel 6.12, KVM guest. Docker 26.1.5 and containerd are running, and a
+**self-hosted GitHub Actions runner for `emse-students` is already installed** - the deploy shape
+this plan wants exists in part.
+
+**The host nginx is real and it terminates TLS.** Ports 80 and 443 listen on `0.0.0.0` while the
+application sits on `127.0.0.1:3000`, which is exactly the shape section 5 assumes. An earlier
+reading that TLS terminated inside a container was wrong: it tested `command -v nginx` against an
+unprivileged login's `PATH`, which does not carry it, and read the absence as an answer.
+
+**The certificate convention is answered**: `/etc/certs/<name>/`, **one directory per name**, not a
+shared SAN. And `/etc/certs/canari.emse.fr/` together with `sites-enabled/canari.conf` were both
+created on 2026-09-22 - **the DSI started preparing phase 2 while this plan was being written.**
+
+**AND THAT PREPARED VHOST ALREADY ANSWERS - WITH THE NEIGHBOUR'S SITE.** `sites-enabled/canari.conf`
+proxies to `127.0.0.1:3000`, which is the port Portail-etu's own container publishes, and a request
+carrying `Host: canari.emse.fr` returns **HTTP 200 and the Portail-etu page**. It is a copy of the
+neighbouring vhost, written before anything of ours existed to point at. Nothing is broken today
+because no DNS record sends traffic there - **but the day phase 2 creates that record, Canari's
+production name serves Portail-etu until that one line is changed.** The host port allocation table
+section 5 asks for is therefore owed BEFORE the DNS request, not after it.
+
+| | Target host | The three VMs to absorb |
+| --- | --- | --- |
+| vCPU | **4** (QEMU, AVX2 present) | 8 |
+| RAM | **11 G**, 1.6 in use | 20 G allocated |
+| Disk | **50 G, fully partitioned, no LVM**; 25 G free | 49 G, of which ~33 G is debris that does not move |
+
+**The disk cannot be grown from here.** `sda` is 50 G, `sda1` takes 46 and `sda5` is 4 G of swap;
+with no LVM, enlarging it is a DSI action on the VM, not a command. Of the 18 G in use, **2.6 G is
+the systemd journal** - reclaimable, but not by us.
+
+**THE ACCOUNT NOW HAS WHAT IT NEEDED, granted 2026-09-23.** `jolan.boudin` is in `docker` and
+carries `ALL=(ALL) NOPASSWD:ALL` in `/etc/sudoers` - broader than the narrow rule this plan asked
+for, so the restraint is the operator's now rather than the system's. The older `boudin` account was
+deleted in the same gesture, and **the caveat that travelled with that deletion is closed**: a sweep
+of the whole root filesystem for every uid with no account behind it returns nothing.
+
+**The host runs DSI-managed security agents that ban a source IP on failed authentication and on
+scans.** Two consequences, both binding: **never sweep ports and never retry a login in a loop**,
+and remember that the source address they see is production's, because the only route in is
+`ProxyJump canari`. A careless probe bans the estate's own IP. What those agents are is a matter for
+the operator's local notes, not for a public repository.
+
+**THE BASTION KEEPS OFFICE HOURS, AND THAT IS THE WHOLE OF IT.** `bastiono-ssh.emse.fr` is up
+**07:00 to 20:00 only, and accepts French source addresses only** - stated by the DSI on 2026-09-23
+at 22:31, in answer to the question. It is not down, it was never misconfigured, and **nothing about
+it needs reporting**.
+
+Two readings died on the way to that one sentence, and the order matters more than either. The
+first, **that we had been banned by fail2ban after two failed logins, is REFUTED**: a ban cannot
+silence an address that never tried, and the same silence came back from four distinct sources. The
+second, **that the host was therefore DOWN, was right about the symptom and wrong about the cause**
+- and the evidence offered for it was weaker than it looked, because the "freshly-rented VPN exit
+with no history" was almost certainly not French either, so it fell foul of a second rule rather
+than corroborating the first. **The measurement that actually carried the answer was the cheapest
+one: the SAME address answered in the morning and was refused at night.** A probe from a new source
+adds nothing when the variable that moved was the clock.
+
+So the operational rule is a schedule, not a workaround: **through the bastion between 07:00 and
+20:00; outside those hours, `portail-etu-direct`**, which reaches `193.49.175.67` by
+`ProxyJump canari`. That route works at any hour **only because `canari` is inside EMSE** and leaves
+on a private address - the DSI confirms egress in RFC1918 through the school passes - since the
+host's port 22 is dropped for every address outside it. This workstation's home address will NOT be
+allowlisted, and was not asked to be: the school route makes it unnecessary.
+
+### THREE TRAPS THE HOST SETS FOR A MIGRATION - MEASURED 2026-09-23
+
+**A BULK FILE DELETION IS KILLED PART-WAY, AND NOTHING SAYS SO.** An `rm -rf` over a few hundred
+files died on `SIGKILL` half finished. It was not the OOM killer - 10 G were free, and `dmesg`
+carries no `Killed process` line - and `journalctl` records nothing at all for the minute it
+happened. The host places an anti-ransomware DECOY file in every home directory, in `/root` and in
+every web root (one of them a `.php`, inside the web tree); no package owns them, and a DSI-managed
+EDR agent runs permanently. The deletion stopped on the decoy. **Consequence binding every phase
+below: any bulk file operation - restoring a volume, emptying a directory, an unfiltered
+`docker system prune` - can be killed half-way with no diagnostic.** So work in small batches,
+**verify the resulting state rather than the exit status**, and never read "the command printed no
+error" as "the operation completed". This is the durable rule about a correct mechanism with no
+report, arriving from the other direction: here the mechanism is someone else's, and its report does
+not reach us at all.
+
+**`/export` IS A NETAPP FILER AND `/` IS NOT - TWO STORAGE CLASSES, NOT ONE DISK.** The root
+filesystem is 45 G of local ext4 with 27 G free. `/export`, which carries the association web roots,
+is NFS from a filer: **24 G with about 14 G free**, holding daily and weekly `.snapshot/` trees and a
+`vserverdr` replication. The capacity table above therefore measures only one of the two, and
+**section 5 owes an explicit answer on which class Canari's data lands on** - they differ in size,
+in free space and in recovery properties. Two further consequences: a snapshot tree is **not a
+backup this project controls**, and space freed by a deletion there is still held by the snapshots
+that predate it.
+
+**UID RECYCLING HAS ALREADY MISATTRIBUTED FILES THREE TIMES ON THIS BOX.** `useradd` hands out the
+lowest free uid, so deleting an account without deleting its files arms a trap: the next account
+created inherits the uid and silently owns them. Three home directories here were owned by living
+accounts that had never written a byte in them, and roughly 8000 files under `/usr/lib` were
+attributed to a person who arrived years after they were installed. **`find -user` is not evidence
+of authorship on this machine.** An account removed during this chantier must lose its files in the
+same operation, and any account created here should be given an explicit uid above the high-water
+mark rather than the lowest free one.
 
 ## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
 
@@ -170,17 +305,25 @@ contract at that seam is identical, which is why [nginx](nginx.md) needs no rewr
 
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 
-The DSI will drop a new file at a fixed path, and **nothing will reload nginx**. The site then dies
-on expiry day, with no warning and no failing gate anywhere in this repository - the deploy is
+The DSI drops a new file in `/etc/certs/<name>/` - the path is measured, not assumed, since
+2026-09-23 - and **something does reload nginx**: `/etc/cron.d/reload-nginx` runs
+`systemctl reload nginx` at 01:00 daily, with a comment saying it exists for exactly this reason.
+**Half of this trap was already closed by the DSI, and the claim that nothing would reload was
+wrong.**
+
+**The other half is untouched, and it is the dangerous half.** That reload is blind: it fires
+whether or not a new file arrived, and it reports nothing either way. A reload firing correctly over
+a certificate that was never renewed is indistinguishable from a working system - until expiry day,
+when the site dies with no warning and no failing gate anywhere in this repository. The deploy is
 green, the containers are up, the health check passes, and the name is simply refused by every
 browser.
 
-This is the durable rule about a correct mechanism with no report, in its purest form. Two things
-are owed, and neither is optional:
+This is the durable rule about a correct mechanism with no report, in its purest form. One thing is
+owed:
 
-1. a reload triggered by the file being replaced, not by a human noticing;
-2. **a report that names the expiry date and accuses BEFORE it**, because a reload that fires
-   correctly and a certificate that was never renewed look identical from the inside.
+1. **a report that names the expiry date and accuses BEFORE it.** The daily reload already covers
+   delivery; **nothing covers non-delivery**, which is the failure that actually takes the site
+   down.
 
 ### The cohabitation, and the rename that is only free once
 
@@ -291,14 +434,24 @@ Pointers only. The substance is in
 - creating the new Cloudflare tunnel on `rootz-emse.fr` - **the project's token cannot do it**:
   measured 2026-09-02, `GET /accounts/{acct}/cfd_tunnel` answers 200 with an EMPTY list and Access
   groups answer 403, so a tunnel is a dashboard gesture ([cloudflare-edge](cloudflare-edge.md));
-- one FIDO touch to open the master connection, which then buys 48 hours of unattended access.
+- ~~the rights request~~ **GRANTED 2026-09-23** - `docker` plus `ALL=(ALL) NOPASSWD:ALL`, wider
+  than the narrow rule asked for; the older `boudin` account is gone and left no orphaned file
+  behind (section 2);
+- **the arbitration on capacity**: 4 vCPU and 11 G against three VMs sized for 8 and 20. Either the
+  VM grows, or what moves onto it is cut down. Nobody can decide that here;
+- nothing further on SSH: the touch is gone and access is unattended (section 2).
 
 ## 9. Open questions
 
 | Question | Who answers | Why it blocks something |
 | --- | --- | --- |
-| The exact path where the DSI deposits the certificates, and whether it is one SAN certificate or one per name | DSI | the host nginx configuration cannot be written without it, and the renewal watcher watches that path |
-| Is the account on the target host also `jolan.boudin`? | DSI, or the first touch | only the bastion half is proven |
+| ~~Will the DSI grant `docker` and a narrow `sudo`?~~ | **ANSWERED 2026-09-23: both granted** | - |
+| Does Canari's data land on local `/` (45 G, 27 free) or on the NetApp `/export` (24 G, 14 free)? | user with the DSI | they differ in size, free space and recovery; section 5 cannot be written without it |
+| What kills a bulk `rm` here, and will it kill a volume restore during the cutover? | DSI, one question | a cutover that dies half-way with no diagnostic is the worst failure mode in this plan |
+| 4 vCPU and 11 G for everything, or does the VM grow? | user, then DSI | it decides whether all three estates move, or only some |
+| What are the file NAMES inside `/etc/certs/<name>/`, and who may read the key? | DSI, or one command once `sudo` is granted | the vhost cannot be written without them; the directory is readable, `/etc/ssl/private` is not |
+| Is `193.49.175.122` the same machine as `193.49.175.67`? | one DSI answer | the plan asserts it is; port 22 behaves differently on the two |
+| What of the shared box's legacy is ours to clean, and what belongs to other associations? | user with the DSI | six php-fpm versions and several dormant sites sit beside us; **none of it is unilaterally ours to remove** |
 | Production's Postgres volume size | one command on `canari` | the read-only window is quoted from it |
 | Does Portail-etu become a compose project with a declared `name:` and ceilings like the others? | user | it is the only estate that would not, and the standing mandate is homogeneity everywhere |
 | What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |

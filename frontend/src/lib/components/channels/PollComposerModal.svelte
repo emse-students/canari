@@ -1,6 +1,13 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
-  import { X, Plus, Trash2, ChartColumn } from '@lucide/svelte';
+  import { X, ChartColumn } from '@lucide/svelte';
+  import PollOptionsEditor from '$lib/components/posts/PollOptionsEditor.svelte';
+  import {
+    emptyPollOptions,
+    filledPollOptions,
+    POLL_MIN_OPTIONS,
+    type PollDraftOption,
+  } from '$lib/posts/pollDraft';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import { m } from '$lib/paraglide/messages';
   import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
@@ -19,41 +26,22 @@
 
   let { open, onClose, onCreate }: Props = $props();
 
-  interface DraftOption {
-    id: string;
-    label: string;
-  }
-
   let question = $state('');
-  let options = $state<DraftOption[]>([
-    { id: crypto.randomUUID(), label: '' },
-    { id: crypto.randomUUID(), label: '' },
-  ]);
+  let options = $state<PollDraftOption[]>(emptyPollOptions());
   let multipleChoice = $state(false);
   let deadline = $state(''); // datetime-local value, '' = no deadline
   let submitting = $state(false);
   let error = $state('');
 
-  const filledOptions = $derived(options.filter((o) => o.label.trim().length > 0));
-  const canSubmit = $derived(question.trim().length > 0 && filledOptions.length >= 2);
-
-  function addOption() {
-    if (options.length >= 10) return;
-    options = [...options, { id: crypto.randomUUID(), label: '' }];
-  }
-
-  function removeOption(id: string) {
-    if (options.length <= 2) return;
-    options = options.filter((o) => o.id !== id);
-  }
+  const filledOptions = $derived(filledPollOptions(options));
+  const canSubmit = $derived(
+    question.trim().length > 0 && filledOptions.length >= POLL_MIN_OPTIONS
+  );
 
   /** Resets the form to its initial empty state (after a successful send or close). */
   function reset() {
     question = '';
-    options = [
-      { id: crypto.randomUUID(), label: '' },
-      { id: crypto.randomUUID(), label: '' },
-    ];
+    options = emptyPollOptions();
     multipleChoice = false;
     deadline = '';
     error = '';
@@ -76,7 +64,12 @@
     try {
       await onCreate({
         question: question.trim(),
-        options: filledOptions.map((o) => ({ id: o.id, label: o.label.trim() })),
+        // The opaque ids are minted HERE, where they always were - the editor holds only labels,
+        // and a row's identity in the DOM is not the identity the protocol carries.
+        // The ids were minted HERE, at submit, when a row had no identity of its own. The row
+        // has carried one since 2026-09-23, so the option that is sent is the option that was
+        // edited rather than a copy of its text.
+        options: filledOptions,
         multipleChoice,
         endsAt: deadline ? new Date(deadline).toISOString() : null,
       });
@@ -125,7 +118,7 @@
   <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
     <div>
       <label for="poll-question" class="text-text-main mb-1.5 block text-sm font-semibold">
-        Question
+        {m.post_poll_question_label()}
       </label>
       <input
         id="poll-question"
@@ -136,40 +129,7 @@
       />
     </div>
 
-    <div class="space-y-2">
-      <span class="text-text-main block text-sm font-semibold"
-        >{m.channel_poll_options_label()}</span
-      >
-      {#each options as option (option.id)}
-        <div class="flex items-center gap-2">
-          <input
-            bind:value={option.label}
-            maxlength="150"
-            placeholder={m.channel_poll_option_placeholder()}
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-          />
-          <button
-            type="button"
-            onclick={() => removeOption(option.id)}
-            disabled={options.length <= 2}
-            class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
-            aria-label={m.channel_poll_remove_option_aria()}
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      {/each}
-      {#if options.length < 10}
-        <button
-          type="button"
-          onclick={addOption}
-          class="text-cn-yellow hover:bg-cn-yellow/10 flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-semibold"
-        >
-          <Plus size={16} />
-          {m.channel_poll_add_option()}
-        </button>
-      {/if}
-    </div>
+    <PollOptionsEditor bind:options />
 
     <label
       class="flex cursor-pointer items-center justify-between rounded-xl bg-black/5 px-4 py-3 select-none dark:bg-white/5"
@@ -180,8 +140,8 @@
 
     <div>
       <label for="poll-deadline" class="text-text-main mb-1.5 block text-sm font-semibold">
-        {m.channel_poll_deadline_label()}
-        <span class="text-text-muted font-normal">{m.channel_poll_deadline_optional()}</span>
+        {m.poll_deadline_label()}
+        <span class="text-text-muted font-normal">{m.poll_deadline_optional()}</span>
       </label>
       <input
         id="poll-deadline"

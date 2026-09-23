@@ -24,6 +24,15 @@
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
+  import { hasContent, localPublishBlocker } from '$lib/posts/composerReadiness';
+  import {
+    emptyPollOptions,
+    filledPollOptions,
+    normalizeMaxSelections,
+    type PollDraft,
+    type PollDraftOption,
+    type PollDraftIssue,
+  } from '$lib/posts/pollDraft';
   import { LocalizedError } from '$lib/utils/localizedError';
   import { getForms, type Form } from '$lib/forms/api';
   import {
@@ -78,8 +87,25 @@
   // --- Optional sections ---
   let includePoll = $state(false);
   let pollQuestion = $state('');
-  let pollOptionsRaw = $state('Oui\nNon');
+  let pollOptions = $state<PollDraftOption[]>(emptyPollOptions());
   let pollMultipleChoice = $state(false);
+  let pollMaxSelections = $state<number | null>(null);
+  let pollEndsAt = $state('');
+  /** Which poll field the last refused publish was waiting on, shown inside the card. */
+  let pollIssue = $state<PollDraftIssue | null>(null);
+
+  /** The poll as the rules in `pollDraft.ts` want it, or `null` when the toggle is off. */
+  const pollDraft = $derived<PollDraft | null>(
+    includePoll
+      ? {
+          question: pollQuestion,
+          options: pollOptions,
+          multipleChoice: pollMultipleChoice,
+          maxSelections: pollMaxSelections,
+          endsAt: pollEndsAt,
+        }
+      : null
+  );
 
   let includeForm = $state(false);
   let selectedFormId = $state('');
@@ -125,8 +151,10 @@
       imageCaptions: [...mediaCaptions],
       includePoll,
       pollQuestion,
-      pollOptionsRaw,
+      pollOptions: [...pollOptions],
       pollMultipleChoice,
+      pollMaxSelections,
+      pollEndsAt,
       includeForm,
       selectedFormId,
       scheduledAt,
@@ -140,8 +168,11 @@
     mediaCaptions = draft.imageCaptions ?? [];
     includePoll = draft.includePoll;
     pollQuestion = draft.pollQuestion;
-    pollOptionsRaw = draft.pollOptionsRaw;
+    pollOptions = [...draft.pollOptions];
     pollMultipleChoice = draft.pollMultipleChoice;
+    pollMaxSelections = draft.pollMaxSelections;
+    pollEndsAt = draft.pollEndsAt;
+    pollIssue = null;
     includeForm = draft.includeForm;
     selectedFormId = draft.selectedFormId;
     scheduledAt = draft.scheduledAt;
@@ -177,15 +208,22 @@
     };
   });
 
-  /** Auto-clear error banner after 5 seconds. */
-  $effect(() => {
-    if (errorMessage) {
-      const timer = setTimeout(() => {
-        errorMessage = '';
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  });
+  /*
+   * THE ERROR BANNER USED TO ERASE ITSELF AFTER 5 SECONDS, AND THAT IS WHY A REPORT ARRIVED WITH
+   * NO SENTENCE IN IT.
+   *
+   * A timer decided when the reader had finished reading. On a phone the on-screen keyboard can
+   * still be covering the banner when it goes, and what is left is a composer that does not
+   * publish and says nothing at all - which is exactly how the 2026-09-21 report reached us: a
+   * member who could only say "sans succes". Ask of any timer what it would mean if it were wrong;
+   * the answer here was "the one line that names the cause is gone".
+   *
+   * So it is cleared by the reader or by the facts, never by a clock: `publishPost` resets it on
+   * the next attempt, a successful publish resets the whole form, and the banner carries its own
+   * dismiss button. The condition it describes is still true until one of those happens, and a
+   * message that outlives its cause would be the opposite defect - which is why nothing else
+   * clears it.
+   */
 
   /** Load validated agenda events when posting as an association. */
   $effect(() => {
@@ -321,22 +359,37 @@
    *
    * So the sentences are typed at the throw (`LocalizedError`, `MutedError`) and `stage` records
    * how far this got, for the console. See `posts/publishFailure.ts`.
+   *
+   * AND NOTHING LOCAL IS LEARNED BY FAILING ANY MORE. The three preconditions this composer can
+   * answer out of its own `$state` are settled FIRST, before `assertNotMuted()` puts a round trip
+   * in front of them - see `posts/composerReadiness.ts` for the report that named it.
    */
   async function publishPost() {
     Log.d('POST_COMPOSER', 'publishPost');
     publishing = true;
     errorMessage = '';
+    markdown = trimComposerText(markdown);
+
     // Reassigned in front of each step rather than derived afterwards: `catch` cannot see where it
     // came from, and the two causes that keep the declared fallback are exactly the two the reader
     // cannot tell apart without it.
-    let stage: PublishStage = 'moderation';
+    let stage: PublishStage = 'content';
     try {
-      markdown = trimComposerText(markdown);
-      await assertNotMuted();
-      stage = 'content';
-      if (!markdown.trim() && selectedFiles.length === 0) {
-        throw new LocalizedError(m.post_create_content_required());
+      // Everything answerable here, answered here: the refusal is instant and costs no request.
+      const blocker = localPublishBlocker({
+        markdown,
+        fileCount: selectedFiles.length,
+        poll: pollDraft,
+        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
+      });
+      pollIssue = blocker?.pollIssue ?? null;
+      if (blocker) {
+        stage = blocker.stage;
+        throw new LocalizedError(blocker.message);
       }
+
+      stage = 'moderation';
+      await assertNotMuted();
       stage = 'mediaToken';
       if (selectedFiles.length > 0 && !authToken) {
         try {
@@ -370,26 +423,25 @@
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       };
 
-      stage = 'poll';
+      // Both attachments were validated above, so assembly only reads them - and it reads the
+      // options through the SAME parser that counted them, never a second spelling of the rule.
       if (includePoll) {
-        const options = pollOptionsRaw
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .map((label) => ({ label }));
-        if (!pollQuestion.trim() || options.length < 2) {
-          throw new LocalizedError(m.post_create_poll_requires_options());
-        }
+        const options = filledPollOptions(pollOptions);
         payload.polls = [
-          { question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice },
+          {
+            question: pollQuestion.trim(),
+            options,
+            multipleChoice: pollMultipleChoice,
+            maxSelections: normalizeMaxSelections(
+              pollMaxSelections,
+              options.length,
+              pollMultipleChoice
+            ),
+            ...(pollEndsAt ? { endsAt: new Date(pollEndsAt).toISOString() } : {}),
+          },
         ];
       }
-
-      stage = 'form';
-      if (includeForm) {
-        if (!selectedFormId) throw new LocalizedError(m.post_create_form_required());
-        payload.attachedFormId = selectedFormId;
-      }
+      if (includeForm) payload.attachedFormId = selectedFormId;
 
       if (isAssociationSelected) payload.associationId = selectedAssociationId;
       else if (isAnonymousSelected) payload.anonymous = true;
@@ -410,7 +462,10 @@
       mediaCaptions = [];
       includePoll = false;
       pollQuestion = '';
-      pollOptionsRaw = 'Oui\nNon';
+      pollOptions = emptyPollOptions();
+      pollMaxSelections = null;
+      pollEndsAt = '';
+      pollIssue = null;
       includeForm = false;
       scheduledAt = '';
       selectedAssociationId = '';
@@ -645,9 +700,15 @@
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <PollSection
           bind:question={pollQuestion}
-          bind:optionsRaw={pollOptionsRaw}
+          bind:options={pollOptions}
           bind:multipleChoice={pollMultipleChoice}
-          onRemove={() => (includePoll = false)}
+          bind:maxSelections={pollMaxSelections}
+          bind:endsAt={pollEndsAt}
+          issue={pollIssue}
+          onRemove={() => {
+            includePoll = false;
+            pollIssue = null;
+          }}
         />
       </div>
     {/if}
@@ -672,7 +733,14 @@
         class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 shadow-inner dark:text-red-400"
       >
         <CircleAlert size={18} strokeWidth={2.5} class="mt-0.5 shrink-0" />
-        <span class="text-sm leading-snug font-bold">{errorMessage}</span>
+        <span class="flex-1 text-sm leading-snug font-bold">{errorMessage}</span>
+        <button
+          type="button"
+          onclick={() => (errorMessage = '')}
+          class="shrink-0 text-xs font-bold text-red-600/60 transition-colors outline-none hover:text-red-600 focus-visible:underline dark:text-red-400/60 dark:hover:text-red-400"
+        >
+          {m.post_create_error_dismiss_label()}
+        </button>
       </div>
     {/if}
 
@@ -779,7 +847,7 @@
       <Button
         type="button"
         class="min-w-[10rem] shrink-0 px-8 py-3 text-sm !font-bold shadow-md shadow-amber-500/20 active:translate-y-0 sm:w-auto"
-        disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
+        disabled={publishing || !hasContent(markdown, selectedFiles.length)}
         loading={publishing}
         onclick={publishPost}
       >
