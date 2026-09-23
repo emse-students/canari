@@ -86,3 +86,79 @@ export interface ThreadScrollMetrics {
 export function isPinnedToBottom(metrics: ThreadScrollMetrics): boolean {
   return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) < THREAD_BOTTOM_SLACK_PX;
 }
+
+/**
+ * WHAT A NEW MESSAGE MAY DO TO THE READER'S POSITION.
+ *
+ * `ChatArea` had this as a three-armed `if` inside an `$effect`, and `useMessaging` had a fourth
+ * opinion: three bare `chatContainer.scrollTop = chatContainer.scrollHeight` - one after every
+ * message persisted, one after every batch, one when a catch-up drain finished. They asked nothing
+ * and were not even scoped to a conversation, so a batch landing in a thread the reader did not
+ * have open still yanked the thread they were reading to the bottom. On a bad connection, where
+ * frames trickle in for minutes, that is the reading experience.
+ *
+ * ONE PREDICATE, AND IT IS THE ONE BOOLEAN. Everything here is decided by `isNearBottom`, which
+ * `handleScroll` is the only writer of, plus the two states in which the component itself owns the
+ * position (`entering`, and a catch-up the reader has not scrolled away from).
+ */
+export type NewMessageResponse =
+  /** Re-run the entry pin: the window has to move with the list before the pane can. */
+  | 'repin-entry'
+  /** An ordinary live message on a thread the reader is sitting at the bottom of. */
+  | 'follow-bottom'
+  /** The reader has gone up to read. Nothing moves; the unread pill says the rest. */
+  | 'stay';
+
+export interface NewMessageState {
+  /** The conversation is still being entered - `fillViewportThenPin` owns the position. */
+  entering: boolean;
+  /** A history replay or a bulk drain is running. */
+  catchupActive: boolean;
+  /** Whether the reader was at the live end BEFORE this message. */
+  isNearBottom: boolean;
+  /** The message that just landed is the reader's own, which always follows. */
+  ownMessageAdded: boolean;
+}
+
+export function respondToNewMessage(state: NewMessageState): NewMessageResponse {
+  if (state.entering) return 'repin-entry';
+  if (state.catchupActive) {
+    // A CATCH-UP IS NOT A LICENCE TO MOVE SOMEBODY. The initial page arriving late still has to
+    // re-pin, which is what `isNearBottom` says while nobody has scrolled; a reader who HAS gone
+    // up is reading history, and a drain finishing is not a reason to take that away.
+    return state.isNearBottom || state.ownMessageAdded ? 'repin-entry' : 'stay';
+  }
+  return state.isNearBottom || state.ownMessageAdded ? 'follow-bottom' : 'stay';
+}
+
+/**
+ * HOW MUCH CONTENT APPEARED ABOVE THE READER, so their row can be put back where it was.
+ *
+ * Three mechanisms prepend into this scroller and only one of them compensated. `loadOlderGroups`
+ * restores `scrollTop` explicitly for the IndexedDB page; the render window stepping up by 140
+ * groups did not, and neither did a PEER scrollback answer - which does not even arrive as a
+ * return value, but later, as an ordinary bundle. So a reader who asked for older history was slid
+ * down the page by exactly the height of what they had asked for.
+ *
+ * THE ANCHOR IS A ROW, NOT A NUMBER. `scrollTop` cannot tell a prepend from an append - both grow
+ * `scrollHeight` and leave `scrollTop` alone - so the caller keeps a reference to a row it has
+ * already measured and asks how far that row moved. Anything above it growing, for any reason, is
+ * the same correction: the thing the reader is looking at stays where it is.
+ */
+export interface ThreadAnchorShift {
+  /** The anchor row's `offsetTop` when it was last measured, or `null` if there was no anchor. */
+  previousTop: number | null;
+  /** Its `offsetTop` now, or `null` if the row is gone from the document. */
+  currentTop: number | null;
+  /** The component owns the position while entering; nothing is compensated then. */
+  isEntering: boolean;
+}
+
+export function anchorShift(shift: ThreadAnchorShift): number {
+  if (shift.isEntering) return 0;
+  if (shift.previousTop === null || shift.currentTop === null) return 0;
+  const moved = shift.currentTop - shift.previousTop;
+  // Only downward movement is a prepend. A row moving UP means something above it shrank, which
+  // pulls the reader up on its own and needs no help.
+  return moved > 0 ? moved : 0;
+}

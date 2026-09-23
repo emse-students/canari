@@ -34,13 +34,17 @@
   }
 
   async function handleUnblock(userId: string) {
+    // The row leaves the list on the tap and comes back if the write is refused. It used to be
+    // filtered only AFTER the round trip, with the button disabled meanwhile.
+    const previous = blocked;
+    blocked = blocked.filter((b) => b.userId !== userId);
     pendingId = userId;
     error = '';
     try {
       await unblockUser(userId);
-      blocked = blocked.filter((b) => b.userId !== userId);
     } catch (err) {
       Log.d('SettingsBlockedSection.handleUnblock failed', err);
+      blocked = previous;
       error = m.settings_blocked_unblock_error();
     } finally {
       pendingId = null;

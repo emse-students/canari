@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { setCurrentUserId, setGlobalAdmin } from '$lib/stores/userState.svelte';
+import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
+import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
@@ -64,10 +65,17 @@ export function saveUserLocally(user: {
   displayName?: string;
   admin?: boolean;
 }): void {
-  localStorage.setItem(USER_STORAGE_KEY, user.id);
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
+  // A REMEMBERED VERDICT BELONGS TO ONE ACCOUNT. Anything derived from the previous session's
+  // `/api/users/me` is about somebody else the moment the id changes, so it is forgotten HERE
+  // rather than left to expire - the whole point of persisting it is that it outlives a reload.
+  if (localStorage.getItem(USER_STORAGE_KEY) !== user.id) {
+    setFeedAudience(null);
+    forgetReaderCaches();
+  }
+  localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
   setCurrentUserId(user.id);
 }
@@ -79,6 +87,8 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
   setGlobalAdmin(false);
+  setFeedAudience(null);
+  forgetReaderCaches();
   setCurrentUserId(null);
 }
 
@@ -110,13 +120,45 @@ export function isAbsentUserError(e: unknown): boolean {
   return e instanceof UserProfileFetchError && e.status === 404;
 }
 
-/** Fetches the authenticated user's own profile from the core service. */
-export async function fetchMyProfile(): Promise<UserProfile> {
+async function requestMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`${coreUrl()}/api/users/me`);
   if (!res.ok) {
     throw new UserProfileFetchError(res.status);
   }
   return (await res.json()) as UserProfile;
+}
+
+/**
+ * The caller's own profile, shared for `MY_PROFILE_TTL_MS` and deduplicated while in flight.
+ *
+ * WHY IT IS CACHED AT ALL, when `fetchUserProfile` already was and this one was not. Its three
+ * callers are all on interactive paths - the feed audience gate, opening a post, and the profile
+ * screen - and none of them needs a reading fresher than the others. Without this, tapping the Fil
+ * tab, then a post, then back cost three identical `GET /api/users/me`, each one a full round trip
+ * ahead of any paint. The window matches `profileCache`'s, for the same reason: it is long enough
+ * to cover one navigation burst and short enough that nobody reasons about staleness.
+ *
+ * EVERY FAILURE EVICTS, unlike the by-id cache. A 404 there is an answer - that account does not
+ * exist - and can be held. A 404 here would mean the caller's own account vanished mid-session,
+ * which is not a steady state worth remembering.
+ */
+const myProfile = new SharedCache<UserProfile>(30_000, { perReader: true });
+
+/** Fetches the authenticated user's own profile from the core service. */
+export function fetchMyProfile(): Promise<UserProfile> {
+  return myProfile.load('me', requestMyProfile);
+}
+
+/**
+ * Forgets the cached own-profile, or replaces it with one the caller already holds.
+ *
+ * `updateMyProfile` hands back the row the server just wrote, so the edit path SEEDS rather than
+ * evicts: dropping it would make the very next read pay a round trip to learn what the response in
+ * hand already said.
+ */
+export function invalidateMyProfile(profile?: UserProfile): void {
+  if (profile) myProfile.put('me', profile);
+  else myProfile.invalidate();
 }
 
 /** In-flight / short-lived cache for user profiles. TTL: 30 s. Deduplicates simultaneous fetches. */
@@ -258,7 +300,9 @@ export async function updateMyProfile(data: {
   if (!res.ok) {
     throw new Error(`Failed to update profile (${res.status})`);
   }
-  return (await res.json()) as UserProfile;
+  const profile = (await res.json()) as UserProfile;
+  invalidateMyProfile(profile);
+  return profile;
 }
 
 /** Fetches the caller's private personal notepad (markdown). Returns "" when unset. */
@@ -348,14 +392,36 @@ export async function setupPaymentMethod(callbacks?: {
     body: JSON.stringify(callbacks ?? {}),
   });
   if (!res.ok) throw new Error(`Failed to start payment setup (${res.status})`);
+  // The reader is about to be sent to Stripe and to come back with a card this list does not have.
+  // Whether the return is a fresh document or a webview that kept this module alive is not
+  // something this function can know, so it drops the list rather than betting on it.
+  invalidatePaymentMethods();
   return (await res.json()) as { ok: boolean; url?: string };
 }
 
+/**
+ * The reader's saved cards, held for a minute and shared by every caller.
+ *
+ * A SHOP PAGE IS N IDENTICAL REQUESTS WITHOUT THIS. `ProductPurchaseButton` asks on mount and the
+ * shop renders one per product, so a page of twelve tiles opened twelve
+ * `GET /api/payments/payment-methods` in the same frame, all for one answer - and on a narrow link
+ * they queue behind each other and behind the products the reader is actually waiting to see. The
+ * in-flight join is what closes that, not the window.
+ */
+const paymentMethods = new SharedCache<PaymentMethod[]>(60_000, { perReader: true });
+
 /** Returns all saved Stripe payment methods for the current user. */
 export async function listPaymentMethods(): Promise<PaymentMethod[]> {
-  const res = await apiFetch(`${coreUrl()}/api/payments/payment-methods`);
-  if (!res.ok) throw new Error(`Failed to fetch payment methods (${res.status})`);
-  return (await res.json()) as PaymentMethod[];
+  return paymentMethods.load('me', async () => {
+    const res = await apiFetch(`${coreUrl()}/api/payments/payment-methods`);
+    if (!res.ok) throw new Error(`Failed to fetch payment methods (${res.status})`);
+    return (await res.json()) as PaymentMethod[];
+  });
+}
+
+/** Drops the held cards. Called by every write that can change the list. */
+export function invalidatePaymentMethods(): void {
+  paymentMethods.invalidate();
 }
 
 /**
@@ -379,6 +445,7 @@ export async function deletePaymentMethod(id: string): Promise<void> {
     }
   );
   if (!res.ok) throw new Error(`Failed to delete payment method (${res.status})`);
+  invalidatePaymentMethods();
 }
 
 /**

@@ -107,18 +107,27 @@
     }
   }
 
-  onMount(async () => {
-    let allowed = false;
-    try {
-      allowed = await getReviewerAccess();
-    } catch {
-      allowed = false;
-    }
-    if (!allowed) {
-      void goto('/dashboard', { replaceState: true });
-      return;
-    }
-    ready = true;
+  onMount(() => {
+    /**
+     * THE GATE RUNS BESIDE THE CONTENT, NOT IN FRONT OF IT.
+     *
+     * `ready` used to be set only after `getReviewerAccess()` answered, and the whole page -
+     * header included - is behind it, so this screen was a blank rectangle for one full round
+     * trip and only THEN started asking for the documents. Two round trips, strictly one after
+     * the other, for a reader whose answer is "yes" every time.
+     *
+     * A READER WHO MAY NOT BE HERE IS STILL SENT AWAY, by the same answer as before. The documents
+     * request that started beside it is refused by the server for exactly the same reason it
+     * refuses the probe - it is not a way in, it is one wasted request on the rarest path, and the
+     * screen it would have painted is replaced by the redirect. `error` is not shown either,
+     * because `ready` gates the whole template and a refused reader never sets it.
+     */
+    getReviewerAccess()
+      .catch(() => false)
+      .then((allowed) => {
+        if (allowed) ready = true;
+        else void goto('/dashboard', { replaceState: true });
+      });
     void load();
   });
 </script>

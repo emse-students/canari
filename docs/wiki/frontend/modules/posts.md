@@ -564,3 +564,28 @@ An `hr` is the one case where preflight is not the whole story: it keeps `border
 the line was always visible. It was the zeroed margin that welded it to the sentences on both sides,
 and `color: inherit` that made it as heavy as body text - hence `var(--cn-border)` rather than
 `currentcolor`.
+
+## A poll option is free text, so it can only wrap (2026-09-23)
+
+`PostPolls.svelte` is the ONE presentation for both surfaces that carry a poll: a post's poll card
+and, through `ChannelPoll.svelte`, a community poll. Its option row carried `truncate` on the label,
+which is `white-space: nowrap` - one line, ellipsis, whatever the text is.
+
+That holds only if the label is short, and nothing makes it short. An option is free text typed by
+the author (`PollSection`'s newline-separated textarea), and the real poll that surfaced this asked
+which charity to give to: eight association names, seven of them longer than the box. Measured on
+the component at a 360px-wide container, the label gets what the row leaves it - the 20px selection
+icon, its 12px gap, then the percentage (`min-w-[2.5rem]`) and the count badge on the right - which
+is under 200px. Every entry became `Confedera...`, `Gustave R...`, `Action con...`: the options were
+not merely ugly, they were **indistinguishable from each other**, which is the one thing a ballot
+may not be.
+
+The label now wraps (`wrap-break-word`, `leading-snug`) and the row grows to two lines when it must;
+`items-center` already kept the icon and the counters centred against a taller label. Verified by
+mounting the component at 360px: eight labels, four of them on two lines, `scrollWidth` equal to
+`clientWidth` on all eight - nothing clipped. The percentage moved from `text-text-main/60` to the
+measured `--text-muted` token in the same pass, since a dimmed main colour was the darker of the two.
+
+**The rule this leaves**: `truncate` is a promise that the container is authoritative and the text is
+expendable. That is true of a filename in a chip or a voter name in a fixed-width tooltip; it is
+never true of content the user wrote for other users to READ AND CHOOSE BETWEEN.

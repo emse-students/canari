@@ -6,7 +6,6 @@
  * - Reply/cancel-reply state
  * - File selection + validation
  */
-import { tick } from 'svelte';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
@@ -97,7 +96,6 @@ export interface MessagingContext {
   selectedContact: string | null;
   getSendError: () => string;
   setSendError: (v: string) => void;
-  getChatContainer: () => HTMLElement | undefined;
   storage: IStorage | null;
   log: (msg: string) => void;
   saveConversation: (contactName: string) => Promise<void>;
@@ -296,10 +294,10 @@ export function useMessaging() {
           }
         }
         finishBulkUiFlushBench();
-        tick().then(() => {
-          const chatContainer = ctx.getChatContainer();
-          if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-        });
+        // AND THE DRAIN DOES NOT MOVE IT EITHER. This ended with the same blind jump, at the
+        // worst possible moment: a catch-up finishing is exactly when a bad connection has just
+        // recovered, so the reader who spent the outage scrolled up reading history was teleported
+        // to the bottom by the recovery itself. `ChatArea` sees the list grow and decides.
       }
     } catch (e) {
       console.error('[CATCHUP] endBulkMessageIngest failed:', e);
@@ -500,7 +498,30 @@ export function useMessaging() {
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
       const existing = bulkIngestBuffer.get(normalized) ?? [];
-      if (existing.some((m) => m.messageId === id) || convo.messages.some((m) => m.id === id)) {
+      const held = convo.messages.find((m) => m.id === id);
+      /**
+       * **AN UPGRADE IS NOT A DUPLICATE, AND CALLING IT ONE COSTS THE MESSAGE FOR EVER.**
+       *
+       * The row this envelope meets may be the FCM notification's caption, put in memory a few
+       * hundred milliseconds earlier by `mergeFcmMessagesIntoConversations` - the same id, and
+       * deliberately so. The live path below asks `shouldUpgradeMessage` and replaces it; this one
+       * only asked whether the id was known, so on every launch where the push preview landed
+       * BEFORE the drain reached the frame, the envelope was dropped here as a duplicate. The
+       * handler then returned `true`, the frame was acknowledged, and the server deleted the only
+       * copy: the bubble reads the caption for good, and nothing can ever repair it.
+       *
+       * Measured on the Mi 9T, 2026-09-23 (`archive/photoprev.mjs --mode restored`): preview
+       * injected at 04:51:34, `[ADD_MSG] Duplicate ignored during a bulk ingest id=57187590` at
+       * 04:51:44, `messageCallback → true` in the same millisecond. It is the user's 2026-09-22
+       * report, reproduced.
+       *
+       * The upgrade FALLS THROUGH to the live path rather than being buffered, and that is not a
+       * shortcut: buffering exists to stop a bulk arrival re-rendering the list once per message,
+       * and an upgrade adds no row - it replaces the content of one already on screen. There is no
+       * jank to avoid, and there IS a write to do that only the live path performs.
+       */
+      const upgrades = held !== undefined && shouldUpgradeMessage(held, content);
+      if (!upgrades && (existing.some((m) => m.messageId === id) || held !== undefined)) {
         // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
@@ -508,16 +529,21 @@ export function useMessaging() {
         console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}…`);
         return;
       }
-      existing.push({
-        senderId,
-        content,
-        ...options,
-        messageId: id,
-        ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
-      });
-      bulkIngestBuffer.set(normalized, existing);
-      raiseOverlayIfWorthAnnouncing();
-      return;
+      if (!upgrades) {
+        existing.push({
+          senderId,
+          content,
+          ...options,
+          messageId: id,
+          ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
+        });
+        bulkIngestBuffer.set(normalized, existing);
+        raiseOverlayIfWorthAnnouncing();
+        return;
+      }
+      console.log(
+        `[ADD_MSG] Preview upgrade during a bulk ingest id=${id}… - taking the live path`
+      );
     }
 
     const convo = ctx.conversations.get(normalized);
@@ -716,10 +742,11 @@ export function useMessaging() {
       }
     }
 
-    tick().then(() => {
-      const chatContainer = ctx.getChatContainer();
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
+    // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
+    // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
+    // reader had scrolled up to read, and not even whether this message belongs to the thread they
+    // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
+    // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
   }
 
   /**
@@ -935,10 +962,11 @@ export function useMessaging() {
       }
     }
 
-    tick().then(() => {
-      const chatContainer = ctx.getChatContainer();
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
+    // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
+    // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
+    // reader had scrolled up to read, and not even whether this message belongs to the thread they
+    // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
+    // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────

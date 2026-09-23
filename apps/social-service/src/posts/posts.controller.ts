@@ -29,7 +29,6 @@ import {
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
-  SubmitFormDto,
 } from './dto/post.dto';
 
 /** Manages post resources including reactions, comments, polls, and notifications. */
@@ -258,18 +257,6 @@ export class PostsController {
     @Body() body: VotePollDto
   ) {
     return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
-  }
-
-  /** Submits the embedded form on a post. */
-  @UseGuards(NginxAuthGuard)
-  @HttpPost(':postId/forms/:formId/submit')
-  submitForm(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
-    @Param('formId') formId: string,
-    @Body() body: SubmitFormDto
-  ) {
-    return this.interactions.submitForm(postId, formId, { ...body, userId: xUserId });
   }
 
   /** Adds an emoji reaction from the calling user to a post. */

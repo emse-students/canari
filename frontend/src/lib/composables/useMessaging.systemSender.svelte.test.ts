@@ -73,7 +73,6 @@ function makeContext() {
     setAuthToken: vi.fn(),
     getSendError: () => '',
     setSendError: vi.fn(),
-    getChatContainer: () => undefined,
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),

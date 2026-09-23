@@ -18,6 +18,8 @@
     GALLERY_MEDIA_ASPECT,
   } from '$lib/utils/mediaLayout';
   import { m } from '$lib/paraglide/messages';
+  import { nearViewport } from '$lib/actions/nearViewport';
+  import { SvelteSet } from 'svelte/reactivity';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -77,6 +79,16 @@
   );
   const displayedMarkdown = $derived(preprocessPostMarkdown(rawMarkdown));
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
+
+  /**
+   * Which attachments have come near the viewport, by media id.
+   *
+   * THE BOX IS WHAT AN OBSERVER CAN WATCH, AND THIS COMPONENT OWNS IT. `PostMedia` renders a
+   * different root per media type - and none at all while a file placeholder is in flow - so the
+   * gate cannot live inside it. Here there is exactly one wrapper per attachment, and it already
+   * reserves the aspect ratio, so nothing moves when the picture lands.
+   */
+  const nearMedia = new SvelteSet<string>();
 </script>
 
 {#if post.markdown}
@@ -112,7 +124,7 @@
     {#if postMedia.length === 1}
       {@const media = postMedia[0]}
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
-      <div>
+      <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
         <!-- An image is deliberately full-bleed; a document card is not, so it
            lines up with the post text (px-5) instead of touching the edges. -->
         <div
@@ -122,7 +134,12 @@
           style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
         >
           <!-- Single attachment: PostMedia handles its own lightbox/download -->
-          <PostMedia {media} {authToken} letterbox={reserved} />
+          <PostMedia
+            {media}
+            {authToken}
+            letterbox={reserved}
+            deferred={!nearMedia.has(media.mediaId)}
+          />
         </div>
         {#if media.caption}
           <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>
@@ -134,6 +151,7 @@
         {#each postMedia as media (media.mediaId)}
           {@const lightboxIdx = lightboxMedia.indexOf(media)}
           <div
+            use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}
             class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5 {lightboxIdx === -1
               ? 'flex items-center p-2'
               : ''}"
@@ -144,6 +162,7 @@
             <PostMedia
               {media}
               {authToken}
+              deferred={!nearMedia.has(media.mediaId)}
               onOpen={lightboxIdx === -1 ? undefined : () => openLightbox(lightboxIdx)}
             />
             {#if media.caption}

@@ -11,6 +11,101 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le travail qu'un scroll fait, a chaque tick
+
+Un scroll n'est pas un evenement mais un flux : le fil de discussion lisait la mise en page a chaque
+`scroll`, plusieurs fois par frame, et cherchait le separateur de date en partant du PREMIER - donc
+quatre-vingt-dix mesures forcees pour un lecteur en bas d'un fil de trois mois. Une mesure par
+frame, et une recherche dichotomique. Le panneau de logs se recalait une fois par ligne avec un
+`tick()` ; une fois par frame suffit. Et le `touchmove` non-passif du tirer-pour-rafraichir n'est
+plus tenu pendant tout le rafraichissement, ou aucun geste ne peut etre servi.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3septies-the-work-a-scroll-does-per-tick-2026-09-23).
+### Fixed - une photo restait le texte de sa notification, pour toujours
+
+Quand le cache FCM injecte la legende au demarrage et que la purge de file arrive ensuite, cette
+purge est un INGEST EN MASSE : sa branche ne demandait que "est-ce que je connais cet id", jetait
+l'enveloppe comme un doublon et acquittait quand meme la trame, que le serveur supprimait alors.
+La branche demande maintenant `shouldUpgradeMessage` et laisse la mise a niveau passer par le
+chemin direct. Reproduit sur le Mi 9T (`archive/photoprev.mjs --mode restored`).
+[mobile](docs/wiki/frontend/mobile.md#fcm-message-cache).
+
+### Fixed - six commandes attendaient qu'on leur dise ce qu'elles savaient deja
+
+Un vote de sondage, un commentaire, son coeur, les deux boutons "Suivre" et "Debloquer" ne
+bougeaient qu'au retour du serveur - lien mauvais, tap mort. Le decompte d'un sondage est une
+fonction pure de l'etat local (`applyPostPollVote`), un commentaire est complet avant d'etre envoye
+et porte un id LOCAL que `PostComments` refuse de nommer au serveur tant qu'il est en attente. La
+verification de mute reste, mais repond depuis le cache : `cachedMuteStatus()` refuse ce qui est
+deja connu, sinon l'interface bouge et la question part derriere.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3quater-six-taps-that-waited-to-be-told-what-they-already-knew-2026-09-23).
+
+### Fixed - ce que le lecteur venait voir, dernier dans la file
+
+Quatre ecrans demandaient tout un element a la fois, et sur chacun la chose ouverte n'etait pas la
+premiere : le mois du calendrier passait TROISIEME, `/documents` ne dessinait rien - pas meme son
+en-tete - tant qu'un booleen n'etait pas revenu, `/forms/[id]` faisait attendre ses controles
+derriere une banniere decorative, et une page d'association finissait suspendue au libelle d'un
+bouton. Rien de ce qui suit ne depend de ce qui est a cote, donc plus rien ne l'attend.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3sexies-what-the-reader-came-for-last-in-the-queue-2026-09-23).
+
+### Fixed - la meme liste, redemandee au serveur a chaque montage
+
+Quatorze ecrans lisent l'annuaire des associations et chacun le redemandait au montage : passer
+d'un onglet a l'autre coutait un aller-retour pour redessiner une liste inchangee. Une page boutique
+de douze produits ouvrait douze `GET /api/payments/payment-methods` identiques dans la meme frame.
+`SharedCache` porte les deux mecanismes que l'on confond : la fenetre rend le changement d'onglet
+gratuit, la jonction des requetes en vol fait des douze tuiles une seule requete. Ce qui garde la
+reponse juste reste l'invalidation a l'ecriture, et ce qui appartient au lecteur connecte s'inscrit
+la ou il est construit, pas dans une liste tenue a la deconnexion.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3quinquies-the-same-list-asked-for-again-on-every-mount-2026-09-23).
+
+### Fixed - le fil de discussion etait ramene en bas par le reseau, et celui d'a cote aussi
+
+`useMessaging` terminait chaque message persiste, chaque lot et chaque rattrapage par un
+`scrollTop = scrollHeight` qui ne demandait rien - ni si le lecteur etait remonte lire, ni meme si
+le message appartenait a la conversation ouverte. Le pire des trois tombait a la fin du rattrapage,
+soit exactement au retour d'une mauvaise connexion. `ChatArea` decide seul desormais. Dans l'autre
+sens, une reponse d'historique d'un pair faisait descendre le lecteur de la hauteur exacte de ce
+qu'il venait de demander : une rangee sert d'ancre.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3bis-who-may-move-the-readers-viewport-2026-09-23).
+
+### Fixed - soixante telechargements de medias dans la meme frame, sans plafond ni annulation
+
+Chaque composant media telechargeait son objet au montage, pour chaque rangee rendue, et des
+originaux : la fenetre de 60 du panneau "Medias, liens & fichiers" est une BORNE, pas une limite de
+concurrence, et un scroll de chat avance la fenetre de 140 groupes d'un coup. Un plafond ne reduit
+pas le travail, il decide l'ORDRE - trois a la fois, et la page d'historique que le lecteur attend
+garde sa part du lien. Ce qui n'est pas encore visible ne demande plus rien.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3ter-sixty-downloads-in-one-frame-2026-09-23).
+
+### Fixed - l'onglet Fil attendait le reseau pour afficher ce que le telephone avait deja
+
+Trois mecanismes sur le meme onglet : la porte d'audience etait un aller-retour place DEVANT la
+requete des posts, un echec de transport etait lu comme une reponse et ejectait le lecteur vers
+`/chat`, et le fil deja affiche etait efface des le tap puis recharge de zero. Mesure sur le Mi 9T
+a travers un lien bride a 1500 ms / 64 kbps : 2045 ms de premier rendu contre 262 ms sans bridage,
+pour finir sur un ecran vide.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3-the-fil-tab-and-what-it-cost-2026-09-23).
+
+
+### Fixed - une soumission de formulaire etait confirmee en anglais dans une interface francaise
+
+Le serveur renvoyait toujours `message: 'Form submitted successfully'`, et la page ecrivait
+`res.message || m.form_view_submission_success()` : la clef Paraglide n'a jamais ete atteinte. La
+reponse n'identifie plus que la soumission, et la page dit elle-meme ce qui s'est passe. La route
+`POST /posts/:postId/forms/:formId/submit`, un stub que personne n'appelait, est supprimee des deux
+cotes. [forms](docs/wiki/frontend/modules/forms.md#the-submit-response-names-no-outcome-because-a-service-with-no-locale-cannot-2026-09-23).
+
+
+### Fixed - les options d'un sondage etaient coupees a l'ellipse, donc impossibles a distinguer
+
+Le libelle portait `truncate`, soit une ligne et rien d'autre. Un libelle est du texte libre, et sur
+un telephone la rangee ne lui laisse pas 200px : un sondage sur huit associations s'affichait
+`Confedera...`, `Gustave R...`, `Action con...`. Il passe desormais a la ligne, sur les deux surfaces
+qui partagent `PostPolls` (post et salon).
+[posts](docs/wiki/frontend/modules/posts.md#a-poll-option-is-free-text-so-it-can-only-wrap-2026-09-23).
+
+
 ### Fixed - une mention sous une photo restait le token brut, que l'app soit relancee ou non
 
 `MessageBubble` ne monte `MessageTextBody` que `{#if !mediaRef}` : la legende d'une piece jointe
@@ -83,8 +178,10 @@ sous les principaux. [associations](docs/wiki/frontend/modules/associations.md).
 ### Changed - la carte d'une liste ne repete plus ce que son rayon dit deja
 
 Suppression de la pastille "Liste 2026" (doublon du titre "Campagnes 2026") et du compteur de
-membres sur les listes seulement ; les rayons sont maintenant divises par association parente a
-l'interieur de chaque annee (user, 2026-09-22).
+membres sur les listes seulement ; a l'interieur d'une annee les listes sont ORDONNEES par
+association parente, dans une seule grille - le regroupement en sous-sections, essaye le
+2026-09-22, ouvrait une grille par parent et laissait une rangee presque vide (user, 2026-09-23 :
+*"enorme espace vide... c'etait plus les organiser en les ordonnant, pas en les regroupant"*).
 [associations](docs/wiki/frontend/modules/associations.md).
 ### Fixed - l'agenda du telephone rendu pour la premiere fois : un trait sur rien, et un jour en francais
 

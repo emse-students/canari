@@ -122,6 +122,11 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
 
       Promise.resolve(onRefresh()).finally(() => {
         refreshing = false;
+        // RE-ASK NOW RATHER THAN WAIT FOR A SCROLL. `refreshing` is what unbound the listener, so
+        // `refreshing = false` is the moment the answer can change - and if the reader is sitting
+        // at the top having just refreshed, no scroll event is coming to ask it for us. Without
+        // this, a second pull would find no `touchmove` bound and do nothing.
+        syncMoveBinding();
         if (indicator) {
           indicator.style.transition = 'height 0.25s ease, opacity 0.25s ease';
           indicator.style.height = '0';
@@ -138,6 +143,8 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
       }
     }
     startY = 0;
+    // The gesture is over, so the binding's reason may be too.
+    syncMoveBinding();
   }
 
   let moveBound = false;
@@ -165,13 +172,21 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
    * that was the whole feed, on top of the shell's own listener - both reported from an iPhone on
    * 2026-09-20 as unpainted bands during a scroll.
    *
-   * A passive `scroll` listener is what re-asks the question. `active` and `refreshing` hold the
-   * binding through a pull that is already under way: the pull is claimed with `preventDefault`, so
-   * no scroll event arrives to re-arm it, and a refresh that scrolls the list under itself must not
-   * unbind the gesture it is serving.
+   * A passive `scroll` listener is what re-asks the question, and `active` holds the binding through
+   * a pull that is already under way: the pull is claimed with `preventDefault`, so no scroll event
+   * arrives to re-arm it.
+   *
+   * `refreshing` USED TO HOLD IT TOO, AND THAT WAS THE SAME DEFECT ONE LAYER IN. No gesture can be
+   * served during a refresh - `onTouchStart` and `onTouchMove` both refuse while `refreshing` - so
+   * the listener was bound, declining, across the whole of a refresh, which on a bad link is
+   * seconds, and which is precisely when the reader gives up and scrolls away. What the binding was
+   * really protecting is that nothing re-asks the question afterwards: a reader sitting at the top
+   * having just refreshed produces no scroll event, so the next pull would find nothing bound.
+   * `syncMoveBinding()` is therefore called where the answer changes - when the refresh settles,
+   * and when the gesture ends - rather than the binding being held until something happens to ask.
    */
   function syncMoveBinding(): void {
-    if (node.scrollTop === 0 || active || refreshing) bindMove();
+    if (node.scrollTop === 0 || active) bindMove();
     else unbindMove();
   }
 

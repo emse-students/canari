@@ -7,6 +7,7 @@ import {
   setEventValidator,
 } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
@@ -440,9 +441,39 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 // ── Public ────────────────────────────────────────────────────────────────
 
 /** Lists associations. Pass `type` to restrict to regular associations or promo lists. */
+/**
+ * The association directory, held for five minutes and shared by every screen that draws it.
+ *
+ * FOURTEEN CALL SITES READ THIS LIST and every one of them asked the server again on mount -
+ * `/associations`, `/directory`, `/lists`, `/shop`, `/calendar`, the admin screens, the co-owner
+ * picker, the post composer. Switching between two of those tabs was two identical round trips to
+ * redraw a list that had not changed, and on a narrow link that round trip IS the tab switch.
+ *
+ * FIVE MINUTES IS NOT THE MECHANISM THAT KEEPS IT RIGHT - {@link invalidateAssociationDirectory}
+ * is, called by every write below that can change what this returns. The TTL is the floor under a
+ * change made somewhere this client cannot see (another member's browser, a moderator), which is
+ * the only case it has to cover.
+ */
+const associationDirectory = new SharedCache<Association[]>(5 * 60_000);
+
+const directoryKey = (type?: 'association' | 'list') => type ?? 'all';
+
 export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
-  const qs = type ? `?type=${type}` : '';
-  return request<Association[]>(`/api/associations${qs}`);
+  return associationDirectory.load(directoryKey(type), () => {
+    const qs = type ? `?type=${type}` : '';
+    return request<Association[]>(`/api/associations${qs}`);
+  });
+}
+
+/**
+ * Drops the held directory, every type at once.
+ *
+ * EVERY TYPE, BECAUSE ONE ASSOCIATION IS IN SEVERAL OF THEM: the untyped listing contains both
+ * bands, and a `type` can itself be edited. Dropping only the key the caller happens to know would
+ * leave the other two disagreeing with it, which is worse than the request it saved.
+ */
+export function invalidateAssociationDirectory(): void {
+  associationDirectory.invalidate();
 }
 
 export async function getAssociation(id: string): Promise<Association> {
@@ -690,12 +721,41 @@ export async function getPostLinkedToCalendarEvent(eventId: string): Promise<{
 
 // ── Authenticated ─────────────────────────────────────────────────────────
 
+/**
+ * The caller's own memberships, held for five minutes and shared by every caller.
+ *
+ * ONE CACHE OVER THE ENDPOINT, NOT ONE PER CALLER - which is the reasoning already written into
+ * {@link ensureMyAssociations} below and was true of the raw function too: `/associations` asks for
+ * it beside the directory, the post composer asks for it, the flag probe asks for it, and two
+ * caches over the same endpoint drift the moment one is forced and the other is not. So the probe
+ * now reads THROUGH this rather than beside it.
+ */
+const myMemberships = new SharedCache<Association[]>(5 * 60_000, { perReader: true });
+
 export async function listMyAssociations(): Promise<Association[]> {
-  return request<Association[]>('/api/associations/me/list');
+  return myMemberships.load('me', () => request<Association[]>('/api/associations/me/list'));
+}
+
+/**
+ * Drops the held memberships AND the flag probe derived from them.
+ *
+ * BOTH, ALWAYS: the flags are a pure function of the list, so a list dropped without the probe
+ * leaves `isAssociationSuperAdmin()` answering from a membership nobody holds any more.
+ */
+export function invalidateMyAssociations(): void {
+  myMemberships.invalidate();
+  myAssociationsProbe = null;
 }
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */
 let myAssociationsProbe: Promise<Association[]> | null = null;
+
+// The probe is not a SharedCache - it is one promise holding three derived flags - so it enrols
+// itself. The list beside it does so through its own `perReader` option, and both have to go: a
+// probe kept across a sign-in answers `isAssociationSuperAdmin()` for the previous account.
+registerPerReaderCache(() => {
+  myAssociationsProbe = null;
+});
 
 /**
  * Loads the caller's memberships once per session and publishes EVERY BDE-derived flag from that
@@ -709,7 +769,7 @@ let myAssociationsProbe: Promise<Association[]> | null = null;
  * indistinguishable from a user who belongs to nothing, and would hide a control with no trace.
  */
 export async function ensureMyAssociations(force = false): Promise<Association[]> {
-  if (force) myAssociationsProbe = null;
+  if (force) invalidateMyAssociations();
   if (!myAssociationsProbe) {
     myAssociationsProbe = listMyAssociations()
       .then((assos) => {
@@ -779,10 +839,12 @@ export async function unfollowAssociation(associationId: string): Promise<{ ok: 
 }
 
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
-  return request<Association>('/api/associations', {
+  const created = await request<Association>('/api/associations', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  invalidateAssociationDirectory();
+  return created;
 }
 
 // ── Admin / Owner ─────────────────────────────────────────────────────────
@@ -791,16 +853,20 @@ export async function updateAssociation(
   id: string,
   payload: UpdateAssociationPayload
 ): Promise<Association> {
-  return request<Association>(`/api/associations/${encodeURIComponent(id)}`, {
+  const updated = await request<Association>(`/api/associations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+  invalidateAssociationDirectory();
+  return updated;
 }
 
 export async function deleteAssociation(id: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(id)}`, {
+  const result = await request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+  invalidateAssociationDirectory();
+  return result;
 }
 
 /**
@@ -841,6 +907,7 @@ export async function uploadAssociationLogo(
     const details = await res.text().catch(() => '');
     throw new Error(`associations ${res.status}: ${details || res.statusText}`);
   }
+  invalidateAssociationDirectory();
   return (await res.json()) as Association;
 }
 
@@ -848,10 +915,12 @@ export async function deleteAssociationLogo(
   associationId: string,
   slot: LogoSlot = 'primary'
 ): Promise<Association> {
-  return request<Association>(
+  const updated = await request<Association>(
     `/api/associations/${encodeURIComponent(associationId)}/logo${logoSlotQuery(slot)}`,
     { method: 'DELETE' }
   );
+  invalidateAssociationDirectory();
+  return updated;
 }
 
 /**
@@ -877,10 +946,13 @@ export async function addMember(
   role: string,
   permissions: number
 ): Promise<AssociationMember> {
-  return request<AssociationMember>(
+  const member = await request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members`,
     { method: 'POST', body: JSON.stringify({ userId, role, permissions }) }
   );
+  // The member added may be the caller, and their permissions decide what this session may do.
+  invalidateMyAssociations();
+  return member;
 }
 
 /**
@@ -893,20 +965,24 @@ export async function updateMemberRole(
   role?: string,
   permissions?: number
 ): Promise<AssociationMember> {
-  return request<AssociationMember>(
+  const member = await request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
     { method: 'PATCH', body: JSON.stringify({ role, permissions }) }
   );
+  invalidateMyAssociations();
+  return member;
 }
 
 export async function removeMember(
   associationId: string,
   userId: string
 ): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
+  const result = await request<{ ok: boolean }>(
     `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
   );
+  invalidateMyAssociations();
+  return result;
 }
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
@@ -2105,19 +2181,33 @@ export interface UpdateAssociationCategoryPayload {
   sortOrder?: number;
 }
 
+/**
+ * The category list, held for five minutes and shared by every caller.
+ *
+ * It is a handful of labels that only a global admin can change, read by the association profile
+ * tab and both carte screens - and the profile tab is inside a tab strip that UNMOUNTS its panel,
+ * so every switch back to it re-asked. Same invalidation rule as the directory: the four writes
+ * below drop it, the window only bounds a change made elsewhere.
+ */
+const categories = new SharedCache<AssociationCategory[]>(5 * 60_000);
+
 /** Lists categories in display order. Public. */
 export async function listAssociationCategories(): Promise<AssociationCategory[]> {
-  return request<AssociationCategory[]>('/api/associations/categories');
+  return categories.load('all', () =>
+    request<AssociationCategory[]>('/api/associations/categories')
+  );
 }
 
 /** Creates a category. Global admins / BDE super-admins only. */
 export async function createAssociationCategory(
   payload: CreateAssociationCategoryPayload
 ): Promise<AssociationCategory> {
-  return request<AssociationCategory>('/api/associations/categories', {
+  const created = await request<AssociationCategory>('/api/associations/categories', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  categories.invalidate();
+  return created;
 }
 
 /** Updates a category's label/order. Global admins / BDE super-admins only. */
@@ -2125,27 +2215,37 @@ export async function updateAssociationCategory(
   id: string,
   payload: UpdateAssociationCategoryPayload
 ): Promise<AssociationCategory> {
-  return request<AssociationCategory>(`/api/associations/categories/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
+  const updated = await request<AssociationCategory>(
+    `/api/associations/categories/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+  categories.invalidate();
+  return updated;
 }
 
 /** Deletes a category and detaches it from its associations. Global admins / BDE super-admins only. */
 export async function deleteAssociationCategory(id: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/associations/categories/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
+  const result = await request<{ ok: boolean }>(
+    `/api/associations/categories/${encodeURIComponent(id)}`,
+    { method: 'DELETE' }
+  );
+  // A deleted category is detached from its associations, so the directory carries it too.
+  categories.invalidate();
+  invalidateAssociationDirectory();
+  return result;
 }
 
 /** Persists a new top-to-bottom category order. Global admins / BDE super-admins only. */
 export async function reorderAssociationCategories(
   orderedIds: string[]
 ): Promise<AssociationCategory[]> {
-  return request<AssociationCategory[]>('/api/associations/categories/reorder', {
+  const reordered = await request<AssociationCategory[]>('/api/associations/categories/reorder', {
     method: 'PATCH',
     body: JSON.stringify({ orderedIds }),
   });
+  // The response IS the new list in the new order, so it seeds rather than evicts.
+  categories.put('all', reordered);
+  return reordered;
 }
 
 // ── Poster projects ("Carte de la Vie Asso") ─────────────────────────────────
