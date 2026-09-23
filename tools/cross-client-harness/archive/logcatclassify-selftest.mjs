@@ -81,6 +81,26 @@ const CASES = [
   [line('D', 'CanariFCM', 'FCM silent from self -> cancelling notification for group=00000000'), 'explained'],
   [line('D', 'CanariFCM', 'cancelConversationNotification: notif removed group=00000000 id=1000'), 'explained'],
   [line('D', 'CanariFCM', 'cancelConversationNotification: no notif for group=00000000'), 'explained'],
+  // The REACTION arm of the same decision: a reaction has carried its own notification id since
+  // 2026-09-17, so reading a conversation cancels TWO notifications and this is the second one.
+  [
+    line('D', 'CanariFCM', 'cancelConversationNotification: reaction notif removed group=00000000 id=1001'),
+    'explained',
+  ],
+  // BOTH HALVES OF THE SOCKET TRIGGER'S HANDOFF - the accept, and the native builder taking it.
+  // They are NOTIF-1b's own success path, and the row was PASS-DIRTY over them.
+  [
+    line('D', 'CanariFCM', 'notifyMessageFromWebSocket: queued groupId=00000000 mentionsMe=false sentAt=1700000000000'),
+    'explained',
+  ],
+  [
+    line(
+      'D',
+      'mines_app_lib::commands::notifications',
+      '[mines_app_lib::commands::notifications] [NOTIF] native builder queued for 00000000'
+    ),
+    'explained',
+  ],
   [line('D', 'CanariFCM', 'drainOutboxBackground: 1 sent, 0 remaining'), 'explained'],
   [line('D', 'CanariWorker', 'resetFailureFlag: flag reset'), 'explained'],
 

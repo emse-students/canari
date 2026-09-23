@@ -2919,6 +2919,45 @@ field, `clean: true` - and those are the exact two findings the warm-up exists t
 swallowed setup failure does not make a run fail; it makes a run mean something else without saying
 so.** Recorded in `a1SetupFaults`, announced, and asserted as `theDmWasOpenOnThePhone`.
 
+## A PARK THAT NEVER PARKED ANYTHING, AND THE FIVE ROWS THAT RESTED ON IT
+
+`notif.mjs` took its second owner browser off the conversation with `history.pushState({}, '', '/chat')`
+and a synthetic `popstate`. That changes the URL and asks the router to follow; it does **not** close
+the conversation pane, and on the two-pane layout the pane stays mounted. So W1 went on reading the DM
+under a stage line saying it had been parked - and a read from ANY owner device raises
+`FCM silent from self -> cancelling notification for group=` on the phone, which withdraws the very
+notification the row is waiting for.
+
+**The symptom was not a failure, it was a DIFFERENT failure each run**, which is what sent this
+looking in three wrong directions before the park itself was read. Same row, same bench, build
+`00a86a1a8`:
+
+| the run | what it recorded |
+| --- | --- |
+| as found | `notified after 2213ms`, then `shade holds 0` |
+| next run | no notification at all in 60 s, `notifiedInMs: null` |
+| through `leaveConversation` | `notified after 2247ms`, **`shade holds 1`**, `W1 holds 1`, clean `PASS` |
+
+`chat.mjs` had grown `leaveConversation` for exactly this - it routes away, verifies
+(`PANE_STATE === 'nothing'`) and ANSWERS `routed away` / `left` / `already outside a conversation` -
+and `notif15.mjs` already used it. Three things changed so the rows measure what they claim:
+
+1. **Both owner browsers leave through the verifying helper, and the answer goes into the row's JSON**
+   (`parkedW1`, `parkedW3`). W3 acts as the owner too, which `identity.mjs` says; the comment above
+   the park read "the OWNER's other device" in the singular because it was written when there was one.
+2. **Every reopening of W1 goes through `ensureChat` first.** A verified park lands on `/dashboard`,
+   where no conversation row is listed, so `openConversation` waited 20 s and threw *"the peer's
+   conversation row was never listed"* - a true sentence naming the wrong cause.
+3. **The classifier learnt the lines the fixed path produces**, including both halves of the socket
+   trigger's handoff, which are NOTIF-1b's own success path.
+
+NOTIF-1b, NOTIF-4, NOTIF-4b, NOTIF-9 and NOTIF-11 all `PASS` clean afterwards - 4b included, whose
+premise is the opposite one, W1 deliberately left reading.
+
+**The rule: a precondition a row states in a log line is not a precondition.** Park through something
+that answers, and record the answer. These rows announced a park for months and their verdicts moved
+with whatever the layout happened to do.
+
 ## READ THE SERVER'S LOGS BEFORE FILING A CLIENT DEFECT
 
 The P1 CANDIDATE filed from NOTIF-1b's console said *"a zombie socket in a FOREGROUNDED app"*, and
