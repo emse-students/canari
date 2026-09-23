@@ -151,11 +151,21 @@
         return;
       }
       asso = loaded;
-      [members, products, partnerships] = await Promise.all([
+      // THE FOLLOW STATUS JOINS THE BATCH RATHER THAN FOLLOWING IT. It used to be a FOURTH round
+      // trip, awaited after these three had all come back, and all it decides is whether one
+      // button reads "Suivre" or "Ne plus suivre" - so on a bad link the whole page sat finished
+      // behind a label.
+      const uid = currentUserId();
+      let followStatus: { following: boolean };
+      [members, products, partnerships, followStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
         listAssociationPartnerships(asso.id).catch(() => []),
+        uid
+          ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
+          : Promise.resolve({ following: false }),
       ]);
+      following = followStatus.following;
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = rosterDisplayName(m);
@@ -167,17 +177,6 @@
             if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
           });
         }
-      }
-      const uid = currentUserId();
-      if (uid) {
-        try {
-          const st = await getAssociationFollowStatus(asso.id);
-          following = st.following;
-        } catch {
-          following = false;
-        }
-      } else {
-        following = false;
       }
     } catch (err) {
       error = m.common_not_found();

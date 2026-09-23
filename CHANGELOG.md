@@ -21,6 +21,26 @@ verification de mute reste, mais repond depuis le cache : `cachedMuteStatus()` r
 deja connu, sinon l'interface bouge et la question part derriere.
 [local-first-ui](docs/wiki/frontend/local-first-ui.md#3quater-six-taps-that-waited-to-be-told-what-they-already-knew-2026-09-23).
 
+### Fixed - ce que le lecteur venait voir, dernier dans la file
+
+Quatre ecrans demandaient tout un element a la fois, et sur chacun la chose ouverte n'etait pas la
+premiere : le mois du calendrier passait TROISIEME, `/documents` ne dessinait rien - pas meme son
+en-tete - tant qu'un booleen n'etait pas revenu, `/forms/[id]` faisait attendre ses controles
+derriere une banniere decorative, et une page d'association finissait suspendue au libelle d'un
+bouton. Rien de ce qui suit ne depend de ce qui est a cote, donc plus rien ne l'attend.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3sexies-what-the-reader-came-for-last-in-the-queue-2026-09-23).
+
+### Fixed - la meme liste, redemandee au serveur a chaque montage
+
+Quatorze ecrans lisent l'annuaire des associations et chacun le redemandait au montage : passer
+d'un onglet a l'autre coutait un aller-retour pour redessiner une liste inchangee. Une page boutique
+de douze produits ouvrait douze `GET /api/payments/payment-methods` identiques dans la meme frame.
+`SharedCache` porte les deux mecanismes que l'on confond : la fenetre rend le changement d'onglet
+gratuit, la jonction des requetes en vol fait des douze tuiles une seule requete. Ce qui garde la
+reponse juste reste l'invalidation a l'ecriture, et ce qui appartient au lecteur connecte s'inscrit
+la ou il est construit, pas dans une liste tenue a la deconnexion.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3quinquies-the-same-list-asked-for-again-on-every-mount-2026-09-23).
+
 ### Fixed - le fil de discussion etait ramene en bas par le reseau, et celui d'a cote aussi
 
 `useMessaging` terminait chaque message persiste, chaque lot et chaque rattrapage par un

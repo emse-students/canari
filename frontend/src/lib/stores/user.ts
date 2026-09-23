@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
@@ -72,7 +73,7 @@ export function saveUserLocally(user: {
   // rather than left to expire - the whole point of persisting it is that it outlives a reload.
   if (localStorage.getItem(USER_STORAGE_KEY) !== user.id) {
     setFeedAudience(null);
-    invalidateMyProfile();
+    forgetReaderCaches();
   }
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
@@ -87,7 +88,7 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
   setGlobalAdmin(false);
   setFeedAudience(null);
-  invalidateMyProfile();
+  forgetReaderCaches();
   setCurrentUserId(null);
 }
 
@@ -141,21 +142,11 @@ async function requestMyProfile(): Promise<UserProfile> {
  * exist - and can be held. A 404 here would mean the caller's own account vanished mid-session,
  * which is not a steady state worth remembering.
  */
-const MY_PROFILE_TTL_MS = 30_000;
-
-let myProfileCache: { promise: Promise<UserProfile>; expiresAt: number } | null = null;
+const myProfile = new SharedCache<UserProfile>(30_000, { perReader: true });
 
 /** Fetches the authenticated user's own profile from the core service. */
 export function fetchMyProfile(): Promise<UserProfile> {
-  const now = Date.now();
-  if (myProfileCache && myProfileCache.expiresAt > now) return myProfileCache.promise;
-
-  const promise = requestMyProfile();
-  myProfileCache = { promise, expiresAt: now + MY_PROFILE_TTL_MS };
-  promise.catch(() => {
-    myProfileCache = null;
-  });
-  return promise;
+  return myProfile.load('me', requestMyProfile);
 }
 
 /**
@@ -166,9 +157,8 @@ export function fetchMyProfile(): Promise<UserProfile> {
  * hand already said.
  */
 export function invalidateMyProfile(profile?: UserProfile): void {
-  myProfileCache = profile
-    ? { promise: Promise.resolve(profile), expiresAt: Date.now() + MY_PROFILE_TTL_MS }
-    : null;
+  if (profile) myProfile.put('me', profile);
+  else myProfile.invalidate();
 }
 
 /** In-flight / short-lived cache for user profiles. TTL: 30 s. Deduplicates simultaneous fetches. */
@@ -402,14 +392,36 @@ export async function setupPaymentMethod(callbacks?: {
     body: JSON.stringify(callbacks ?? {}),
   });
   if (!res.ok) throw new Error(`Failed to start payment setup (${res.status})`);
+  // The reader is about to be sent to Stripe and to come back with a card this list does not have.
+  // Whether the return is a fresh document or a webview that kept this module alive is not
+  // something this function can know, so it drops the list rather than betting on it.
+  invalidatePaymentMethods();
   return (await res.json()) as { ok: boolean; url?: string };
 }
 
+/**
+ * The reader's saved cards, held for a minute and shared by every caller.
+ *
+ * A SHOP PAGE IS N IDENTICAL REQUESTS WITHOUT THIS. `ProductPurchaseButton` asks on mount and the
+ * shop renders one per product, so a page of twelve tiles opened twelve
+ * `GET /api/payments/payment-methods` in the same frame, all for one answer - and on a narrow link
+ * they queue behind each other and behind the products the reader is actually waiting to see. The
+ * in-flight join is what closes that, not the window.
+ */
+const paymentMethods = new SharedCache<PaymentMethod[]>(60_000, { perReader: true });
+
 /** Returns all saved Stripe payment methods for the current user. */
 export async function listPaymentMethods(): Promise<PaymentMethod[]> {
-  const res = await apiFetch(`${coreUrl()}/api/payments/payment-methods`);
-  if (!res.ok) throw new Error(`Failed to fetch payment methods (${res.status})`);
-  return (await res.json()) as PaymentMethod[];
+  return paymentMethods.load('me', async () => {
+    const res = await apiFetch(`${coreUrl()}/api/payments/payment-methods`);
+    if (!res.ok) throw new Error(`Failed to fetch payment methods (${res.status})`);
+    return (await res.json()) as PaymentMethod[];
+  });
+}
+
+/** Drops the held cards. Called by every write that can change the list. */
+export function invalidatePaymentMethods(): void {
+  paymentMethods.invalidate();
 }
 
 /**
@@ -433,6 +445,7 @@ export async function deletePaymentMethod(id: string): Promise<void> {
     }
   );
   if (!res.ok) throw new Error(`Failed to delete payment method (${res.status})`);
+  invalidatePaymentMethods();
 }
 
 /**
