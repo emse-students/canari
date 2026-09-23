@@ -95,6 +95,39 @@ not; the middot separator belongs to the count, so a list prints the note withou
 the count is a CONDITION rather than a deletion, and why `associationTileList.test.ts` reads the
 markup - every one of these was valid markup that rendered without complaint.
 
+### What the detail header says, and the space a compiler kept eating
+
+Two defects reported together on 2026-09-23, both visible in one screenshot of `/lists/minestagnard`.
+
+**`BDE - Bureau des Eleves ·@minestagnard`, and `Mines'tagnard& Mines'diana Jones`.** Neither was a
+typo. Svelte removes the whitespace at the end of an `{#if}` block and at the start of an element's
+content, and the header had one of each: the space after the middot was the last thing inside the
+parent-name block, and the space before `&` was the first thing inside the second name's `<span>`.
+The source showed a space in both places; the emitted code did not, which `compile(src, { generate:
+'server' })` prints in seconds. The meta line is now a `flex` row whose separators are its own
+children, so the spacing is `gap-x-1.5` - the box model cannot be trimmed by a compiler, and the row
+still reads correctly when the parent name is absent. The rule is in
+[durable-rules](../../durable-rules.md).
+
+**Each logo now sits with its own name.** Both logos shared one `lg` row while both names shared the
+`<h1>`, so `logo1 logo2 / name1 & name2` asked the reader to cross the pairing over (user: *"ce n'est
+pas logique d'avoir logo1 puis titre1 et titre2 puis logo2"*). The second theme is the subordinate
+row `AssociationTile` already draws - an `sm` avatar beside its own name, under the main pair - so
+the card and the detail page now state the same thing the same way, and the `&` shape that needed a
+space in markup is gone. It renders when EITHER half is set, matching the tile: a list can be renamed
+before its second logo is uploaded, or the reverse.
+
+**The member count left the header** (user, same day). The members tab states it, and on a list it
+read "0 membre" for a campaign whose roster simply is not registered yet - the same reason the card
+stopped printing it on 2026-09-22. `asso_header_member_count` had no other caller and was deleted
+from both catalogues. `Campagnes 2026` became a pill rather than the tail of a run of middots.
+
+**Portail-etu carried both defects identically** and took the same fix (`EntityDetail.svelte`,
+`AssociationCard.svelte`), plus one of its own: its `<h1>` tested `name2` alone while its logo row
+tested `name2 && logoMediaId2`, so the two halves of the same header disagreed about whether a second
+theme existed, and a list renamed before its logo was uploaded lost the logo. Its cards did not show
+the second theme at all; they do now.
+
 ### The two orderings of the directory, and the grouping that lasted one day
 
 `/lists` shelves by campaign year, most recent first, `promo`-less lists last under "Divers". The
