@@ -108,11 +108,11 @@ on the wrong VM entirely.
   box, which pulls the code itself. The same shape is what Canari, le Cercle and Authentik will
   use, so no deploy path ever needs SSH.
 - `canari.emse.fr` **already resolves**, to `193.49.175.122`, and serves Portail-etu byte for byte
-  (identical `ETag`). The name has to be reclaimed, not created. **That it is a second address of
-  the SAME machine is an inference, not a measurement, and one probe now sits against it**: from
-  inside EMSE, `193.49.175.67:22` answers an SSH banner while `193.49.175.122:22` is dropped. A
-  per-address firewall rule explains that as easily as two hosts do, so it refutes nothing - but
-  the claim is not to be repeated as fact until something settles it.
+  (identical `ETag`). The name has to be reclaimed, not created. **IT IS THE SAME
+  MACHINE, AND THAT IS MEASURED ON THE BOX SINCE 2026-09-24**: `ip -4 -o addr show ens18` returns
+  `193.49.175.67/24`, `193.49.175.40/24` and `193.49.175.122/24` on one interface. The probe that
+  sat against it - `.67:22` answering an SSH banner while `.122:22` is dropped - was the
+  per-address firewall rule, which is exactly the alternative reading the paragraph allowed for.
 
 ### WHAT THE HOST ACTUALLY IS - MEASURED ON IT, 2026-09-23
 
@@ -224,6 +224,49 @@ of authorship on this machine.** An account removed during this chantier must lo
 same operation, and any account created here should be given an explicit uid above the high-water
 mark rather than the lowest free one.
 
+### THE HOST WAS EMPTIED BEFORE THE MOVE - 2026-09-24
+
+The survey above found a shared box carrying years of other people's leftovers. It now carries
+**1187 packages where it carried 1813**, and the difference is the surface this project would
+otherwise have inherited.
+
+| Removed | What it was |
+| --- | --- |
+| **nine** concurrent PHP versions, 7.0 through 8.4 | 175 packages. Exactly ONE was referenced by nginx - `php8.2`, and only for phpMyAdmin |
+| apache2 | installed, inactive, listening on nothing |
+| phpMyAdmin | the `/linterfacelephp` vhost location, now `404` |
+| MySQL, engine and data | eleven legacy databases, nothing connected to it |
+| 111 `rc` residues | config left by packages removed years ago, down to `linux-image-4.19` |
+| the desktop trees | WebKit, GTK 3 and 4, Mesa and Vulkan, three obsolete GCC toolchains, LLVM 19, X fonts, a speech-recognition model |
+
+`/` went from 16 G used to **12 G, leaving 32 G free where the capacity table measured 27**, and
+`/etc` is under version control again: etckeeper had not committed since 2019-07-31 and 1882
+pending changes were carried into one commit that dates this cleanup.
+
+**Every check after each batch was on the STATE, never on the exit status** - the `rm` that
+SIGKILLs is on this same machine. Twelve services and four vhosts were re-verified after each step;
+Portail-etu answered `200` throughout.
+
+**MySQL is the one that needed evidence before it could go.** Nothing reached it: no process on its
+socket, no systemd dependency, no container, and the Portail-etu container declares no database
+variable at all. Its last write was `cercle`'s, on 2026-09-11 - and the monthly histogram shows why
+that is not a live system: 917 transactions in June 2026, **1 in July, 58 in August (a single bar
+shift, `perm` 917) and 1 in September**. The pre-Canari bar system stopped in June; what followed is
+a tail. Confirmed by the user: it is `ssh cercle` that replaced it.
+
+The dump is verified in four places - `/var/backups`, `/var/lib/automysqlbackup` (234 M),
+`/export/mysqlbackup` (96 M on the filer) and the user's workstation, md5 checked against the host.
+**What would have talked to a MySQL that is gone was neutralised in the same breath**, because a
+daily cron failing into a mailbox is the noise nobody reads: two backup crons and one Zabbix
+`userparameter_mysql.conf`.
+
+**AIDE reported nothing for two and a half years and now does.** `/var/lib/aide/aide.db` was absent
+and `aide.db.new` dated 2024-02-12 had never been promoted; the daily unit was in `failed`. The
+rebuild also exposed the noise that would have followed it - thirteen warnings per run on
+`/run/rpc_pipefs`, the NFS client's pseudo-filesystem, whose entries declare a null size and return
+content - so `99_aide_local_volatile` excludes it. A monitor whose report is thirteen lines of
+nothing is a monitor its reader learns to skip.
+
 ## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
 
 For one day this plan had a blocking question. It is recorded because the refutation is what makes
@@ -290,6 +333,23 @@ contract at that seam is identical, which is why [nginx](nginx.md) needs no rewr
   portail    canari-prod   cercle      authentik
              (its own nginx, then its services)
 ```
+
+**THE `30xx` ABOVE ARE NOW CHOOSABLE, BECAUSE THE HOST'S LOOPBACK HAS BEEN ENUMERATED** (2026-09-24).
+This is the table section 8 owed BEFORE the DNS request, since the prepared `canari.conf` already
+proxies to `127.0.0.1:3000` - which is Portail-etu's.
+
+| Port | Held by |
+| --- | --- |
+| 22 | `sshd` |
+| 80, 443 | host nginx |
+| 111 | `rpcbind` |
+| **3000** | **the Portail-etu container - what `canari.conf` currently points at** |
+| 6060, 7422, 8080 | CrowdSec |
+| 10050 | Zabbix agent |
+| 44855 | containerd |
+
+Nothing else listens. `3001`, `3002` and `3003` are free for `canari-prod`, `cercle` and
+`authentik`, and the removal of five php-fpm sockets took five more consumers off the box.
 
 ### What the edge did that the origin must now do
 
@@ -446,12 +506,12 @@ Pointers only. The substance is in
 | Question | Who answers | Why it blocks something |
 | --- | --- | --- |
 | ~~Will the DSI grant `docker` and a narrow `sudo`?~~ | **ANSWERED 2026-09-23: both granted** | - |
-| Does Canari's data land on local `/` (45 G, 27 free) or on the NetApp `/export` (24 G, 14 free)? | user with the DSI | they differ in size, free space and recovery; section 5 cannot be written without it |
+| Does Canari's data land on local `/` (45 G, **32 free** since the 2026-09-24 cleanup) or on the NetApp `/export` (24 G, 15 free)? | user with the DSI | they differ in size, free space and recovery; section 5 cannot be written without it. The local disk grew by 5 G, so the question is now about recovery and snapshots rather than about room |
 | What kills a bulk `rm` here, and will it kill a volume restore during the cutover? | DSI, one question | a cutover that dies half-way with no diagnostic is the worst failure mode in this plan |
 | 4 vCPU and 11 G for everything, or does the VM grow? | user, then DSI | it decides whether all three estates move, or only some |
-| What are the file NAMES inside `/etc/certs/<name>/`, and who may read the key? | DSI, or one command once `sudo` is granted | the vhost cannot be written without them; the directory is readable, `/etc/ssl/private` is not |
-| Is `193.49.175.122` the same machine as `193.49.175.67`? | one DSI answer | the plan asserts it is; port 22 behaves differently on the two |
-| What of the shared box's legacy is ours to clean, and what belongs to other associations? | user with the DSI | six php-fpm versions and several dormant sites sit beside us; **none of it is unilaterally ours to remove** |
+| ~~What are the file NAMES inside `/etc/certs/<name>/`?~~ | **ANSWERED 2026-09-24, by that one command** | `cert.pem`, `chain.pem`, `fullchain.pem`, `privkey.pem` - the Let's Encrypt layout - with the key `0600 root:root`, which nginx's root master reads. **`/etc/certs/canari.emse.fr/` ALREADY EXISTS and is complete**: the DSI issued that certificate before any request was made. `handimines.emse.fr` also still has one, for a vhost this cleanup retired |
+| ~~Is `193.49.175.122` the same machine as `193.49.175.67`?~~ | **ANSWERED 2026-09-24: yes, measured** | `ens18` carries `.67`, `.40` and `.122`. Section 2 |
+| ~~What of the shared box's legacy is ours to clean?~~ | **ANSWERED 2026-09-24 by the user, and DONE** | The nine php-fpm versions, apache2, phpMyAdmin and MySQL are gone; the databases are archived rather than destroyed. What was NOT touched is named above: `wazuh-agent` stays at 4.14.7 because an agent newer than the DSI's manager on `193.49.175.93` is unsupported, `isc-dhcp-client` stays because this machine is reached only over SSH, and the other associations' web roots under `/export/www` are untouched |
 | Production's Postgres volume size | one command on `canari` | the read-only window is quoted from it |
 | Does Portail-etu become a compose project with a declared `name:` and ceilings like the others? | user | it is the only estate that would not, and the standing mandate is homogeneity everywhere |
 | What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |
