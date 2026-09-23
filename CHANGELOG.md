@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'onglet Fil attendait le reseau pour afficher ce que le telephone avait deja
+
+Trois mecanismes sur le meme onglet : la porte d'audience etait un aller-retour place DEVANT la
+requete des posts, un echec de transport etait lu comme une reponse et ejectait le lecteur vers
+`/chat`, et le fil deja affiche etait efface des le tap puis recharge de zero. Mesure sur le Mi 9T
+a travers un lien bride a 1500 ms / 64 kbps : 2045 ms de premier rendu contre 262 ms sans bridage,
+pour finir sur un ecran vide.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3-the-fil-tab-and-what-it-cost-2026-09-23).
+
+
 ### Fixed - une soumission de formulaire etait confirmee en anglais dans une interface francaise
 
 Le serveur renvoyait toujours `message: 'Form submitted successfully'`, et la page ecrivait

@@ -5,14 +5,16 @@ import type { PageLoad } from './$types';
 import { redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 
 export const load: PageLoad = async ({ params }) => {
+  // BOTH AT ONCE, NOT ONE THEN THE OTHER. These were two sequential awaits, so opening a post from
+  // the feed cost the audience round trip PLUS the post's, back to back, with the reader still
+  // looking at the feed. They answer independent questions and neither needs the other's result.
+  const fetching = getPost(params.postId).catch(() => null);
+
   if (await redirectIfNotFeedAudience()) return;
 
-  let post: PostEntity | null = null;
-  try {
-    post = await getPost(params.postId);
-  } catch {
-    // Post doesn't exist or network error - show "not found" UI instead of hard 404
-  }
+  // A refusal here is not distinguished from an absent post on purpose: the page shows its
+  // "not found" state rather than a hard 404, and it has done so since this route existed.
+  const post: PostEntity | null = await fetching;
   const seo: SeoMeta | undefined = post
     ? {
         title: 'Publication',

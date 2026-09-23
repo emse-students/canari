@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { verdictFromFailure, verdictFromProfile } from './feedAudience';
+import { UserProfileFetchError } from '$lib/stores/user';
 
 /**
  * THE FEED AUDIENCE RULE IS STATED ONCE PER SIDE, AND THIS IS THE CLIENT'S HALF.
@@ -40,5 +42,35 @@ describe('the feed audience gate', () => {
       return /formation\s*!==\s*'ICM'/.test(source);
     });
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * THE MAPPING IS A BEHAVIOUR TEST, BECAUSE IT IS NOW A JUDGEMENT AND NOT A LINE.
+ *
+ * The guard above is still a source guard for the reason its docblock gives. What it cannot see is
+ * the 2026-09-23 change: the helper stopped redirecting on every `catch` and started asking
+ * whether the refusal was an ANSWER. That distinction has exactly two outcomes and they are worth
+ * pinning, because getting the transport case wrong ejects a reader on a train out of the feed.
+ */
+describe('what a profile answer, or a refusal, says about the reader', () => {
+  it('reads the formation the feed is addressed to', () => {
+    expect(verdictFromProfile({ formation: 'ICM' })).toBe(true);
+  });
+
+  it.each([['ISMIN'], ['CMP'], [null]])('keeps %s out of the feed', (formation) => {
+    expect(verdictFromProfile({ formation })).toBe(false);
+  });
+
+  it('treats a 404 as the answer it is: there is no such account', () => {
+    expect(verdictFromFailure(new UserProfileFetchError(404))).toBe(false);
+  });
+
+  it.each([
+    [new UserProfileFetchError(500)],
+    [new UserProfileFetchError(401)],
+    [new TypeError('Failed to fetch')],
+  ])('says nothing about the reader when it could not ask (%s)', (error) => {
+    expect(verdictFromFailure(error)).toBeNull();
   });
 });
