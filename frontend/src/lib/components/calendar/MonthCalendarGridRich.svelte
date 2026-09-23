@@ -3,8 +3,10 @@
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import {
+    BREAK_LABEL_ANGLE,
     DAY_NUM_H,
     EVENT_TITLE_LINE_HEIGHT,
+    breakMark,
     daySlotLayout,
     fitEventText,
     splitLogoBands,
@@ -201,18 +203,17 @@
     <!-- Day cells -->
     <div class="grid grid-cols-7" role="grid" aria-label={m.calendar_month_grid_label()}>
       {#each calendarCells as day, i (i)}
+        <!-- A SQUARE OUTSIDE THE MONTH IS NOT DRAWN (user, 2026-09-23: *"on peut supprimer les
+             cases qui ne contiennent pas de jour"*), exactly as the PDF sheet no longer draws it.
+             The element stays: dropping it would slide the 1st onto the wrong weekday. It paints
+             nothing and rules nothing, so the month reads as a shape cut out of the card rather
+             than as a rectangle with four grey corners. -->
         {#if day === null}
-          <div
-            class="border-cn-border/40 border-r border-b {isWeekend(i)
-              ? 'bg-cn-bg'
-              : 'bg-cn-surface'}"
-            style="min-height:{CELL_H}px;"
-            role="gridcell"
-            aria-hidden="true"
-          ></div>
+          <div style="min-height:{CELL_H}px;" role="gridcell" aria-hidden="true"></div>
         {:else}
           {@const dayEvents = eventsOnDay(day)}
           {@const dayBreaks = breaksOnDay(day)}
+          {@const mark = breakMark(dayBreaks.length > 0, dayEvents.length)}
           {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
@@ -228,6 +229,10 @@
               : null}
           {@const selected = selectedDay === day}
           {@const today = isTodaySquare(day)}
+          <!-- The grid rules with a right and a bottom border per cell, so the line to the LEFT of
+               a day belongs to its neighbour. Now that an out-of-month neighbour draws nothing, the
+               1st would open onto no edge at all - this cell draws that one itself. -->
+          {@const leftIsUndrawn = i % 7 > 0 && calendarCells[i - 1] === null}
           <button
             type="button"
             role="gridcell"
@@ -239,31 +244,29 @@
               selectedDay = selectedDay === day ? null : day;
             }}
             style="min-height:{CELL_H}px;"
-            class="border-cn-border/40 relative overflow-hidden border-r border-b text-left transition-all {isWeekend(
-              i
-            )
-              ? 'bg-cn-bg'
-              : 'bg-cn-surface'} {selected ? '' : 'hover:brightness-95'}"
+            class="border-cn-border/40 relative overflow-hidden border-r border-b text-left transition-all {leftIsUndrawn
+              ? 'border-l'
+              : ''} {isWeekend(i) ? 'bg-cn-bg' : 'bg-cn-surface'} {selected
+              ? ''
+              : 'hover:brightness-95'}"
           >
-            <!-- Break (vacation / no-course) background tint - behind everything so a period reads
-                 across days; the title shows as a bottom band and on empty days below. -->
-            {#if dayBreaks.length > 0}
-              <div
-                class="pointer-events-none absolute inset-0 z-0"
-                style="background:{eventColors(dayBreaks[0])[0]};opacity:0.14;"
-              ></div>
-            {/if}
-
             {#if dayEvents.length === 0}
-              <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
+              <!-- Empty cell: the day number, in the corner it has always held. -->
               <span
                 class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
  {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
               >
-              {#if dayBreaks.length > 0}
+              <!-- A BREAK IS A WORD WRITTEN ACROSS THE DAY, the sheet's rendering and the Canva's
+                   before it. `breakMark` is the shared rule, so this grid cannot stamp where the
+                   page it previews would stripe. The colour is the break owner's accent rather
+                   than the sheet's derived palette, which exists only where a background image
+                   does; `overflow-hidden` clips a long title here exactly as it does there. -->
+              {#if mark === 'stamp'}
                 <span
-                  class="text-2xs absolute inset-x-1 bottom-1 z-10 line-clamp-2 text-center leading-tight font-bold"
-                  style="color:{eventColors(dayBreaks[0])[0]};"
+                  class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-center font-bold whitespace-nowrap"
+                  style="font-size:var(--text-lg);color:{eventColors(
+                    dayBreaks[0]
+                  )[0]};transform:rotate({BREAK_LABEL_ANGLE}deg);"
                   title={dayBreaks[0].title}>{dayBreaks[0].title}</span
                 >
               {/if}
@@ -426,8 +429,9 @@
               </div>
             {/if}
 
-            <!-- Break band: a colored strip along the bottom edge, continuous across a period. -->
-            {#if dayBreaks.length > 0}
+            <!-- The quiet half of the same rule: a break day that already carries events has no
+                 room for a word across it, so it says so with a strip along its bottom edge. -->
+            {#if mark === 'strip'}
               <div
                 class="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-1"
                 style="background:{eventColors(dayBreaks[0])[0]};"

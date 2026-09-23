@@ -369,17 +369,43 @@ toggle in the event modal), and is BDE/association-managed - not tied to the nat
 matches the school's real schedule. Rendering differs:
 - `event`: a card occupying an event slot.
 - `break`: takes no slot and does not prevent other associations' events on those days - purely
-  graphical. On the PDF sheet the day also recedes by one `offDayShade` step, and the break itself
-  is **the title written across the day at an angle** - a stamp, the
-  way "Vacances" is written by hand on the sheet this one copies (user, 2026-09-23: *"remplace. Et
-  c'est le rendu de tout break"*). The faint full-cell tint it replaced was invisible over a
-  photographic background, which is why the hand-made sheet never used one. A break day that ALSO
-  carries events keeps a 3px accent strip instead: a word rotated across two event cards makes three
+  graphical. It is **the title written across the day at an angle** - a stamp, the way "Vacances" is
+  written by hand on the sheet this one copies (user, 2026-09-23: *"remplace. Et c'est le rendu de
+  tout break"*). The faint full-cell tint it replaced was invisible over a photographic background,
+  which is why the hand-made sheet never used one. A break day that ALSO carries events keeps an
+  accent strip along its bottom edge instead: a word rotated across two event cards makes three
   things unreadable.
+
+**WHICH OF THE TWO MARKS A DAY GETS IS `breakMark(hasBreak, eventCount)`, EXPORTED FROM
+`calendarExport.ts` AND CALLED BY BOTH RENDERERS.** The screen grid is a preview of the sheet, so
+the day one of them stamped where the other striped, the preview would be lying about what prints -
+and that is exactly what it did until 2026-09-23, when the screen washed every break day at 14% and
+clamped its title into the bottom two lines while the sheet had already moved to the stamp. The
+threshold is ONE event, not "a few": a rotated word across a single card already makes both
+unreadable, which is why the two marks exist rather than one.
+
+**WHAT THE SCREEN DOES NOT TAKE FROM THE SHEET IS THE SHADE.** `offDayShade` deepens a break day's
+cell on the sheet; on screen the ground stays the `bg-cn-bg` / `bg-cn-surface` token pair, because
+those two resolve per theme where a fixed ratio would not - a cell darkened 24% off a dark-mode
+surface is a hole, not a day. The stamp and the strip carry the meaning on screen; the shade is the
+sheet's own answer to a photograph behind it.
 
 Breaks are excluded from the event-slot layout in both the interactive grid
 (`MonthCalendarGridRich`) and the PDF export (`$lib/utils/calendarExport.ts`), but still appear in the
 day panel so they remain editable/deletable.
+
+### A SQUARE OUTSIDE THE MONTH IS NOT DRAWN, ON EITHER SURFACE
+
+Both renderers emit the cell and paint nothing in it (user, 2026-09-23: *"on peut supprimer les
+cases qui ne contiennent pas de jour"*). Dropping the element would slide the 1st onto the wrong
+weekday, so it keeps its place and its size and loses its fill. On the sheet the background
+photograph runs through it; on screen the card's ground does, and the month reads as a shape cut out
+of the card rather than as a rectangle with grey corners.
+
+**The screen grid rules with one right and one bottom border per cell, so the line to the LEFT of a
+day belongs to its neighbour** - and an undrawn neighbour draws none. A day whose left neighbour is
+out of the month therefore draws that one edge itself (`leftIsUndrawn`), which is the whole of the
+change beyond deleting a fill.
 
 ## PDF export
 

@@ -67,7 +67,14 @@ const DAY_NUM_SIZE = 15;
  * thing they describe, and one more slider for one more word is exactly what was deleted here.
  */
 const BREAK_LABEL_SIZE = 22;
-const BREAK_LABEL_ANGLE = -20;
+
+/**
+ * The tilt of that stamp, in degrees, exported because the screen grid stamps the same word.
+ *
+ * Steep enough that the word reads as a stamp rather than as a mis-set line, and shallow enough
+ * that a long one still fits the width it crosses.
+ */
+export const BREAK_LABEL_ANGLE = -20;
 
 /**
  * How far a cell is deepened for EACH reason its day is off, and the floor two reasons reach.
@@ -208,6 +215,28 @@ function safe(s: string): string {
 
 /** Line-height shared by the event-title fit computation and the rendered spans (must match). */
 export const EVENT_TITLE_LINE_HEIGHT = 1.25;
+
+/**
+ * How a break announces itself on a given day: as a word across it, as a strip, or not at all.
+ *
+ * A BREAK IS A WORD WRITTEN ACROSS THE DAY, not a tint under it (user, 2026-09-23). A faint
+ * full-cell wash is invisible on the sheet's photographic background, which is why the Canva never
+ * used one and stamped "Vacances" on each day instead.
+ *
+ * The stamp is spent only on a day with nothing else on it, and that is the honest reading of the
+ * rule rather than an exception to it: a rotated word across two event cards makes three things
+ * unreadable at once. A busy break day keeps the strip, which says the same thing quietly.
+ *
+ * Exported and shared because the screen grid is a preview of the sheet: the day one of them
+ * stamped where the other striped, the preview would be lying about what prints.
+ *
+ * @param hasBreak - a break entry (vacation, no-course) covers this day.
+ * @param eventCount - how many event cards the day already carries.
+ */
+export function breakMark(hasBreak: boolean, eventCount: number): 'stamp' | 'strip' | 'none' {
+  if (!hasBreak) return 'none';
+  return eventCount === 0 ? 'stamp' : 'strip';
+}
 
 /**
  * How much darker a day's cell is than the ordinary one, from the reasons it is off.
@@ -504,22 +533,15 @@ function buildCalendarHtml(
         opts.cellBgOpacity
       );
 
-      /*
-       * A BREAK IS A WORD WRITTEN ACROSS THE DAY, not a tint under it (user, 2026-09-23). The faint
-       * full-cell wash and the 3px strip are gone: on a photographic background a 14% tint is
-       * invisible, which is why the Canva never used one and stamped "Vacances" on each day instead.
-       *
-       * It is stamped only on a day with nothing else on it, and that is the honest reading of the
-       * rule rather than an exception to it: a rotated word across two event cards makes three
-       * things unreadable. A busy break day keeps the strip, which says the same thing quietly.
-       * October has no such day, so nothing here is claimed to have been seen.
-       */
+      // Which of the two marks this day gets - `breakMark` is the rule, shared with the screen
+      // grid. October has no busy break day, so the strip is not claimed to have been seen.
+      const mark = breakMark(hasBreak, dayEvents.length);
       const breakStamp =
-        hasBreak && dayEvents.length === 0
+        mark === 'stamp'
           ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><span data-pdf-text style="font-size:${BREAK_LABEL_SIZE}px;font-weight:800;color:${opts.textColor};line-height:1.1;white-space:nowrap;transform:rotate(${BREAK_LABEL_ANGLE}deg);${blockShadowCss(BREAK_LABEL_SIZE, opts.accentColor)}">${safe(dayBreaks[0].title)}</span></div>`
           : '';
       const breakStrip =
-        hasBreak && dayEvents.length > 0
+        mark === 'strip'
           ? `<div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${opts.accentColor};"></div>`
           : '';
 

@@ -20,6 +20,13 @@ ainsi depuis des mois, revele le 2026-09-22 quand #967 a cesse d'ecraser `transi
 partout. Un gate condamne desormais tout element qui anime le rung sur lequel il se tient.
 [design-reference](docs/wiki/frontend/design-reference.md#a-rung-that-is-animated-is-not-the-rung-it-declares-2026-09-23).
 
+### Changed - la grille /calendar rend les pauses et les cases vides comme la feuille PDF
+
+L'ecran lavait chaque jour de pause a 14% et tassait son titre sur deux lignes en bas, alors que la
+feuille l'estampille en travers depuis le meme jour ; la regle est maintenant partagee (`breakMark`)
+et une case hors du mois n'est plus peinte sur aucune des deux surfaces.
+[calendar](docs/wiki/frontend/modules/calendar.md#entry-kind-event-vs-break).
+
 ### Changed - l'export PDF du calendrier reproduit le Canva, et le panneau passe de 20 reglages a 7
 
 Le BDE refaisait le mois a la main dans Canva chaque mois ; la feuille copie desormais ce design
