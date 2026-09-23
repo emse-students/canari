@@ -19,6 +19,7 @@
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import { nearViewport } from '$lib/actions/nearViewport';
 
   interface Props {
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
@@ -41,6 +42,14 @@
     textSegments?: Array<{ type: 'text' | 'link'; value: string }>;
     /** Called when the user clicks a link inside the caption. */
     onNavigateLink?: (e: MouseEvent) => void;
+    /**
+     * Called once, the first time this row comes near the viewport.
+     *
+     * The DOWNLOAD is the caller's, so the gate on it has to be too: `MessageBubble` renders a
+     * dozen mutually exclusive branches and has no single element to observe, while this component
+     * has exactly one whenever there is media at all.
+     */
+    onNear?: () => void;
   }
 
   let {
@@ -52,6 +61,7 @@
     isOwn = false,
     textSegments = [],
     onNavigateLink: _onNavigateLink,
+    onNear,
   }: Props = $props();
 
   let showLightbox = $state(false);
@@ -100,7 +110,10 @@
 </script>
 
 {#if mediaRef}
-  <div class="overflow-hidden rounded-3xl">
+  <!-- THE ROW'S ONE ELEMENT THAT ALWAYS EXISTS WHEN THERE IS MEDIA, which is why the viewport
+       hook lives here and the download it gates lives in `MessageBubble`: that component renders
+       a dozen mutually exclusive branches and has no root of its own to observe. -->
+  <div class="overflow-hidden rounded-3xl" use:nearViewport={{ onnear: () => onNear?.() }}>
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}

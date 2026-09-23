@@ -4,6 +4,7 @@ import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
 import { MediaPurgedError } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
+import { mediaRequestGate } from './requestGate';
 
 /** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
 export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -31,7 +32,11 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
  * media and 401'd on every newly received one - visible as an image that only appeared after a
  * reload. `getToken` refreshes silently when the token is within a minute of expiring.
  */
-async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayBuffer> {
+async function fetchCiphertext(
+  mediaId: string,
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
   const cacheKey = cipherCacheKey(baseUrl, mediaId);
 
   if (typeof caches !== 'undefined') {
@@ -53,11 +58,15 @@ async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayB
     }
   }
 
-  const res = await fetch(
-    `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`,
-    {
-      headers: { Authorization: `Bearer ${await getToken()}` },
-    }
+  // THE CACHE LOOKUP ABOVE IS FREE AND IS NOT GATED; ONLY THE BYTES ARE. An object already held
+  // answers instantly whatever else is in flight, which is what makes the cap invisible to a
+  // reader scrolling back through media they have seen.
+  const res = await mediaRequestGate.run(
+    async () =>
+      fetch(`${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`, {
+        headers: { Authorization: `Bearer ${await getToken()}` },
+      }),
+    signal
   );
 
   if (!res.ok) {
@@ -82,7 +91,11 @@ async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayB
   return ciphertext;
 }
 
-async function loadDecryptedBlobUrl(ref: MediaRef, baseUrl: string): Promise<string> {
+async function loadDecryptedBlobUrl(
+  ref: MediaRef,
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<string> {
   const key = decryptedKey(ref);
   const cached = decryptedPool.tryRetain(key);
   if (cached) return cached;
@@ -94,7 +107,7 @@ async function loadDecryptedBlobUrl(ref: MediaRef, baseUrl: string): Promise<str
   }
 
   const promise = (async () => {
-    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl);
+    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, signal);
     const plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
     const blobUrl = URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
     decryptedPool.retain(key, blobUrl);
@@ -109,7 +122,11 @@ async function loadDecryptedBlobUrl(ref: MediaRef, baseUrl: string): Promise<str
   }
 }
 
-async function loadRawBlobUrl(mediaId: string, baseUrl: string): Promise<string> {
+async function loadRawBlobUrl(
+  mediaId: string,
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<string> {
   const key = mediaId;
   const cached = rawPool.tryRetain(key);
   if (cached) return cached;
@@ -121,9 +138,12 @@ async function loadRawBlobUrl(mediaId: string, baseUrl: string): Promise<string>
   }
 
   const promise = (async () => {
-    const res = await fetch(
-      `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`,
-      { headers: { Authorization: `Bearer ${await getToken()}` } }
+    const res = await mediaRequestGate.run(
+      async () =>
+        fetch(`${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`, {
+          headers: { Authorization: `Bearer ${await getToken()}` },
+        }),
+      signal
     );
     if (!res.ok) {
       if (res.status === 410) throw new MediaPurgedError();
@@ -145,12 +165,15 @@ async function loadRawBlobUrl(mediaId: string, baseUrl: string): Promise<string>
 /**
  * Returns a blob URL for decrypted post/chat media, reusing cached ciphertext and
  * decrypted blobs when possible.
+ *
+ * @param signal Drops the request from `mediaRequestGate`'s queue if it has not started yet.
  */
 export async function acquireDecryptedMediaBlobUrl(
   ref: MediaRef,
-  baseUrl: string
+  baseUrl: string,
+  signal?: AbortSignal
 ): Promise<string> {
-  return loadDecryptedBlobUrl(ref, baseUrl);
+  return loadDecryptedBlobUrl(ref, baseUrl, signal);
 }
 
 /** Releases a decrypted media blob URL acquired via {@link acquireDecryptedMediaBlobUrl}. */
@@ -160,9 +183,15 @@ export function releaseDecryptedMediaBlobUrl(ref: MediaRef): void {
 
 /**
  * Returns a blob URL for raw (unencrypted) media such as group avatars.
+ *
+ * @param signal Drops the request from `mediaRequestGate`'s queue if it has not started yet.
  */
-export async function acquireRawMediaBlobUrl(mediaId: string, baseUrl: string): Promise<string> {
-  return loadRawBlobUrl(mediaId, baseUrl);
+export async function acquireRawMediaBlobUrl(
+  mediaId: string,
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<string> {
+  return loadRawBlobUrl(mediaId, baseUrl, signal);
 }
 
 /** Releases a raw media blob URL acquired via {@link acquireRawMediaBlobUrl}. */

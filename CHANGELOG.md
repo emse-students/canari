@@ -21,6 +21,14 @@ sens, une reponse d'historique d'un pair faisait descendre le lecteur de la haut
 qu'il venait de demander : une rangee sert d'ancre.
 [local-first-ui](docs/wiki/frontend/local-first-ui.md#3bis-who-may-move-the-readers-viewport-2026-09-23).
 
+### Fixed - soixante telechargements de medias dans la meme frame, sans plafond ni annulation
+
+Chaque composant media telechargeait son objet au montage, pour chaque rangee rendue, et des
+originaux : la fenetre de 60 du panneau "Medias, liens & fichiers" est une BORNE, pas une limite de
+concurrence, et un scroll de chat avance la fenetre de 140 groupes d'un coup. Un plafond ne reduit
+pas le travail, il decide l'ORDRE - trois a la fois, et la page d'historique que le lecteur attend
+garde sa part du lien. Ce qui n'est pas encore visible ne demande plus rien.
+[local-first-ui](docs/wiki/frontend/local-first-ui.md#3ter-sixty-downloads-in-one-frame-2026-09-23).
 
 ### Fixed - l'onglet Fil attendait le reseau pour afficher ce que le telephone avait deja
 
