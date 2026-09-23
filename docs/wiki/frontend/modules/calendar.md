@@ -260,11 +260,22 @@ genuinely free.**
 | began earlier, ends here at or after 13:00 | `full` |
 | begins here at or after 13:00, ends later | `afternoon` |
 | begins here before 13:00, ends later | `full` - it holds the day to 05:00 tomorrow |
-| contained in this day | the half its start hour names |
+| contained in this day, crossing 13:00 | `full` - it holds both halves |
+| contained in this day, on one side of 13:00 | the half it falls in |
 
-The hours compare against the pivot without re-shifting, and that is a property of `calendarDayOf`
-rather than a coincidence: an instant it assigns to a square necessarily reads between 05:00 and
-23:59 local.
+**A CONTAINED EVENT USED TO BE READ BY ITS START HOUR ALONE**, which made Forum Perspectives -
+08:00 to 18:00, the whole of a Tuesday - paint the top half of its square and leave the bottom one
+empty (user, 2026-09-23: *"quand un event est sur les deux parties de la journee, il doit prendre la
+case entiere"*). The row above is the fix: a contained event is halved only when it stays on ONE
+side of the pivot.
+
+**AND THE HOURS ARE NOT RAW `getHours()`.** The page used to claim that they could be, "a property
+of `calendarDayOf` rather than a coincidence" - and that claim was false in exactly the case it did
+not consider. A day here runs 05:00 to 28:59, so an instant `calendarDayOf` assigns to a square may
+read 00:00-04:59 on the wall clock, which is BELOW the pivot rather than eleven hours above it. A
+party from 18:00 to 02:00 therefore answered `morning` for the day it had held end to end, and so
+did the Saturday of a Friday-18:00 to Sunday-02:00 trip. `hourWithinDay()` in `feedEvents.ts` adds
+the 24 back, and it is the only thing either renderer is allowed to compare against the pivot.
 
 **THE RULE LIVES BESIDE `fitEventText` AND `splitLogoBands` FOR THE REASON THOSE TWO DO** - the
 screen grid and the PDF export both import it, and a layout rule written in the component would be
@@ -357,9 +368,13 @@ vacation / public-holiday period. It is created and edited exactly like an event
 toggle in the event modal), and is BDE/association-managed - not tied to the national calendar, so it
 matches the school's real schedule. Rendering differs:
 - `event`: a card occupying an event slot.
-- `break`: a full-day background band (faint cell tint + a colored strip along the bottom edge,
-  continuous across the period; the title shows on empty days). It takes no slot and does not prevent
-  other associations' events on those days - purely graphical.
+- `break`: takes no slot and does not prevent other associations' events on those days - purely
+  graphical. On the PDF sheet it is **the title written across the day at an angle** - a stamp, the
+  way "Vacances" is written by hand on the sheet this one copies (user, 2026-09-23: *"remplace. Et
+  c'est le rendu de tout break"*). The faint full-cell tint it replaced was invisible over a
+  photographic background, which is why the hand-made sheet never used one. A break day that ALSO
+  carries events keeps a 3px accent strip instead: a word rotated across two event cards makes three
+  things unreadable.
 
 Breaks are excluded from the event-slot layout in both the interactive grid
 (`MonthCalendarGridRich`) and the PDF export (`$lib/utils/calendarExport.ts`), but still appear in the
@@ -368,11 +383,78 @@ day panel so they remain editable/deletable.
 ## PDF export
 
 `src/routes/calendar/export/+page.svelte` + `$lib/utils/calendarExport.ts` render a monthly A4
-landscape PDF (html2canvas -> jsPDF). The live preview is rendered **in-document** (not an iframe) so
-it uses the app's real fonts (`Fredoka Variable` / `Nunito Variable`) and matches the export
-pixel-for-pixel. Colors, a background image, and an optional Canva-style block shadow (a hard-offset
-colored text duplicate, configurable color + offset) are all adjustable. Break entries render as the
-same background band described above.
+landscape sheet, rasterised and re-drawn as vector text by `$lib/pdf/searchableRaster.ts`. The live
+preview is rendered **in-document** (not an iframe) so it uses the app's real fonts and matches the
+export pixel-for-pixel.
+
+### THE SHEET IS A REPRODUCTION, AND THE THING IT REPRODUCES IS A CANVA
+
+The BDE did not use this export: they rebuilt the month by hand in Canva every month, and the goal
+stated on 2026-09-23 was to retire that file - *"l'objectif est de ne plus avoir besoin du Canva
+[...] on vise le pixel mais surtout l'esprit"*. The October 2026 design (`DAHVWmNqj34`) was measured
+rather than eyeballed, and its numbers are this sheet's constants, scaled by 1080/1168: cell pitch
+163.2 x 120.8 becomes `COL_GAP` 23 / `ROW_GAP` 16, the 105.92px title becomes `TITLE_SIZE` 98, the
+33.79px weekday row becomes `WEEKDAY_SIZE` 31, the rotated "Vacances" becomes `BREAK_LABEL_SIZE` 22
+at `BREAK_LABEL_ANGLE` -20deg.
+
+**THREE THINGS DIVERGE FROM THE CANVA DELIBERATELY**, each on the user's answer:
+
+| the Canva | this sheet | why |
+| --- | --- | --- |
+| the first row is filled with September's last evenings | those squares are empty | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*) |
+| the day number is large, bottom-right, UNDER the event cards | small, top-left, in a row nothing else may enter | *"tout doit etre lisible et rien ne doit se chevaucher"* |
+| no weekend distinction | weekend cells are the same colour darkened 16% | *"on peut garder une distinction de fond quand meme, c'est plus lisible"* |
+
+### TWO FONTS ARE THE CANVA'S AND EVERYTHING ELSE IS CANARI'S
+
+*"La police de titre (le mois, les jours) doit etre celle actuellement choisie dans Canva, mais pour
+tout le reste, les polices de Canari sont prioritaires."* The weekday row is **Chewy**, which is the
+Canva's own face and is Apache-2.0. The title is **Leckerli One** (SIL OFL), NOT the Canva's Railey:
+Railey is not redistributable and is not on Google Fonts, so a substitute was rendered side by side
+and chosen by the user. Event titles, day numbers and the break stamp stay on Nunito.
+
+**BOTH SHIP ONE WEIGHT ONLY, SO THE SHEET ASKS FOR `font-weight:400` EXPLICITLY.** Ask for 700 and
+the raster layer gets a synthetic bold while the vector layer draws the real regular on top of it -
+two different shapes at the same coordinates. Each face is registered twice for that reason: as web
+CSS (`@fontsource/*`, imported by the export route alone, since the on-screen grid draws neither) and
+as a static TTF for jsPDF (`@expo-google-fonts/*`, in `$lib/pdf/appFonts.ts`). `exportCalendarMonth`
+names every face it draws with in its `fonts:` wait list; a face missing there is rasterised in
+whatever the browser had ready.
+
+### TWENTY CONTROLS BECAME SEVEN, AND NINE OF THEM HAD NOTHING LEFT TO COLOUR
+
+*"Ce truc la est quand meme une vraie usine a gaz."* The panel is now one image picker, four sliders
+(image strength, scrim, cell opacity, logo strength) and three colours (text, accent, cells).
+
+Nine of the deleted controls were not a simplification but a consequence: the header bar, the
+weekday bar and the grid rules are not part of this design, so `headerBg`, `weekdayRowBg`,
+`borderColor` and `gridOuterBorder` had nothing to paint. Four more were never choices - the two
+weekday label colours are one text colour, `emptyDayColor` is whatever contrasts with the cell, and
+the shadow offset follows the font size. `weekdayFullNames` is gone the same way, always true
+(*"supprime ce parametre [...] les conventions du Canva sont generalement les bonnes"*). `pageBg` is
+derived: it only shows through where no image is set, so it is the cell colour lightened.
+
+### THE PALETTE IS READ OFF THE PHOTOGRAPH
+
+`$lib/calendar/sheetPalette.ts`, on the user's ask: *"tu pourrais faire aussi en sorte que les
+couleurs de mise en valeur soient automatiquement modifiees a l'import d'une image pour que le theme
+soit harmonieux."* Choosing the picture is the real gesture; hunting for the two colours that go with
+it is arithmetic.
+
+The vote is a **sum of saturation-weighted unit vectors, not a histogram**. Hue is circular, and a
+histogram splits a red subject across the 0 and 359 buckets, so the one colour everybody in the room
+would name comes last. Pixels below 12% saturation or outside 12-92% lightness are dropped first: a
+photograph is mostly highlights and shadows, and a blown-out white corner is nominally orange.
+
+**The text stays white and that is not laziness.** What separates it from the background is the hard
+offset duplicate behind it, not its own contrast - so the one degree of freedom is spent on the
+ACCENT, which flips deep on a light image and bright on a dark one. Measured in a browser on
+2026-09-23: a pale pink image returns accent `#891a29`, against the `#a01f2d` a human picked by hand
+in the Canva. A monochrome image returns `null` and the user's colours are left alone, which is a
+real answer rather than a failure.
+
+It runs on IMPORT only, never on reset: a reset is a request for the defaults, and quietly putting
+the picture's colours back would make the button do nothing visible.
 
 ## ICS export
 
