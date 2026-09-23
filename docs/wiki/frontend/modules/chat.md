@@ -41,6 +41,32 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
+
+`MessageBubble` renders `MessageTextBody` under `{#if !mediaRef}`. A message carrying an attachment
+therefore never reaches it: its caption goes to `MessageMediaRenderer`, which printed each text
+segment verbatim. So a photo captioned `Dans le retro @[7283faf1...]` displayed those 64 hex
+characters, and a `#hashtag` in a caption rendered as plain text.
+
+**IT LOOKED LIKE A COLD CACHE AND WAS NOT ONE.** The user reported it as a name that never arrives -
+*"le refresh ou le relancement de l'app ne fait rien"* (2026-09-23) - which is the one observation
+that rules the cache out. `MessageMentionChip` resolves for itself and re-renders when the name
+lands, precisely so a cold cache heals within a frame; a token that survives a full relaunch was
+never handed to a resolver. Nothing on the caption path ever called `splitTextWithMentions`.
+
+**THE FIX IS A SHARED COMPONENT, NOT A SECOND CALL.** `MessageInlineText.svelte` renders one
+plain-text run - mention chip, hashtag, or text - and both `MessageTextBody` and the caption in
+`MessageMediaRenderer` now go through it. A caption and a body genuinely differ in what WRAPS the
+text (the `<p>`, the search highlight, the GIF embed, the link preview card) and in nothing about
+what the text MEANS; spelling the mention and hashtag cases separately in each is what allowed one
+to be written without the other, and a third surface would have repeated it.
+
+`MessageMediaRenderer.caption.svelte.test.ts` asserts the caption, not the parser:
+`splitTextWithMentions` was correct throughout and its own tests passed for the whole life of the
+defect. **The search highlight is still body-only** - `searchTerm` is not passed to
+`MessageMediaRenderer` at all, so a hit inside a caption is not marked. That is a separate gap and
+nothing above closes it.
+
 ### The composer's own emoji picker, and what it shares with the reaction one
 
 `ComposerEmojiPicker.svelte` sits at the right end of `ChatComposer`'s text field, right before the

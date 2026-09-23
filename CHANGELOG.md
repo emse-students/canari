@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une mention sous une photo restait le token brut, que l'app soit relancee ou non
+
+`MessageBubble` ne monte `MessageTextBody` que `{#if !mediaRef}` : la legende d'une piece jointe
+partait dans `MessageMediaRenderer`, qui imprimait le texte tel quel. Aucun resolveur sur ce chemin,
+donc `@[64 hex]` a l'ecran pour toujours - et un `#hashtag` sans style. Les deux chemins passent
+desormais par `MessageInlineText`.
+[chat](docs/wiki/frontend/modules/chat.md#a-message-body-and-a-media-caption-are-two-render-paths-and-only-one-of-them-parsed-mentions-2026-09-23).
+
+
 ### Fixed - la rangee NOTIF-14 disait quel CONSTRUCTEUR avait ecrit la banniere, et ne pouvait repondre qu'une chose
 
 Depuis 2026-09-18 il n'y a plus qu'un constructeur : la trame WebSocket est devenue un second
