@@ -81,16 +81,29 @@ on the wrong VM entirely.
   both of this workstation's keys - the FIDO one and `id_ed25519` - tried once each and not again,
   because the host counts failed authentications (see the security agents below). It is that older
   account, not ours, that carries the `docker` group: **the rights did not follow the new account.**
-- The key is `id_ed25519_sk`, a **FIDO authenticator requiring a physical touch**, so no unattended
-  process can SSH there. **`ControlPersist` IS NOT THE LEVER, and nothing here may lean on it** -
+- **THE TOUCH IS GONE, AND THE HARDWARE-BACKED WAY OF REMOVING IT FAILED FIRST.** Access is
+  unattended since 2026-09-23: `id_ed25519` - the ordinary key that already opens `canari`,
+  `cercle`, `miconnect` and GitLab - now sits in the account's own `authorized_keys`, measured at
+  four consecutive connections, ~1.4 s each, no gesture. The FIDO key stays installed and still
+  works, and `bastion` keeps using it because its `authorized_keys` is DSI-managed.
+- **Do not retry the hardware route here.** An `ed25519-sk` key created with `-O no-touch-required`
+  was installed with the matching `authorized_keys` option and the server **ACCEPTED it** -
+  `Server accepts key` is in the trace. Signing then failed on this workstation with
+  `ssh-sk-helper: Signing failed: requested feature not supported` at `flags 0x00`: the FIDO
+  provider will not produce an assertion without user presence. **The blocker is the authenticator
+  chain, not the server**, so the real choice was never "same guarantees, fewer gestures" - it was a
+  software key or one gesture per command, and the software key is the one the rest of this estate
+  already trusts.
+- The FIDO key remains `id_ed25519_sk`, and **`ControlPersist` IS STILL NOT A LEVER** -
   measured on this workstation 2026-09-23 and REFUTED. The master starts, it daemonises, and
   `ssh -O check` reports `Master running`; every client that presents itself is nonetheless reset
   and silently falls back to a fresh connection. The tell is the clock: 7 to 10 seconds and one
   touch per command, where a reused socket costs about 20 ms. MSYS emulates the Unix domain socket
   over Windows and multiplexing does not survive the emulation; native Windows OpenSSH does not
-  implement `ControlMaster` at all, so no configuration fixes this. **The working shape is ONE
-  batched command per round of investigation, never a sequence of small ones** - each small one
-  spends a human gesture.
+  implement `ControlMaster` at all, so no configuration fixes this. Every connection is therefore a
+  fresh TCP handshake and a fresh authentication, about 1.4 s. That is now a cost in seconds rather
+  than in human gestures, so **batching a survey into one `ssh ... <<'REMOTE'` heredoc is a
+  courtesy, not the constraint it was for the few hours the FIDO key was the only way in.**
 - **This does not constrain CI.** Portail-etu deploys from a self-hosted runner installed ON the
   box, which pulls the code itself. The same shape is what Canari, le Cercle and Authentik will
   use, so no deploy path ever needs SSH.
@@ -381,8 +394,7 @@ Pointers only. The substance is in
   the same gesture;
 - **the arbitration on capacity**: 4 vCPU and 11 G against three VMs sized for 8 and 20. Either the
   VM grows, or what moves onto it is cut down. Nobody can decide that here;
-- one FIDO touch per batched round of investigation on the host. **There is no way to buy more than
-  one command with one touch from this workstation** - see the refutation in section 2.
+- nothing further on SSH: the touch is gone and access is unattended (section 2).
 
 ## 9. Open questions
 
