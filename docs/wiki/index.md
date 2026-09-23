@@ -68,6 +68,7 @@
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
 - [Dev environment](infrastructure/dev-environment.md) — `dev.canari-emse.fr`: what keeps it apart from production, the full copy and its three strips, the declared version gap, and the one kind of evidence that lifts a merge ceiling
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
+- [Estate migration](infrastructure/estate-migration.md) - the three VMs moving onto the Portail-etu host and then onto `emse.fr`: the two phases and why they are separate, the decisions taken 2026-09-23, the bun blocker that is REFUTED, and the certificate renewal nothing would reload
 
 ### Features
 

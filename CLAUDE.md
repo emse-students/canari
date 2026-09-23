@@ -35,6 +35,7 @@
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
 | The second estate: isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
+| The move onto the Portail-etu host, then onto `emse.fr`: the phases, the decisions, the traps | [estate-migration.md](docs/wiki/infrastructure/estate-migration.md) |
 | Whether the BOXES take their security updates, and what reports it | [host-updates.md](docs/wiki/infrastructure/host-updates.md) |
 | What the USER must do by hand, and the long-term dev/release workflow (French) | [workflow-developpement.md](docs/user-guide/workflow-developpement.md) |
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
@@ -220,62 +221,64 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
+1. **THE ESTATE MIGRATION IS THE NEXT CHANTIER, AND ITS PLAN IS THE ONLY COPY** - three VMs onto the
+   Portail-etu host, then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
+2. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
    SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
+3. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
    reclaims refuted (`0 expired`), EXPIRY CLOSED. Re-measured 2026-09-22: the undated last-resort
    rows are a CLIENT VERSION (`< 0.18.10`, exact in 759) draining ~20/day, so **both repairs are
    REFUTED - client code cannot reach them** ([backlog](docs/wiki/backlog.md)).
-3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
+4. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
-4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
+5. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
+6. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
    and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
    WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
    so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
-6. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
+7. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
    CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
-7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+8. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
-8. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
+9. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
-9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+10. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
+11. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
-11. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
+12. **A MEMBER COULD NOT PUBLISH; RIGHTS AND THE BUILD ARE BOTH REFUTED** - a non-admin published
     anonymously on `0.18.17` on the REPORTED SURFACE, so nothing repairs that path and **ONE observation
     from the reporter is owed**; a deploy destroys prod's only log, so the first attempt has none ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-catch-said-seven-things)).
-12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+13. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+14. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
     and audit in [backlog](docs/wiki/backlog.md).
-14. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+15. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
-15. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+16. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
+17. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
+18. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
-18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
+19. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-19. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
+20. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-20. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
+21. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
     **THE BUNDLED EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
@@ -293,10 +296,8 @@ RELITIGATED" paragraphs exist so a later session cannot "finish" the work by und
 paragraph forbids. **NestJS 12 is HALF DONE and needs nothing done to it**, an ASSERTION rather than
 an ignore, so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md).
 
-**FIVE THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
-[backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
-the code (prose and diagrams, no code, user 2026-08-20); the iOS avatar-cache question; WP-LYDIA-1,
-waiting on credentials Lydia owes; one MLS client in a SharedWorker; and the SECOND campaign.
+**FIVE THINGS CANNOT BE PULLED FORWARD**, and [backlog](docs/wiki/backlog.md) is where each is
+NAMED with its blocking condition - listing them here is the re-derivation the paragraph above forbids.
 
 ### CANARI - release, store submission, iOS
 
@@ -326,10 +327,9 @@ re-deriving anything here, and keep no second copy.**
 cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
 free of debris that would REATTRIBUTE the run - it does not sweep `queued_message`), `bun
 identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
-`fcmlink.mjs`. Every count, incident and disposition behind them - `ignoringExpectedLog` per row,
-the device cap re-measured rather than quoted, the LOCAL estate the rig has targeted since
-2026-09-03 - is on [methodology](docs/wiki/testing-methodology.md) and the campaign page. **Read
-them; do not restate them here** - this paragraph was a second copy of all of it until 2026-09-10.
+`fcmlink.mjs`. Every count, incident and disposition behind them is on
+[methodology](docs/wiki/testing-methodology.md) and the campaign page. **Read them; do not restate
+them here** - this paragraph was a second copy of all of it until 2026-09-10.
 
 **FOUR STANDING RULES FOR A RUN.** The bar is `PASS`, **never `PASS-DIRTY`** (user) - a P1 met on
 the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather than
