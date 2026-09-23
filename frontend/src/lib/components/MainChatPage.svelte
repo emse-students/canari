@@ -299,7 +299,6 @@
       setSendError: (v: string) => {
         convs.sendError = v;
       },
-      getChatContainer: () => convs.chatContainer,
       storage: session.storage,
       log,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),

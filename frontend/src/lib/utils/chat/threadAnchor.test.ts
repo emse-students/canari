@@ -1,7 +1,10 @@
 import {
+  anchorShift,
   isPinnedToBottom,
+  respondToNewMessage,
   shouldFollowThreadBottom,
   THREAD_BOTTOM_SLACK_PX,
+  type NewMessageState,
   type ThreadGrowth,
 } from './threadAnchor';
 
@@ -88,5 +91,84 @@ describe('isPinnedToBottom', () => {
     expect(isPinnedToBottom(before)).toBe(true);
     const composerGrewByTwoLines = { ...before, scrollHeight: 2000 + THREAD_BOTTOM_SLACK_PX };
     expect(isPinnedToBottom(composerGrewByTwoLines)).toBe(false);
+  });
+});
+
+/**
+ * WHO MAY MOVE THE READER WHEN A MESSAGE LANDS.
+ *
+ * Until 2026-09-23 four places answered this and three of them asked nothing: `useMessaging` ended
+ * every persist, every batch and every finished catch-up drain with a bare
+ * `scrollTop = scrollHeight`, on whichever conversation happened to be open. The cases below are
+ * the ones a bad connection actually produces - frames trickling in for minutes while somebody is
+ * scrolled up reading.
+ */
+const settledReader: NewMessageState = {
+  entering: false,
+  catchupActive: false,
+  isNearBottom: true,
+  ownMessageAdded: false,
+};
+
+describe('respondToNewMessage', () => {
+  it('follows the bottom for a live message under a reader who is at the bottom', () => {
+    expect(respondToNewMessage(settledReader)).toBe('follow-bottom');
+  });
+
+  it('follows the bottom for the reader own message, wherever they were', () => {
+    expect(
+      respondToNewMessage({ ...settledReader, isNearBottom: false, ownMessageAdded: true })
+    ).toBe('follow-bottom');
+  });
+
+  it('leaves a reader who has gone up to read exactly where they are', () => {
+    expect(respondToNewMessage({ ...settledReader, isNearBottom: false })).toBe('stay');
+  });
+
+  it('re-runs the entry pin while the conversation is still being entered', () => {
+    // The initial page arriving late, on a cold start from a notification: the window is pinned
+    // near zero and only this re-runs it forward.
+    expect(respondToNewMessage({ ...settledReader, entering: true, isNearBottom: false })).toBe(
+      'repin-entry'
+    );
+  });
+
+  it('re-pins during a catch-up only while the reader has not left the bottom', () => {
+    expect(respondToNewMessage({ ...settledReader, catchupActive: true })).toBe('repin-entry');
+  });
+
+  it('does not let a recovering connection take history away from a reader', () => {
+    // The worst moment of the old blind jump: a drain finishing is exactly when a bad link has
+    // just recovered, and the reader spent the outage scrolled up.
+    expect(
+      respondToNewMessage({ ...settledReader, catchupActive: true, isNearBottom: false })
+    ).toBe('stay');
+  });
+});
+
+describe('anchorShift', () => {
+  const base = { previousTop: 400, currentTop: 400, isEntering: false };
+
+  it('reports nothing when the anchored row has not moved', () => {
+    expect(anchorShift(base)).toBe(0);
+  });
+
+  it('reports how far a prepend pushed the reader down', () => {
+    // A peer scrollback answer, or the render window stepping up by 140 groups: the row the
+    // reader is looking at slides down by the height of what appeared above it.
+    expect(anchorShift({ ...base, currentTop: 2600 })).toBe(2200);
+  });
+
+  it('reports nothing when content above SHRANK, which pulls the reader up on its own', () => {
+    expect(anchorShift({ ...base, currentTop: 120 })).toBe(0);
+  });
+
+  it('reports nothing when the anchor is gone or was never taken', () => {
+    expect(anchorShift({ ...base, currentTop: null })).toBe(0);
+    expect(anchorShift({ ...base, previousTop: null })).toBe(0);
+  });
+
+  it('defers to the entry pin, which owns the position until it lands', () => {
+    expect(anchorShift({ ...base, currentTop: 2600, isEntering: true })).toBe(0);
   });
 });

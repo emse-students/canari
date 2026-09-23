@@ -74,6 +74,34 @@ anything the reader has since appended or deleted is kept. A pull-to-refresh no 
 list that is on screen either: the skeleton is for an empty list, which is the rule `ChatArea`
 already followed.
 
+## 3bis. Who may move the reader's viewport (2026-09-23)
+
+FOUR PLACES ANSWERED THAT, AND THREE OF THEM ASKED NOTHING. `useMessaging` ended every message
+persisted, every batch and every finished catch-up drain with a bare
+`chatContainer.scrollTop = chatContainer.scrollHeight`. It asked neither whether the reader had
+scrolled up to read, nor even whether the message belonged to the thread they had open - the
+container it wrote to is *whichever conversation is on screen*, so a batch landing in conversation B
+yanked the reader of conversation A to the bottom. On a bad link, where frames trickle in for
+minutes, that IS the reading experience. Worst of the three was the one at the end of the drain: a
+catch-up finishing is exactly when a bad connection has just recovered, so the recovery itself took
+the reader's place away from them.
+
+`ChatArea` already held the careful decision and was being overruled. It is now the only writer, and
+the decision is `respondToNewMessage` in `threadAnchor.ts`, tested on its own. Its one behavioural
+change: a catch-up may re-pin only while the reader has not left the bottom, and it no longer
+re-arms `entering` - which was setting the whole message list to `opacity-0`, so a thread flickered
+blank once per arriving frame.
+
+THE OTHER END OF THE PANE HAD NO ANSWER AT ALL. Three mechanisms prepend into the scroller and only
+one compensated: `loadOlderGroups` restores `scrollTop` for the IndexedDB page, while the render
+window stepping up by 140 groups did not, and neither did a PEER scrollback answer - which does not
+arrive as a return value but later, as an ordinary bundle, by which time nothing is holding an
+anchor. So a reader who asked for older history was slid down the page by exactly the height of what
+they had asked for. `scrollTop` cannot tell a prepend from an append, so a ROW is anchored instead:
+the growth observer keeps the topmost rendered row and asks how far it moved (`anchorShift`). That
+covers all three mechanisms without knowing which one ran, and it needs no `overflow-anchor`, which
+WebKit does not implement.
+
 ## 4. The ledger - what is fixed, what is not
 
 Audited 2026-09-22/23 across chat, feed, communities, associations, settings and profile. Every
@@ -82,8 +110,8 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | # | mechanism | shape | state |
 | --- | --- | --- | --- |
 | 1 | Fil: audience gate, profile cache, per-tab cache, no blanking | 1 | **fixed 2026-09-23** |
-| 2 | Chat scroll yanked to the bottom by any inbound frame, in any conversation (`useMessaging.svelte.ts:299`, `:719`, `:938`) | - | open |
-| 3 | Peer scrollback prepends with no anchor compensation (`ChatArea.svelte:597`) | - | open |
+| 2 | Chat scroll yanked to the bottom by any inbound frame, in any conversation | - | **fixed 2026-09-23** |
+| 3 | Prepends with no anchor compensation: peer scrollback, and the render window stepping up | - | **fixed 2026-09-23** |
 | 4 | Post and message media fetched on mount: no viewport gate, no cap, no cancel (`PostMedia.svelte:78`, `MessageBubble.svelte:522`, `SharedMediaThumb.svelte:27`) | 3 | open |
 | 5 | Optimistic UI missing: poll vote, comment, comment like, follow, unblock, reaction-behind-a-mute-check | 2 | open |
 | 6 | `apiFetch` carries no `AbortSignal` and no timeout, so every await below is unbounded | - | open |

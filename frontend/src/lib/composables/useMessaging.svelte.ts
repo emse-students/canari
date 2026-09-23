@@ -6,7 +6,6 @@
  * - Reply/cancel-reply state
  * - File selection + validation
  */
-import { tick } from 'svelte';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
@@ -97,7 +96,6 @@ export interface MessagingContext {
   selectedContact: string | null;
   getSendError: () => string;
   setSendError: (v: string) => void;
-  getChatContainer: () => HTMLElement | undefined;
   storage: IStorage | null;
   log: (msg: string) => void;
   saveConversation: (contactName: string) => Promise<void>;
@@ -296,10 +294,10 @@ export function useMessaging() {
           }
         }
         finishBulkUiFlushBench();
-        tick().then(() => {
-          const chatContainer = ctx.getChatContainer();
-          if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-        });
+        // AND THE DRAIN DOES NOT MOVE IT EITHER. This ended with the same blind jump, at the
+        // worst possible moment: a catch-up finishing is exactly when a bad connection has just
+        // recovered, so the reader who spent the outage scrolled up reading history was teleported
+        // to the bottom by the recovery itself. `ChatArea` sees the list grow and decides.
       }
     } catch (e) {
       console.error('[CATCHUP] endBulkMessageIngest failed:', e);
@@ -716,10 +714,11 @@ export function useMessaging() {
       }
     }
 
-    tick().then(() => {
-      const chatContainer = ctx.getChatContainer();
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
+    // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
+    // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
+    // reader had scrolled up to read, and not even whether this message belongs to the thread they
+    // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
+    // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
   }
 
   /**
@@ -935,10 +934,11 @@ export function useMessaging() {
       }
     }
 
-    tick().then(() => {
-      const chatContainer = ctx.getChatContainer();
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
+    // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
+    // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
+    // reader had scrolled up to read, and not even whether this message belongs to the thread they
+    // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
+    // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
