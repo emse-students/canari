@@ -4,6 +4,7 @@ import {
   daySlotLayout,
   eventBgCss,
   fitEventText,
+  offDayShade,
   splitLogoBands,
   splitLogoWatermark,
 } from './calendarExport';
@@ -257,5 +258,25 @@ describe('daySlotLayout', () => {
     expect(l.nSlots).toBe(2);
     expect(l.slotOf).toEqual([0]);
     expect(l.overflowSlot).toBe(1);
+  });
+});
+
+describe('offDayShade', () => {
+  it('leaves an ordinary working day alone', () => {
+    expect(offDayShade(false, false)).toBe(0);
+  });
+
+  it('shades a weekend and a break day by the same single step', () => {
+    expect(offDayShade(true, false)).toBeCloseTo(0.24);
+    expect(offDayShade(false, true)).toBeCloseTo(0.24);
+  });
+
+  it('COMPOUNDS the two, because a Saturday in the holidays is off twice', () => {
+    expect(offDayShade(true, true)).toBeGreaterThan(offDayShade(true, false));
+  });
+
+  it('floors the compounded shade, so a dark cell colour cannot become a hole', () => {
+    // Two full steps would be 0.48; the floor is what keeps the cell a cell.
+    expect(offDayShade(true, true)).toBeCloseTo(0.38);
   });
 });

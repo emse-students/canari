@@ -105,6 +105,21 @@ export const HALF_DAY_PIVOT_HOUR = 13;
 export type DayOccupancy = 'morning' | 'afternoon' | 'full';
 
 /**
+ * An instant's hour ON THE CALENDAR DAY IT BELONGS TO, which runs 05:00 to 28:59 rather than 0-23.
+ *
+ * {@link HALF_DAY_PIVOT_HOUR} is a position inside a day, so everything compared against it has to
+ * be measured on that day's own clock. A raw `getHours()` is not: 02:00 belongs to the PREVIOUS
+ * square by {@link DAY_STARTS_AT_HOUR}, and it read as 2 - lower than the pivot - so a party
+ * running 18:00 to 02:00 answered `morning` for the day it had held from end to end, and a Friday
+ * 18:00 to Sunday 02:00 trip did the same to its Saturday. Past midnight the hour is the small
+ * hours of a day that is not over, so it counts as 24 and up.
+ */
+function hourWithinDay(instant: Date): number {
+  const hour = instant.getHours();
+  return hour < DAY_STARTS_AT_HOUR ? hour + 24 : hour;
+}
+
+/**
  * How much of `day` this event occupies - the question a half-filled cell answers.
  *
  * A START HOUR IS ONLY ABOUT THE DAY IT FALLS ON. Reading `startsAt` on every square a multi-day
@@ -119,10 +134,13 @@ export type DayOccupancy = 'morning' | 'afternoon' | 'full';
  *   before {@link HALF_DAY_PIVOT_HOUR}, and otherwise fills;
  * - it begins here and ends later - it holds the day to 05:00 tomorrow, so it is an afternoon only
  *   if it starts at or after the pivot, and otherwise fills;
- * - it is contained in the day - the half its start hour names, which is the original rule.
+ * - it is contained in the day - a half only when it stays on ONE side of the pivot. An event that
+ *   opens before 13:00 and is still running after it has left no half free, so it fills (user,
+ *   2026-09-23, on `Forum Perspectives` 08:00-18:00 being drawn as a morning).
  *
- * The hours are safe to compare against the pivot without re-shifting: an instant assigned to `day`
- * by {@link calendarDayOf} necessarily reads between 05:00 and 23:59 local.
+ * WHEN THERE IS NO `endsAt` the start hour is all there is, and it names the half - a 22:00 perm is
+ * an evening, an 11:00 brunch is a morning. That is a statement about what the data can support,
+ * not a default: nothing here can know how long an event with no end runs.
  */
 export function dayOccupancy(event: AssociationCalendarFeedEvent, day: Date): DayOccupancy {
   const target = squareOf(day);
@@ -131,11 +149,16 @@ export function dayOccupancy(event: AssociationCalendarFeedEvent, day: Date): Da
   const startsEarlier = calendarDayOf(start) < target;
   const endsLater = end !== null && calendarDayOf(end) > target;
   if (startsEarlier && endsLater) return 'full';
-  if (startsEarlier && end !== null) {
-    return end.getHours() < HALF_DAY_PIVOT_HOUR ? 'morning' : 'full';
+  const startHour = hourWithinDay(start);
+  const endHour = end === null ? null : hourWithinDay(end);
+  if (startsEarlier && endHour !== null) {
+    return endHour < HALF_DAY_PIVOT_HOUR ? 'morning' : 'full';
   }
-  if (endsLater) return start.getHours() >= HALF_DAY_PIVOT_HOUR ? 'afternoon' : 'full';
-  return start.getHours() < HALF_DAY_PIVOT_HOUR ? 'morning' : 'afternoon';
+  if (endsLater) return startHour >= HALF_DAY_PIVOT_HOUR ? 'afternoon' : 'full';
+  if (endHour !== null && startHour < HALF_DAY_PIVOT_HOUR && endHour >= HALF_DAY_PIVOT_HOUR) {
+    return 'full';
+  }
+  return startHour < HALF_DAY_PIVOT_HOUR ? 'morning' : 'afternoon';
 }
 
 /**

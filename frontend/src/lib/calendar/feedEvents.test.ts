@@ -420,6 +420,50 @@ describe('dayOccupancy - how much of ONE day an event fills', () => {
 
     expect(dayOccupancy(noEnd, new Date(2026, 8, 18))).toBe('afternoon');
   });
+
+  /**
+   * A DAY AN EVENT HOLDS ACROSS THE PIVOT HAS NO FREE HALF, and until 2026-09-23 the contained case
+   * never asked: it named the half its START hour fell in, so `Forum Perspectives` 08:00-18:00 was
+   * drawn as a morning with an afternoon that was not free. Reported by the user against the
+   * October sheet, where `Interpromos` and `Trams` did the same thing.
+   */
+  it('FILLS a day an event contained in it holds across the pivot', () => {
+    const forum = event({
+      startsAt: localIso(2026, 9, 20, 8),
+      endsAt: localIso(2026, 9, 20, 18),
+    });
+
+    expect(dayOccupancy(forum, new Date(2026, 8, 20))).toBe('full');
+  });
+
+  it('fills when the event reaches the pivot exactly, and halves one minute short of it', () => {
+    const toThePivot = event({
+      startsAt: localIso(2026, 9, 20, 9),
+      endsAt: localIso(2026, 9, 20, 13),
+    });
+    const justBefore = event({
+      startsAt: localIso(2026, 9, 20, 9),
+      endsAt: localIso(2026, 9, 20, 12, 59),
+    });
+
+    expect(dayOccupancy(toThePivot, new Date(2026, 8, 20))).toBe('full');
+    expect(dayOccupancy(justBefore, new Date(2026, 8, 20))).toBe('morning');
+  });
+
+  /**
+   * AN HOUR PAST MIDNIGHT IS NOT AN EARLY HOUR, it is a late one on a day that is not over - which
+   * is the whole of {@link DAY_STARTS_AT_HOUR}. Compared raw against the pivot, 02:00 read as 2 and
+   * claimed a morning: a trip leaving Friday 18:00 and returning Sunday 02:00 answered `morning`
+   * for its SATURDAY, a day it holds from end to end.
+   */
+  it('fills the middle day of a trip that returns after midnight', () => {
+    const trip = event({
+      startsAt: localIso(2026, 9, 18, 18),
+      endsAt: localIso(2026, 9, 20, 2),
+    });
+
+    expect(dayOccupancy(trip, new Date(2026, 8, 19))).toBe('full');
+  });
 });
 
 describe('eventCardsOnDay - the selector both painted surfaces now share', () => {

@@ -12,99 +12,150 @@ import {
 } from '$lib/calendar/feedEvents';
 import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
 
-// Header height. Kept generous so the month title (Fredoka, tall round ascenders) sits low enough in
-// its line box to clear the top page edge - a tighter header clipped the glyph tops on export.
-const HEADER_H = 88;
-const WEEKDAY_ROW_H = 40;
-const GRID_PAD_BOTTOM = 20;
 /**
  * Height of the A4 landscape calendar container in pixels (1080px logical width).
  * Pinned to the EXACT A4 landscape ratio (297:210) so the rasterised canvas fills a standard A4
  * page with no distortion and no white bar - the container itself is the page.
  */
 export const CALENDAR_CONTAINER_HEIGHT = Math.round((210 * 1080) / 297); // = 764
+
+/**
+ * THE SHEET'S GEOMETRY, MEASURED OFF THE BDE'S OWN CANVA PLANNING AND SCALED TO 1080.
+ *
+ * Every number below is read from `Planning d'octobre` (a 1168x827 Canva page, itself A4 landscape)
+ * and multiplied by 1080/1168. They are not taste: the sheet this export replaces was drawn by hand
+ * every month, and the point of the 2026-09-23 rework is that nobody has to draw it again.
+ *
+ * What the old numbers were, and why none of them survived: the sheet had an 88px HEADER BAR and a
+ * 40px WEEKDAY BAR, both filled with a solid colour, over a grid whose cells touched each other and
+ * were separated by 1px rules inside a 1.5px frame. The Canva has none of that - the title and the
+ * weekday names sit directly on the photograph, and the days are detached cards with air between
+ * them. A bar and a rule cannot be "configured" into not existing, so they are gone, and the nine
+ * colour controls that pointed at them went with them.
+ */
+const SHEET_PAD_X = 20;
+/** Top of the first row of day cells - everything above it is the title and the weekday names. */
+const GRID_TOP = 181;
+/** Free space kept under the last row, so the sheet does not end flush against the paper edge. */
+const GRID_BOTTOM = 34;
+const COL_GAP = 23;
+const ROW_GAP = 16;
+const TITLE_PAD_TOP = 8;
+const TITLE_SIZE = 98;
+const WEEKDAY_ROW_H = 44;
+const WEEKDAY_SIZE = 31;
+/**
+ * Height of the row carrying the day number on the FIRST slot of a day, and the size of the number.
+ *
+ * Exported because `MonthCalendarGridRich` takes the same decision for the same reason: the day
+ * number gets a row of its own that the title cannot enter, so a long title cannot run over it.
+ * A corner-pinned number is invisible to a centred title, and the two only avoid each other by
+ * luck - which held at 182px cells and stopped holding at 128px, where "29" read as "2".
+ *
+ * THE CANVA PUTS ITS NUMBER BOTTOM-RIGHT, ON TOP OF THE CARD, AND WE DO NOT (user, 2026-09-23:
+ * *"tout doit etre lisible et rien ne doit se chevaucher"*). Only the size follows the Canva, and
+ * only as far as a reserved row allows.
+ */
+export const DAY_NUM_H = 22;
+const DAY_NUM_SIZE = 15;
+
+/**
+ * The break stamp: a word written across the day at an angle, the Canva's rendering of "Vacances".
+ *
+ * The angle is steep enough that the word reads as a stamp rather than as a mis-set line, and the
+ * size is the Canva's 23.5px scaled to this sheet. Both are constants because a break is the only
+ * thing they describe, and one more slider for one more word is exactly what was deleted here.
+ */
+const BREAK_LABEL_SIZE = 22;
+const BREAK_LABEL_ANGLE = -20;
+
+/**
+ * How far a cell is deepened for EACH reason its day is off, and the floor two reasons reach.
+ *
+ * A Saturday is off. A day inside a break is off. A Saturday inside a break is off twice, and
+ * saying so is the whole point of a shade: the eye should be able to find the school weeks without
+ * reading a single word. The two compound rather than override, because a single flat "off" colour
+ * makes the holidays and the weekends the same object.
+ *
+ * The floor exists because `cellBg` can be dark already, and two full steps off a dark grey is a
+ * hole in the sheet rather than a cell.
+ */
+const OFF_DAY_SHADE = 0.24;
+const OFF_DAY_SHADE_MAX = 0.38;
+
 const MAX_SHOW = 3;
 
-/** Configurable visual options for the monthly calendar PDF export. */
+/**
+ * The block shadow's offset for a given font size - down and to the LEFT, as the Canva draws it.
+ *
+ * It is derived rather than configured because it is not an independent choice: a hard-offset
+ * duplicate reads as a shadow only while the offset stays proportional to the stroke, and a single
+ * number set for a 98px title turns into a smudge under a 15px day number. One control fewer, and
+ * one way for the sheet to look wrong fewer.
+ */
+function blockShadowCss(fontSize: number, color: string): string {
+  const offset = Math.max(2, Math.round(fontSize * 0.05));
+  return `text-shadow:${-offset}px ${offset}px 0 ${color};`;
+}
+
+/**
+ * What the sheet still lets a human decide - and it is deliberately short.
+ *
+ * NINE CONTROLS WERE DELETED ON 2026-09-23 BECAUSE THEIR SUBJECT WAS (user: *"ce truc la est quand
+ * meme une vraie usine a gaz"*). The header bar, the weekday bar, the inner rules and the outer
+ * frame are not part of this design any more, so `headerBg`, `weekdayRowBg`, `borderColor` and
+ * `gridOuterBorder` had nothing left to colour. Four more were not choices in the first place: the
+ * two weekday label colours are one text colour, `emptyDayColor` is whatever contrasts with the
+ * cell, the shadow offset follows the font size, and `weekdayFullNames` is always true because the
+ * sheet it copies always spells them out.
+ *
+ * WHAT IS LEFT IS AN IMAGE AND SIX NUMBERS, and the three colours are pre-filled FROM the image by
+ * {@link paletteFromImage}, so the ordinary month is: drop in a photo, export.
+ */
 export interface CalendarExportOptions {
   /** Base64 data: URL for the full-page background image. */
   bgDataUrl?: string | null;
-  /** Background image opacity in percent (0-100). Default: 14. */
+  /** Background image opacity in percent (0-100). Default: 100 - the photo IS the design. */
   bgOpacity?: number;
-  /** Header bar background color (hex). Default: '#151B2C'. */
-  headerBg?: string;
-  /** Month title text color (hex). Default: '#151B2C'. */
-  monthTitleColor?: string;
-  /** Weekday row background color (hex). Default: '#151B2C'. */
-  weekdayRowBg?: string;
-  /** Mon-Fri label color (hex). Default: '#c8d8eb'. */
-  weekdayLabelColor?: string;
-  /** Sat-Sun label color (hex). Default: '#f5c518'. */
-  weekendLabelColor?: string;
-  /** Normal day cell background color (hex). Default: '#ffffff'. */
-  cellBg?: string;
-  /** Normal day cell background opacity in percent (0-100). Default: 92. */
-  cellBgOpacity?: number;
-  /** Weekend cell background color (hex). Default: '#f1f5f9'. */
-  weekendCellBg?: string;
-  /** Weekend cell background opacity in percent (0-100). Default: 92. */
-  weekendCellBgOpacity?: number;
-  /** Cell border color (hex). Default: '#dde3ec'. */
-  borderColor?: string;
-  /** Grid outer border color (hex). Default: '#151B2C'. */
-  gridOuterBorder?: string;
-  /** Day number color on event-free cells (hex). Default: '#b8c4d0'. */
-  emptyDayColor?: string;
   /**
-   * Add a Canva-style block shadow (a hard-offset duplicate of the text, no blur) behind the month
-   * title and weekday labels. The duplicate's color and offset are configurable below. Default: false.
-   */
-  enableTextShadow?: boolean;
-  /** Block-shadow color (hex) - the color of the offset text duplicate. Default: '#f5c518'. */
-  textShadowColor?: string;
-  /** Block-shadow offset in pixels (applied on both x and y for a diagonal translation). Default: 2. */
-  textShadowOffset?: number;
-  /**
-   * Dark scrim opacity in percent (0-100) laid over the background IMAGE for text legibility (the
-   * Justine-style "full-bleed photo + readable text" look). Default: 0 (no scrim). Only has an
-   * effect when `bgDataUrl` is set.
+   * Dark scrim opacity in percent (0-100) laid over the background IMAGE for legibility. Default: 0.
+   * Only has an effect when `bgDataUrl` is set.
    */
   scrimOpacity?: number;
-  /** Scrim overlay color (hex). Default: '#0b1220'. */
-  scrimColor?: string;
-  /** Full French weekday names (Lundi...Dimanche) instead of abbreviations (Lun...Dim). Default: false. */
-  weekdayFullNames?: boolean;
-  /** Break (vacation / no-course) full-cell tint opacity in percent (0-100). Default: 14. */
-  breakTintOpacity?: number;
-  /** Page (container) background color behind the whole calendar (hex). Default: '#f0f4f8'. */
-  pageBg?: string;
+  /** Month title + weekday name colour (hex). Default: '#ffffff'. */
+  textColor?: string;
+  /**
+   * The one accent: the block shadow behind every display text, and the break label. Default the
+   * Canva's deep red.
+   */
+  accentColor?: string;
+  /** Day cell fill colour (hex). Default: a neutral grey. */
+  cellBg?: string;
+  /** Day cell fill opacity in percent (0-100). Default: 58 - the photo has to read through it. */
+  cellBgOpacity?: number;
+  /**
+   * Association logo watermark opacity in percent (0-100). Default: 55.
+   *
+   * It was 18-22 and hardcoded, which is what made the sheet look empty next to the Canva: there the
+   * logos are the loudest thing in a cell. It is a control rather than a constant because it trades
+   * directly against the title drawn over it, and that trade depends on the logos of the month.
+   */
+  logoOpacity?: number;
 }
 
-/** Default values matching the original hardcoded design. */
+/** The starting point, and the only one - see {@link CalendarExportOptions}. */
 export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
-  bgOpacity: 14,
-  // Original design: no extra background on the header bar - it inherits the container bg (#f0f4f8).
-  headerBg: '#f0f4f8',
-  monthTitleColor: '#151B2C',
-  weekdayRowBg: '#151B2C',
-  weekdayLabelColor: '#c8d8eb',
-  weekendLabelColor: '#f5c518',
-  cellBg: '#ffffff',
-  cellBgOpacity: 92,
-  weekendCellBg: '#f1f5f9',
-  weekendCellBgOpacity: 92,
-  borderColor: '#dde3ec',
-  gridOuterBorder: '#151B2C',
-  emptyDayColor: '#b8c4d0',
-  enableTextShadow: false,
-  textShadowColor: '#f5c518',
-  textShadowOffset: 2,
+  bgOpacity: 100,
   scrimOpacity: 0,
-  scrimColor: '#0b1220',
-  weekdayFullNames: false,
-  breakTintOpacity: 14,
-  pageBg: '#f0f4f8',
+  textColor: '#ffffff',
+  accentColor: '#a01f2d',
+  cellBg: '#8b939c',
+  cellBgOpacity: 58,
+  logoOpacity: 55,
 };
+
+/** Colour of the scrim - a legibility device over a photograph, never a design choice. */
+const SCRIM_COLOR = '#0b1220';
 
 type ResolvedOpts = Required<CalendarExportOptions>;
 
@@ -159,14 +210,20 @@ function safe(s: string): string {
 export const EVENT_TITLE_LINE_HEIGHT = 1.25;
 
 /**
- * Height of the row carrying the day number, on the FIRST event slot of a day.
+ * How much darker a day's cell is than the ordinary one, from the reasons it is off.
  *
- * Exported because `MonthCalendarGridRich` takes the same decision for the same reason: the day
- * number gets a row of its own that the title cannot enter, so a long title cannot run over it.
- * A corner-pinned number is invisible to a centred title, and the two only avoid each other by
- * luck - which held at 182px cells and stopped holding at 128px, where "29" read as "2".
+ * Exported because it is a RULE about reading the sheet rather than a colour: the screen grid draws
+ * the same seven columns and, the day it is asked to agree with the sheet, it must agree by calling
+ * this rather than by copying a number that then drifts.
+ *
+ * @param isWeekend - the cell sits in the Saturday or Sunday column.
+ * @param hasBreak - a break entry (vacation, no-course) covers this day.
+ * @returns a ratio for {@link darken}, 0 when the day is an ordinary working one.
  */
-export const DAY_NUM_H = 20;
+export function offDayShade(isWeekend: boolean, hasBreak: boolean): number {
+  const reasons = (isWeekend ? 1 : 0) + (hasBreak ? 1 : 0);
+  return Math.min(OFF_DAY_SHADE_MAX, OFF_DAY_SHADE * reasons);
+}
 
 /**
  * Picks a font size, line clamp and horizontal padding so an event title fills the available cell
@@ -319,6 +376,10 @@ export function splitLogoBands(n: number): LogoBand[] {
  * logo would collapse to n=1 and draw that logo WHOLE across the circle, which is indistinguishable
  * from a working two-logo split and hides the fact that a logo failed to load.
  *
+ * `opacity` is the caller's, not a constant: the watermark is the loudest thing in a Canva cell and
+ * the faintest thing in the sheet that copied it, and which of the two is right depends on the
+ * logos of the month - see {@link CalendarExportOptions.logoOpacity}.
+ *
  * Each band image MUST carry `max-width:none;max-height:none`. This markup is rendered inside the
  * app document (the preview inline, the export in an offscreen container), so Tailwind's Preflight
  * `img { max-width: 100% }` applies to it and clamps the logo to its BAND rather than the circle -
@@ -327,7 +388,11 @@ export function splitLogoBands(n: number): LogoBand[] {
  * as a squeezed centre strip, which reads exactly like "the second logo is missing". It reproduces
  * only inside the app: a standalone probe page has no Preflight and renders the split correctly.
  */
-export function splitLogoWatermark(logoSrcs: (string | null)[], size: number): string {
+export function splitLogoWatermark(
+  logoSrcs: (string | null)[],
+  size: number,
+  opacity = 0.2
+): string {
   const geometry = splitLogoBands(logoSrcs.length);
   const bands = logoSrcs
     .map((src, i) => {
@@ -339,22 +404,44 @@ export function splitLogoWatermark(logoSrcs: (string | null)[], size: number): s
       return `<div style="position:absolute;top:0;left:${left.toFixed(2)}px;width:${width.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${imgLeft.toFixed(2)}px;width:${size}px;height:${size}px;max-width:none;max-height:none;object-fit:cover;" /></div>`;
     })
     .join('');
-  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:0.20;">${bands}</div></div>`;
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:${opacity.toFixed(2)};">${bands}</div></div>`;
+}
+
+/**
+ * Mixes `hex` toward black by `ratio`, for the shades the sheet derives rather than asks for.
+ *
+ * A NEGATIVE RATIO LIGHTENS, toward white rather than past it: scaling a channel up overflows on
+ * anything already bright, and a pale grey would come back pure white with its hue thrown away.
+ */
+function darken(hex: string, ratio: number): string {
+  const h = hex.replace('#', '');
+  const channel = (i: number) => {
+    const value = parseInt(h.slice(i, i + 2), 16);
+    const mixed = ratio >= 0 ? value * (1 - ratio) : value + (255 - value) * -ratio;
+    return Math.round(mixed).toString(16).padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(2)}${channel(4)}`;
 }
 
 /**
  * Builds the inner calendar HTML (no `<!DOCTYPE>` wrapper).
- * - `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to use
- *   `ev.associationLogoUrl` directly (suitable for the iframe preview, same origin).
- * - `faviconUrl`: data URL for export, or a direct path (e.g. `'/favicon.png'`) for preview.
+ *
+ * `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to use
+ * `ev.associationLogoUrl` directly (suitable for the in-document preview, same origin).
+ *
+ * THE TWO DISPLAY FACES ARE ASKED FOR AT WEIGHT 400 AND THAT IS NOT A DETAIL. Leckerli One and
+ * Chewy ship one weight; a `font-weight:700` here would be synthesised by the browser for the
+ * raster while `pickAppFont` draws the only real outline over it, and the PDF's vector text would
+ * sit thinner than the picture under it. Their CSS is loaded by the export route, the one page that
+ * renders this markup - `MonthCalendarGridRich` imports this module too and must not pay for fonts
+ * it never draws.
  */
 function buildCalendarHtml(
   events: AssociationCalendarFeedEvent[],
   year: number,
   month: number,
   opts: ResolvedOpts,
-  logoMap: Map<string, string | null> | 'direct',
-  faviconUrl: string | null
+  logoMap: Map<string, string | null> | 'direct'
 ): string {
   const locale = getLocale();
   const monthLabel = new Intl.DateTimeFormat(locale, { month: 'long' })
@@ -363,48 +450,47 @@ function buildCalendarHtml(
 
   const cells = monthGridDays(new Date(year, month, 1));
   const nRows = cells.length / 7;
-  // Divide the FULL container height across the rows (no cap): a 4-row month gets taller cells that
-  // reach the bottom edge instead of leaving a white band, keeping the content A4-ratio exact.
+  // The rows share whatever is left between the weekday names and the bottom margin, gaps included,
+  // so a 4-row month gets taller cells rather than a band of empty paper under the last one.
   const CELL_H = Math.floor(
-    (CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows
+    (CALENDAR_CONTAINER_HEIGHT - GRID_TOP - GRID_BOTTOM - (nRows - 1) * ROW_GAP) / nRows
   );
 
-  // Canva-style block shadow: a hard-offset duplicate of the text (0 blur radius), not a diffuse
-  // drop-shadow. The offset is applied on both axes for a diagonal translation, in the chosen color.
-  const blockShadow = opts.enableTextShadow
-    ? `text-shadow:${opts.textShadowOffset}px ${opts.textShadowOffset}px 0 ${opts.textShadowColor};`
-    : '';
-  const labelShadow = blockShadow;
-  const weekdayNames = localizedWeekdays(locale, opts.weekdayFullNames ? 'long' : 'short');
-  // Full names are wider, so tighten letter-spacing and drop the font a touch to keep them on one line.
-  const weekdayFontSize = opts.weekdayFullNames ? 11 : 12;
-  const weekdayLetterSpacing = opts.weekdayFullNames ? '.02em' : '.09em';
+  // Weekday names are always spelt in full: the sheet this copies does, and the switch for it was
+  // one of the nine controls deleted along with the design they configured.
+  const weekdayNames = localizedWeekdays(locale, 'long');
+  const gridPad = `padding:0 ${SHEET_PAD_X}px;`;
   const headerRow = weekdayNames
     .map(
-      (w, i) =>
-        // The marker sits on the inner span, never on this padded box: the vector re-draw anchors a
+      (w) =>
+        // The marker sits on the inner span, never on the padded box: the vector re-draw anchors a
         // run to the TOP of the marked element and knows nothing about padding, so marking the box
-        // drew the label 11 px above where the preview shows it. Flex centring also makes the row
-        // height explicit rather than padding-derived, which is what WEEKDAY_ROW_H already assumed.
-        `<div style="height:${WEEKDAY_ROW_H}px;display:flex;align-items:center;justify-content:center;padding:0 6px;box-sizing:border-box;background:${opts.weekdayRowBg};"><span data-pdf-text style="text-align:center;font-size:${weekdayFontSize}px;font-weight:800;line-height:1;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};${labelShadow}">${w}</span></div>`
+        // drew the label 11px above where the preview shows it. Flex centring also makes the row
+        // height explicit rather than padding-derived.
+        `<div style="height:${WEEKDAY_ROW_H}px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;"><span data-pdf-text style="font-family:'Chewy','Fredoka Variable',sans-serif;font-size:${WEEKDAY_SIZE}px;font-weight:400;line-height:1.1;color:${opts.textColor};${blockShadowCss(WEEKDAY_SIZE, opts.accentColor)}">${safe(w)}</span></div>`
     )
     .join('');
 
-  const cellBgNormal = hexToRgba(opts.cellBg, opts.cellBgOpacity);
-  const cellBgWeekend = hexToRgba(opts.weekendCellBg, opts.weekendCellBgOpacity);
-  // Empty (padding) cells are slightly more transparent so the bg image shows through more.
-  const cellBgEmptyNormal = hexToRgba(opts.cellBg, Math.max(0, opts.cellBgOpacity - 12));
-  const cellBgEmptyWeekend = hexToRgba(
-    opts.weekendCellBg,
-    Math.max(0, opts.weekendCellBgOpacity - 4)
-  );
+  // The Canva makes no distinction between a working day and a day off; the user asked to keep one
+  // (2026-09-23: *"on peut garder une distinction de fond quand meme, c'est plus lisible"*), then
+  // asked for more of it (*"le WE et les jours de pause pourraient etre en un peu plus fonce"*).
+  // A shade of the SAME colour keeps that a distinction rather than a second palette entry.
+  const emptyDayColor = contrastColor(opts.cellBg);
+  const logoAlpha = opts.logoOpacity / 100;
 
   const cellHtml = cells
     .map((day, i) => {
       const isWeekend = i % 7 >= 5;
+      const cellBase = `height:${CELL_H}px;overflow:hidden;box-sizing:border-box;`;
 
+      // A SQUARE OUTSIDE THE MONTH IS NOT DRAWN AT ALL (user, 2026-09-23: *"on peut supprimer les
+      // cases qui ne contiennent pas de jour"*). It keeps its place in the grid - dropping the
+      // element would slide the 1st onto the wrong weekday - and paints nothing, so the background
+      // photograph runs through where September's and November's days would have been. The Canva
+      // fills them by hand with the neighbouring month's evenings; the feed here is one month wide,
+      // and widening it was refused before the squares themselves were.
       if (day === null) {
-        return `<div style="height:${CELL_H}px;background:${isWeekend ? cellBgEmptyWeekend : cellBgEmptyNormal};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;"></div>`;
+        return `<div style="${cellBase}"></div>`;
       }
 
       // The square this cell paints, and the ONE definition of which events land on it - the 05:00
@@ -412,23 +498,33 @@ function buildCalendarHtml(
       const square = new Date(year, month, day);
       const dayEvents = eventCardsOnDay(events, square, day);
       const dayBreaks = breaksOnDay(events, square, day);
-      const breakColor = dayBreaks.length > 0 ? eventHexColors(dayBreaks[0])[0] : null;
-      // A 3px colored strip along the bottom edge, continuous across a break period.
-      const breakBand = breakColor
-        ? `<div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${breakColor};"></div>`
-        : '';
-      // A full-cell tint so a break reads across days behind events. Opacity is configurable so a
-      // theme with a busy background image can strengthen it enough to stay visible.
-      const breakTint = breakColor
-        ? `<div style="position:absolute;inset:0;background:${breakColor};opacity:${(opts.breakTintOpacity / 100).toFixed(2)};pointer-events:none;"></div>`
-        : '';
+      const hasBreak = dayBreaks.length > 0;
+      const bg = hexToRgba(
+        darken(opts.cellBg, offDayShade(isWeekend, hasBreak)),
+        opts.cellBgOpacity
+      );
+
+      /*
+       * A BREAK IS A WORD WRITTEN ACROSS THE DAY, not a tint under it (user, 2026-09-23). The faint
+       * full-cell wash and the 3px strip are gone: on a photographic background a 14% tint is
+       * invisible, which is why the Canva never used one and stamped "Vacances" on each day instead.
+       *
+       * It is stamped only on a day with nothing else on it, and that is the honest reading of the
+       * rule rather than an exception to it: a rotated word across two event cards makes three
+       * things unreadable. A busy break day keeps the strip, which says the same thing quietly.
+       * October has no such day, so nothing here is claimed to have been seen.
+       */
+      const breakStamp =
+        hasBreak && dayEvents.length === 0
+          ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><span data-pdf-text style="font-size:${BREAK_LABEL_SIZE}px;font-weight:800;color:${opts.textColor};line-height:1.1;white-space:nowrap;transform:rotate(${BREAK_LABEL_ANGLE}deg);${blockShadowCss(BREAK_LABEL_SIZE, opts.accentColor)}">${safe(dayBreaks[0].title)}</span></div>`
+          : '';
+      const breakStrip =
+        hasBreak && dayEvents.length > 0
+          ? `<div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${opts.accentColor};"></div>`
+          : '';
 
       if (dayEvents.length === 0) {
-        const bg = isWeekend ? cellBgWeekend : cellBgNormal;
-        const breakLabel = breakColor
-          ? `<div data-pdf-text style="position:absolute;left:4px;right:4px;bottom:6px;text-align:center;font-size:9px;font-weight:800;color:${breakColor};line-height:1.15;overflow:hidden;">${safe(dayBreaks[0].title)}</div>`
-          : '';
-        return `<div style="position:relative;height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;">${breakTint}<span data-pdf-text style="position:relative;font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span>${breakLabel}${breakBand}</div>`;
+        return `<div style="position:relative;${cellBase}background:${bg};padding:6px 8px;"><span data-pdf-text style="position:relative;font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${emptyDayColor};line-height:1;">${day}</span>${breakStamp}</div>`;
       }
 
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -451,17 +547,17 @@ function buildCalendarHtml(
       const blankHalf = (withDayNumber: boolean) =>
         `<div style="height:${slotH}px;position:relative;box-sizing:border-box;">${
           withDayNumber
-            ? `<div style="padding:5px 0 0 6px;"><span data-pdf-text style="font-size:11px;font-weight:800;color:${opts.emptyDayColor};line-height:1;">${day}</span></div>`
+            ? `<div style="padding:6px 0 0 8px;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${emptyDayColor};line-height:1;">${day}</span></div>`
             : ''
         }</div>`;
 
       const rows = [
         ...(loneSlot === 1 ? [blankHalf(true)] : []),
         ...visible.map((ev, idx) => {
-          const bg = eventBgCss(ev);
+          const evBg = eventBgCss(ev);
           const fg = contrastColor(eventHexColors(ev)[0]);
 
-          // Resolve logos (primary + co-owners): data URL map for PDF export, direct URL for preview.
+          // Resolve logos (primary + co-owners): data URL map for the export, direct URL for preview.
           const resolveLogo = (url: string | null | undefined): string | null =>
             url ? (logoMap === 'direct' ? url : (logoMap.get(url) ?? null)) : null;
           // Positional, one entry per OWNER, nulls kept: the split reserves a band per owner, so
@@ -474,98 +570,103 @@ function buildCalendarHtml(
             ...(ev.coOwners ?? []).map((co) => ({ name: co.name, url: co.logoUrl })),
           ];
           const logoSrcs = owners.map((o) => resolveLogo(o.url));
-          for (const [i, o] of owners.entries()) {
-            if (logoSrcs[i] === null) {
+          for (const [oi, o] of owners.entries()) {
+            if (logoSrcs[oi] === null) {
               console.warn(
                 `[CalendarExport] No logo for "${o.name}" on "${ev.title}" - its half stays empty (logoUrl: ${o.url ?? 'none set'})`
               );
             }
           }
 
-          const logoSize = Math.max(Math.round(slotH * 0.62), 14);
+          const logoSize = Math.max(Math.round(slotH * 0.78), 16);
           // Watermark stays absolute - decorative only, doesn't affect flow.
-          const watermark = logoSrcs.every((s) => s === null)
+          const watermark = logoSrcs.every((src) => src === null)
             ? ''
             : owners.length === 1
-              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
-              : splitLogoWatermark(logoSrcs, logoSize);
+              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:${logoAlpha.toFixed(2)};" /></div>`
+              : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
+          // An event title is read over a logo now, not over a flat colour, so it carries the same
+          // hard outline the Canva gives it - in black rather than the accent, which belongs to the
+          // display faces and would fight the association's own colour.
+          const titleShadow = 'text-shadow:-1px 1px 0 rgba(0,0,0,0.55);';
 
           if (idx === 0 && loneSlot !== 1) {
-            // First slot: day number on top, title below - flex column so html2canvas sees
-            // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
+            // First slot: day number on top, title below - flex column so the rasteriser sees
+            // explicit heights and doesn't collapse the text area.
             const availH = slotH - DAY_NUM_H;
-            const { fontSize, clampCss, ph } = fitEventText(availH);
-            return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">
+            const fit = fitEventText(availH);
+            return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;flex-direction:column;box-sizing:border-box;">
               ${watermark}
-              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span data-pdf-text style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${blockShadow}${clampCss}">${safe(ev.title)}</span></div>
-            </div>`;
-          } else {
-            // Subsequent slots: no day number, title fully centred.
-            const { fontSize, clampCss, ph } = fitEventText(slotH);
-            return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;align-items:center;justify-content:center;padding:0 ${ph}px;box-sizing:border-box;">
-              ${watermark}
-              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${blockShadow}${clampCss}">${safe(ev.title)}</span>
+              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:6px 0 0 8px;position:relative;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
+              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${titleShadow}${fit.clampCss}">${safe(ev.title)}</span></div>
             </div>`;
           }
+          // Subsequent slots: no day number, title fully centred.
+          const fit = fitEventText(slotH);
+          return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
+              ${watermark}
+              <span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${titleShadow}${fit.clampCss}">${safe(ev.title)}</span>
+            </div>`;
         }),
         ...(loneSlot === 0 ? [blankHalf(false)] : []),
         ...(overflowCount > 0
-          ? (() => {
-              return [
-                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
-              ];
-            })()
+          ? [
+              `<div style="height:${slotH}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;color:${emptyDayColor};">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
+            ]
           : []),
       ];
 
-      return `<div style="position:relative;height:${CELL_H}px;overflow:hidden;border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;">${breakTint}${rows.join('')}${breakBand}</div>`;
+      return `<div style="position:relative;${cellBase}background:${bg};">${rows.join('')}${breakStamp}${breakStrip}</div>`;
     })
     .join('');
 
-  const bgOpacityVal = (opts.bgOpacity / 100).toFixed(2);
   // Optional dark scrim over the image so text stays legible on a busy full-bleed photo. Nested in
   // the same [data-full-bg] layer so the export's single height patch covers it too.
   const scrimLayer =
     opts.scrimOpacity > 0
-      ? `<div style="position:absolute;inset:0;background:${opts.scrimColor};opacity:${(opts.scrimOpacity / 100).toFixed(2)};"></div>`
+      ? `<div style="position:absolute;inset:0;background:${SCRIM_COLOR};opacity:${(opts.scrimOpacity / 100).toFixed(2)};"></div>`
       : '';
   // Full-page background image behind everything, CROPPED to the sheet.
   //
-  // This was an <img> with object-fit:cover in a div that had a width but no height - the height
-  // was patched in JS after insertion, on the export path only. So the preview never got one, the
-  // image fell back to its intrinsic ratio, and neither view was reliably cropped: the sheet showed
-  // bands wherever the photo's aspect did not match A4. A CSS background on a box pinned to the
-  // container (inset:0) is the same visual with none of that: cover crops against a box that always
-  // has the sheet's exact dimensions, in both the preview and the export, and there is nothing left
-  // to patch afterwards. It also survives rasterisation more predictably than object-fit, which the
-  // DOM-to-SVG serialiser has to reproduce on an inline replaced element.
+  // A CSS background on a box pinned to the container (inset:0) crops against a box that always has
+  // the sheet's exact dimensions, in both the preview and the export, with nothing to patch after
+  // insertion - which an <img> with object-fit in a height-less div did not, leaving bands wherever
+  // the photo's aspect did not match A4. It also survives rasterisation more predictably, the
+  // DOM-to-SVG serialiser having to reproduce object-fit on an inline replaced element.
   //
   // The image layer carries the opacity and the scrim is its SIBLING, not its child: the scrim is a
   // legibility device over the photo and must not be faded along with it.
   const fullBgHtml = opts.bgDataUrl
-    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;inset:0;background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${bgOpacityVal};"></div>${scrimLayer}</div>`
-    : '';
-
-  const faviconHtml = faviconUrl
-    ? `<img src="${faviconUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
+    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;inset:0;background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${(opts.bgOpacity / 100).toFixed(2)};"></div>${scrimLayer}</div>`
     : '';
 
   return `
     ${fullBgHtml}
     <div style="position:relative;">
-      <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
-        ${faviconHtml}
-        <h1 data-pdf-text style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI','Noto Color Emoji Canari',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
+      <div style="padding:${TITLE_PAD_TOP}px ${SHEET_PAD_X}px 0;display:flex;align-items:center;justify-content:center;">
+        <span data-pdf-text style="font-family:'Leckerli One','Fredoka Variable',cursive;font-size:${TITLE_SIZE}px;font-weight:400;line-height:1.15;color:${opts.textColor};${blockShadowCss(TITLE_SIZE, opts.accentColor)}">${safe(monthLabel)}</span>
       </div>
-      <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
-          ${headerRow}${cellHtml}
-        </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);column-gap:${COL_GAP}px;${gridPad}">
+        ${headerRow}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);column-gap:${COL_GAP}px;row-gap:${ROW_GAP}px;${gridPad}">
+        ${cellHtml}
       </div>
     </div>`;
+}
+
+/**
+ * What the sheet is painted on under everything else.
+ *
+ * `pageBg` used to be a colour picker, and on a sheet whose background is a full-bleed photograph it
+ * was a control for something nobody sees. It only shows through when no image is set, so it is the
+ * cell colour lightened - which keeps an image-less sheet coherent instead of grey cards on a blue
+ * page nobody chose.
+ */
+function sheetBaseColor(opts: ResolvedOpts): string {
+  return darken(opts.cellBg, -0.55);
 }
 
 /** The 1080px logical width of the rendered calendar, shared by the preview and the export. */
@@ -586,12 +687,12 @@ export function buildPreviewInnerHtml(
   options: CalendarExportOptions = {}
 ): string {
   const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
-  const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
+  const body = buildCalendarHtml(events, year, month, opts, 'direct');
   // Wrapper mirrors the export container exactly (width, background, font-family) so the two render
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
   // Square corners, like the export: the preview's job is to show the sheet that will print, so a
   // decorative radius belongs to the page chrome around it, never to the sheet itself.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI','Noto Color Emoji Canari',sans-serif;color:#111;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${sheetBaseColor(opts)};font-family:'Nunito Variable','Nunito','Segoe UI','Noto Color Emoji Canari',sans-serif;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -620,15 +721,12 @@ export async function exportCalendarMonth(
       ])
     ),
   ].filter((u): u is string => !!u);
-  const [faviconDataUrl, ...resolvedLogos] = await Promise.all([
-    fetchDataUrl('/favicon.png'),
-    ...uniqueLogoUrls.map(fetchDataUrl),
-  ]);
+  const resolvedLogos = await Promise.all(uniqueLogoUrls.map(fetchDataUrl));
   const logoMap = new Map<string, string | null>(
     uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
   );
 
-  const innerHtml = buildCalendarHtml(events, year, month, opts, logoMap, faviconDataUrl ?? null);
+  const innerHtml = buildCalendarHtml(events, year, month, opts, logoMap);
 
   const container = document.createElement('div');
   Object.assign(container.style, {
@@ -637,8 +735,7 @@ export async function exportCalendarMonth(
     left: '-9999px',
     width: '1080px',
     height: `${CALENDAR_CONTAINER_HEIGHT}px`,
-    background: opts.pageBg,
-    color: '#111111',
+    background: sheetBaseColor(opts),
     fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", "Noto Color Emoji Canari", sans-serif',
     boxSizing: 'border-box',
     // No radius: this box IS the sheet, and a sheet of paper has square corners. A radius here
@@ -657,9 +754,12 @@ export async function exportCalendarMonth(
       naturalWidth: 1080,
       naturalHeight: CALENDAR_CONTAINER_HEIGHT,
       rasterScale: 2,
-      backgroundColor: opts.pageBg,
+      backgroundColor: sheetBaseColor(opts),
+      // Every face the sheet actually draws with. A face missing here is rasterised in whatever the
+      // browser had ready, and the vector re-draw then lands on top of a different shape.
       fonts: [
-        "700 30px 'Fredoka Variable'",
+        `400 ${TITLE_SIZE}px 'Leckerli One'`,
+        `400 ${WEEKDAY_SIZE}px 'Chewy'`,
         "700 13px 'Nunito Variable'",
         "800 13px 'Nunito Variable'",
       ],

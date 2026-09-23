@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'export PDF du calendrier reproduit le Canva, et le panneau passe de 20 reglages a 7
+
+Le BDE refaisait le mois a la main dans Canva chaque mois ; la feuille copie desormais ce design
+(geometrie mesuree, titre Leckerli One, jours Chewy, conges estampilles en travers de la case) et
+les couleurs se derivent de l'image de fond importee. Neuf des reglages supprimes n'avaient plus
+rien a peindre. Un jour off s'assombrit d'un cran par raison de l'etre, week-end et vacances
+cumulant ; une case hors du mois n'est plus dessinee du tout.
+[calendar](docs/wiki/frontend/modules/calendar.md#pdf-export).
+
+### Fixed - un evenement qui tient toute la journee ne prenait que la moitie de sa case
+
+`dayOccupancy` ne lisait que l'heure de debut, donc Forum Perspectives (08:00-18:00) laissait la
+moitie basse vide. Un second defaut, jamais signale, tombait avec : une soiree finissant a 02:00 se
+lisait "matin" faute de rendre la journee de 05:00 a 28:59.
+[calendar](docs/wiki/frontend/modules/calendar.md#a-lone-event-takes-half-the-square-and-which-half-says-when).
+
 ### Security - le WebView de la build livree par les stores est inspectable
 
 Check R execute sur l'artefact `v0.18.21` lui-meme : DevTools s'attache au telephone et lit l'etat
