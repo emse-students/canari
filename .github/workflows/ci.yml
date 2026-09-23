@@ -310,8 +310,18 @@ jobs:
           fi
 
           # -- Cross-client harness self-tests --
-          # They read the rig's own sources and nothing else, so this path is the whole trigger.
-          if has '^tools/cross-client-harness/'; then
+          # THEY DO NOT READ THE RIG'S OWN SOURCES AND NOTHING ELSE, whatever this comment claimed
+          # until 2026-09-24. Two of them read the APP: `caption-selftest` resolves every Paraglide
+          # key the rig spells against `frontend/messages/fr.json`, and `selector-selftest` also
+          # imports `frontend/src/lib/styles/markupSources.ts`. Those two exist precisely to catch a
+          # renamed key - and with `tools/cross-client-harness/` as the whole trigger, the pull
+          # request that renames one is the pull request they do not run on. #1006 replaced the poll
+          # composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went with it,
+          # and the rig could no longer compose a poll at all. Nothing said so until an unrelated
+          # workflow edit made CI run everything.
+          if has '^tools/cross-client-harness/' ||
+             has '^frontend/messages/' ||
+             has '^frontend/src/lib/styles/markupSources[.]ts'; then
             echo "harness=true" >> "$GITHUB_OUTPUT"
           else
             echo "harness=false" >> "$GITHUB_OUTPUT"
@@ -637,6 +647,22 @@ jobs:
         if: steps.check_lint.outputs.has_format == 'true'
         working-directory: ${{ matrix.service }}
         run: bun run format:check
+
+      # ADDED 2026-09-24. `bun run build` is `nest build`, which reads `tsconfig.build.json` and
+      # that file excludes `*.spec.ts` - so a service's OWN tests were typechecked by nothing. Not
+      # by jest either: ts-jest transpiles without checking as soon as `isolatedModules` is set,
+      # and all four set it. The single thing that did check them was `Dockerfile.social-service`,
+      # by accident, pointing at `tsconfig.json` where its three siblings point at the build one.
+      # That is a gate that fires AFTER the merge, on a release: a type error from #1006 reached
+      # main, went green, and killed the `v0.18.22-alpha.1` build. The Dockerfile now matches its
+      # siblings and the check moved here, where it can refuse a pull request.
+      #
+      # NOT guarded by a script-presence probe, unlike lint and format above. The failure this
+      # gate exists for IS a service whose types nothing reads; skipping it silently on a service
+      # that forgot the script would rebuild exactly that hole.
+      - name: Typecheck (tests included)
+        working-directory: ${{ matrix.service }}
+        run: bun run typecheck
 
       - name: Build
         working-directory: ${{ matrix.service }}

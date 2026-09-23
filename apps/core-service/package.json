@@ -1,11 +1,12 @@
 {
   "name": "core-service",
-  "version": "0.18.21",
+  "version": "0.18.22-alpha.1",
   "description": "",
   "author": "",
   "private": true,
   "license": "SEE LICENSE IN ../../LICENSE",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",

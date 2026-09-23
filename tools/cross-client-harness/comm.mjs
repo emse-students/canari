@@ -43,7 +43,7 @@ export {
   saysMessage,
   wordingsOf,
 } from './messages.mjs';
-import { caption, control, pluralPattern } from './messages.mjs';
+import { caption, captionWith, control, pluralPattern } from './messages.mjs';
 
 
 /**
@@ -1430,30 +1430,6 @@ export async function rotateInvite(cx) {
   return evaluate(cx, `(document.querySelector('input[readonly]') || {}).value || ''`);
 }
 
-/**
- * Marks the `index`-th match of a CSS selector so a real click can reach it.
- *
- * `document.querySelector` returns the first match and nothing in this app gives its repeated
- * fields an id, so the second option field of a poll cannot be named at all. Marked here and then
- * CLICKED for real, rather than focused from script: a click is the gesture, and `el.focus()` skips
- * whatever the component does on pointerdown - which is exactly the kind of shortcut that makes a
- * harness agree with a product that no longer works.
- */
-async function markNth(cx, css, index, tag) {
-  const outcome = await evaluate(
-    cx,
-    `(function () {
-       var all = [].slice.call(document.querySelectorAll(${JSON.stringify(css)}));
-       var el = all[${index}];
-       if (!el) return 'no-element';
-       el.setAttribute('data-harness', ${JSON.stringify(tag)});
-       return 'marked';
-     })()`
-  );
-  if (outcome !== 'marked') throw new Error(`markNth(${css}, ${index}): ${outcome}`);
-  return `[data-harness=${JSON.stringify(tag)}]`;
-}
-
 /** Opens the poll composer from the message composer. Channels only - a DM has no such button. */
 export async function openPollComposer(cx) {
   const label = caption('chat_create_poll_label');
@@ -1465,10 +1441,15 @@ export async function openPollComposer(cx) {
  * Fills the poll composer and sends it. Returns nothing - what the poll BECAME is read from the
  * card and from the database, never from the form that was just used to type it.
  *
- * The modal ships exactly two option fields and grows one per "Ajouter une option", so a poll of
- * three options needs one click before the third field exists. Written as a loop over the wanted
- * options rather than as a special case, because a check asking for two must exercise the same code
- * as one asking for four.
+ * The modal ships `POLL_MIN_OPTIONS` (two) option fields and grows one per "Ajouter une option", so
+ * a poll of three options needs one click before the third field exists. Written as a loop over the
+ * wanted options rather than as a special case, because a check asking for two must exercise the
+ * same code as one asking for four.
+ *
+ * EACH FIELD NAMES ITS OWN POSITION since #1006 rebuilt the editor both composers mount:
+ * `poll_option_placeholder` is `Option {position}`, so the nth field is addressable directly and
+ * the harness no longer marks one out of a set of identical inputs. The two keys this used to read
+ * - `channel_poll_option_placeholder` and `channel_poll_add_option` - went with the old editor.
  */
 export async function composePoll(cx, { question, options, multiple = false }) {
   if (!Array.isArray(options) || options.length < 2) {
@@ -1477,13 +1458,11 @@ export async function composePoll(cx, { question, options, multiple = false }) {
   await realClick(cx, '#poll-question');
   await cx.send('Input.insertText', { text: question });
 
-  const field = `input[placeholder=${JSON.stringify(caption('channel_poll_option_placeholder'))}]`;
   for (let i = 0; i < options.length; i++) {
-    if (i >= 2) {
-      await realClick(cx, control('channel_poll_add_option'));
-      await until(cx, `document.querySelectorAll(${JSON.stringify(field)}).length > ${i}`, 8000);
-    }
-    await realClick(cx, await markNth(cx, field, i, `poll-option-${i}`));
+    if (i >= 2) await realClick(cx, control('poll_add_option'));
+    const field = `input[placeholder=${JSON.stringify(captionWith('poll_option_placeholder', { position: i + 1 }))}]`;
+    await until(cx, `!!document.querySelector(${JSON.stringify(field)})`, 8000);
+    await realClick(cx, field);
     await cx.send('Input.insertText', { text: options[i] });
   }
 

@@ -16,7 +16,12 @@ COPY apps/social-service/package.json apps/social-service/bun.lock ./apps/social
 RUN cd apps/social-service && bun install --frozen-lockfile
 
 COPY apps/social-service ./apps/social-service
-RUN cd apps/social-service && bunx tsc -p tsconfig.json
+# `tsconfig.build.json`, like the three sibling services - it excludes `*.spec.ts`, so the image
+# stops carrying compiled test files. This line said `tsconfig.json` until 2026-09-24, which made
+# this container the ONLY typecheck of any service's specs in the whole project, and it runs after
+# the merge: a type error shipped in #1006 and surfaced by killing a RELEASE. The gate that belongs
+# before the merge is the `typecheck` script CI now runs for all four services.
+RUN cd apps/social-service && bunx tsc -p tsconfig.build.json
 
 # -- Runtime stage -------------------------------------------------------------
 FROM oven/bun:1.4.2-alpine

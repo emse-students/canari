@@ -21,6 +21,27 @@ le 2026-09-24, chacune trouvee par hasard, parce que la post-condition ne demand
 ce qu'un chemin absolu satisfait.
 [development](docs/wiki/development.md#corehookspath-is-shared-by-every-worktree-and-must-stay-relative).
 
+### Fixed - le rig ne savait plus composer un sondage, et son garde-fou ne tournait pas sur la PR qui l'a casse
+
+`caption-selftest` verifie que chaque cle Paraglide que le rig epelle existe encore dans
+`frontend/messages/fr.json` : c'est precisement une cle renommee qu'il attrape. Son declencheur ne
+nommait que `tools/cross-client-harness/`, donc la seule PR sur laquelle il devait tourner - celle
+qui renomme - est celle ou il etait saute. #1006 a remplace le composer de sondage,
+`channel_poll_add_option` et `channel_poll_option_placeholder` sont partis avec, et `composePoll`
+visait deux clefs mortes. Le declencheur nomme desormais les deux chemins de l'app que ces tests
+lisent.
+[cicd](docs/wiki/cicd.md).
+
+### Fixed - les tests d'un service NestJS n'etaient typecheckes par rien, et une release l'a appris
+
+`nest build` lit `tsconfig.build.json`, qui exclut `*.spec.ts`, et ts-jest transpile sans verifier
+des que `isolatedModules` est pose - les quatre services le posent. Le seul controle existant etait
+`Dockerfile.social-service`, seul des quatre a compiler `tsconfig.json` : une erreur de types
+fusionnee avec #1006 est passee au vert et a tue le build de `v0.18.22-alpha.1`. Le Dockerfile
+rejoint ses trois freres, et `bun run typecheck` passe en CI pour les quatre services, avant la
+fusion.
+[cicd](docs/wiki/cicd.md).
+
 ### Fixed - deux espaces que le compilateur Svelte effacait, et un logo apparie au mauvais nom
 
 Le blanc en fin de bloc `{#if}` et en tete de contenu d'element est supprime a la compilation, et
@@ -31,6 +52,7 @@ desormais avec son nom. Le compteur de membres quitte l'en-tete (demande utilisa
 correction sur Portail-etu, ou le `<h1>` et la rangee de logos se contredisaient en plus sur la
 condition d'affichage.
 [associations](docs/wiki/frontend/modules/associations.md).
+
 ### Security - un identifiant utilisateur devient un nom de propriete, et quatre sites le refusaient differemment
 
 Reactions et reponses de sondage sont stockees dans des maps indexees par id utilisateur. Quatre
@@ -106,12 +128,16 @@ moitie basse vide. Un second defaut, jamais signale, tombait avec : une soiree f
 lisait "matin" faute de rendre la journee de 05:00 a 28:59.
 [calendar](docs/wiki/frontend/modules/calendar.md#a-lone-event-takes-half-the-square-and-which-half-says-when).
 
-### Security - le WebView de la build livree par les stores est inspectable
+### Security - la build livree par les stores compilait l'activation du debogage WebView
 
-Check R execute sur l'artefact `v0.18.21` lui-meme : DevTools s'attache au telephone et lit l'etat
-MLS, les messages dechiffres et le jeton en memoire - ce que la regle "jeton en memoire UNIQUEMENT"
-suppose inatteignable. Trois causes candidates, separees une par une : c'est la feature Cargo
-`devtools` qui compile l'appel, pas le manifeste. Cinq des six etapes passent ; l'etape 2 n'est pas
+`v0.18.21` embarque l'appel `setWebContentsDebuggingEnabled`, que la feature Cargo `devtools`
+compile et que `tauri.conf.json` arme a `true` : sur un telephone ordinaire le WebView est donc
+inspectable, et avec lui l'etat MLS, les messages dechiffres et le jeton "en memoire UNIQUEMENT".
+La feature est retiree - une occurrence de l'appel dans la lib livree, zero dans la nouvelle, a
+architecture et profil identiques, et zero dans le dex. **La mesure faite sur le Mi 9T ne prouvait
+pas l'exposition et ne prouve pas davantage le correctif** : cette ROM est `userdebug`, ce qui rend
+inspectable TOUTE application - y compris une APK ne contenant aucun activateur. La preuve tient au
+binaire, pas au telephone. Cinq des six etapes de check R passent ; l'etape 2 n'est pas
 mesurable faute d'un avatar sur un compte de test.
 [device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
 [backlog](docs/wiki/backlog.md).

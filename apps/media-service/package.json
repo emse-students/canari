@@ -1,6 +1,6 @@
 {
   "name": "media-service",
-  "version": "0.18.21",
+  "version": "0.18.22-alpha.1",
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
@@ -10,6 +10,7 @@
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
     "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",
     "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build"
   },
   "dependencies": {
