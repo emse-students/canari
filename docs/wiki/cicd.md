@@ -111,6 +111,16 @@ Runs on every pull request to `main`, and again on every push to `main`:
 | **Frontend lint** | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required) |
 | **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
 
+**THE HARNESS SELF-TESTS ARE TRIGGERED BY THE APP'S MESSAGE FILE TOO, AND FOR TWELVE DAYS THEY WERE
+NOT.** `changes` said the rig "reads its own sources and nothing else", so `tools/cross-client-harness/`
+was the whole trigger. Two of those self-tests read the APP: `caption-selftest` resolves every
+Paraglide key the rig spells against `frontend/messages/fr.json`, and `selector-selftest` imports
+`frontend/src/lib/styles/markupSources.ts`. Both exist to catch a renamed key - so the one pull
+request they had to run on, the one doing the renaming, is the one they were skipped on. #1006
+rebuilt the poll composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went
+with it, and the rig could not compose a poll until 2026-09-24, when an unrelated workflow edit
+made CI run everything and said so. The trigger now names the two app paths those tests read.
+
 **`typecheck` IS A SEPARATE STEP FROM `build`, AND THE DIFFERENCE IS THE TESTS.** `bun run build`
 is `nest build`, which reads `tsconfig.build.json`; every service excludes `*.spec.ts` there. Jest
 does not make up the difference - ts-jest transpiles without checking once `isolatedModules` is

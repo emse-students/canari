@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le rig ne savait plus composer un sondage, et son garde-fou ne tournait pas sur la PR qui l'a casse
+
+`caption-selftest` verifie que chaque cle Paraglide que le rig epelle existe encore dans
+`frontend/messages/fr.json` : c'est precisement une cle renommee qu'il attrape. Son declencheur ne
+nommait que `tools/cross-client-harness/`, donc la seule PR sur laquelle il devait tourner - celle
+qui renomme - est celle ou il etait saute. #1006 a remplace le composer de sondage,
+`channel_poll_add_option` et `channel_poll_option_placeholder` sont partis avec, et `composePoll`
+visait deux clefs mortes. Le declencheur nomme desormais les deux chemins de l'app que ces tests
+lisent.
+[cicd](docs/wiki/cicd.md).
+
 ### Fixed - les tests d'un service NestJS n'etaient typecheckes par rien, et une release l'a appris
 
 `nest build` lit `tsconfig.build.json`, qui exclut `*.spec.ts`, et ts-jest transpile sans verifier
