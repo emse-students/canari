@@ -63,7 +63,11 @@ Premieres mesures SUR la machine cible le meme jour : ce n'est pas un serveur po
 machine d'hebergement associatif partagee de l'ecole, 4 vCPU et 11 G face a trois VMs taillees pour
 8 et 20, et le compte livre n'a ni docker ni sudo - rien ne peut commencer avant. Deux affirmations
 du plan tombent : le multiplexage SSH ne marche pas sur ce poste, et le bastion muet n'est pas un
-bannissement. [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+bannissement. Le compte a depuis docker et sudo, et les comptes dormants sont supprimes. Trois
+pieges mesures sur la machine : une suppression massive de fichiers y est tuee sans laisser de
+trace, `/export` est un NetApp distinct du disque local, et la reutilisation d'uid a deja fausse
+l'attribution de fichiers trois fois. Le vhost `canari.emse.fr` prepare par la DSI repond deja - en
+servant Portail-etu. [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - NOTIF-10 ne mesure plus l'ignorance de son propre classificateur
 
