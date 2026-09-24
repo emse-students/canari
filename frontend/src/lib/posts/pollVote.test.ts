@@ -1,4 +1,10 @@
-import { applyPostPollVote, nextPollSelection, pollSelectionIsFull } from './pollVote';
+import {
+  applyPostPollVote,
+  msUntilPollDeadline,
+  nextPollSelection,
+  pollDeadlinePassed,
+  pollSelectionIsFull,
+} from './pollVote';
 import type { Poll, PostEntity } from '$lib/posts/api';
 
 /**
@@ -174,5 +180,64 @@ describe('pollSelectionIsFull', () => {
   it('is true exactly when the cap is reached', () => {
     expect(pollSelectionIsFull(['a'], { multipleChoice: true, maxSelections: 2 })).toBe(false);
     expect(pollSelectionIsFull(['a', 'b'], { multipleChoice: true, maxSelections: 2 })).toBe(true);
+  });
+});
+
+/**
+ * A DEADLINE IS JUDGED AGAINST AN INSTANT THE CALLER NAMES, AND EVERY INSTANT HERE IS A LITERAL.
+ *
+ * Nothing below reads a wall clock, which is the point twice over: it is the campaign's standing
+ * rule for tests, and it is also the defect being fixed - the old spelling took its instant from
+ * `Date.now()` during render, so it answered once and never again.
+ */
+const T = Date.UTC(2026, 8, 24, 12, 0, 0);
+const iso = (ms: number) => new Date(ms).toISOString();
+
+describe('pollDeadlinePassed', () => {
+  it('is false for a poll with no deadline, whatever the instant', () => {
+    expect(pollDeadlinePassed(undefined, T)).toBe(false);
+    expect(pollDeadlinePassed(null, T + 10 ** 9)).toBe(false);
+  });
+
+  it('is false before the deadline and true from the instant it lands', () => {
+    const at = iso(T);
+    expect(pollDeadlinePassed(at, T - 1)).toBe(false);
+    expect(pollDeadlinePassed(at, T)).toBe(true);
+    expect(pollDeadlinePassed(at, T + 1)).toBe(true);
+  });
+
+  it('treats an unparseable deadline as no deadline rather than as passed', () => {
+    expect(pollDeadlinePassed('not a date', T)).toBe(false);
+  });
+});
+
+describe('msUntilPollDeadline', () => {
+  const withEnds = (...ends: Array<string | null | undefined>) =>
+    ends.map((endsAt) => ({ endsAt }));
+
+  it('schedules nothing when no poll carries a deadline', () => {
+    expect(msUntilPollDeadline([], T)).toBeUndefined();
+    expect(msUntilPollDeadline(withEnds(undefined, null), T)).toBeUndefined();
+  });
+
+  it('schedules nothing when every deadline is already behind the instant', () => {
+    expect(msUntilPollDeadline(withEnds(iso(T - 1), iso(T)), T)).toBeUndefined();
+  });
+
+  it('returns the wait to the EARLIEST deadline still ahead - one timer, not one per poll', () => {
+    expect(msUntilPollDeadline(withEnds(iso(T + 5000), iso(T + 1000), iso(T + 9000)), T)).toBe(
+      1000
+    );
+  });
+
+  it('ignores the ones behind it and takes the earliest of the rest', () => {
+    expect(msUntilPollDeadline(withEnds(iso(T - 9000), iso(T + 7000), iso(T + 2000)), T)).toBe(
+      2000
+    );
+  });
+
+  it('ignores an unparseable deadline rather than returning NaN, which setTimeout spins on', () => {
+    expect(msUntilPollDeadline(withEnds('nonsense'), T)).toBeUndefined();
+    expect(msUntilPollDeadline(withEnds('nonsense', iso(T + 3000)), T)).toBe(3000);
   });
 });
