@@ -11,6 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le demineur genere sa grille six fois plus vite, et la meme grille
+
+Le solveur enumerait les 2^n combinaisons de chaque bloc de la bordure ; une recherche en
+profondeur qui coupe des qu'une equation est impossible, plus une table de voisins, ramene le pire
+cas mesure de 1438 ms a 125 ms, sur 1276 grilles toutes identiques. La case cliquee s'affiche
+enfoncee pendant l'attente ([minesweeper](docs/wiki/frontend/modules/minesweeper.md)).
+
 ### Fixed - la banniere aveugle d'un salon nomme laquelle de ses quatre conditions a manque
 
 `handleChannelMessage: no seed/ciphertext -> generic notification` est un `if` a quatre termes qui

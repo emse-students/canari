@@ -87,6 +87,8 @@
   let challengeRoundTripMs = $state<number | undefined>(undefined);
   /** True while the first-dig challenge request is in flight, to guard against double-taps. */
   let firstClickBusy = $state(false);
+  /** Index of the cell whose first dig is being prepared (challenge fetch + generation), shown pressed meanwhile. */
+  let pendingCell = $state<number | null>(null);
 
   let leaderboard = $state<LeaderboardEntry[]>([]);
   let leaderboardLoading = $state(false);
@@ -209,6 +211,7 @@
     rankedMode = false;
     challengeRoundTripMs = undefined;
     firstClickBusy = false;
+    pendingCell = null;
     elapsedMs = 0;
     board = createBoard(DEFAULT_CONFIG, null);
   }
@@ -224,6 +227,13 @@
     void afterBoardChange();
   }
 
+  /** Resolves once the browser has painted the current state (two frames: one to schedule, one to paint). */
+  function nextPaint(): Promise<void> {
+    return new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+  }
+
   /**
    * Ensures a real board exists before the very first reveal: tries a ranked seeded
    * challenge, falling back to a casual unseeded board on failure, then performs the
@@ -237,6 +247,7 @@
     }
     if (firstClickBusy) return;
     firstClickBusy = true;
+    pendingCell = y * board.width + x;
     try {
       console.debug('[minesweeper] first dig, attempting ranked challenge start');
       try {
@@ -257,12 +268,16 @@
         rankedMode = false;
         challengeRoundTripMs = undefined;
       }
+      // Generation is synchronous and blocks the main thread; paint the pressed cell first
+      // so the tap is acknowledged even when the challenge answered within the same frame.
+      await nextPaint();
       dig(x, y);
       startTimer();
       // Board size is unchanged — keep the player's framed pan/zoom.
       await tick();
     } finally {
       firstClickBusy = false;
+      pendingCell = null;
     }
   }
 
@@ -717,16 +732,18 @@
                 onpointerup={handlePointerRelease}
                 onpointerleave={handlePointerRelease}
                 onpointercancel={handlePointerRelease}
-                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm {cell.state ===
-                'hidden'
-                  ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
-                  : cell.state === 'flagged'
+                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm {pendingCell ===
+                i
+                  ? 'bg-cn-bg border-cn-border animate-pulse'
+                  : cell.state === 'hidden'
                     ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
-                    : cell.mine
-                      ? 'border-transparent bg-red-500/80'
-                      : cell.adjacent === 0
-                        ? 'bg-cn-bg border-transparent'
-                        : 'bg-cn-bg border-transparent'} {cell.state === 'revealed' &&
+                    : cell.state === 'flagged'
+                      ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
+                      : cell.mine
+                        ? 'border-transparent bg-red-500/80'
+                        : cell.adjacent === 0
+                          ? 'bg-cn-bg border-transparent'
+                          : 'bg-cn-bg border-transparent'} {cell.state === 'revealed' &&
                 !cell.mine &&
                 cell.adjacent > 0
                   ? NUMBER_COLORS[cell.adjacent]
