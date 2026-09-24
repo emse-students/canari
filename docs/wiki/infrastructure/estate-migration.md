@@ -339,17 +339,28 @@ VERIFIED only where it was actually probed, not inferred from the intent that sh
 | `www.` -> apex redirect | N/A - no `www.canari.emse.fr` DNS record exists at all (the row was dropped from the DSI request, item 1) | **YES** - `www.canari.emse.fr` does not resolve/connect; nothing to redirect |
 | CSP header | N/A - was never a Cloudflare setting. `http_response_headers_transform` on the zone is empty by design; nginx has always owned every response header, unaffected by which hostname is used | N/A |
 | CSRF protection | N/A - Cloudflare has no CSRF-specific feature; this was always application-level (SvelteKit/NestJS origin checks), unaffected by the zone | N/A |
-| `websockets: on` (zone setting, "Required by `/api/ws`") | **WAS NOT PORTED - FOUND AND FIXED 2026-09-25.** `sites-available/canari.conf` on the target host proxied `/` but never forwarded `Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase 1, and correct). A WS handshake against `canari.emse.fr` got a bare nginx `400` with no `Upgrade` echoed back; the same handshake against `canari-emse.fr` reached the app and got `401` (unauthenticated, the correct answer). Fixed by adding the same two lines `canari-prod.conf` already carries | **YES, both before (broken) and after (fixed)** |
-| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means | N/A - deliberate |
+| `websockets: on` (zone setting, "Required by `/api/ws`") | **WAS NOT PORTED - FOUND 2026-09-25, STILL NOT FIXED.** `sites-available/canari.conf` on the target host proxies `/` but never forwards `Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase 1, and correct - both carry `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $http_connection;`). A WS handshake against `canari.emse.fr` gets a bare nginx `400` with no `Upgrade` echoed back; the same handshake against `canari-emse.fr` reaches the app and gets `401` (unauthenticated, the correct answer). **The edit itself needs the ONE write this session's classifier has refused four times in a row** - a `.bak-2026-09-25-no-websocket-upgrade` copy exists, the live file is still the unmodified original, and the fix is the same two lines `canari-prod.conf` already carries, added to `canari.conf`'s single `location /` block, then `nginx -t && systemctl reload nginx` | **YES, confirmed broken again 2026-09-25 (re-probed after the frontend fix in this same session)** |
+| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported - and RE-VERIFIED, not merely re-asserted, 2026-09-25.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means, and it does: `canari.emse.fr` serves `Cache-Control: public, max-age=31536000, immutable` on `/_app/immutable/*` and `public, max-age=0, s-maxage=60` on the shell, byte-identical to what `canari-emse.fr` sends today - the ORIGIN half of this was never Cloudflare's to begin with and the migration changed nothing about it. What is genuinely gone, confirmed by `curl -I` carrying no `cf-cache-status` header at all on `canari.emse.fr` where `canari-emse.fr` answers `HIT`/`REVALIDATED`: every request for the same bytes now reaches the origin container instead of a warm edge node. A local substitute (nginx `proxy_cache` on the shared host, keyed the same way) would recover the shared-cache EFFECT without a CDN, but is a NEW build, not a port, and is a separate open item below rather than folded into this "deliberate, not ported" row | **YES - origin headers identical on both hostnames; no edge layer exists on either the new host or a viable substitute for it** |
 | The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` | N/A - deliberate |
 | Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` | N/A - out of scope |
 | DDoS absorption, bot filtering | promised as "nginx rate limiting on the authentication and upload paths" | **NO - NOT DONE.** `grep -r limit_req /etc/nginx` on the target host returns nothing, on any vhost. This is a real gap, open below |
 | `0rtt`, BIC, Rocket Loader | Rocket Loader and BIC have no nginx equivalent and were already `off`/scoped to the auth subdomain (out of scope); 0-RTT is a TLS 1.3 server option nginx does not enable by default, matching the zone's `off` | N/A - all three end up equivalent to "off" either way |
 
+**OPEN: the WebSocket header fix above is diagnosed, not applied** - one nginx edit, blocked by
+this session's own write classifier every time it was attempted; the exact commands are in the row
+above and are owed to the user directly.
+
 **OPEN: no rate limiting exists on the authentication or upload paths on the target host, on any
 vhost.** This was stated as done in this table before being checked and was not; it needs a design
 (zones, keyed by IP, which exact paths) rather than a one-line port, and is tracked as its own item
-rather than folded into the WebSocket fix above ([backlog](backlog.md)).
+rather than folded into the WebSocket fix above ([backlog](../backlog.md)).
+
+**OPEN: an nginx `proxy_cache` substitute for the lost edge HIT layer** would need its own zone
+(disk-backed, sized for the `/_app/immutable/` set plus one shell entry), a key that does not
+conflate `canari.emse.fr` and `canari-emse.fr` responses if both are ever proxied by the same host,
+and an invalidation step in the deploy scripts mirroring what `CLOUDFLARE_CACHE_PURGE_TOKEN` did for
+the shell - a design decision, not a default to just turn on, and not requested yet
+([backlog](../backlog.md)).
 
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 

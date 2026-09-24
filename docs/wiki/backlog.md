@@ -178,6 +178,45 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
+### P1 - `canari.emse.fr` cannot carry a WebSocket at all - diagnosed 2026-09-25, still not fixed
+
+`/etc/nginx/sites-available/canari.conf` on the shared host proxies `/` but never forwards
+`Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase
+1, and correct). A WS handshake against `canari.emse.fr` gets a bare nginx `400` with no `Upgrade`
+echoed back - it never reaches the app - while the same handshake against `canari-emse.fr` reaches
+it and gets `401` (unauthenticated, the right answer). Since `canari.emse.fr` is now the primary
+public name, this is real-time chat, presence and calling all silently unreachable on it.
+
+**The fix is written and untaken**: add the two lines `canari-prod.conf` already carries -
+`proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $http_connection;` -
+to `canari.conf`'s single `location /` block, then `nginx -t && systemctl reload nginx`. A backup
+(`canari.conf.bak-2026-09-25-no-websocket-upgrade`) already exists. **This session's own
+[Remote Shell Writes] classifier refused the write four times in a row**; the edit needs either a
+permission rule granted to this session, or the user applying the two lines directly.
+[estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
+
+
+### P3 - an nginx `proxy_cache` substitute for the lost Cloudflare edge HIT layer is undesigned (found 2026-09-25)
+
+The origin's own `Cache-Control` headers migrated untouched - `canari.emse.fr` serves the identical
+`max-age=31536000, immutable` on `/_app/immutable/*` and `max-age=0, s-maxage=60` on the shell that
+`canari-emse.fr` always has, confirmed byte-for-byte on both hostnames 2026-09-25. What is gone is
+the SHARED cache: `canari-emse.fr` still answers `cf-cache-status: HIT`/`REVALIDATED` through
+Cloudflare, `canari.emse.fr` carries no such header at all because nothing sits between nginx and
+the browser - every request now reaches the origin container.
+
+Standing on the shared host serving Portail-etu, Cercle and Authentik too, an `nginx proxy_cache`
+zone could recover the effect locally (repeat requests hitting nginx's own disk cache instead of
+the origin container) without a CDN, mirroring the two Cloudflare Cache Rules this replaced:
+`/_app/immutable/*` (safe to cache indefinitely - content-hashed, `immutable` already says so) and
+the shell (60 s, matching `s-maxage`). **Needs a design, not a default to enable**: its own cache
+zone sized for the immutable asset set, a key that does not conflate `canari.emse.fr` and
+`canari-emse.fr` responses once both are proxied by the same host, and an invalidation step in the
+deploy scripts standing in for `CLOUDFLARE_CACHE_PURGE_TOKEN`. Not requested yet - this is the
+option, not a plan to build it.
+[estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
+
+
 ### P2 - no rate limiting exists on the authentication or upload paths on the shared host, on any vhost (found 2026-09-25)
 
 The estate-migration table has said, since phase 2 was planned, that Cloudflare's DDoS absorption
