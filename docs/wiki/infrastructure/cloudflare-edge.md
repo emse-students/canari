@@ -247,6 +247,40 @@ deploy purging would flush production's cache on every alpha. Dev's exposure is 
 page after a deploy, bounded by `s-maxage` and by nothing else - the same bound that protects
 production when the purge fails.
 
+**IT IS SERVING, AND THAT IS A CONTROLLED PAIR RATHER THAN A NUMBER.** `SHIPPED` is a statement about
+a commit, and a merged fix is not a shipped fix. Production answers the same URL with
+`cf-cache-status: HIT` in **~54 ms** and, immediately after a purge, `MISS` in **~96 ms** - measured
+back to back on 2026-09-17. The pair is the point: one absolute number cannot tell a warm edge from a
+fast origin, and the ~42 ms between two fetches of identical bytes can only be the round trip that no
+longer happens. **Do not quote it against the ~80 ms predicted from the user's own browser.** Same
+order, different measurement - that one is an origin round trip seen from where the user sits, this
+one from a workstation; neither confirms the other.
+
+**AND THE HONEST CEILING IS ~80 ms, NOT A COLD START UNDER A SECOND.** Chrome's navigation split made
+this look like the biggest term before the app speaks - TTFB 90-130 ms of a 162-323 ms pre-first-word
+block, 56-60% of it - but Chrome was answering for `/login`, with no session and no MLS state, where
+the 580 ms that dominate a real boot do not exist. On the user's line the same round trip is 94 ms of
+a 1342 ms boot, **7%**. The reason to have done it is that it removes `frontend-ssr` from the critical
+path of EVERY navigation rather than only of a boot.
+
+**AND `no-store` DOES NOT COST THE BACK/FORWARD CACHE HERE, WHICH IS MEASURED AND NOT INHERITED.** The
+standard argument for `no-cache` + an ETag over `no-store` is that `no-store` disqualifies a document
+from the bfcache, so leaving the site and pressing Back pays the whole boot again. In this Chrome it
+does not: a real history traversal away from `https://canari-emse.fr/login` and back fired `pageshow`
+with `persisted: true`, the document's own JavaScript globals survived it, and
+`performance.getEntriesByType('navigation')[0]` was still the ORIGINAL entry - all three the
+signature of a restore, on the `no-store` response production served that day. So `no-cache` would
+have bought the 6 KB body on a revalidation and nothing else; the round trip was always the cost.
+**A later reader reaching for that argument should re-measure before believing it**, and the probe is
+three steps: stamp `window`, traverse away, `history.back()`, read the stamp back.
+
+**NOTHING HERE IS A LEAK**, which is worth stating because "the shell is per-user" is the first thing
+a reader assumes and it is false. The app is a SPA with `ssr = false`; `hooks.server.ts` is the whole
+of the server-side work and reads `event.url.pathname` and nothing else - no cookie, no session, no
+user. Two fetches of `/chat` differ in exactly four lines, all of them Cloudflare's own injected
+`__CF$cv$params`. An unauthenticated fetch already receives this document, so caching changes how
+fresh it is, never who may read it.
+
 ## The daemon on the origin, and the token it carries
 
 The tunnel is **remotely managed** (`config_src=cloudflare`): there is no `/etc/cloudflared/config.yml`
