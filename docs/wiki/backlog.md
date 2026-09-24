@@ -117,22 +117,6 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
-### P3 - `login.mjs` calls a login FAILED while the authorization-code exchange is still running (measured 2026-09-23)
-
-Driving A1 through the service-account flow, the atom printed every stage correctly - both fields
-filled, both submits landed - then `session held: false`, `final .../auth/callback?code=...` and a
-non-zero exit with *"the flow completed but no session was written - the app is not logged in"*.
-**The login had succeeded.** Seconds later the app was on `/posts` with the first-connection PIN
-gate up, and the PIN atom then completed normally against it. What the atom caught was the app
-mid-exchange: its own capture holds the words *"Echange du code d'autorisation..."*.
-
-This is the rig's own rule pointed the wrong way - *termination from a PROOF, never from a clock*.
-The poll ends on a deadline and then reports the state it happened to see, so a slow exchange is
-indistinguishable from a refused one, and the atom's docblock is explicit that a non-zero exit means
-the client holds no session. A caller that believes it re-runs a login that already worked, or
-grades a row `SETUP-FAILED` against a healthy app. The end condition should be a fact - the session,
-or the PIN gate, or an error the app itself reports - not the expiry of the wait for one.
-
 ### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
 
 `tauri-plugin-notification` creates a channel on plugin load whose name and description are the

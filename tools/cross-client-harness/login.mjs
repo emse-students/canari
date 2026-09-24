@@ -580,13 +580,20 @@ for (let n = 0; n <= MAX_STAGES; n++) {
 // THE APP'S WEBVIEW CAN BE GONE BY NOW, and the socket opened before the hop then answers nothing.
 // Android is free to kill the Tauri process while the Custom Tab is in front, and it did - measured
 // 2026-08-28 on A1, where polling the pre-hop target reported the same `/login` for sixty seconds
-// while the login had in fact moved to Chrome. So the landing is read by RE-RESOLVING the app's
-// target on its own port, and only the web path keeps using the connection it already holds.
-const landing = async () => {
-  if (!tabTarget) return here();
+// while the login had in fact moved to Chrome. So the app is read through a connection RE-RESOLVED
+// on its own port: dropped the moment it stops answering, and opened again on whatever target
+// exists then. Only the web path keeps the connection it already holds, because there nothing died.
+let probe = tabTarget ? null : await appCx();
+const appProbe = async () => {
+  if (probe) return probe;
   const seen = await listTargets(port).catch(() => []);
   const app = seen.find((t) => onTheApp(t.url));
-  return app ? app.url : '(the app has no target yet)';
+  if (!app) return null;
+  const next = connect(app.webSocketDebuggerUrl);
+  await next.ready;
+  await next.send('Runtime.enable');
+  probe = next;
+  return probe;
 };
 
 // `/auth/callback` IS NOT A LANDING, IT IS THE EXCHANGE STILL RUNNING. The deep link returns the
@@ -600,46 +607,66 @@ const landing = async () => {
 // An atom ends on a FACT. The fact here is the one the app itself writes.
 const stillExchanging = (url) => url.includes('/auth/callback');
 
-// CAS -> auth.canari-emse.fr -> back to the app. Poll rather than guess a single delay.
-let arrived = null;
-for (let i = 0; i < 300; i++) {
+// THE POLL ENDS ON THE SESSION, NEVER ON THE CLOCK - this rig's own rule, pointed the right way at
+// last: termination from a PROOF, never from a timer. Until 2026-09-24 the loop ended on the URL
+// having left `/auth/callback`, and read the session ONCE, afterwards - so an exchange that was
+// merely slow and an exchange that was REFUSED produced the same output, and the throw at the foot
+// of this file accused the app of writing nothing when nobody had in fact waited for it. The end
+// condition is now the fact the caller actually needs: `canari_saved_user`, which
+// `handleOidcCallback` writes at the end of the exchange and BEFORE any PIN gate
+// (`frontend/src/lib/stores/auth.ts`), and which is the same key the idempotence check at the top of
+// this file reads. The bound that remains bounds the REPORT, not the verdict - reaching it says
+// which of the three states the flow was left in, and each of the three is a different fix.
+const APP_STATE = `JSON.stringify({ href: location.href, session: !!localStorage.getItem('canari_saved_user') })`;
+const WAIT_MS = 30000;
+const startedAt = Date.now();
+let session = false;
+let last = { href: '(the app has no target yet)' };
+while (Date.now() - startedAt < WAIT_MS) {
   await sleep(100);
-  const url = await landing();
-  if (onTheApp(url) && !stillExchanging(url)) {
-    arrived = url;
-    console.log(`[login:${account}] landed ${url} after ${((i + 1) / 10).toFixed(1)}s`);
+  const cxNow = await appProbe();
+  if (!cxNow) continue;
+  let seen;
+  try {
+    seen = JSON.parse(await evaluate(cxNow, APP_STATE));
+  } catch {
+    // The target went out from under the socket - the Android kill this helper exists for. Drop it,
+    // let the next turn re-resolve, and never report it as a login that failed.
+    probe = null;
+    continue;
+  }
+  last = seen;
+  if (seen.session) {
+    session = true;
+    const took = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`[login:${account}] session written after ${took}s, at ${seen.href}`);
     break;
   }
-  if (i === 299) console.log(`[login:${account}] STILL AT ${url}`);
-}
-if (!arrived) console.log(`[login:${account}] the code exchange never left /auth/callback`);
-
-// Read the app through a FRESH connection on the tab path, for the same reason - and on the tab path
-// `cx` may never have been opened at all, which is now the NORMAL phone case rather than an edge.
-let readCx = tabTarget ? null : await appCx();
-if (tabTarget) {
-  formCx.close();
-  const seen = await listTargets(port).catch(() => []);
-  const app = seen.find((t) => onTheApp(t.url));
-  if (!app) throw new Error(`the Custom Tab submitted but the app has no target on ${port}`);
-  readCx = connect(app.webSocketDebuggerUrl);
-  await readCx.ready;
-  await readCx.send('Runtime.enable');
 }
 
-// THE POST-CONDITION, ASSERTED RATHER THAN ASSUMED - and read through the target that exists NOW.
-// `canari_saved_user` is what the app writes at login and erases at logout, the same key the
-// idempotence check at the top of this file reads. Saying "logged in" without it is saying "a page
-// rendered".
-const session = await evaluate(readCx, `!!localStorage.getItem('canari_saved_user')`);
-console.log(`[login:${account}] session held: ${session}`);
-console.log(`[login:${account}] final ${await evaluate(readCx, 'location.href')}`);
-console.log(await evaluate(readCx, 'document.body.innerText.replace(/\\s+/g," ").slice(0,500)'));
-readCx.close();
+// WHAT FAILED, NAMED - "no session" has three causes and only one of them is the app refusing.
+const failure = session
+  ? null
+  : stillExchanging(last.href)
+    ? 'the exchange is STILL RUNNING - this is a SLOW exchange, not a refusal'
+    : onTheApp(last.href)
+      ? 'the app is back and wrote no session - the exchange finished and was REFUSED'
+      : 'the browser never came back to the app - the deep link or the IdP is where this died';
+console.log(`[login:${account}] session held: ${session}${failure ? ` - ${failure}` : ''}`);
+
+// The IdP tab has answered everything it is going to; the app is read through the connection the
+// poll just used, which is by construction the target that exists NOW.
+if (tabTarget) formCx.close();
+const readCx = probe;
+if (readCx) {
+  console.log(`[login:${account}] final ${await evaluate(readCx, 'location.href')}`);
+  console.log(await evaluate(readCx, 'document.body.innerText.replace(/\\s+/g," ").slice(0,500)'));
+  readCx.close();
+}
 if (cx && readCx !== cx) cx.close();
 
 // A NON-ZERO EXIT, because a caller reads the code and not the prose. This atom's whole purpose is
 // to leave the client holding a session, so not holding one is a failure however far the flow got.
 if (!session) {
-  throw new Error(`the flow completed but no session was written - the app is not logged in`);
+  throw new Error(`no session after ${WAIT_MS / 1000}s, last at ${last.href} - ${failure}`);
 }
