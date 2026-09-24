@@ -45,4 +45,19 @@ describe('cors-origins', () => {
     expect(isAllowedOrigin('tauri://localhost', bare)).toBe(true);
     expect(isAllowedOrigin('https://canari-emse.fr', bare)).toBe(false);
   });
+
+  it('accepts every origin in a comma-separated FRONTEND_URL', () => {
+    // The same idiom chat-gateway's ALLOW_ORIGIN already uses - both hosts claimed during the
+    // canari-emse.fr -> canari.emse.fr migration are one client, presenting either origin.
+    const both = buildAllowedOrigins('https://canari-emse.fr/, https://canari.emse.fr/');
+    expect(isAllowedOrigin('https://canari-emse.fr', both)).toBe(true);
+    expect(isAllowedOrigin('https://canari.emse.fr', both)).toBe(true);
+    expect(isAllowedOrigin('https://evil.example', both)).toBe(false);
+  });
+
+  it('drops blank segments from FRONTEND_URL, so a trailing comma is not an error', () => {
+    const trailing = buildAllowedOrigins('https://canari-emse.fr/,');
+    expect(isAllowedOrigin('https://canari-emse.fr', trailing)).toBe(true);
+    expect(trailing.has('')).toBe(false);
+  });
 });

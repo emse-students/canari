@@ -38,6 +38,11 @@ describe('publicAppUrl', () => {
     expect(isPublicAppUrl('https://example.com/posts/x')).toBe(false);
   });
 
+  it('also detects canari.emse.fr links, claimed additively for phase 2', () => {
+    expect(isPublicAppUrl('https://canari.emse.fr/forms/x')).toBe(true);
+    expect(inAppPathFromPublicUrl('https://canari.emse.fr/posts/abc')).toBe('/posts/abc');
+  });
+
   it('maps public URLs to in-app paths', () => {
     expect(inAppPathFromPublicUrl('https://canari-emse.fr/posts/abc?q=1')).toBe('/posts/abc?q=1');
     expect(inAppPathFromPublicUrl('https://canari-emse.fr/post/legacy')).toBe('/posts/legacy');

@@ -36,15 +36,23 @@ export const TAURI_WEBVIEW_ORIGINS = [
 ] as const;
 
 /**
- * Builds the exact-match origin allowlist: every Tauri WebView origin, plus the deployed frontend
- * when `FRONTEND_URL` names one.
+ * Builds the exact-match origin allowlist: every Tauri WebView origin, plus the deployed
+ * frontend(s) named in `FRONTEND_URL`.
  *
- * @param frontendUrl - Value of `FRONTEND_URL`; a trailing slash is stripped, empty is ignored.
+ * `FRONTEND_URL` is a comma-separated list, the same idiom `chat-gateway`'s `ALLOW_ORIGIN` already
+ * uses (`main.rs`, `parse_allowed_origins`) - kept in step deliberately, since both lists describe
+ * the same fact: which web origins are really this app. A single URL with no comma still works,
+ * so this is backward compatible with every existing deployment.
+ *
+ * @param frontendUrl - Value of `FRONTEND_URL`; each segment's trailing slash is stripped, blank
+ * segments (including an unset variable) are dropped.
  */
 export function buildAllowedOrigins(frontendUrl: string | undefined): Set<string> {
   const allowed = new Set<string>(TAURI_WEBVIEW_ORIGINS);
-  const frontend = (frontendUrl || '').replace(/\/+$/, '');
-  if (frontend) allowed.add(frontend);
+  for (const part of (frontendUrl ?? '').split(',')) {
+    const origin = part.trim().replace(/\/+$/, '');
+    if (origin) allowed.add(origin);
+  }
   return allowed;
 }
 
