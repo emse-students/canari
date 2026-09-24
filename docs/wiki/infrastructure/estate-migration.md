@@ -455,8 +455,54 @@ proxies to `127.0.0.1:3000` - which is Portail-etu's.
 | 10050 | Zabbix agent |
 | 44855 | containerd |
 
-Nothing else listens. `3001`, `3002` and `3003` are free for `canari-prod`, `cercle` and
-`authentik`, and the removal of five php-fpm sockets took five more consumers off the box.
+Nothing else listens, and the `30xx` guess above was one: `cercle` took **`5173`** on 2026-09-24,
+not `3002`, because `CERCLE_PUBLISH` already named it on the old VM and changing the publish address
+and the machine in the same gesture would have made a failure unattributable. **The rule is a
+distinct loopback port, not a consecutive one.**
+
+#### WHICH CONTAINER PUBLISHES WHAT - MEASURED ON THE FOUR MACHINES, 2026-09-24
+
+Built after the `cercle` cutover, because the loopback table above answers "what is taken" and not
+"what is asked for", and the difference decides whether an estate fits. Internal ports are shown
+only where a container publishes; an `EXPOSE`d port reached over the compose network is not a
+migration constraint and is left out.
+
+| Estate | Container | Publishes today | -> container | Target loopback |
+| --- | --- | --- | --- | --- |
+| Portail-etu | `portail-etu` | `127.0.0.1:3000` | `3000` | **already there** |
+| `cercle` | `cercle` | `0.0.0.0:5173` on the old VM | `3000` | **`5173`, LIVE since 2026-09-24** |
+| `canari` prod | `infrastructure-frontend-1` | `0.0.0.0:8080` | `80` | **NOT `8080` - see below** |
+| `canari` prod | `infrastructure-garage-1` | `127.0.0.1:19010`, `:19011` | `3900`, `3903` | free, but see the question below |
+| `canari` prod | `infrastructure-adminer-1` | `127.0.0.1:8888` | `8080` | **does not move** - admin surface, decision 4 |
+| `miconnect` | `miconnect-server-1` | `0.0.0.0:9000`, `:9443` | `9000`, `9443` | `9000` free; `9443` has no object - see below |
+| `canari` dev | `canari-dev-*` | `127.0.0.1:3080`, `:19100`, `:19101` | - | **does not move** - decision 4 |
+
+**THE CANARI PRODUCTION STACK ASKS FOR ONE PORT ON THE PUBLIC PATH.** Twelve containers run on
+`canari` and only THREE publish at all - the frontend, adminer and garage, each a row above. The
+other NINE publish nothing: `frontend-ssr`, `chat-gateway`, `call-service`, `chat-delivery-service`,
+`media-service`, `core-service`, `social-service`, `postgres` and `redis` are reached by service name
+over the compose network and cross no host boundary. So the public surface is `infrastructure-frontend-1`
+alone - the in-container nginx section 5 opens on - and the shape above needs no rewrite. **The other
+two publishers are not public and are not thereby free**: they are the admin-surface question decision
+4 already governs, answered for adminer and open for garage.
+
+**`8080` IS REFUSED, AND IT IS THE ONE PORT CANARI CURRENTLY USES.** It is held on the target by a
+host-owned agent this project does not administer, so the collision is not negotiable from our side:
+the frontend's publish address changes. It has to change anyway - `0.0.0.0:8080` breaks the house
+rule in the same line, and on the target a `0.0.0.0` bind is *also* the thing the firewall
+measurement said would be unreachable rather than exposed.
+
+**`9443` ON `miconnect` HAS NO OBJECT BEHIND A TLS-TERMINATING NGINX.** Authentik publishes both a
+plain and a TLS listener; the host's nginx terminates TLS with the DSI certificate and speaks plain
+HTTP to the loopback, exactly as it does for the other three. Carrying `9443` across would mean
+either a second certificate on the box or `proxy_ssl_verify off`, and both are refused elsewhere in
+this plan. **This is the same seam as [authentik](authentik.md)'s, and it is not yet decided.**
+
+**OPEN: does garage's published pair move, and who consumes it?** The two ports are loopback-bound on
+`canari` today, so nothing outside that machine reaches them - but "loopback-bound" says where they
+may be reached from, never who reaches them. Garage is production object storage and moves with
+production; `19011` is its admin port and would be an admin surface under decision 4. **Enumerate the
+consumers before choosing**, which is what the standing rule about auditing a seam requires.
 
 ### What the edge did that the origin must now do
 
