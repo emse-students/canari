@@ -67,6 +67,41 @@ defect. **The search highlight is still body-only** - `searchTerm` is not passed
 `MessageMediaRenderer` at all, so a hit inside a caption is not marked. That is a separate gap and
 nothing above closes it.
 
+### The @mention picker does not offer you yourself, and that follows from a fact (2026-09-24)
+
+Typing `@` used to list the signed-in reader among the suggestions. Picking yourself inserted a
+chip, put your own id in `mentionedUserIds`, and then **reached nothing at all** - which is the
+whole argument, because it makes the question a fact rather than a preference:
+
+| Consumer | What it does with a self-mention |
+| --- | --- |
+| `notifyChannelRecipients` (social-service) | skips `member.userId === input.senderId` BEFORE it looks at any notification level, so no channel notification can result |
+| a post comment's notify block | seeds `alreadyNotified` with `data.userId`, so the mention loop skips the author |
+| `mentionsMe` in `useMessaging.svelte.ts` | runs only on an INBOUND frame, and your own message is never one - MLS gives no echo of it |
+| a mentions inbox | **there is none** - no `hasMention`, no mention filter, nothing in this app that lists mentions of you |
+
+The last row is what closes the only argument for keeping it: some chat apps treat a self-mention as
+a way to bookmark your own message, and that needs a surface to find it again from. This app has
+none, so the control's only possible effect was on the text. **Offering a control that cannot do
+anything is how a reader learns by being ignored what a fact could have told them**, and two pickers
+here already excluded the reader for the same reason - `SidebarNewChatModal` and `ChatGroupPanel`.
+This was the last one that did not.
+
+**The exclusion lives in `useMentionAutocomplete`, not in its three callers.** `ChatComposer`,
+`PostComments` and `MarkdownComposerField` all reach the composable through
+`MentionComposerInput`, so threading a prop would have been three components carrying a fact that
+`currentUserId()` already publishes globally - and a fourth surface added later could forget it. The
+decision is made where the search results are filtered, from where the discriminator is already
+known.
+
+**The same change deleted a duplicate filter and pinned the trap under it.** The allowlist half was
+an inline `SvelteSet` comparison, reimplementing `filterUserSuggestions`, which the rest of the app
+uses and which is case-insensitive on BOTH sides for reasons its own doc comment gives. The two do
+not agree about one input: an EMPTY `allowedUserIds` means "no restriction" here and "offer nobody"
+there, and the array is legitimately empty while a channel's member list is still loading. So it is
+passed only when non-empty, and a test pins that reading rather than leaving it to the helper's
+default.
+
 ### The composer's own emoji picker, and what it shares with the reaction one
 
 `ComposerEmojiPicker.svelte` sits at the right end of `ChatComposer`'s text field, right before the
