@@ -992,6 +992,19 @@ user-visible effect, because Authentik's `name` claim happens to equal `firstNam
 436 production accounts. "It has never been wrong in the field" measures the population, not the
 code: the day one account differs, every surface disagrees at once and nothing is watching.
 
+**AND A PACKAGE BOUNDARY IS NOT WHAT MAKES THIS TRUE - TWO FILES IN ONE DIRECTORY DO IT JUST AS
+WELL.** The campaign's verdict vocabulary lived in `results.mjs`, which accepted whatever word a
+runner handed it, and in `rows.mjs`, which held a private map of the words it could read back off
+the board. A runner inventing a word therefore made the RECONCILER wrong about the board - the one
+report whose whole job is to be right about it. It happened twice, and the second time the warning
+was already written above the bug: a comment went in beside the first missing word explaining
+exactly why this must not recur, and the next word walked into the same hole under it. The fix was
+ownership - one frozen list both sides import, a refusal AT THE THROW for a word that is in neither,
+and a self-test asserting that neither side has quietly grown a private map again
+([harness README](../../tools/cross-client-harness/README.md), [testing-methodology](testing-methodology.md)).
+**A vocabulary owned by nobody drifts on the first edit, and the smell is a comment asking a future
+author to remember something.**
+
 ### A PROPORTION MEASURED IN ANOTHER BROWSER, ON ANOTHER ROUTE, WITHOUT THE SESSION IS A SHAPE - AND A SHAPE CAN INVERT
 
 A cold-start block was split three times in Chrome on this workstation, on `/login`, with no session

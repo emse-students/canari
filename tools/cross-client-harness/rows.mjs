@@ -43,6 +43,22 @@ import { PHASES } from './checks.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { findScript } from './scriptpath.mjs';
 import { STATE_DIR } from './names.mjs';
+/**
+ * The board's word -> the ledger's word, IMPORTED rather than written out, and that is the point.
+ *
+ * THIS MAP WAS A SECOND VOCABULARY AND IT DRIFTED TWICE. `results.mjs` accepted whatever word a
+ * runner handed it; this file held its own list of the words it recognised; nothing tied them
+ * together. `INCONCLUSIVE` was missing, so PIN-11 - the first row ever to record one - read
+ * `unstated` and was reported as work the board had not written down, which it had. A comment went
+ * in here saying exactly that must not recur. On 2026-09-06 `SETUP-FAILED`, which `heal-w2.mjs` had
+ * recorded since the day it was written, did the same thing to HEAL-W2, under that comment.
+ *
+ * A comment is not a mechanism, so the list moved to `verdicts.mjs`, which both sides now read: a
+ * new verdict is recognised by both or by neither, and `record()` refuses a word that is in neither
+ * at the throw. `pending` is still not a verdict and does not become one - it is the ABSENCE of a
+ * claim, which is why it maps to itself and is never compared against a recorded word.
+ */
+import { CLAIM } from './verdicts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The repository, for the one `git` question this file asks: is a build stamp still reachable. */
@@ -67,44 +83,6 @@ const sinceBuild = argv.includes('--build') ? argv[argv.indexOf('--build') + 1] 
  * board says what a HUMAN claims; a row with neither is the campaign's actual remaining work. The
  * interesting cell is the disagreement, and it now has a name - see `claimedOnly` and `contradicted`.
  */
-/**
- * The board's word -> the ledger's word. `pending` is not a verdict and does not become one: it is
- * the ABSENCE of a claim, which is why it maps to itself and is never compared against a verdict.
- */
-const CLAIM = {
-  passed: 'PASS',
-  PASS: 'PASS',
-  'PASS-DIRTY': 'PASS-DIRTY',
-  failed: 'FAIL',
-  FAIL: 'FAIL',
-  skipped: 'SKIPPED',
-  SKIPPED: 'SKIPPED',
-  partial: 'PARTIAL',
-  PARTIAL: 'PARTIAL',
-  VACUOUS: 'VACUOUS',
-  // A VERDICT THE RECORDER WRITES AND THIS READER COULD NOT READ. `results.mjs` names
-  // `INCONCLUSIVE` in the same breath as `PASS-DIRTY`, `VACUOUS` and `INVALID` - it is what a row
-  // records when its question could not be ASKED, which is a third answer and never spelt "fine".
-  // It was missing here, so PIN-11 - the first row to record one - read as `unstated` and was
-  // reported as work the board had not written down, which it had. A word the ledger can produce
-  // and the reconciler cannot recognise makes the reconciler wrong about the board, which is the
-  // one thing it exists to be right about.
-  INCONCLUSIVE: 'INCONCLUSIVE',
-  // AND IT HAPPENED AGAIN, EXACTLY AS DESCRIBED ABOVE (2026-09-06). `heal-w2.mjs` records
-  // `SETUP-FAILED` - its premise did not hold, so the app was never asked the question - and this
-  // map did not carry the word, so HEAL-W2 read `unstated` and was reported as a verdict the board
-  // had not written down. The board HAD written it down, in full, with both rig faults named. The
-  // comment above predicted this failure mode and did not prevent it, because a vocabulary shared
-  // between two files and enforced by neither drifts the moment a runner invents a word. That is
-  // the real gap, and it is filed in `backlog.md` - the fix is for the recorder to EXPORT the list
-  // and this file to import it, so a new verdict cannot be readable by one side alone.
-  'SETUP-FAILED': 'SETUP-FAILED',
-  INVALID: 'INVALID',
-  ERROR: 'ERROR',
-  UNOBSERVED: 'UNOBSERVED',
-  pending: 'pending',
-};
-
 const rows = [];
 const boardState = new Map();
 /** Board rows carrying more cells than the table has columns - see the note at the split below. */
