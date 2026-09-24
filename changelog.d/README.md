@@ -7,8 +7,11 @@ the entry it would have written under `## [Unreleased]`:
 ```md
 ### Fixed - what changed, in one line
 
-A sentence or two, and a LINK to the wiki page carrying the reasoning ([page](docs/wiki/page.md)).
+A sentence or two, and a LINK to the wiki page carrying the reasoning ([cicd](docs/wiki/cicd.md)).
 ```
+
+**Links are written from the repository ROOT**, as they will read once folded into
+`CHANGELOG.md` - `wiki-links.test.mjs` resolves everything in this directory from there.
 
 **Why a file and not a line.** Every entry used to be inserted directly below `## [Unreleased]`,
 so any two pull requests open at once edited the same line and conflicted, which blocks the

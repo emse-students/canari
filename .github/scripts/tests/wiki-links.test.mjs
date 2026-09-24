@@ -75,6 +75,16 @@ function anchorsOf(text) {
 }
 
 const files = collect(ROOT);
+
+/**
+ * The directory a file's links are relative to. A `changelog.d/` entry is written to be PASTED into
+ * the root `CHANGELOG.md` by the stable bump (`promote_changelog`), so its links are written from the
+ * root and must resolve from there - resolved from `changelog.d/` they all look dead, and written as
+ * `../docs/...` to satisfy this check they would all BE dead the moment they are folded in.
+ */
+function baseOf(file) {
+  return relative(ROOT, dirname(file)) === 'changelog.d' ? ROOT : dirname(file);
+}
 const anchors = new Map(files.map((f) => [normalize(f), anchorsOf(readFileSync(f, 'utf-8'))]));
 const broken = [];
 
@@ -87,7 +97,7 @@ for (const file of files) {
     if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(link)) continue;
     const [rel, fragment] = link.split('#');
     if (!rel) continue;
-    const target = normalize(resolve(dirname(file), rel));
+    const target = normalize(resolve(baseOf(file), rel));
     const inside = relative(ROOT, target);
     if (inside === '' || inside.startsWith('..')) {
       broken.push(`${where} -> ${link} (outside the repository - dead for every reader but you)`);
