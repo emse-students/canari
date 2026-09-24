@@ -2255,7 +2255,11 @@ export function logcatReport(lines, label = 'A1') {
     // The route line carries a `→` between the type and the group. It is matched as `\S+` rather
     // than spelt, so this file stays ASCII and the rule survives that arrow being normalised.
     ['fcm-channel-route', /^type=channel \S+ groupId=\S+ - background channel notification$/],
-    ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S+$/],
+    // `session` is `\S*` and not `\S+`: `senderSessionId` defaults to the empty string at the call
+    // site, so the old rule stopped matching in exactly the case worth catching. `missing=` is
+    // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
+    // its absence would go on matching a build that had quietly lost the discriminator.
+    ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
     ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a

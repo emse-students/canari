@@ -2221,6 +2221,26 @@ not the discriminator. On Android the blind banner is now distinguishable in log
 -> generic banner, frame HELD` against `no seed/ciphertext`, the frame that can never be retried -
 but nothing counts either. See [backlog](../backlog.md).
 
+**AND THE SECOND OF THOSE NAMES ITS OWN CAUSE SINCE 2026-09-24.** `no seed/ciphertext` is one `if`
+with four terms - `seedB64`, `ciphertext`, `nonce`, `messageIndex` - and the line named none of
+them, so two opposite problems printed one sentence: a seed that was never mirrored, which is a
+mirroring bound (the sender opened a Graine session while this device was away), and a ciphertext
+the server declined to inline, which is the 4 KB FCM budget. They want opposite fixes, so a report
+that cannot separate them is a report that sends the next reader back to the phone. The line now
+ends `missing=<terms>`, comma-joined in declaration order.
+
+**It is a SUFFIX, and that is the whole of the design.** Three things read this line - `watch.mjs`'s
+`fcm-channel-generic` rule, anchored at both ends; `notif18.mjs`, which locates the frame by the
+prefix; and `NOTIF-18` on the [board](../cross-client-testing.md), which asserts its ABSENCE - so
+anything woven into the middle would have unclassified it in the two runners and left the third
+reading a line nothing matched. The classifier rule was widened in the same commit, as its own
+comment requires (*every pattern is copied from its `Log.` call site*), and `missing=` is REQUIRED
+there rather than optional: a build that quietly lost the discriminator must stop matching, not go
+on passing. Widening it also closed a blind spot the rule had always had - `senderSessionId`
+defaults to the empty string, and `session=\S+` could not match the line that produced, which is
+precisely a frame whose session this device never knew. Both shapes are fixtures in
+`logcatclassify-selftest.mjs`, and reverting the rule drops both to `unexplained`.
+
 ## 15. A member added to a community entered no key group at all until they restarted - FIXED 2026-09-21
 
 Four moments register a channel against its community, and each owes the community's

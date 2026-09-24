@@ -48,7 +48,13 @@ const CASES = [
   // second push and redraws it. A run showing the first without the second has a banner that stayed
   // generic, and these two assertions are what keep that visible in a row that does not assert the
   // redraw itself.
-  [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session=q1JykLP1'), 'notable'],
+  // AND THE GENERIC HALF NAMES WHICH OF ITS FOUR TERMS WAS ABSENT SINCE 2026-09-24. The two rows
+  // below are the two causes that used to print the same sentence: a seed that was never mirrored,
+  // and a ciphertext the server declined to inline. Both must stay `notable` - naming the cause
+  // does not make a blind banner expected - and the second carries an EMPTY `session`, which the
+  // call site can emit and the rule refused to match until the same day.
+  [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session=q1JykLP1 missing=seed'), 'notable'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session= missing=ciphertext,nonce'), 'notable'],
   [line('I', 'CanariFCM', 'handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=6333a324 index=0'), 'notable'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
