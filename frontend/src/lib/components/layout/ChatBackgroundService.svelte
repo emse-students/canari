@@ -1098,6 +1098,25 @@
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
   function applyTabMessageEvent(event: import('$lib/mls-client/tabMessageSync').TabMessageEvent) {
+    // A COMPOSED MESSAGE IS HANDLED BEFORE THE ROLE IS EVEN READ, because it is the one event on
+    // this channel a FOLLOWER sends and the LEADER needs. Everything below it is the leader
+    // relaying what it alone receives, which a leader must not apply to itself.
+    if (event.type === 'own_message_composed') {
+      const target = globalConvs.conversations.get(event.conversationId);
+      if (!target) return;
+      // Deduplicated on the id, which is what makes this safe to accept from anywhere: the row is
+      // already in the shared IndexedDB outbox, so whichever copy arrives first is the same row.
+      if (target.messages.some((m) => m.id === event.message.id)) return;
+      globalConvs.conversations.set(event.conversationId, {
+        ...target,
+        messages: insertMessageOrdered(target.messages, event.message),
+        lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt),
+        // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
+        // has nothing to say about what this tab has read.
+      });
+      return;
+    }
+
     if (globalSession.isTabLeader) return;
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
