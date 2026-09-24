@@ -964,6 +964,22 @@ the moment the paragraph is drafted, never "cleaned up later". Two corollaries w
   damage and does not undo it. That asymmetry is the entire argument for rewriting at drafting time:
   there is no second chance, only a smaller first one.
 
+**AND ON 2026-09-24 IT CAME BACK FROM A SOURCE THIS RULE DID NOT NAME - not a production
+measurement, an ACCESS MAP.** [estate-migration](infrastructure/estate-migration.md) carried the
+login used on the DSI's shared host, a second account beside it, which of the two held the `docker`
+group, the key files on one workstation and the second factor that had been removed from them.
+**Leon asked why it was hardcoded, and that question is the only control that caught it**: CI's
+secret scan runs TruffleHog `--only-verified`, which authenticates a candidate credential against
+its provider before reporting it - a bare login is not a credential, so no scanner will ever report
+this class, and the same page had ALREADY been through one identity sweep in August. The damage is
+not "a name in a file": an account, plus the privilege it holds, plus the fact that one software key
+opens the whole estate unattended, is a map of somebody else's machine, drawn for them, in public.
+**So the source list is not "production data" - it is ANY sentence that would help a stranger reach
+something.** Access goes to the agent's local memory; the page keeps the CONSEQUENCE, which is what
+the work actually needs. And the sweep found the second defect the first one hid: the public copy
+still said the rights had not followed the account, which had been false since the day the DSI
+granted them - **a fact worth hiding is a fact nobody re-reads.**
+
 An opaque uuid is not an identity and may be written down - it is how a later session finds the same
 group again. A `name` column, a display name and a screenshot caption are identities and may not.
 

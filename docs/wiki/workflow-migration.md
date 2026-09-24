@@ -231,10 +231,12 @@ committed directly on `main` until WP-2 existed - the flow it creates cannot gov
       unexplainable local modification
 - [x] `bunx`: **not needed.** `bun 1.4.0` here comes from the official installer at `~/.bun/bin` and
       ships `bunx.exe`. LITHIUM's shim was a winget artefact
-- [x] `glab` 1.115.0 is **already on the PATH and already authenticated** to `gitlab.emse.fr` as
-      `jolan.boudin` through the keyring - the memory note claiming otherwise was LITHIUM's.
-      `D:\Documents\Programmation\gitlab-pat.txt` deleted. **Deleting the file did not revoke that
-      PAT**, so it is a third rotation owed
+- [x] `glab` 1.115.0 is **already on the PATH and already authenticated** to `gitlab.emse.fr`
+      through the OS keyring - the memory note claiming otherwise was LITHIUM's. A plaintext PAT
+      file sat beside it and was deleted; **deleting a file does not revoke a token**, so that
+      rotation is still owed. WHICH account, and WHERE the file was, are machine-local wiring and
+      live in the agent's memory - naming them in a PUBLIC repository is the defect Leon caught on
+      [estate-migration](infrastructure/estate-migration.md) on 2026-09-24
 - [x] **`CF_DNS_TOKEN` rotation - done by the user 2026-09-02**, who issued replacements after the
       original leaked into a transcript on 2026-09-01. The workstation could not have done it: the
       leaked token was `active` with no expiry, and `PUT /user/tokens/{id}/value` on itself answers
