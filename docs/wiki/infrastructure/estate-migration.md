@@ -1407,21 +1407,59 @@ first - the target itself is carrying 2 GB of build cache and 1.3 GB of reclaima
 is the stated goal; and dropping it instead would break release gate 2, which refuses a stable
 unless a pre-release served dev at that commit.
 
-**THE RUNNER DOES NOT MOVE - IT GOES AWAY** (user, 2026-09-24). The deploy job **builds nothing**:
-it checks out, logs in to GHCR, pulls `latest` and runs `docker compose up`. All of that is doable
-over SSH from a GitHub-hosted runner, so keeping a self-hosted runner would put 5.5 GB and the
-execution of arbitrary workflow code on a machine owned by the DSI and shared with other
-associations, to buy nothing. Four jobs carry `runs-on: self-hosted`: `serve-prod`, `serve-dev`,
-and `hosts` + `dev-refresh` in `scheduled.yml`. **`deploy-env.test.sh` derives assertions from that
-literal string**, so it is part of the change, not a follow-up.
+**THE RUNNER MOVES WITH THE ESTATES - THE DECISION TO DELETE IT RESTED ON A PREMISE MEASUREMENT
+REFUTED.** On 2026-09-24 this section said the runner goes away and the deploy converts to SSH from
+a GitHub-hosted runner. **A GitHub-hosted runner cannot reach the target at all.** Measured the same
+day, from three source addresses:
 
-#### THE ORDER MATTERS, AND IT IS NOT THE OBVIOUS ONE
+| From | Egress address | `193.49.175.67:22` |
+| --- | --- | --- |
+| This workstation (consumer ISP) | `90.x` | **times out** |
+| `mitv` | `193.49.174.63` | answers |
+| The `canari` box | `193.49.174.63` | answers |
 
-**Convert the deploy to SSH FIRST, still pointing at the CURRENT box.** Then the mechanism change
-is provable on its own - publish a pre-release, watch dev come up - with the machine held constant.
-Only then move the estates, at which point the only difference is an address. **Doing both at once
-produces a failure that cannot be attributed**: a deploy that breaks would be equally explained by
-the new transport and by the new host, and that is the position this repository has a rule about.
+**It is not a ban on one address, and that is the measurement that matters**: `443` connects from
+the SAME workstation address that `22` times out from. A CrowdSec decision bans an IP, not a port,
+and CrowdSec plus its firewall bouncer are both `active` on that host - so an IP ban would have
+taken `443` with it. The filter is per-port and UPSTREAM of the machine: `sshd` listens on
+`0.0.0.0:22`, `/etc/hosts.deny` is empty, and neither `nft` nor `ufw` is even installed. SSH into
+that host is a campus-network privilege, which is the entire reason the DSI runs a bastion.
+
+**So the transport was never the choice it looked like.** Section 2 of this page already said so -
+*"Portail-etu deploys from a self-hosted runner installed ON the target, so no deploy path ever
+needs SSH"* - and section 12's install table already reserved `/opt/actions-runner/runners/<repo>/`
+for `cercle`, `canari` and `miconnect`. The section you are reading contradicted both for half a
+day. **A plan that disagrees with its own earlier measurement is reporting that nobody re-read it.**
+
+**What the runner therefore becomes**, all of it measured on the target rather than assumed:
+
+| | |
+| --- | --- |
+| Shape already running there | an ORG-level runner `portail-etu`, group `portail-etu`, `visibility=selected` to `emse-students/refonte-portail-etu` alone, `allows_public_repositories=true` |
+| Install root | `/opt/actions-runner/runners/<name>/`, a layout already shaped for several |
+| Account | `gha-runner` - no password, no `sudo`, member of `docker`, home `0700` |
+| What that buys | `deploy-environment.sh` and `verify-secrets.sh` both resolve plain `docker` on their first branch, so no `sudo -n` path is exercised |
+| What it needs from the user | **nothing** - a registration token is mintable with the `admin:org` scope the release tooling already carries |
+
+Canari takes a SECOND runner under that same root, in its OWN org group restricted to
+`emse-students/canari`. **The group is the isolation, not the label**: both runners answer to the
+bare `self-hosted` that four jobs ask for, and `visibility=selected` is what keeps a Canari job off
+the Portail-etu runner and the reverse. `allows_public_repositories` must be `true` because this
+repository is public - the same posture already accepted on the same machine for the same reason,
+and the hazard it carries (a fork's pull request executing on the box) is governed by GitHub's
+approval requirement for outside contributors rather than by anything here.
+
+**Four jobs carry `runs-on: self-hosted`** - `serve-prod`, `serve-dev`, and `hosts` + `dev-refresh`
+in `scheduled.yml` - and **none of them changes**. `deploy-env.test.sh` derives assertions from that
+literal string and keeps deriving them. The machine underneath moves; the mechanism does not.
+
+#### THE ORDER, AND THE REASON IT IS SHORTER THAN IT WAS
+
+This section prescribed converting the deploy to SSH first, against the current box, so that a
+mechanism change could be proved with the machine held constant. **There is no mechanism change
+left to prove.** What moves is a host and a set of paths, so the sequencing rule that argued for two
+steps - never change transport and machine at once, because the resulting failure cannot be
+attributed - now argues for one: the only variable is the address.
 
 #### THE PUBLISH ADDRESSES, CHOSEN BY MEASUREMENT
 
@@ -1444,22 +1482,58 @@ That is the same finding the Cercle's compose file already carries a paragraph a
 
 #### THEN, IN ORDER, AND NONE OF IT VISIBLE TO A USER
 
-1. Convert the four jobs to SSH against the current box, and prove it with a pre-release.
-2. Write `/srv/canari/` and `/srv/canari-dev/` on the target: compose with `name: canari-prod` and
-   `name: canari-dev` DECLARED, the `.env`, the mount directories.
-3. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
-4. **Move the checkouts and the crontab too - decided 2026-09-24 by the user: "le serveur initial
-   n a pas vocation a perdurer pendant des annees apres la migration".** The deploy `git reset
-   --hard`s into `/home/canari/canari` and three cron lines run from it: the nightly backup, the
-   object backup, and a per-minute egress probe. **Every path that names the old box is part of
-   this step, not a follow-up** - including `MICONNECT_SSH_HOST`, which becomes a hop to the same
-   machine. A half-moved estate is the state that breaks on the first release nobody is watching.
-5. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
+1. **DONE 2026-09-24: Canari's runner is registered on the target, and deliberately STOPPED AND
+   DISABLED.** Org-level, name `canari`, group `canari`, `visibility=selected` to this repository
+   alone, `/opt/actions-runner/runners/canari`, unit `actions.runner.emse-students.canari.service`,
+   `User=gha-runner`, runner `2.337.0` - the version already installed beside it, digest checked
+   against the published one. It was started once to prove registration (`online`, `busy=false`, in
+   the right group) and then stopped. **`systemctl disable` is half the point**: both runners answer
+   to the bare `self-hosted` that four Canari jobs ask for, and both are visible to this repository,
+   so a release published before the estates move could land on the empty one. A stopped unit that
+   a reboot would restart is not a closed hazard, which is why the symlink is gone too.
+   **Re-enabling it is part of step 6, in the window, and it is the last thing done before the flip
+   rather than the first** - the old runner must stop in the same breath, or the same race reopens
+   from the other side.
+2. **Create the two CHECKOUTS on the target - they are not compose directories, and that is the
+   difference from the other two estates.** `/srv/le-cercle` and `/srv/miconnect` each hold a
+   `compose.yml` and nothing else; Canari's estates are clones of THIS repository that the deploy
+   `git reset --hard`s into, so what is written on the target is a git tree and the compose file
+   arrives with it. **The paths are LITERALS in the workflow env** - `DEPLOY_PATH:
+   /home/canari/canari` in `serve-prod.yml`, `DEV_DEPLOY_PATH: /home/canari/canari-dev` in
+   `serve-dev.yml` - so moving them is a commit in this repository, not a server-side gesture.
+   **And the two halves do NOT behave the same when the directory is missing**: `serve-dev.yml`
+   clones when it finds no `.git`, `serve-prod.yml` assumes the checkout is there. A move that
+   trusts both to self-heal leaves production's first deploy on the new host failing on a directory
+   that was never created, while dev comes up and makes the migration look successful.
+3. **Declare `name: canari-prod` and `name: canari-dev` in the two compose files, IN THE SAME COMMIT
+   as the path change, and never before it.** The project name is inferred today from the compose
+   file's own directory, which is why production's project is called `infrastructure`. Declaring it
+   renames the project, and a renamed project looks for volumes that do not exist - so a commit
+   landing this ahead of the move would, at the next ordinary production deploy on the CURRENT box,
+   bring the whole estate up EMPTY and healthy. That is the identical failure this migration already
+   met on Authentik, which is section A; the difference is that here it is predictable to the day.
+   At the move the volumes are restored from a dump anyway, so the new names cost nothing.
+4. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
+5. **Move the crontab and every remaining path that names the old box - decided 2026-09-24 by the
+   user: "le serveur initial n a pas vocation a perdurer pendant des annees apres la migration".**
+   The checkouts are step 2; what is left is everything ELSE that was written against
+   `/home/canari/canari`. Three cron lines run from it - the nightly backup, the object backup and
+   a per-minute egress probe - and `MICONNECT_SSH_HOST` becomes a hop to the same machine rather
+   than to another one. **This is part of the move, not a follow-up.** A half-moved estate is the
+   state that breaks on the first release nobody is watching, and it breaks in the one place with
+   no user watching either: a backup that still writes to a VM nobody looks at any more is
+   indistinguishable from a backup that works, until it is needed.
+6. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
 
 ### C. DECIDED 2026-09-24, AND THE ONE THING STILL OWED BY THE USER
 
-**Still owed, and nothing moves without it: send the DSI request.** It is written out in section 7,
-and every name costs a ticket, so a second request is a second wait.
+**Still owed: send the DSI request - and it blocks PHASE 2, not phase 1.** This line said "nothing
+moves without it" and two estates then moved without it on 2026-09-24, because phase 1 changes no
+public name and therefore needs no record. What the request buys is the `emse.fr` names, and the
+reason to send it EARLY is lead time rather than a dependency: every name costs a ticket, there is
+no delegated zone and no wildcard, so a second request is a second wait. It is written out in
+section 7, ready to copy. **One of its asks can be refused on its merits** - `canari.emse.fr` is
+live today on a different machine - which is the other reason not to discover the answer late.
 
 The other three were put to the user on 2026-09-24 and answered:
 
