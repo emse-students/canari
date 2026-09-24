@@ -215,11 +215,8 @@ only; never re-enumerate it here.
 ### CANARI - THE QUEUE, IN ORDER
 
 **A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
-on 2026-09-03 - restating the substance the linked pages carry, in violation of both this file's
-line cap and its own "not restated" rule, and TWO of the items had gone FALSE without anyone
-noticing. Order = priority. Detail lives where the link says. Defect stories are in `CHANGELOG.md`,
-rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
-[cross-client-testing](docs/wiki/cross-client-testing.md).
+on 2026-09-03, restating what the linked pages carry - and TWO items had gone FALSE unnoticed.
+Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
 
 1. **THE ESTATE MIGRATION IS THE NEXT CHANTIER, AND ITS PLAN IS THE ONLY COPY** - three VMs onto the
    Portail-etu host, then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
@@ -241,44 +238,47 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
    WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
    so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
-7. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
+7. **P1 - THE TUNNEL RUN TOKEN IS READ BY ANY LOCAL USER ON BOTH PROD BOXES** - `600` closes
+   `systemctl cat` and NOT `show -p ExecStart`, which answers from systemd's memory. `EnvironmentFile`
+   first, rotation WITH the user ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md)).
+8. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
    CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
-8. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+9. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
-9. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
+10. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
-10. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+11. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-11. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
+12. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
-12. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
+13. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
     path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
     **ONE OBSERVATION OWED** - he is on `0.18.14` ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
-13. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+14. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-14. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+15. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
     and audit in [backlog](docs/wiki/backlog.md).
-15. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+16. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
-16. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+17. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-17. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
+18. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-18. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
+19. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
-19. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
+20. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-20. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
+21. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-21. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
+22. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
     **THE BUNDLED EMOJI FONT IS DEAD ON WEBKIT, Safari included** - TWO causes left, and **no `@font-face` edit before the probe that separates them** ([backlog](docs/wiki/backlog.md), [emoji](docs/wiki/frontend/emoji.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
