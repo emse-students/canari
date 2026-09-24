@@ -262,6 +262,20 @@ icon size had applied. The CSS now bounds that icon unconditionally rather than 
 that used to size it, so the race is removed rather than hidden: a genuine, persisting alert still
 renders, at its correct size.
 
+**A page-level rule reused on an inner element stretches the element, not the page** - the
+`redirect_uri` error page reported 2026-09-25 as "not centered, huge empty space" had
+`min-height: 100vh` plus flex-centering applied to `.pf-c-login` (correct: it is the page wrapper)
+AND to `ak-flow-card`/`.pf-c-form__group` (wrong: they are the card's own content, so the SAME rule
+stretched the card itself to full viewport height, leaving its short content pinned near the top
+with empty space below it). Fixed by keeping the sizing/centering on `.pf-c-login` alone and giving
+the inner elements only the dark background they needed. Same date, a first-connection
+(enrollment/user-write) stage reported black text on this dark background: the light text-color
+rule was gated on `input[type='text'|'password'|'email']`, so a field with no `type` attribute or a
+`type` this list didn't name never got it even though it did inherit the dark background from
+`.pf-c-form-control`. Fixed by matching `input`/`textarea`/`select` by tag rather than by `type`,
+the same "stop scoping, cover the whole flow" fix already applied to the submit button above.
+**Not yet pasted into the live Brand** - it needs the same manual admin-UI step as any edit here.
+
 ## Database and backup
 
 The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.

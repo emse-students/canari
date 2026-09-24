@@ -39,8 +39,17 @@ html, body, .pf-c-login, .pf-c-login * {
         sans-serif !important;
 }
 
-/* --- Background: blobs behind a dark base --- */
-.pf-c-login, .pf-c-login ak-flow-card, .pf-c-login .pf-c-form__group {
+/* --- Background: blobs behind a dark base ---
+ * Only `.pf-c-login` (the page-level wrapper) gets sized to the viewport and
+ * flex-centered. `ak-flow-card` and `.pf-c-form__group` are INNER elements -
+ * a stage's actual content, or one field group within it - and used to carry
+ * the exact same `min-height: 100vh` + flex-centering as their ancestor.
+ * That stretched the card itself to full viewport height with its (usually
+ * short) content pinned to top/center, which is the huge empty gap reported
+ * below the error text on the "redirect_uri" page (2026-09-25). They only
+ * need the dark background so no light default ever shows through.
+ */
+.pf-c-login {
     background-image: none !important;
     background-color: var(--rootz-bg-dark) !important;
     position: relative;
@@ -57,6 +66,10 @@ html, body, .pf-c-login, .pf-c-login * {
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+}
+
+.pf-c-login ak-flow-card, .pf-c-login .pf-c-form__group {
+    background-color: var(--rootz-bg-dark) !important;
 }
 
 .pf-c-login::before, .pf-c-login::after {
@@ -151,7 +164,15 @@ html, body, .pf-c-login, .pf-c-login * {
     font-weight: 600;
 }
 
-.pf-c-form-control, input[type='text'], input[type='password'], input[type='email'] {
+/* Bare `input`/`textarea`/`select`, not `input[type='text'|'password'|'email']`:
+ * a first-connection stage (enrollment/user-write) reported black text on
+ * this dark background (2026-09-25) - a field with no `type` attribute, or a
+ * `type` this list didn't name (e.g. `tel`), inherited the dark background
+ * from `.pf-c-form-control` but never got the light text color, since that
+ * color rule was gated on the same three type values. Matching by tag
+ * instead of type covers every field regardless of its `type` attribute.
+ */
+.pf-c-form-control, input, textarea, select {
     background: rgba(255, 255, 255, 0.06) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
     border-radius: 10px !important;
@@ -160,11 +181,11 @@ html, body, .pf-c-login, .pf-c-login * {
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pf-c-form-control::placeholder, input::placeholder {
+.pf-c-form-control::placeholder, input::placeholder, textarea::placeholder {
     color: rgba(234, 246, 248, 0.4) !important;
 }
 
-.pf-c-form-control:focus, input:focus {
+.pf-c-form-control:focus, input:focus, textarea:focus, select:focus {
     border-color: var(--rootz-cyan) !important;
     box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.25) !important;
     outline: none !important;
