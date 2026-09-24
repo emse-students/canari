@@ -122,11 +122,14 @@ Everything above was inferred from the outside. A shell on the box says somethin
 changes what this chantier is.
 
 **It is not a Portail-etu server. It is the school's shared association-hosting box**, and it has
-been one for years: `gala.emse.fr`, `handimines.emse.fr` and `mep.emse.fr` are served beside
-Portail-etu from `/etc/nginx/sites-enabled/`, with MySQL, postfix, NFS mounts and **six concurrent
-php-fpm versions** (7.4 through 8.4) underneath, plus roughly a dozen human accounts. **We are
-moving in beside other associations, not onto an empty host**, which is a constraint on every
-decision below and was not priced into section 4.
+been one for years: several OTHER associations' sites are served beside Portail-etu from
+`/etc/nginx/sites-enabled/`, with MySQL, postfix, NFS mounts and **six concurrent php-fpm versions**
+(7.4 through 8.4) underneath, plus a number of human accounts. **We are moving in beside other
+associations, not onto an empty host**, which is a constraint on every decision below and was not
+priced into section 4. **Which sites, which accounts and which security tooling are DELIBERATELY not
+written here** - this repository is public, and none of that is ours to publish. It is in the
+operator's local notes, and the [durable rule](../durable-rules.md) that says so is the one this
+paragraph was corrected against.
 
 **Debian 13 (trixie)**, kernel 6.12, KVM guest. Docker 26.1.5 and containerd are running, and a
 **self-hosted GitHub Actions runner for `emse-students` is already installed** - the deploy shape
@@ -451,7 +454,7 @@ proxies to `127.0.0.1:3000` - which is Portail-etu's.
 | 80, 443 | host nginx |
 | 111 | `rpcbind` |
 | **3000** | **the Portail-etu container - what `canari.conf` currently points at** |
-| 6060, 7422, 8080 | CrowdSec |
+| 6060, 7422, 8080 | a host-owned agent this project does not administer |
 | 10050 | Zabbix agent |
 | 44855 | containerd |
 
@@ -890,7 +893,7 @@ allowlist of what it may touch, not a pattern that looks like debris. And a name
 pointed at ABSOLUTE paths under the old home, so the move alone would have broken them.** The
 deletion changed a silent breakage into a loud one.
 
-### `cercle` IS READY, AND WHAT IS LEFT IS FOUR GESTURES - 2026-09-24
+### `cercle` HAS MOVED - 2026-09-24, AND IT IS THE SHAPE THE OTHER TWO FOLLOW
 
 **STEP 3 IS NOT DONE, AND THIS PAGE SAID IT WAS** - measured 2026-09-24 on the host: `/srv/le-cercle`
 exists and is **EMPTY**, and the only container running there is Portail-etu's. What is done is step
@@ -981,10 +984,59 @@ moment it is taken.
 being able to serve: its container is left running and its data is left in place. That is the whole
 reason the two host-specific values are variables rather than lines in a commit.
 
-**Two files were NOT removed from the production volume**: `pre-formation-rename.db` and
-`pre-reclass.db`, 52 MB each, hand-made snapshots from 2026-08-28 sitting inside the live data
-volume. They are archived on the user's workstation and deleting them from production is the user's
-call. They do not travel - the move copies the live database only.
+**The two hand-made snapshots inside the live data volume are GONE** - `pre-formation-rename.db` and
+`pre-reclass.db`, 52 MB each, from 2026-08-28. The user's call, taken 2026-09-24: the renames they
+precede have been live for a month, and they were archived on the workstation first. They never
+travelled; the move copies the live database only.
+
+#### IT IS DONE - THE NAME HAS SERVED FROM THE TARGET SINCE 2026-09-24
+
+Pipeline `#22369` built and deployed on the new host, four jobs green, and the public name was moved
+the same morning. **The chain, end to end:** the Cloudflare tunnel reaches `10.0.0.6:5173` exactly as
+it always did; there an nginx relay on the OLD VM proxies to `193.49.175.122:443` with SNI
+`canari.emse.fr` and `Host: cercle.canari-emse.fr`; the target selects its `cercle` vhost by that
+`Host` and proxies to `127.0.0.1:5173`.
+
+**GESTURE 1 ABOVE WAS NOT TAKEN AND CANNOT BE** - a tunnel cannot leave the target host, which is
+what the port 7844 measurement settled. The relay replaces it, and the list above is kept as the
+SHAPE the two remaining estates follow, with that one substitution.
+
+**What makes the verification a measurement rather than a green light**: `200` from outside in
+0.13-0.19 s against 0.16 s before, so the extra hop costs nothing readable - and the TARGET's own
+access log names `10.0.0.6` as the client of those requests. A `200` says something answered; the
+far-end log is what says the new machine answered. The old container is `Exited (0)` under
+`unless-stopped`, a policy that deliberately honours a manual stop across a daemon restart, so it
+cannot come back and contend for `5173`.
+
+#### THE READ-ONLY WINDOW WAS NOT NEEDED, AND WHAT PROVED IT WAS NOT THE CLOCK
+
+The database had not been written for nine and a half hours, which is a reason to LOOK and never a
+proof. The proof is a per-table content fingerprint taken on both sides with the same image: rows
+serialized, SORTED, then hashed, so the comparison survives the storage reordering a `VACUUM`
+performs and answers about CONTENT. **17 tables, every fingerprint equal**, `ledger` at 234 366 rows
+included. Row counts alone would not have settled it - a count answers "how many", never "which",
+and an `UPDATE` moves neither.
+
+The same run refuted a hypothesis worth keeping refuted: `VACUUM INTO` was expected to drop the new
+file back to the default journal mode, and **both sides read `wal`**.
+
+#### THE DIRECTORY, NOT THE FILE - A DATABASE THAT READ PERFECTLY AND COULD NOT BE WRITTEN
+
+The copied database was `1000:1000` mode `664`, so the container's `bun` user could write the FILE.
+The directory holding it was `0:0` mode `755`, so that user could create NOTHING beside it - and
+SQLite in WAL mode must create `le_cercle.db-wal` and `le_cercle.db-shm` there. Neither file existed
+on the target, and a probe running as uid 1000 was refused. The old side is `1000:1000` mode `775`;
+restoring that parity made the probe pass, and the two files appeared within the minute.
+
+**AND `/api/health` ANSWERED `{"status":"ok","schema":2}` THE WHOLE TIME.** It reads. *A column is
+only evidence for the question it was written to answer* ([durable-rules](../durable-rules.md)), and
+a health check that only reads is evidence of nothing about writing: it reported a healthy service
+that would have failed the first sign-in. **A write probe belongs in that endpoint** - `BEGIN
+IMMEDIATE` then `ROLLBACK` takes the write lock and changes no row, which is exactly how the repair
+above was proved.
+
+**A copy carries a file's mode and not its directory's**, which is why this class survives every
+checksum anyone thinks to run.
 
 ### `miconnect` - WHAT THE MOVE MUST CARRY, AND THE RUNBOOK STEP THAT IS EMPTY HERE - 2026-09-24
 
@@ -1175,9 +1227,9 @@ Pointers only. The substance is in
 | Does Canari's data land on local `/` (45 G, **32 free** since the 2026-09-24 cleanup) or on the NetApp `/export` (24 G, 15 free)? | user with the DSI | they differ in size, free space and recovery; section 5 cannot be written without it. The local disk grew by 5 G, so the question is now about recovery and snapshots rather than about room |
 | What kills a bulk `rm` here, and will it kill a volume restore during the cutover? | DSI, one question | a cutover that dies half-way with no diagnostic is the worst failure mode in this plan |
 | 4 vCPU and 11 G for everything, or does the VM grow? | user, then DSI | it decides whether all three estates move, or only some |
-| ~~What are the file NAMES inside `/etc/certs/<name>/`?~~ | **ANSWERED 2026-09-24, by that one command** | `cert.pem`, `chain.pem`, `fullchain.pem`, `privkey.pem` - the Let's Encrypt layout - with the key `0600 root:root`, which nginx's root master reads. **`/etc/certs/canari.emse.fr/` ALREADY EXISTS and is complete**: the DSI issued that certificate before any request was made. `handimines.emse.fr` also still has one, for a vhost this cleanup retired |
+| ~~What are the file NAMES inside `/etc/certs/<name>/`?~~ | **ANSWERED 2026-09-24, by that one command** | `cert.pem`, `chain.pem`, `fullchain.pem`, `privkey.pem` - the Let's Encrypt layout - with the key `0600 root:root`, which nginx's root master reads. **`/etc/certs/canari.emse.fr/` ALREADY EXISTS and is complete**: the DSI issued that certificate before any request was made. another association's retired vhost also still has one |
 | ~~Is `193.49.175.122` the same machine as `193.49.175.67`?~~ | **ANSWERED 2026-09-24: yes, measured** | `ens18` carries `.67`, `.40` and `.122`. Section 2 |
-| ~~What of the shared box's legacy is ours to clean?~~ | **ANSWERED 2026-09-24 by the user, and DONE** | The nine php-fpm versions, apache2, phpMyAdmin and MySQL are gone; the databases are archived rather than destroyed. What was NOT touched is named above: `wazuh-agent` stays at 4.14.7 because an agent newer than the DSI's manager on `193.49.175.93` is unsupported, `isc-dhcp-client` stays because this machine is reached only over SSH, and the other associations' web roots under `/export/www` are untouched |
+| ~~What of the shared box's legacy is ours to clean?~~ | **ANSWERED 2026-09-24 by the user, and DONE** | The nine php-fpm versions, apache2, phpMyAdmin and MySQL are gone; the databases are archived rather than destroyed. What was NOT touched is named above: the host's DSI-managed security agent stays at the version it had, because an agent newer than the DSI's central manager is unsupported - the product, its version and the manager's address are in the operator's local notes and not here, `isc-dhcp-client` stays because this machine is reached only over SSH, and the other associations' web roots under `/export/www` are untouched |
 | Production's Postgres volume size | one command on `canari` | the read-only window is quoted from it |
 | Does Portail-etu become a compose project with a declared `name:` and ceilings like the others? | user | it is the only estate that would not, and the standing mandate is homogeneity everywhere |
 | What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |
