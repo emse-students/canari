@@ -241,8 +241,23 @@ otherwise have inherited.
 | the sury repository | **removing PHP is not removing its archive.** `packages.sury.org` stayed declared, stayed in `unattended-upgrades`, and still owned three installed packages - among them `libpcre3`, a PCRE 1 whose upstream ended in 2021 and which nothing depended on. Repository, keyring, origin line and the three packages are gone |
 
 `/` went from 16 G used to **12 G, leaving 32 G free where the capacity table measured 27**, and
-`/etc` is under version control again: etckeeper had not committed since 2019-07-31 and 1882
-pending changes were carried into one commit that dates this cleanup.
+`/etc` is under version control again - 1882 pending changes carried into one commit that dates
+this cleanup, and a second commit for the batches that followed.
+
+**THAT REPOSITORY IS NOT ETCKEEPER, AND SAYING IT WAS NAMED A MECHANISM THAT NEVER EXISTED.** The
+first version of this paragraph read "etckeeper had not committed since 2019-07-31". There is no
+`etckeeper` package on the box and no `/etc/etckeeper/` at all: `/etc/.git` is a repository the
+DSI's own staff drove BY HAND, fifteen commits, each subject prefixed with the initials of whoever
+typed it, the last on 2019-07-31. So the two new commits follow that convention rather than
+introducing a daemon onto someone else's machine - **and the standing rule about a stale claim
+cuts both ways: it must name the mechanism that would honour it AND show that mechanism gone, not
+invent one from the shape of the evidence.** Installing `etckeeper` would be an improvement and it
+is the DSI's call, not ours.
+
+**The runner's token is excluded from it** (`/etc/.git/info/exclude`). The repository already
+tracks `/etc/shadow` and `/etc/.git` is `0700 root:root`, so this is not about who can read it: a
+CI credential is revoked and replaced on a schedule that has nothing to do with configuration, and
+it does not belong in a history of configuration.
 
 **Every check after each batch was on the STATE, never on the exit status** - the `rm` that
 SIGKILLs is on this same machine. Twelve services and four vhosts were re-verified after each step;
@@ -530,6 +545,53 @@ allowlist of what it may touch, not a pattern that looks like debris. And a name
 `ls -l` before `rm -rf` would have shown the arrow. There is a sharpening, though - **the symlinks
 pointed at ABSOLUTE paths under the old home, so the move alone would have broken them.** The
 deletion changed a silent breakage into a loud one.
+
+### `cercle` IS READY, AND WHAT IS LEFT IS FOUR GESTURES - 2026-09-24
+
+Steps 1 to 3 of the runbook are done for the first estate. **Nothing serves from the new host and
+the old VM has not been touched**: production answered `200` throughout and was re-deployed once,
+deliberately, to prove the change below is inert.
+
+| Ready | What was done |
+| --- | --- |
+| The runner | `cercle-portail`, shell, `run_untagged = false`, locked to the project, **registered PAUSED** so no job can land on it by accident |
+| Its version | `gitlab-runner` **19.3.2, the exact version of `gitlab.emse.fr`**. The repository offered 19.4.0; a runner ahead of its server is outside what GitLab supports, and `packages.gitlab.com` is deliberately absent from that host's `unattended-upgrades` origins so nothing raises it on a clock |
+| `/srv/le-cercle` | pre-created, owned by `gitlab-runner`. **The deploy job's `mkdir -p` runs as that account and `/srv` belongs to root**, so the first deploy would have died there |
+| The two variables | `CERCLE_RUNNER_TAG` and `CERCLE_PUBLISH`, carrying today's values, already through one production deploy |
+| The data | restored into `le-cercle_cercle-data` on the target, owned by uid 1000 as the image expects |
+
+**The data rehearsal is a DIFF, not a copy.** `VACUUM INTO` while the application was serving (a
+`cp` of a live SQLite file is how a backup ends up subtly corrupt), 106 MB, moved through the
+workstation because the two boxes cannot reach each other. Both sides were then inventoried by the
+same script: **17 tables, 455722 rows, `user_version = 2`, `integrity_check = ok`** - identical, and
+the md5 of the transferred archive matched at both ends. The count that matters is the per-table
+one, because a total can agree while two tables have swapped.
+
+#### The cutover, and its rollback, are the same four gestures
+
+The delta re-sync is what makes this a rehearsal rather than the move: the copy above ages from the
+moment it is taken.
+
+1. **The tunnel** - a Cloudflare tunnel on the target host with ingress `cercle.canari-emse.fr` ->
+   `http://127.0.0.1:5173`. **This is the user's dashboard gesture and the only blocking one.**
+2. **The read-only window** - stop the old container, re-run `VACUUM INTO`, move the file, restore
+   it into the target volume, diff it again. Nothing about the size suggests this takes minutes.
+3. **The flip** - pause `cercle-prod`, un-pause `cercle-portail`, set `CERCLE_RUNNER_TAG` to
+   `cercle-portail` and `CERCLE_PUBLISH` to `127.0.0.1:5173`, re-run the pipeline on `main`. It
+   builds on the new host, writes the `.env` there from the same CI/CD variables, migrates and
+   starts.
+4. **The verification** - `/api/health` must answer `{"status":"ok","schema":2}` from the new
+   container AND through the public name, and a real sign-in must work. `ORIGIN` does not change in
+   phase 1, and the `sessions` table travels with the database, so nobody is signed out.
+
+**The rollback is gestures 3 and 1 reversed**, and it costs nothing because the old VM never stopped
+being able to serve: its container is left running and its data is left in place. That is the whole
+reason the two host-specific values are variables rather than lines in a commit.
+
+**Two files were NOT removed from the production volume**: `pre-formation-rename.db` and
+`pre-reclass.db`, 52 MB each, hand-made snapshots from 2026-08-28 sitting inside the live data
+volume. They are archived on the user's workstation and deleting them from production is the user's
+call. They do not travel - the move copies the live database only.
 
 ## 7. Phase 2 - the names
 

@@ -132,6 +132,16 @@ mesurable faute d'un avatar sur un compte de test.
 [device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
 [backlog](docs/wiki/backlog.md).
 
+### Changed - le Cercle est pret a demenager, et il ne reste que quatre gestes
+
+Les etapes 1 a 3 du runbook sont faites pour le premier estate : runner enregistre EN PAUSE sur la
+machine cible, `/srv/le-cercle` cree avant que le deploiement ne s'y casse les dents, et la base
+restauree puis comparee table par table - 17 tables, 455722 lignes, `user_version = 2`, integrite
+ok des deux cotes. Rien ne sert depuis la nouvelle machine et l'ancienne n'a pas bouge. Ce qui
+differe entre les deux boites tient dans deux variables CI, donc le basculement et son retour
+arriere sont le meme geste.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Changed - le runner quitte un compte personnel, et cloudflared attend son tunnel
 
 Le runner qui deploie Portail-etu tournait sous le login d'une personne, sur une machine partagee :
