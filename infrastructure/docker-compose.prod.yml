@@ -420,7 +420,11 @@ services:
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3014/api/channels/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      # `/api/health` since 2026-09-24, like the other three services. It probed
+      # `/api/channels/health` - a route that belongs to ChannelsController and answers about the
+      # channel service specifically - because social-service had no root health route at all. The
+      # route ships in the same commit as this line, so the image and this file move together.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3014/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
