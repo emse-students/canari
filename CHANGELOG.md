@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la porte interne ne demenage pas, donc le port refuse ne sert plus a rien
+
+Decision de l'utilisateur : dev et les interfaces d'admin restent sur l'ancienne VM, dont le tunnel
+marche deja ; la nouvelle machine ne porte que la production. Le blocage du 7844 cesse d'etre un
+sujet, le connecteur installe la-bas a ete SUPPRIME le jour meme - unite, `EnvironmentFile`, binaire,
+source apt et trousseau - et la demande DSI perd deux points sur six. Cout accepte et consigne : dev
+ne tourne plus sur la meme machine que la prod.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Fixed - le nom pointe deja sur l'hote cible, et la moitie des questions posees n'existait pas
 
 "ne sera pas reaffecte" a ete lu comme "on ne nous donnera pas ce nom" au lieu de "ce nom ne bougera
