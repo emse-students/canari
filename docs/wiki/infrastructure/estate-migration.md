@@ -569,8 +569,13 @@ local accounts.
 | TCP **443** to that same edge address | **open** |
 | TCP **7844** to that same edge address | **blocked** |
 | the host's own egress policy | `-P OUTPUT ACCEPT`, and no direct firewalld rule |
+| **the same two probes from `canari`, whose tunnel runs** | 443 open and **7844 OPEN** - same command, same edge address |
+| TCP 7844 to a SECOND edge address | **blocked**, so it is not one edge host having a bad day |
 
-**The block is UPSTREAM of the machine, on 7844, in BOTH transports.** `http2` is not a way round
+**The A/B is the whole argument, and it is one command**: production's box reaches 7844 and the
+target's does not. Nothing is wrong with cloudflared, the token or the tunnel - the new machine
+simply sits behind a network that does not let 7844 out. **The block is UPSTREAM of the machine, on
+7844, in BOTH transports.** `http2` is not a way round
 it - that mode still dials 7844 and merely swaps UDP for TCP. Cloudflare Tunnel has no port-443
 mode, so this is a firewall change or it is nothing, and it joins the certificate question in the
 same request to the DSI. **It also reframes the choice**: phase 2 removes Cloudflare from every
