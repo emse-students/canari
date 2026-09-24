@@ -1,12 +1,21 @@
 # Stack Authentik (fournisseur OIDC de Canari), projet Docker Compose "miconnect".
 #
-# Source de verite versionnee. La CD copie ce fichier vers
-# /home/canari/miconnect/compose.yml et l execute depuis ce dossier (le nom de
-# projet "miconnect" et les conteneurs miconnect-* sont ainsi preserves), apres
-# avoir genere le .env depuis les secrets GitHub.
+# Source de verite versionnee, et REFERENCE DE RECONSTRUCTION : aucun pipeline ne
+# deploie cette stack. Elle tourne dans /srv/miconnect/ sur l hote mutualise depuis
+# le 2026-09-24, et son .env est ecrit a la main a cote de ce fichier. Le README
+# de ce dossier porte l histoire et la procedure de reconstruction.
 #
-# Les montages relatifs (./data, ./certs, ./custom-templates) sont resolus dans
-# /home/canari/miconnect. Le volume nomme "database" porte la base PostgreSQL.
+# Les montages relatifs (./data, ./certs, ./custom-templates) sont resolus depuis
+# le dossier d ou la commande est lancee. Le volume nomme "database" porte la base.
+
+# LE NOM DU PROJET EST DECLARE ET JAMAIS DEDUIT, parce qu il nomme le volume.
+# Sans cette ligne, le projet prend le nom du DOSSIER : un dossier nomme autrement
+# demarrerait sur une base VIDE au lieu d echouer, et cette stack est le seul
+# endroit ou la configuration OIDC existe. C est la perte silencieuse que cette
+# ligne rend impossible - elle manquait jusqu au 2026-09-24, ou le nom n a tenu
+# que parce que les deux dossiers successifs s appelaient "miconnect" par chance.
+name: miconnect
+
 services:
   postgresql:
     image: docker.io/library/postgres:16-alpine

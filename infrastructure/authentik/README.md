@@ -114,8 +114,11 @@ cible - ce qui est la seule preuve qu ils l ont ete.
 
 1. Copier ce `compose.yml` et ecrire le `.env` (les deux secrets ci-dessus,
    `AUTHENTIK_VERSION`).
-2. `docker compose up -d` depuis un dossier nomme `miconnect` - **le nom du
-   projet determine le nom du volume**, donc un dossier nomme autrement
-   demarrerait sur une base VIDE au lieu d echouer.
+2. `docker compose up -d`, depuis n importe quel dossier - **`name: miconnect` est
+   DECLARE dans le `compose.yml` depuis le 2026-09-24**, donc le volume s appelle
+   `miconnect_database` quel que soit le chemin. Cette ligne manquait : le nom
+   etait deduit du DOSSIER, et un dossier nomme autrement aurait demarre sur une
+   base VIDE au lieu d echouer. Il n a tenu pendant le demenagement que parce que
+   les deux chemins successifs finissaient par `miconnect`, par chance.
 3. Restaurer : `./infrastructure/backup/restore.sh --latest-from-mitv --yes`,
    qui s arrete et donne la commande a jouer sur la boite Authentik.
