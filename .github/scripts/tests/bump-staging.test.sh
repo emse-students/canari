@@ -87,23 +87,29 @@ PREV="$(grep -m1 '"version"' "$WT/frontend/package.json" | sed 's/.*"version"[^"
 cp "$SCRIPT" "$WT/scripts/bump-app-version.sh"
 
 # A CHANGELOG OF THIS SUITE'S OWN MAKING, and not the repository's. The promotion's behaviour
-# depends on whether `[Unreleased]` has a BODY, and the repository's answer to that changes with
-# every release: v0.15.0 promoted its section and left `[Unreleased]` empty, at which point three
+# depends on whether `changelog.d/` holds entries, and the repository's answer to that changes with
+# every release: v0.15.0 promoted its section and left nothing behind, at which point three
 # assertions below started failing against a mechanism that was behaving exactly as designed. A
 # fixture makes both arms testable and neither dependent on when the suite happens to run.
+FRAGMENTS="$WT/changelog.d"
+clear_fragments() {
+  find "$FRAGMENTS" -maxdepth 1 -name '*.md' ! -name README.md -delete
+}
+clear_fragments
 cat > "$WT/CHANGELOG.md" <<'FIXTURE'
 # Changelog
 
 ## [Unreleased]
 
-### Fixed
-
-- a line that must survive the promotion and end up under the new version heading
-- a second one, so "the prose moved" is a count and not a coincidence
-
 ## [0.14.0] - 2026-08-17
 
 - an older section the promotion must not touch
+FIXTURE
+cat > "$FRAGMENTS/fixture-a.md" <<'FIXTURE'
+### Fixed - a line that must survive the promotion and end up under the new version heading
+FIXTURE
+cat > "$FRAGMENTS/fixture-b.md" <<'FIXTURE'
+### Fixed - a second one, so "the prose moved" is a count and not a coincidence
 FIXTURE
 
 # NOT piped anywhere: this suite exists partly because a pipe killed this script once.
@@ -219,9 +225,23 @@ PROMOTED="$(awk -v ver="$TARGET" '
 ' "$WT/CHANGELOG.md")"
 SEEDED="$(printf '%s\n' "$PROMOTED" | grep -c 'must survive the promotion\|so "the prose moved" is a count')"
 if [ "$SEEDED" -eq 2 ]; then
-  pass "both seeded entries moved under [$TARGET] with the heading"
+  pass "both changelog.d/ entries were folded under [$TARGET]"
 else
-  fail "$SEEDED of 2 seeded entries are under [$TARGET] - the prose did not move with the heading"
+  fail "$SEEDED of 2 changelog.d/ entries are under [$TARGET] - the fragments were not folded in"
+fi
+
+# Folded AND deleted, in the same commit: a fragment left behind would be folded in AGAIN by the
+# next stable, under a version that did not ship it.
+if [ ! -e "$FRAGMENTS/fixture-a.md" ] && [ ! -e "$FRAGMENTS/fixture-b.md" ]; then
+  pass "the folded fragments are deleted, so the next stable cannot fold them twice"
+else
+  fail "a folded fragment is still in changelog.d/ - the next stable would publish it again"
+fi
+
+if [ -f "$FRAGMENTS/README.md" ] && ! grep -qF 'one file per unreleased change' <<< "$PROMOTED"; then
+  pass "changelog.d/README.md is neither folded in nor deleted"
+else
+  fail "changelog.d/README.md was folded into the notes or deleted"
 fi
 
 if grep -qF '## [0.14.0] - 2026-08-17' "$WT/CHANGELOG.md"; then
@@ -244,18 +264,16 @@ printf '\nand the two arms that must NOT rewrite it\n'
 # =================================================================================================
 # A PRE-RELEASE MUST NOT TOUCH IT AT ALL. Promoting on `-alpha.1` would close the section and leave
 # the stable that follows days later publishing an empty one - the drift being fixed, inverted.
-write_fixture() {
-  cat > "$WT/CHANGELOG.md" <<'FIX'
+cat > "$WT/CHANGELOG.md" <<'FIX'
 # Changelog
 
 ## [Unreleased]
 
-- something worth releasing
-
 ## [0.14.0] - 2026-08-17
 FIX
-}
-write_fixture
+cat > "$FRAGMENTS/fixture-alpha.md" <<'FIX'
+### Fixed - something worth releasing
+FIX
 BEFORE="$(cat "$WT/CHANGELOG.md")"
 ( cd "$WT" && bash scripts/bump-app-version.sh "${TARGET}-alpha.7" ) >> "$WT/.bump.log" 2>&1
 if [ "$BEFORE" = "$(cat "$WT/CHANGELOG.md")" ]; then
@@ -263,9 +281,15 @@ if [ "$BEFORE" = "$(cat "$WT/CHANGELOG.md")" ]; then
 else
   fail "a pre-release rewrote CHANGELOG.md - its notes belong to the stable that follows"
 fi
+if [ -f "$FRAGMENTS/fixture-alpha.md" ]; then
+  pass "and it leaves the changelog.d/ entry for the stable to fold"
+else
+  fail "a pre-release deleted a changelog.d/ entry - the stable would publish without it"
+fi
+clear_fragments
 
-# AND AN EMPTY SECTION IS REFUSED, WITH A WARNING THAT REACHES THE RUN. This arm is reached in the
-# ordinary course of things - every release leaves `[Unreleased]` empty behind it - and promoting it
+# AND AN EMPTY RELEASE IS REFUSED, WITH A WARNING THAT REACHES THE RUN. This arm is reached in the
+# ordinary course of things - every release leaves `changelog.d/` empty behind it - and promoting it
 # would claim a release documented nothing. It must not FAIL the release either, so the check is
 # that the file is untouched AND that a GitHub annotation was emitted.
 cat > "$WT/CHANGELOG.md" <<'FIX'
@@ -279,9 +303,9 @@ BEFORE="$(cat "$WT/CHANGELOG.md")"
 EMPTY_OUT="$(cd "$WT" && GITHUB_ACTIONS=true bash scripts/bump-app-version.sh "$TARGET" 2>&1)"
 EMPTY_RC=$?
 if [ "$BEFORE" = "$(cat "$WT/CHANGELOG.md")" ]; then
-  pass "an empty [Unreleased] is not promoted to a version heading"
+  pass "no changelog.d/ entry: [Unreleased] is not promoted to a version heading"
 else
-  fail "an empty [Unreleased] was promoted - the release would claim it documented nothing"
+  fail "a release with no changelog.d/ entry was promoted - it would claim it documented nothing"
 fi
 if [ "$EMPTY_RC" -eq 0 ]; then
   pass "and it does not fail the release, which is what ships the fix"

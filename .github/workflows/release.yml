@@ -222,7 +222,8 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # WRITE THE VERSION EVERYWHERE, IN ONE COMMIT
   #
-  # 18 files: 17 manifests and `CHANGELOG.md`. `.github/scripts/tests/bump-staging.test.sh` asserts
+  # 18 files: 17 manifests and `CHANGELOG.md`, plus the `changelog.d/` entries a stable folds in and
+  # deletes. `.github/scripts/tests/bump-staging.test.sh` asserts
   # that the commit carries everything the script wrote, because a release whose components disagree
   # surfaces at a store upload rather than in CI.
   bump:

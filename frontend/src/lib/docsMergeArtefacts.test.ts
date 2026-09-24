@@ -129,6 +129,33 @@ describe('the changelog files work under the version that shipped it', () => {
     expect(all.filter(({ line }) => line === '## [Unreleased]')).toHaveLength(1);
   });
 
+  it('keeps [Unreleased] empty - an entry is a file in changelog.d/', () => {
+    // Every pull request writing under this one heading is what made any two of them conflict, and
+    // GitHub ignores the `merge=union` driver meant to absorb it. See changelog.d/README.md.
+    const lines = read('CHANGELOG.md').split('\n');
+    const start = lines.findIndex((line) => line.trim() === '## [Unreleased]');
+    const end = lines.findIndex((line, i) => i > start && line.startsWith('## '));
+    const written = lines
+      .slice(start + 1, end)
+      .map((line, i) => ({ line: line.trim(), n: start + 2 + i }))
+      .filter(({ line }) => line !== '')
+      .map(({ line, n }) => `CHANGELOG.md:${n}: ${line} - move it to a file in changelog.d/`);
+
+    expect(written).toEqual([]);
+  });
+
+  it('gives every changelog.d/ entry a heading the release notes can carry', () => {
+    // The bump pastes each fragment under `## [X.Y.Z]` verbatim, so a fragment that does not open
+    // with its own `### ` heading would run into the entry before it.
+    const dir = join(ROOT, 'changelog.d');
+    const fragments = readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'README.md');
+    const malformed = fragments
+      .filter((f) => !/^### \S/.test(readFileSync(join(dir, f), 'utf8')))
+      .map((f) => `changelog.d/${f}: must start with a '### ' heading`);
+
+    expect(malformed).toEqual([]);
+  });
+
   it('gives every release heading the one shape the bump writes', () => {
     // A heading that parses as neither is a heading this guard would otherwise skip in silence.
     const malformed = releaseHeadings()

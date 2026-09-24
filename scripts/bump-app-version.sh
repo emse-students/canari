@@ -256,9 +256,16 @@ promote_changelog() {
   #
   # IDEMPOTENT, because a re-run is an ordinary event - the workflow is hand-dispatchable and a
   # release can be re-published. A heading for this version already present means the work is done.
+  #
+  # THE ENTRIES COME FROM `changelog.d/`, ONE FILE EACH, and are deleted once folded in. Pull
+  # requests used to insert them under `[Unreleased]`, the same line for all of them, so two open at
+  # once conflicted - and GitHub ignores the `merge=union` driver that was meant to absorb it. A file
+  # per entry leaves no shared line. Deleting a TRACKED file is staged by `git add -u` like any edit.
   local file="$1"
   local version="$2"
   local rank="$3"
+  local fragments_dir
+  fragments_dir="$(dirname "$file")/changelog.d"
 
   if [ "$rank" -ne 99 ]; then
     echo "  CHANGELOG     skip (${version} is a pre-release; the notes belong to its stable)"
@@ -287,33 +294,58 @@ promote_changelog() {
   # must not FAIL the release - a release is what ships a fix, and blocking one over a documentation
   # gap is the wrong trade - so under GitHub Actions it emits a `::warning::`, which puts it on the
   # run's summary page where the person who published the release will see it.
+  # File-name order: the order entries were written in is not recorded anywhere a shallow release
+  # checkout can read, and each entry is a self-contained block carrying its own link.
+  local -a fragments=()
+  local fragment
+  shopt -s nullglob
+  for fragment in "$fragments_dir"/*.md; do
+    [ "$(basename "$fragment")" = "README.md" ] && continue
+    fragments+=("$fragment")
+  done
+  shopt -u nullglob
+
   local body
   body="$(awk '/^## \[Unreleased\]/ { inside = 1; next } inside && /^## \[/ { exit } inside { print }' "$file" | tr -d '[:space:]')"
-  if [ -z "$body" ]; then
-    echo "  CHANGELOG     [Unreleased] is EMPTY - not promoting it to [${version}]" >&2
+  if [ -z "$body" ] && [ "${#fragments[@]}" -eq 0 ]; then
+    echo "  CHANGELOG     no entry in changelog.d/ - not promoting [Unreleased] to [${version}]" >&2
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
-      echo "::warning file=CHANGELOG.md::Released ${version} with an EMPTY [Unreleased] section - this release documents nothing. Add the entries and the next release promotes them."
+      echo "::warning file=CHANGELOG.md::Released ${version} with NO entry in changelog.d/ - this release documents nothing. Add the entries and the next release promotes them."
     fi
     return
   fi
 
-  local today tmp
+  local today tmp notes
   today="$(date -u +%Y-%m-%d)"
   tmp="$(mktemp)"
+  notes="$(mktemp)"
+  for fragment in "${fragments[@]}"; do
+    cat "$fragment" >> "$notes"
+    printf '\n' >> "$notes"
+  done
   # A fresh empty [Unreleased] stays on top for the next cycle, which is what Keep a Changelog asks
-  # for and what makes the promotion invisible to anyone adding an entry tomorrow.
-  awk -v ver="$version" -v today="$today" '
+  # for and what makes the promotion invisible to anyone adding an entry tomorrow. The fragments go
+  # directly under the new heading; anything still written under [Unreleased] follows them.
+  awk -v ver="$version" -v today="$today" -v notes="$notes" '
     /^## \[Unreleased\]/ && !done {
       print "## [Unreleased]"
       print ""
       print "## [" ver "] - " today
+      print ""
+      while ((getline line < notes) > 0) print line
       done = 1
+      skip_blank = 1
       next
     }
-    { print }
+    skip_blank && /^[[:space:]]*$/ { next }
+    { skip_blank = 0; print }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
-  echo "  CHANGELOG     $file → [Unreleased] promoted to [${version}] - ${today}"
+  rm -f "$notes"
+  if [ "${#fragments[@]}" -gt 0 ]; then
+    rm -f "${fragments[@]}"
+  fi
+  echo "  CHANGELOG     $file → ${#fragments[@]} entries from changelog.d/ promoted to [${version}] - ${today}"
 }
 
 discover_package_json_files() {
