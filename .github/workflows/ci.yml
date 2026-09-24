@@ -521,31 +521,37 @@ jobs:
         with:
           node-version: '24'
 
-      # MinIO speaks the S3 API that `StorageService` uses, and stands in for Garage. It is started
-      # with `docker run` rather than declared as a service container because the image needs a
-      # command (`server /data`) and `services:` cannot set one.
+      # GARAGE, THE S3 SERVER PRODUCTION RUNS, at the tag the compose files pin - not a stand-in.
+      # MinIO stood in until 2026-09-24 and its image vanished TWICE: `minio/minio` left Docker Hub
+      # (2026-09-11), then quay.io made the same repository private (a 401 even to an anonymous pull
+      # token). A probe that depends on a third party's goodwill to publish an image breaks on
+      # their schedule; the image production already pulls breaks on ours.
       #
-      # THE REGISTRY IS quay.io AND THE TAG NAMES A RELEASE, both since 2026-09-11. `minio/minio` on
-      # Docker Hub stopped existing - the Hub API answers `object not found` for the repository
-      # itself, and the pull reports `pull access denied ... may require 'docker login'`, which
-      # reads like a credentials problem and is not one. quay.io is MinIO's own registry and carries
-      # the same releases. `:latest` is what let this break silently, so the tag is pinned: a boot
-      # probe that pulls a moving tag depends on something nothing here declares or reviews.
+      # `--single-node --default-bucket` provisions the layout, the key and the bucket from the three
+      # GARAGE_DEFAULT_* values on an empty store - the same mechanism `infrastructure/local`
+      # uses, so the probe exercises it too. The key ID has Garage's shape (`GK` + 24 hex) and the
+      # region is the one `garage.toml` declares: Garage rejects a request signed for another.
+      # Started with `docker run` because the image needs a command and `services:` cannot set one.
       - name: Start an S3 endpoint for media-service
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=boot-probe \
-            -e MINIO_ROOT_PASSWORD=boot-probe-secret \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
-          # Wait on the endpoint ANSWERING, not on a clock. MinIO's liveness route needs no
-          # credentials, and a 403 would still prove the server is up - so any HTTP reply ends it.
+          docker run -d --name garage -p 9000:3900 \
+            -v "$GITHUB_WORKSPACE/infrastructure/garage/garage.toml:/etc/garage.toml:ro" \
+            -e GARAGE_RPC_SECRET=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e GARAGE_ADMIN_TOKEN=boot-probe-admin-token \
+            -e GARAGE_DEFAULT_ACCESS_KEY=GKb007b007b007b007b007b007 \
+            -e GARAGE_DEFAULT_SECRET_KEY=b007b007b007b007b007b007b007b007b007b007b007b007b007b007b007b007 \
+            -e GARAGE_DEFAULT_BUCKET=boot-probe \
+            dxflrs/garage:v2.4.1 /garage server --single-node --default-bucket
+          # Wait on the endpoint ANSWERING, not on a clock. Garage refuses anonymous requests with a
+          # 403, which still proves the server is up - so any HTTP reply ends it.
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null "http://127.0.0.1:9000/minio/health/live"; then
-              echo "S3 endpoint up after ${i}s"; exit 0
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/ || true)"
+            if [ "$code" != "000" ]; then
+              echo "S3 endpoint up after ${i}s (HTTP $code)"; exit 0
             fi
             sleep 1
           done
-          echo "S3 endpoint never answered"; docker logs minio; exit 1
+          echo "S3 endpoint never answered"; docker logs garage; exit 1
 
       - name: Install Dependencies
         working-directory: ${{ matrix.service }}
@@ -573,10 +579,10 @@ jobs:
           GARAGE_ENDPOINT: localhost
           GARAGE_PORT: '9000'
           GARAGE_USE_SSL: 'false'
-          GARAGE_REGION: us-east-1
+          GARAGE_REGION: garage
           GARAGE_BUCKET: boot-probe
-          GARAGE_ACCESS_KEY_ID: boot-probe
-          GARAGE_SECRET_ACCESS_KEY: boot-probe-secret
+          GARAGE_ACCESS_KEY_ID: GKb007b007b007b007b007b007
+          GARAGE_SECRET_ACCESS_KEY: b007b007b007b007b007b007b007b007b007b007b007b007b007b007b007b007
           JWT_SECRET: boot-probe-jwt-secret
           INTERNAL_SECRET: boot-probe-internal-secret
           INTERNAL_SHARED_SECRET: boot-probe-internal-shared-secret
