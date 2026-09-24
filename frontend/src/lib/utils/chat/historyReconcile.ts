@@ -422,7 +422,7 @@ export function answerAfterMailboxDrained(
 export async function reconcileGroup(
   mlsService: Pick<
     IMlsService,
-    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   groupId: string,
   log: (msg: string) => void,
@@ -473,6 +473,46 @@ export async function reconcileGroup(
   // Silent, because there is nothing here for a reader to act on: not asking is the correct and
   // permanent behaviour for this kind of group, not a degradation of anything.
   if (mlsService.isDistributionGroup(groupId)) return false;
+
+  // AND A GROUP THIS DEVICE HOLDS NO LEAF IN CANNOT BE PROBED, WHICH THE LOCAL STORE KNOWS AND THE
+  // SWEEP USED TO LEARN BY BEING REFUSED. Measured on DEL-1, 2026-09-05: seconds after a peer
+  // re-added W2 to a group it had been evicted from, and before the Welcome had been processed,
+  // the connection audit picked that group up - `getLocalGroups()` names it, because an eviction
+  // leaves the state in the WASM store as an INACTIVE group - broadcast a `history_state` probe,
+  // and got `403 sender_not_active` back. Nothing was lost: `sendHistoryStateKey` returns `false`
+  // and the sweep simply happens later. What was wrong is the ASKING, and it is the rule this
+  // repository states as *never learn by failing what a fact could have told you*: whether this
+  // device holds a leaf is answerable here, with no network at all, and `isGroupActive` is the
+  // same fact `setupMessageHandler` already treats as authoritative for the opposite decision.
+  //
+  // The server is right to refuse - a device with no leaf mints frames no member can open, which
+  // is what turned six production messages into thirty unopenable rows on 2026-09-02 - so this
+  // removes a frame, a refusal, and a line that reads like a delivery defect to whoever meets it.
+  //
+  // A THROW IS NOT A `false`, AND IT PROCEEDS. `isGroupActive` throws for two causes it does not
+  // separate - the client is not loaded, or the group is not held at all - and neither may be read
+  // as "we were removed". Both mean the LOCAL STORE CANNOT ANSWER, and asking the network what the
+  // local store cannot answer is exactly the right thing to do, so the pass continues as before.
+  // It is logged because a reconciliation pass running against a client that cannot read its own
+  // membership is the visible end of something upstream, not a routine state.
+  let holdsLeaf = true;
+  try {
+    holdsLeaf = await mlsService.isGroupActive(groupId);
+  } catch (e) {
+    log(
+      `[HISTORY_RECONCILE] could not read this device's membership of ${short}…: ${String(e).slice(0, 120)} - asking anyway`
+    );
+  }
+  if (!holdsLeaf) {
+    // SAID, NOT SILENT, unlike the distribution case above: that one is permanent and there is
+    // nothing for a reader to act on, where this one is a device waiting for a Welcome and the
+    // line is what explains the absence of a probe until it arrives. The recovery is the ladder's,
+    // and this group comes back on a later trigger once the Welcome installs a leaf.
+    log(
+      `[HISTORY_RECONCILE] ${short}… is held but this device has no leaf in it - nothing to ask until a Welcome arrives`
+    );
+    return false;
+  }
 
   // A FRESH ASK STARTS A FRESH WALK. `exclude` is empty for every ordinary trigger, so this is the
   // seam where "the previous chase is over" is known without a clock: whatever it excluded belonged
@@ -677,7 +717,7 @@ export async function reconcileGroup(
 export async function escalateReconciliation(
   mlsService: Pick<
     IMlsService,
-    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   groupId: string,
   log: (msg: string) => void,
@@ -756,7 +796,7 @@ function excludes(exclude: readonly string[], member: string): boolean {
 export async function noteCoverageShortfall(
   mlsService: Pick<
     IMlsService,
-    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   groupId: string,
   from: string,
@@ -839,7 +879,7 @@ const ELECTION_CONCURRENCY = 6;
 export async function reconcileAllGroups(
   mlsService: Pick<
     IMlsService,
-    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   groupIds: Iterable<string>,
   log: (msg: string) => void
@@ -885,7 +925,7 @@ export async function reconcileAllGroups(
 export async function retryDeferredReconciliations(
   mlsService: Pick<
     IMlsService,
-    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   localGroupIds: Iterable<string>,
   log: (msg: string) => void

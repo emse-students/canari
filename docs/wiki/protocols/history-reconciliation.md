@@ -396,6 +396,37 @@ The resulting flow, which is today's with one probe in front of it:
 One round trip is added to the case that differs and one whole digest is removed from the case that
 does not - which is the common one, and the only one paid on every connect of every device.
 
+### Two groups are refused before anything leaves, and both are answered locally
+
+`reconcileGroup` is the one door every trigger comes through, so the two exclusions that are
+permanent live there rather than in each caller's candidate list.
+
+| refused | why | said aloud |
+| --- | --- | --- |
+| a **distribution group** | it carries channel seeds and has never held a message, so there is no history to reconcile - and it must never reach the conversation pipeline, which this is the repair arm of | **no** - not asking is correct and permanent, and there is nothing for a reader to act on |
+| a group this device **holds no leaf in** | the probe is an MLS frame, and a device with no leaf mints frames no member can open | **yes** - it explains the absent probe, and the group returns when a Welcome installs a leaf |
+
+**THE SECOND ONE WAS LEARNED BY BEING REFUSED UNTIL 2026-09-24.** Measured on DEL-1, 2026-09-05:
+seconds after a peer re-added a device to a group it had been evicted from, and before the Welcome
+had been processed, the connection audit picked that group up, broadcast a `history_state` probe,
+and got `403 sender_not_active` back - logged as `[HISTORY_STATE] Send failed`, which reads like a
+delivery defect to whoever meets it. **The group is in `getLocalGroups()` legitimately**: an
+eviction leaves the state in the WASM store as an INACTIVE group, which is the same fact
+`setupMessageHandler` relies on to tell a re-admitting Welcome from a redelivery.
+
+Nothing was lost - `sendHistoryStateKey` returns `false`, and its contract says the caller treats
+that as *"this group was not reconciled"*, never as *"we agree"*, so the sweep simply happened
+later. The server was right to refuse, for the reason `SenderNotActiveError` was typed after
+production turned six messages into thirty unopenable rows on 2026-09-02. **What was wrong is the
+ASKING**, and it is the rule this repository states as *never learn by failing what a fact could
+have told you*: `isGroupActive` answers it here, from the local store, with no network at all.
+
+**A THROW IS NOT A `false`.** `isGroupActive` throws for two causes it does not separate - the WASM
+client is not loaded, and the group is not held at all - and reading either as *"we were removed"*
+would silence reconciliation for a device whose store simply could not be read. Both mean the local
+store cannot answer, and asking the network what the local store cannot answer is exactly right, so
+the pass proceeds and logs that it could not read its own membership.
+
 ### The fifth trigger: an ask that reached a member which answered nothing
 
 **The election is random on purpose, and the client owed it a second draw.** `notifyHistoryRequest`
