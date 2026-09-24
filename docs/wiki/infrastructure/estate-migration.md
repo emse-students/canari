@@ -1352,31 +1352,38 @@ Two of the three estates are on the target: `cercle` since the morning, `auth.ca
 midday. This section is what is left, in the order it should be done, and it is deliberately
 separate from the runbook above - the runbook says HOW, this says WHAT IS NEXT and who owes it.
 
-### A. THE RENAMES, AND THE WINDOW IS ALREADY HALF SHUT - A MISS TO OWN
+### A. THE NAMES - AND THE THING THAT WAS ACTUALLY WRONG WAS NOT A NAME
 
-Section 5 says renaming a compose project renames its volumes, so **the migration is the only
-moment it is free**. Two estates were then migrated without applying it:
+**This section said two estates had been migrated without renaming their compose projects, and it
+named the wrong defect on both.** Corrected 2026-09-24 by reading the three files rather than the
+directory listing:
 
-| Estate | Project name it got | What section 5 asked for |
+| Estate | Project name | Declared, or inferred from the directory? |
 | --- | --- | --- |
-| Le Cercle | `le-cercle` (from the DIRECTORY, declared nowhere) | `cercle`, DECLARED |
-| Authentik | `miconnect` (from the directory) | `authentik` in section 5's list |
-| Canari prod | not moved yet - still `infrastructure` | `canari-prod` |
+| Le Cercle | `le-cercle` | **DECLARED**, with a comment saying why |
+| Authentik | `miconnect` | **INFERRED** - no `name:` at all, until this was fixed |
+| Canari prod | `infrastructure` | DECLARED, but it is the old directory's name |
 
-**It is not free any more, but it is still cheap**, and much cheaper than the years section 5 warns
-about: the dump-and-restore procedure has now been run twice in one day, it takes minutes, and both
-estates are small. **Do it before Canari moves**, because that is the last moment the whole set can
-be made consistent in one pass.
+**`le-cercle` was never the defect.** It is stated in the compose file, it matches the repository
+and the GitLab project, and renaming it to `cercle` would make it match a list in section 5 while
+DISAGREEING with everything else that names it. Section 5's list was written from memory of the
+directories; the file says otherwise. **Left alone, deliberately** (user, 2026-09-24).
 
-- Le Cercle is the easy one: the payload is a single 106 MB SQLite file in
-  `le-cercle_cercle-data`, so it is a volume copy, not a dump. Declare `name: cercle` in the compose
-  file at the same time, so the name stops depending on what the directory is called.
-- **Authentik's is a QUESTION, not a task.** `miconnect` is the estate's real name - the product is
-  called MiConnect and the public name is `auth.canari-emse.fr` - while section 5's list says
-  `authentik`, which is the software. The volume name is load-bearing (`authentik/README.md`: a
-  differently-named project starts on an EMPTY database instead of failing), so this is decided
-  once and then left alone. **The user decides; do not pick silently.**
-- Canari's `infrastructure` -> `canari-prod` happens AT its move, not before.
+**Authentik was the defect, and it was the silent kind.** The project had no `name:`, so it took the
+name of whatever directory it ran from. It survived the move only because the old path and the new
+one happened to both end in `miconnect` - and this stack's own README documents what the miss costs:
+a differently-named project comes up on an **EMPTY database instead of failing**, and this database
+is the only place the OIDC configuration exists. `name: miconnect` is now declared in the repository
+and on the host. **Verified by `docker compose up -d --dry-run`: `Running` / `Healthy`, no
+recreation** - the declaration was a no-op for Docker, which is exactly the point.
+
+**The name `miconnect` is kept** (user, 2026-09-24): it is the estate's name - the product is
+MiConnect, the public name is `auth.canari-emse.fr`, the SSH alias and `/srv` directory both say
+`miconnect` - where section 5's list said `authentik`, which is the name of the software. Section 5
+is the copy that was wrong.
+
+**Canari's `infrastructure` -> `canari-prod` is the one rename still worth doing**, and it happens
+AT its move, when the volumes are recreated from a restore anyway.
 
 ### B. CANARI'S MOVE - WHAT CAN BE PREPARED WITH NO OUTAGE AT ALL
 
@@ -1407,25 +1414,34 @@ Then, in order, none of it visible to a user:
    mount directories.
 2. Write the target vhost for `canari-emse.fr` -> `127.0.0.1:8081`, and the relay config on the
    `canari` box, exactly as the other two were done.
-3. **Decide what `/home/canari/canari` becomes.** It is not a stray checkout: the production deploy
-   does `git reset --hard` into it and the backup crontab runs from it. Whatever the target gets
-   must carry both, or the deploy and the nightly backup break on the day the name moves.
+3. **Move `/home/canari/canari` WITH the stack - decided 2026-09-24 by the user: "le serveur
+   initial n a pas vocation a perdurer pendant des annees apres la migration".** It is not a stray
+   checkout: the production deploy does `git reset --hard` into it and the backup crontab runs from
+   it. So the checkout, the crontab and the deploy's SSH destination all move to the target, and
+   the old VM is left holding the relay and nothing else. **Every path that names the old box is
+   part of this step, not a follow-up** - the deploy workflow's host secret, the backup crontab,
+   `MICONNECT_SSH_HOST` (which will then be a loopback hop on the same machine), and whatever else
+   a grep for the old address finds. A half-moved estate is the state that breaks on the first
+   release nobody is watching.
 4. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
 
-### C. OWED BY THE USER, AND NOTHING HERE MOVES WITHOUT IT
+### C. DECIDED 2026-09-24, AND THE ONE THING STILL OWED BY THE USER
 
-- **Send the DSI request.** It is written out in section 7, and every name costs a ticket, so a
-  second request is a second wait.
-- **Decide the Authentik project name** (section A above).
-- **Decide whether Le Cercle keeps SQLite.** Raised by the user 2026-09-24, and the question is
-  real but the premise needs correcting: the database does NOT live outside a container. It is a
-  106 MB SQLite file in the named volume `le-cercle_cercle-data`, which is exactly where mutable
-  state belongs - Canari's PostgreSQL data sits in a named volume too, and neither is "in" the
-  image. **So the choice is homogeneity, not containment**: one backup mechanism instead of two,
-  against a data-layer rewrite touching 68 files and about twenty table modules in a repository
-  declared complete, plus a migration of the 234 366-row ledger. **The recommendation here is to
-  keep SQLite and revisit only if concurrency or the second backup path actually hurts** - but the
-  standing mandate is homogeneity everywhere, so this is the user's call and not an agent's.
+**Still owed, and nothing moves without it: send the DSI request.** It is written out in section 7,
+and every name costs a ticket, so a second request is a second wait.
+
+The other three were put to the user on 2026-09-24 and answered:
+
+- **The Authentik project name stays `miconnect`** - section A.
+- **Le Cercle keeps `le-cercle`** - section A; it was never inferred.
+- **Le Cercle moves to PostgreSQL, but AFTER the estate migration, as its own chantier.** The
+  premise it was raised on needed correcting first: the database does NOT live outside a container.
+  It is a 106 MB SQLite file in the named volume `le-cercle_cercle-data`, which is exactly where
+  mutable state belongs - Canari's PostgreSQL data sits in a named volume too, and neither is "in"
+  the image. **So the choice was homogeneity, not containment**: one backup mechanism instead of
+  two, against a data-layer rewrite touching 68 files and about twenty table modules, plus a
+  migration of the 234 366-row ledger. It is worth doing and it is not worth doing DURING a
+  migration whose remaining steps are measured in minutes. **Sequenced, not refused.**
 
 ### D. LOOSE ENDS FROM 2026-09-24, SMALL AND REAL
 
