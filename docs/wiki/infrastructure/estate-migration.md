@@ -725,6 +725,16 @@ box), `https://dev.canari-emse.fr/api/version` answered `200` with the target's 
 the request's full `X-Forwarded-For` chain ending in `10.0.0.3`, and the old box's 11 dev containers
 are stopped.
 
+**DESTROYED 2026-09-25: the rollback path above no longer exists, by explicit user consent
+("Tout supprimer maintenant").** All 23 stopped containers (12 prod + 11 dev, listed above) and all
+10 named volumes (`infrastructure_*` and `canari-dev_*` - postgres, garage data/meta, redis,
+media_meta) were removed from the old box; `docker ps -a` and `docker volume ls` there are now both
+empty. **A `docker compose start` can no longer bring either estate back on this box** - the target
+is the only copy from this point on. Verified before deleting: every name matched this section's own
+inventory exactly, none of it Authentik/`miconnect` - a separate stack, on a separate old VM, kept
+alive deliberately as a frozen rollback copy
+([authentik README](../../../infrastructure/authentik/README.md)).
+
 ## 7. Phase 2 - the names
 
 `canari-emse.fr` -> `canari.emse.fr`, `cercle.canari-emse.fr` -> `cercle.emse.fr`,
