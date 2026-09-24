@@ -381,7 +381,12 @@ measured - were all spent on a door the new host does not need to have.
 | --- | --- |
 | Outbound 7844 on the new host | **no longer a blocker, and not worth a DSI request** |
 | The connector installed there on 2026-09-24 | **REMOVED** the same day - unit, `EnvironmentFile`, binary, apt source and keyring; the host is back to its prior state, and the run token no longer sits on a machine shared with other associations |
-| The relay from the old VM | **not needed.** The measurement below stays because it is true and cheap to re-read, not because anything is waiting on it |
+| The relay from the old VM | **NEEDED after all** - not for the internal door, which no longer moves, but for phase 1's PUBLIC path, whose every step goes through the tunnel. See the relay section |
+
+**AND IT DOES NOT MAKE PHASE 1 TUNNEL-FREE.** Phase 1 preserves the OLD public names, which reach
+the edge through the tunnel; only the CONNECTOR's location was settled here. The relay section below
+is what carries that, and declaring it unneeded on the strength of this decision was an error made
+and corrected the same day.
 
 **The cost the user accepted, stated so nobody re-derives it as a defect**: dev no longer runs on
 the same machine as production, so it rehearses the production environment less faithfully than it
@@ -651,10 +656,36 @@ remove. It is therefore a LANDING, not the target - which is exactly what phase 
 
 #### THE OLD ESTATE CAN RELAY WHAT THE NEW ONE CANNOT SEND - MEASURED 2026-09-24, AND NOT NEEDED
 
-**NOTHING IS WAITING ON THIS SECTION.** The 2026-09-24 decision in section 4 leaves dev and the
-admin interfaces on the old VM, so the new host never needs a door outwards and this relay was never
-built. It is kept for one reason: the measurements are true, they were expensive to take, and they
-are what a future session would otherwise re-take on the day something does need to cross.
+**THIS SECTION IS LOAD-BEARING, AND IT WAS DECLARED UNNEEDED FOR HALF A DAY.** The 2026-09-24
+decision leaves dev and the admin interfaces on the old VM, and from that it was concluded that
+nothing needs to cross - which is wrong, because **the tunnel had a SECOND consumer and it is the
+whole of phase 1**. Section 6, step 4, is *"point the tunnel ingress at the new loopback port"*, and
+the phase's rollback is *"repoint the tunnel at the old VM"*: every public name in phase 1 reaches
+the new host through a tunnel that cannot run on it. **The same error as the parade, one level in**:
+a seam was audited through the consumer that had just been discussed, not through all of them, which
+is exactly what the durable rule about enumerating consumers exists to prevent.
+
+So a relay is what phase 1 needs, and the question is only which end of the tunnel it sits at:
+
+| | How the new host is reached | What it costs |
+| --- | --- | --- |
+| **The old VM's web server proxies** (preferred) | the tunnel keeps pointing where it points today; the old VM's nginx gains an upstream to the new host | **NO Cloudflare change at all**, so the dashboard gesture that section 8 calls the one thing blocking phase 1 stops blocking it. Rollback is one line, on a machine we own |
+| The tunnel's ingress points at the new host | one ingress rule per name, edited to name the target host instead of a loopback port | **a dashboard gesture, and it cannot be ours**: production's connector runs with `--token` on `ExecStart`, so the tunnel is REMOTELY MANAGED and its ingress lives in Cloudflare, not on the box (measured 2026-09-24) |
+
+Either way the connector stays on the OLD VM, which is what the section-4 decision actually bought:
+**nothing is installed on the new host, and nothing there has to reach the edge.**
+
+**AND THE ADDRESS TO POINT AT IS NOT A PRIVATE ONE - THIS IS THE TRAP IN THE OBVIOUS VERSION.** The
+two estates are NOT on one LAN. The old VMs sit on a private `/16` and the target host has **only
+public addresses** on its single interface; the route from one to the other leaves through the old
+VM's gateway and arrives at a public address. What is private is the SOURCE, preserved end to end -
+which is what makes a tight allow rule possible, and is the only reason the private range is worth
+mentioning at all. So an ingress rule names the target's PUBLIC address, and two consequences
+follow: the port must be bound on that public interface rather than on loopback, so it is exposed
+to the co-tenants until a rule restricts it to the one source; and the hop between the two estates
+is **plain HTTP across the campus network** unless it is carried inside something. An `ssh -L` from
+the old VM keeps the service on loopback and encrypts the hop, and pays for it with a key and a
+tunnel to supervise - that trade is the whole choice, and it is not a detail of the ingress rule.
 
 The user's proposal, and it is better than the parade above: **do not make the new host reach the
 edge - make the old one do it on its behalf.** The refused port is refused on ONE machine, and the
@@ -975,7 +1006,12 @@ Pointers only. The substance is in
 [backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
 - the DNS and certificate request to the DSI, as one message;
-- **creating the new Cloudflare tunnel on `rootz-emse.fr` - THE ONE THING BLOCKING PHASE 1.**
+- **creating the new Cloudflare tunnel on `rootz-emse.fr` - AND IT MAY NOT BLOCK PHASE 1 ANY MORE.**
+  A new tunnel would have to run on the target host, where 7844 is refused, so that plan is dead as
+  written; if the old VM's web server proxies to the new host instead, phase 1 needs NO Cloudflare
+  change at all and this ceases to be a blocker. **That is the first thing to settle** - the
+  paragraph below is kept because the measurement in it is still the reason a tunnel cannot be
+  created from here.
   The project's token cannot do it, measured 2026-09-02 and again 2026-09-24 with the same result:
   `POST /accounts/{acct}/cfd_tunnel` answers `10000 Authentication error`, `GET` answers 200 with
   an EMPTY list while production runs a tunnel, and Access groups answer 403. A tunnel is a
