@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'etape 3 du runbook n'etait pas faite, et la page disait qu'elle l'etait
+
+Mesure sur l'hote : `/srv/le-cercle` existe et est VIDE, et le seul conteneur qui y tourne est celui
+de Portail-etu. L'affirmation a survecu parce que le repertoire et le volume de donnees existent tous
+les deux, ce qui ressemblait a "pret" vu de loin. Ce que demande vraiment la mise en place est
+desormais ecrit, avec l'etat des deux runners, des variables et des droits verifie des deux cotes.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Fixed - seuls 22, 80 et 443 entrent sur l'hote cible, ce qui refute un mecanisme deja choisi
 
 Les regles disaient le contraire : `DOCKER-USER` est un `RETURN` nu et la chaine `DOCKER` accepte
