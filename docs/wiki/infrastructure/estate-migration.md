@@ -687,7 +687,7 @@ So a relay is what phase 1 needs, and the question is only which end of the tunn
 
 | | How the new host is reached | What it costs |
 | --- | --- | --- |
-| **The old VM's web server proxies** (preferred) | the tunnel keeps pointing where it points today; the old VM's nginx gains an upstream to the new host | **NO Cloudflare change at all**, so the dashboard gesture that section 8 calls the one thing blocking phase 1 stops blocking it. Rollback is one line, on a machine we own |
+| **The old VM's web server proxies** (preferred, and the only shape the network allows) | the tunnel keeps pointing where it points today; the old VM's nginx gains an upstream to the new host, **over 80/443 or through an `ssh -L`, because no other port reaches it** | **NO Cloudflare change at all**, so the dashboard gesture that section 8 calls the one thing blocking phase 1 stops blocking it. Rollback is one line, on a machine we own |
 | The tunnel's ingress points at the new host | one ingress rule per name, edited to name the target host instead of a loopback port | **a dashboard gesture, and it cannot be ours**: production's connector runs with `--token` on `ExecStart`, so the tunnel is REMOTELY MANAGED and its ingress lives in Cloudflare, not on the box (measured 2026-09-24) |
 
 Either way the connector stays on the OLD VM, which is what the section-4 decision actually bought:
@@ -734,8 +734,35 @@ is what separates it from the parade above.**
 
 | | Data path | Costs |
 | --- | --- | --- |
-| A firewall allow | `cloudflared` on the old box proxies to a port bound on the new host's interface, allowed from the relay's address only | a firewall rule on a machine we do not own; nothing to supervise, no keys |
-| An SSH forward | a `systemd` `ssh -N -L` from the old box; services stay loopback-only on the new host | nothing asked of anyone; a key on the old box and a tunnel that can flap |
+| ~~A firewall allow~~ | ~~a port bound on the new host's interface, allowed from the relay's address only~~ | **REFUTED 2026-09-24 - the packet never arrives.** See below: only 22, 80 and 443 enter that host, from anywhere, the private range included |
+| An SSH forward | a `systemd` `ssh -N -L` from the old box; services stay loopback-only on the new host | nothing asked of anyone; a key on the old box and a tunnel that can flap. **22 is one of the three ports that pass** |
+| A proxy to the host's own web server | the old box's nginx proxies to the target on **80 or 443**, with the `Host` header; the target's nginx routes it to the right vhost | **no new port, nothing to open, nothing to persist on a machine we do not own.** It requires the target's nginx to be the router, which is what section 5 chose anyway |
+
+#### ONLY 22, 80 AND 443 ENTER THE TARGET HOST - MEASURED 2026-09-24, WITH A CONTROL
+
+**This refutes a mechanism that had already been chosen**, and it was found by testing the thing
+rather than reading firewall rules - which said the opposite. `DOCKER-USER` is a bare `RETURN` and
+the `DOCKER` chain ACCEPTs directly, the textbook shape of Docker punching through a host firewall,
+so a published port was expected to be reachable and to need restricting. It is not reachable at all.
+
+| Probe | Result |
+| --- | --- |
+| A container publishing a high port on the host's PUBLIC address | started, and the **host itself reads it** - so the probe was listening, which is the control the first attempt lacked |
+| The same port from the workstation, over the internet | **timeout** |
+| The same port from BOTH old estates, over the private range | **timeout** |
+| 22, 80, 443 from an old estate to the target | **all three open** |
+| 5173 and a random high port, same source, same destination | **blocked** |
+
+**So the filter is the school's network, not the host's firewall**, and it is symmetric with the 7844
+finding: that machine talks to the world on a handful of ports and nothing else, inbound or outbound.
+Two consequences. **The bind-a-port-and-restrict-it design is dead** - there is nothing to restrict,
+because nothing arrives; and **the architecture section 5 already chose is the only one the network
+permits**: services on loopback ports, the host's nginx owning 443 and routing by `Host`. A design
+was validated here by a firewall rather than by an argument.
+
+**AND THE FIRST PROBE WAS WORTHLESS FOR WANT OF A CONTROL.** It returned nothing and the conclusion
+"blocked" was one sentence away from being written; the probe might simply never have listened. The
+control - the same request from the host itself - is what separated those, and it cost one command.
 
 **And the price, either way, is that the old VM stops being decorative.** Section 4 already keeps it
 alive to answer `canari-emse.fr` with 301s; this makes it load-bearing for the internal door, so
