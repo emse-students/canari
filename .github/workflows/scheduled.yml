@@ -37,7 +37,9 @@ on:
     - cron: '0 3 * * 0'
     # Daily. Did the last stable release actually reach both stores?
     - cron: '0 9 * * *'
-    # Mondays. Re-seed the dev estate from production.
+    # Mondays, and TWO jobs read this one. Re-seed the dev estate from production, and ask what the
+    # cargo directories Dependabot cannot reach are behind on. Adding a third means editing this
+    # line too: a schedule serves whichever `if:` names it, and a comment naming one hides the rest.
     - cron: '0 4 * * 1'
   workflow_dispatch:
     inputs:

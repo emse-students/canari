@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le cron que la file reclamait existait depuis le 2026-09-10
+
+L'entree "deux des six repertoires cargo sont invisibles a Dependabot" exigeait encore un cron ;
+`.github/scripts/cargo-blocked-update-report.sh` le fait depuis le 2026-09-10, branche sur le cron
+du lundi avec son auto-test. Les deux moities etant livrees, l'entree part et ses deux refutations
+- retirer `links`, ou desassumer les repertoires - rejoignent l'incident qu'elles concernent dans
+[cicd](docs/wiki/cicd.md#and-a-manifest-can-make-a-whole-directory-invisible-to-dependabot). Au
+passage, `0 4 * * 1` sert DEUX jobs et son commentaire n'en nommait qu'un.
+
+### Changed - vingt nuits rouges d'affilee, lues par personne
+
+La passe nocturne a echoue chaque nuit du 2026-09-04 au 2026-09-23, pour deux causes sans rapport ;
+la seconde posait une vraie question a un humain et s'est eteinte seule quand `v0.18.22` a pris le
+creux App Store. Mesure verse a l'entree qui porte deja le manque de canal, dont c'est une seconde
+population : rien ici n'a d'autre sortie que la couleur d'un run
+([backlog](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click)).
+
 ### Fixed - un sondage dont la date tombe pendant qu'on le regarde se ferme enfin tout seul
 
 `Date.now()` n'est pas reactif : la fermeture etait vraie de l'instant ou la carte avait ete
@@ -11441,8 +11458,9 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   **A dependency graph that stops moving looks exactly like one with nothing to update**, and this
   one belongs to the artefact that ships to phones. The measurement, the three ways out and the
   detection that would have named it on day one are in
-  [backlog](docs/wiki/backlog.md#p2---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-194-updates-were-waiting-behind-that-silence-measured-2026-09-02-decided-and-given-a-trigger-2026-09-10); `dependabot-cargo-reach.test.sh` now pins the blocked set, so
-  the next one fails on the day it is committed.
+  [cicd](docs/wiki/cicd.md#and-a-manifest-can-make-a-whole-directory-invisible-to-dependabot);
+  `dependabot-cargo-reach.test.sh` now pins the blocked set, so the next one fails on the day it is
+  committed.
 
 - **The migration set is not a schema, and the deploy learned it by failing on an arbitrary file.**
   With the previous fix in place all 80 migrations were finally attempted on dev's virgin database,
