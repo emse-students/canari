@@ -1080,7 +1080,9 @@ undo. Both are corrected.
 **The stack is one volume and two ports.** `miconnect_database` (declared `external`), and
 `9000`/`9443` published on `0.0.0.0` today because the box is its own VM. On the shared host that
 is exactly the trap section 2 measured: Docker publishes through the nat table, which firewalld's
-zone does not govern, so both must become `127.0.0.1:` there. `data/`, `certs/` and
+zone does not govern, so a published port must become `127.0.0.1:` there. **`9443` was not moved
+at all: it was DELETED**, because the tunnel reaches Authentik at `http://10.0.0.7:9000` in plain
+HTTP and nothing has ever asked for the TLS port. `data/`, `certs/` and
 `custom-templates/` are 16 K, 4 K and 4 K - nothing travels but the database.
 
 **AND THE BACKUP KEY TRAVELS WITH IT.** The nightly backup reaches this box by SSH since 2026-09-24,
@@ -1103,9 +1105,11 @@ memory its VM is sized for.**
 | Memory, all three containers | **907 MB** (424 server + 300 worker + 183 postgres) against a 2 G VM |
 | Startup to healthy | under two minutes, migrations included |
 
-**The loopback binding needs no edit to the compose file** - `COMPOSE_PORT_HTTP=127.0.0.1:9000` in
-the `.env` interpolates into the `ports:` entry, and `docker compose config` resolves it to
-`host_ip: 127.0.0.1`. That matters because the same file has to keep working on the VM it is leaving.
+**The loopback binding needs no edit to the compose file** - the `.env` interpolates an ADDRESS
+rather than a bare port into the `ports:` entry, and `docker compose config` resolves it to
+`host_ip: 127.0.0.1`. That matters because the same file has to keep working on the VM it is
+leaving. **The variable was renamed to `AUTHENTIK_PUBLISH` at the cutover**, and its sibling
+`COMPOSE_PORT_HTTPS` deleted with the port it named.
 
 It was brought down with `down -v`, its throwaway `.env` deleted and its empty volume removed;
 `/srv/miconnect/` and its three mount directories stay, ready. **Nothing of the real estate was
@@ -1115,8 +1119,82 @@ touched, and the identity database never left its box.**
 as `uid=1000(authentik)`, and uid 1000 on the shared machine belongs to the DSI's automation
 account - so every file the container writes through a bind mount lands owned by `ansible`, which is
 what `./data` and `./certs` looked like after the test. Ownership was put back. **On a shared box a
-bind mount is a uid collision waiting to be misread**, and the three directories here are empty
-anyway: they are candidates for named volumes at the cutover.
+bind mount is a uid collision waiting to be misread**, and the three directories here hold ONE file
+between them: they are candidates for named volumes at the cutover. **The collision turned out to
+be benign in the direction that mattered** - Authentik writes as uid 1000 and the carried files
+landed as uid 1000, so they stayed writable; it misleads a reader, not the container.
+
+#### IT IS DONE - `auth.canari-emse.fr` HAS SERVED FROM THE TARGET SINCE 2026-09-24
+
+The same four gestures as `cercle`, in the same order, and the shape held. **The window was 6 min
+37 s**, 10:19:06 to 10:25:43 UTC, and almost all of it was one `pg_dump` crossing two SSH hops.
+
+| What proves it | Reading |
+| --- | --- |
+| `https://auth.canari-emse.fr/if/flow/...` from outside | `200` in 0.24-0.40 s (0.16-0.23 s before) |
+| The TARGET's own access log, during those calls | client `10.0.0.7` - the relay, so the new machine answered |
+| Every table's content fingerprint, both databases | **230 tables, all identical** |
+| `server` and `worker` logs since start | **0 errors, 0 warnings** |
+
+**The latency grew and the reason is structural, not a defect**: a request now crosses the tunnel to
+the old VM, then a second TLS session to the target. Phase 2 deletes both hops at once.
+
+**What actually travelled was the database and one file.** `data/`, `certs/` and
+`custom-templates/` hold exactly ONE file between them - Authentik's default background - and the
+flow executor serves it from the target, which is how we know the bind mounts were carried and not
+merely created.
+
+**The relay is a CONTAINER on this estate, where `cercle`'s was a package.** `nginx` is absent from
+the `miconnect` VM, apache is there but without its proxy modules, and `sudo` asks for a password
+nobody here holds - while `docker` needs none. So the relay is `nginx:alpine` with one mounted
+config, and `docker rm` retires it leaving no state on a machine that is about to be deleted anyway.
+The tunnel reaches `9000` in PLAIN HTTP, so the relay listens in clear and raises TLS itself.
+
+**INTERPOSING A PROXY IMPOSES A LIMIT THAT DID NOT EXIST.** Authentik was published DIRECTLY until
+now, so no body size ceiling applied to it at all; nginx's default is 1 MB, and an icon upload
+failing weeks later would have been attributed to anything but this. `client_max_body_size 50m` is
+set on BOTH halves. **A proxy inherits none of the defaults of the thing it replaces - enumerate
+what the direct path allowed before assuming the proxy allows it.**
+
+**The Docker socket removal was confirmed in the field, not merely reasoned about.** The Embedded
+Outpost registered, fetched its configuration and refreshed its providers with no socket present -
+all of it in-process, which is what the deletion claimed and what the logs now show.
+
+**THE ROLLBACK IS STILL ARMED.** The old VM's PostgreSQL still holds the identity database; only
+`server` and `worker` were stopped, and `unless-stopped` honours a manual stop across daemon
+restarts, so nothing there will contend for `9000` with the relay. Reversing is: stop the relay,
+`docker compose start server worker`.
+
+##### THE END-TO-END PROOF, BECAUSE A `200` ON A LOGIN PAGE PROVES ALMOST NOTHING
+
+An identity provider that renders its front page and cannot issue a token is broken in the way that
+matters. Each of these was exercised through the PUBLIC name after the cutover:
+
+| Path | Result |
+| --- | --- |
+| OIDC discovery + JWKS, all five applications | `200`/`200` each |
+| The `issuer` in every discovery document | `https://auth.canari-emse.fr/...` - the public name, NOT the new host |
+| `/application/o/authorize/` with a real client and its registered redirect | `302` to the flow |
+| `/api/v3/flows/executor/...` - what the page's JavaScript actually calls | the identification stage, with its CAS source |
+| The CAS EMSE redirect, which is how members really sign in | `302` to `cas.emse.fr`, callback still `auth.canari-emse.fr` |
+
+That last row is the one that could have silently broken: CAS validates the callback against a URI
+registered on ITS side, and the move changed the machine without changing the name, so it still
+matches. **Phase 2 is where that row becomes a request to another team, not a check.**
+
+##### A DIFFERENTIAL CHECK AGREED WITH ITSELF AND WAS WRONG
+
+The fingerprint comparison first reported **"IDENTICAL, 3 tables"** for a database with 230. The
+query named `relname` where `pg_tables` exposes `tablename`, so BOTH sides returned the same three
+lines of `ERROR: column "relname" does not exist` - and `diff` was perfectly right to call them
+equal.
+
+**A COMPARISON PROVES EQUALITY OF WHATEVER IT ACTUALLY READ, AND AN ERROR COMPARES EQUAL TO
+ITSELF.** What caught it was not the tooling but the number: three tables is not what Authentik
+looks like. So a differential check owes a claim about its own SHAPE - a row count, a non-empty
+assertion - or it can only ever confirm that two failures failed the same way. The corrected run
+read 230 tables on each side with zero `ERROR` lines before its verdict was believed
+([durable-rules](../durable-rules.md)).
 
 ## 7. Phase 2 - the names
 

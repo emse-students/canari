@@ -33,6 +33,38 @@ faire reculer le schema de six versions. Une reference qui ne peut pas etre
 lancee est inutile ; une reference qui peut etre lancee et casse la base est
 pire.
 
+## Deux choses retirees le 2026-09-24, avant le demenagement
+
+**Le socket Docker n est plus monte dans le worker.** Authentik ne s en sert que
+pour piloter des outposts en CONTENEURS, via une connexion de service Docker. Le
+seul outpost declare ici est l **Embedded Outpost**, qui tourne dans le conteneur
+serveur et n a besoin d aucun socket ; la connexion de service existe bien en base
+et **aucun outpost ne la reference** - verifie AVANT la suppression, pas apres :
+
+```sh
+docker exec miconnect-postgresql-1 psql -U authentik -d authentik   -c 'SELECT name, type, managed, service_connection_id FROM authentik_outposts_outpost;'
+```
+
+Ce que le montage coutait : sur une machine partagee avec d autres locataires,
+c est un controle equivalent-root sur TOUT le demon Docker, le leur compris. Il
+reste une connexion de service qui pointe vers un socket absent - elle
+n orchestre rien et s affichera en erreur dans l admin.
+
+**Le port `9443` n est plus publie, et il n avait aucun consommateur.** L ingress
+du tunnel atteint cette stack en `http://10.0.0.7:9000`, en clair - lu sur le
+connecteur lui-meme (`curl http://127.0.0.1:20241/config` sur la boite qui le
+fait tourner, l API Cloudflare ne voyant pas les tunnels). Sur l hote partage,
+TLS est termine par le nginx de l hote avec le certificat DSI, comme pour les
+autres estates.
+
+`AUTHENTIK_PUBLISH` remplace `COMPOSE_PORT_HTTP` et `COMPOSE_PORT_HTTPS` : elle
+porte l ADRESSE entiere, pas seulement le port, pour qu un demenagement la lie a
+`127.0.0.1:9000` sans toucher au `compose.yml`.
+
+**Les deux registres servent la MEME image**, verifie par digest de manifeste et
+non par le champ `Id`, qui est le digest de configuration local et differe d une
+machine a l autre : `sha256:7421753c...` des deux cotes pour `2026.8.0`.
+
 ## Secrets
 
 | Variable | Role |

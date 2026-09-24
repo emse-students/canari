@@ -40,9 +40,15 @@ services:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
       AUTHENTIK_URL_DOMAIN: auth.canari-emse.fr
       AUTHENTIK_LOG_LEVEL: debug
+    # ONE publish, and an ADDRESS rather than a bare port. `9443` was dropped on 2026-09-24:
+    # the tunnel ingress reaches this stack at `http://10.0.0.7:9000`, measured on the connector
+    # itself, so the TLS listener had no consumer. On the shared host, TLS is terminated by the
+    # host's nginx with the DSI certificate, exactly as it is for the other estates - carrying
+    # `9443` across would need either a second certificate there or `proxy_ssl_verify off`, and
+    # both are refused. AUTHENTIK_PUBLISH holds the whole left-hand side so a move can bind it to
+    # loopback (`127.0.0.1:9000`) without editing this file.
     ports:
-      - ${COMPOSE_PORT_HTTP:-9000}:9000
-      - ${COMPOSE_PORT_HTTPS:-9443}:9443
+      - ${AUTHENTIK_PUBLISH:-9000}:9000
     shm_size: 512mb
     depends_on:
       postgresql:
@@ -55,6 +61,10 @@ services:
     image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}
     restart: unless-stopped
     command: worker
+    # STILL root, and no longer for the reason it was: the Docker socket below is gone. What is
+    # left is `./certs` and `./data`, written by this container and owned on the host by root. It
+    # is NOT verified that a non-root worker can write them, so dropping this is its own change
+    # with its own verification, not a line to delete while moving a machine.
     user: root
     env_file:
       - .env
@@ -70,7 +80,12 @@ services:
       postgresql:
         condition: service_healthy
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # THE DOCKER SOCKET IS NOT MOUNTED, and was removed on 2026-09-24. Authentik wants it only
+      # to run outposts as containers through a Docker service connection; the sole outpost here is
+      # the EMBEDDED one, which runs inside the server container and needs no socket. The service
+      # connection object exists in the database and NO outpost references it - checked before this
+      # line was deleted rather than after. What the mount cost: on a machine shared with other
+      # tenants it is root-equivalent control of the whole daemon, theirs included.
       - ./data:/data
       - ./certs:/certs
       - ./custom-templates:/templates

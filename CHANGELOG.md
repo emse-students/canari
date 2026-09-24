@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - Authentik sert depuis la machine cible, et un proxy n'herite d'aucun defaut
+
+Fenetre de 6 min 37 s, 230 tables prouvees identiques par empreinte de contenu. Le relais est un
+conteneur ici et non un paquet : `nginx` est absent de la VM et `sudo` y demande un mot de passe,
+pas `docker`. Interposer ce relais imposait une limite de corps de 1 Mo a une stack publiee en
+direct jusque-la, donc sans aucune - relevee des deux cotes. Verifie jusqu'au bout : emetteur OIDC,
+executeur de flux et redirection CAS.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - le worker Authentik montait le socket Docker, et rien ne s'en servait
+
+Sur sa propre VM c'est contenu ; sur l'hote partage ou cette stack demenage, c'est un controle
+equivalent-root sur tout le demon, conteneurs des autres locataires compris. Le seul outpost declare
+est l'Embedded Outpost, qui tourne dans le conteneur serveur - verifie en base AVANT de retirer la
+ligne. Le port `9443` part aussi : l'ingress du tunnel atteint la stack en clair sur `9000`, lu sur
+le connecteur. [authentik](infrastructure/authentik/README.md).
+
 ### Fixed - BEGIN IMMEDIATE ne prouve rien, et l'endpoint de sante avait raison
 
 L'entree precedente disait que `/api/health` repondait `ok` sur une base impossible a ecrire. Le
