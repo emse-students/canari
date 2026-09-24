@@ -1216,7 +1216,7 @@ without.
 
 | Ask | Note |
 | --- | --- |
-| `canari.emse.fr` | **exists, is LIVE and was re-certified 2026-09-22**: `Portail Etudiant ICM` on `193.49.175.122`, a DIFFERENT machine from the one `portail-etu.emse.fr` uses. A reassignment that takes a name off a running site, and the one ask here that can be refused on its merits |
+| `canari.emse.fr` | **NOTHING TO ASK FOR, AND THIS ROW SAID THE OPPOSITE UNTIL 2026-09-24.** It read "a DIFFERENT machine from the one `portail-etu.emse.fr` uses", and `193.49.175.122` is **the same machine**: the target's single interface carries `.67`, `.122` and a third address, so a vhost listening on `443` answers on all of them. Measured the same day: the name resolves to `.122`, an ENABLED vhost for it already exists on the target proxying to `127.0.0.1:3000` - the portal's port, which is why it returns `Portail Etudiant ICM` - and a GEANT TCS certificate for it sits in `/etc/certs/canari.emse.fr/`, issued 2026-09-22, valid to 2027-04-09, one SAN. **So no record, no certificate, no ticket: the whole change is one `proxy_pass` line on a machine we already administer.** The request text below already said this and was right; it is the table that was wrong, which is the more dangerous way round - a plan is read from its table |
 | `cercle.emse.fr` | new. The School reserves `etu.emse.fr` for mail, so it is not `cercle.etu.emse.fr` |
 | `miconnect.emse.fr` | new |
 | `www.canari.emse.fr` | new, and only so the redirect to the apex exists |
