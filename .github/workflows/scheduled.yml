@@ -33,7 +33,8 @@ on:
     # Daily. A new advisory can land against code nobody touched, which is the half the
     # pull-request path cannot see.
     - cron: '0 2 * * *'
-    # Sundays. The Actions cache quota is 10 GB and buildkit entries are never evicted.
+    # Sundays, and TWO jobs read this one. The Actions cache quota is 10 GB and buildkit entries
+    # are never evicted; GHCR image versions never expire either.
     - cron: '0 3 * * 0'
     # Daily. Did the last stable release actually reach both stores?
     - cron: '0 9 * * *'
@@ -47,7 +48,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, analysis, alerts, caches, dev-refresh, stores, cargo-unreachable]
+        options: [all, hosts, analysis, alerts, caches, ghcr-cleanup, dev-refresh, stores, cargo-unreachable]
       dry_run:
         description: 'dev-refresh only: report what would happen and change nothing'
         type: boolean
@@ -224,6 +225,83 @@ jobs:
             done
 
           echo "Pruning complete."
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # GHCR NEVER EXPIRES A VERSION, AND `build.yml` PUSHES THREE TAGS PER SERVICE ON EVERY RELEASE
+  #
+  # Measured 2026-09-24: 6048 versions of `frontend` alone, 1990 of them tagged (the rest are
+  # untagged single-platform images this build never made multi-arch, left behind whenever a
+  # commit or version tag moved onto a newer push) - and no job anywhere has ever deleted one.
+  # Every other of the 8 services accumulates the same way.
+  #
+  # KEEP is a rollback margin, not a guess at what is deployed: both estates are always pinned to
+  # an explicit `TAG=<sha>` (docs/wiki/infrastructure/estate-migration.md), so whatever is
+  # currently running is always among the newest few pushes and survives by construction. 30 covers
+  # months of release cadence at this project's rate without ever approaching a number that would
+  # make "can I still reach last month's build" a real question.
+  #
+  # ONE `gh api DELETE` PER VERSION, NOT THE THIRD-PARTY ACTION - `actions/delete-package-versions`
+  # caps a single run at 100 deletions, which would take dozens of weekly runs just to work through
+  # today's backlog, and its handling of untagged versions next to a multi-arch manifest list is
+  # undocumented. Moot here anyway: `build.yml` sets no `platforms:` input, so every image is a
+  # single-platform push with no manifest-list children to protect - an untagged version here is
+  # simply a superseded single image, safe to delete outright.
+  ghcr-cleanup:
+    name: Prune stale GHCR image versions
+    if: >
+      github.event.schedule == '0 3 * * 0' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "ghcr-cleanup"]'), inputs.job))
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      # THE SAME EIGHT NAMES `build.yml` PUSHES TO, HARDCODED THE SAME WAY IT HARDCODES THEM - an
+      # allowlist of exactly what this destructive step may touch, never a wildcard over the org's
+      # packages, and never derived from a listing that could grow to include something else.
+      - name: Delete versions beyond the rollback margin, oldest first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          SERVICES=(
+            core-service
+            social-service
+            chat-gateway
+            call-service
+            chat-delivery-service
+            frontend
+            frontend-ssr
+            media-service
+          )
+          KEEP=30
+
+          for service in "${SERVICES[@]}"; do
+            package="canari%2F${service}"
+            echo "=== ${service} ==="
+
+            # created_at first so a lexicographic sort is a chronological one (ISO 8601), newest
+            # first - never trusted from the API's own order, which is not a documented contract.
+            versions="$(gh api "orgs/emse-students/packages/container/${package}/versions?per_page=100" \
+              --paginate --jq '.[] | "\(.created_at)\t\(.id)"' | sort -r)"
+            total=$(printf '%s\n' "$versions" | grep -c . || true)
+
+            if [ "$total" -le "$KEEP" ]; then
+              echo "  ${total} version(s), at or under the ${KEEP} kept - nothing to do"
+              continue
+            fi
+
+            printf '%s\n' "$versions" | tail -n "+$((KEEP + 1))" | cut -f2 | while read -r id; do
+              [ -z "$id" ] && continue
+              if gh api --method DELETE "orgs/emse-students/packages/container/${package}/versions/${id}" >/dev/null 2>&1; then
+                :
+              else
+                echo "  ::warning::could not delete version ${id} of ${service} - left in place"
+              fi
+            done
+            echo "  ${total} version(s), kept ${KEEP} newest"
+          done
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # RE-SEED THE DEV ESTATE FROM PRODUCTION
