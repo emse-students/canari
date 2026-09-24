@@ -1304,35 +1304,6 @@ outranks `0.18.3-alpha.1` = 1800301 and Play restores it as an ordinary update, 
 out of the tester programme instead forces an uninstall, which wipes the very state being measured.
 
 ---
-### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
-
-```
-SELECT split_part("deviceId",'-',1) AS kind, count(*) FROM queued_message GROUP BY 1;
- web   | 12051
- tauri |  1224
-```
-
-Oldest row **2026-08-05**, spread over dead throwaway devices - the top six tauri device ids hold
-326, 299, 275, 126, 94 and 59 rows each. Retention is 90 days, so this expires on its own; it is
-filed because of what debris has already cost this campaign. Forty-two leftover groups made a run
-misread twice on 2026-09-06, and sweeping them turned a `FAIL` into that row's first clean `PASS`
-and PROVED a P1 - **debris does not just slow a run, it reattributes what the run measures**. A
-device re-entering a long queue on every reconnect is the same shape of cost.
-
-`cleanup.mjs` reports "nothing to sweep" against this state, which is the more precise finding: it
-answers a narrower question than its name suggests. Either it grows a clause for the queue, or its
-report says which stores it does not look at - a sweep that is silent about what it cannot see reads
-as an all-clear.
-
-**The GROUP half of this is fixed** (2026-09-08): `debris.mjs` named six runners while seven mint
-groups, so three `N17B-*` groups from NOTIF-17b were permanent - the phone under test carried seven
-groups where it should have carried four. The allowlist is widened, `debris-selftest.mjs` now
-refuses when an unenumerated file calls `createGroup(`, and the three are swept (`CHANGELOG.md`).
-What is left is the QUEUE half above, which no sweep looks at.
-
-**Blocked on nothing.** Local estate, test accounts, destroyable.
-
----
 
 ## Reported by the USER on 2026-09-18 - eleven items, verbatim
 

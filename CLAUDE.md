@@ -325,7 +325,7 @@ re-deriving anything here, and keep no second copy.**
 
 **THREE COMMANDS RUN BEFORE ANY MEASUREMENT IS BELIEVED**, each because skipping it has already
 cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
-free of debris that would REATTRIBUTE the run - it does not sweep `queued_message`), `bun
+free of debris that would REATTRIBUTE the run - and it now PRINTS what it does not sweep), `bun
 identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
 `fcmlink.mjs`. Every count, incident and disposition behind them is on
 [methodology](docs/wiki/testing-methodology.md) and the campaign page. **Read them; do not restate

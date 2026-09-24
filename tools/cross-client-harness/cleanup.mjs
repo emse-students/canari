@@ -166,8 +166,52 @@ if (groupDebris.length > 0) {
   for (const n of groupDebris) console.log(`  ${n}`);
 }
 
+/**
+ * THE STORES THIS SWEEP DOES NOT LOOK AT, COUNTED RATHER THAN NAMED.
+ *
+ * "nothing to sweep" reads as "the estate is clean" and means "the three stores I own are clean".
+ * That is the same gap the community and salon reports above were widened to close, one level up:
+ * an all-clear about a narrower question than the one the reader is asking. So the scope is printed
+ * on every run, with a live count, and a reader can see for themselves whether it matters today.
+ *
+ * **NEITHER ENTRY IS A SWEEP WAITING TO BE WRITTEN.** Each was considered and REFUSED, and the
+ * reason is the allowlist rule this file is built on - a destructive control names what it MAY
+ * touch, and neither of these can be named that way.
+ *
+ * `queued_message` is the delivery queue. 13 275 rows had accumulated behind dead throwaway devices
+ * by 2026-09-08, which is the count this was first written for. **Re-measured 2026-09-24: the local
+ * estate holds 4, from ONE device, all minted that day** - the estate has been re-seeded since, so
+ * the population the clause would have been written against no longer exists, and what is there now
+ * belongs to a LIVE device whose undelivered messages a sweep would destroy. There is also no
+ * product gesture that deletes a queue row and no table on this estate that enumerates devices, so
+ * an allowlist could only be built as a denylist. Retention is 90 days and it expires on its own.
+ *
+ * `associations` holds check R's notification fixture - an association with a logo, the only
+ * fixture-reachable feeder of a notification's large icon (`docs/wiki/device-verification.md`). It
+ * is built BY HAND and reused across runs, so deleting it would cost the next run its fixture
+ * rather than save it anything. It is not debris; it is equipment.
+ */
+const UNSWEPT = [
+  {
+    store: 'queued_message',
+    sql: 'SELECT count(*) FROM queued_message',
+    why: 'the delivery queue - a live device owns undelivered rows, and 90-day retention expires the rest',
+  },
+  {
+    store: 'associations',
+    sql: 'SELECT count(*) FROM associations',
+    why: "check R's notification fixture - built by hand and reused, equipment rather than debris",
+  },
+];
+
+console.log('[cleanup] NOT looked at by this sweep, and deliberately so:');
+for (const { store, sql, why } of UNSWEPT) {
+  const count = psql(sql).trim() || '(unreadable)';
+  console.log(`  ${store}: ${count} row(s) - ${why}`);
+}
+
 if (debris.length === 0 && salonDebris.length === 0 && groupDebris.length === 0) {
-  console.log('[cleanup] nothing to sweep');
+  console.log('[cleanup] nothing to sweep in the three stores this file owns - communities, salons, groups');
   process.exit(0);
 }
 if (dry) {
