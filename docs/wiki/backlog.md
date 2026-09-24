@@ -2157,6 +2157,37 @@ hardware-blocked items rather than with this one.
 
 ## CI and the chain that runs unattended
 
+### P3 - THE TWO GESTURES OF A RELEASE NEED `main` TO HOLD STILL FOR ~30 MINUTES, AND NOTHING ARRANGES THAT (measured while shipping v0.18.22, 2026-09-24)
+
+**The gates are right; the window is the problem.** Gate 2 of `.github/scripts/release-preflight.sh`
+requires `main` to still POINT AT the released commit, because the bump commits on it and pushes a
+fast-forward. Gate 4 requires dev to have served that commit, and the dev marker is written by the
+pre-release's own deploy - on the bump commit it produced. So a stable is publishable only at the
+head the last pre-release left, and only until somebody merges.
+
+**What it cost on 2026-09-24**, shipping `v0.18.22`, with sixteen agent sessions on the repository:
+`alpha.2` was green and a pull request merged minutes later, so `main` had moved past the commit dev
+served; `alpha.3`, cut at the new head, was REFUSED by gate 2 because a second pull request merged
+between the `git fetch` that read the head and the `gh release create` that tagged it; `alpha.4`
+succeeded only because a peer session was asked to freeze its merges, and held that freeze until the
+stable run concluded. Three pre-releases for one stable, and the freeze was arranged by hand.
+
+**A rerun does not substitute for the freeze, and believing it does costs a cycle.** `gh run rerun`
+re-evaluates gate 2 against the SAME tag; it rescues a release whose `CI passed` had not concluded
+yet (gate 3), never one whose `main` has moved. The released tree still carries the pre-release
+version, so `classify_main_position` answers `unpushable`, not `pushable noop`.
+
+**What is NOT the fix.** Letting the bump rebase, or letting gate 4 accept a dev that is behind by
+"harmless" commits, are both fallbacks: the guarantee those gates buy is that what production runs
+is what `main` says and what dev already served. **The shape worth designing is one where the human
+gesture names a RELEASE and the machine picks the commit** - the release cut from `main` HEAD at the
+moment the preflight runs, rather than from a sha a human read seconds earlier. That is a design
+question, not a patch, and nobody has costed it.
+
+**Until then the constraint is written in `CLAUDE.md`** ("do not merge anything in between") and in
+the preflight's own refusal hint, and it is enforced by asking peers to stop - which works, and is
+not a mechanism.
+
 ### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
 **The Android half of this closed on 2026-09-22** and is on
