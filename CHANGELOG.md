@@ -11,6 +11,14 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - quel conteneur publie quoi, et un port que Canari ne pourra pas garder
+
+La table de loopback de la cible disait ce qui etait pris, jamais ce qui etait demande. Mesure des
+quatre machines : la pile de production Canari n'expose qu'UN port sur le chemin public, et c'est
+`8080`, deja tenu sur la cible par un agent que ce projet n'administre pas. Deux points restent
+ouverts, le `9443` d'Authentik et la paire publiee par garage.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md#5-the-target-shape-and-the-one-thing-it-forces).
+
 ### Fixed - l'etape 3 du runbook n'etait pas faite, et la page disait qu'elle l'etait
 
 Mesure sur l'hote : `/srv/le-cercle` existe et est VIDE, et le seul conteneur qui y tourne est celui
