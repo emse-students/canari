@@ -26,7 +26,7 @@
 # and `docker compose config` resolve secrets, so their output is piped and never echoed.
 #
 # Usage:
-#   verify-secrets.sh --environment prod|dev --path /home/canari/canari
+#   verify-secrets.sh --environment prod|dev --path /srv/canari
 #
 # It runs AFTER deploy-environment.sh: the services must be up for their environment to be readable.
 set -euo pipefail

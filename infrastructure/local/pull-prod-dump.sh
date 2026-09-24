@@ -26,8 +26,12 @@
 set -euo pipefail
 
 # ── Production, by compose label. Constants: this script must not be pointable elsewhere. ──
-readonly PROD_HOST="canari"
-readonly PROD_PROJECT="infrastructure"
+# Production's containers moved off the `canari` box onto portail-etu.emse.fr on 2026-09-24
+# (docs/wiki/infrastructure/estate-migration.md); `ssh canari` still reaches the OLD box, which is
+# now only the tunnel relay, so this must name the box that actually runs postgres. The compose
+# project was renamed `infrastructure` -> `canari-prod` in the same move.
+readonly PROD_HOST="portail-etu-direct"
+readonly PROD_PROJECT="canari-prod"
 readonly DATABASE="auth_db"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

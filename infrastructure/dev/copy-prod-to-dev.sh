@@ -37,7 +37,11 @@
 set -euo pipefail
 
 # ── The two projects. Constants, deliberately: see the header. ────────────────
-readonly PROD_PROJECT="infrastructure"
+# PROD_PROJECT was "infrastructure" until the 2026-09-24 move onto portail-etu.emse.fr renamed
+# prod's compose project to "canari-prod" (docs/wiki/infrastructure/estate-migration.md) - this
+# script runs on whichever box's runner picks up the job, and finds both projects by label on
+# THAT box, so it must name whatever prod is actually called there.
+readonly PROD_PROJECT="canari-prod"
 readonly DEV_PROJECT="canari-dev"
 readonly DATABASE="auth_db"
 
