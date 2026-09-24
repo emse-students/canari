@@ -2,6 +2,7 @@
  * MediaController
  *
  * Endpoints:
+ *   GET  /media/limits  - The one ceiling, so no client has to be built carrying a copy of it
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
@@ -13,7 +14,8 @@
  * X-Internal-Secret so only social-service (which owns association-admin authz) can
  * remove blobs - a logged-in client cannot delete another association's public assets.
  *
- * Size limit: configurable via MEDIA_MAX_SIZE_MB (default 20 MB).
+ * Size limit: configurable via MEDIA_MAX_SIZE_MB (default 100 MB, capped at 100 by policy), and
+ * published by GET /media/limits so a client never has to carry a build-time copy of it.
  * The service never inspects the ciphertext content.
  */
 import {
@@ -129,6 +131,41 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // GET /media/limits
+  // ---------------------------------------------------------------------------
+  /**
+   * The upload ceiling, as ONE fact the client asks for rather than one it is built with.
+   *
+   * ## What was wrong with a build-time number
+   *
+   * The client refused a file over `VITE_MEDIA_MAX_SIZE_MB`, a Vite variable inlined at BUILD time.
+   * Nothing in `build.yml` ever wrote it - it is set only by `scripts/setup-env.sh` on a developer's
+   * machine - so every shipped build (web, APK, iOS) used the code default of 100 MB while every
+   * server has run on `MEDIA_MAX_SIZE_MB=50`. Measured on the local estate 2026-09-24: 49 MB
+   * uploads with `201`, 51 MB is refused with `413 File too large`. A member could therefore pick a
+   * 90 MB video, watch the whole of it go up, and be refused at the end - and `client_max_body_size
+   * 100m` on nginx, long believed to be the opposing side, never got a say at all.
+   *
+   * A build-time variable could not have fixed it either, which is the deciding argument: **an
+   * installed APK carries whatever value it was built with, and nothing keeps that in step with the
+   * box.** Only the box can answer, so the box answers.
+   *
+   * ## Why no JWT
+   *
+   * It is global platform configuration, never user-specific - the same shape as
+   * `GET /payments/provider`, and declared alongside it in
+   * `.github/scripts/tests/auth-request-coverage.test.mjs`. It reveals a number that anybody may
+   * discover by attempting one upload.
+   *
+   * @returns `maxBytes`, measured on the CIPHERTEXT - which is the plaintext plus the 16-byte
+   *   AES-GCM tag, the IV travelling beside the blob rather than inside it.
+   */
+  @Get('limits')
+  limits(): { maxBytes: number } {
+    return { maxBytes: MAX_BYTES };
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /media/upload
   // ---------------------------------------------------------------------------
   @Post('upload')
@@ -150,8 +187,11 @@ export class MediaController {
     try {
       upload = requireUploadedFile(file);
     } catch {
+      // NAMES THE CONFIGURED CEILING, NOT THE POLICY ONE. This said `POLICY_MAX_MEDIA_MB` - 100 -
+      // on a service that has always run at 50, so the one line a caller reads when an upload is
+      // refused announced a limit twice the real one.
       throw new PayloadTooLargeException(
-        `No file provided or file exceeds size limit (${POLICY_MAX_MEDIA_MB} MB max)`
+        `No file provided or file exceeds size limit (${MAX_BYTES} bytes max)`
       );
     }
 

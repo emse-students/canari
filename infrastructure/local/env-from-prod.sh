@@ -309,7 +309,6 @@ VITE_FRONTEND_URL=http://localhost:1420
 VITE_AUTHENTIK_URL=$(value_of AUTHENTIK_BASE_URL)
 VITE_AUTHENTIK_CLIENT_ID=${CANARI_LOCAL_OIDC_CLIENT_ID:-}
 VITE_ENABLE_DEV_ROUTES=true
-VITE_MEDIA_MAX_SIZE_MB=$(value_of MEDIA_MAX_SIZE_MB)
 
 # Klipy (GIF picker) has no value in infrastructure/.env: it is a BUILD-TIME frontend variable that
 # CI injects from the GitHub secret KLIPY_API_KEY, and a GitHub secret cannot be read back. Empty

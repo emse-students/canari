@@ -335,6 +335,34 @@ export function parseMediaMessage(content: string): MediaRef | null {
 // ---------------------------------------------------------------------------
 
 /**
+ * What encryption adds to a file before the server measures it: the AES-GCM authentication tag.
+ *
+ * The server's ceiling is applied to the CIPHERTEXT, and the client picks a PLAINTEXT file, so the
+ * two are not comparing the same bytes. The IV is not part of the difference - it travels beside the
+ * blob in the `MediaRef`, never inside it - which leaves exactly the 16-byte tag `crypto.subtle`
+ * appends. A file of `maxBytes` therefore does NOT fit, and `maxBytes - 16` is the largest that
+ * does: the boundary the two numbers used to disagree about, now written down once.
+ */
+export const MEDIA_CIPHERTEXT_OVERHEAD_BYTES = 16;
+
+/**
+ * THE UPLOAD CEILING, ASKED OF THE SERVER ONCE PER PAGE, because it is the server's number.
+ *
+ * It used to be `VITE_MEDIA_MAX_SIZE_MB`, inlined at BUILD time. Nothing in CI ever wrote that
+ * variable - only `scripts/setup-env.sh`, on a developer's machine - so every shipped build refused
+ * at the code default of 100 MB while every server has run at 50, and 50 MB of a 90 MB video went
+ * up the wire before anybody said no (measured 2026-09-24). A build-time value could not have been
+ * the fix either: an installed APK carries whatever it was built with, and nothing keeps that in
+ * step with the box it talks to.
+ *
+ * Module-level, so a page pays for it once however many `MediaService` instances it makes, and the
+ * PROMISE is cached rather than the value, so two concurrent pickers make one request. Keyed by
+ * base URL because that is what the answer is about: an instance pointed at another origin is
+ * asking a different server, and sharing one entry between them would answer the wrong box.
+ */
+const ceilings = new Map<string, Promise<{ maxBytes: number; maxPlaintextBytes: number } | null>>();
+
+/**
  * Client-side media operations: encrypt-then-upload and download-then-decrypt.
  * The decryption key (CEK) is never transmitted to or stored on the server - it is embedded inside
  * the MLS-encrypted application message so only group members can decrypt the attachment.
@@ -351,6 +379,49 @@ export class MediaService {
     const fallback =
       typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3011';
     this.baseUrl = (baseUrl ?? env ?? '').replace(/\/$/, '') || fallback;
+  }
+
+  // -------------------------------------------------------------------------
+  // Limits
+  // -------------------------------------------------------------------------
+
+  /**
+   * This server's upload ceiling, or `null` when it could not be asked.
+   *
+   * `null` is not a fallback ceiling and must never be turned into one - it is the absence of an
+   * OPTIMISATION. The refusal that matters is the server's 413; this number exists only so a member
+   * is told before the bytes go up rather than after. When it cannot be had, the upload proceeds and
+   * the server decides, which is what happens on every path anyway.
+   *
+   * TWO NUMBERS, BECAUSE THEY ANSWER TWO QUESTIONS. `maxPlaintextBytes` is what a file is COMPARED
+   * against - the server measures ciphertext, so the tag has to come off. `maxBytes` is what the
+   * member is TOLD, because the ceiling they were given is 50 MB and announcing "49 Mo" would be
+   * wrong by a whole megabyte of files that do fit. The two disagree only over the last 16 bytes,
+   * which no display at megabyte granularity can show anyway.
+   */
+  async uploadLimits(): Promise<{ maxBytes: number; maxPlaintextBytes: number } | null> {
+    const cached = ceilings.get(this.baseUrl);
+    if (cached) return cached;
+    const pending = (async () => {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/media/limits`);
+        if (!res.ok) {
+          console.warn(`[media] GET /media/limits answered ${res.status} - no client-side ceiling`);
+          return null;
+        }
+        const { maxBytes } = (await res.json()) as { maxBytes?: unknown };
+        if (typeof maxBytes !== 'number' || !Number.isFinite(maxBytes) || maxBytes <= 0) {
+          console.warn(`[media] /media/limits gave no usable maxBytes - no client-side ceiling`);
+          return null;
+        }
+        return { maxBytes, maxPlaintextBytes: maxBytes - MEDIA_CIPHERTEXT_OVERHEAD_BYTES };
+      } catch (e) {
+        console.warn(`[media] /media/limits unreachable - no client-side ceiling`, e);
+        return null;
+      }
+    })();
+    ceilings.set(this.baseUrl, pending);
+    return pending;
   }
 
   // -------------------------------------------------------------------------

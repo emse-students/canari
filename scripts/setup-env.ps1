@@ -294,7 +294,6 @@ else {
 if (Test-Path $FrontendEnv) {
     Write-EnvVar $FrontendEnv "VITE_JWT_SECRET" $FrontendSecret
     Write-EnvVar $FrontendEnv "VITE_MEDIA_URL" "http://localhost:3011"
-    Write-EnvVar $FrontendEnv "VITE_MEDIA_MAX_SIZE_MB" "50"
 
     Write-Success "Updated frontend VITE_JWT_SECRET"
 }

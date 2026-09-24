@@ -33,6 +33,7 @@ Server:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| GET | `/api/media/limits` | none | The configured upload ceiling in bytes - the client ASKS for it rather than being built with it |
 | POST | `/api/media/upload` | JWT | Upload encrypted blob, return `mediaId` |
 | POST | `/api/media/upload/public` | JWT | Upload small public image (logo), auto-resized to 512x512 WebP |
 | POST | `/api/media/upload/chunk/init` | JWT | Initialize chunked upload session |
@@ -76,7 +77,7 @@ Requires running PostgreSQL, Garage (S3 store), and configured credentials.
 | `GARAGE_ACCESS_KEY_ID` | yes | The key Garage provisions on first boot - not a second one |
 | `GARAGE_SECRET_ACCESS_KEY` | yes | Its secret |
 | `GARAGE_BUCKET` | yes | Bucket for both private and public blobs (default `canari-media`) |
-| `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
+| `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number |
 | `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 hour) |
 
 ## See also

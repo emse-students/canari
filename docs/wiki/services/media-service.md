@@ -48,6 +48,7 @@ a prop, but only as a signal that the session is authenticated.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| GET | `/api/media/limits` | none | The configured upload ceiling in bytes - the client ASKS for it rather than being built with it |
 | POST | `/api/media/upload` | JWT | Upload encrypted blob, return `mediaId` |
 | POST | `/api/media/upload/public` | JWT | Upload small public image (logo), auto-resized to 512x512 WebP |
 | POST | `/api/media/upload/chunk/init` | JWT | Initialize chunked upload session |
@@ -65,6 +66,42 @@ Neither `DELETE` is reachable by a client. `:id` is called by
 carries **no JWT on purpose** - the account is already being destroyed, so there is no token left to
 present - and it is declared BEFORE the catch-all `:id` for the same reason `internal/:id` precedes
 `GET :id`. **Nothing in the chat or channel paths deletes a blob** - see retention below.
+
+## The upload ceiling is ONE number, and the box publishes it (2026-09-24)
+
+`GET /api/media/limits` answers `{ "maxBytes": <number> }` and takes no token. It exists because the
+client used to carry its OWN copy of the ceiling.
+
+**What the two copies were.** The client refused a file over `VITE_MEDIA_MAX_SIZE_MB`, a Vite
+variable inlined at BUILD time, default 100. The server refuses a part over `MEDIA_MAX_SIZE_MB`,
+default 100, and **both estates run `50`**. Nothing in CI ever wrote the Vite variable - only
+`scripts/setup-env.sh`, on a developer's machine - so **every shipped build, web, APK and iOS,
+allowed twice what every server accepts.**
+
+**Measured before either number moved**, on the local estate, uploading from a logged-in page: 49 MB
+answers `201`, 51 MB answers `413 File too large`. So the gap is a whole 50 MB, not the handful of
+bytes the backlog item predicted, and a member could pick a 90 MB video, watch all of it go up and
+be refused at the end.
+
+**`client_max_body_size 100m` on nginx was never the opposing side.** It is the number the item named
+and it never got a say: media-service refuses at half of it, first.
+
+**The two caps also measured different bytes, and that is now explicit.** The server's ceiling
+applies to the CIPHERTEXT; the picker holds a PLAINTEXT `File`. AES-GCM grows it by exactly its
+16-byte tag - the IV travels beside the blob in the `MediaRef`, not inside it - so
+`MediaService.uploadLimits()` returns both `maxBytes` (what the member is TOLD) and
+`maxPlaintextBytes` (what a file is COMPARED against). Announcing the compared number would say
+"49 Mo" of a 50 MB server, which is the bug the boundary test in
+`useMessaging.mediaCeiling.svelte.test.ts` exists to keep shut.
+
+**A build-time variable could not have fixed this**, which is the deciding argument rather than a
+preference: an installed APK carries whatever value it was built with, and nothing keeps that in
+step with the box. Only the box can answer.
+
+**When the limit cannot be had, the client refuses NOTHING.** The check is an optimisation - telling
+a member before the bytes go up rather than after - and the refusal that matters is the server's
+`413`. A `null` ceiling never becomes an invented one; a default would be exactly the second copy
+this removed. The answer is cached per origin, so one fetch serves every picker.
 
 ## Retention: a 90-day IDLE sweep on CHAT media, and nothing else deletes them
 
@@ -155,7 +192,7 @@ breakdown was split to fix on 2026-08-18. At the rate measured on the day it shi
 | `GARAGE_ACCESS_KEY_ID` | yes | The key Garage provisions on first boot - the only S3 identity in the stack |
 | `GARAGE_SECRET_ACCESS_KEY` | yes | Its secret |
 | `GARAGE_BUCKET` | yes | Bucket name for media blobs (default `canari-media`), **also used for public assets** |
-| `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
+| `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number |
 | `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 h) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself

@@ -196,8 +196,6 @@ export function useMessaging() {
   >();
 
   const mediaService = new MediaService();
-  const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '100', 10);
-  const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
 
   // ── Incoming message ──────────────────────────────────────────────────────
 
@@ -1214,9 +1212,17 @@ export function useMessaging() {
     ctx: MessagingContext
   ): Promise<import('$lib/media').PendingMediaFile[]> {
     const readyFiles: import('$lib/media').PendingMediaFile[] = [];
+    // THE CEILING IS THE SERVER'S, ASKED FOR RATHER THAN BUILT IN, and `null` means it could not be
+    // asked - in which case nothing is refused here and the server's 413 decides, as it always did.
+    // It is one request per origin per page, awaited here because this function is already async and
+    // a picker that has not yet been answered has nothing to refuse.
+    const limits = await mediaService.uploadLimits();
     for (const file of files) {
-      if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
+      if (limits !== null && file.size > limits.maxPlaintextBytes) {
         const size = (file.size / 1024 / 1024).toFixed(1);
+        // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
+        // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.
+        const mediaMaxSizeMb = Math.round(limits.maxBytes / 1024 / 1024);
         ctx.setSendError(m.chat_media_too_large({ size, limit: mediaMaxSizeMb }));
         // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
         // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
