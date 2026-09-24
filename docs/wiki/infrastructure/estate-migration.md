@@ -1491,19 +1491,39 @@ That is the same finding the Cercle's compose file already carries a paragraph a
    to the bare `self-hosted` that four Canari jobs ask for, and both are visible to this repository,
    so a release published before the estates move could land on the empty one. A stopped unit that
    a reboot would restart is not a closed hazard, which is why the symlink is gone too.
-   **Re-enabling it is part of step 5, in the window, and it is the last thing done before the flip
+   **Re-enabling it is part of step 6, in the window, and it is the last thing done before the flip
    rather than the first** - the old runner must stop in the same breath, or the same race reopens
    from the other side.
-2. Write `/srv/canari/` and `/srv/canari-dev/` on the target: compose with `name: canari-prod` and
-   `name: canari-dev` DECLARED, the `.env`, the mount directories.
-3. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
-4. **Move the checkouts and the crontab too - decided 2026-09-24 by the user: "le serveur initial
-   n a pas vocation a perdurer pendant des annees apres la migration".** The deploy `git reset
-   --hard`s into `/home/canari/canari` and three cron lines run from it: the nightly backup, the
-   object backup, and a per-minute egress probe. **Every path that names the old box is part of
-   this step, not a follow-up** - including `MICONNECT_SSH_HOST`, which becomes a hop to the same
-   machine. A half-moved estate is the state that breaks on the first release nobody is watching.
-5. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
+2. **Create the two CHECKOUTS on the target - they are not compose directories, and that is the
+   difference from the other two estates.** `/srv/le-cercle` and `/srv/miconnect` each hold a
+   `compose.yml` and nothing else; Canari's estates are clones of THIS repository that the deploy
+   `git reset --hard`s into, so what is written on the target is a git tree and the compose file
+   arrives with it. **The paths are LITERALS in the workflow env** - `DEPLOY_PATH:
+   /home/canari/canari` in `serve-prod.yml`, `DEV_DEPLOY_PATH: /home/canari/canari-dev` in
+   `serve-dev.yml` - so moving them is a commit in this repository, not a server-side gesture.
+   **And the two halves do NOT behave the same when the directory is missing**: `serve-dev.yml`
+   clones when it finds no `.git`, `serve-prod.yml` assumes the checkout is there. A move that
+   trusts both to self-heal leaves production's first deploy on the new host failing on a directory
+   that was never created, while dev comes up and makes the migration look successful.
+3. **Declare `name: canari-prod` and `name: canari-dev` in the two compose files, IN THE SAME COMMIT
+   as the path change, and never before it.** The project name is inferred today from the compose
+   file's own directory, which is why production's project is called `infrastructure`. Declaring it
+   renames the project, and a renamed project looks for volumes that do not exist - so a commit
+   landing this ahead of the move would, at the next ordinary production deploy on the CURRENT box,
+   bring the whole estate up EMPTY and healthy. That is the identical failure this migration already
+   met on Authentik, which is section A; the difference is that here it is predictable to the day.
+   At the move the volumes are restored from a dump anyway, so the new names cost nothing.
+4. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
+5. **Move the crontab and every remaining path that names the old box - decided 2026-09-24 by the
+   user: "le serveur initial n a pas vocation a perdurer pendant des annees apres la migration".**
+   The checkouts are step 2; what is left is everything ELSE that was written against
+   `/home/canari/canari`. Three cron lines run from it - the nightly backup, the object backup and
+   a per-minute egress probe - and `MICONNECT_SSH_HOST` becomes a hop to the same machine rather
+   than to another one. **This is part of the move, not a follow-up.** A half-moved estate is the
+   state that breaks on the first release nobody is watching, and it breaks in the one place with
+   no user watching either: a backup that still writes to a VM nobody looks at any more is
+   indistinguishable from a backup that works, until it is needed.
+6. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
 
 ### C. DECIDED 2026-09-24, AND THE ONE THING STILL OWED BY THE USER
 
