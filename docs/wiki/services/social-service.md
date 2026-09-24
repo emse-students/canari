@@ -258,6 +258,20 @@ broadcast, and the vote and close responses and their broadcasts - by one helper
 The opportunistic auto-unpin uses the same predicate, so a poll cannot be unpinned for being over
 while being served as open.
 
+**AND THE HALF `closed` CANNOT COVER IS THE DEADLINE ARRIVING WHILE THE CARD IS ON SCREEN**, closed
+client-side on 2026-09-24. `closed` is true of the instant it was stamped, and a client that is
+already holding the card never asks again - so a poll whose `endsAt` simply came round kept showing
+its vote form until an unrelated redraw, and a tap then earned exactly the 403 this field exists to
+prevent. The deadline is KNOWN, so the moment it becomes interesting is known too: the client
+schedules ONE timer per card at the earliest `endsAt` still ahead (`pollDeadlineClock`,
+[posts](../frontend/modules/posts.md#a-deadline-that-arrives-while-the-card-is-on-screen-2026-09-24)),
+not an interval and not one per poll. **The asymmetry is what makes that safe where the old
+comparison was not**: a skewed comparison produced a verdict of "still open" that nothing would ever
+revisit, so its error was permanent, while a skewed DELAY moves the moment the form closes by a few
+hundred milliseconds, once. The client flip is also one-way - it can only add closure to what this
+service said, never remove it - and this service remains the only thing that decides whether a vote
+is taken.
+
 #### Message reactions
 
 **A reaction is an encrypted channel message (WP-40, 2026-08-18).** It is sealed under its sender's

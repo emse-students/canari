@@ -21,7 +21,8 @@
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
-  import { applyPostPollVote, nextPollSelection } from '$lib/posts/pollVote';
+  import { applyPostPollVote, nextPollSelection, pollDeadlinePassed } from '$lib/posts/pollVote';
+  import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { getForm, checkSubmission } from '$lib/forms/api';
@@ -92,6 +93,14 @@
   let selectedOptions = $state<string[]>([]);
 
   /**
+   * The instant this card's deadlines are judged against - see {@link pollDeadlineClock}.
+   *
+   * It exists because the old spelling read `Date.now()` during render, which is not reactive: a
+   * deadline arriving while the card was on screen flipped nothing until an unrelated redraw.
+   */
+  const deadlineClock = pollDeadlineClock(() => localPost.polls ?? []);
+
+  /**
    * Whether a poll has closed - ONE spelling, read by the renderer and by the tap handler.
    *
    * A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
@@ -99,7 +108,7 @@
    * prop rather than deciding for every caller (COMM-15).
    */
   function pollIsOver(poll: Poll): boolean {
-    return !!poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now();
+    return pollDeadlinePassed(poll.endsAt, deadlineClock.at);
   }
 
   /**

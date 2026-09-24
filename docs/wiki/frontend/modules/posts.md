@@ -670,6 +670,39 @@ reader's answer to the poll beside it - and `submitVote` then sent that other po
 poll's endpoint. `selectionIn(poll)` splits it once, on both sides of the write, which is also what
 makes "two answers max" count the right answers.
 
+## A deadline that arrives while the card is on screen (2026-09-24)
+
+`PostPolls` takes `isOver` as a PROP and does not own a clock - the two callers' deadlines come
+from different clocks and only the caller knows whose (COMM-15). What neither caller did was notice
+the deadline ARRIVING. `PostCard` spelt it `new Date(poll.endsAt).getTime() <= Date.now()`, read
+during render: `Date.now()` is not reactive, so the answer was true of the instant the card
+happened to be drawn and nothing re-ran it. `ChannelPoll` read the server's `closed`, which is
+stamped at hand-out and likewise never re-read. Either way the vote form stayed live after the poll
+had ended, and the reader learnt by being refused with a 403 - **learning by failing what a fact
+could have told us**, when `endsAt` was sitting in the payload the whole time.
+
+Three pieces, and the split is what makes it testable:
+
+| Piece | Where | What it is |
+| --- | --- | --- |
+| `pollDeadlinePassed(endsAt, at)` | `posts/pollVote.ts` | pure; the instant is a PARAMETER, never `Date.now()` |
+| `msUntilPollDeadline(polls, at)` | `posts/pollVote.ts` | pure; the wait to the EARLIEST deadline still ahead, or `undefined` |
+| `pollDeadlineClock(polls)` | `posts/pollDeadline.svelte.ts` | the rune wrapper: one `setTimeout`, cleaned up on unmount |
+
+**ONE TIMER PER CARD, NOT ONE PER POLL**, because the feed scrolls and a card can carry several:
+only the earliest deadline ahead is interesting, and when it lands the effect runs again and finds
+the next. A card with no deadline schedules nothing at all, and an unparseable date yields
+`undefined` rather than a `NaN` delay, which `setTimeout` would treat as zero and spin on.
+
+**Whose clock, and which direction it may be wrong in.** The delay is computed from the deadline the
+SERVER sent, against this browser's clock. That is safe here in a way the old comparison was not,
+and the difference is not one of degree: a skewed comparison produced a permanent "still open", while
+a skewed delay moves the closing moment by a few hundred milliseconds once. The flip is one-way - it
+only ever adds closure - and the server stays the authority on whether a vote is taken.
+
+Every instant in `pollVote.test.ts` is a literal, which is the campaign's standing rule for tests
+and also the defect itself restated: the old code took its instant from a wall clock at render time.
+
 ## A poll option is free text, so it can only wrap (2026-09-23)
 
 `PostPolls.svelte` is the ONE presentation for both surfaces that carry a poll: a post's poll card

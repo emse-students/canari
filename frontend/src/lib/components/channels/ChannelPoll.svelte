@@ -1,7 +1,8 @@
 <script lang="ts">
   import PostPolls from '$lib/components/posts/PostPolls.svelte';
   import type { Poll } from '$lib/posts/api';
-  import { nextPollSelection } from '$lib/posts/pollVote';
+  import { nextPollSelection, pollDeadlinePassed } from '$lib/posts/pollVote';
+  import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import type { ChannelPollMeta, ChannelPollSpec } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
@@ -59,7 +60,15 @@
   // THE SERVER'S OWN STATEMENT, not a comparison against this clock. `endsAt` is an instant on the
   // server's clock; a poll closed *now* reaches us stamped with a time our clock has not caught up
   // to, so the comparison this used to make came out false and nothing ever re-ran it (COMM-15).
-  const isClosed = $derived(meta.closed);
+  //
+  // AND THE DEADLINE ARRIVING WHILE THE CARD IS ON SCREEN IS THE CASE THAT STATEMENT CANNOT COVER:
+  // `closed` is stamped when the poll is handed out and nothing re-reads it, so the vote form used
+  // to stay live until the next redraw and a tap then earned a 403. The clock below is ONE-WAY - it
+  // can only ADD closure to what the server said - and it is scheduled from the server's own
+  // `endsAt`, so skew moves WHEN the form closes by a few hundred milliseconds instead of leaving
+  // it open for ever. See {@link pollDeadlineClock} for why that asymmetry is the whole argument.
+  const deadlineClock = pollDeadlineClock(() => [{ endsAt: meta.endsAt }]);
+  const isClosed = $derived(meta.closed || pollDeadlinePassed(meta.endsAt, deadlineClock.at));
 
   /**
    * Single-choice: toggle then submit immediately. Multiple-choice: just toggle;
