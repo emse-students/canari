@@ -35,6 +35,46 @@ interface GroupCreationDeps {
 }
 
 /**
+ * WHY A CONVERSATION WAS NOT CREATED - A TYPE, DECIDED WHERE THE REFUSAL HAPPENS.
+ *
+ * Both creation paths used to end their failures in a `log()` line and return `void`, so the only
+ * caller that could act on them - the creation modal - had nothing to act on: it closed on a
+ * conversation that did not exist and left the member to work out why. The fix is not a message but
+ * a discriminator: the screen that renders a refusal and the developer line that records it are two
+ * different readers, and prose cannot serve both without one call site learning to parse the other's
+ * sentences.
+ *
+ * Each member is a distinct thing the member can DO something about, which is the bar for adding
+ * one. Anything the creation threw is `creation-failed` deliberately: the exception is already
+ * logged with its detail, and splitting it further here would be inventing distinctions the screen
+ * cannot act on.
+ */
+export type ConversationRefusal =
+  /** A group of that name is already open on this device - the existing one is where to go. */
+  | 'duplicate-group-name'
+  /** A block stands between the two accounts, in one direction or the other. */
+  | 'blocked'
+  /** core-service could not be asked about blocks, so nothing may be concluded and nothing is. */
+  | 'block-check-unavailable'
+  /** The peer has never signed in, so there is no KeyPackage to add and no group to build. */
+  | 'peer-has-no-device'
+  /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
+  | 'creation-failed';
+
+/**
+ * What a creation path answers.
+ *
+ * `key` is the conversation to open, and `null` means there was nothing to do at all - an empty
+ * name, or the caller's own id. That is a success rather than a refusal: nothing failed and there is
+ * nothing to tell anybody. Both are already unreachable from the modal, which refuses empty input
+ * and excludes the current user; `null` exists so a programmatic caller cannot be handed a key that
+ * is not there.
+ */
+export type ConversationOutcome =
+  | { ok: true; key: string | null }
+  | { ok: false; reason: ConversationRefusal };
+
+/**
  * Fetches the list of registered devices for a user, retrying up to `attempts` times
  * before giving up. Returns an empty array if no devices are found after all retries.
  * Targets are always picked from the user autocomplete (they exist and have signed in),
@@ -73,9 +113,13 @@ async function fetchDevicesWithRetry(
  * in a single bulk commit to avoid epoch fragmentation.
  *
  * On failure the partially-created group is cleaned up server-side and the
- * conversation is removed from the reactive map.
+ * conversation is removed from the reactive map, and the caller is told WHICH failure it was so the
+ * creation modal can stay open and say so - see `ConversationOutcome`.
  */
-export async function createNewGroup(name: string, deps: GroupCreationDeps): Promise<void> {
+export async function createNewGroup(
+  name: string,
+  deps: GroupCreationDeps
+): Promise<ConversationOutcome> {
   const {
     mlsService,
     userId,
@@ -86,14 +130,17 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     log,
   } = deps;
 
-  if (!name.trim()) return;
+  if (!name.trim()) return { ok: true, key: null };
   const groupDisplayName = name.trim();
   const duplicateGroup = Array.from(conversations.values()).find(
     (c) =>
       (c.conversationType ?? 'group') === 'group' &&
       c.name.toLowerCase() === groupDisplayName.toLowerCase()
   );
-  if (duplicateGroup) return log(`Group "${groupDisplayName}" already exists.`);
+  if (duplicateGroup) {
+    log(`Group "${groupDisplayName}" already exists.`);
+    return { ok: false, reason: 'duplicate-group-name' };
+  }
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
@@ -210,6 +257,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         globalMessaging.resetMessageCatchupState();
       }
     });
+    return { ok: true, key: conversationKey };
   } catch (e) {
     log(`Group creation error: ${String(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
@@ -224,6 +272,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         // Non-blocking
       }
     }
+    return { ok: false, reason: 'creation-failed' };
   }
 }
 
@@ -474,11 +523,14 @@ export async function inviteMemberToGroup(
  *
  * All of the contact's devices plus the current user's other devices are added
  * in a single bulk MLS commit to keep epoch numbers contiguous.
+ *
+ * Every way this can decline is named in the answer rather than left in a log line - see
+ * `ConversationOutcome`.
  */
 export async function startNewConversation(
   contactName: string,
   deps: GroupCreationDeps
-): Promise<void> {
+): Promise<ConversationOutcome> {
   const { mlsService, userId, conversations, selectConversation, saveConversation, log } = deps;
   const silent = deps.silent ?? false;
   const maybeSelect = (id: string) => {
@@ -486,7 +538,7 @@ export async function startNewConversation(
   };
 
   const contact = contactName.trim().toLowerCase();
-  if (!contact || contact === userId) return;
+  if (!contact || contact === userId) return { ok: true, key: null };
 
   // Check local map first
   const existingDirect = Array.from(conversations.entries()).find(([, convo]) => {
@@ -498,7 +550,7 @@ export async function startNewConversation(
     const [existingKey, existingConvo] = existingDirect;
     if (existingConvo.lifecycle === 'active') {
       maybeSelect(existingKey);
-      return;
+      return { ok: true, key: existingKey };
     }
     // Conversation exists locally but MLS state is missing (e.g. backup on another device).
     // Fall through to the server check so we attempt repair below.
@@ -548,7 +600,7 @@ export async function startNewConversation(
       if (holdsGroupState(mlsService, key)) {
         await ensureDirectConvo(key, true);
         maybeSelect(key);
-        return;
+        return { ok: true, key };
       }
 
       // MLS state missing locally - recover via the external-join / welcome_request seam.
@@ -571,7 +623,10 @@ export async function startNewConversation(
       } catch {
         if (conversations.has(key)) maybeSelect(key);
       }
-      return;
+      // The row exists either way - recovery having been REQUESTED is the outcome here, and the
+      // conversation opens `pending` while it runs. A refusal would close a modal over a
+      // conversation the sidebar is about to show.
+      return { ok: true, key };
     }
   } catch (e) {
     // Non-blocking: continue with normal creation but log the error.
@@ -589,11 +644,11 @@ export async function startNewConversation(
   try {
     if (await isBlockedWith(contact)) {
       log(`[1v1] Refused: a block stands between ${userId} and ${contact}.`);
-      return;
+      return { ok: false, reason: 'blocked' };
     }
   } catch (e) {
     log(`[ERROR] Could not check whether ${contact} can be contacted: ${String(e)}`);
-    return;
+    return { ok: false, reason: 'block-check-unavailable' };
   }
 
   // IMPORTANT: Check if contact is available BEFORE creating the group
@@ -604,7 +659,7 @@ export async function startNewConversation(
     log(
       `[ERROR] No devices found for ${contact}. The contact must sign in at least once to publish their KeyPackage.`
     );
-    return;
+    return { ok: false, reason: 'peer-has-no-device' };
   }
 
   const groupName = `${userId}::${contact}`;
@@ -686,6 +741,7 @@ export async function startNewConversation(
     saveConversation(conversationKey);
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
+    return { ok: true, key: conversationKey };
   } catch (_e: unknown) {
     log(`Creation error: ${String(_e)}`);
     if (groupId) conversations.delete(groupId);
@@ -707,5 +763,6 @@ export async function startNewConversation(
         // Non-blocking: orphan will be cleaned up on next server-side GC
       }
     }
+    return { ok: false, reason: 'creation-failed' };
   }
 }

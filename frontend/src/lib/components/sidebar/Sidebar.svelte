@@ -14,6 +14,8 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
+  import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
   import {
     conversationMatchesQuery,
     recentDirectPeers,
@@ -64,10 +66,16 @@
     onGroupInputChange: (value: string) => void;
     /** Callback fired when the channel name input value changes. */
     onChannelInputChange?: (value: string) => void;
-    /** Callback to start a direct conversation with the given contact ID. */
-    onAddContact: (contactId?: string) => void;
-    /** Callback to create a new group conversation with the given name. */
-    onCreateGroup: (groupName?: string) => void;
+    /**
+     * Callback to start a direct conversation with the given contact ID.
+     *
+     * ANSWERS WHETHER IT WORKED, because this panel closes on the answer. It used to return
+     * nothing, so the modal closed on every call and a member whose conversation had just been
+     * refused was shown a sidebar that had not changed, with no line anywhere saying why.
+     */
+    onAddContact: (contactId?: string) => Promise<ConversationOutcome>;
+    /** Callback to create a new group conversation with the given name. Answers, like `onAddContact`. */
+    onCreateGroup: (groupName?: string) => Promise<ConversationOutcome>;
     /** Callback to create a new channel inside the specified workspace. */
     onCreateChannel?: (
       workspaceId: string,
@@ -163,6 +171,17 @@
   );
   let contactId = $state('');
   let groupName = $state('');
+  /**
+   * The refusal the new-chat panel is currently showing, and whether a creation is in flight.
+   *
+   * Both are here rather than in the modal because this component owns the submit: the modal is
+   * given its state and has no way to learn the outcome of a call it did not make. `newChatBusy`
+   * is not cosmetic - a creation takes seconds (device fetch, bulk commit, welcomes), and a panel
+   * that stays open with no sign of work reads as one that ignored the click, which is how a
+   * second group gets created by a member pressing the button again.
+   */
+  let newChatError = $state('');
+  let newChatBusy = $state(false);
   let channelName = $state('');
   let channelVisibility = $state<'public' | 'private'>('public');
   let communityName = $state('');
@@ -317,12 +336,14 @@
       activeTab = tab;
       contactId = newContactInput || '';
       groupName = newGroupInput || '';
+      newChatError = '';
       showNewChatModal = true;
     }
   }
 
   function closeNewChatModal() {
     showNewChatModal = false;
+    newChatError = '';
   }
 
   function closeNewChannelModal() {
@@ -334,25 +355,59 @@
     showCommunityAdminPanel = false;
   }
 
+  /**
+   * Runs one creation and decides what the panel does with the answer.
+   *
+   * THE FIELD IS CLEARED ONLY ON SUCCESS, which is the other half of staying open: a member who is
+   * told "this contact has never signed in" is looking at the id they typed, and blanking it would
+   * make them type it again to read it. On success the panel closes and the sidebar shows the
+   * conversation, which is the signal - no toast is added for it.
+   */
+  async function runCreation(
+    create: () => Promise<ConversationOutcome>,
+    clearField: () => void
+  ): Promise<void> {
+    if (newChatBusy) return;
+    newChatBusy = true;
+    newChatError = '';
+    try {
+      const outcome = await create();
+      if (!outcome.ok) {
+        newChatError = conversationRefusalMessage(outcome.reason);
+        return;
+      }
+      clearField();
+      closeNewChatModal();
+    } finally {
+      newChatBusy = false;
+    }
+  }
+
   function handleAddContact() {
     const value = contactId.trim();
     if (!value) return;
     if (currentUserId && value.toLowerCase() === currentUserId.toLowerCase()) return;
     onContactInputChange(value);
-    onAddContact(value);
-    contactId = '';
-    onContactInputChange('');
-    closeNewChatModal();
+    void runCreation(
+      () => onAddContact(value),
+      () => {
+        contactId = '';
+        onContactInputChange('');
+      }
+    );
   }
 
   function handleCreateGroup() {
     const value = groupName.trim();
     if (!value) return;
     onGroupInputChange(value);
-    onCreateGroup(value);
-    groupName = '';
-    onGroupInputChange('');
-    closeNewChatModal();
+    void runCreation(
+      () => onCreateGroup(value),
+      () => {
+        groupName = '';
+        onGroupInputChange('');
+      }
+    );
   }
 
   function handleCreateChannel() {
@@ -554,7 +609,7 @@
               <p class="mb-4 text-xs">{m.sidebar_start_writing()}</p>
               <button
                 type="button"
-                onclick={() => (showNewChatModal = true)}
+                onclick={() => openNewChatModal('contact')}
                 class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
@@ -669,6 +724,8 @@
   {groupName}
   {currentUserId}
   {recentPeers}
+  error={newChatError}
+  busy={newChatBusy}
   onClose={closeNewChatModal}
   onPickPeer={(peerId) => {
     contactId = peerId;
@@ -676,6 +733,7 @@
   }}
   onTabChange={(tab) => {
     activeTab = tab;
+    newChatError = '';
   }}
   onContactIdChange={(value) => {
     contactId = value;

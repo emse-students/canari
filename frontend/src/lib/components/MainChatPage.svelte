@@ -393,19 +393,22 @@
       onChannelInputChange: (v: string) => {
         convs.newChannelInput = v;
       },
-      onAddContact: (value?: string) => {
+      // BOTH ANSWER, because the sidebar closes its creation panel on the answer. The input is
+      // cleared here as before - the panel keeps its own copy of the text and decides, from the
+      // outcome, whether to blank it.
+      onAddContact: async (value?: string) => {
         const c = (value ?? convs.newContactInput).trim();
-        if (c) {
-          void convs.startNewConversation(c, convCtx());
-          convs.newContactInput = '';
-        }
+        if (!c) return { ok: true, key: null } as const;
+        const outcome = await convs.startNewConversation(c, convCtx());
+        convs.newContactInput = '';
+        return outcome;
       },
-      onCreateGroup: (value?: string) => {
+      onCreateGroup: async (value?: string) => {
         const g = (value ?? convs.newGroupInput).trim();
-        if (g) {
-          void convs.createNewGroup(g, convCtx());
-          convs.newGroupInput = '';
-        }
+        if (!g) return { ok: true, key: null } as const;
+        const outcome = await convs.createNewGroup(g, convCtx());
+        convs.newGroupInput = '';
+        return outcome;
       },
       onCreateChannel: (workspaceId: string, value?: string, visibility?: 'public' | 'private') => {
         const ch = (value ?? convs.newChannelInput).trim();

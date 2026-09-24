@@ -1605,6 +1605,54 @@ invariant - covered only the group path. The rule about a comment citing a prece
 comment citing a SIBLING FUNCTION just as hard: the guarding test now asserts the order on both
 paths.
 
+### A creation that is refused now says which refusal it was (2026-09-24)
+
+`createNewGroup` and `startNewConversation` answered `void`. Five distinct ways of declining ended
+in a `log()` line and nothing else:
+
+| Answer | What happened |
+|---|---|
+| `duplicate-group-name` | a group of that name is already open on this device |
+| `blocked` | a block stands between the two accounts, in one direction or the other |
+| `block-check-unavailable` | core-service could not be asked, so nothing is concluded |
+| `peer-has-no-device` | the peer has never signed in and has published no KeyPackage |
+| `creation-failed` | anything the creation threw; the log carries the detail |
+
+**The modal closed on every one of them.** It called, ignored the answer there was none of, and shut
+- so the member saw a sidebar that had not changed, over a conversation that did not exist, with
+nothing anywhere saying why. The server-side orphan was cleaned up correctly the whole time; the
+repair was never the missing half.
+
+**The fix is a discriminator, not a message.** `ConversationOutcome` is
+`{ ok: true; key } | { ok: false; reason }`, and the reason is a union of the five above. Prose in a
+log line can only be read by parsing it, which is the one thing
+[durable-rules](../../durable-rules.md) forbids - a distinction carried in a sentence is a
+distinction exactly one call site will ever make.
+
+**One exhaustive mapping turns a reason into a sentence**, in `conversationRefusalMessage.ts`. It is
+a `Record<ConversationRefusal, () => string>` rather than a `switch`: adding a member to the union
+fails to compile until a message exists for it, where a `default` branch would have let a new
+refusal ship as whatever the fallback said - which is the shape of the defect being fixed. The
+values are thunks because Paraglide reads the active locale when the message is CALLED.
+
+**`Sidebar` decides, and the modal renders.** The panel stays open on a refusal, keeps the text that
+was typed (a member told "this contact has never signed in" is looking at the id they entered), and
+closes only on success - where the new row in the sidebar is the signal and no toast is added.
+A `busy` flag locks the submit for the seconds a creation takes: device fetch, bulk commit and
+Welcomes are not instant, and a panel that looked inert is how a member creates the same group
+twice.
+
+`key: null` is a SUCCESS, not a refusal: it means there was nothing to do - an empty name, or the
+caller's own id. Both are already unreachable from the modal.
+
+Background key distribution (`useChannelWorkspaces`) types the same call as `Promise<unknown>` on
+purpose: it has no screen to say a refusal on, and already treats a failure as "the member misses
+one key, their next request fetches it".
+
+Pinned by `groupCreation.refusal.test.ts` (the discriminators) and
+`Sidebar.creationRefusal.svelte.test.ts` (the panel stays open, keeps its text, closes on success,
+and runs one creation per submit).
+
 ### A `welcome_request` has a third outcome, and only one of its two entrances knew it (R-D9, 2026-09-13)
 
 A device that has lost its MLS state asks the group's members to re-add it. The member that answers

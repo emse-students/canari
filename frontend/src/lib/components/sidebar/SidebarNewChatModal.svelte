@@ -20,6 +20,16 @@
      * single character is typed, in place of the ~600px of nothing a bare search field left.
      */
     recentPeers?: RecentDirectPeer[];
+    /**
+     * The refusal to show, already localized, or `''` for none.
+     *
+     * A STRING RATHER THAN THE REASON CODE: this panel does not decide what a refusal means, and
+     * giving it the discriminator would put the one exhaustive mapping (`conversationRefusalMessage`)
+     * behind a second one here.
+     */
+    error?: string;
+    /** True while a creation is in flight - the panel is open, the inputs are locked, and it says so. */
+    busy?: boolean;
     /** Callback to close the modal. */
     onClose: () => void;
     /** Called when one of `recentPeers` is chosen: fills the field AND starts the conversation. */
@@ -43,6 +53,8 @@
     groupName,
     currentUserId = '',
     recentPeers = [],
+    error = '',
+    busy = false,
     onClose,
     onPickPeer,
     onTabChange,
@@ -76,11 +88,13 @@
   // Gestionnaires de soumission natifs
   function handleContactSubmit(e: Event) {
     e.preventDefault();
+    if (busy) return;
     if (contactId.trim() && !isSelf) onSubmitContact();
   }
 
   function handleGroupSubmit(e: Event) {
     e.preventDefault();
+    if (busy) return;
     if (groupName.trim()) onSubmitGroup();
   }
 </script>
@@ -210,6 +224,22 @@
   {/if}
 
   <!--
+    THE REFUSAL IS RENDERED HERE, ONCE, FOR BOTH TABS. It sits outside the tab panels because it is
+    about the submission rather than about a field: the same five refusals can come back from either
+    one, and duplicating the block would mean two places to forget. `role="alert"` is what makes a
+    screen reader announce a line that appears seconds after the button was pressed, which is
+    exactly when this one does.
+  -->
+  {#if error}
+    <p
+      role="alert"
+      class="mt-4 shrink-0 rounded-xl border border-red-400/40 bg-red-500/10 px-3 py-2 text-center text-xs font-medium text-red-600 dark:text-red-300"
+    >
+      {error}
+    </p>
+  {/if}
+
+  <!--
     THE PRIMARY ACTION IS AT THE BOTTOM EDGE, not under the field. On a full-height panel it used to
     float mid-screen with the dead space BELOW it, which reads as an unfinished layout; and now that
     the list can scroll, a button that scrolled away with it would be worse still. `form=` is what
@@ -220,19 +250,19 @@
       <button
         type="submit"
         form="new-contact-form"
-        disabled={!contactId.trim() || isSelf}
+        disabled={!contactId.trim() || isSelf || busy}
         class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {m.chat_modal_start_discussion_button()}
+        {busy ? m.chat_modal_creation_in_progress_label() : m.chat_modal_start_discussion_button()}
       </button>
     {:else}
       <button
         type="submit"
         form="new-group-form"
-        disabled={!groupName.trim()}
+        disabled={!groupName.trim() || busy}
         class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {m.chat_modal_create_group_button()}
+        {busy ? m.chat_modal_creation_in_progress_label() : m.chat_modal_create_group_button()}
       </button>
     {/if}
   {/snippet}
