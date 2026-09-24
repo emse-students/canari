@@ -1527,8 +1527,13 @@ That is the same finding the Cercle's compose file already carries a paragraph a
 
 ### C. DECIDED 2026-09-24, AND THE ONE THING STILL OWED BY THE USER
 
-**Still owed, and nothing moves without it: send the DSI request.** It is written out in section 7,
-and every name costs a ticket, so a second request is a second wait.
+**Still owed: send the DSI request - and it blocks PHASE 2, not phase 1.** This line said "nothing
+moves without it" and two estates then moved without it on 2026-09-24, because phase 1 changes no
+public name and therefore needs no record. What the request buys is the `emse.fr` names, and the
+reason to send it EARLY is lead time rather than a dependency: every name costs a ticket, there is
+no delegated zone and no wildcard, so a second request is a second wait. It is written out in
+section 7, ready to copy. **One of its asks can be refused on its merits** - `canari.emse.fr` is
+live today on a different machine - which is the other reason not to discover the answer late.
 
 The other three were put to the user on 2026-09-24 and answered:
 
