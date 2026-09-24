@@ -54,6 +54,32 @@ bun run dev
 | `make install-services` | `bun install` in every NestJS service directory |
 | `make install-hooks` | Husky + pre-commit hooks |
 
+#### `core.hooksPath` is shared by every worktree, and must stay RELATIVE
+
+The setting lives in the COMMON git directory, so one value serves the main checkout and every
+`git worktree` at once. `frontend/scripts/install-husky.js` used to hand husky an ABSOLUTE path -
+`findGitRoot` stops at a worktree, whose `.git` is a FILE rather than a directory - so a single
+`bun install` run inside a worktree re-pointed the hooks of the whole repository at that worktree.
+When the worktree was later removed, **git ran no hook anywhere and said nothing about it**: the
+only symptom is that commits become suspiciously fast and stop re-staging formatted files.
+
+It happened four times (2026-09-03, 2026-09-21, 2026-09-23, 2026-09-24), each found by accident,
+because the installer's post-condition asked only whether the value was non-empty - which an
+absolute path satisfies. The value is now written by the script from one declared constant
+(`frontend/scripts/hooks-path.js`) and asserted with `hooksPathProblem`, which refuses a drive
+letter, a leading separator and a UNC prefix; `.github/scripts/tests/husky-hookspath.test.mjs` pins
+the four values actually observed.
+
+If commits stop re-staging, read it back before anything else:
+
+```sh
+git config core.hooksPath      # must print .husky/_ and nothing else
+git config core.hooksPath .husky/_
+```
+
+A checkout that has never run `bun install` has no `.husky/_` at all, and git runs no hook there -
+that case is an un-armed checkout, not a hijacked one, and `make install-hooks` fixes it.
+
 ### Build
 
 | Target | What it does |

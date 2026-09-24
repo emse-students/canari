@@ -9,6 +9,7 @@
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
+import { HOOKS_PATH, hooksPathProblem } from './hooks-path.js';
 
 const cwd = process.cwd();
 const binDir = join(cwd, 'node_modules', '.bin');
@@ -67,19 +68,37 @@ try {
   process.exit(0);
 }
 
+// THE SETTING IS THIS SCRIPT'S JOB, NOT A SIDE EFFECT OF THE ARGUMENT HUSKY WAS HANDED.
+// husky writes whatever path it is given, and `findGitRoot` reaches a WORKTREE root - a worktree's
+// `.git` is a FILE, and `existsSync` is true for a file - so husky was handed that worktree's
+// absolute path. Since `core.hooksPath` lives in the shared git directory, one `bun install` inside
+// a worktree then disarmed the main checkout and every other worktree. Measured four times on this
+// workstation, most recently 2026-09-24, each time found by accident. The value is therefore
+// written here, where the reason for it is, rather than inferred from husky's argument.
+try {
+  execSync(`git config core.hooksPath ${HOOKS_PATH}`, { cwd: gitRoot, stdio: 'pipe' });
+} catch (error) {
+  console.warn(`[install-husky] could not set core.hooksPath in ${gitRoot}: ${error.message}`);
+}
+
 // THE POST-CONDITION, ASSERTED. `husky` can exit 0 having done nothing useful, and what this script
 // is actually for is one git setting - so it reads that setting back rather than trusting the exit
 // code. A hook that is not armed is a gate that is not running, and it says nothing on its own.
+//
+// AND "NON-EMPTY" IS NOT THE POST-CONDITION. It was, and an absolute path satisfies it while
+// disarming every other checkout - which is how this went unnoticed four times. `hooksPathProblem`
+// carries what actually has to hold.
 try {
   const hooksPath = execSync('git config core.hooksPath', {
     cwd: gitRoot,
     encoding: 'utf8',
   }).trim();
-  if (!hooksPath) throw new Error('core.hooksPath is empty');
+  const problem = hooksPathProblem(hooksPath);
+  if (problem) throw new Error(problem);
   console.log(`[install-husky] git hooks armed - core.hooksPath = ${hooksPath}`);
-} catch {
+} catch (error) {
   console.warn(
-    `[install-husky] husky exited 0 but core.hooksPath is not set in ${gitRoot} - the hooks are ` +
-      `NOT armed, and nothing will run on commit.`
+    `[install-husky] hooks are NOT reliably armed in ${gitRoot}: ${error.message}. Nothing will ` +
+      `run on commit, and git reports that as silence.`
   );
 }
