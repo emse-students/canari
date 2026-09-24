@@ -398,6 +398,15 @@ The SERVER half stays manual: `cleanup.mjs` deletes live groups and generates re
 decision about the estate rather than a tidy-up of one pass, and a row the sweep must spare because
 its group is still alive is printed by name so the gesture that is owed is never inferred.
 
+**AND IT NOW SAYS WHAT IT DOES NOT LOOK AT.** `cleanup.mjs` owns three stores - communities, salons,
+groups - and its "nothing to sweep" used to read as "the estate is clean" while a delivery queue of
+13 275 rows sat beside it (2026-09-08). Every run now prints the stores outside its scope with a
+LIVE count, so the size is visible rather than asserted: `queued_message`, whose rows belong to
+devices no table here enumerates and which expire on their own after 90 days, and `associations`,
+which holds check R's notification fixture and is equipment rather than debris. **Neither is a sweep
+waiting to be written** - re-measured 2026-09-24 the queue held 4 rows from ONE LIVE device, so a
+clause would destroy undelivered messages to buy nothing.
+
 **AND IT NAVIGATES NOTHING, ON ANY DEVICE.** A1 had to be swept as it was left, because `goto` there
 re-locks the PIN and replaces the document under Tauri's IPC - which PROVED the sweep needs no
 navigation, since the phone was swept without one. W1 and W2 kept a `navigate` on their first row
