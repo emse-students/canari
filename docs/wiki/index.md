@@ -56,6 +56,7 @@
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
 - [Payments module](frontend/modules/payments.md) — Stripe Connect, products, shop
+- [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 
 ### Infrastructure

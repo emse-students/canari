@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le demineur genere sa grille six fois plus vite, et la meme grille
+
+Le solveur enumerait les 2^n combinaisons de chaque bloc de la bordure ; une recherche en
+profondeur qui coupe des qu'une equation est impossible, plus une table de voisins, ramene le pire
+cas mesure de 1438 ms a 125 ms, sur 1276 grilles toutes identiques. La case cliquee s'affiche
+enfoncee pendant l'attente ([minesweeper](docs/wiki/frontend/modules/minesweeper.md)).
 ### Fixed - la sonde de demarrage des services parle a Garage, l'image MinIO a disparu une deuxieme fois
 
 `quay.io/minio/minio` refuse desormais tout telechargement anonyme (401), apres Docker Hub le
