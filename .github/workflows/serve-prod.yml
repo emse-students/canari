@@ -87,88 +87,42 @@ jobs:
       name: production
       url: https://${{ env.DOMAIN }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.sha }}
-
-      - name: Log deployment start
-        run: |
-          echo "🚀 Starting deployment on self-hosted runner…"
-          echo "User: $(whoami)"
-          echo "Working directory: $(pwd)"
-          echo "Deploy path: ${{ env.DEPLOY_PATH }}"
-
-      - name: Setup environment variables
-        run: |
-          echo "REGISTRY=${{ env.REGISTRY }}" >> $GITHUB_ENV
-          echo "IMAGE_PREFIX=${{ env.IMAGE_PREFIX }}" >> $GITHUB_ENV
-          # `latest` AND NOT THE COMMIT SHA, AND THAT IS FORCED BY SELECTIVE REBUILDS. The compose
-          # file resolves a tag for EVERY service, including the ones this release did not change -
-          # and those have no image at this commit's sha, because nothing built one. A moving tag is
-          # the only one that resolves for all of them, each pointing at the last build of that
-          # service for THIS estate. Production moves `latest`; a pre-release moves `dev` and leaves
-          # `latest` alone, so the two estates never read each other's images.
-          #
-          # WHICH COMMIT PRODUCTION RUNS is answered by the `prod-released` tag the last step writes
-          # and by `/api/version`, never by reading `latest`.
-          echo "TAG=latest" >> $GITHUB_ENV
-
-      - name: Resolve Docker access
-        run: |
-          if docker info >/dev/null 2>&1; then
-            echo "DOCKER_CLI=docker" >> $GITHUB_ENV
-            echo "DOCKER_COMPOSE=docker compose" >> $GITHUB_ENV
-            echo "✅ Docker access available via docker"
-          elif sudo -n docker info >/dev/null 2>&1; then
-            echo "DOCKER_CLI=sudo docker" >> $GITHUB_ENV
-            echo "DOCKER_COMPOSE=sudo docker compose" >> $GITHUB_ENV
-            echo "✅ Docker access available via sudo docker"
-          else
-            echo "❌ Cannot access Docker daemon as current runner user"
-            id
-            ls -l /var/run/docker.sock || true
-            echo "Runner user must be in docker group or have passwordless sudo for docker"
-            exit 1
-          fi
-
-      - name: Authenticate to GHCR
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          echo "🔐 Logging into GHCR…"
-          if [ "$DOCKER_CLI" = "docker" ]; then
-            echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
-          else
-            echo "$GHCR_TOKEN" | sudo docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
-          fi
-          echo "✅ GHCR authentication successful"
-
-      - name: Navigate to deployment directory
-        run: |
-          cd ${{ env.DEPLOY_PATH }}
-          echo "📂 Current directory: $(pwd)"
-
       # THE COMMIT, NEVER THE BRANCH, AND THIS IS THE TREE PRODUCTION IS ACTUALLY SERVED FROM:
-      # `docker-compose.prod.yml`, the nginx configuration and the migration SQL below all come
-      # from here, not from the images. `main` MOVES while a release runs - the bump's own push is
-      # on it, and auto-merge lands pull requests unattended - and this job waits behind the iOS
-      # build, so the gap between the caller resolving the commit and this line is TWENTY-TWO
-      # MINUTES, measured on v0.16.6 (bump 19:45:12, deploy 20:07:45). Resolving `main` again here
-      # would make the `prod-released` tag at the bottom name a commit this tree is not on. The
-      # released commit is always an ancestor of `main` (the ruleset forbids a force-push), so
-      # fetching the branch makes it reachable, and `reset` fails loudly if it somehow is not.
+      # `docker-compose.prod.yml`, the nginx configuration and the migration SQL all come from here,
+      # not from the images. `main` MOVES while a release runs - the bump's own push is on it, and
+      # auto-merge lands pull requests unattended - and this job waits behind the iOS build, so the
+      # gap between the caller resolving the commit and this line is TWENTY-TWO MINUTES, measured on
+      # v0.16.6 (bump 19:45:12, deploy 20:07:45). Resolving `main` again here would make the
+      # `prod-released` tag at the bottom name a commit this tree is not on. The released commit is
+      # always an ancestor of `main` (the ruleset forbids a force-push), so fetching the branch makes
+      # it reachable, and `reset` fails loudly if it somehow is not.
+      #
+      # THERE IS NO `actions/checkout` ABOVE THIS, AND THERE WAS ONE UNTIL 2026-09-24. It cloned the
+      # monorepo into the runner's workspace, where not one step ever read it: every step works in
+      # DEPLOY_PATH. What it actually did was contribute to the 3.9 GB of `_work` on a box that is
+      # about to move.
       - name: Put the deployment tree on the released commit
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          echo "📥 Updating repository…"
           git fetch origin main
           git reset --hard "${{ inputs.sha }}"
-          echo "✅ Code updated to $(git rev-parse --short HEAD)"
+          echo "production tree at $(git rev-parse --short HEAD)"
 
-      - name: Sync runtime secrets into infrastructure/.env
+      # Renders infrastructure/.env for production and NOTHING ELSE, from the unprefixed secrets.
+      # The list is the manifest's own `secret:` rows that production does not skip; a row added
+      # there and not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives
+      # this block.
+      #
+      # IT RUNS BEFORE ANY CONTAINER IS TOUCHED, and refuses to write a partial file: a missing
+      # required secret fails here, with the previous deployment still up.
+      #
+      # THIS REPLACES 277 LINES OF INLINED SHELL (2026-09-24). They were ~40 hand-written
+      # `if [ -n "$X" ]; then upsert; else warn; fi` blocks - the exact shape `render-env.sh` and
+      # `env-manifest.tsv` were written to delete on 2026-09-01, and which production alone went on
+      # carrying for three weeks after dev stopped. Its own header says why: a deploy job embedded in
+      # YAML can be run by exactly one thing, so it is never tested, only used.
+      - name: Render production's environment
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -181,10 +135,13 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
           LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
-          AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
+          # THE VARIABLE IS NAMED AFTER THE SECRET, NOT AFTER THE KEY IT RENDERS. render-env.sh
+          # reads the manifest's SOURCE column verbatim for production, so `AUTHENTIK_BASE_URL`
+          # here would leave `$AUTHENTIK_URL` unset and fail a `required` row at deploy time.
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
-          FRONTEND_URL: ${{ secrets.BASE_URL }}
+          BASE_URL: ${{ secrets.BASE_URL }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
@@ -203,646 +160,54 @@ jobs:
           APNS_VOIP_KEY_ID: ${{ secrets.APNS_VOIP_KEY_ID }}
           APNS_VOIP_TEAM_ID: ${{ secrets.APNS_VOIP_TEAM_ID }}
         run: |
-          if [ -z "$JWT_SECRET" ]; then
-            echo "::error::Missing required GitHub secret: JWT_SECRET"
-            exit 1
-          fi
+          set -euo pipefail
+          bash infrastructure/deploy/render-env.sh \
+            --environment prod \
+            --domain "${{ env.DOMAIN }}" \
+            --out infrastructure/.env
 
-          if [ -z "$AUTHENTIK_CLIENT_SECRET" ]; then
-            echo "::error::Missing required GitHub secret: AUTHENTIK_CLIENT_SECRET"
-            exit 1
-          fi
-
-          if [ -z "$POSTGRES_USER" ]; then
-            echo "::error::Missing required GitHub secret: POSTGRES_USER"
-            exit 1
-          fi
-
-          if [ -z "$POSTGRES_PASSWORD" ]; then
-            echo "::error::Missing required GitHub secret: POSTGRES_PASSWORD"
-            exit 1
-          fi
-
-          # Regenerate .env from the template on every deploy so it stays ordered
-          # like .env.example, drops stale keys, and never accumulates leftovers.
-          # All real secrets are GitHub-backed and re-injected by the upserts below,
-          # so nothing is lost; non-secret defaults come straight from the template.
-          if [ ! -f infrastructure/.env.example ]; then
-            echo "::error::infrastructure/.env.example is missing - cannot generate infrastructure/.env"
-            exit 1
-          fi
-          cp infrastructure/.env.example infrastructure/.env
-
-          upsert_env_var() {
-            key="$1"
-            value="$2"
-            # Remove existing line (if any), then append.
-            # Avoids sed delimiter issues with URLs containing '/'.
-            grep -v "^${key}=" infrastructure/.env > infrastructure/.env.tmp || true
-            mv infrastructure/.env.tmp infrastructure/.env
-            printf '%s=%s\n' "$key" "$value" >> infrastructure/.env
-          }
-
-          upsert_env_var "JWT_SECRET" "$JWT_SECRET"
-
-          if [ -n "$INTERNAL_SECRET" ]; then
-            upsert_env_var "INTERNAL_SECRET" "$INTERNAL_SECRET"
-          else
-            echo "::warning::INTERNAL_SECRET is not set - social/form push notifications will be disabled"
-          fi
-
-          # Optional override of the verification service account id. When unset, the default
-          # from .env.example applies (regenerated above), so no warning is needed.
-          if [ -n "$SERVICE_ACCOUNT_USER_ID" ]; then
-            upsert_env_var "SERVICE_ACCOUNT_USER_ID" "$SERVICE_ACCOUNT_USER_ID"
-          fi
-
-          if [ -n "$EXTERNAL_API_KEY" ]; then
-            upsert_env_var "EXTERNAL_API_KEY" "$EXTERNAL_API_KEY"
-          else
-            echo "::warning::EXTERNAL_API_KEY is not set - external profile API (Sky) will reject all requests"
-          fi
-
-          if [ -n "$SKY_API_KEY" ]; then
-            upsert_env_var "SKY_API_KEY" "$SKY_API_KEY"
-          else
-            echo "::warning::SKY_API_KEY is not set - Sky parrainage tree on profiles will be empty"
-          fi
-
-          # Le Cercle reads /api/public/cotisant-status before letting a member drink. An empty
-          # key is not a degraded mode: assertCercleApiKey rejects EVERY request when unset, so
-          # the bar simply stops serving cotisants. Must equal CANARI_API_KEY on the Cercle side.
-          if [ -n "$CERCLE_API_KEY" ]; then
-            upsert_env_var "CERCLE_API_KEY" "$CERCLE_API_KEY"
-          else
-            echo "::warning::CERCLE_API_KEY is not set - /api/public/cotisant-status will reject all requests (Le Cercle cannot check cotisant status)"
-          fi
-
-          upsert_env_var "CALL_E2E_ENCRYPTION" "false"
-
-          upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
-          upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
-          upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
-          # SPA base URL → FRONTEND_URL (CORS pour core, social, chat-delivery, media).
-          upsert_env_var "FRONTEND_URL" "$FRONTEND_URL"
-          upsert_env_var "POSTGRES_USER" "$POSTGRES_USER"
-          upsert_env_var "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
-          # chat-gateway CORS, and THIS VALUE NOW REACHES THE CONTAINER. Until 2026-08-30
-          # `docker-compose.prod.yml` set `ALLOW_ORIGIN: "*"` as a LITERAL on that service, which
-          # wins over anything in `.env`, so this line had never been read by anything and the
-          # gateway answered every origin on earth (measured on prod 2026-08-27 and again on
-          # 2026-08-30: `OPTIONS /api/presence` from `https://evil.example` -> 200,
-          # `access-control-allow-origin: *`). That wildcard is also why the gateway was never the
-          # iOS blocker - it accepted the very origin the Nest services refused.
-          #
-          # Every entry is a Canari client, and dropping one costs that client the gateway with no
-          # server-side error to show for it. The three tauri origins are the app itself, one
-          # spelling per platform - `http(s)://tauri.localhost` on Android/Windows,
-          # `tauri://localhost` on iOS/macOS/Linux; omitting the iOS spelling from the Nest list
-          # cost that platform its login (see cors-origins.ts, which this must stay in step with).
-          # `dev.canari-emse.fr` is a proxied CNAME onto this SAME tunnel, so a list built from
-          # FRONTEND_URL alone would refuse a hostname this very stack serves. `127.0.0.1:1420` is
-          # how tauri.conf.json's devUrl actually spells the dev server, and the gateway matches
-          # exactly where the Nest services accept any loopback.
-          #
-          # THE DEPLOY'S COLOUR DOES NOT PROVE THIS VALUE: an origin that is merely WRONG parses
-          # fine and simply matches nothing. Read the served header back after deploying.
-          upsert_env_var "ALLOW_ORIGIN" "$FRONTEND_URL,https://dev.${{ env.DOMAIN }},http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
-
-          if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
-            FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT="$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n')"
-            upsert_env_var "FIREBASE_SERVICE_ACCOUNT_JSON" "$FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT"
-          else
-            echo "⚠️ FIREBASE_SERVICE_ACCOUNT_JSON is not set in GitHub secrets (push notifications will be disabled)"
-          fi
-
-          if [ -n "$STRIPE_SECRET_KEY" ]; then
-            upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
-          else
-            echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets (payments features may be disabled)"
-          fi
-
-          if [ -n "$STRIPE_WEBHOOK_SECRET" ]; then
-            upsert_env_var "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
-          else
-            echo "⚠️ STRIPE_WEBHOOK_SECRET is not set in GitHub secrets (Stripe webhooks will be rejected in production)"
-          fi
-
-          if [ -n "$LYDIA_PROVIDER_TOKEN" ]; then
-            upsert_env_var "LYDIA_PROVIDER_TOKEN" "$LYDIA_PROVIDER_TOKEN"
-          else
-            echo "⚠️ LYDIA_PROVIDER_TOKEN is not set in GitHub secrets (Lydia payments unavailable if selected as the active provider)"
-          fi
-
-          if [ -n "$LYDIA_PROVIDER_PRIVATE_TOKEN" ]; then
-            upsert_env_var "LYDIA_PROVIDER_PRIVATE_TOKEN" "$LYDIA_PROVIDER_PRIVATE_TOKEN"
-          else
-            echo "⚠️ LYDIA_PROVIDER_PRIVATE_TOKEN is not set in GitHub secrets (Lydia payments unavailable if selected as the active provider)"
-          fi
-
-          if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
-            upsert_env_var "CLOUDFLARE_CALLS_API_TOKEN" "$CLOUDFLARE_CALLS_API_TOKEN"
-          else
-            echo "::warning::CLOUDFLARE_CALLS_API_TOKEN is not set - voice/video calls will fail (ice-servers returns 503)"
-          fi
-
-          if [ -n "$CLOUDFLARE_TURN_KEY_ID" ]; then
-            upsert_env_var "CLOUDFLARE_TURN_KEY_ID" "$CLOUDFLARE_TURN_KEY_ID"
-          else
-            echo "::warning::CLOUDFLARE_TURN_KEY_ID is not set - voice/video calls will fail (ice-servers returns 503)"
-          fi
-
-          if [ -n "$GARAGE_RPC_SECRET" ]; then
-            upsert_env_var "GARAGE_RPC_SECRET" "$GARAGE_RPC_SECRET"
-          else
-            echo "::error::GARAGE_RPC_SECRET is not set - media storage (Garage) will fail to start"
-            exit 1
-          fi
-
-          if [ -n "$GARAGE_ADMIN_TOKEN" ]; then
-            upsert_env_var "GARAGE_ADMIN_TOKEN" "$GARAGE_ADMIN_TOKEN"
-          else
-            echo "::error::GARAGE_ADMIN_TOKEN is not set - media storage (Garage) will fail to start"
-            exit 1
-          fi
-
-          # Garage's own S3 key, and the ONLY S3 identity in the stack: media-service
-          # authenticates with it too. It required an access key ID >= 8 characters and a secret
-          # >= 16, which MinIO enforced neither of - that is why the cutover minted a new pair
-          # instead of renaming MinIO's old root credentials. Until 2026-08-18 these values were
-          # ALSO written under MINIO_ACCESS_KEY/SECRET_KEY, which media-service read; one value
-          # under two names is a duplicate that can drift, and drift here refuses every media
-          # request. One name now, everywhere.
-          #
-          # THE ENDPOINT AND THE CREDENTIALS FOR IT MUST MOVE IN THE SAME COMMIT. .env is
-          # regenerated from .env.example on every deploy; an earlier version of this cutover
-          # moved the endpoint in .env.example without moving these upserts, so media-service kept
-          # getting MinIO's root credentials for a store that no longer existed and crash-looped
-          # on `AccessDenied` inside `onModuleInit`. See docs/wiki/infrastructure/docker.md.
-          if [ -n "$GARAGE_ACCESS_KEY_ID" ]; then
-            upsert_env_var "GARAGE_ACCESS_KEY_ID" "$GARAGE_ACCESS_KEY_ID"
-          else
-            echo "::error::GARAGE_ACCESS_KEY_ID is not set - media storage (Garage) will fail to start"
-            exit 1
-          fi
-
-          if [ -n "$GARAGE_SECRET_ACCESS_KEY" ]; then
-            upsert_env_var "GARAGE_SECRET_ACCESS_KEY" "$GARAGE_SECRET_ACCESS_KEY"
-          else
-            echo "::error::GARAGE_SECRET_ACCESS_KEY is not set - media storage (Garage) will fail to start"
-            exit 1
-          fi
-
-          if [ -n "$MIGALLERY_API_KEY" ]; then
-            upsert_env_var "MIGALLERY_API_KEY" "$MIGALLERY_API_KEY"
-          else
-            echo "::warning::MIGALLERY_API_KEY is not set - avatar service will not work"
-          fi
-
-          # WP-SAFELINK-1: server-side Safe Browsing lookup for links shared in messages/posts.
-          # Optional and fails OPEN when unset - a missing safety key must not become an outage
-          # for every link in the app, same reasoning as the other optional keys above.
-          if [ -n "$GOOGLE_SAFE_BROWSING_API_KEY" ]; then
-            upsert_env_var "GOOGLE_SAFE_BROWSING_API_KEY" "$GOOGLE_SAFE_BROWSING_API_KEY"
-          else
-            echo "::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set - links will not be checked against Safe Browsing"
-          fi
-
-          if [ -n "$CHANNELS_ENCRYPTION_SECRET" ]; then
-            upsert_env_var "CHANNELS_ENCRYPTION_SECRET" "$CHANNELS_ENCRYPTION_SECRET"
-          else
-            echo "::error::CHANNELS_ENCRYPTION_SECRET is not set - channel encryption will fail"
-            exit 1
-          fi
-
-          if [ -n "$INTERNAL_SHARED_SECRET" ]; then
-            upsert_env_var "INTERNAL_SHARED_SECRET" "$INTERNAL_SHARED_SECRET"
-          else
-            echo "::error::INTERNAL_SHARED_SECRET is not set - inter-service HMAC auth will be disabled (security risk)"
-            exit 1
-          fi
-
-          if [ -n "$CALL_ROOM_SECRET" ]; then
-            upsert_env_var "CALL_ROOM_SECRET" "$CALL_ROOM_SECRET"
-          else
-            echo "::error::CALL_ROOM_SECRET is not set - WebRTC room access control will be disabled (security risk)"
-            exit 1
-          fi
-
-          # APNs VoIP key (WP-XP-5, iOS CallKit rings). Optional: without it iOS falls back
-          # to an FCM alert banner. The .env file is line-based, so a raw multi-line PEM is
-          # base64-encoded before writing (ApnsVoipService accepts both forms).
-          if [ -n "$APNS_VOIP_KEY_P8" ]; then
-            case "$APNS_VOIP_KEY_P8" in
-              *"BEGIN PRIVATE KEY"*) APNS_VOIP_KEY_P8="$(printf '%s' "$APNS_VOIP_KEY_P8" | base64 -w0)" ;;
-            esac
-            upsert_env_var "APNS_VOIP_KEY_P8" "$APNS_VOIP_KEY_P8"
-            upsert_env_var "APNS_VOIP_KEY_ID" "$APNS_VOIP_KEY_ID"
-            upsert_env_var "APNS_VOIP_TEAM_ID" "$APNS_VOIP_TEAM_ID"
-          else
-            echo "::warning::APNS_VOIP_KEY_P8 is not set - iOS CallKit VoIP pushes disabled (FCM banner fallback)"
-          fi
-
-          echo "✅ Runtime secrets synced to infrastructure/.env"
-
-      - name: Check environment configuration
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          echo "🔍 Checking environment configuration…"
-
-          FRONTEND_HOST_PORT=80
-          if [ -f infrastructure/.env ]; then
-            ENV_PORT=$(grep -E '^FRONTEND_HOST_PORT=' infrastructure/.env | cut -d= -f2 || true)
-            if [ -n "$ENV_PORT" ]; then
-              FRONTEND_HOST_PORT="$ENV_PORT"
-            fi
-          fi
-          echo "FRONTEND_HOST_PORT=$FRONTEND_HOST_PORT" >> $GITHUB_ENV
-
-          if [ ! -f infrastructure/.env ]; then
-            echo ""
-            echo "╔═══════════════════════════════════════════════════════════╗"
-            echo "║  ⚠️  CONFIGURATION MANQUANTE                             ║"
-            echo "╚═══════════════════════════════════════════════════════════╝"
-            echo ""
-            echo "Le fichier infrastructure/.env n'existe pas."
-            echo "Pour le premier déploiement, vous devez :"
-            echo ""
-            echo "  1. SSH sur le serveur :"
-            echo "     ssh ${{ env.DEPLOY_PATH }}"
-            echo ""
-            echo "  2. Lancer la configuration initiale :"
-            echo "     make production"
-            echo ""
-            echo "  3. Configurer les secrets dans infrastructure/.env"
-            echo ""
-            echo "  4. Relancer ce workflow"
-            echo ""
-            exit 1
-          fi
-
-          if [ ! -f frontend/.env ]; then
-            echo "⚠️ frontend/.env manquant, création depuis template…"
-            cp frontend/.env.example frontend/.env
-          fi
-
-          echo "✅ Configuration .env présente"
-
-          # Vérifier que JWT_SECRET est configuré (sans afficher la valeur)
-          if grep -q "^JWT_SECRET=.*change.*me" infrastructure/.env 2>/dev/null; then
-            echo ""
-            echo "⚠️  WARNING: JWT_SECRET semble être une valeur par défaut"
-            echo "   Assurez-vous d'avoir configuré un secret sécurisé !"
-            echo ""
-          fi
-
-      - name: Pull Docker images
+      # `latest` AND NOT THE COMMIT SHA, AND THAT IS FORCED BY SELECTIVE REBUILDS. The compose file
+      # resolves a tag for EVERY service, including the ones this release did not change - and those
+      # have no image at this commit's sha, because nothing built one. A moving tag is the only one
+      # that resolves for all of them, each pointing at the last build of that service for THIS
+      # estate. Production moves `latest`; a pre-release moves `dev` and leaves `latest` alone, so
+      # the two estates never read each other's images.
+      #
+      # WHICH COMMIT PRODUCTION RUNS is answered by the `prod-released` tag below and by
+      # /api/version, never by reading `latest`.
+      #
+      # THE SCRIPT IS STRICTLY STRONGER THAN THE STEPS IT REPLACES, and one difference is worth
+      # naming: it requires every service the compose file DECLARES to be running, exempting only
+      # what is written down, where the old step named ten services by hand. `frontend-ssr` was in
+      # neither version of that hand list, so an estate whose server-side renderer never came up
+      # would have deployed green.
+      - name: Deploy the production estate
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          CHANGED_SERVICES: ${{ inputs.services_args }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$CHANGED_SERVICES" ]; then
-            echo "🔄 Pulling changed Docker images: $CHANGED_SERVICES"
-            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml pull $CHANGED_SERVICES"
-            echo "✅ Changed images pulled successfully"
-          else
-            echo "ℹ️ No service image changes detected. Skipping docker pull."
-          fi
+          set -euo pipefail
+          bash infrastructure/deploy/deploy-environment.sh \
+            --environment prod \
+            --path "${{ env.DEPLOY_PATH }}" \
+            --tag latest \
+            --registry "${{ env.REGISTRY }}" \
+            --image-prefix "${{ env.IMAGE_PREFIX }}" \
+            --pull-services "${{ inputs.services_args }}"
 
-      - name: Deploy services
-        working-directory: ${{ env.DEPLOY_PATH }}
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-        run: |
-          echo "🚀 Deploying services with zero-downtime…"
-          set +e
-          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
-          DEPLOY_STATUS=$?
-          set -e
-
-          if [ "$DEPLOY_STATUS" -ne 0 ]; then
-            echo "⚠️ First deploy attempt failed. Checking for frontend host port conflicts…"
-
-            CONFLICTS=$(eval "$DOCKER_CLI ps --filter 'publish=$FRONTEND_HOST_PORT' --format '{{.ID}} {{.Image}} {{.Names}}'")
-
-            NON_CANARI_CONFLICT=0
-            if [ -n "$CONFLICTS" ]; then
-              while IFS= read -r row; do
-                [ -z "$row" ] && continue
-
-                cid=$(echo "$row" | awk '{print $1}')
-                image=$(echo "$row" | awk '{print $2}')
-                name=$(echo "$row" | awk '{print $3}')
-
-                if echo "$image" | grep -q "^${REGISTRY}/${IMAGE_PREFIX}/frontend:"; then
-                  echo "🧹 Removing stale Canari frontend container using host port: $name ($cid)"
-                  eval "$DOCKER_CLI rm -f $cid"
-                else
-                  echo "❌ Port conflict with non-Canari container: $name ($image)"
-                  NON_CANARI_CONFLICT=1
-                fi
-              done <<< "$CONFLICTS"
-            fi
-
-            if [ "$NON_CANARI_CONFLICT" -ne 0 ]; then
-              echo "Resolve host port ${FRONTEND_HOST_PORT} conflicts and retry deployment."
-              exit 1
-            fi
-
-            echo "🔁 Retrying deployment after frontend cleanup…"
-            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
-          fi
-
-          echo "✅ Services deployed"
-
-      - name: Run database migrations
-        working-directory: ${{ env.DEPLOY_PATH }}
-        env:
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-        run: |
-          echo "🗄️ Running database migrations…"
-
-          # Wait for PostgreSQL to accept connections (up to 60s).
-          # psql and pg_isready connect via unix socket inside the container → trust auth, no password needed.
-          for i in $(seq 1 30); do
-            if eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres pg_isready -U \"$POSTGRES_USER\" -d auth_db" >/dev/null 2>&1; then
-              echo "✅ PostgreSQL is ready"
-              break
-            fi
-            echo "⏳ Waiting for PostgreSQL… ($i/30)"
-            sleep 2
-            if [ "$i" -eq 30 ]; then
-              echo "❌ PostgreSQL did not become ready in time"
-              exit 1
-            fi
-          done
-
-          PSQL="$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres \
-            psql -U \"$POSTGRES_USER\" -d auth_db -v ON_ERROR_STOP=1"
-
-          # Ledger of applied migrations, keyed by repo-relative path. Without it every file
-          # replays on every deploy, which silently reverts admin changes made after a one-shot
-          # data backfill (migrations 004 and 016 are exactly that). See infrastructure/MIGRATION.md.
-          eval "$PSQL -q -c \"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())\""
-
-          # Run all *.sql files found under apps/*/src/migrations/, sorted by filename (001_, 002_, …).
-          # Files must still be idempotent: a deploy that fails mid-migration leaves the rest
-          # unrecorded, so the next one re-runs them.
-          MIGRATIONS=$(find apps/*/src/migrations -name "*.sql" 2>/dev/null | sort)
-
-          if [ -z "$MIGRATIONS" ]; then
-            echo "ℹ️ No migration files found - skipping"
-          else
-            for migration in $MIGRATIONS; do
-              checksum=$(sha256sum "$migration" | cut -d' ' -f1)
-              recorded=$(eval "$PSQL -At -c \"SELECT checksum FROM schema_migrations WHERE filename = '$migration'\"")
-
-              if [ -n "$recorded" ]; then
-                if [ "$recorded" != "$checksum" ]; then
-                  echo "::warning::$migration changed after it was applied - production still has the old version. Add a new migration instead of editing an applied one."
-                  eval "$PSQL -q -c \"UPDATE schema_migrations SET checksum = '$checksum' WHERE filename = '$migration'\""
-                fi
-                echo "⏭️ Already applied: $migration"
-                continue
-              fi
-
-              echo "▶️ Applying: $migration"
-              eval "$PSQL" < "$migration"
-              eval "$PSQL -q -c \"INSERT INTO schema_migrations (filename, checksum) VALUES ('$migration', '$checksum') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum\""
-              echo "✅ Done: $migration"
-            done
-          fi
-
-          echo "✅ All migrations applied"
-
-      - name: Verify runtime secrets are applied
-        working-directory: ${{ env.DEPLOY_PATH }}
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
-          LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
-        run: |
-          if [ -z "$JWT_SECRET" ]; then
-            echo "::error::Missing required GitHub secret: JWT_SECRET"
-            exit 1
-          fi
-
-          expected_jwt_sha=$(printf '%s' "$JWT_SECRET" | sha256sum | awk '{print $1}')
-          core_jwt_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$JWT_SECRET\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-
-          if [ -z "$core_jwt_sha" ] || [ "$core_jwt_sha" != "$expected_jwt_sha" ]; then
-            echo "::error::JWT_SECRET is not correctly applied in core-service"
-            exit 1
-          fi
-
-          delivery_has_jwt=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T chat-delivery-service sh -lc 'test -n \"$JWT_SECRET\" && echo yes || echo no'" || true)
-          if [ "$delivery_has_jwt" != "yes" ]; then
-            echo "::error::JWT_SECRET is not present in chat-delivery-service"
-            exit 1
-          fi
-
-          if [ -n "$STRIPE_SECRET_KEY" ]; then
-            expected_stripe_sha=$(printf '%s' "$STRIPE_SECRET_KEY" | sha256sum | awk '{print $1}')
-            core_stripe_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$STRIPE_SECRET_KEY\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-            social_stripe_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T social-service sh -lc 'printf %s \"$STRIPE_SECRET_KEY\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-
-            if [ -z "$core_stripe_sha" ] || [ "$core_stripe_sha" != "$expected_stripe_sha" ]; then
-              echo "::error::STRIPE_SECRET_KEY is not correctly applied in core-service"
-              exit 1
-            fi
-            if [ -z "$social_stripe_sha" ] || [ "$social_stripe_sha" != "$expected_stripe_sha" ]; then
-              echo "::error::STRIPE_SECRET_KEY is not correctly applied in social-service"
-              exit 1
-            fi
-          fi
-
-          if [ -n "$STRIPE_WEBHOOK_SECRET" ]; then
-            expected_webhook_sha=$(printf '%s' "$STRIPE_WEBHOOK_SECRET" | sha256sum | awk '{print $1}')
-            core_webhook_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$STRIPE_WEBHOOK_SECRET\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-
-            if [ -z "$core_webhook_sha" ] || [ "$core_webhook_sha" != "$expected_webhook_sha" ]; then
-              echo "::error::STRIPE_WEBHOOK_SECRET is not correctly applied in core-service"
-              exit 1
-            fi
-          fi
-
-          # Lydia (WP-LYDIA-1): core-service only, unlike Stripe - social-service never reads these.
-          if [ -n "$LYDIA_PROVIDER_TOKEN" ]; then
-            expected_lydia_token_sha=$(printf '%s' "$LYDIA_PROVIDER_TOKEN" | sha256sum | awk '{print $1}')
-            core_lydia_token_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$LYDIA_PROVIDER_TOKEN\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-
-            if [ -z "$core_lydia_token_sha" ] || [ "$core_lydia_token_sha" != "$expected_lydia_token_sha" ]; then
-              echo "::error::LYDIA_PROVIDER_TOKEN is not correctly applied in core-service"
-              exit 1
-            fi
-          fi
-
-          if [ -n "$LYDIA_PROVIDER_PRIVATE_TOKEN" ]; then
-            expected_lydia_private_sha=$(printf '%s' "$LYDIA_PROVIDER_PRIVATE_TOKEN" | sha256sum | awk '{print $1}')
-            core_lydia_private_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$LYDIA_PROVIDER_PRIVATE_TOKEN\" | sha256sum | awk \"{print \\\$1}\"'" || true)
-
-            if [ -z "$core_lydia_private_sha" ] || [ "$core_lydia_private_sha" != "$expected_lydia_private_sha" ]; then
-              echo "::error::LYDIA_PROVIDER_PRIVATE_TOKEN is not correctly applied in core-service"
-              exit 1
-            fi
-          fi
-
-          echo "✅ Runtime secrets are applied in containers"
-
-      - name: Wait for services to be healthy
+      # A RENDERED .env PROVES NOTHING ABOUT WHAT IS RUNNING - a container keeps the environment it
+      # was created with. This step used to verify five keys in four services by hand; it is derived
+      # now, so every key this estate renders is checked in every service the compose file says
+      # reads it. Measured against production on 2026-09-24: 51 pairs where the hand-written version
+      # covered 5.
+      - name: Verify the containers carry the secrets
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "⏳ Waiting for critical services to be running…"
-          # THE THREE DATASTORES ARE IN THIS LIST BECAUSE THEY WERE NOT, ON 2026-09-01. A postgres
-          # major crossing crash-looped the only database for 33 minutes and this gate named seven
-          # APPLICATION services and none of the three things they all depend on. It happened not to
-          # matter that day - the migration step fails earlier, and a starved social-service does
-          # enter `Restarting` - but a gate that catches its own dependency only through a downstream
-          # symptom is the named-list defect this repository keeps paying for: it does not cover the
-          # entity nobody added to it. A datastore that crash-loops for any OTHER reason - a full
-          # disk, a corrupted volume - must fail the deploy by its own name.
-          #
-          # `Restarting` is safe to treat as fatal for these: an ordinary `up -d` recreate goes
-          # Created -> Running, and Docker reports `Restarting` only after a non-zero exit brought
-          # the restart policy in.
-          critical_services=(
-            chat-gateway
-            call-service
-            chat-delivery-service
-            media-service
-            core-service
-            social-service
-            frontend
-            postgres
-            redis
-            garage
-          )
-
-          # ONE LIST, NOT TWO. The array and the regex below were maintained separately, which is
-          # precisely how they came to disagree - the regex is derived from the array now, so a
-          # service cannot be added to one and forgotten in the other.
-          critical_pattern=$(IFS='|'; echo "${critical_services[*]}")
-
-          ready=0
-          for _ in {1..36}; do
-            running_services=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --status running --services" || true)
-            ps_all=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all" || true)
-
-            if echo "$ps_all" | grep -E "($critical_pattern)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
-              echo "❌ One or more critical services are unhealthy/restarting/exited"
-              echo "$ps_all"
-              exit 1
-            fi
-
-            missing=0
-            for service in "${critical_services[@]}"; do
-              if ! echo "$running_services" | grep -qx "$service"; then
-                missing=1
-                break
-              fi
-            done
-
-            if [ "$missing" -eq 0 ]; then
-              ready=1
-              break
-            fi
-
-            sleep 5
-          done
-
-          if [ "$ready" -ne 1 ]; then
-            echo "❌ Timeout waiting for critical services"
-            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all"
-            exit 1
-          fi
-
-          echo "✅ Critical services are running"
-
-      - name: Cleanup old resources
-        run: |
-          echo "🧹 Cleaning up old Docker resources…"
-          eval "$DOCKER_CLI image prune -af --filter 'until=24h'"
-          eval "$DOCKER_CLI container prune -f"
-          # Le build cache n etait jamais purge et grossissait sans limite
-          # (~30 Go observes). On garde 7 jours de cache pour ne pas ralentir
-          # les builds recents.
-          eval "$DOCKER_CLI builder prune -af --filter 'until=168h'"
-          echo "✅ Cleanup completed"
-
-      - name: Display running services
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          echo "📊 Currently running services:"
-          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps"
-
-      - name: Deployment summary
-        run: |
-          echo "✅ Deployment completed successfully!"
-          echo "🔗 Application URL: https://${{ env.DOMAIN }}"
-          echo "📦 Released v${{ inputs.version }} at ${{ inputs.sha }}"
-
-      - name: Health Check
-        run: |
-          echo "🔍 Performing health checks…"
-          sleep 5
-
-          FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-8080}"
-
-          retry_http() {
-            local label="$1"
-            local expected_regex="$2"
-            local cmd="$3"
-            local attempts="${4:-12}"
-            local delay="${5:-3}"
-            local status="000"
-
-            for _ in $(seq 1 "$attempts"); do
-              status=$(eval "$cmd" || true)
-              if echo "$status" | grep -Eq "$expected_regex"; then
-                echo "✅ ${label} (HTTP ${status})"
-                return 0
-              fi
-              sleep "$delay"
-            done
-
-            echo "❌ ${label} failed after ${attempts} attempts (last HTTP ${status})"
-            return 1
-          }
-
-          # Check frontend (local host port)
-          retry_http \
-            "frontend health check" \
-            "^(2|3)[0-9][0-9]$" \
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/"
-
-          # Check chat-delivery-service via Nginx (dedicated anonymous liveness route).
-          retry_http \
-            "chat-delivery-service health check" \
-            "^200$" \
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/chat-delivery-health"
-
-          # Check media-service TCP/HTTP reachability via Nginx (status may be 2xx/4xx depending on route).
-          retry_http \
-            "media-service reachability check" \
-            "^[1-5][0-9][0-9]$" \
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/media"
-
-          # ROUTE EXISTENCE, not just reachability. The check above passes on ANY status, which is
-          # what let a media-service missing `POST /media/touch` deploy green while the endpoint
-          # answered 404 in production for a day. Unauthenticated, an existing route answers 401 and
-          # an absent one answers 404, so the two are distinguishable without a credential - and
-          # this asserts the image really carries the code, which "the container started" never did.
-          retry_http \
-            "media-service /touch route present" \
-            "^401$" \
-            "curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"mediaIds\":[]}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/media/touch"
-
-          echo "✅ Health checks completed"
+          set -euo pipefail
+          bash infrastructure/deploy/verify-secrets.sh \
+            --environment prod \
+            --path "${{ env.DEPLOY_PATH }}"
 
       # THE EDGE HOLDS THE PREVIOUS BUILD'S SHELL, AND THAT SHELL NAMES CHUNKS THIS IMAGE DOES NOT
       # CONTAIN. Since 2026-09-17 nginx offers the SSR page to a shared cache

@@ -308,12 +308,25 @@ indistinguishable from the status alone; what makes the disjunction honest is th
 because without it there is no result to read and the condition is vacuously true. `build-frontend` is
 in `needs:` and its result is checked, alongside the image job's.
 
-**The deploy body is two scripts, not inlined YAML.** `infrastructure/deploy/render-env.sh` resolves
-every `.env` key from `infrastructure/deploy/env-manifest.tsv` and refuses to write a partial file;
-`infrastructure/deploy/deploy-environment.sh` then takes the environment as an argument. Dev reads
-`DEV_<NAME>` for every secret and never the bare name, so a missing dev secret is EMPTY rather than
-production's value. **Production's own deploy job is deliberately NOT on these scripts yet** — it
-moves once dev has exercised them. Everything about the estate itself is on
+**The deploy body is three scripts, not inlined YAML, and BOTH estates are on them since
+2026-09-24.** `infrastructure/deploy/render-env.sh` resolves every `.env` key from
+`infrastructure/deploy/env-manifest.tsv` and refuses to write a partial file;
+`infrastructure/deploy/deploy-environment.sh` then takes the environment as an argument; and
+`infrastructure/deploy/verify-secrets.sh` asserts afterwards that the CONTAINERS hold what was
+rendered. Dev reads `DEV_<NAME>` for every secret and never the bare name, so a missing dev secret
+is EMPTY rather than production's value.
+
+**Production moved last, and it took `serve-prod.yml` from 943 lines to 306.** Dev had exercised the
+scripts for three weeks while production kept 277 lines of hand-written
+`if [ -n "$X" ]; then upsert; else warn; fi` and its own copies of the pull, the up, the migrations
+and the health wait. Two things the swap bought immediately: the service list a deploy requires to
+be running is DERIVED from the compose file rather than hand-listed, where the hand list had never
+contained `frontend-ssr`; and the equivalence was measured rather than assumed - rendering
+production's `.env` through the script reproduced all 61 keys with **no value different**. Two
+things it cost, both caught before shipping: the old job named its variables after the key they
+rendered (`AUTHENTIK_BASE_URL` held `secrets.AUTHENTIK_URL`), which `render-env.sh` does not read,
+and `deploy-env.test.sh` now asserts the variable NAME rather than merely that the secret is
+mentioned. Everything about the estate itself is on
 [dev-environment](infrastructure/dev-environment.md), the only copy.
 
 `scheduled.yml`'s `dev-refresh` job copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind

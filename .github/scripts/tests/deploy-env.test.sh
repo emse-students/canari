@@ -2,11 +2,13 @@
 #
 # Self-tests for infrastructure/deploy/render-env.sh and its manifest.
 #
-# THE ASSERTION THIS FILE EXISTS FOR is the first group: the expected key set is DERIVED from
-# `serve-prod.yml`, which is the thing that has always written production's .env. A key added there and
-# forgotten in the manifest would otherwise be written by nobody, and the service would read the
-# template default in silence - the exact shape of defect this repository keeps paying for. The
-# failure mode of a guard list is an ABSENCE, so the list may not be hand-written.
+# THE ASSERTION THIS FILE EXISTS FOR is the first group, and its DIRECTION reversed on 2026-09-24.
+# It used to derive the expected key set from `serve-prod.yml`, because 277 lines of inlined shell
+# there were the thing that wrote production's .env. That job calls `render-env.sh` now, so the
+# manifest is the source of truth and both workflows are what must keep up: a manifest row whose
+# secret a workflow never passes resolves to EMPTY, and the service reads the template default in
+# silence - the exact shape of defect this repository keeps paying for. The failure mode of a guard
+# list is an ABSENCE, so neither side of the comparison may be hand-written.
 #
 # The second group is the isolation property, and it is the reason the dev environment is allowed to
 # exist at all: with EVERY production secret present in the environment and no dev secret, the dev
@@ -102,29 +104,41 @@ manifest_field() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf '\nthe manifest covers what serve-prod.yml writes - DERIVED, so an omission cannot pass\n'
+printf '\nserve-prod.yml passes every production secret the manifest asks for - DERIVED\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
+# THE DIRECTION CHANGED WITH THE JOB, AND THE ASSERTION GOT STRONGER (2026-09-24). This used to
+# read `upsert_env_var "KEY"` calls out of 277 lines of inlined shell and check that the manifest
+# carried each one. `serve-prod.yml` calls `render-env.sh` now, so the manifest is the source and
+# the workflow is what must keep up - the direction the dev block below has always used.
+#
+# IT ASSERTS THE VARIABLE NAME, NOT MERELY THAT THE SECRET IS MENTIONED, and that is what this
+# conversion needed. `render-env.sh` reads the SOURCE column verbatim for production, while the old
+# inlined block named its variables after the KEY they rendered: `AUTHENTIK_BASE_URL` carried
+# `secrets.AUTHENTIK_URL`, and `FRONTEND_URL` carried `secrets.BASE_URL`. Moved across unchanged,
+# both would have left a `required` row resolving to EMPTY and failed the first production deploy
+# after the conversion. A check that merely looked for `secrets.AUTHENTIK_URL` somewhere in the
+# file would have passed it.
 if [ ! -f "$CD_PROD" ]; then
-  fail "serve-prod.yml not found at $CD - the derivation below has no source"
+  fail "serve-prod.yml not found at $CD_PROD - the derivation below has no source"
 else
-  cd_keys="$(grep -oE 'upsert_env_var "[A-Z_0-9]+"' "$CD_PROD" | sed 's/upsert_env_var "//; s/"//' | sort -u)"
-  if [ -z "$cd_keys" ]; then
-    fail "no upsert_env_var calls found in serve-prod.yml - if the deploy job was converted to render-env.sh, point this derivation at its manifest instead"
-  else
-    pass "serve-prod.yml names $(printf '%s\n' "$cd_keys" | wc -l | tr -d ' ') keys to derive from"
-    missing=""
-    while read -r key; do
-      [ -z "$key" ] && continue
-      if [ -z "$(manifest_field "$key" 1)" ]; then
-        missing="$missing $key"
-      fi
-    done <<<"$cd_keys"
-    if [ -n "$missing" ]; then
-      fail "serve-prod.yml writes these keys and the manifest does not carry them:$missing"
-    else
-      pass "every key serve-prod.yml writes has a manifest row"
+  want_prod="$(manifest_rows | awk -F'\t' '$2 != "skip" && $4 ~ /^secret:/ { sub(/^secret:/, "", $4); print $4 }' | sort -u)"
+  absent=""
+  misnamed=""
+  while read -r name; do
+    [ -z "$name" ] && continue
+    if ! grep -q "secrets\.${name} }}" "$CD_PROD"; then
+      absent="$absent $name"
+    elif ! grep -q "^ *${name}: \${{ secrets\.${name} }}$" "$CD_PROD"; then
+      misnamed="$misnamed $name"
     fi
+  done <<<"$want_prod"
+  if [ -n "$absent" ]; then
+    fail "serve-prod.yml never passes these production secrets, so render-env.sh resolves them to empty:$absent"
+  elif [ -n "$misnamed" ]; then
+    fail "serve-prod.yml passes these secrets under a variable name render-env.sh does not read:$misnamed"
+  else
+    pass "serve-prod.yml passes all $(printf '%s\n' "$want_prod" | wc -l | tr -d ' ') production secrets, each under the name render-env.sh reads"
   fi
 fi
 
@@ -273,7 +287,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf '\nproduction renders exactly what serve-prod.yml rendered\n'
+printf '\nproduction renders what production is serving\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
 out="$TMP/prod.env"
@@ -286,19 +300,18 @@ else
   pass "a complete production environment renders"
 
   got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
-  # The value serve-prod.yml computed, with its one interpolation resolved the way env.DOMAIN resolves.
-  want_raw="$(grep -oE 'upsert_env_var "ALLOW_ORIGIN" "[^"]*"' "$CD_PROD" | sed 's/.*"ALLOW_ORIGIN" "//; s/"$//')"
-  if [ -z "$want_raw" ]; then
-    fail "could not read serve-prod.yml's ALLOW_ORIGIN to compare against"
+  # WHAT PRODUCTION IS ACTUALLY SERVING, read off the running estate on 2026-09-24 and pinned here.
+  # This used to compare against the value `serve-prod.yml` computed inline, which was the right
+  # check while the conversion to `render-env.sh` was still ahead; that shell is gone, and a
+  # renderer compared to itself asserts nothing. Every entry is a Canari client, and dropping one
+  # costs that client the gateway with no server-side error to show for it, so the list is worth
+  # stating outright rather than deriving.
+  want="ALLOW_ORIGIN=https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  if [ "$got" = "$want" ]; then
+    pass "ALLOW_ORIGIN is byte-identical to what production serves"
   else
-    want="ALLOW_ORIGIN=$(printf '%s' "$want_raw" |
-      sed 's|\${{ env.DOMAIN }}|canari-emse.fr|g; s|\$FRONTEND_URL|https://canari-emse.fr|g')"
-    if [ "$got" = "$want" ]; then
-      pass "ALLOW_ORIGIN is byte-identical to the value serve-prod.yml built"
-    else
-      fail "ALLOW_ORIGIN changed"
-      printf '       serve-prod.yml: %s\n       render: %s\n' "$want" "$got"
-    fi
+    fail "ALLOW_ORIGIN changed"
+    printf '       production: %s\n       render: %s\n' "$want" "$got"
   fi
 
   if grep -q '^CALL_E2E_ENCRYPTION=false$' "$out"; then
