@@ -218,9 +218,7 @@ only; never re-enumerate it here.
 on 2026-09-03, restating what the linked pages carry - and TWO items had gone FALSE unnoticed.
 Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
 
-1. **PHASE 1 IS DONE FOR DATA AND TRAFFIC, ALL THREE ESTATES, SINCE 2026-09-24** - OPEN: the runner
-   flip and the crontab move (section 10, steps 5-6), then phase 2, NOT reversible unlike phase 1
-   ([estate-migration](docs/wiki/infrastructure/estate-migration.md#10-the-ordered-list---written-2026-09-24-data-and-traffic-now-done-for-all-three-estates)).
+1. **PHASE 1 IS DONE FOR DATA/TRAFFIC, ALL THREE ESTATES** - OPEN: the runner flip and the crontab move (section 10, steps 5-6), then phase 2, not reversible ([estate-migration](docs/wiki/infrastructure/estate-migration.md#10-the-ordered-list---written-2026-09-24-data-and-traffic-now-done-for-all-three-estates)).
 2. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election ignores presence the server already knows; fix proposed, awaiting the go-ahead ([backlog](docs/wiki/backlog.md)).
 3. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
    SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
