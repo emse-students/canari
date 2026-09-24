@@ -303,14 +303,50 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
   const said = `${install.stdout ?? ''}${install.stderr ?? ''}`.trim();
   console.log(`[${TAG}] ${said.split('\n').slice(-3).join(' | ')}`);
   if (install.status !== 0 || /Failure|INSTALL_FAILED/i.test(said)) {
+    // WHICH SIDE IS THE RELEASE BUILD, NAMED FROM THE DUMP RATHER THAN ASSUMED. This threw
+    // "the APK is a RELEASE build" for both directions until 2026-09-24, and sent a session
+    // looking for a debug APK it was already holding: the mismatch was the other way round -
+    // the PHONE carried a release build, left there by a devtools verification. The dump
+    // already answers it. `DEBUGGABLE` is in pkgFlags for a debug build and absent for a
+    // release one, and a release build cannot have been installed OVER the debug one, so its
+    // presence proves an uninstall already happened and the enrolment is already gone -
+    // `firstInstallTime` says when. That is the one case where uninstalling costs nothing.
+    const phoneIsRelease = before.length > 0 && !/DEBUGGABLE/.test(before);
+    const installedAt = /firstInstallTime=(\S+ \S+)/.exec(before)?.[1] ?? 'an unrecorded time';
     throw new Error(
-      `install -r failed. A signature mismatch means the APK is a RELEASE build; build debug rather ` +
-        `than uninstalling - an uninstall destroys the enrolment and the MLS store this device is for.`
+      phoneIsRelease
+        ? `install -r failed: the PHONE carries a RELEASE build (${verOf(before)}, installed ` +
+          `${installedAt}) and this APK is the debug one. A release build cannot be installed over ` +
+          `a debug build, so the uninstall that put it there ALREADY destroyed the enrolment and ` +
+          `the MLS store - re-check that with firstInstallTime, and if it holds, uninstalling now ` +
+          `costs nothing that is not already lost.`
+        : `install -r failed: the APK is a RELEASE build. Build debug rather than uninstalling - ` +
+          `an uninstall destroys the enrolment and the MLS store this device is for.`
     );
   }
 
   const after = adb(['shell', 'dumpsys', 'package', PKG]);
   console.log(`[${TAG}] installed after : ${verOf(after)} (code ${codeOf(after)})`);
+
+  // A FRESH INSTALL IS A NEW DEVICE, AND NOTHING DOWNSTREAM SAYS SO. `install -r` keeps
+  // `firstInstallTime`; only a package that was uninstalled first gets a new one, so the two
+  // clocks being equal IS the proof that the enrolment, the MLS store and every runtime grant
+  // are gone. Two things then mislead the next run: the app looks installed and at the right
+  // version, and `POST_NOTIFICATIONS` is back to DENIED - which the rig treats as ambient
+  // (`archive/life.mjs` revokes it and grants it back), so a push row would fail for a reason
+  // nothing names. This says both out loud rather than granting anything back: a grant here
+  // would hide the loss, and the enrolment cannot be restored by one.
+  const firstInstall = /firstInstallTime=(\S+ \S+)/.exec(after)?.[1] ?? null;
+  const lastUpdate = /lastUpdateTime=(\S+ \S+)/.exec(after)?.[1] ?? null;
+  if (firstInstall && firstInstall === lastUpdate) {
+    const notifs = /android[.]permission[.]POST_NOTIFICATIONS: granted=(\w+)/.exec(after)?.[1];
+    console.log(
+      `[${TAG}] THIS IS A NEW DEVICE: firstInstallTime == lastUpdateTime (${firstInstall}), so the ` +
+        `package was uninstalled before this install and took the enrolment and the MLS store with ` +
+        `it. POST_NOTIFICATIONS granted=${notifs ?? '(unknown)'} - a push row needs it granted, and ` +
+        `every conversation this device held has to be re-joined.`
+    );
+  }
 
   // The reverse survives an install but not a replug, so it is re-asserted here rather than assumed:
   // this is the last moment at which a caller can be told the phone cannot reach the estate.

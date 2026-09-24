@@ -647,7 +647,14 @@ next one's symptom names the wrong cause.
   - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
     store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
     accounts sign in by password through the service-account link - but it is still a new DEVICE,
-    with no history for any HEAL row to reason about.
+    with no history for any HEAL row to reason about. **And nothing afterwards says the uninstall
+    happened**: the package reads the right version and launches. `install -r` preserves
+    `firstInstallTime`, so `firstInstallTime == lastUpdateTime` is the ONLY witness - `a1apk.mjs`
+    reads both clocks after every install and shouts, with `POST_NOTIFICATIONS`, which a fresh
+    install leaves DENIED while every push row assumes it granted. Its refusal names the side too:
+    `INSTALL_FAILED_UPDATE_INCOMPATIBLE` is symmetric, and it said "the APK is a RELEASE build" in
+    both directions until 2026-09-24, when the phone was the release one
+    ([device-verification](../../docs/wiki/device-verification.md#before-you-start)).
   - **`--target aarch64` is not needed and its absence is not a warning to fix.** A full build prints
     "There are no .so files available to package in the APK for armeabi-v7a, x86, x86_64" and
     packages arm64 alone, which is what the Pixel 6a runs. Measured 2026-08-24 on v0.14.4.
