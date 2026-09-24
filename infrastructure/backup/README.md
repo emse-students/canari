@@ -11,7 +11,7 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 | PostgreSQL Canari (`auth_db`) | `pg_dump` (dump logique coherent) | users, channels, posts, forms, paiements, **et l historique MLS chiffre** (`queued_message`, `mls_*`) |
 | Garage (`infrastructure_garage_data`, `infrastructure_garage_meta`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
 | media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
-| PostgreSQL Authentik (`miconnect`) | `pg_dump` | identites, config OIDC |
+| PostgreSQL Authentik (`miconnect`, **sur une autre VM**) | `pg_dump` par SSH a commande forcee | identites, config OIDC |
 
 Non sauvegarde car transitoire : Redis.
 
@@ -82,6 +82,71 @@ journalctl -u canari-backup.service -f
 | `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | cible offsite (vide = desactive) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | dossier offsite sur mitv |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
+| `MICONNECT_SSH_HOST` | `miconnect@10.0.0.7` | machine qui porte Authentik (vide = conteneur local) |
+
+## Authentik vit ailleurs, et la sauvegarde l a ignore 93 nuits
+
+**Du 2026-06-23 au 2026-09-23, aucune archive n a contenu `authentik_db.sql.gz`** -
+93 nuits d affilee, et l archive du 2026-09-23 est celle ou on l a vu. Ce n etait
+pas une panne bruyante : la stack Authentik a demenage sur sa propre VM le
+2026-06-22, le `docker inspect` local qui la cherchait ici a cesse de la trouver,
+et la branche de rattrapage ecrivait `WARN conteneur Authentik absent - ignore`
+avant de continuer. La sauvegarde se terminait par `Sauvegarde terminee` et
+sortait en 0.
+
+**Trois defauts distincts, et le troisieme est le plus grave.**
+
+1. **Une source configuree et injoignable etait traitee comme une exclusion.**
+   Une seule condition portait les deux cas. Ils sont separes : seule une valeur
+   VIDE - le seul geste par lequel quelqu un declare ne pas vouloir cette source
+   - autorise a continuer sans elle. Une valeur posee et injoignable fait
+   desormais **echouer** la sauvegarde.
+2. **La sauvegarde ne savait pas atteindre la nouvelle machine.** Elle le sait :
+   `MICONNECT_SSH_HOST`.
+3. **LE MANIFESTE, LUI, CONTINUAIT D ANNONCER LE MEMBRE.** C etait un texte
+   constant. Pendant 93 nuits, chaque archive a promis des identites qu elle ne
+   contenait pas - et le manifeste est precisement ce qu on lit pour savoir si
+   elles sont la. Il est maintenant **derive des fichiers reellement produits**.
+   Le meme fichier portait deja la lecon du dump MongoDB de 116 octets ; elle n
+   avait pas suffi parce qu elle etait ecrite comme une anecdote et non comme une
+   contrainte.
+
+`restore.sh` avait le symetrique : une archive sans ce membre le faisait ne rien
+faire, puis annoncer `Restauration terminee`. Il **refuse** maintenant.
+
+### La cle de la boite applicative ne sait que LIRE
+
+Le compte qui possede la stack Authentik est membre de `sudo` et de `docker`,
+donc equivalent root sur cette machine. Y autoriser la cle de `canari` sans plus
+donnerait a la boite applicative les pleins pouvoirs sur le fournisseur d
+identite - et la direction interessante est l inverse.
+
+La cle est donc installee avec une **commande forcee** :
+
+```
+command="/home/miconnect/bin/authentik-pg-dump",restrict ssh-ed25519 AAAA… canari@canari
+```
+
+`authentik-pg-dump.sh` de ce dossier est ce programme, et c est la liste
+exhaustive de ce que la cle peut faire. **Mesure le 2026-09-24** : la meme cle a
+qui l on demande `id; cat /etc/shadow` renvoie le dump PostgreSQL, parce que le
+serveur ignore la commande du client. `restrict` refuse en plus pty, agent, X11
+et port forwarding.
+
+Installation sur la boite Authentik (aucun droit root necessaire) :
+
+```bash
+scp infrastructure/backup/authentik-pg-dump.sh miconnect:bin/authentik-pg-dump
+ssh miconnect 'chmod 0755 ~/bin/authentik-pg-dump'
+# puis ajouter la ligne ci-dessus a ~/.ssh/authorized_keys
+```
+
+**La restauration n est deliberement PAS automatique.** L ouvrir demanderait une
+cle d **ecriture** permanente de la boite applicative vers le fournisseur d
+identite, pour un geste qu on fait une fois par decennie. `restore.sh`
+decompresse donc le dump, dit ou il est, donne la commande a jouer sur la boite
+Authentik, et echoue plutot que d annoncer une restauration complete. Le choix
+est discutable : il est ecrit ici pour pouvoir l etre.
 
 ## Sauvegarde dedupliquee des volumes objets (`backup-objects.sh`)
 
@@ -149,8 +214,10 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 ## Restauration / migration vers un nouveau serveur
 
-1. Lancer la CD (`main`) : elle genere les `.env`, demarre la stack Canari
-   ET la stack Authentik (`miconnect`, cf [../authentik/](../authentik/)).
+1. Lancer la CD (`main`) : elle genere les `.env` et demarre la stack Canari.
+   **Elle ne demarre PAS Authentik** - aucun pipeline ne l a jamais fait depuis
+   son demenagement, et cette ligne le pretendait jusqu au 2026-09-24. La stack
+   `miconnect` se remonte a la main, cf [../authentik/](../authentik/).
 2. Restaurer la derniere sauvegarde depuis mitv :
 
 ```bash

@@ -286,6 +286,28 @@ package still comes FROM here"**, and it is answered by joining the repository's
 index against `dpkg-query`, not by reading the removal log.
 
 
+**AND 160 MB THAT LOOK EXACTLY LIKE RECLAIMABLE BUILD DEBRIS ARE THE LAST COPY OF A DELETED
+REPOSITORY.** `/opt/actions-runner/runners/portail-etu/_work/refonte-gala/` is a runner workspace -
+`node_modules`, a `build/`, a `.venv`, nothing touched since 2026-01-08 - on a runner whose only
+remaining consumer is `refonte-portail-etu`. Every filesystem question said "delete": no process has
+it as a cwd, no container mounts it, nothing listens from it, no symlink points in, and a runner
+recreates its workspaces anyway.
+
+**The question the filesystem cannot answer is whether the code still exists somewhere else.**
+`emse-students/refonte-gala` answers `404` - the repository is GONE - and `Gala-Website`, which
+looks like its successor, is a FRESH repository whose earliest commit is 2026-09-23 and which does
+not contain this checkout's `HEAD` (`268d218e`, refused with `No commit found for SHA`). So on this
+host that directory is the only surviving artefact of a repository nobody can clone any more. It
+was left in place, and reclaiming the 160 MB is a question for its owners
+([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+**The runner it sits in is ORG-scoped, and that was checked rather than assumed.** Its group is
+`visibility: selected` and names exactly one repository, and the only two jobs that ask for
+`self-hosted` are the deploy library - called by `release.yml` alone - and the scheduled egress
+probe. Neither is reachable from a fork's pull request, which is what would otherwise put a
+`docker`-group account on a machine we do not own within reach of a stranger's branch.
+
+
 ### AIDE reported nothing for two and a half years, and three separate defects stood between it and a report
 
 `/var/lib/aide/aide.db` was absent and the `aide.db.new` dated 2024-02-12 had never been promoted;
@@ -440,6 +462,43 @@ owed:
    delivery; **nothing covers non-delivery**, which is the failure that actually takes the site
    down.
 
+#### ONE CERTIFICATE PER NAME, AND IT IS NOT ACME - MEASURED ON THE TWO LIVE NAMES, 2026-09-24
+
+The certificate question in section 7 was listed as **the blocking answer** the nginx configuration
+could not be written without. It is answered, and by reading the two certificates the School already
+serves rather than by asking:
+
+| | `portail-etu.emse.fr` | `canari.emse.fr` |
+| --- | --- | --- |
+| Subject CN | the name itself | the name itself |
+| `subjectAltName` | **`DNS:portail-etu.emse.fr` and nothing else** | **`DNS:canari.emse.fr` and nothing else** |
+| Issuer | GEANT TLS RSA 1 (Hellenic Academic and Research Institutions CA) | the same |
+| Validity | 2026-07-23 -> 2027-02-07 | 2026-09-22 -> 2027-04-09 |
+
+**One certificate per name.** Four names is four certificates, four expiry dates and four renewals -
+not one SAN bundle, so the nginx configuration gets four `ssl_certificate` pairs and the report this
+section owes has four dates to watch, not one.
+
+**And it is the GEANT TCS service, on a ~6.5-month validity - there is no ACME anywhere in this.**
+Nothing in this repository, and nothing on the host, can renew one: a renewal is a DSI action
+followed by a file landing in `/etc/certs/<name>/`. That is precisely why the blind 01:00 reload
+covers delivery and nothing covers NON-delivery, and it is why the missing report is the whole of
+what is owed here.
+
+**`canari.emse.fr` IS LIVE, AND ITS CERTIFICATE WAS REISSUED TWO DAYS AGO** (2026-09-22). It serves
+`Portail Etudiant ICM` - a SvelteKit application, `nginx`, HTTPS only, port 80 does not answer - from
+**`193.49.175.122`, which is NOT the host `portail-etu.emse.fr` runs on** (`193.49.175.67`). So the
+line in section 7 calling it a reassignment is right, and thinner than the thing it describes: the
+ask is to take a name off a running site on a machine this project has never inventoried, whose
+certificate somebody renewed this week. It is the one item in that request that can be refused on
+its merits, and the request should say what it is rather than let it read as moving a spare record.
+
+**The three other names do not exist at all** - `cercle.emse.fr`, `miconnect.emse.fr` and
+`www.canari.emse.fr` all answer `NXDOMAIN`, and neither live name carries an `AAAA`. There is no
+wildcard: a nonsense name under `emse.fr` answers `NXDOMAIN` too, which is worth stating because the
+first measurement here appeared to show one - the resolver's own address, echoed by `nslookup` in
+every answer, read as a record.
+
 ### The cohabitation, and the rename that is only free once
 
 Five compose projects will share one daemon: `portail-etu`, `canari-prod`, `canari-dev`, `cercle`,
@@ -593,6 +652,62 @@ reason the two host-specific values are variables rather than lines in a commit.
 volume. They are archived on the user's workstation and deleting them from production is the user's
 call. They do not travel - the move copies the live database only.
 
+### `miconnect` - WHAT THE MOVE MUST CARRY, AND THE RUNBOOK STEP THAT IS EMPTY HERE - 2026-09-24
+
+Measured on the box and in the repository the same day, while preparing the next estate in the
+order.
+
+**Step 1 of the runbook does not apply to this estate: NOTHING DEPLOYS IT.** `cercle` needed a
+GitLab runner rather than an Actions one; `miconnect` needs neither, because no pipeline has ever
+built it. `infrastructure/authentik/README.md` described a `deploy.yml` job copying its compose file
+onto the box - **neither that workflow nor that job exists**, and a search for `infrastructure/authentik`
+across `.github/` returns nothing. The only `AUTHENTIK_*` secrets the CD still handles are the OIDC
+CLIENT's, written into the application's `.env`. So this estate moves by hand, and the repository's
+compose file is a REBUILD REFERENCE that had drifted from the running one - including a pinned
+`2026.2.2` against a running `2026.8.0`, which is a schema downgrade Authentik's migrations cannot
+undo. Both are corrected.
+
+**The stack is one volume and two ports.** `miconnect_database` (declared `external`), and
+`9000`/`9443` published on `0.0.0.0` today because the box is its own VM. On the shared host that
+is exactly the trap section 2 measured: Docker publishes through the nat table, which firewalld's
+zone does not govern, so both must become `127.0.0.1:` there. `data/`, `certs/` and
+`custom-templates/` are 16 K, 4 K and 4 K - nothing travels but the database.
+
+**AND THE BACKUP KEY TRAVELS WITH IT.** The nightly backup reaches this box by SSH since 2026-09-24,
+with a key whose forced command can do exactly one thing, read the PostgreSQL dump. **On the shared
+host the two stacks are co-located again, so `MICONNECT_SSH_HOST` must be EMPTIED** and the local
+`docker exec` path resumes. Forgetting it is how the estate spent 93 nights with no Authentik
+backup at all - and the difference now is that the script FAILS rather than warns, which is the
+entire point of that change ([backup](../../../infrastructure/backup/README.md)).
+
+#### It was STOOD UP on the target host, empty, and taken back down - 2026-09-24
+
+Step 2 of the runbook, with the data left out of it, which is the half that needs no permission and
+answers the questions a plan cannot: **the stack runs there, on loopback, inside a tenth of the
+memory its VM is sized for.**
+
+| Measured on `193.49.175.67` | |
+| --- | --- |
+| `http://127.0.0.1:9000/-/health/live/` | `200` |
+| `http://193.49.175.67:9000/` from the host itself | **refused** (`000`) |
+| Memory, all three containers | **907 MB** (424 server + 300 worker + 183 postgres) against a 2 G VM |
+| Startup to healthy | under two minutes, migrations included |
+
+**The loopback binding needs no edit to the compose file** - `COMPOSE_PORT_HTTP=127.0.0.1:9000` in
+the `.env` interpolates into the `ports:` entry, and `docker compose config` resolves it to
+`host_ip: 127.0.0.1`. That matters because the same file has to keep working on the VM it is leaving.
+
+It was brought down with `down -v`, its throwaway `.env` deleted and its empty volume removed;
+`/srv/miconnect/` and its three mount directories stay, ready. **Nothing of the real estate was
+touched, and the identity database never left its box.**
+
+**ONE TRAP FOUND BY DOING IT: the container's uid 1000 is `ansible` on this host.** Authentik runs
+as `uid=1000(authentik)`, and uid 1000 on the shared machine belongs to the DSI's automation
+account - so every file the container writes through a bind mount lands owned by `ansible`, which is
+what `./data` and `./certs` looked like after the test. Ownership was put back. **On a shared box a
+bind mount is a uid collision waiting to be misread**, and the three directories here are empty
+anyway: they are candidates for named volumes at the cutover.
+
 ## 7. Phase 2 - the names
 
 `canari-emse.fr` -> `canari.emse.fr`, `cercle.canari-emse.fr` -> `cercle.emse.fr`,
@@ -604,18 +719,68 @@ without.
 
 | Ask | Note |
 | --- | --- |
-| `canari.emse.fr` | **exists already**, pointing at `193.49.175.122` and serving Portail-etu. To be REASSIGNED, not created |
+| `canari.emse.fr` | **exists, is LIVE and was re-certified 2026-09-22**: `Portail Etudiant ICM` on `193.49.175.122`, a DIFFERENT machine from the one `portail-etu.emse.fr` uses. A reassignment that takes a name off a running site, and the one ask here that can be refused on its merits |
 | `cercle.emse.fr` | new. The School reserves `etu.emse.fr` for mail, so it is not `cercle.etu.emse.fr` |
 | `miconnect.emse.fr` | new |
 | `www.canari.emse.fr` | new, and only so the redirect to the apex exists |
 | AAAA for the above | only if the host has a v6 address. Nothing blocks on it |
-| The certificate path, and one SAN certificate or one per name | **this is the blocking answer**, not a nicety |
+| The certificate path, and one SAN certificate or one per name | **ANSWERED by measurement 2026-09-24, leave it out of the request**: one certificate per name, GEANT TCS, no ACME - see above |
 | Confirm 80/443 inbound are already open | the machine already serves `portail-etu.emse.fr`, so this is expected to be a no-op |
 | Is the account on the target host also `jolan.boudin`? | the bastion half is proven, the target half is not |
 
 **TURN is deliberately NOT in that request.** It needs an inbound UDP range, which is a different
 kind of ask and is refused more easily than a DNS record; attaching it would put the whole list at
 risk. It goes in its own request when calls are revived ([calls](../frontend/modules/calls.md)).
+
+### The request, written out - copy it, do not rewrite it
+
+**One message, every name at once**, because every name costs a ticket and a second request is a
+second wait. The certificate question that used to be in the table is GONE from it: it was answered
+by measurement above, and a request that asks what the asker could have read is a request that gets
+a slower answer.
+
+**The block below is the message, and it carries French accents on purpose** - it is text to be
+SENT, not documentation prose, and `Portail Etudiant ICM` is not how that site spells its own name.
+Everything around it stays ASCII like the rest of this repository.
+
+```text
+Objet : demande d'enregistrements DNS et de certificats pour quatre noms (association Canari)
+
+Bonjour,
+
+L'application Canari (association etudiante, actuellement sur canari-emse.fr) et les
+services qui l'accompagnent vont etre heberges sur la machine 193.49.175.67, celle qui
+sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse.fr.
+
+1. Creation de trois enregistrements A vers 193.49.175.67 :
+     cercle.emse.fr
+     miconnect.emse.fr
+     www.canari.emse.fr
+
+2. Reaffectation de canari.emse.fr vers 193.49.175.67.
+   Ce nom pointe aujourd'hui vers 193.49.175.122 et sert le Portail Etudiant ICM, dont
+   le certificat a ete renouvele le 22/09/2026. Nous ne demandons cette reaffectation
+   que si ce site n'a plus besoin du nom ; s'il en a besoin, dites-le nous et nous vous
+   proposerons un autre nom pour Canari.
+
+3. Un certificat par nom pour les quatre noms ci-dessus, livre comme les autres dans
+   /etc/certs/<nom>/ sur 193.49.175.67.
+
+4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
+   (la machine sert deja portail-etu.emse.fr, donc nous pensons que oui).
+
+5. Une question d'acces : le compte sur 193.49.175.67 est-il bien jolan.boudin, comme
+   sur le rebond ?
+
+6. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
+   Ce point ne bloque rien.
+
+Merci d'avance,
+```
+
+**What is deliberately NOT in it**: TURN's inbound UDP range, which is refused more easily than a
+DNS record and would put the whole list at risk, and `dev`, which goes internal and needs no public
+name at all.
 
 ### The deep links are the one thing a redirect cannot fix
 

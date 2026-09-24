@@ -287,7 +287,39 @@ assert the fingerprint is non-empty before comparing it.
 **That unit must be `600`.** It shipped as `644 root:root`, which is how the run token ended up in a
 terminal transcript: any login user could `systemctl cat cloudflared` and read it. systemd runs as
 root and never needed it world-readable, so the permission bought nothing and cost a rotation. The
-unit is `600` on both hosts that carry a token, as of 2026-09-02.
+unit is `600 root:root` on both hosts that carry a token, and `systemctl cat` is refused to an
+unprivileged user on both - re-measured 2026-09-24.
+
+#### AND THE TOKEN IS STILL READABLE BY ANY LOCAL USER, ON BOTH HOSTS - 2026-09-24
+
+`600` closed `systemctl cat`, which reads the FILE. **`systemctl show cloudflared -p ExecStart`
+reads systemd's own in-memory state over D-Bus, where the command line lives in full, and it answers
+any unprivileged user.** Measured on both boxes the same minute, as the ordinary login account: the
+unit is unreadable, and the complete `--token …` comes back anyway.
+
+**The permission was verified against the mechanism that caused the incident, not against the
+question.** The question was "can a local user read this token", and `systemctl cat` was only one of
+its answers; the paragraph above has read since 2026-09-02 as though the exposure were closed. It
+was not, and this is the second time this token has reached a transcript.
+
+**The fix is not a stricter mode - no mode reaches D-Bus.** The token must leave the command line:
+
+```ini
+# /etc/cloudflared/token   (600 root:root)
+TUNNEL_TOKEN=…
+
+# unit
+EnvironmentFile=/etc/cloudflared/token
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+```
+
+`systemctl show` prints `EnvironmentFile=` as a PATH and never its contents; the value reaches the
+process environment at exec time, and `/proc/<pid>/environ` is readable only by the process owner,
+which is root. `Environment=` in the unit would NOT do - that one `show` prints verbatim.
+
+**Both hosts owe this, and both owe a rotation after it**, in the order below - step 1 invalidates
+the old token instantly, so the tunnel is down between step 1 and the restart. That is a minute of
+production being unreachable, which is why it is done with the user present rather than alone.
 
 ### Rotating the run token, and the order that matters
 

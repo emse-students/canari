@@ -97,3 +97,66 @@ describe('the backlog holds what is LEFT, and a duplicate heading says a merge d
     expect(duplicates).toEqual([]);
   });
 });
+
+describe('the changelog files work under the version that shipped it', () => {
+  /**
+   * WHY THIS IS NOT THE BACKLOG CHECK AGAIN.
+   *
+   * Every entry is added immediately under `## [Unreleased]`, and a release bump inserts
+   * `## [X.Y.Z] - DATE` at that exact line. So a branch written before a release and rebased after
+   * one has its entries and that new heading competing for one position, and git resolves it as a
+   * union WITHOUT A CONFLICT: the entries land BELOW the heading, filed under a version that was
+   * cut before they existed. Moving the heading back by hand then leaves a second copy of it, which
+   * is what happened on 2026-09-24 - `## [0.18.22]` appeared twice, one rebase apart, silently.
+   *
+   * Neither half can be caught by reading the diff, because the diff of a clean rebase shows the
+   * hunk applying exactly as written. What can be asserted is the SHAPE the file must always have:
+   * `[Unreleased]` on top, every version once, and the versions descending. A rebase that files
+   * work under the wrong heading breaks one of the three or it moved nothing.
+   */
+  const VERSION = /^## \[(\d+)\.(\d+)\.(\d+)\] - \d{4}-\d{2}-\d{2}$/;
+
+  const releaseHeadings = () =>
+    read('CHANGELOG.md')
+      .split('\n')
+      .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+      .filter(({ line }) => line.startsWith('## '));
+
+  it('finds the headings it is meant to police', () => {
+    const all = releaseHeadings();
+    expect(all.length).toBeGreaterThan(20);
+    expect(all[0]?.line).toBe('## [Unreleased]');
+    expect(all.filter(({ line }) => line === '## [Unreleased]')).toHaveLength(1);
+  });
+
+  it('gives every release heading the one shape the bump writes', () => {
+    // A heading that parses as neither is a heading this guard would otherwise skip in silence.
+    const malformed = releaseHeadings()
+      .slice(1)
+      .filter(({ line }) => !VERSION.test(line))
+      .map(({ line, n }) => `CHANGELOG.md:${n}: ${line}`);
+
+    expect(malformed).toEqual([]);
+  });
+
+  it('names each version once, in descending order', () => {
+    const versions = releaseHeadings()
+      .slice(1)
+      .map(({ line, n }) => {
+        const [, major, minor, patch] = VERSION.exec(line) ?? [];
+        return { line, n, rank: [Number(major), Number(minor), Number(patch)] as const };
+      });
+
+    const disordered: string[] = [];
+    for (let i = 1; i < versions.length; i++) {
+      const previous = versions[i - 1]!;
+      const current = versions[i]!;
+      const descends = previous.rank.findIndex((part, k) => part !== current.rank[k]!);
+      // -1 = the same version twice; otherwise the first differing part must be the LARGER one.
+      if (descends === -1 || previous.rank[descends]! < current.rank[descends]!)
+        disordered.push(`CHANGELOG.md:${current.n}: ${current.line} follows ${previous.line}`);
+    }
+
+    expect(disordered).toEqual([]);
+  });
+});

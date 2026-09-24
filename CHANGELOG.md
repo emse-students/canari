@@ -20,6 +20,14 @@ donc rien ne dit que le device est NEUF - seul `firstInstallTime == lastUpdateTi
 lit les deux horloges apres chaque installation et le dit. Son refus nommait aussi le mauvais cote :
 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` est symetrique. A1 a perdu son device ainsi le 2026-09-24.
 [device-verification](docs/wiki/device-verification.md#before-you-start).
+### Fixed - un rebase classait du travail non livre sous une version deja sortie
+
+Toute entree s'ecrit sous `## [Unreleased]`, la ligne exacte ou un bump de version insere
+`## [X.Y.Z]` : une branche rebasee par-dessus une release voit donc ses entrees classees sous une
+version coupee avant qu'elles existent, par une union sans conflit. `docsMergeArtefacts.test.ts`
+assure desormais la forme du fichier - `[Unreleased]` en tete, chaque version nommee une fois,
+versions decroissantes - chaque moitie prouvee en reintroduisant l'artefact.
+[durable-rules](docs/wiki/durable-rules.md).
 
 ### Fixed - un `bun install` dans un worktree desarmait les hooks de tous les autres
 
@@ -30,6 +38,44 @@ une fois ce worktree disparu git n'executait plus aucun hook - sans rien dire. Q
 le 2026-09-24, chacune trouvee par hasard, parce que la post-condition ne demandait que "non vide",
 ce qu'un chemin absolu satisfait.
 [development](docs/wiki/development.md#corehookspath-is-shared-by-every-worktree-and-must-stay-relative).
+
+### Changed - la question des certificats ne bloque plus, et la demande DSI est ecrite
+
+Les deux certificats que l'ecole sert deja portent UN SEUL nom chacun, emis par GEANT TCS pour ~6,5
+mois : un certificat par nom, aucun ACME, donc rien ici ne peut renouveler. `canari.emse.fr` est
+vivant, sert le Portail Etudiant ICM depuis une AUTRE machine que portail-etu.emse.fr, et son
+certificat a ete reemis le 22/09 - la reaffectation demandee prend un nom a un site qui tourne. La
+demande DSI est desormais ecrite mot pour mot, la question du certificat en moins.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - miconnect prepare, et Authentik tient dans un dixieme de sa VM
+
+Aucun pipeline ne deploie cette stack, contrairement a ce que son README decrivait; son compose de
+reference etait epingle six versions en arriere de ce qui tourne. Les deux sont corriges, et la
+stack a ete montee a vide sur l'hote cible puis redescendue : 907 Mo pour les trois conteneurs,
+sante a 200 sur la loopback, refusee depuis l'IP publique, et la liaison loopback s'obtient par le
+`.env` sans toucher au compose.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - le jeton du tunnel Cloudflare se lit sans aucun droit, sur les deux boites de prod
+
+L'unite `cloudflared` porte le jeton sur sa ligne de commande. Elle avait ete passee en `600` apres
+une premiere fuite, ce qui ferme `systemctl cat` - mais `systemctl show -p ExecStart` lit l'etat
+interne de systemd par D-Bus, qu'aucun mode de fichier ne protege, et rend la ligne entiere a un
+compte ordinaire. Mesure sur `canari` et `miconnect` le 2026-09-24. Le jeton doit passer par un
+`EnvironmentFile`, et une rotation est due ensuite : elle coupe le chemin public une minute, donc
+elle se fait avec l'utilisateur.
+[cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md), [backlog](docs/wiki/backlog.md).
+
+### Fixed - 93 nuits sans sauvegarde d'Authentik, et le manifeste les annoncait quand meme
+
+La stack Authentik a pris sa propre VM le 2026-06-22 ; `backup.sh` la cherchait toujours sur la
+machine applicative, ne la trouvait plus, ecrivait un WARN et continuait - une source configuree et
+injoignable etait traitee comme une exclusion. Aucune archive du 2026-06-23 au 2026-09-23 ne
+contient `authentik_db.sql.gz`, et le `MANIFEST.txt`, texte constant, l'a promis chaque nuit. La
+sauvegarde atteint desormais la boite par SSH avec une cle a commande forcee qui ne sait que lire,
+echoue si la source est injoignable, et derive son manifeste des fichiers reellement produits.
+[backup](infrastructure/backup/README.md), [authentik](infrastructure/authentik/README.md).
 
 ## [0.18.22] - 2026-09-24
 
