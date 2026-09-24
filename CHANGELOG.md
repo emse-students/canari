@@ -132,12 +132,21 @@ mesurable faute d'un avatar sur un compte de test.
 [device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android),
 [backlog](docs/wiki/backlog.md).
 
+### Changed - le runner quitte un compte personnel, et cloudflared attend son tunnel
+
+Le runner qui deploie Portail-etu tournait sous le login d'une personne, sur une machine partagee :
+il tourne sous `gha-runner`, sans sudo, et aucun workflow n'ecrit plus ou il vit. `cloudflared` est
+installe sur la cible et configure avec rien - creer le tunnel reste un geste de dashboard, remesure
+le 2026-09-24. Trois regles durables en sortent, dont `bin` est un lien symbolique.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Changed - la machine cible est videe avant le demenagement
 
-1813 paquets ramenes a 1187 : neuf versions de PHP dont une seule servait, apache2, phpMyAdmin et
-MySQL. Les onze bases heritees sont archivees et verifiees en quatre exemplaires avant d'etre
-supprimees - la derniere ecriture datait de juin 2026, le reste etait une traine. AIDE ne rapportait
-plus rien depuis fevrier 2024 et rapporte de nouveau ; trois questions ouvertes du plan se referment.
+1813 paquets ramenes a 796 : neuf versions de PHP dont une seule servait, apache2, phpMyAdmin,
+MySQL et les 144 paquets node de Debian. Les onze bases heritees sont archivees et verifiees avant
+d'etre supprimees - la derniere ecriture datait de juin 2026, le reste etait une traine. AIDE ne
+rapportait plus rien depuis fevrier 2024 : trois defauts separes le tenaient muet, dont un alias
+mort qui jetait la moitie des alertes de la machine. Trois questions ouvertes du plan se referment.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Added - le plan du demenagement des trois VMs, puis des noms vers `emse.fr`

@@ -227,7 +227,7 @@ mark rather than the lowest free one.
 ### THE HOST WAS EMPTIED BEFORE THE MOVE - 2026-09-24
 
 The survey above found a shared box carrying years of other people's leftovers. It now carries
-**1187 packages where it carried 1813**, and the difference is the surface this project would
+**787 packages where it carried 1813**, and the difference is the surface this project would
 otherwise have inherited.
 
 | Removed | What it was |
@@ -238,6 +238,7 @@ otherwise have inherited.
 | MySQL, engine and data | eleven legacy databases, nothing connected to it |
 | 111 `rc` residues | config left by packages removed years ago, down to `linux-image-4.19` |
 | the desktop trees | WebKit, GTK 3 and 4, Mesa and Vulkan, three obsolete GCC toolchains, LLVM 19, X fonts, a speech-recognition model |
+| the sury repository | **removing PHP is not removing its archive.** `packages.sury.org` stayed declared, stayed in `unattended-upgrades`, and still owned three installed packages - among them `libpcre3`, a PCRE 1 whose upstream ended in 2021 and which nothing depended on. Repository, keyring, origin line and the three packages are gone |
 
 `/` went from 16 G used to **12 G, leaving 32 G free where the capacity table measured 27**, and
 `/etc` is under version control again: etckeeper had not committed since 2019-07-31 and 1882
@@ -256,16 +257,55 @@ a tail. Confirmed by the user: it is `ssh cercle` that replaced it.
 
 The dump is verified in four places - `/var/backups`, `/var/lib/automysqlbackup` (234 M),
 `/export/mysqlbackup` (96 M on the filer) and the user's workstation, md5 checked against the host.
-**What would have talked to a MySQL that is gone was neutralised in the same breath**, because a
-daily cron failing into a mailbox is the noise nobody reads: two backup crons and one Zabbix
-`userparameter_mysql.conf`.
+**What would have talked to a MySQL that is gone was DELETED in the same breath**, because a daily
+cron failing into a mailbox is the noise nobody reads: two backup crons and one Zabbix
+`userparameter_mysql.conf`. Renaming them aside was the first instinct and it was wrong - a
+disabled thing is a thing a later reader has to re-decide.
 
-**AIDE reported nothing for two and a half years and now does.** `/var/lib/aide/aide.db` was absent
-and `aide.db.new` dated 2024-02-12 had never been promoted; the daily unit was in `failed`. The
-rebuild also exposed the noise that would have followed it - thirteen warnings per run on
-`/run/rpc_pipefs`, the NFS client's pseudo-filesystem, whose entries declare a null size and return
-content - so `99_aide_local_volatile` excludes it. A monitor whose report is thirteen lines of
-nothing is a monitor its reader learns to skip.
+**A REPOSITORY OUTLIVES THE PACKAGES IT SHIPPED, AND NOTHING SAYS SO.** The nine PHP versions went
+in the first pass; `packages.sury.org` was still declared a week later, still listed as a trusted
+origin for unattended upgrades, and still the source of `libgd3`, `libpcre3` and its own keyring.
+Nothing failed, nothing warned - `apt update` fetched an index for a distribution that no longer had
+a reason to exist. **The question that finds this is not "what is installed" but "which installed
+package still comes FROM here"**, and it is answered by joining the repository's own `Packages`
+index against `dpkg-query`, not by reading the removal log.
+
+
+### AIDE reported nothing for two and a half years, and three separate defects stood between it and a report
+
+`/var/lib/aide/aide.db` was absent and the `aide.db.new` dated 2024-02-12 had never been promoted;
+the daily unit sat in `failed`. Rebuilding the baseline was the easy part, and it was not enough.
+
+**The exclusion syntax was wrong twice, and only a 9317-line run said so.** AIDE's `!<regex>` is a
+RECURSIVE negative rule: the manual says the children of matching directories *are recursed into*
+and merely not added to the database. So `!/export` excluded the NetApp filer from the baseline
+while still walking every `.snapshot` tree the filer recreates daily. `-<regex>`, added in AIDE
+0.19, is the one that prunes. **`--path-check` settles which rule wins for a given path in one
+second**, against twelve minutes for a rebuild, and it is how each exclusion below was verified
+rather than assumed:
+
+| Pruned | Why |
+| --- | --- |
+| `/run/rpc_pipefs` | the NFS client's pseudo-filesystem; its entries declare a null size and return content, so every run warned on them |
+| `/run/docker`, `/run/containerd` | container network namespaces, whose id is random per start - on a Docker host that is a permanent report of files appearing and vanishing |
+| `/export` | the NetApp mount and its daily `.snapshot` trees |
+| `/var/lib/docker`, `/var/lib/containerd` | 51007 entries that every build and every deploy rewrites |
+
+`/etc`, `/usr/bin` and `/etc/shadow` remain watched - checked, not assumed.
+
+**And the report reached nobody.** Debian runs AIDE as `_aide` with `CAP_DAC_READ_SEARCH`, and that
+capability disables the suid bit the traditional `sendmail` interface needs; the package's own
+README says a non-root AIDE on systemd can only mail through `s-nail`, which was absent. **Worse,
+`/etc/aliases` sent root's mail to an address that no longer exists** - the Rootz address is dead,
+and `/var/log/mail.log` shows system mail still being sent to it hours before this was found. Half
+of every alert this machine has raised, for however long, went into the void. The alias now names a
+live Rootz mailbox beside the DSI's, and delivery was proven end to end: a report sent AS `_aide`
+arrived.
+
+**This is the durable rule about a correct mechanism with no report, met three times in one
+afternoon**: a baseline that was never promoted, a monitor whose output would have been unreadable,
+and a delivery path that silently dropped half its recipients. None of the three would have shown
+up in a green check.
 
 ## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
 
@@ -421,7 +461,10 @@ same deploy path, run once for real before the estate that matters.
 
 Per service, and the whole of it:
 
-1. install the self-hosted runner for that repository on the target host;
+1. install the self-hosted runner for that repository on the target host - **and `cercle` is not
+   a GitHub repository at all.** It lives on `gitlab.emse.fr`, so its runner is a `gitlab-runner`
+   registered against that project, not an Actions runner; the two coexist on the host and neither
+   knows about the other;
 2. stand the project up beside the old one, on its loopback port, **serving nothing**;
 3. restore its data into it, and diff the restore against the source;
 4. take a read-only window on the old estate, re-sync the delta, point the tunnel ingress at the
@@ -433,6 +476,60 @@ Per service, and the whole of it:
 **Nothing in phase 1 changes a hostname, a certificate or an OIDC issuer.** If step 5 is not
 convincing, step 4 is reversed by pointing the ingress back, and the old estate never stopped being
 able to serve.
+
+### GROUNDWORK LAID 2026-09-24 - NOTHING IS SERVING YET, AND THAT IS THE POINT
+
+Three pieces of step 1 exist on the target host. **No ingress moved, no name changed, and the old
+estate has not been touched** - the user's instruction was to be ready, not to switch.
+
+**`cloudflared` 2026.9.1 is installed and configured with nothing.** The Cloudflare apt repository
+is declared in deb822 form beside the host's others, and its keyring was not trusted on the
+strength of the URL it came from: the file is **byte for byte the one that has been signing
+production's `cloudflared` since June**, compared by sha256 across the two machines. There is no
+`/etc/cloudflared`, no unit and no token, because the tunnel does not exist yet.
+
+**AND IT CANNOT BE CREATED FROM HERE - RE-MEASURED 2026-09-24, unchanged since 2026-09-02.**
+`POST /accounts/{acct}/cfd_tunnel` answers `10000 Authentication error` and the tunnel list answers
+`success` with **zero** tunnels while production is plainly running one. That second answer is the
+dangerous one: a caller that trusts the shape concludes the account has no tunnels. **Creating it
+is a dashboard gesture the user makes**, and step 4 of phase 1 waits on it.
+
+**The Portail-etu runner left a personal account.** It ran as one person's login, from that
+person's home, on a machine shared with other associations - so closing or renaming that account
+would have stopped every deployment of the portal, for a reason nobody would have gone looking for.
+It now runs as `gha-runner`: no password, no `sudo`, one group.
+
+| | Path |
+| --- | --- |
+| Runner installs | `/opt/actions-runner/runners/<repository>/` - one per estate, this is where `cercle`, `canari` and `miconnect` land |
+| Deploy directory | `/opt/actions-runner/portail-etu`, which is `~/portail-etu` for that account |
+| Unit | `actions.runner.<org>.<name>.service`, `User=gha-runner` |
+
+**The move was blocked by one line, and that line is the lesson.** `deploy.yml` copied from
+`~/actions-runner/_work/refonte-portail-etu/refonte-portail-etu`, which encoded the install path,
+the owning home and Actions' `_work` layout - three facts about the host written into a file that
+should only know about the deploy. It now reads `$GITHUB_WORKSPACE`
+([PR 83](https://github.com/emse-students/refonte-portail-etu/pull/83)). **Proven end to end, not
+declared**: the egress probe, the one other job that needs `self-hosted`, was dispatched after the
+move and came back `success`.
+
+#### `bin` WAS A SYMLINK, AND FOUR DIRECTORIES THAT LOOKED LIKE BACKUPS WERE THE INSTALL
+
+The runner directory held `bin`, `bin.2.336.0`, `bin.2.337.0` and the same for `externals`. The
+numbered ones read as leftovers of two self-updates and were deleted as housekeeping. They were not
+leftovers: **`bin` and `externals` are symlinks into the newest numbered directory**, which is how
+the runner's self-update swaps versions atomically. Deleting them left `svc.sh` reporting `Must run
+from runner root or install is corrupt`, with no hint of the cause.
+
+Repaired by re-extracting the official 2.337.0 archive - the same version, sha256 checked against
+the release notes - over the directory; `.runner` and `.credentials` are files and survived
+untouched, so no re-registration was needed.
+
+**Two rules were already written for this and neither was applied.** A destructive control needs an
+allowlist of what it may touch, not a pattern that looks like debris. And a name is not evidence:
+`ls -l` before `rm -rf` would have shown the arrow. There is a sharpening, though - **the symlinks
+pointed at ABSOLUTE paths under the old home, so the move alone would have broken them.** The
+deletion changed a silent breakage into a loud one.
 
 ## 7. Phase 2 - the names
 
@@ -491,12 +588,18 @@ Pointers only. The substance is in
 [backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
 - the DNS and certificate request to the DSI, as one message;
-- creating the new Cloudflare tunnel on `rootz-emse.fr` - **the project's token cannot do it**:
-  measured 2026-09-02, `GET /accounts/{acct}/cfd_tunnel` answers 200 with an EMPTY list and Access
-  groups answer 403, so a tunnel is a dashboard gesture ([cloudflare-edge](cloudflare-edge.md));
+- **creating the new Cloudflare tunnel on `rootz-emse.fr` - THE ONE THING BLOCKING PHASE 1.**
+  The project's token cannot do it, measured 2026-09-02 and again 2026-09-24 with the same result:
+  `POST /accounts/{acct}/cfd_tunnel` answers `10000 Authentication error`, `GET` answers 200 with
+  an EMPTY list while production runs a tunnel, and Access groups answer 403. A tunnel is a
+  dashboard gesture ([cloudflare-edge](cloudflare-edge.md)). Everything up to step 3 of phase 1 can
+  be done without it; step 4 cannot. The alternative to the gesture is an API token carrying
+  `Cloudflare Tunnel: Edit` on the account;
 - ~~the rights request~~ **GRANTED 2026-09-23** - `docker` plus `ALL=(ALL) NOPASSWD:ALL`, wider
-  than the narrow rule asked for; the older `boudin` account is gone and left no orphaned file
-  behind (section 2);
+  than the narrow rule asked for; the older `boudin` account is gone and left no orphaned FILE
+  behind, though it did leave a **membership**: `getent group docker` still named it on 2026-09-24,
+  a group entry for a uid that no longer resolves. Removed. `deluser` does not sweep supplementary
+  groups, and nothing on a box reports one (section 2);
 - **the arbitration on capacity**: 4 vCPU and 11 G against three VMs sized for 8 and 20. Either the
   VM grows, or what moves onto it is cut down. Nobody can decide that here;
 - nothing further on SSH: the touch is gone and access is unattended (section 2).
