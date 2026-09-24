@@ -286,6 +286,28 @@ package still comes FROM here"**, and it is answered by joining the repository's
 index against `dpkg-query`, not by reading the removal log.
 
 
+**AND 160 MB THAT LOOK EXACTLY LIKE RECLAIMABLE BUILD DEBRIS ARE THE LAST COPY OF A DELETED
+REPOSITORY.** `/opt/actions-runner/runners/portail-etu/_work/refonte-gala/` is a runner workspace -
+`node_modules`, a `build/`, a `.venv`, nothing touched since 2026-01-08 - on a runner whose only
+remaining consumer is `refonte-portail-etu`. Every filesystem question said "delete": no process has
+it as a cwd, no container mounts it, nothing listens from it, no symlink points in, and a runner
+recreates its workspaces anyway.
+
+**The question the filesystem cannot answer is whether the code still exists somewhere else.**
+`emse-students/refonte-gala` answers `404` - the repository is GONE - and `Gala-Website`, which
+looks like its successor, is a FRESH repository whose earliest commit is 2026-09-23 and which does
+not contain this checkout's `HEAD` (`268d218e`, refused with `No commit found for SHA`). So on this
+host that directory is the only surviving artefact of a repository nobody can clone any more. It
+was left in place, and reclaiming the 160 MB is a question for its owners
+([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+**The runner it sits in is ORG-scoped, and that was checked rather than assumed.** Its group is
+`visibility: selected` and names exactly one repository, and the only two jobs that ask for
+`self-hosted` are the deploy library - called by `release.yml` alone - and the scheduled egress
+probe. Neither is reachable from a fork's pull request, which is what would otherwise put a
+`docker`-group account on a machine we do not own within reach of a stranger's branch.
+
+
 ### AIDE reported nothing for two and a half years, and three separate defects stood between it and a report
 
 `/var/lib/aide/aide.db` was absent and the `aide.db.new` dated 2024-02-12 had never been promoted;
@@ -620,6 +642,34 @@ host the two stacks are co-located again, so `MICONNECT_SSH_HOST` must be EMPTIE
 `docker exec` path resumes. Forgetting it is how the estate spent 93 nights with no Authentik
 backup at all - and the difference now is that the script FAILS rather than warns, which is the
 entire point of that change ([backup](../../../infrastructure/backup/README.md)).
+
+#### It was STOOD UP on the target host, empty, and taken back down - 2026-09-24
+
+Step 2 of the runbook, with the data left out of it, which is the half that needs no permission and
+answers the questions a plan cannot: **the stack runs there, on loopback, inside a tenth of the
+memory its VM is sized for.**
+
+| Measured on `193.49.175.67` | |
+| --- | --- |
+| `http://127.0.0.1:9000/-/health/live/` | `200` |
+| `http://193.49.175.67:9000/` from the host itself | **refused** (`000`) |
+| Memory, all three containers | **907 MB** (424 server + 300 worker + 183 postgres) against a 2 G VM |
+| Startup to healthy | under two minutes, migrations included |
+
+**The loopback binding needs no edit to the compose file** - `COMPOSE_PORT_HTTP=127.0.0.1:9000` in
+the `.env` interpolates into the `ports:` entry, and `docker compose config` resolves it to
+`host_ip: 127.0.0.1`. That matters because the same file has to keep working on the VM it is leaving.
+
+It was brought down with `down -v`, its throwaway `.env` deleted and its empty volume removed;
+`/srv/miconnect/` and its three mount directories stay, ready. **Nothing of the real estate was
+touched, and the identity database never left its box.**
+
+**ONE TRAP FOUND BY DOING IT: the container's uid 1000 is `ansible` on this host.** Authentik runs
+as `uid=1000(authentik)`, and uid 1000 on the shared machine belongs to the DSI's automation
+account - so every file the container writes through a bind mount lands owned by `ansible`, which is
+what `./data` and `./certs` looked like after the test. Ownership was put back. **On a shared box a
+bind mount is a uid collision waiting to be misread**, and the three directories here are empty
+anyway: they are candidates for named volumes at the cutover.
 
 ## 7. Phase 2 - the names
 
