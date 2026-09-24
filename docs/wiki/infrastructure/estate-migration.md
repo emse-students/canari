@@ -31,7 +31,25 @@ symptom indistinguishable from a phase-1 one.
 
 ## 2. The measured starting point (2026-09-23)
 
-### The three VMs
+### The three VMs - which are LXC CONTAINERS, and the capacity question has an answer
+
+**They are not virtual machines.** `systemd-detect-virt` answers `lxc` on all three (measured
+2026-09-24), and the tell that prompted the check is that `/proc/loadavg` is IDENTICAL on the three
+to two decimals and moves TOGETHER: load is not namespaced, so all three report the Proxmox host's.
+`nproc` and `free` do differ per estate, so lxcfs is presenting the configured limits - the table
+below is allocation, not hardware, and **nothing in it is dedicated.**
+
+**That makes section 9's capacity question decidable, and the answer is measured rather than
+argued.** Allocated across the three: **8 vCPU and 20 G**. Actually resident, at the same moment:
+**about 2 G in total** (1 G, 0 G, 1 G) with the Proxmox host's load at **0.21**. The target offers 4
+vCPU and 11 G with **10 G available** and a load of 0.11, 30 G free on local `/` and 15 G on the
+NetApp. **The allocation was generous; the consumption is not, and the gap is an order of
+magnitude.**
+
+**THIS IS AN IDLE READING AND IT IS NOT A HEADROOM PROOF.** It says the three estates do not need 20
+G, which is what the arbitration was stuck on. It says nothing about a peak - a Postgres restore
+during a cutover, or a frontend build - and the honest next measurement is the resident set during
+one, not another reading at rest.
 
 | VM | vCPU | RAM | Disk | Contents |
 | --- | --- | --- | --- | --- |
@@ -819,6 +837,26 @@ workstation because the two boxes cannot reach each other. Both sides were then 
 same script: **17 tables, 455722 rows, `user_version = 2`, `integrity_check = ok`** - identical, and
 the md5 of the transferred archive matched at both ends. The count that matters is the per-table
 one, because a total can agree while two tables have swapped.
+
+#### THE TUNNEL ALREADY POINTS AT ANOTHER MACHINE - MEASURED 2026-09-24
+
+**The relay is not a new mechanism; it is the one already in production.** `cercle.canari-emse.fr`
+answers `200`, and the VM serving it runs **no connector at all** (`cloudflared` is `inactive`
+there): it listens on `0.0.0.0:5173` on its own private address, and the connector that serves the
+name runs on the `canari` VM and reaches it across the private network. **The ingress therefore
+already names a REMOTE address rather than a loopback port**, which is exactly the shape the move
+needs.
+
+So `cercle`'s cutover is one ingress rule repointed - from the old VM's private address to the
+target host - and the runbook's *"point the tunnel ingress at the new loopback port"* was written
+for a connector on the target that will now never exist. **The rollback is the same edit reversed**,
+and the old VM keeps serving throughout, exactly as the phase intends.
+
+**ONE THING DOES CHANGE, AND IT IS NOT THE INGRESS.** Today `0.0.0.0:5173` is harmless: the private
+network is ours and only our VMs are on it. On the target host that same binding is reachable by
+**every co-tenant of a machine we do not own**. So the port mapping must bind to one address and be
+restricted to the relay's source, or the hop must be carried inside an `ssh -L` and stay on loopback.
+**The publish address is part of the move, not a detail of the compose file.**
 
 #### The cutover, and its rollback, are the same four gestures
 

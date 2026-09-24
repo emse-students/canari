@@ -11,13 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - ce sont trois conteneurs LXC, pas trois VM, et la question de capacite a une reponse
+
+`systemd-detect-virt` repond `lxc` sur les trois. Le signe qui a declenche la verification : leur
+`/proc/loadavg` est identique a deux decimales et bouge ensemble, la charge n'etant pas cloisonnee.
+Les chiffres du plan sont donc de l'allocation, pas du materiel. Mesure : 8 vCPU et 20 G alloues,
+environ 2 G reellement residents ; la cible offre 11 G dont 10 libres. La question d'arbitrage que la
+section 9 disait indecidable l'est - mais c'est une lecture au repos, pas une preuve de marge.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Changed - la porte interne ne demenage pas, et le relais sert quand meme: la phase 1 en depend
 
 Decision de l'utilisateur : dev et les interfaces d'admin restent sur l'ancienne VM, dont le tunnel
 marche deja ; la nouvelle machine ne porte que la production, et le connecteur installe la-bas a ete
 SUPPRIME le jour meme. Mais le tunnel avait un SECOND consommateur : toute la phase 1 passe par lui
 (l'etape 4 pointe son ingress, le rollback le repointe). Conclure du premier que le relais etait
-inutile etait faux, et corrige le jour meme. Le relais reste donc, cote ANCIENNE VM.
+inutile etait faux, et corrige le jour meme. Le relais reste donc, cote ANCIENNE VM - et ce n'est pas
+un mecanisme neuf : mesure, l'ingress de prod nomme DEJA une adresse distante, la VM qui sert cercle
+n'ayant aucun connecteur. Ce qui change au deplacement n'est pas l'ingress mais l'adresse de
+publication, inoffensive sur un reseau prive et exposee aux co-locataires sur l'hote partage.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - le nom pointe deja sur l'hote cible, et la moitie des questions posees n'existait pas
