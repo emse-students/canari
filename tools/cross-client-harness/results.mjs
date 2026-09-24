@@ -16,6 +16,7 @@ import { LOCAL } from './estate.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
+import { RECORDER_ONLY, VERDICTS, isVerdict } from './verdicts.mjs';
 import { gate, report } from './watch.mjs';
 
 /**
@@ -408,6 +409,31 @@ export function record(id, verdict, detail) {
   // already work owed and already exit non-zero; rewriting them would destroy evidence to say
   // something the row already says. `UNOBSERVED` is distinct from `PASS-DIRTY` on purpose - "nobody
   // looked" and "someone looked and it was dirty" send their reader to different places.
+  // A WORD THIS LEDGER CANNOT SPELL IS REFUSED HERE, AT THE THROW, AND NOT DISCOVERED ON THE BOARD.
+  //
+  // The vocabulary was two hand-kept copies until 2026-09-24 - this file accepted whatever a runner
+  // handed it, `rows.mjs` held a private map of the words it recognised - so a runner inventing a
+  // word wrote a row the reconciler read as `unstated` and reported as work the board had not
+  // written down. `INCONCLUSIVE` did it to PIN-11; `SETUP-FAILED` did it to HEAL-W2 under a comment
+  // predicting exactly that. Refusing at the call site moves the failure to the first local run of
+  // the runner that invented the word, where its author is standing, and the fix is one entry in
+  // `verdicts.mjs` that BOTH sides then read.
+  //
+  // BEFORE ANY WRITE, and a throw rather than a coercion: a verdict guessed into the nearest legal
+  // word is a measurement nobody can audit, and this campaign's whole claim is that a row means
+  // what it says. `UNOBSERVED` is refused from a runner for the narrower reason that `record()` is
+  // its only author - a check cannot assert that nobody looked at it.
+  if (!isVerdict(verdict))
+    throw new Error(
+      `${id}: '${verdict}' is not a verdict - add it to VERDICTS in verdicts.mjs, which both the ` +
+        `recorder and rows.mjs read, or use one of: ${VERDICTS.join(', ')}`
+    );
+  if (RECORDER_ONLY.includes(verdict))
+    throw new Error(
+      `${id}: '${verdict}' is written by record() alone - a check cannot state that nothing ` +
+        `observed it. Record the verdict you measured and let the demotion happen here.`
+    );
+
   const clobbered = RESERVED.filter((k) => k in (detail ?? {}));
   if (clobbered.length)
     throw new Error(
@@ -656,3 +682,9 @@ export function all() {
 // it without `names.mjs` - which is gitignored, and which CI therefore does not have. Re-exported
 // here because every runner already imports `mark` from this module.
 export { MARKER_RE, mark, markSeq, markerStamp } from './marker.mjs';
+
+// THE VOCABULARY IS THIS MODULE'S BY OWNERSHIP AND LIVES NEXT DOOR FOR THE REASON DIRECTLY ABOVE:
+// `verdicts.mjs` imports nothing, so `rows.mjs` and the self-test that pins the two together can
+// open it on a checkout that has no rig. Re-exported here because a runner reads the RECORDER as
+// the place a verdict comes into existence, and that is where it should find the list of them.
+export { VERDICTS, isVerdict } from './verdicts.mjs';

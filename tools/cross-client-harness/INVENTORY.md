@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-59 scripts.
+60 scripts.
 
 | script | what it is |
 |---|---|
@@ -80,6 +80,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `sweep.mjs` | THE GRAPHICAL PASS, ON A CLIENT THAT IS ACTUALLY RENDERING - every route, one instrument. |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
+| `verdicts.mjs` | THE VERDICT VOCABULARY, IN ONE PLACE, BECAUSE TWO COPIES DRIFTED TWICE. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
 
 ## Primitives that carry their own row
@@ -180,7 +181,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-26 scripts.
+27 scripts.
 
 | script | what it is |
 |---|---|
@@ -210,6 +211,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
+| `archive/verdict-selftest.mjs` | ONE VOCABULARY, READ BY THE RECORDER AND BY THE RECONCILER, OR BY NEITHER. |
 
 ## Gestures, libraries and runners in `archive/`
 
@@ -264,4 +266,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-203 scripts in total.
+205 scripts in total.

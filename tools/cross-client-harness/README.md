@@ -184,6 +184,23 @@ Makefile recipe, walks each gated script's imports and fails if any of them is n
 What it still cannot see is a script that imports only tracked files and needs a device anyway; only
 running the gate somewhere with no rig proves that, which is what CI does on every push.
 
+**THE VERDICT VOCABULARY MOVED OUT FOR THAT REASON AND ONE OF ITS OWN (2026-09-24).**
+`results.mjs` decided what a check may record - by accepting whatever string it was handed - and
+`rows.mjs` held a private map of the words it could read back off the board. Nothing tied the two
+together, so a runner inventing a word made the reconciler report `board: unstated` for a row the
+board stated in full: a false accusation in the one report whose whole job is to be right about the
+board. It happened twice, `INCONCLUSIVE` (PIN-11) and then `SETUP-FAILED` (HEAL-W2, 2026-09-06), the
+second directly under a comment predicting it - a vocabulary shared by two files and owned by
+neither drifts the moment a runner invents a word, and a comment is not a mechanism. Both sides now
+import one frozen list from `verdicts.mjs`, which imports nothing so the gate can open it, and
+`record()` REFUSES a word that is not in it rather than writing a row nobody can read.
+`verdict-selftest.mjs` pins the arrangement: neither file may keep a private map, every verdict
+spelled out anywhere in the rig is one the reconciler recognises, the board's older spellings
+(`passed`, `failed`, `skipped`, `partial`) all land on a real verdict, and `pending` stays what it
+is - the ABSENCE of a claim, never a verdict. Run against the vocabulary as it stood before either
+incident, that scan names all sixteen offending call sites, which is both incidents caught in the
+source on the day they were written.
+
 ## The atoms
 
 **A GESTURE AND A ROW ARE NOT THE SAME KIND OF FILE, and until 2026-09-04 nothing in this directory
@@ -366,7 +383,7 @@ reload that skips the PIN gate initialises before a session can attach, and on t
 line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
 actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
 
-**Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs`
+**Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `navstack.mjs` `state.mjs` `results.mjs` `verdicts.mjs`
 
 `navstack.mjs` reads what the BACK button has left to go back to - `location.pathname`,
 `history.length` and the top entry's own state - which no screenshot and no log can give:

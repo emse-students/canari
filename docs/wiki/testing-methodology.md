@@ -517,6 +517,33 @@ identified RUNS, over one build, with the rule set fixed - three properties a ch
 Nothing in the ledger is ever deleted to make that easier; an aborted attempt is evidence, and pruning
 it is how a series comes to claim more than it measured.
 
+#### 5b. THE VITE DEV SERVER IS A DIFFERENT ORIGIN, SO A TAB ON IT IS A NEW DEVICE (measured 2026-09-24)
+
+Verifying a UI change against a WORKING TREE looks free: `cd frontend && bun run dev` serves it on
+`http://localhost:1420` and `vite.config.js` already proxies `/api` to the local estate
+(`CANARI_LOCAL_API_PORT`, default `8081`). Opening a second tab in an existing rig profile costs
+nothing and disturbs nothing - `window.open` from the estate tab, `void`-ed, because CDP cannot
+serialise the `Window` it returns.
+
+**Half of the session comes with it and the half that matters does not.** Cookies ignore the port,
+so the estate's HttpOnly refresh cookie is sent to `:1420` and the app authenticates: measured, the
+tab reached `/chat` with `canari_saved_user` set. But `localStorage` and IndexedDB are keyed by
+ORIGIN including the port, so the MLS device key is not there. The tab is a **brand-new device**:
+it draws the PIN gate, and answering it would ENROL a device on the estate rather than reuse one.
+
+So a dev-server tab is free only for surfaces that render before the gate. Anything behind it - the
+sidebar's creation panel among them - costs a device enrolment and its cleanup, which is a decision
+to take deliberately rather than discover halfway through. **Where the behaviour can be pinned by
+mounting the real component instead, that is both cheaper and reproducible**: `mount()` from
+`svelte` with `conditions: ['browser']` (already in `vitest.config.ts`) renders the true markup and
+the true event path, which is how the creation panel's refusal was verified.
+
+One environment trap comes with it: happy-dom REJECTS an animation's `finished` promise when Svelte
+cancels an interrupted transition, and nothing in the app reads that promise - so closing a modal
+mid-intro raises an unhandled `AbortError` and the run exits 1. Claim it by wrapping
+`Element.prototype.animate` in the suite; waiting the transition out instead puts a wall clock in
+every case to work around one of the environment's.
+
 #### 6. A MATCHER TESTS ONE SPELLING - and one written from the success wording can only ever report success
 
 Both are the same failure of a matcher: it was written from what the author expected to see, so the outcomes it cannot spell become silence, and silence reads as health.
@@ -1997,6 +2024,18 @@ already carries for the exit code. So the refusal lives in the two places that c
   `results.mjs` can only see the rows a process wrote, never the rows it owed; the runner is the only
   observer that knows a script was supposed to speak. A silent job now counts against the pass,
   because a phase claiming coverage its record cannot support is the same debt as a dirty window.
+- **`record()` refuses a word that is not a verdict, before it writes anything** (2026-09-24). The
+  vocabulary was two hand-kept copies - this file accepted whatever string a runner handed it, and
+  `rows.mjs` carried a private map of the words it could read back off the board - so a runner
+  inventing a word wrote a row the RECONCILER read as `unstated` and reported as work the board had
+  not written down. It happened twice, `INCONCLUSIVE` (PIN-11) and then `SETUP-FAILED` (HEAL-W2,
+  2026-09-06) directly under a comment predicting it, which is what a shared vocabulary owned by
+  neither side does. `verdicts.mjs` now owns the list, both sides import it, and
+  `archive/verdict-selftest.mjs` pins that neither may keep a private map and that every verdict
+  SPELLED OUT anywhere in the rig is one the reconciler recognises. Run against the vocabulary as it
+  stood before either incident, that scan names all sixteen offending call sites, so both incidents
+  were catchable in the source on the day they were written. It does not see a verdict built from an
+  expression; the throw is what covers those, one run later rather than one board reading later.
 
 **The three surfaces were at three different levels of rigour, and the phone was the lowest.** The
 server has a full classifier with a per-rule self-test; the web has `report()`'s buckets; the phone
