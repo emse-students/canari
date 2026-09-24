@@ -84,13 +84,21 @@ being different from the other two, and nothing outside Authentik's own database
 
 | Provider | `client_id` | Which client uses it | Authorized redirect URIs (all STRICT) |
 |---|---|---|---|
-| `Canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari-emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
+| `Canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari-emse.fr/auth/callback`, `https://canari.emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
 | `Canari Dev` (pk 10) | `6cNHJotT...` | `dev.canari-emse.fr` - and every PRE-RELEASE build, TestFlight and the Play tester tracks | `https://dev.canari-emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
 | `Canari Local` (pk 11) | `qqzuUBQp...` | the LOCAL estate on a workstation, and the harness APK | `http://localhost:1420/auth/callback`, `http://127.0.0.1:1420/auth/callback`, `http://localhost:1421/auth/callback`, `http://localhost:8081/auth/callback`, `fr.emse.canari://callback` |
 
-**The three differ in exactly one dimension - the web origin - and must not differ in any other.**
-`fr.emse.canari://callback` is on all three because the SAME packaged app talks to all three: a
-build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an identifier.
+**The three differ in exactly one dimension - the web origin(s) - and must not differ in any
+other.** `fr.emse.canari://callback` is on all three because the SAME packaged app talks to all
+three: a build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an
+identifier. `Canari` (pk 1) carries TWO web origins since 2026-09-25, additively: `canari-emse.fr`
+stays until the estate migration's browser-storage rule
+([estate-migration](estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---there-must-never-be-one))
+lets it retire, `canari.emse.fr` was added the same way the vhost was - by hand, via `ak shell`, the
+admin UI's `redirect_uris` textarea reads as a single string but the field is actually a list of
+`RedirectURI` objects that must be REASSIGNED whole (`p.redirect_uris = [...]`), not mutated in
+place - appending to the list `p.redirect_uris` returns and calling `.save()` silently keeps the
+old value, because that attribute is rebuilt fresh from the stored JSON on every read.
 
 **That rule covers `grant_types` too, and the two sections below are what happens when it does not.**
 On 2026-09-07 `Canari Dev` differed from its siblings in BOTH fields at once, and the first fault
