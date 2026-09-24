@@ -41,6 +41,7 @@ ENV_FILE="$INFRA_DIR/.env"
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-miconnect@10.0.0.7}"
 
 # Depot restic des blobs medias. Doit rester aligne sur backup-objects.sh : un chemin
 # qui diverge ne casse pas la sauvegarde, il casse la restauration - c est-a-dire le
@@ -159,15 +160,38 @@ if [ -f "$STAGE/media_meta.tar.gz" ]; then
 fi
 
 # ── Authentik ─────────────────────────────────────────────────────────────────
-if [ -f "$STAGE/authentik_db.sql.gz" ]; then
-  if docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1; then
-    log "Restauration PostgreSQL Authentik…"
-    gunzip -c "$STAGE/authentik_db.sql.gz" \
-      | docker exec -i "$MICONNECT_PG_CONTAINER" sh -c \
-        'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0'
-  else
-    log "WARN conteneur Authentik absent - dump authentik non restaure"
-  fi
+# UNE ARCHIVE SANS DUMP AUTHENTIK EST UNE ARCHIVE INCOMPLETE, PAS UNE ARCHIVE
+# SANS AUTHENTIK. Ce bloc se contentait de ne rien faire, puis la restauration
+# annoncait "terminee" : elle rendait le service applicatif a un estate dont
+# plus personne ne pouvait ouvrir de session. Les archives d avant le
+# 2026-09-24 sont dans ce cas - 93 nuits sans ce membre - et c est au moment de
+# restaurer qu il faut le dire, pas apres.
+if [ -z "$MICONNECT_PG_CONTAINER" ]; then
+  log "Authentik exclu par configuration (MICONNECT_PG_CONTAINER vide)"
+elif [ ! -f "$STAGE/authentik_db.sql.gz" ]; then
+  fail "archive sans authentik_db.sql.gz : ni les identites ni la configuration OIDC ne seraient restaurees. Prendre une archive posterieure au 2026-09-24, ou relancer avec MICONNECT_PG_CONTAINER= (vide) pour restaurer le reste en connaissance de cause."
+elif [ -n "$MICONNECT_SSH_HOST" ]; then
+  # LA CLE DE SAUVEGARDE NE SAIT QUE LIRE, DELIBEREMENT. Elle est installee
+  # la-bas avec une commande forcee vers authentik-pg-dump : rien de ce qui part
+  # d ici ne peut ecrire dans le fournisseur d identite. Ouvrir ce chemin
+  # rendrait la restauration automatique, au prix d une cle d ecriture
+  # permanente vers Authentik pour un geste qu on fait une fois par decennie.
+  # Le choix est discutable, et il est ecrit dans README.md pour pouvoir l etre.
+  gunzip -c "$STAGE/authentik_db.sql.gz" > "$STAGE/authentik_db.sql"
+  cp "$STAGE/authentik_db.sql" "$BACKUP_DIR/authentik_db-a-restaurer.sql"
+  log "Authentik vit sur ${MICONNECT_SSH_HOST}, et cette machine n y a qu un acces"
+  log "en LECTURE. Le dump decompresse est ici :"
+  log "  ${BACKUP_DIR}/authentik_db-a-restaurer.sql"
+  log "Le porter sur la boite Authentik avec un compte administrateur, puis :"
+  log "  docker exec -i ${MICONNECT_PG_CONTAINER} psql -U authentik -d authentik -v ON_ERROR_STOP=0 < authentik_db.sql"
+  fail "restauration Authentik a terminer a la main (commandes ci-dessus)"
+else
+  docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1 \
+    || fail "conteneur Authentik ($MICONNECT_PG_CONTAINER) absent sur cette machine, et MICONNECT_SSH_HOST est vide"
+  log "Restauration PostgreSQL Authentik…"
+  gunzip -c "$STAGE/authentik_db.sql.gz" \
+    | docker exec -i "$MICONNECT_PG_CONTAINER" sh -c \
+      'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0'
 fi
 
 log "Restauration terminee. Verifier les services puis redemarrer si besoin :"

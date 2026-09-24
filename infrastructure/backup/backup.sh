@@ -42,8 +42,13 @@ ENV_FILE="$INFRA_DIR/.env"
 # ── Configuration (surchargeable via infrastructure/.env) ──────────────────────
 BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
-# Stack Authentik (compose separe). Vide pour desactiver son inclusion.
+# Stack Authentik (compose separe). Vide pour desactiver son inclusion - et
+# c est le SEUL geste qui l exclut : une valeur posee ici et injoignable fait
+# echouer la sauvegarde.
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
+# La machine qui porte cette stack. Vide = ce conteneur tourne ici, ce qui
+# etait vrai jusqu au 2026-06-22 et ne l est plus : Authentik a sa propre VM.
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-miconnect@10.0.0.7}"
 # Stockage secondaire offsite via SSH/rsync (serveur LAN mitv). Vide pour desactiver.
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
@@ -95,27 +100,77 @@ docker run --rm \
   tar czf /out/media_meta.tar.gz -C /data .
 
 # ── 3. Authentik (stack miconnect) ────────────────────────────────────────────
-if [ -n "$MICONNECT_PG_CONTAINER" ] && docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1; then
-  log "Dump PostgreSQL Authentik…"
+# DEPUIS LE 2026-06-22 CETTE STACK N EST PLUS SUR CETTE MACHINE : elle a sa
+# propre VM. Le "docker inspect" local qui la cherchait ici a donc echoue chaque
+# nuit pendant 93 nuits, et la branche qui rattrapait cet echec ecrivait un
+# avertissement puis continuait - l archive repartait sans les identites ni la
+# configuration OIDC, et le manifeste continuait de les annoncer.
+#
+# UNE SOURCE CONFIGUREE ET INJOIGNABLE EST UNE PANNE, PAS UNE EXCLUSION. Les
+# deux cas etaient confondus dans une seule condition ; ils sont separes ici, et
+# seule la variable VIDE - le seul geste par lequel quelqu un declare ne pas
+# vouloir cette source - autorise a continuer sans elle.
+if [ -z "$MICONNECT_PG_CONTAINER" ]; then
+  log "Authentik exclu par configuration (MICONNECT_PG_CONTAINER vide)"
+elif [ -n "$MICONNECT_SSH_HOST" ]; then
+  log "Dump PostgreSQL Authentik via ${MICONNECT_SSH_HOST}…"
+  # La cle de "canari" est installee la-bas avec une commande forcee vers
+  # authentik-pg-dump (cf authentik-pg-dump.sh) : l argument ci-dessous est donc
+  # ignore par le serveur, et il est ecrit quand meme parce qu il dit ce qui va
+  # tourner a quelqu un qui lit ce fichier.
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$MICONNECT_SSH_HOST" authentik-pg-dump \
+    > "$STAGE/authentik_db.sql.gz" \
+    || fail "dump Authentik impossible via ${MICONNECT_SSH_HOST} (cle, reseau ou conteneur)"
+else
+  docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1 \
+    || fail "conteneur Authentik ($MICONNECT_PG_CONTAINER) absent sur cette machine, et MICONNECT_SSH_HOST est vide"
+  log "Dump PostgreSQL Authentik (conteneur local)…"
   docker exec "$MICONNECT_PG_CONTAINER" sh -c \
     'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
     | gzip > "$STAGE/authentik_db.sql.gz"
-else
-  log "WARN conteneur Authentik ($MICONNECT_PG_CONTAINER) absent - ignore"
+fi
+
+# Un flux tronque produit un fichier qui a l air d un dump et ne se decompresse
+# pas. C est exactement ce qu une restauration decouvre trop tard.
+if [ -f "$STAGE/authentik_db.sql.gz" ]; then
+  gzip -t "$STAGE/authentik_db.sql.gz" \
+    || fail "dump Authentik illisible (flux tronque)"
 fi
 
 # ── 4. Manifeste + archive unique ─────────────────────────────────────────────
+# LE MANIFESTE EST DERIVE DE CE QUI A ETE PRODUIT, JAMAIS ECRIT A L AVANCE.
+# Il etait un texte constant qui annoncait trois membres : quand l un d eux a
+# cesse d etre produit, l archive a continue de le promettre pendant 93 jours.
+# Un manifeste qui peut mentir est pire qu un membre manquant, parce qu il est
+# precisement ce qu on lit pour savoir si le membre est la - la meme lecon que
+# le dump MongoDB de 116 octets ci-dessous, qui n avait pas suffi.
+describe_member() {
+  case "$1" in
+    postgres_auth_db.sql.gz)
+      printf 'Canari: users, channels, posts, forms, paiements, ET l historique MLS chiffre (queued_message, mls_*)' ;;
+    media_meta.tar.gz)
+      printf 'Canari: metadonnees media-service' ;;
+    authentik_db.sql.gz)
+      printf 'Authentik: identites, config OIDC' ;;
+    *)
+      printf 'membre non decrit - ajouter sa description a describe_member() dans backup.sh' ;;
+  esac
+}
+
+MEMBERS=""
+for member in "$STAGE"/*; do
+  name="$(basename "$member")"
+  MEMBERS="${MEMBERS}  - ${name}  ($(du -h "$member" | cut -f1), $(describe_member "$name"))
+"
+done
+
 cat > "$STAGE/MANIFEST.txt" <<EOF
 Canari backup
 timestamp: $TIMESTAMP
 created_by: $(whoami)@$(hostname)
 git_commit: $(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "n/a")
-contenu:
-  - postgres_auth_db.sql.gz   (Canari: users, channels, posts, forms, paiements,
-                               ET l historique MLS chiffre - queued_message, mls_*)
-  - media_meta.tar.gz         (Canari: metadonnees media-service)
-  - authentik_db.sql.gz       (Authentik: identites, config OIDC)
-
+contenu (liste etablie a partir des fichiers reellement archives) :
+${MEMBERS}
 NOTE - MongoDB ne figure plus ici (2026-08-18) : le service a ete supprime de la
 stack. Il ne contenait aucune base applicative et aucun service ne s y
 connectait. Cette ligne du manifeste annoncait "blobs MLS chiffres / historique",

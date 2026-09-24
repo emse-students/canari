@@ -593,6 +593,34 @@ reason the two host-specific values are variables rather than lines in a commit.
 volume. They are archived on the user's workstation and deleting them from production is the user's
 call. They do not travel - the move copies the live database only.
 
+### `miconnect` - WHAT THE MOVE MUST CARRY, AND THE RUNBOOK STEP THAT IS EMPTY HERE - 2026-09-24
+
+Measured on the box and in the repository the same day, while preparing the next estate in the
+order.
+
+**Step 1 of the runbook does not apply to this estate: NOTHING DEPLOYS IT.** `cercle` needed a
+GitLab runner rather than an Actions one; `miconnect` needs neither, because no pipeline has ever
+built it. `infrastructure/authentik/README.md` described a `deploy.yml` job copying its compose file
+onto the box - **neither that workflow nor that job exists**, and a search for `infrastructure/authentik`
+across `.github/` returns nothing. The only `AUTHENTIK_*` secrets the CD still handles are the OIDC
+CLIENT's, written into the application's `.env`. So this estate moves by hand, and the repository's
+compose file is a REBUILD REFERENCE that had drifted from the running one - including a pinned
+`2026.2.2` against a running `2026.8.0`, which is a schema downgrade Authentik's migrations cannot
+undo. Both are corrected.
+
+**The stack is one volume and two ports.** `miconnect_database` (declared `external`), and
+`9000`/`9443` published on `0.0.0.0` today because the box is its own VM. On the shared host that
+is exactly the trap section 2 measured: Docker publishes through the nat table, which firewalld's
+zone does not govern, so both must become `127.0.0.1:` there. `data/`, `certs/` and
+`custom-templates/` are 16 K, 4 K and 4 K - nothing travels but the database.
+
+**AND THE BACKUP KEY TRAVELS WITH IT.** The nightly backup reaches this box by SSH since 2026-09-24,
+with a key whose forced command can do exactly one thing, read the PostgreSQL dump. **On the shared
+host the two stacks are co-located again, so `MICONNECT_SSH_HOST` must be EMPTIED** and the local
+`docker exec` path resumes. Forgetting it is how the estate spent 93 nights with no Authentik
+backup at all - and the difference now is that the script FAILS rather than warns, which is the
+entire point of that change ([backup](../../../infrastructure/backup/README.md)).
+
 ## 7. Phase 2 - the names
 
 `canari-emse.fr` -> `canari.emse.fr`, `cercle.canari-emse.fr` -> `cercle.emse.fr`,
