@@ -115,6 +115,7 @@ const MIN_SIZE_SAVINGS_RATIO = 0.85;
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+import { mediaUrl } from '$lib/utils/apiUrl';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -371,14 +372,10 @@ export class MediaService {
   private readonly baseUrl: string;
 
   /**
-   * @param baseUrl Optional override for the media service base URL.
-   *   Defaults to the `VITE_MEDIA_URL` env var, then `window.location.origin`.
+   * @param baseUrl Optional override for the media service base URL. Defaults to {@link mediaUrl}.
    */
   constructor(baseUrl?: string) {
-    const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL;
-    const fallback =
-      typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3011';
-    this.baseUrl = (baseUrl ?? env ?? '').replace(/\/$/, '') || fallback;
+    this.baseUrl = (baseUrl ?? mediaUrl()).replace(/\/$/, '');
   }
 
   // -------------------------------------------------------------------------

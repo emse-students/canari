@@ -1,44 +1,64 @@
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+
+/**
+ * Resolves a service's base URL for the runtime that is actually running.
+ *
+ * A real browser tab always shares its origin with the nginx that fronts it, whichever public
+ * hostname served the page - `canari.emse.fr` and `canari-emse.fr` both proxy `/api/`, `/ws` and
+ * `/media/` to the same backend, so the page's own origin is ALWAYS the right answer there and an
+ * env-baked absolute URL is only ever correct for ONE of the two. `window.location.origin` is
+ * therefore checked FIRST for a non-Tauri browser, ahead of the env var, not merely as its fallback.
+ *
+ * Tauri is the one runtime where that origin is useless - `tauri://localhost` / `http://tauri.
+ * localhost` never reaches the proxy - so it is the one case that still needs the env var.
+ */
+function resolveServiceUrl(envValue: string | undefined, devFallback: string): string {
+  if (typeof window !== 'undefined' && !isTauriRuntime()) return window.location.origin;
+  const url = envValue?.trim();
+  if (url) return url.replace(/\/$/, '');
+  return typeof window !== 'undefined' ? window.location.origin : devFallback;
+}
+
 /**
  * Returns the base URL for the core service (auth, users, payments).
- * Falls back to the current origin in the browser so relative paths work
- * when the app is served behind the same Nginx proxy.
+ * Same-origin in any real browser; falls back to `VITE_CORE_URL` only in Tauri/mobile.
  */
 export function coreUrl(): string {
-  const url = (import.meta as any).env?.VITE_CORE_URL as string | undefined;
-  if (url?.trim()) return url.trim().replace(/\/$/, '');
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
+  return resolveServiceUrl((import.meta as any).env?.VITE_CORE_URL, 'http://localhost:3012');
 }
 
 /**
  * Returns the base URL for the social service (posts, channels, associations).
- * Returns an empty string when VITE_SOCIAL_URL is not set so that relative
- * paths are used - Nginx routes /api/posts/* to the social service.
+ * Same-origin in any real browser; falls back to `VITE_SOCIAL_URL` only in Tauri/mobile.
  */
 export function socialUrl(): string {
-  const url = (import.meta as any).env?.VITE_SOCIAL_URL as string | undefined;
-  if (url?.trim()) return url.trim().replace(/\/$/, '');
-  return '';
+  return resolveServiceUrl((import.meta as any).env?.VITE_SOCIAL_URL, '');
 }
 
 /**
  * Returns the base URL for the chat-gateway (WebSocket, presence, admin routes).
- * Must be an absolute URL in Tauri/mobile where `window.location.origin` is
- * `tauri://localhost` and does not reach the nginx proxy.
+ * Same-origin in any real browser; must be an absolute `VITE_GATEWAY_URL` in Tauri/mobile where
+ * `window.location.origin` is `tauri://localhost` and does not reach the nginx proxy.
  */
 export function gatewayUrl(): string {
-  const url = (import.meta as any).env?.VITE_GATEWAY_URL as string | undefined;
-  if (url?.trim()) return url.trim().replace(/\/$/, '');
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  return resolveServiceUrl((import.meta as any).env?.VITE_GATEWAY_URL, 'http://localhost:3000');
 }
 
 /**
  * Returns the base URL for the chat-delivery service (MLS HTTP API, push, history).
- * Must be an absolute URL in Tauri/mobile - see {@link gatewayUrl}.
+ * Same-origin in any real browser; must be an absolute `VITE_DELIVERY_URL` in Tauri/mobile - see
+ * {@link gatewayUrl}.
  */
 export function deliveryUrl(): string {
-  const url = (import.meta as any).env?.VITE_DELIVERY_URL as string | undefined;
-  if (url?.trim()) return url.trim().replace(/\/$/, '');
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
+  return resolveServiceUrl((import.meta as any).env?.VITE_DELIVERY_URL, 'http://localhost:3010');
+}
+
+/**
+ * Returns the base URL for the media service (uploads, `/api/media/…`).
+ * Same-origin in any real browser; must be an absolute `VITE_MEDIA_URL` in Tauri/mobile.
+ */
+export function mediaUrl(): string {
+  return resolveServiceUrl((import.meta as any).env?.VITE_MEDIA_URL, 'http://localhost:3011');
 }
 
 /**

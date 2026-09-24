@@ -1,15 +1,11 @@
 import { inAppPathFromHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+
+export { isTauriRuntime };
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
-
-export function isTauriRuntime(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-  );
-}
 
 /** True when the href should leave the WebView and open in the OS browser / default app. */
 export function shouldOpenExternalHref(
