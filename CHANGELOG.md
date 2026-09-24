@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.22] - 2026-09-24
+
 ### Fixed - le rig ne savait plus composer un sondage, et son garde-fou ne tournait pas sur la PR qui l'a casse
 
 `caption-selftest` verifie que chaque cle Paraglide que le rig epelle existe encore dans
