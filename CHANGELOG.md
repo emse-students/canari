@@ -11,6 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un rebase classait du travail non livre sous une version deja sortie
+
+Toute entree s'ecrit sous `## [Unreleased]`, la ligne exacte ou un bump de version insere
+`## [X.Y.Z]` : une branche rebasee par-dessus une release voit donc ses entrees classees sous une
+version coupee avant qu'elles existent, par une union sans conflit. `docsMergeArtefacts.test.ts`
+assure desormais la forme du fichier - `[Unreleased]` en tete, chaque version nommee une fois,
+versions decroissantes - chaque moitie prouvee en reintroduisant l'artefact.
+[durable-rules](docs/wiki/durable-rules.md).
+
 ### Fixed - un `bun install` dans un worktree desarmait les hooks de tous les autres
 
 `core.hooksPath` vit dans le repertoire git COMMUN, partage par chaque `git worktree`, et
@@ -21,7 +30,6 @@ le 2026-09-24, chacune trouvee par hasard, parce que la post-condition ne demand
 ce qu'un chemin absolu satisfait.
 [development](docs/wiki/development.md#corehookspath-is-shared-by-every-worktree-and-must-stay-relative).
 
-## [0.18.22] - 2026-09-24
 ### Changed - la question des certificats ne bloque plus, et la demande DSI est ecrite
 
 Les deux certificats que l'ecole sert deja portent UN SEUL nom chacun, emis par GEANT TCS pour ~6,5
