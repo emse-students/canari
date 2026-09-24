@@ -49,10 +49,14 @@ function service(
     }),
     waitForMessageQueueIdle,
     isDistributionGroup: vi.fn((groupId: string) => distributionGroups.includes(groupId)),
+    // A LEAF BY DEFAULT, because every case below that is not about membership assumes one - and a
+    // stub answering `false` here would make them all pass for the wrong reason.
+    isGroupActive: vi.fn().mockResolvedValue(true),
   } as unknown as Parameters<typeof reconcileGroup>[0] & {
     sendHistoryRequest: ReturnType<typeof vi.fn>;
     waitForMessageQueueIdle: ReturnType<typeof vi.fn>;
     isDistributionGroup: ReturnType<typeof vi.fn>;
+    isGroupActive: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -101,6 +105,57 @@ describe('reconcileGroup', () => {
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
     expect(probe).toHaveBeenCalledWith(GROUP);
+  });
+
+  // DEL-1, 2026-09-05: a peer re-added this device to a group it had been evicted from, and the
+  // sweep picked the group up before the Welcome had been processed - `getLocalGroups()` names it,
+  // because an eviction leaves the state in the WASM store as an inactive group. The probe went
+  // out and came back `403 sender_not_active`, which the local store could have said for free.
+  it('does not probe a group this device holds no leaf in - it asks the store, not the server', async () => {
+    const mls = service();
+    mls.isGroupActive.mockResolvedValue(false);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    // Not deferred: "ask later" is wrong for this one too. The Welcome raises its own trigger.
+    expect(deferredGroups()).not.toContain(GROUP);
+    expect(log.mock.calls.map((c) => String(c[0])).join(' | ')).toContain('has no leaf in it');
+  });
+
+  // THE CONTROL. The same call with a leaf must probe, or the assertion above would also pass for a
+  // service stub that never answers, a group that looks like a distribution one, or a probe that
+  // was never installed - none of which is the fact being tested.
+  it('probes the same group once this device does hold a leaf', async () => {
+    const mls = service();
+    mls.isGroupActive.mockResolvedValue(true);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
+    expect(probe).toHaveBeenCalledWith(GROUP);
+  });
+
+  // A THROW IS NOT A `false`, AND THE TWO CAUSES IT CONFLATES - the client is not loaded, the group
+  // is not held at all - are both "the local store cannot answer". Asking the network what the
+  // local store cannot answer is exactly right, so the pass proceeds rather than skipping.
+  it('asks anyway when the membership read throws, and says that it could not read it', async () => {
+    const mls = service();
+    mls.isGroupActive.mockRejectedValue(new Error('[MLS] WASM client not ready'));
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
+    expect(probe).toHaveBeenCalledWith(GROUP);
+    const said = log.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(said).toContain("could not read this device's membership");
+    expect(said).toContain('asking anyway');
+  });
+
+  // The membership question is asked AFTER the distribution one and before anything leaves, so a
+  // distribution group is refused without a membership read at all - it is the cheaper fact and it
+  // is the one that must not reach the conversation pipeline.
+  it('refuses a distribution group without reading membership at all', async () => {
+    const mls = service({}, vi.fn().mockResolvedValue(undefined), [GROUP]);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
+    expect(mls.isGroupActive).not.toHaveBeenCalled();
   });
 
   it('elects a responder FIRST, then sends the probe', async () => {
@@ -911,6 +966,7 @@ describe('noteCoverageShortfall', () => {
     const log = vi.fn();
     const mls = {
       isDistributionGroup: () => false,
+      isGroupActive: vi.fn().mockResolvedValue(true),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
       sendHistoryRequest: vi
         .fn()
@@ -939,6 +995,7 @@ describe('noteCoverageShortfall', () => {
     const log = vi.fn();
     const mls = {
       isDistributionGroup: () => false,
+      isGroupActive: vi.fn().mockResolvedValue(true),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
       sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: true, excludedOnline: 2 }),
     };
