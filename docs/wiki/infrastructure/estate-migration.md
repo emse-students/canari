@@ -685,7 +685,7 @@ route (no sudo password on that account). The old box's crontab is gone entirely
 backed up first to `/home/canari/backups/crontab.removed-2026-09-24.bak`) - the three lines it
 carried (nightly backup, object backup, egress probe) already run from the target under
 `gha-runner`, which now also schedules Le Cercle's own backup at 04:15
-([le-cercle deployment](https://gitlab.emse.fr/aurel.dautry/le-cercle/-/blob/main/docs/wiki/deployment.md#state)),
+([le-cercle deployment](https://gitlab.emse.fr/rootz/le-cercle/-/blob/main/docs/wiki/deployment.md#state)),
 closing the backup-completeness gap this same audit found. Production's window ran
 `2026-09-24T18:17:50Z`-`18:26:39Z` (8m49s):
 `pg_dump`/restore of `auth_db` plus the three object-storage volumes, verified with the same
