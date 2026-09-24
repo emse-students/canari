@@ -100,7 +100,7 @@ a PUBLIC repository, so it lives in the operator's local notes.
 account is in `docker` and carries `ALL=(ALL) NOPASSWD:ALL`, broader than this plan asked for, so
 the restraint is the operator's rather than the system's.
 
-**THE HOST'S STANDING TRAPS ARE IN [durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation), not here**, because they bind every
+**THE HOST'S STANDING TRAPS ARE IN [durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration), not here**, because they bind every
 command run there and not only this migration: a bulk file operation killed half-way with no
 diagnostic, two storage classes behind one capacity figure, recycled uids that make `find -user`
 worthless, and the ban-on-scan rule whose blast radius is production's own address.
@@ -561,7 +561,7 @@ tables**, `ledger`'s 234 366 rows included.
 
 **Two traps found here are now durable rules**: a restored database read and could not be written
 because the copy carried the FILE's permissive mode and not its DIRECTORY's, which WAL mode's
-sibling files need ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation));
+sibling files need ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration));
 and the health endpoint's `ok` read masked exactly this for nine hours because `BEGIN IMMEDIATE`
 defers its write and is not a write probe, which the journal-mode table below settles.
 
@@ -599,7 +599,7 @@ arrives.
 across all three containers on a 2 G VM, under two minutes to healthy including migrations, refused
 from the outside and healthy on loopback. The loopback binding needs no compose edit - the `.env`
 interpolates an address rather than a bare port. **uid 1000 collided with the host's own automation
-account** ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation))
+account** ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration))
 and was benign only by luck; the three bind-mounted directories are candidates for named volumes at
 the cutover.
 
