@@ -625,7 +625,7 @@ about a comparison proving equality of whatever it actually read
 ([durable-rules](../durable-rules.md#contracts-the-compiler-does-not-check)); the corrected run read
 230 tables with zero `ERROR` lines before its verdict was believed.
 
-### `canari` - NOT YET MOVED: it is two estates and a CI runner, not one estate
+### `canari` - MOVED 2026-09-24: it was two estates and a CI runner, not one estate
 
 Measured on the `canari` box, 2026-09-24:
 
@@ -677,6 +677,45 @@ dev keeps its current `3080`/`19100`/`19101`. **Production's `0.0.0.0:8080` must
 move**: Docker publishes through the nat table, which firewalld's zone does not govern, so a port
 published on `0.0.0.0` there is reachable from the whole campus network whatever the zone says - the
 same finding Le Cercle's own compose file already carries a paragraph about.
+
+**IT IS DONE for both estates' data and traffic; the runner flip and the crontab move are the two
+items still open (step 10.6).** Production's window ran `2026-09-24T18:17:50Z`-`18:26:39Z` (8m49s):
+`pg_dump`/restore of `auth_db` plus the three object-storage volumes, verified with the same
+per-table content fingerprint methodology `cercle` and `miconnect` used - **53/53 tables identical**,
+spot-checked against the documented false-positive trap (two sides silently agreeing on the same
+error rather than the same content). The relay flipped (`:8080` on the old box -> `127.0.0.1:8081`
+on the target) and `https://canari-emse.fr/api/version` answered `200` through the full chain, the
+target's own nginx access log naming `10.0.0.3` as the client. The old box's 12 production
+containers are `Exited (0)` under `unless-stopped`.
+
+**One real defect surfaced mid-window and is now a durable rule
+([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration)):
+Garage's data and meta volumes were restored while the `garage-1` container consuming them was still
+running.** It had generated a fresh node identity in memory against the empty volumes at first boot;
+the restore then overwrote the on-disk state underneath it, and the two diverged -
+`ServerConn::run: Handshake error: performing handshake: failed opening client secret box`. Fixed by
+stopping the container before mutating its volume, never the reverse: `docker compose stop garage`,
+`rm -f`, then `up -d` to force a clean re-read, healthy within ~45 s. Two rehearsal-only defects were
+caught and fixed BEFORE the real window, exactly because both estates were stood up empty and torn
+down first: the exact pre-rename commit (`ffbe54731`) still declared `name: infrastructure`, patched
+live on the target's checkout to `canari-prod`; and `FRONTEND_HOST_PORT=8080`, copied verbatim from
+the old box's `.env`, collided with the shared host's own `crowdsec` - the nginx vhost had already
+anticipated `8081`, the `.env` had not been reconciled with it.
+
+**Dev was seeded from the target's own live `canari-prod`, not migrated from the old box's separate
+dev database** - the architecturally correct source, since dev is always a disposable periodic copy
+of production and never independently authoritative
+([dev-environment](dev-environment.md)). `copy-prod-to-dev.sh` ran for real on the target:
+442/442 users, every strip verified (push tokens, Stripe customer ids and media references all zero
+afterward). The script itself carried the same stale project name production's rename had already
+made wrong (`PROD_PROJECT="infrastructure"`, needed `"canari-prod"` now that both projects share a
+box and the script finds them by label) - patched live to unblock the copy, fixed properly in
+[PR 1073](https://github.com/emse-students/canari/pull/1073) along with the same defect in
+`infrastructure/local/pull-prod-dump.sh` (`PROD_HOST="canari"`, which now only reaches the relay, not
+the box running postgres). Dev's relay flipped the same way as prod's (`127.0.0.1:3080` on the old
+box), `https://dev.canari-emse.fr/api/version` answered `200` with the target's access log showing
+the request's full `X-Forwarded-For` chain ending in `10.0.0.3`, and the old box's 11 dev containers
+are stopped.
 
 ## 7. Phase 2 - the names
 
@@ -819,13 +858,15 @@ Pointers only. The substance is in
 | What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |
 | What becomes of the Proxmox host once every VM is off it | user, not yet decided | it is the obvious destination for the reworked backups |
 
-## 10. THE NEXT HOURS - the ordered list, written 2026-09-24 after two estates moved
+## 10. THE ORDERED LIST - written 2026-09-24, DATA AND TRAFFIC NOW DONE FOR ALL THREE ESTATES
 
-Two of the three estates are on the target: `cercle` since the morning, `auth.canari-emse.fr` since
-midday. What is left is Canari's own move - two estates and a CI runner, not one estate
-([reasoning](#canari---not-yet-moved-it-is-two-estates-and-a-ci-runner-not-one-estate)) - and the
-naming and Postgres-timing decisions it raised are already settled in section 4. This is only the
-order; the runbook in section 6 says HOW each step is shaped.
+All three estates' data and traffic are on the target: `cercle` and `auth.canari-emse.fr` since
+midday, `canari-emse.fr` and `dev.canari-emse.fr` since the evening - Canari's own move was two
+estates and a CI runner, not one estate
+([reasoning](#canari---moved-2026-09-24-it-was-two-estates-and-a-ci-runner-not-one-estate)), and the
+naming and Postgres-timing decisions it raised were settled in section 4. **What is still open is
+narrower than what this list once described**: steps 5 and 6's runner half. The runbook in section 6
+says HOW each step was shaped, and carries Canari's own write-up.
 
 1. **DONE 2026-09-24: Canari's runner is registered on the target, STOPPED AND DISABLED.**
    Org-level, name `canari`, group `canari`, `/opt/actions-runner/runners/canari`, `User=gha-runner`.
@@ -867,18 +908,28 @@ order; the runbook in section 6 says HOW each step is shaped.
    `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari-emse.fr` -> `127.0.0.1:3080`) are
    written, `nginx -t` passed, reloaded - verified from outside with `Host`-header routing (a clean
    `502 Connection refused` on each, not a config error, and `cercle`/`miconnect` unaffected by the
-   reload). **The old-VM half is NOT done and cannot be prepared in advance**: the `canari` box has
-   NO system nginx at all - the frontend containers ARE the entry point, publishing the ports the
-   tunnel names - so nginx must be installed there and cannot take those ports until BOTH estates
-   have stopped. That ordering is the window, which is why step 6 is one step and not two.
+   reload). **DONE 2026-09-24 on the old-VM half too.** The claim this step's plan carried - that the
+   `canari` box has NO system nginx at all - was WRONG: nginx 1.26.3 is a pre-existing Debian package
+   there, `inactive`/`disabled` since a pre-containerization setup dated March 2026, not absent. It
+   needed enabling, not installing: `canari-relay-prod.conf` (`:8080` -> the target) and
+   `canari-relay-dev.conf` (`127.0.0.1:3080` -> the target), `nginx -t` passed, `systemctl enable
+   --now nginx`, both verified end to end through the real public names with the target's own access
+   log naming `10.0.0.3` as the client - the same proof `cercle` and `miconnect` used.
 5. **Move the crontab and every remaining path naming the old box** - three cron lines (the nightly
    backup, the object backup, a per-minute egress probe) and `MICONNECT_SSH_HOST`, which becomes a
    hop to the same machine rather than to another one. Decided by the user: the old server has no
    multi-year future once the estates leave it, so this is part of the move, not a follow-up. A
    backup that still writes to an unwatched VM is indistinguishable from one that works, until it is
    needed.
-6. **Only then take the window**: dump, restore, verify by content fingerprint, flip the relay,
-   re-enable the new runner and stop the old one in the same breath.
+6. **DONE 2026-09-24 for the data and the relay, NOT YET for the runner.** Prod's window: dump,
+   restore, verify by content fingerprint (53/53 tables), flip the relay, stop the old containers -
+   see the write-up below. Dev was not dumped from the old box at all: it was seeded from the
+   target's own now-live `canari-prod` via `copy-prod-to-dev.sh`, which is the architecturally
+   correct source (dev is always a disposable copy of prod, never independently authoritative -
+   `dev-environment.md`). **Re-enabling the target's runner and disabling the old box's stay open**,
+   deliberately split from the data cutover: nothing depends on the runner to serve traffic, and
+   flipping it is a CI/CD-only change with its own blast radius (a race lands a running release on
+   the wrong box).
 
 **Loose ends, small and real.** Two manual `authentik_db_2026-09-24_manuel.sql.gz` copies (27 MB
 each, on `canari` and on `mitv`) sit outside the 14-day purge, which only matches `*.tar.gz` - they
