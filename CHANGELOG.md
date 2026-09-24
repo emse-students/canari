@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - un plan de migration decrivait comment atteindre une machine qu'on ne possede pas
+
+Leon a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
+ca : le compte utilise sur l'hote partage de la DSI, un second compte a cote, lequel des deux
+detenait `docker`, les fichiers de cles d'un poste et le second facteur qui en avait ete retire -
+une carte d'acces vers la machine d'un tiers, dans un depot PUBLIC. Le scan de secrets ne pouvait
+pas le voir : il authentifie les credentials candidats, et un login n'en est pas un. Tout est parti
+en memoire locale, la page ne garde que les consequences, et la regle existante a ete elargie -
+elle ne nommait que les mesures de production. La reprise a trouve le defaut que le premier cachait :
+la copie publique affirmait encore que les droits n'avaient pas suivi le compte, faux depuis le
+2026-09-23.
+[durable-rules](docs/wiki/durable-rules.md), [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - le tunnel de l'hote cible existe et ne peut pas joindre Cloudflare, et c'est le port 7844
+
+Le connecteur est installe dans la bonne forme des le depart - jeton dans un `EnvironmentFile` 0600,
+rien sur `ExecStart` - mais il ne s'enregistre pas. Mesure depuis la machine : le 443 sortant passe,
+le 7844 est bloque EN AMONT, en UDP comme en TCP, et la politique de sortie de la machine est
+`ACCEPT`. `http2` n'est pas un contournement, il compose le meme 7844. L'unite reste installee et
+DESACTIVEE, l'ouverture rejoint la demande DSI, et comme la phase 2 retire Cloudflare de tout chemin
+public, sauter le tunnel devient une option a part entiere.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Fixed - la banniere aveugle d'un salon nomme laquelle de ses quatre conditions a manque
 
 `handleChannelMessage: no seed/ciphertext -> generic notification` est un `if` a quatre termes qui

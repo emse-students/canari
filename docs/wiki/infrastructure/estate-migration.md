@@ -76,34 +76,18 @@ on the wrong VM entirely.
 
 `portail-etu.emse.fr`, `193.49.175.67`, reached by `ssh portail-etu` through `ProxyJump bastion`.
 
-- The login is **`jolan.boudin`**, and it is now proven ON THE HOST ITSELF, not just on the
-  bastion: a shell was reached 2026-09-23. **`boudin` is a SEPARATE, older account** that refuses
-  both of this workstation's keys - the FIDO one and `id_ed25519` - tried once each and not again,
-  because the host counts failed authentications (see the security agents below). It is that older
-  account, not ours, that carries the `docker` group: **the rights did not follow the new account.**
-- **THE TOUCH IS GONE, AND THE HARDWARE-BACKED WAY OF REMOVING IT FAILED FIRST.** Access is
-  unattended since 2026-09-23: `id_ed25519` - the ordinary key that already opens `canari`,
-  `cercle`, `miconnect` and GitLab - now sits in the account's own `authorized_keys`, measured at
-  four consecutive connections, ~1.4 s each, no gesture. The FIDO key stays installed and still
-  works, and `bastion` keeps using it because its `authorized_keys` is DSI-managed.
-- **Do not retry the hardware route here.** An `ed25519-sk` key created with `-O no-touch-required`
-  was installed with the matching `authorized_keys` option and the server **ACCEPTED it** -
-  `Server accepts key` is in the trace. Signing then failed on this workstation with
-  `ssh-sk-helper: Signing failed: requested feature not supported` at `flags 0x00`: the FIDO
-  provider will not produce an assertion without user presence. **The blocker is the authenticator
-  chain, not the server**, so the real choice was never "same guarantees, fewer gestures" - it was a
-  software key or one gesture per command, and the software key is the one the rest of this estate
-  already trusts.
-- The FIDO key remains `id_ed25519_sk`, and **`ControlPersist` IS STILL NOT A LEVER** -
-  measured on this workstation 2026-09-23 and REFUTED. The master starts, it daemonises, and
+- **WHO REACHES THIS HOST, WITH WHICH KEY, AND FROM WHICH WORKSTATION IS DELIBERATELY NOT WRITTEN
+  HERE.** It named a personal login, a second account beside it, the key files on one machine and
+  the second factor that was removed from them - an access map for a host this project does not
+  own, in a PUBLIC repository. It is machine-local wiring, so it lives in the agent's local memory
+  with the other host-access notes, and this page keeps only what the MIGRATION needs.
+- **Access is unattended since 2026-09-23** - four consecutive connections, ~1.4 s each, no gesture.
+  What matters here is the cost rather than the credential: every connection is a fresh handshake,
+  because connection multiplexing is **REFUTED on this workstation**. The master daemonises and
   `ssh -O check` reports `Master running`; every client that presents itself is nonetheless reset
-  and silently falls back to a fresh connection. The tell is the clock: 7 to 10 seconds and one
-  touch per command, where a reused socket costs about 20 ms. MSYS emulates the Unix domain socket
-  over Windows and multiplexing does not survive the emulation; native Windows OpenSSH does not
-  implement `ControlMaster` at all, so no configuration fixes this. Every connection is therefore a
-  fresh TCP handshake and a fresh authentication, about 1.4 s. That is now a cost in seconds rather
-  than in human gestures, so **batching a survey into one `ssh ... <<'REMOTE'` heredoc is a
-  courtesy, not the constraint it was for the few hours the FIDO key was the only way in.**
+  and silently falls back. MSYS emulates the Unix domain socket over Windows, and native Windows
+  OpenSSH does not implement `ControlMaster` at all, so no configuration fixes this. **Batching a
+  survey into one `ssh ... <<'REMOTE'` heredoc is a courtesy, not the constraint it once was.**
 - **This does not constrain CI.** Portail-etu deploys from a self-hosted runner installed ON the
   box, which pulls the code itself. The same shape is what Canari, le Cercle and Authentik will
   use, so no deploy path ever needs SSH.
@@ -157,10 +141,10 @@ section 5 asks for is therefore owed BEFORE the DNS request, not after it.
 with no LVM, enlarging it is a DSI action on the VM, not a command. Of the 18 G in use, **2.6 G is
 the systemd journal** - reclaimable, but not by us.
 
-**THE ACCOUNT NOW HAS WHAT IT NEEDED, granted 2026-09-23.** `jolan.boudin` is in `docker` and
-carries `ALL=(ALL) NOPASSWD:ALL` in `/etc/sudoers` - broader than the narrow rule this plan asked
-for, so the restraint is the operator's now rather than the system's. The older `boudin` account was
-deleted in the same gesture, and **the caveat that travelled with that deletion is closed**: a sweep
+**THE ACCOUNT NOW HAS WHAT IT NEEDED, granted 2026-09-23.** It is in `docker` and carries
+`ALL=(ALL) NOPASSWD:ALL` in `/etc/sudoers` - broader than the narrow rule this plan asked for, so the
+restraint is the operator's now rather than the system's. The older, separate account that used to
+hold those rights was deleted in the same gesture, and **the caveat that travelled with that deletion is closed**: a sweep
 of the whole root filesystem for every uid with no account behind it returns nothing.
 
 **The host runs DSI-managed security agents that ban a source IP on failed authentication and on
@@ -568,6 +552,43 @@ production's `cloudflared` since June**, compared by sha256 across the two machi
 dangerous one: a caller that trusts the shape concludes the account has no tunnels. **Creating it
 is a dashboard gesture the user makes**, and step 4 of phase 1 waits on it.
 
+#### THE TUNNEL EXISTS NOW, AND IT CANNOT REACH THE EDGE - PORT 7844, MEASURED 2026-09-24
+
+The user made the dashboard gesture the paragraph above waits on, and a connector was installed
+**the right way**: the token in a `0600` `EnvironmentFile`, nothing on `ExecStart`, `DynamicUser=yes`
+- the defect this repository documented on its own two boxes the same morning, not repeated on a
+machine shared with other associations, where it would have handed the tunnel's identity to a dozen
+local accounts.
+
+**It cannot connect, and the token is not why.** Measured from the host:
+
+| Probe | Result |
+| --- | --- |
+| cloudflared's UDP precheck, `region1`/`region2.v2.argotunnel.com` | **FAIL** - `QUIC connection failed` |
+| its own automatic fallback to `http2` | taken, then `dial tcp 198.41.200.23:7844: i/o timeout` |
+| TCP **443** to that same edge address | **open** |
+| TCP **7844** to that same edge address | **blocked** |
+| the host's own egress policy | `-P OUTPUT ACCEPT`, and no direct firewalld rule |
+
+**The block is UPSTREAM of the machine, on 7844, in BOTH transports.** `http2` is not a way round
+it - that mode still dials 7844 and merely swaps UDP for TCP. Cloudflare Tunnel has no port-443
+mode, so this is a firewall change or it is nothing, and it joins the certificate question in the
+same request to the DSI. **It also reframes the choice**: phase 2 removes Cloudflare from every
+public path anyway, so "open 7844" and "skip the tunnel and cut straight to the phase-2 shape" are
+now two live options rather than one obvious one. That is the user's call, not this page's.
+
+The unit is left **INSTALLED and DISABLED**. A service that fails at every boot on somebody else's
+machine is noise; what the runbook needs kept is the configuration, not the retry loop.
+
+**TWO TUNNEL IDENTITIES ARE IN PLAY** - the box carries one, and a second was handed over the same
+morning. Nothing was overwritten, because which one is the keeper is a dashboard-side decision and
+guessing it is how an orphan tunnel is left claiming a hostname later.
+
+**Nothing of the old estate moved, and that is measured rather than assumed.** All four public names
+answered throughout (`cercle`, the apex, `dev`, `auth`) - which is also the proof that no hostname is
+bound to the new tunnel: a name pointing at a tunnel with no healthy connector returns a `1033`, and
+none did.
+
 **The Portail-etu runner left a personal account.** It ran as one person's login, from that
 person's home, on a machine shared with other associations - so closing or renaming that account
 would have stopped every deployment of the portal, for a reason nobody would have gone looking for.
@@ -726,7 +747,6 @@ without.
 | AAAA for the above | only if the host has a v6 address. Nothing blocks on it |
 | The certificate path, and one SAN certificate or one per name | **ANSWERED by measurement 2026-09-24, leave it out of the request**: one certificate per name, GEANT TCS, no ACME - see above |
 | Confirm 80/443 inbound are already open | the machine already serves `portail-etu.emse.fr`, so this is expected to be a no-op |
-| Is the account on the target host also `jolan.boudin`? | the bastion half is proven, the target half is not |
 
 **TURN is deliberately NOT in that request.** It needs an inbound UDP range, which is a different
 kind of ask and is refused more easily than a DNS record; attaching it would put the whole list at
@@ -769,10 +789,15 @@ sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse
 4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
    (la machine sert deja portail-etu.emse.fr, donc nous pensons que oui).
 
-5. Une question d'acces : le compte sur 193.49.175.67 est-il bien jolan.boudin, comme
-   sur le rebond ?
+5. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
 
-6. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
+6. Ouverture du trafic SORTANT vers le port 7844 (TCP et UDP) depuis 193.49.175.67 vers
+   l'infrastructure Cloudflare. Mesure du 24/09 depuis la machine : le 443 sortant passe,
+   le 7844 est bloque en amont (la politique de sortie de la machine elle-meme est
+   ACCEPT). C'est le port qu'utilise un tunnel Cloudflare, et il nous permettrait de
+   basculer les services un par un sans toucher au DNS. Si cette ouverture n'est pas
+   souhaitable, dites-le nous simplement : nous basculerons directement sur les noms
+   emse.fr, et nous n'aurons alors plus besoin de Cloudflare du tout.
    Ce point ne bloque rien.
 
 Merci d'avance,
