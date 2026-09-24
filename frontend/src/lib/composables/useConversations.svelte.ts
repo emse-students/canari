@@ -58,6 +58,7 @@ import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
   startNewConversation as startConversation,
+  type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
@@ -1218,9 +1219,18 @@ export function useConversations() {
     });
   }
 
-  /** Creates a new named MLS group, persists it, and selects it in the UI. */
-  async function createNewGroup(nameRaw: string, ctx: ConversationContext) {
-    await createGroup(nameRaw, {
+  /**
+   * Creates a new named MLS group, persists it, and selects it in the UI.
+   *
+   * Returns the creation's own answer unchanged: the modal that called it needs to know whether to
+   * close, and a wrapper that swallowed the outcome is exactly what left it closing over a group
+   * that had just been deleted server-side.
+   */
+  async function createNewGroup(
+    nameRaw: string,
+    ctx: ConversationContext
+  ): Promise<ConversationOutcome> {
+    return createGroup(nameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
       userId: ctx.userId,
@@ -1264,13 +1274,17 @@ export function useConversations() {
     }
   }
 
-  /** Opens or creates a direct 1-to-1 conversation with the given user. */
+  /**
+   * Opens or creates a direct 1-to-1 conversation with the given user.
+   *
+   * Forwards the outcome for the same reason `createNewGroup` does.
+   */
   async function startNewConversation(
     contactNameRaw: string,
     ctx: ConversationContext,
     opts?: { silent?: boolean }
-  ) {
-    await startConversation(contactNameRaw, {
+  ): Promise<ConversationOutcome> {
+    return startConversation(contactNameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
       userId: ctx.userId,

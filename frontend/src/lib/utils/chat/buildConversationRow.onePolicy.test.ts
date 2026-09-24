@@ -153,7 +153,12 @@ interface Site {
   /** The map key the row lands under, and what `conversationType` it must carry. */
   key: string;
   type: 'direct' | 'group' | 'channel';
-  run: (conversations: SvelteMap<string, Conversation>) => Promise<void>;
+  /**
+   * `unknown` rather than `void`: the creation paths answer whether they refused, and this suite
+   * asserts the ROW they leave behind, never the answer. Naming the outcome type here would make
+   * every case declare a value none of them reads.
+   */
+  run: (conversations: SvelteMap<string, Conversation>) => Promise<unknown>;
 }
 
 const sites: Site[] = [

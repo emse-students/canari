@@ -7207,15 +7207,6 @@ shape. It closes with the P1 that reports a damaged MLS state as a PIN rotation.
 one allowlist entry, and that entry FAILS the day the site stops offending, so it cannot rot while
 the P1 waits.
 
-### P3 - a group creation that fails tells the member nothing, and closes the modal on a group that does not exist
-
-`createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan group, and
-leave a console line as the only trace. The modal closes, the conversation is not there, and the
-member is left to work out why. This was true before the prose sweep and nothing regressed - the
-sentences that path used to build never reached a screen either. Fixing it is a UI change (the
-creation modal has to STAY OPEN and render a refusal), not a sweep, which is why it is here rather
-than folded into a commit about a ternary.
-
 ### P3 - the workers and `mls-client` are the trees nobody has swept, and nothing blocks it
 
 Every other tree under `src` answers the guard. These are blocked on nothing but somebody doing the

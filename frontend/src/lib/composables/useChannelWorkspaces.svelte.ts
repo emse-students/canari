@@ -112,8 +112,16 @@ export interface ChannelWorkspaceContext {
   selectConversation: (id: string) => void;
   /** Returns (or lazily initialises) the MLS service instance - required for key distribution. */
   ensureMls?: () => IMlsService | Promise<IMlsService>;
-  /** Opens (or creates) a direct MLS conversation with the given user. Pass { silent: true } to skip UI selection (e.g. background key distribution). */
-  startDirectConversation?: (targetUserId: string, opts?: { silent?: boolean }) => Promise<void>;
+  /**
+   * Opens (or creates) a direct MLS conversation with the given user. Pass { silent: true } to skip
+   * UI selection (e.g. background key distribution).
+   *
+   * The result is deliberately `unknown`: the creation paths answer WHY they refused, for the
+   * creation modal, and this caller is background key distribution - it has no screen to say it on
+   * and already treats a failure as "the member misses one key, their next request fetches it".
+   * Typing the answer here would invite a second reading of it that nothing would act on.
+   */
+  startDirectConversation?: (targetUserId: string, opts?: { silent?: boolean }) => Promise<unknown>;
   /** Returns the conversation ID currently visible in the chat panel. */
   getSelectedConversationId?: () => string | null;
   /**
