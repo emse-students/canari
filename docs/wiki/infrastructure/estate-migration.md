@@ -582,10 +582,22 @@ same request to the DSI. **It also reframes the choice**: phase 2 removes Cloudf
 public path anyway, so "open 7844" and "skip the tunnel and cut straight to the phase-2 shape" are
 now two live options rather than one obvious one. That is the user's call, not this page's.
 
-#### THE PARADE, IF 7844 IS REFUSED: A PROXIED RECORD INSTEAD OF A TUNNEL - 2026-09-24
+#### THE PARADE THAT WAS WRONG, AND WHAT THE BLOCK ACTUALLY BREAKS - 2026-09-24
 
-The user expects the DSI to refuse. **A tunnel goes OUT of the machine; the proxy comes IN to it**,
-and Cloudflare does both. So the answer is not to argue about 7844: it is to stop needing it.
+**READ SECTION 4 BEFORE READING THIS.** The parade below was proposed, and it is REFUTED by a
+decision taken with the user on 2026-09-23 and marked not to be relitigated: *public traffic, no
+Cloudflare at all*. It is kept here rather than deleted because the reasoning has one half worth
+having and one half that shows how a settled decision gets re-opened by accident - by solving the
+problem in front of you without re-reading what the problem was allowed to cost.
+
+**AND THE BLOCK IS NOT WHERE THIS PARAGRAPH FIRST PUT IT.** The public path never needed 7844,
+because it never needed Cloudflare: nginx on the host, DSI certificates, ufw. What section 4 sends
+through a tunnel is the INTERNAL half - the admin interfaces and dev, on `rootz-emse.fr`, behind
+Access. **So the refused port does not block phase 2 at all; it blocks the internal door**, and that
+is the question that needs an answer, not the public one.
+
+The refuted proposal, for the record: **a tunnel goes OUT of the machine; the proxy comes IN to it**,
+and Cloudflare does both.
 
 Replace the tunnel CNAME with an **`A` record to `193.49.175.67`, proxied**. Cloudflare then reaches
 the origin on **443 inbound**, the port this host already serves - measured from outside on
