@@ -3267,11 +3267,13 @@ mirrors the seed. The unmeasured case is a session whose seed was never mirrored
 started a new Graine session while this device was away - and its symptom is
 `handleChannelMessage: no seed/ciphertext -> generic notification`.
 
-**That line cannot say which of its four conditions failed**, and it is one `if` with four terms
-(`seedB64`, `ciphertext`, `nonce`, `messageIndex`). A seed that was never mirrored and a ciphertext
-the server declined to inline are opposite problems - one is a mirroring bound, the other a 4 KB FCM
-budget - and they print the same sentence. Naming the term is a one-line change and it is what turns
-the user's report into a diagnosis.
+**That line now says which of its four conditions failed** (`missing=<terms>`, 2026-09-24), so a
+seed that was never mirrored and a ciphertext the server declined to inline no longer print the same
+sentence - opposite problems wanting opposite fixes, one a mirroring bound and the other the 4 KB FCM
+budget. The suffix shape, the three readers that forced it and the classifier blind spot it closed
+are [channel-encryption section 14](protocols/channel-encryption.md#what-is-left), the only copy.
+**This was the precondition, not the measurement**: it makes the four runs below readable and
+settles nothing on its own.
 
 **A COMMUNITY SALON CANNOT INHERIT THAT ANSWER, BECAUSE IT IS NOT THE SAME KEY PATH.** A salon is
 encrypted with the community's shared key

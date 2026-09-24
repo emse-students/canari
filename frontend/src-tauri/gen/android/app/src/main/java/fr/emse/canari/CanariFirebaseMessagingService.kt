@@ -4030,7 +4030,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // NO CIPHERTEXT IS NOT NO SEED, and only this branch can tell them apart. A frame the
             // server could not inline is generic for ever and nothing retries it; a frame whose
             // seed is merely late was logged as HELD by the caller and will be redrawn.
-            Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId")
+            //
+            // AND IT TOLD THEM APART ONLY IN THIS COMMENT UNTIL 2026-09-24: the condition has FOUR
+            // terms and the line named none of them, so a seed that was never mirrored (a mirroring
+            // bound - the sender opened a Graine session while this device was away) and a
+            // ciphertext the server declined to inline (a 4 KB FCM budget) printed the same
+            // sentence. They are opposite problems wanting opposite fixes, and the user's report
+            // becomes a diagnosis only once the report names which one it is - a correct mechanism
+            // with no report is found by hand, a day late.
+            //
+            // The terms are APPENDED, never woven in: `watch.mjs`'s `fcm-channel-generic` rule is
+            // anchored at both ends and `notif18.mjs` locates this frame by the same prefix, so a
+            // suffix is the one shape that adds the discriminator without unclassifying the line.
+            val missing = listOfNotNull(
+                "seed".takeIf { seedB64 == null },
+                "ciphertext".takeIf { ciphertext == null },
+                "nonce".takeIf { nonce == null },
+                "messageIndex".takeIf { messageIndex == null },
+            ).joinToString(",")
+            Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId missing=$missing")
             buildChannelFallbackText(res, channelName)
         }
 
