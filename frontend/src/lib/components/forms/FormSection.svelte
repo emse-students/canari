@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, type Icon as IconType } from '@lucide/svelte';
-  import type { Snippet } from 'svelte';
+  import { ChevronDown } from '@lucide/svelte';
+  import type { Component, Snippet } from 'svelte';
 
   /**
    * One card of the form editor: icon, title, an optional counter on the right, and the fields.
@@ -17,7 +17,7 @@
     /** Section heading. */
     title: string;
     /** Lucide icon shown in the yellow tile. */
-    icon: typeof IconType;
+    icon: Component;
     /** Small pill on the right of the header, e.g. a question count. */
     badge?: string;
     /** When true, the header toggles the body open and shut. */
