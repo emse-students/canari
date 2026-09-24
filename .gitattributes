@@ -7,14 +7,6 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
-# CHANGELOG.md : chaque PR ajoute une entree juste sous [Unreleased], donc deux PR ouvertes en
-# parallele touchent la meme ligne d'ancrage et entrent en conflit l'une contre l'autre - ce qui
-# bloque le merge automatique (arm-auto-merge) et exige une main humaine que ce depot essaie
-# justement d'eviter. Le driver "union" garde les deux insertions au lieu de signaler un conflit ;
-# l'ordre des entrees sous [Unreleased] n'est alors plus garanti chronologique, ce qui est sans
-# consequence puisque chaque entree est un bloc independant portant son propre lien.
-CHANGELOG.md merge=union
-
 # Fichiers binaires : jamais normalisés (sinon corruption).
 *.png   binary
 *.jpg   binary
