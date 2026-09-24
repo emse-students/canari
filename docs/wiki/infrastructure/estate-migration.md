@@ -736,10 +736,9 @@ without.
 
 | Ask | Note |
 | --- | --- |
-| `canari.emse.fr` | **NOTHING TO ASK FOR, AND THIS ROW SAID THE OPPOSITE UNTIL 2026-09-24.** It read "a DIFFERENT machine from the one `portail-etu.emse.fr` uses", and `193.49.175.122` is **the same machine**: the target's single interface carries `.67`, `.122` and a third address, so a vhost listening on `443` answers on all of them. Measured the same day: the name resolves to `.122`, an ENABLED vhost for it already exists on the target proxying to `127.0.0.1:3000` - the portal's port, which is why it returns `Portail Etudiant ICM` - and a GEANT TCS certificate for it sits in `/etc/certs/canari.emse.fr/`, issued 2026-09-22, valid to 2027-04-09, one SAN. **So no record, no certificate, no ticket: the whole change is one `proxy_pass` line on a machine we already administer.** The request text below already said this and was right; it is the table that was wrong, which is the more dangerous way round - a plan is read from its table |
+| `canari.emse.fr` | **DONE 2026-09-24, no ticket ever needed.** The vhost's `proxy_pass` pointed at `127.0.0.1:3000` (the portal's port, hence `Portail Etudiant ICM`); repointed to `127.0.0.1:8081` (Canari's, matching `canari-prod.conf`), `nginx -t` + reload, verified live: `canari.emse.fr` now serves Canari, `portail-etu.emse.fr` and `canari-emse.fr` unaffected. The DNS record and the GEANT TCS certificate (`/etc/certs/canari.emse.fr/`, issued 2026-09-22, valid to 2027-04-09) already existed - this row never belonged in a DSI request |
 | `cercle.emse.fr` | new. The School reserves `etu.emse.fr` for mail, so it is not `cercle.etu.emse.fr` |
 | `miconnect.emse.fr` | new |
-| `www.canari.emse.fr` | new, and only so the redirect to the apex exists |
 | AAAA for the above | only if the host has a v6 address. Nothing blocks on it |
 | The certificate path, and one SAN certificate or one per name | **ANSWERED by measurement 2026-09-24, leave it out of the request**: one certificate per name, GEANT TCS, no ACME - see above |
 | Confirm 80/443 inbound are already open | the machine already serves `portail-etu.emse.fr`, so this is expected to be a no-op |
@@ -760,7 +759,7 @@ SENT, not documentation prose, and `Portail Etudiant ICM` is not how that site s
 Everything around it stays ASCII like the rest of this repository.
 
 ```text
-Objet : demande d'enregistrements DNS et de certificats pour trois noms (association Canari)
+Objet : demande d'enregistrements DNS et de certificats pour deux noms (association Canari)
 
 Bonjour,
 
@@ -771,17 +770,14 @@ sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse
 1. Creation de deux enregistrements A vers 193.49.175.67 :
      cercle.emse.fr
      miconnect.emse.fr
-   Et un enregistrement pour www.canari.emse.fr vers la meme adresse que
-   canari.emse.fr, celle qui vous paraitra la plus coherente.
 
-2. Aucune demande concernant canari.emse.fr : ce nom pointe deja vers 193.49.175.122,
-   qui est une adresse de cette meme machine, et son certificat a ete renouvele le
-   22/09/2026. Nous n'avons donc besoin ni d'un nouvel enregistrement, ni d'un nouveau
-   certificat pour lui. Nous signalons simplement que ce nom servira desormais Canari :
-   il renvoie aujourd'hui le Portail Etudiant ICM, ce qui semble etre une configuration
-   nginx restee en place, et nous la corrigerons cote machine.
+2. Pour information, sans demande de votre part : canari.emse.fr pointe deja vers
+   193.49.175.122, une adresse de cette meme machine, et son certificat a ete renouvele
+   le 22/09/2026. Ce nom renvoyait le Portail Etudiant ICM, une configuration nginx
+   restee en place ; nous l'avons corrigee cote machine le 24/09/2026 et il sert
+   desormais Canari.
 
-3. Un certificat par nom pour les trois noms du point 1, livre comme les autres dans
+3. Un certificat par nom pour les deux noms du point 1, livre comme les autres dans
    /etc/certs/<nom>/ sur 193.49.175.67.
 
 4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
@@ -814,6 +810,37 @@ So the rule for phase 2 is: **both hosts are claimed by the app for several rele
 configuration migrates totally, and `canari-emse.fr` keeps answering with 301s indefinitely.** The
 old domain is not decommissioned at the end of this chantier, and no date is written for it until
 the stores say the old builds are gone.
+
+### A browser cannot follow a redirect and keep its state - there must never be one
+
+Native apps are unaffected by which public host is used: `mls.bin`, the SQLite message database and
+the device key all live on the OS filesystem under the app's own identity (`fr.emse.canari`), not
+under a public hostname - the WebView itself never navigates away from `tauri://localhost` /
+`tauri.localhost`, and a deep link only tells the OS which installed app to open. Confirmed by
+reading `IMlsService.ts` ("`mls.bin`... meaningless on the web") and `mlsStatePersister.ts`, whose
+equivalent checkpoint on the WEB build is written to **IndexedDB**, which every browser partitions
+strictly per origin.
+
+`https://canari-emse.fr` and `https://canari.emse.fr` are two unrelated origins to a browser, with no
+shared registrable-domain suffix a cookie's `Domain=` could bridge. Nothing - no redirect, no API -
+moves IndexedDB, `localStorage` or a cookie between them. A browser session that lands on
+`canari.emse.fr` for the first time therefore starts from **zero**: no cached history, no MLS
+ratchet state, no refresh-token cookie (forced re-login), and cryptographically it looks exactly like
+adding a brand-new device to every conversation that browser was in - which depends on the healing/
+welcome path the queue already documents as unreliable (item 6, ~3 successes in 10).
+
+**Measured 2026-09-24: nothing in this repository or on the target's nginx does this today.**
+`canari-prod.conf` and `canari.conf` carry no cross-host redirect in either direction, and
+`DEFAULT_PUBLIC_APP_ORIGIN` in `publicAppUrl.ts` deliberately stays `canari-emse.fr` - outbound share
+links are not migrated either. The "`canari-emse.fr` keeps answering with 301s indefinitely" line
+above is about its ordinary HTTP-to-HTTPS upgrade, not a cross-domain one.
+
+**The rule going forward: no server-side redirect and no client-side canonicalization may ever send
+an existing `canari-emse.fr` browser session to `canari.emse.fr`.** `canari.emse.fr` may exist,
+resolve and be linked to for NEW visits, but an existing session's origin is not something this
+migration can or should move. If the old host is ever decommissioned, browser users need an explicit,
+in-app warning and a chance to be re-added before their storage becomes unreachable - never a silent
+redirect.
 
 ### The OIDC issuer
 
