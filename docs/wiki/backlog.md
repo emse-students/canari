@@ -178,6 +178,29 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
+### P2 - no rate limiting exists on the authentication or upload paths on the shared host, on any vhost (found 2026-09-25)
+
+The estate-migration table has said, since phase 2 was planned, that Cloudflare's DDoS absorption
+and bot filtering become "nginx rate limiting on the authentication and upload paths, plus whatever
+the School already runs upstream" - stated as the plan, read back later as though it were the
+state. `grep -r limit_req /etc/nginx` on the target host, across `authentik.conf`, `canari.conf`,
+`canari-dev.conf`, `canari-prod.conf` and `cercle.conf`, returns nothing. There is no rate limiting
+anywhere on this host today, for any of the five vhosts it carries.
+
+Cloudflare's own zone never had one either - the "DDoS absorption, bot filtering" row was always
+about the CDN layer generally, not a specific configured rule - so this is not a regression, but it
+is also not the mitigation the table implied was in place for `canari-emse.fr`'s auth and upload
+paths once the tunnel(which hid the origin's IP entirely) stops being the only path in.
+
+**Needs a design, not a port**: which paths (`/api/auth/login`, `/api/auth/refresh`, media upload
+routes at minimum), a key (per-IP is the obvious default, `$binary_remote_addr`), a rate and burst
+that does not lock out a legitimate user on a flaky connection retrying a request, and whether
+`limit_req_zone` belongs in a shared `conf.d/` snippet across vhosts or is defined per-vhost. See
+[cloudflare-edge](infrastructure/cloudflare-edge.md#settings-that-are-deliberate) for what the zone
+used to provide, and [estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
+for the rest of the audit this was found during.
+
+
 ### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
 
 `tauri-plugin-notification` creates a channel on plugin load whose name and description are the

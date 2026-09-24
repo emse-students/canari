@@ -328,15 +328,28 @@ consumers before choosing**, which is what the standing rule about auditing a se
 
 ### What the edge did that the origin must now do
 
-| Edge mechanism today | After phase 2 |
-| --- | --- |
-| TLS termination | host nginx, DSI certificates |
-| `www.` -> apex redirect | host nginx |
-| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means |
-| The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` |
-| Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` |
-| DDoS absorption, bot filtering | nginx rate limiting on the authentication and upload paths, plus whatever the School already runs upstream |
-| `min_tls_version`, `0rtt`, BIC, Rocket Loader | nginx configuration, or they stop existing |
+**Re-audited against the live zone and the live host, 2026-09-25** - every deliberate Cloudflare
+setting is in [cloudflare-edge.md](cloudflare-edge.md#settings-that-are-deliberate); this table is
+what each one becomes once `canari.emse.fr` never reaches that zone at all. A claim below is
+VERIFIED only where it was actually probed, not inferred from the intent that shipped it.
+
+| Edge mechanism today | After phase 2 | Verified 2026-09-25 |
+| --- | --- | --- |
+| TLS termination, `min_tls_version: 1.2` | host nginx, DSI certificates | **YES** - `--tlsv1.0 --tls-max 1.0` refused (connection failure), 1.2 and 1.3 both `200` |
+| `www.` -> apex redirect | N/A - no `www.canari.emse.fr` DNS record exists at all (the row was dropped from the DSI request, item 1) | **YES** - `www.canari.emse.fr` does not resolve/connect; nothing to redirect |
+| CSP header | N/A - was never a Cloudflare setting. `http_response_headers_transform` on the zone is empty by design; nginx has always owned every response header, unaffected by which hostname is used | N/A |
+| CSRF protection | N/A - Cloudflare has no CSRF-specific feature; this was always application-level (SvelteKit/NestJS origin checks), unaffected by the zone | N/A |
+| `websockets: on` (zone setting, "Required by `/api/ws`") | **WAS NOT PORTED - FOUND AND FIXED 2026-09-25.** `sites-available/canari.conf` on the target host proxied `/` but never forwarded `Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase 1, and correct). A WS handshake against `canari.emse.fr` got a bare nginx `400` with no `Upgrade` echoed back; the same handshake against `canari-emse.fr` reached the app and got `401` (unauthenticated, the correct answer). Fixed by adding the same two lines `canari-prod.conf` already carries | **YES, both before (broken) and after (fixed)** |
+| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means | N/A - deliberate |
+| The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` | N/A - deliberate |
+| Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` | N/A - out of scope |
+| DDoS absorption, bot filtering | promised as "nginx rate limiting on the authentication and upload paths" | **NO - NOT DONE.** `grep -r limit_req /etc/nginx` on the target host returns nothing, on any vhost. This is a real gap, open below |
+| `0rtt`, BIC, Rocket Loader | Rocket Loader and BIC have no nginx equivalent and were already `off`/scoped to the auth subdomain (out of scope); 0-RTT is a TLS 1.3 server option nginx does not enable by default, matching the zone's `off` | N/A - all three end up equivalent to "off" either way |
+
+**OPEN: no rate limiting exists on the authentication or upload paths on the target host, on any
+vhost.** This was stated as done in this table before being checked and was not; it needs a design
+(zones, keyed by IP, which exact paths) rather than a one-line port, and is tracked as its own item
+rather than folded into the WebSocket fix above ([backlog](backlog.md)).
 
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 
