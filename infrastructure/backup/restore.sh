@@ -41,7 +41,8 @@ ENV_FILE="$INFRA_DIR/.env"
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-miconnect@10.0.0.7}"
+# Alias ~/.ssh/config, et non un user@hote : cf backup.sh, meme raison.
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-authentik-target}"
 
 # Depot restic des blobs medias. Doit rester aligne sur backup-objects.sh : un chemin
 # qui diverge ne casse pas la sauvegarde, il casse la restauration - c est-a-dire le

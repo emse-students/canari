@@ -1085,12 +1085,21 @@ at all: it was DELETED**, because the tunnel reaches Authentik at `http://10.0.0
 HTTP and nothing has ever asked for the TLS port. `data/`, `certs/` and
 `custom-templates/` are 16 K, 4 K and 4 K - nothing travels but the database.
 
-**AND THE BACKUP KEY TRAVELS WITH IT.** The nightly backup reaches this box by SSH since 2026-09-24,
-with a key whose forced command can do exactly one thing, read the PostgreSQL dump. **On the shared
-host the two stacks are co-located again, so `MICONNECT_SSH_HOST` must be EMPTIED** and the local
-`docker exec` path resumes. Forgetting it is how the estate spent 93 nights with no Authentik
-backup at all - and the difference now is that the script FAILS rather than warns, which is the
-entire point of that change ([backup](../../../infrastructure/backup/README.md)).
+**AND THE BACKUP KEY TRAVELS WITH IT - IT DID NOT, AND THE PARAGRAPH THAT SAID SO WAS WRONG.**
+This page claimed the nightly backup reached the Authentik box by SSH "since 2026-09-24", with a
+forced-command key that can do exactly one thing. **The repair existed only in the repository**: the
+production checkout was still at `0.18.22`, its script did not contain the variable, no such key
+existed on the applicative box, and the archive written the morning of 2026-09-24 had three members
+and no Authentik among them. The streak was 94 nights, not 93, and it ended by hand.
+
+**AND THE "EMPTY THE VARIABLE" INSTRUCTION WAS WRONG IN THE OTHER DIRECTION.** It assumed the two
+stacks meet on the shared host. They do not meet yet: Authentik left and Canari stayed, so the SSH
+hop is MORE necessary than before, simply reversed - it now points at the target. Emptying the
+variable becomes correct only on the day Canari itself arrives, and not one day sooner. The value
+now lives in `.env.example` rather than in the machine's `.env`, because a deploy regenerates that
+file from the template and would otherwise restore a default naming the OLD VM - where a frozen
+copy of the database still runs, so the backup would have succeeded and lied
+([backup](../../../infrastructure/backup/README.md), [durable-rules](../durable-rules.md)).
 
 #### It was STOOD UP on the target host, empty, and taken back down - 2026-09-24
 
