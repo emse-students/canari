@@ -701,7 +701,7 @@ The migration target's `22` answers from the campus network and times out from a
 `443` answers from the same address that `22` refuses - so it is a per-port filter upstream of the
 host, not a ban on one address, and a GitHub-hosted runner has no route in at all. The measurement
 and the three source addresses it was taken from are on
-[estate-migration](infrastructure/estate-migration.md#b-canaris-move---and-it-is-not-one-estate-it-is-two-estates-and-a-ci-runner).
+[estate-migration](infrastructure/estate-migration.md#canari---not-yet-moved-it-is-two-estates-and-a-ci-runner-not-one-estate).
 
 **So the model is the same in all five repositories, and it is one sentence: `release.yml` is the
 only thing that deploys, and its deploy job runs on the machine it deploys to. Nothing deploys
