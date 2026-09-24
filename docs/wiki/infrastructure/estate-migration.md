@@ -190,7 +190,7 @@ say `1.4.2`.
 | Internal traffic | stays on **`rootz-emse.fr`** behind a Cloudflare tunnel, with Access | an admin interface does not need a public name, and a gated door does not need a signpost |
 | **Where dev and the admin surface run** (2026-09-24, REVISED the same day) | **BOTH Canari estates move to the target, dev included** - reached the same way as production, through the old VM's relay, never a new connector | the earlier "stays on the old VM" reading argued from the refused port, but the relay already answers that regardless of which estate sits behind it; keeping dev off the target bought nothing further and cost it rehearsing production less faithfully |
 | The tunnel | **stays where it already works**, on the old VM (2026-09-24) | nothing is installed on the new host for it, so nothing there needs to reach the edge |
-| Dev | **`dev.canari.rootz-emse.fr`**, internal, behind the tunnel, **now hosted on the TARGET, reached via the old VM's relay** (revised 2026-09-24) | still not published under `emse.fr` - dev holds a FULL COPY of production data, and that name is anyone's to reach. Only WHERE it runs changed, not its exposure |
+| Dev | **`dev.canari-emse.fr`**, a proxied CNAME on production's OWN zone and tunnel (not `rootz-emse.fr`, and not behind Access) - **now hosted on the TARGET, reached via the old VM's relay** (revised 2026-09-24) | it was never internal: dev holds a FULL COPY of production data and answers `200` to anyone who resolves the name, unlinked but not gated. Only WHERE it runs changed, not its exposure |
 | Certificates | **issued, deposited and renewed by the DSI** at a fixed path | we never hold a private key and never run a renewal |
 | Old domain | `canari-emse.fr` **keeps answering, with 301s, from the old VM** | the less of it on the new installation the better (user) |
 | Old VMs | stay powered on for a while after each cutover | they are the rollback |
@@ -854,7 +854,7 @@ order; the runbook in section 6 says HOW each step is shaped.
    the PR, open it only as part of step 6.**
 4. **Write the target vhosts and the relay, on the pattern `cercle` and `miconnect` already prove.**
    **DONE 2026-09-24 on the target's half**: `canari-prod.conf` (`canari-emse.fr` ->
-   `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari.rootz-emse.fr` -> `127.0.0.1:3080`) are
+   `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari-emse.fr` -> `127.0.0.1:3080`) are
    written, `nginx -t` passed, reloaded - verified from outside with `Host`-header routing (a clean
    `502 Connection refused` on each, not a config error, and `cercle`/`miconnect` unaffected by the
    reload). **The old-VM half is NOT done and cannot be prepared in advance**: the `canari` box has
