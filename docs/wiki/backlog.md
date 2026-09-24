@@ -5704,26 +5704,6 @@ materialise each Canari user row and its display name, then a Chrome profile, `P
 `ACCOUNT_OF` entry per device.
 
 
-### P3 - a check run BY HAND can measure a bundle older than the build it stamps, and nothing refuses it (measured 2026-09-05)
-
-`bundle.mjs` exists precisely for this and states it: a browser left open across a deploy keeps
-executing the old bundle and its console reads exactly like a reloaded one. `run.mjs` asks; a check
-invoked directly does not, and `record()` stamps `build` from the repository rather than from the
-client.
-
-Measured: TAB-1 was re-run three times against a fixed application and recorded `FAIL` each time
-against a build whose fix its tab had never loaded. Three probes were spent before the stale tab was
-the answer, and the ledger holds three rows naming a commit they did not measure. `tab1.mjs` now
-reloads (as `tab4.mjs` and `tab5.mjs` already did), but that is one file remembering, not a rule:
-`tab3b.mjs`, `tab7.mjs`, `notif.mjs`, `del1.mjs`, `msg4.mjs` and `mut.mjs` still do not.
-
-The fix belongs in `recordObserved`, which is the only place that knows BOTH the verdict and the
-clients it was observed on: compare each observed client's running bundle id against the deployed one
-and refuse the row rather than stamp it. That is the rig's own rule - never learn by failing what a
-fact could have told you - and the discriminator is already written and already exported. The care
-needed is that TAB-7 asserts `neverReloaded`, so the check must REFUSE, never silently reload.
-
-
 ### P3 - the debris sweeper looks for a WEB-shaped store on the PHONE, so on A1 it can neither clean nor tell whether there is anything to clean (measured 2026-09-08)
 
 `dismiss.mjs` chooses what to sweep by enumerating `CanariDB_<user>` IndexedDB databases. That is the

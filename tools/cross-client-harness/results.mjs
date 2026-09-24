@@ -16,6 +16,7 @@ import { LOCAL } from './estate.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
+import { observedBundles } from './bundle.mjs';
 import { RECORDER_ONLY, VERDICTS, isVerdict } from './verdicts.mjs';
 import { gate, report } from './watch.mjs';
 
@@ -633,10 +634,28 @@ export function finish(id, verdict, detail) {
  * @param {Record<string, object>} observers label -> `watch()` handle or a finished report
  */
 export async function recordObserved(id, verdict, detail, observers) {
+  // BEFORE THE REPORTS, BECAUSE `report()` DRAINS THE SOCKET and this needs the clients alive. The
+  // question is about the client itself rather than about what it printed - see `gate()`.
+  //
+  // WHY IT LIVES HERE AND NOT IN A RUNNER. `bundle.mjs` could answer "is this tab stale" since
+  // 2026-08-24, and only a runner ever asked: TAB-1 recorded `FAIL` three times against a fix its
+  // tab had never loaded, `tab1.mjs` learned to reload afterwards, and six other runners had not.
+  // This function is the one place that knows BOTH the verdict and the clients it was observed on,
+  // which is the rig's own rule - never learn by failing what a fact could have told you.
+  //
+  // IT NEVER DESTROYS A VERDICT. Every failure inside is a blind spot recorded under a label, and
+  // the whole call is wrapped because a row that cannot be written is worse than one carrying a
+  // note: `deployedBundleId()` throws by design when the shell has no id, and that throw belongs to
+  // `bundle.mjs`'s command line, not to a check that has just finished measuring something real.
+  const bundles = await observedBundles(observers).catch((e) => ({
+    stale: {},
+    blind: { '*': `the bundle check itself failed: ${String(e?.message ?? e)}` },
+  }));
+
   const reports = {};
   for (const [label, o] of Object.entries(observers))
     if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
-  const gated = gate(verdict, reports);
+  const gated = gate(verdict, reports, { bundles });
   return record(id, gated.verdict, { ...gated.detail, ...detail });
 }
 

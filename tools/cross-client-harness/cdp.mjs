@@ -244,7 +244,18 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       });
       ws.send(JSON.stringify({ id, method, params }));
     });
-  return { ready, send, events, close: () => ws.close() };
+  // WHETHER THE SOCKET IS STILL THERE IS A FACT, AND ASKING COSTS NOTHING.
+  //
+  // `ws.send` on a CLOSED socket does not throw here - the frame goes nowhere, no reply ever
+  // arrives, and the caller learns thirty seconds later from the timeout above. Measured
+  // 2026-09-24: one `Runtime.evaluate` against a closed client cost 30 002 ms where a live one cost
+  // 8 ms. That is the rig's own rule broken by its own transport - never learn by FAILING what a
+  // fact could have told you - and it matters most to callers that decorate a verdict rather than
+  // produce it, where a dead client must cost a sentence and not half a minute.
+  //
+  // A PREDICATE, NOT THE SOCKET. Handing out `ws` would let a caller send frames around `send`,
+  // which is where the pending map, the stack capture and the timeout live.
+  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1 };
 }
 
 /** Evaluates an expression in the page and returns its value, awaiting promises. */

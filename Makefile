@@ -417,6 +417,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/identity-selftest.mjs
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs
 	@bun tools/cross-client-harness/archive/verdict-selftest.mjs
+	@bun tools/cross-client-harness/archive/staleness-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
 	@bun tools/cross-client-harness/archive/transport-selftest.mjs

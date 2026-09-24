@@ -184,6 +184,32 @@ Makefile recipe, walks each gated script's imports and fails if any of them is n
 What it still cannot see is a script that imports only tracked files and needs a device anyway; only
 running the gate somewhere with no rig proves that, which is what CI does on every push.
 
+**AND THE RECORDER NOW ASKS WHETHER THE CLIENTS IT IS ABOUT TO STAMP ARE RUNNING THE DEPLOYMENT
+(2026-09-24).** `record()` stamps `build` from the REPOSITORY, so a check run against a tab left
+open across a deploy writes a row naming a commit whose code that tab never executed: TAB-1 came
+back `FAIL` three times on 2026-09-05 against a fix its tab had never loaded, and three probes were
+spent before the stale tab was the answer. `bundle.mjs` could tell a stale client from a current one
+since 2026-08-24, and **only a runner ever asked it** - `tab1.mjs` learned to reload after paying
+for those three rows, while `tab3b.mjs`, `tab7.mjs`, `notif.mjs`, `del1.mjs`, `msg4.mjs` and
+`mut.mjs` had not. A rule living in six memories is not a rule. `recordObserved` is the one place
+that knows BOTH the verdict and the clients it was observed on, so `observedBundles` puts the
+question there and `gate()` makes the row **`VACUOUS` - absent, not failing**, beside
+`redeployedMidRun`. **It refuses and never repairs**: TAB-7 asserts `neverReloaded`, so a recorder
+that quietly reloaded a stale client would destroy the very observable some checks exist to measure
+- the repair stays `bun bundle.mjs --repair`, run deliberately. A bundle that cannot be READ is a
+blind spot recorded under its label, never a demotion, exactly as `deployWindow` already is. Which
+clients may be judged is read off the PAGE (`location.origin === SITE`), not off a device name: the
+labels runners pass to `watch()` are prose (`sender`, `receiver`, `phone`, `TAB7-W1`), and a phone
+serves its shell out of the APK so its id legitimately differs. `staleness-selftest.mjs` pins all of
+it.
+
+**IT ALSO COST THE TRANSPORT ONE FACT IT WAS NOT PUBLISHING.** `ws.send` on a CLOSED socket does not
+throw here - the frame goes nowhere, no reply arrives, and the caller learns from `cdp.mjs`'s 30 s
+command timeout. Measured through this path on 2026-09-24: **30 002 ms for a closed client against
+8 ms for a live one**, on the path of every observed row whose client had died. That is the rig's own
+rule broken by its own transport, so `connect()` now returns `isOpen()` and the check reads the fact
+instead of awaiting the failure - 1 ms.
+
 **THE VERDICT VOCABULARY MOVED OUT FOR THAT REASON AND ONE OF ITS OWN (2026-09-24).**
 `results.mjs` decided what a check may record - by accepting whatever string it was handed - and
 `rows.mjs` held a private map of the words it could read back off the board. Nothing tied the two
