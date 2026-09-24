@@ -217,6 +217,14 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
           ' This device cannot register and NOTHING will heal it: an unused device must be deleted.'
       );
       // The only actor who can lift it is the user, so the only useful place to say so is the UI.
+      //
+      // AND THE TOAST IS THE ONLY CLAIM THE PRODUCT MAKES ABOUT IT, which is the answer to the
+      // question this branch otherwise leaves open: what do the groups below, skipped one by one
+      // with `welcome_request deferred (KP not published)`, look like to the reader? Nothing at
+      // all. Their sidebar tiles carry no "Sync" chip - removed 2026-09-04 as a product decision
+      // about machinery in general - and `ChatArea`'s catch-up banner is gated on REAL decrypted
+      // messages arriving, which a device with no published KeyPackage never receives. So a
+      // refusal no longer has rows claiming a repair is in progress behind it.
       showToast(m.chat_device_limit_reached({ max: e.max ?? '' }), 'error', 12_000);
     } else {
       log(`[KP] Publication failed (${e}) - welcome_request deferred to next connection`);
