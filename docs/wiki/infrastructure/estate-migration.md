@@ -846,7 +846,12 @@ deletion changed a silent breakage into a loud one.
 
 ### `cercle` IS READY, AND WHAT IS LEFT IS FOUR GESTURES - 2026-09-24
 
-Steps 1 to 3 of the runbook are done for the first estate. **Nothing serves from the new host and
+**STEP 3 IS NOT DONE, AND THIS PAGE SAID IT WAS** - measured 2026-09-24 on the host: `/srv/le-cercle`
+exists and is **EMPTY**, and the only container running there is Portail-etu's. What is done is step
+1 and the groundwork below; the project has never been stood up. The claim survived because the
+directory and the volume both exist, which is what "ready" looked like from a distance.
+
+Steps 1 and 2 of the runbook are done for the first estate. **Nothing serves from the new host and
 the old VM has not been touched**: production answered `200` throughout and was re-deployed once,
 deliberately, to prove the change below is inert.
 
@@ -884,6 +889,30 @@ network is ours and only our VMs are on it. On the target host that same binding
 **every co-tenant of a machine we do not own**. So the port mapping must bind to one address and be
 restricted to the relay's source, or the hop must be carried inside an `ssh -L` and stay on loopback.
 **The publish address is part of the move, not a detail of the compose file.**
+
+#### WHAT STANDING IT UP ACTUALLY TAKES - MEASURED 2026-09-24
+
+Everything below was verified on the two sides rather than read off the pipeline.
+
+| | State |
+| --- | --- |
+| Runner `cercle-prod`, tag `cercle-prod` | active |
+| Runner `cercle-portail`, tag `cercle-portail` | **registered and PAUSED**, `gitlab-runner` 19.3.2 (the server's own version), service `active` on the host, and the account **can reach Docker** |
+| `CERCLE_RUNNER_TAG` / `CERCLE_PUBLISH` | `cercle-prod` / `5173` - a bare port, so `0.0.0.0` |
+| `/srv/le-cercle` | present, owned by `gitlab-runner`, **empty** |
+| `le-cercle_cercle-data` | present on the target |
+
+**Standing the project up IS gesture 3, and it takes nothing from the old host.** Un-pause the target
+runner, pause the production one, set the tag to `cercle-portail` and the publish address to
+`127.0.0.1:5173`, run the pipeline on `main`. The deploy writes the server's `.env` from the CI
+variables, copies `compose.yml` and starts the stack **on the target, published on loopback only** -
+while the old container keeps running and the tunnel keeps pointing at it. Nothing a member can see
+changes, and the rollback is the two variables put back.
+
+**The publish address is loopback for a better reason than the pipeline gave.** Its comment said the
+tunnel would run on that box; it will not. Only 22, 80 and 443 reach that host at all, so a port
+published on its public address is unreachable rather than exposed - and loopback is what the host's
+nginx expects, since it terminates TLS and routes by `Host`.
 
 #### The cutover, and its rollback, are the same four gestures
 
