@@ -1028,12 +1028,36 @@ SQLite in WAL mode must create `le_cercle.db-wal` and `le_cercle.db-shm` there. 
 on the target, and a probe running as uid 1000 was refused. The old side is `1000:1000` mode `775`;
 restoring that parity made the probe pass, and the two files appeared within the minute.
 
-**AND `/api/health` ANSWERED `{"status":"ok","schema":2}` THE WHOLE TIME.** It reads. *A column is
-only evidence for the question it was written to answer* ([durable-rules](../durable-rules.md)), and
-a health check that only reads is evidence of nothing about writing: it reported a healthy service
-that would have failed the first sign-in. **A write probe belongs in that endpoint** - `BEGIN
-IMMEDIATE` then `ROLLBACK` takes the write lock and changes no row, which is exactly how the repair
-above was proved.
+**WHAT THE HEALTH ENDPOINT ACTUALLY DID, CORRECTED THE SAME DAY - IT CAUGHT IT.** This page first
+said `/api/health` answered `ok` throughout, and the container's own log refutes that in one line:
+at `09:22:03`, three seconds after the process came up, `[HEALTH] Could not read the schema version:
+SQLiteError: attempt to write a readonly database`. The endpoint returned `unavailable` and a `503`,
+which is exactly its contract. **The claim was written from a single `ok` read off the wire without
+looking at the other end** - the rule about reading the other end before filing a defect, applied to
+a defect filed against our own code.
+
+**BUT IT CAUGHT IT BY AN ACCIDENT OF THE JOURNAL MODE, AND THAT IS THE PART WORTH KEEPING.**
+Reproduced on a throwaway database on the old VM, same ownership shape, as uid 1000:
+
+| Probe | WAL | `DELETE` |
+| --- | --- | --- |
+| a plain `SELECT` | **refused** (`SQLITE_READONLY_DIRECTORY`) | passes |
+| `BEGIN IMMEDIATE` then `ROLLBACK` | refused | **passes** |
+| `BEGIN IMMEDIATE`, write, `ROLLBACK` | refused | refused |
+| a real `INSERT` (the control) | refused | refused |
+
+In WAL mode nothing works at all, because opening the database means creating `-shm` - so a reader
+fails and the endpoint speaks. **In `DELETE` mode a read succeeds and only a write fails**, and
+there the endpoint would report `ok` on a database nobody can write. *A column is only evidence for
+the question it was written to answer* ([durable-rules](../durable-rules.md)): this one asks whether
+the schema can be READ, and it answered a second question only because the journal mode made the two
+coincide.
+
+**AND `BEGIN IMMEDIATE` IS NOT A WRITE PROBE** - the same table says so, and this page proposed it
+before measuring. SQLite defers the write until a statement needs it, so the transaction opens
+happily on a database it could never commit to; it opens on a `readonly: true` connection too. A
+probe that means it has to WRITE inside the transaction and roll back - `PRAGMA user_version` set to
+the value it already holds changes nothing and is refused when writing is impossible.
 
 **A copy carries a file's mode and not its directory's**, which is why this class survives every
 checksum anyone thinks to run.
