@@ -582,6 +582,35 @@ same request to the DSI. **It also reframes the choice**: phase 2 removes Cloudf
 public path anyway, so "open 7844" and "skip the tunnel and cut straight to the phase-2 shape" are
 now two live options rather than one obvious one. That is the user's call, not this page's.
 
+#### THE PARADE, IF 7844 IS REFUSED: A PROXIED RECORD INSTEAD OF A TUNNEL - 2026-09-24
+
+The user expects the DSI to refuse. **A tunnel goes OUT of the machine; the proxy comes IN to it**,
+and Cloudflare does both. So the answer is not to argue about 7844: it is to stop needing it.
+
+Replace the tunnel CNAME with an **`A` record to `193.49.175.67`, proxied**. Cloudflare then reaches
+the origin on **443 inbound**, the port this host already serves - measured from outside on
+2026-09-24: `portail-etu.emse.fr` answers `200`, and a TLS connection carrying a `canari` SNI is
+ESTABLISHED and fails only on the certificate, which is the expected half. **Nothing is circumvented
+and 7844 is not used at all**, which is the point: inbound 443 to a web server is what this machine
+is for.
+
+What it needs, all of it ours:
+
+| Piece | Note |
+| --- | --- |
+| The DNS record | our zone, no DSI. But `CF_TOKEN_ADMIN` lacks `Zone:DNS` (`10000`, measured 2026-09-24) and the DNS-scoped token is dead - so this is a dashboard gesture or a new token |
+| An origin certificate | **Cloudflare Origin CA**: free, issued by Cloudflare, trusted only between the edge and the origin, so `Full (strict)` holds with no ACME and nothing asked of the school |
+| A vhost on the host's nginx | already the target shape of section 5; the tunnel was only ever a way of reaching it. **The port allocation table is owed FIRST** - `sites-enabled/canari.conf` currently sends `canari.emse.fr` to Portail-etu |
+
+**AND IT CORRECTS A CLAIM MADE EARLIER THE SAME DAY.** "Without the tunnel phase 1 stops being
+reversible" is WRONG for a PROXIED record: a client never resolves the origin address, the edge holds
+the mapping, so the rollback is one API call with immediate effect and **no TTL to wait out**. That
+is more reversible than a bare DNS flip and level with the tunnel. The bare-record version of this
+idea is the one that carries a TTL, and it is not what is proposed here.
+
+The real cost is the honest one: this keeps Cloudflare in the public path, which phase 2 exists to
+remove. It is therefore a LANDING, not the target - which is exactly what phase 1 was defined to be.
+
 The unit is left **INSTALLED and DISABLED**. A service that fails at every boot on somebody else's
 machine is noise; what the runbook needs kept is the configuration, not the retry loop.
 
