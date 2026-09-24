@@ -820,6 +820,26 @@ same script: **17 tables, 455722 rows, `user_version = 2`, `integrity_check = ok
 the md5 of the transferred archive matched at both ends. The count that matters is the per-table
 one, because a total can agree while two tables have swapped.
 
+#### THE TUNNEL ALREADY POINTS AT ANOTHER MACHINE - MEASURED 2026-09-24
+
+**The relay is not a new mechanism; it is the one already in production.** `cercle.canari-emse.fr`
+answers `200`, and the VM serving it runs **no connector at all** (`cloudflared` is `inactive`
+there): it listens on `0.0.0.0:5173` on its own private address, and the connector that serves the
+name runs on the `canari` VM and reaches it across the private network. **The ingress therefore
+already names a REMOTE address rather than a loopback port**, which is exactly the shape the move
+needs.
+
+So `cercle`'s cutover is one ingress rule repointed - from the old VM's private address to the
+target host - and the runbook's *"point the tunnel ingress at the new loopback port"* was written
+for a connector on the target that will now never exist. **The rollback is the same edit reversed**,
+and the old VM keeps serving throughout, exactly as the phase intends.
+
+**ONE THING DOES CHANGE, AND IT IS NOT THE INGRESS.** Today `0.0.0.0:5173` is harmless: the private
+network is ours and only our VMs are on it. On the target host that same binding is reachable by
+**every co-tenant of a machine we do not own**. So the port mapping must bind to one address and be
+restricted to the relay's source, or the hop must be carried inside an `ssh -L` and stay on loopback.
+**The publish address is part of the move, not a detail of the compose file.**
+
 #### The cutover, and its rollback, are the same four gestures
 
 The delta re-sync is what makes this a rehearsal rather than the move: the copy above ages from the
