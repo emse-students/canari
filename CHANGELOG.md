@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'etape 2 du check R n'est plus bloquee par un fixture inexistant
+
+Elle attendait une notification portant une vraie image, et aucun compte de test n'avait d'avatar.
+Le premier contournement propose est mort : les avatars viennent de MiGallery, pas d'une colonne
+d'ici. Le second marche - une association creee sur l'estate LOCALE, logo televerse par le recadreur
+de l'app - et la chaine a repondu sur le build debug (`decodeSampled: 512x512 -> inSampleSize=2`,
+`largeIcon=true`). Reste la meme mesure sur l'artefact retreci : `bun a1apk.mjs --release`, dont
+l'installation coute le device. La recette du fixture est consignee.
+[device-verification](docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android).
+
+### Fixed - un build release PEUT joindre l'estate locale, et deux pages disaient le contraire
+
+`usesCleartextTraffic=true` n'est pose que sur le type debug, mais cet attribut n'est que la
+configuration de BASE : `network_security_config.xml` vit dans `src/main/res`, s'applique a tous les
+types et nomme `tauri.localhost` et `localhost` dans un `domain-config` qui l'emporte pour eux. Lu
+sur l'artefact release lui-meme (`aapt2 dump xmltree` : `cleartextTrafficPermitted=true`, ressource
+renommee `res/8G.xml` par le shrinker et conservee). Ce qui manque vraiment a un build release,
+c'est la capacite Tauri `local-estate`, que `--config` donne aux deux types.
+[README du rig](tools/cross-client-harness/README.md).
+
 ### Fixed - une desinstallation ne laisse aucune trace, et le rig accusait le mauvais cote
 
 Franchir la ligne debug/release exige une desinstallation, qui emporte l'enrolement et `mls.bin` :

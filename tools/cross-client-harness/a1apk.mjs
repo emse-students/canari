@@ -4,6 +4,8 @@
  *   bun a1apk.mjs               # reverse + build + install + prove
  *   bun a1apk.mjs --no-build    # reverse + install the APK already on disk + prove
  *   bun a1apk.mjs --reverse     # only the reverse, which is what a replug costs
+ *   bun a1apk.mjs --release     # the MINIFIED, resource-shrunk build for check R - COSTS THE DEVICE
+ *   bun a1apk.mjs --build-only  # build and assert the artifact; touch no phone
  *
  * WHY THIS IS AN ATOM AND NOT A PARAGRAPH IN THE README. The invocation was documented and nothing
  * executed it, so every session retyped it - and the copy went stale in the one place a copy always
@@ -16,9 +18,17 @@
  * 1. **The phone reaches the estate over `adb reverse`, per device, and it does not survive a
  *    replug.** `SITE` is `http://localhost:<port>` for the workstation; `adb reverse tcp:<port>
  *    tcp:<port>` makes the SAME string true on the phone, which is why nothing here rewrites a URL.
- * 2. **A debug build is what makes that legal.** `build.gradle.kts` sets
- *    `usesCleartextTraffic=true` for the debug type only, and `network_security_config.xml` permits
- *    cleartext to `localhost` - so a release APK cannot talk to the local estate at all.
+ * 2. **Cleartext to `localhost` is NOT a debug-only privilege, and the sentence here said it was.**
+ *    `build.gradle.kts` does set `usesCleartextTraffic=true` for the debug type alone - but that
+ *    attribute is only the BASE config, and `network_security_config.xml` lives in `src/main/res`,
+ *    applies to every build type, and names `tauri.localhost` and `localhost` in a `domain-config`
+ *    that overrides the base for exactly those two. Measured on the release ARTIFACT rather than
+ *    argued: `aapt2 dump xmltree` on `app-universal-release.apk` reads
+ *    `cleartextTrafficPermitted=true` over both domains, in a resource the shrinker renamed to
+ *    `res/8G.xml` and kept. What a `--debug` build really buys is `run-as`, the native half of a
+ *    footprint row - and what a release build lacks for the local estate is the Tauri CAPABILITY
+ *    scope, which `--config src-tauri/tauri.local.conf.json` supplies to either build type. This
+ *    says what the APK PERMITS; only a run says what it reaches.
  * 3. **`BUILD_WEB` must be UNSET.** The APK embeds its frontend (`frontendDist: "../build"`) and
  *    Tauri needs the adapter-STATIC shape. Inheriting `BUILD_WEB=1` from a shell that had just
  *    deployed the local estate would package an adapter-node build - a `build/` with no
@@ -149,7 +159,13 @@ ${listed}`
  * to reuse cannot have its work at module scope - the rule the four other dual-purpose files in
  * this directory already follow with the same `pathToFileURL` guard.
  */
-export async function armA1({ build = true, reverseOnly = false, device = 'A1' } = {}) {
+export async function armA1({
+  build = true,
+  reverseOnly = false,
+  device = 'A1',
+  release = false,
+  buildOnly = false,
+} = {}) {
   // BINDS THE NAMED PHONE ITSELF, defaulting to the one this atom is named for.
   //
   // With two phones attached, `serial()` refuses rather than choosing - correctly, and it says so:
@@ -185,9 +201,18 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
   console.log(`[${TAG}] NDK ${ndkVersion} (discovered, not named)`);
   console.log(`[${TAG}] target origin ${SITE} - the same string on both sides of the reverse`);
 
+  // THE RELEASE VARIANT IS FOR CHECK R AND COSTS THE DEVICE, which is why it is a flag and not a
+  // default. `isMinifyEnabled` and `isShrinkResources` are on for this build type ALONE, so it is
+  // the only artifact in which a stripped class or resource can surface - and it is signed with the
+  // release keystore, so it cannot be installed over the debug build without an uninstall that
+  // destroys the enrolment and the MLS store. Everything else is identical, the local-estate
+  // overlay included: `network_security_config.xml` lives in `src/main/res`, applies to every build
+  // type, and names `localhost`, so cleartext to the estate is NOT a debug-only privilege.
   const APK = join(
     FRONTEND,
-    'src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk'
+    release
+      ? 'src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk'
+      : 'src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk'
   );
 
   // Relative to FRONTEND, which is this build's cwd - `--config` resolves against the cwd.
@@ -231,7 +256,7 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
     const logDir = join(STATE_DIR, 'logs');
     mkdirSync(logDir, { recursive: true });
     const logFile = join(logDir, `a1apk-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
-    console.log(`[${TAG}] building (debug) - output to ${logFile}`);
+    console.log(`[${TAG}] building (${release ? 'RELEASE - minified and resource-shrunk' : 'debug'}) - output to ${logFile}`);
     console.log(`[${TAG}]   NOT piped: this build buffers until exit, so a pipe loses all progress.`);
 
     // `stdio: inherit` for the same reason the README gives: piping it hides every line until the
@@ -241,14 +266,17 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
     // build without this overlay produces an APK that REFUSES the estate it was pointed at, with the
     // product's own red "url not allowed on the configured scope". The overlay adds `local-estate`,
     // and nothing else does, which is what keeps a release build from ever compiling it.
-    const built = spawnSync(tauri, ['android', 'build', '--debug', '--config', LOCAL_CONF], {
+    const args = release
+      ? ['android', 'build', '--config', LOCAL_CONF]
+      : ['android', 'build', '--debug', '--config', LOCAL_CONF];
+    const built = spawnSync(tauri, args, {
       cwd: FRONTEND,
       env,
       stdio: 'inherit',
       timeout: 45 * 60_000,
     });
     if (built.status !== 0) {
-      throw new Error(`tauri android build --debug --config ${LOCAL_CONF} exited ${built.status}`);
+      throw new Error(`tauri android build ${args.join(' ')} exited ${built.status}`);
     }
 
     if (!existsSync(APK)) {
@@ -289,12 +317,43 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
     );
   }
 
+  // AN ARTIFACT CAN BE ASKED QUESTIONS WITHOUT A PHONE, and the answers that matter most are of
+  // that kind: what a shipped library COMPILES was settled by counting a string in it against a
+  // control, and a runtime probe on a development ROM could not corroborate either half. So the
+  // build and its assertions stand alone, and installing is a separate decision - which the release
+  // variant makes irreversible.
+  if (buildOnly) {
+    console.log(`[${TAG}] --build-only: the APK is at ${APK} and no phone was touched`);
+    return { apk: APK, installed: false, dev };
+  }
+
   // ── install, and NEVER uninstall ────────────────────────────────────────────────────────────────
   console.log(`[${TAG}] installing ${APK}`);
   const before = adb(['shell', 'dumpsys', 'package', PKG]);
   const verOf = (dump) => /versionName=(\S+)/.exec(dump)?.[1] ?? '(none)';
   const codeOf = (dump) => /versionCode=(\d+)/.exec(dump)?.[1] ?? '(none)';
   console.log(`[${TAG}] installed before: ${verOf(before)} (code ${codeOf(before)})`);
+
+  // A DELIBERATE UNINSTALL, AND ONLY IN THE ONE DIRECTION THAT CANNOT AVOID IT. The release APK is
+  // signed with another key, so `install -r` over the debug build is refused - and the refusal is
+  // correct, which is why it is not simply caught below. What makes this legitimate is that the
+  // caller asked for the release variant, which is a decision about the DEVICE and not about the
+  // install step: check R exists to measure the shrunk artifact and there is no shrunk artifact
+  // signed with the debug key. Everything it costs is named here rather than discovered afterwards.
+  if (release && before.length > 0 && /DEBUGGABLE/.test(before)) {
+    console.log(
+      `[${TAG}] UNINSTALLING the debug build first - the release APK is signed with another key and ` +
+        `cannot replace it. THIS DESTROYS the enrolment, the MLS store and every runtime grant: the ` +
+        `phone comes back as a NEW device that has to log in, set a PIN, re-join every conversation ` +
+        `and be re-granted POST_NOTIFICATIONS.`
+    );
+    const removed = spawnSync('adb', ['-s', dev, 'uninstall', PKG], { encoding: 'utf8' });
+    const saidRemoved = `${removed.stdout ?? ''}${removed.stderr ?? ''}`.trim();
+    if (removed.status !== 0 || !/Success/i.test(saidRemoved)) {
+      throw new Error(`uninstall before the release install failed: ${saidRemoved || '(no output)'}`);
+    }
+    console.log(`[${TAG}] uninstalled - the device that was on this phone no longer exists`);
+  }
 
   const install = spawnSync('adb', ['-s', dev, 'install', '-r', APK], {
     encoding: 'utf8',
@@ -374,6 +433,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   armA1({
     build: !argv.includes('--no-build'),
     reverseOnly: argv.includes('--reverse'),
+    release: argv.includes('--release'),
+    buildOnly: argv.includes('--build-only'),
     device,
   }).catch(
     (e) => {

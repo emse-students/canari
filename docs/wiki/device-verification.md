@@ -767,13 +767,62 @@ guard correctly refuses to grade a campaign row on it (`pin.mjs` said so, and wa
 | Step | Verdict | The evidence, and not the impression |
 | --- | --- | --- |
 | 1. own background | **PASS** | The APK's own resource table declares `() #fff9fbff` / `(night) #ff070b12`, the two colours this check names, so the assertion is LOSSLESS and not a pixel judgement. A screen recording of the cold launch holds `#060a12` for the first 500 ms - `#070B12` with one LSB of h.264 chroma loss per channel - before anything else drew. No grey flash. |
-| 2. a face in the shade | **BLOCKED, and not by the app** | See below. |
+| 2. a face in the shade | **OWED, no longer blocked** | The fixture exists and the path answered on the DEBUG build (`decodeSampled: 512x512 -> inSampleSize=2`, `largeIcon=true`), 2026-09-24. What is left is the same run on `bun a1apk.mjs --release`, whose install costs the device. See below. |
 | 3. French channels | **PASS** | All six survive R8 WITH their descriptions: `canari_messages` "Messages Canari", `canari_mentions` "Mentions Canari", `canari_calls` "Appels Canari", `canari_social` "Activite sociale Canari", `canari_reactions` "Reactions a vos messages", `canari_forms` "Rappels de formulaires". A seventh, `default`, is named **"Default"** in English - it is `tauri-plugin-notification`'s own hardcoded literal, created on plugin load in BOTH build types, and nothing posts to it. Library blemish, not a shrinking regression ([backlog](backlog.md)). |
 | 4. both system bars | **PASS** | `env(safe-area-inset-top)` = `34px`, `env(safe-area-inset-bottom)` = `24px`, left/right `0px`, with `viewport-fit=cover` intact. At `devicePixelRatio` 2.475 that is 84 and 59 physical pixels, matching the status bar and the gesture bar on screen. |
 | 5. picker, dialog, biometric | **PASS, all three** | File picker: `com.android.documentsui/.picker.PickActivity` became the top resumed activity on a real touch. Dialog: a `role=dialog` rendered with its French copy and both actions. **Biometric - the one that broke before**: `ActivityTaskManager: Displayed fr.emse.canari/app.tauri.biometric.BiometricActivity for user 0: +84ms`, no `InflateException`, the system `BiometricPrompt` bound its credential view and animated in, and dismissing it rejected the promise and returned to `MainActivity` with no crash. |
 | 6. refuses a device transfer | **PASS** | `aapt2` on the artifact reads `android:allowBackup=false` AND `android:dataExtractionRules=@0x7f120000`, which resolves in the resource table to `xml/data_extraction_rules -> res/4j.xml`. The shrinker RENAMED the file but kept it, which is why an `unzip | grep data_extraction` finds nothing and reads as absent. `dumpsys` on Android 16 does not print the attribute at all, so the artifact is the only witness. |
 
-**WHY STEP 2 CANNOT BE MEASURED TODAY, AND WHAT WOULD UNBLOCK IT.** The step needs a notification
+**THE FIXTURE NOW EXISTS, MEASURED ON DEBUG 2026-09-24 - WHAT IS LEFT IS THE INSTALL.** The
+paragraph below said no notification the campaign can trigger carries a bitmap. That is no longer
+true, and the route it named as second is the one that worked: **an association created on the LOCAL
+estate, with a logo uploaded through the app's own cropper**, which writes `logoMediaId` and makes
+`/api/media/public/<id>` serve real bytes (`200 image/webp`, measured). Publishing as that
+association announces to the whole feed audience through `PostAnnounceScheduler`'s minute tick, and
+the phone answered with the line the step requires:
+
+```
+CanariFCM: onMessageReceived: type=social ...
+CanariFCM: showSimpleNotification: type=social channel=canari_social title=<the association> a publie
+CanariFCM: fetchPublicMediaIcon: cached for <media id>
+CanariFCM: decodeSampled: 512x512 -> inSampleSize=2, target=158
+CanariFCM: showSimpleNotification: notifId=10001 channel=canari_social largeIcon=true
+```
+
+**THE RECIPE, BECAUSE A FIXTURE THAT SURVIVES ONLY IN A CHAT HISTORY IS NOT A FIXTURE.** It lives
+in the estate's database and object store, so a rebuilt local estate loses it and it is rebuilt like
+this, all of it through the app's own code paths:
+
+1. `update users set admin = true where id = <the peer's>` on the local Postgres - association
+   creation is global-admin or BDE `MANAGE_ASSO`, and no local account had either.
+2. As that account, `/associations/new` - name and slug only; the slug derives from the name.
+3. `/associations/<slug>/edit`, "Changer le logo", stage `fixtures/msg4-image.png` on the cropper's
+   `input[type=file]` (`attachFiles`), then "Utiliser cette image". This is the ONLY step that
+   cannot be an API call: the cropper exports a `Blob` the upload takes.
+4. Check the estate, not the screen: `logoMediaId` is set, and
+   `curl -o /dev/null -w '%{http_code} %{content_type}' /api/media/public/<id>` answers
+   `200 image/webp`.
+5. Publish as the association from that client's own page - `apiPost(cx, '/api/posts',
+   { associationId, markdown })`. The announce tick is `* * * * *`, so the push follows within a
+   minute; `[ANNOUNCE] post=... kind=association recipients=N` in social-service's log says it went.
+
+**A `[NOTIFY] association <id> pushes the actor's face, not its logo` warning means the fixture is
+broken, not the app** - that line separates a logo nobody uploaded from a column that cannot be
+read, and neither of them measures step 2.
+
+**That run was on the DEBUG build, so it is not check R** - `isMinifyEnabled` is false there and
+nothing was shrunk. It settles the FIXTURE and nothing else: the path is reachable, the bytes are
+real, and the evidence line fires. Re-running it against `bun a1apk.mjs --release` is the whole of
+what step 2 has left, and that install is what costs the device.
+
+**AND THE FIRST ROUTE NAMED BELOW IS NOT AVAILABLE AT ALL.** "Giving a test account an avatar
+server-side" cannot be done on any estate here: `users` has no avatar column, and
+`/api/mls/push/avatar/:id` proxies core-service's `users/:id/avatar`, which fetches from
+**MiGallery** - another repository's estate, keyed by the school's own photo directory. An account
+without a photo there returns `absent`, and writing one is not a change this repository can make.
+The association-logo caller is the only feeder a fixture can reach.
+
+**WHY STEP 2 COULD NOT BE MEASURED ON 2026-09-23, AND WHAT UNBLOCKED IT.** The step needs a notification
 carrying a real bitmap, because `decodeSampled` is the line that separates "the avatar arrived" from
 "the fallback looked fine". Its ONLY feeder is `cachedRemoteIcon`, which has exactly two callers: a
 user avatar and an association logo. **No test identity on any estate has an avatar image** - the

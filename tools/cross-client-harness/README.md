@@ -617,6 +617,15 @@ next one's symptom names the wrong cause.
   `--no-build` installs what is already on disk; `--reverse` alone is what a replug costs. It is a
   MODULE too (`armA1`), so a phase that arms the phone calls it instead of shelling out.
 
+  **Two flags exist for check R and for nothing else.** `--release` builds the MINIFIED,
+  resource-shrunk variant - the only one in which a stripped class or resource can surface - and
+  installing it **costs the device**: it is signed with another key, so the tool uninstalls the
+  debug build first, deliberately and loudly, rather than meeting a refusal it cannot honour.
+  `--build-only` stops after the build and its assertions and touches no phone, because the
+  questions that matter most are asked of the ARTIFACT: what a shipped library compiles was settled
+  by counting a string in it against a control, and a runtime probe on a development ROM could
+  corroborate neither half ([device-verification](../../docs/wiki/device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)).
+
   **Everything it needs is DISCOVERED, which is why the paragraph below went stale.** The SDK comes
   from `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `%LOCALAPPDATA%/Android/Sdk`; the NDK is the
   highest version present under it. The line here used to name `ndk/26.1.10909125`, and this
@@ -632,10 +641,17 @@ next one's symptom names the wrong cause.
   2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
   keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
   uninstall - which destroys the very data a footprint row measures. And **`run-as` needs
-  debuggable**, while `run-as` IS the native half of the footprint, the half that found two P1s. A
-  debug build is also the ONLY one that can reach the local estate at all: `build.gradle.kts` sets
-  `usesCleartextTraffic=true` for the debug type only, and `network_security_config.xml` permits
-  cleartext to `localhost`. The upgrade KEEPS the app data - verified, 355 bytes of drift, and again
+  debuggable**, while `run-as` IS the native half of the footprint, the half that found two P1s.
+  **What this bullet also claimed - that a debug build is the ONLY one that can reach the local
+  estate - is FALSE, and the config it cited is what refutes it (2026-09-24).**
+  `usesCleartextTraffic=true` is set for the debug type alone, but that attribute is only the BASE
+  config; `network_security_config.xml` sits in `src/main/res`, applies to every build type, and
+  names `tauri.localhost` and `localhost` in a `domain-config` that overrides the base for them.
+  Read off the release ARTIFACT, not argued: `aapt2 dump xmltree` on `app-universal-release.apk`
+  gives `cleartextTrafficPermitted=true` over both domains, from a resource the shrinker renamed to
+  `res/8G.xml` and kept. What a release build genuinely lacks is the Tauri CAPABILITY scope, and
+  `--config src-tauri/tauri.local.conf.json` gives it to either build type - which is how
+  `--release` builds a check-R artifact for this estate. The upgrade KEEPS the app data - verified, 355 bytes of drift, and again
   2026-09-04 going from 0.5.0 to 0.16.3. **Do not pipe that build to `tail`**: the output is buffered
   until exit, so all progress visibility is lost. Redirect instead, and read `cargo` / `rustc` in the
   process list to tell a running build from a stalled one.
