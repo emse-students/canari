@@ -3,8 +3,15 @@ import { m } from '$lib/paraglide/messages';
 /** Production web origin used for shareable links when the WebView runs on Tauri. */
 export const DEFAULT_PUBLIC_APP_ORIGIN = 'https://canari-emse.fr';
 
-/** Hostnames treated as in-app navigation targets (not external browser). */
-export const PUBLIC_APP_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr'] as const;
+/**
+ * Hostnames treated as in-app navigation targets (not external browser).
+ *
+ * `canari.emse.fr` is claimed ADDITIVELY here (phase 2 of the estate migration,
+ * see docs/wiki/infrastructure/estate-migration.md#7-phase-2---the-names): both hosts stay claimed
+ * for several releases, `canari-emse.fr` keeps answering indefinitely, and no date is set for
+ * removing it here.
+ */
+export const PUBLIC_APP_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr', 'canari.emse.fr'] as const;
 
 /**
  * SPA route prefixes eligible for the rich in-app link label (chat cards) and for
@@ -59,7 +66,8 @@ export function isPublicAppUrl(url: string, base?: string): boolean {
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
     return (
       (PUBLIC_APP_HOSTS as readonly string[]).includes(u.hostname) ||
-      u.hostname.endsWith('.canari-emse.fr')
+      u.hostname.endsWith('.canari-emse.fr') ||
+      u.hostname.endsWith('.canari.emse.fr')
     );
   } catch {
     return false;

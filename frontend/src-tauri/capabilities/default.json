@@ -37,7 +37,11 @@
     "websocket:default",
     {
       "identifier": "websocket:allow-connect",
-      "allow": [{ "url": "wss://canari-emse.fr" }, { "url": "wss://www.canari-emse.fr" }]
+      "allow": [
+        { "url": "wss://canari-emse.fr" },
+        { "url": "wss://www.canari-emse.fr" },
+        { "url": "wss://canari.emse.fr" }
+      ]
     },
     "log:default",
     "log:allow-log",

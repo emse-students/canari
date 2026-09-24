@@ -6,8 +6,13 @@ export const MOBILE_APP_PACKAGE = 'fr.emse.canari';
  *
  * `www` is intentionally excluded: it only 301-redirects to the apex, and
  * Google Play rejects App Link domains that are not reachable without redirect.
+ *
+ * `canari.emse.fr` is claimed ADDITIVELY (phase 2 of the estate migration, see
+ * docs/wiki/infrastructure/estate-migration.md#the-deep-links-are-the-one-thing-a-redirect-cannot-fix):
+ * both hosts stay claimed for several releases, an installation never updated keeps opening
+ * `canari-emse.fr` for ever, and no date is set here for dropping it.
  */
-export const MOBILE_APP_LINK_HOSTS = ['canari-emse.fr'] as const;
+export const MOBILE_APP_LINK_HOSTS = ['canari-emse.fr', 'canari.emse.fr'] as const;
 
 /**
  * SPA path prefixes opened in the native app when the user taps an https link.

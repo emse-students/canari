@@ -18,6 +18,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:canari-emse.fr</string>
+		<string>applinks:canari.emse.fr</string>
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>

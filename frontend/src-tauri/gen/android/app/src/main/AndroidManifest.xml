@@ -153,6 +153,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
                 <data android:host="canari-emse.fr" />
+                <data android:host="canari.emse.fr" />
                 <data android:path="/chat" />
                 <data android:path="/communities" />
                 <data android:path="/notifications" />
