@@ -11,13 +11,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Changed - la porte interne ne demenage pas, donc le port refuse ne sert plus a rien
+### Changed - la porte interne ne demenage pas, et le relais sert quand meme: la phase 1 en depend
 
 Decision de l'utilisateur : dev et les interfaces d'admin restent sur l'ancienne VM, dont le tunnel
-marche deja ; la nouvelle machine ne porte que la production. Le blocage du 7844 cesse d'etre un
-sujet, le connecteur installe la-bas a ete SUPPRIME le jour meme - unite, `EnvironmentFile`, binaire,
-source apt et trousseau - et la demande DSI perd deux points sur six. Cout accepte et consigne : dev
-ne tourne plus sur la meme machine que la prod.
+marche deja ; la nouvelle machine ne porte que la production, et le connecteur installe la-bas a ete
+SUPPRIME le jour meme. Mais le tunnel avait un SECOND consommateur : toute la phase 1 passe par lui
+(l'etape 4 pointe son ingress, le rollback le repointe). Conclure du premier que le relais etait
+inutile etait faux, et corrige le jour meme. Le relais reste donc, cote ANCIENNE VM.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - le nom pointe deja sur l'hote cible, et la moitie des questions posees n'existait pas
