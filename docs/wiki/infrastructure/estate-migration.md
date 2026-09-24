@@ -31,7 +31,25 @@ symptom indistinguishable from a phase-1 one.
 
 ## 2. The measured starting point (2026-09-23)
 
-### The three VMs
+### The three VMs - which are LXC CONTAINERS, and the capacity question has an answer
+
+**They are not virtual machines.** `systemd-detect-virt` answers `lxc` on all three (measured
+2026-09-24), and the tell that prompted the check is that `/proc/loadavg` is IDENTICAL on the three
+to two decimals and moves TOGETHER: load is not namespaced, so all three report the Proxmox host's.
+`nproc` and `free` do differ per estate, so lxcfs is presenting the configured limits - the table
+below is allocation, not hardware, and **nothing in it is dedicated.**
+
+**That makes section 9's capacity question decidable, and the answer is measured rather than
+argued.** Allocated across the three: **8 vCPU and 20 G**. Actually resident, at the same moment:
+**about 2 G in total** (1 G, 0 G, 1 G) with the Proxmox host's load at **0.21**. The target offers 4
+vCPU and 11 G with **10 G available** and a load of 0.11, 30 G free on local `/` and 15 G on the
+NetApp. **The allocation was generous; the consumption is not, and the gap is an order of
+magnitude.**
+
+**THIS IS AN IDLE READING AND IT IS NOT A HEADROOM PROOF.** It says the three estates do not need 20
+G, which is what the arbitration was stuck on. It says nothing about a peak - a Postgres restore
+during a cutover, or a frontend build - and the honest next measurement is the resident set during
+one, not another reading at rest.
 
 | VM | vCPU | RAM | Disk | Contents |
 | --- | --- | --- | --- | --- |
