@@ -22,6 +22,15 @@ ce qu'un chemin absolu satisfait.
 [development](docs/wiki/development.md#corehookspath-is-shared-by-every-worktree-and-must-stay-relative).
 
 ## [0.18.22] - 2026-09-24
+### Changed - la question des certificats ne bloque plus, et la demande DSI est ecrite
+
+Les deux certificats que l'ecole sert deja portent UN SEUL nom chacun, emis par GEANT TCS pour ~6,5
+mois : un certificat par nom, aucun ACME, donc rien ici ne peut renouveler. `canari.emse.fr` est
+vivant, sert le Portail Etudiant ICM depuis une AUTRE machine que portail-etu.emse.fr, et son
+certificat a ete reemis le 22/09 - la reaffectation demandee prend un nom a un site qui tourne. La
+demande DSI est desormais ecrite mot pour mot, la question du certificat en moins.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
 ### Changed - miconnect prepare, et Authentik tient dans un dixieme de sa VM
 
 Aucun pipeline ne deploie cette stack, contrairement a ce que son README decrivait; son compose de
@@ -50,6 +59,8 @@ contient `authentik_db.sql.gz`, et le `MANIFEST.txt`, texte constant, l'a promis
 sauvegarde atteint desormais la boite par SSH avec une cle a commande forcee qui ne sait que lire,
 echoue si la source est injoignable, et derive son manifeste des fichiers reellement produits.
 [backup](infrastructure/backup/README.md), [authentik](infrastructure/authentik/README.md).
+
+## [0.18.22] - 2026-09-24
 
 ### Fixed - le rig ne savait plus composer un sondage, et son garde-fou ne tournait pas sur la PR qui l'a casse
 

@@ -462,6 +462,43 @@ owed:
    delivery; **nothing covers non-delivery**, which is the failure that actually takes the site
    down.
 
+#### ONE CERTIFICATE PER NAME, AND IT IS NOT ACME - MEASURED ON THE TWO LIVE NAMES, 2026-09-24
+
+The certificate question in section 7 was listed as **the blocking answer** the nginx configuration
+could not be written without. It is answered, and by reading the two certificates the School already
+serves rather than by asking:
+
+| | `portail-etu.emse.fr` | `canari.emse.fr` |
+| --- | --- | --- |
+| Subject CN | the name itself | the name itself |
+| `subjectAltName` | **`DNS:portail-etu.emse.fr` and nothing else** | **`DNS:canari.emse.fr` and nothing else** |
+| Issuer | GEANT TLS RSA 1 (Hellenic Academic and Research Institutions CA) | the same |
+| Validity | 2026-07-23 -> 2027-02-07 | 2026-09-22 -> 2027-04-09 |
+
+**One certificate per name.** Four names is four certificates, four expiry dates and four renewals -
+not one SAN bundle, so the nginx configuration gets four `ssl_certificate` pairs and the report this
+section owes has four dates to watch, not one.
+
+**And it is the GEANT TCS service, on a ~6.5-month validity - there is no ACME anywhere in this.**
+Nothing in this repository, and nothing on the host, can renew one: a renewal is a DSI action
+followed by a file landing in `/etc/certs/<name>/`. That is precisely why the blind 01:00 reload
+covers delivery and nothing covers NON-delivery, and it is why the missing report is the whole of
+what is owed here.
+
+**`canari.emse.fr` IS LIVE, AND ITS CERTIFICATE WAS REISSUED TWO DAYS AGO** (2026-09-22). It serves
+`Portail Etudiant ICM` - a SvelteKit application, `nginx`, HTTPS only, port 80 does not answer - from
+**`193.49.175.122`, which is NOT the host `portail-etu.emse.fr` runs on** (`193.49.175.67`). So the
+line in section 7 calling it a reassignment is right, and thinner than the thing it describes: the
+ask is to take a name off a running site on a machine this project has never inventoried, whose
+certificate somebody renewed this week. It is the one item in that request that can be refused on
+its merits, and the request should say what it is rather than let it read as moving a spare record.
+
+**The three other names do not exist at all** - `cercle.emse.fr`, `miconnect.emse.fr` and
+`www.canari.emse.fr` all answer `NXDOMAIN`, and neither live name carries an `AAAA`. There is no
+wildcard: a nonsense name under `emse.fr` answers `NXDOMAIN` too, which is worth stating because the
+first measurement here appeared to show one - the resolver's own address, echoed by `nslookup` in
+every answer, read as a record.
+
 ### The cohabitation, and the rename that is only free once
 
 Five compose projects will share one daemon: `portail-etu`, `canari-prod`, `canari-dev`, `cercle`,
@@ -682,18 +719,68 @@ without.
 
 | Ask | Note |
 | --- | --- |
-| `canari.emse.fr` | **exists already**, pointing at `193.49.175.122` and serving Portail-etu. To be REASSIGNED, not created |
+| `canari.emse.fr` | **exists, is LIVE and was re-certified 2026-09-22**: `Portail Etudiant ICM` on `193.49.175.122`, a DIFFERENT machine from the one `portail-etu.emse.fr` uses. A reassignment that takes a name off a running site, and the one ask here that can be refused on its merits |
 | `cercle.emse.fr` | new. The School reserves `etu.emse.fr` for mail, so it is not `cercle.etu.emse.fr` |
 | `miconnect.emse.fr` | new |
 | `www.canari.emse.fr` | new, and only so the redirect to the apex exists |
 | AAAA for the above | only if the host has a v6 address. Nothing blocks on it |
-| The certificate path, and one SAN certificate or one per name | **this is the blocking answer**, not a nicety |
+| The certificate path, and one SAN certificate or one per name | **ANSWERED by measurement 2026-09-24, leave it out of the request**: one certificate per name, GEANT TCS, no ACME - see above |
 | Confirm 80/443 inbound are already open | the machine already serves `portail-etu.emse.fr`, so this is expected to be a no-op |
 | Is the account on the target host also `jolan.boudin`? | the bastion half is proven, the target half is not |
 
 **TURN is deliberately NOT in that request.** It needs an inbound UDP range, which is a different
 kind of ask and is refused more easily than a DNS record; attaching it would put the whole list at
 risk. It goes in its own request when calls are revived ([calls](../frontend/modules/calls.md)).
+
+### The request, written out - copy it, do not rewrite it
+
+**One message, every name at once**, because every name costs a ticket and a second request is a
+second wait. The certificate question that used to be in the table is GONE from it: it was answered
+by measurement above, and a request that asks what the asker could have read is a request that gets
+a slower answer.
+
+**The block below is the message, and it carries French accents on purpose** - it is text to be
+SENT, not documentation prose, and `Portail Etudiant ICM` is not how that site spells its own name.
+Everything around it stays ASCII like the rest of this repository.
+
+```text
+Objet : demande d'enregistrements DNS et de certificats pour quatre noms (association Canari)
+
+Bonjour,
+
+L'application Canari (association etudiante, actuellement sur canari-emse.fr) et les
+services qui l'accompagnent vont etre heberges sur la machine 193.49.175.67, celle qui
+sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse.fr.
+
+1. Creation de trois enregistrements A vers 193.49.175.67 :
+     cercle.emse.fr
+     miconnect.emse.fr
+     www.canari.emse.fr
+
+2. Reaffectation de canari.emse.fr vers 193.49.175.67.
+   Ce nom pointe aujourd'hui vers 193.49.175.122 et sert le Portail Etudiant ICM, dont
+   le certificat a ete renouvele le 22/09/2026. Nous ne demandons cette reaffectation
+   que si ce site n'a plus besoin du nom ; s'il en a besoin, dites-le nous et nous vous
+   proposerons un autre nom pour Canari.
+
+3. Un certificat par nom pour les quatre noms ci-dessus, livre comme les autres dans
+   /etc/certs/<nom>/ sur 193.49.175.67.
+
+4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
+   (la machine sert deja portail-etu.emse.fr, donc nous pensons que oui).
+
+5. Une question d'acces : le compte sur 193.49.175.67 est-il bien jolan.boudin, comme
+   sur le rebond ?
+
+6. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
+   Ce point ne bloque rien.
+
+Merci d'avance,
+```
+
+**What is deliberately NOT in it**: TURN's inbound UDP range, which is refused more easily than a
+DNS record and would put the whole list at risk, and `dev`, which goes internal and needs no public
+name at all.
 
 ### The deep links are the one thing a redirect cannot fix
 
