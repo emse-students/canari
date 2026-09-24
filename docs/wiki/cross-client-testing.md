@@ -11,7 +11,11 @@ distilled into, `CHANGELOG.md` holds every product defect,
 [the README](../../tools/cross-client-harness/README.md) is the instrument, and `CLAUDE.md` is what
 is open. **A cell that is not `PASS` may carry prose, because what it is waiting on is state.**
 
-Two accounts, **owner** (W1, W3, A1) and **peer** (W2). **Target is the LOCAL estate.** **Run order
+Two accounts, **owner** (W1, W3, A1) and **peer** (W2). **A1 CARRIES A DEVICE CREATED 2026-09-24,
+JOINED TO NOTHING** - a release-signed APK was installed over the rig's debug build to verify the
+WebView fix, and the uninstall that allowed it took the enrolment and the MLS store; **a row needing
+history on that phone has to build it first**
+([device-verification](device-verification.md#before-you-start)). **Target is the LOCAL estate.** **Run order
 is the numbered ladder below, top to bottom - the only copy of that order.**
 
 **`bun rows.mjs` IS WHAT SETTLES THIS FILE, AND IT HAS CAUGHT THE BOARD WRONG FIVE TIMES.** It reads

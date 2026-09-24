@@ -196,7 +196,17 @@ nothing and looks like a dead WebView rather than a wrong name.
   is void. And a debug-keystore install cannot be replaced by a release-signed APK
   (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): crossing that line needs an **uninstall, which wipes
   `mls.bin`** and re-enrols the device, so it is a decision to take before the setup, never at the
-  install step. Then date the CODE from a string the running app logs - `git log -S "<that line>"` -
+  install step. **That refusal is SYMMETRIC and names neither side** - it fires just as well when
+  the phone carries the release build and the APK is the debug one, which is the case in which the
+  uninstall has ALREADY happened; `pkgFlags` answers which is which. **And afterwards nothing says
+  it happened**: the replacement package reads the right version and launches, so the only witness
+  is that `install -r` preserves `firstInstallTime` and a fresh install does not. **`firstInstallTime
+  == lastUpdateTime` means a NEW device** - no enrolment, no MLS store, and `POST_NOTIFICATIONS`
+  back to denied, which a push check needs granted. `a1apk.mjs` prints all of it after every
+  install. **A1 lost its device this way on 2026-09-24**: a release APK built to verify the WebView
+  devtools fix was installed over the rig's debug build, and the uninstall that allowed it took the
+  enrolment with it - the phone now carries a device created 2026-09-24 03:11 and joined to nothing.
+  Then date the CODE from a string the running app logs - `git log -S "<that line>"` -
   because a log string is version-stamped evidence the process hands you for free. See rule 17 in
   [testing-methodology](testing-methodology.md).
 - **KNOW WHICH ESTATE THE BUILD POINTS AT, because it decides what EMPTINESS means.** Read it from

@@ -1296,6 +1296,23 @@ What must not be forgotten between the pages:
   its dex was inspectable anyway. It cannot confirm the exposure and it cannot confirm the fix.
   **Read `ro.build.type` before believing any capability reading taken on a phone**, and prefer the
   artifact: a count against a control settles what a runtime probe on a development ROM cannot.
+- **AN UNINSTALL LEAVES NO TRACE ON THE PACKAGE THAT REPLACES IT - AND ONE CLOCK IS THE ONLY
+  WITNESS.** Crossing the debug/release signing line needs an uninstall, which is already written
+  down as the cost of the enrolment and `mls.bin`; what is not is that **nothing afterwards says it
+  happened**. The package reads the right `versionName`, launches, and shows a login screen that
+  looks like any signed-out app - so the next session re-installs, logs in, and believes it is
+  driving the device the campaign enrolled. `install -r` PRESERVES `firstInstallTime`; only a
+  package uninstalled first gets a new one, so **`firstInstallTime == lastUpdateTime` IS the proof
+  that the enrolment, the MLS store and every runtime grant are gone**, and it is the only one. The
+  grants matter on their own: `POST_NOTIFICATIONS` returns to DENIED, the rig treats it as ambient
+  (`archive/life.mjs` revokes it and grants it back), and a push row then fails for a reason nothing
+  names. `a1apk.mjs` reads both clocks after every install and says so out loud rather than granting
+  anything back - a grant would hide the loss, and it cannot restore the enrolment. **The refusal it
+  prints used to name the wrong side**: `INSTALL_FAILED_UPDATE_INCOMPATIBLE` is symmetric, and the
+  message asserted the APK was the release one when the PHONE was, which cost a session looking for
+  a debug build it was already holding. `DEBUGGABLE` in `pkgFlags` says which side is which, from a
+  dump the tool already had. Measured on A1, 2026-09-24
+  ([device-verification](device-verification.md#before-you-start)).
 - **A CAPABILITY COMPILED INTO AN APK IS NOT REACHED BY A DEPLOY, AND `minClientVersion` CANNOT GATE
   IT.** The app embeds its frontend (`frontendDist: "../build"`), so every device already holding a
   build keeps whatever that binary can do until a NEW store version replaces it - and the version
