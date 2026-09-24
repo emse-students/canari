@@ -78,6 +78,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 | **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
 | **send the DSI the one request that carries every name at once - IT IS WRITTEN OUT, copy it** - three records to create, `canari.emse.fr` to reassign, the certificates, the INBOUND firewall confirmation, the OUTBOUND opening of port 7844 that a Cloudflare tunnel needs and that is measured BLOCKED upstream, and the account question. The certificate question that used to block it was ANSWERED by measurement on 2026-09-24 and removed from the request. Every name costs a ticket, so a second request is a second wait | 1 message | [estate-migration](infrastructure/estate-migration.md#the-request-written-out---copy-it-do-not-rewrite-it) |
+| **decide how a member ever clears the dead rows a deleted group leaves - a bulk action, an age-out once the banner has been seen, or nothing at all.** The retention is deliberate and right; what has no answer is the ACCUMULATION, and that the only exit is per-row. Any bulk control's one honest allowlist is "already marked `removed`" - precisely the set whose purpose is to have been SEEN first - so a control that clears them wholesale re-introduces, by the owner's own hand, the silent removal the banner exists to prevent. That trade is a UX call, not an agent's | 1 decision | [P3 - a deleted group leaves every OTHER member a dead row](#p3---a-deleted-group-leaves-every-other-member-a-dead-row-for-ever-clearable-only-one-at-a-time) |
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **rotate the Cloudflare run token on both boxes, after moving it out of the unit's command line** - any local user reads it today through `systemctl show -p ExecStart`, on `canari` and on `miconnect`, whatever the file mode. The unit shape that closes it is written down; what needs the user is that the rotation drops the public path to production for the minute between invalidating the old token and restarting the daemon | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala`, a repository that now answers `404`; the repository that looks like its successor does not contain that commit. Nothing runs from it and nothing points at it, so this is not a technical question but somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
@@ -4507,73 +4508,6 @@ handed it.
 into the least legible failure it can produce. Every HEAL-NEW row is affected, and it costs nothing
 today only because the owner sits at 3 of 15 slots.
 
-### P2 - a client at the DEVICE CAP still enumerates ten rows it can never join
-
-**A rendering-honesty question rather than a mechanism**, and a P2 rather than a P1 because nothing
-is silent any more: the refusal is logged with the count it read, the user is shown
-`chat_device_limit_reached` naming the device list to open. What is left: ten conversations
-that can never become ready still wear the "Sync" badge, because the sidebar is enumerated from the
-server's group list and every row starts `isReady: false`. The toast explains the cause once; the
-rows keep claiming a repair is in progress for as long as the device stays refused.
-
-**Everything below is the original measurement, kept because it is the evidence, not the plan.**
-
-**This is the user's own HEAL report, mechanised.** They described adding a device and finding
-conversations wearing the "Sync" badge, some repairing and others not. That is exactly the state a
-device reaches when its KeyPackage publication is REFUSED: the sidebar is enumerated from the
-server's group list, every row starts `isReady: false`, and nothing can ever move them because the
-device is not addressable.
-
-**THE MEASUREMENT.** A device minted on prod at 10:22, on a fresh profile of an account holding
-fifteen devices:
-
-```
-POST /api/mls/register-device -> 400
-[KP] Publication failed (Error: Failed to publish KeyPackage: 400 ) - welcome_request deferred to next connection
-[SYNC] 7da231f8... absent - welcome_request deferred (KP not published)      (x10, one per group)
-```
-
-and on the server, for every one of the ten groups:
-
-```
-[MEMBERSHIP_ACTIVE] REFUSED group=... device=...  reason=no_key_package
-```
-
-`registerDevice` counts `key_package` rows inside `RETENTION_WINDOW_MS` and throws
-`BadRequestException` at `MAX_DEVICES_PER_USER` (15) - **before** it logs `[REGISTER_DEVICE] START`,
-which is why the server's own trace shows nothing for the device at all. The cap is deliberate (audit
-M5) and is not the defect.
-
-**THE DEFECT IS THAT THE CLIENT CALLS A PERMANENT REFUSAL "deferred to next connection".** A 400 here
-is a statement about the ACCOUNT, not about this attempt: no reconnection, no retry and no amount of
-waiting will change it, and the user is never told the one thing that would fix it - delete a device
-in Settings. The server's message already says so and is thrown away. A fallback is a signal, never a
-path: the retry loop here is a path, and it is silent.
-
-**WHY IT IS NOT ONLY OUR TEST ACCOUNT.** Two accounts on prod are at exactly 15 on 2026-08-28: the
-campaign owner (its own debris, since purged to 2) and one REAL user, whose oldest device dates from
-2026-07-21. Their next device will be refused the same way, and nothing will tell them.
-
-**WHAT A FIX MUST DO**, in the order that matters:
-
-1. **Classify at the throw, not on the message.** A 400 from `register-device` is terminal; a 5xx or
-   a transport failure is retryable. The publication path currently treats every failure as the
-   second kind. The discriminator is the status code, which is already there.
-2. **Say it, once, where the user is.** The refusal is the answer to "why is everything stuck on
-   Sync", so it belongs on the sidebar state, not in a console line - and it needs a Paraglide
-   string, with the action (`Settings -> Devices`) in it.
-3. **Do not enumerate what cannot be joined.** Ten rows that can never become ready are ten rows
-   claiming a repair is in progress. Whatever the UI decides to show, the honest state is not "Sync".
-
-**MEASURED SO IT IS NOT RE-DERIVED:** with a slot free, the same profile publishes its KeyPackage in
-**1.9 s** - so slowness was never the story, and neither was the wipe.
-
-**WHAT IT COST THE CAMPAIGN, recorded because the lesson is the reusable part.** The rung's own
-sixteen HEAL-NEW rows each mint a device and abandon it, so the cap was reached by construction, and
-five rows then reported that a wiped profile does not publish - a phantom product defect written into
-this file overnight. `newdevice.mjs` now asserts the account has a slot BEFORE it wipes anything, and
-purges the id each mint abandons.
-
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
 **The defect, its cause, the guards of 2026-08-28 and the hand cleanup of 2026-08-30 - with every
@@ -5014,10 +4948,31 @@ never writes a body; it can present a body it knows is superseded.
 
 **Why it is not simply a bug to fix.** Taking the bundle's body means trusting a peer's copy of
 another member's message content over our own, and the comment on the deletion branch (D5) shows the
-narrowness there was reasoned rather than accidental. `editSupersedes` now gives the merge a rule it
-did not have when it was written - apply the bundle's body when its `editedAt` is strictly newer -
-which would close this without trusting anything undated. That is a trust-model decision, so it is
-recorded here rather than taken while a campaign is running.
+narrowness there was reasoned rather than accidental.
+
+**AND THE FIX THIS ENTRY PROPOSED IS REFUTED (2026-09-24), WHICH MATTERS MORE THAN THE ENTRY.** It
+said `editSupersedes` *"would close this without trusting anything undated"*. It would not.
+`editSupersedes` decides WHICH of two edits wins; it never decides WHO may edit. The live
+`edit_message` path answers that separately and first, with `mutationIsAuthorised` - *"only the
+author may mutate it"*, checked against the MLS-authenticated sender, for edits and deletes alike.
+**A bundle cannot reproduce that check**: its sender is whichever peer answered the history request,
+not the message's author, and the bundle carries no per-message authorisation. So applying a
+bundle's body on a date comparison alone would let ANY member rewrite ANY other member's message
+body on the receiving device, bypassing the one rule the live path enforces. Anyone acting on the
+old sentence would have shipped that. *A claim that a mechanism closes something must be read
+against what that mechanism actually decides.*
+
+**Why the deletion branch is not the same concession.** It writes a body too, unauthorised, but the
+body is a tombstone - fixed text, not attacker-chosen. The worst a hostile peer gets is destroying a
+message on our device; it cannot put words in another member's mouth. That asymmetry is exactly the
+"reasoned rather than accidental" narrowness above.
+
+**THE SOUND SUBSET, IF THIS IS EVER TAKEN.** Accept the bundle's body only when the responding peer
+IS the message's author - the bundle's MLS-authenticated sender equal to the row's `senderId` - and
+then order it with `editSupersedes` as the live path does. That closes the case where the author
+answers the history request and leaves every other case exactly as narrow as it is now. It is
+strictly smaller than what this entry used to propose, and it needs no trust-model decision at all.
+Anything wider needs the bundle to carry the author's own signed edit, which is a wire change.
 
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
@@ -5046,7 +5001,10 @@ touch, and the only honest allowlist is "conversations already marked `removed`"
 exactly the set whose whole purpose is to have been SEEN by its owner first. A control that clears
 them wholesale re-introduces, by the owner's own hand, the silent removal the banner exists to
 prevent. So the question is a UX one and belongs to the user: is the exit a bulk action, an
-age-out for a row whose banner has been seen, or nothing at all.
+age-out for a row whose banner has been seen, or nothing at all. **It is on
+[the user's list](#owed-to-the-user---decisions-rotations-and-one-off-clicks) since 2026-09-24** -
+it said "belongs to the user" for a month and was on no list, which is the one thing that table
+exists to make impossible.
 
 **What would tell us it matters:** no board row covers it, and no rung would ever notice - every
 runner either creates and deletes its own group (so it is the CREATOR, whose copy `deleteGroup`
