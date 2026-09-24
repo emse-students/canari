@@ -1403,9 +1403,18 @@ hard ones.** Measured 2026-09-24 on the `canari` box:
 13 GB of disk for everything above. It fits, and it stops being comfortable if nothing is pruned
 first - the target itself is carrying 2 GB of build cache and 1.3 GB of reclaimable images.
 
-**BOTH ESTATES MOVE** (user, 2026-09-24). Dev is what makes the old VM switchable-off at all, which
-is the stated goal; and dropping it instead would break release gate 2, which refuses a stable
-unless a pre-release served dev at that commit.
+**BOTH ESTATES MOVE** (user, 2026-09-24), and dropping dev instead would break release gate 2, which
+refuses a stable unless a pre-release served dev at that commit.
+
+**WHAT MOVING THEM DOES NOT BUY IS SWITCHING THE OLD VM OFF, and this paragraph claimed it did.**
+Section 9 decided the CONNECTOR stays there - the one installed on the target on 2026-09-24 was
+removed the same day - and its ingress was read on 2026-09-24: **nine names, and three of them
+(`pm`, `wiki`, `archives`) point at machines that are no part of this migration**, while two more
+(`cercle`, `auth`) point at old VMs now reduced to relays. So the `canari` box survives phase 1 as
+the estate's single connector whatever Canari does, and the thing that would let it go is the
+tunnel moving or disappearing - which is phase 2's subject, not this one. **A migration that says
+"then we switch the old machine off" owes a list of what still answers from it**, and that list is
+what this line was missing.
 
 **THE RUNNER MOVES WITH THE ESTATES - THE DECISION TO DELETE IT RESTED ON A PREMISE MEASUREMENT
 REFUTED.** On 2026-09-24 this section said the runner goes away and the deploy converts to SSH from
@@ -1513,7 +1522,28 @@ That is the same finding the Cercle's compose file already carries a paragraph a
    bring the whole estate up EMPTY and healthy. That is the identical failure this migration already
    met on Authentik, which is section A; the difference is that here it is predictable to the day.
    At the move the volumes are restored from a dump anyway, so the new names cost nothing.
-4. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
+4. **Write the target vhosts and the relays, on the pattern the other two already prove - read it
+   rather than reinventing it (measured 2026-09-24).** Each half is four lines of substance:
+
+   - **On the target**, `listen 443 ssl` + `server_name <the public name>` + the
+     `/etc/certs/canari.emse.fr/` certificate + `proxy_pass` to the loopback port. Every estate
+     vhost there presents that same certificate although none of them is called `canari.emse.fr`,
+     and that is deliberate, not an oversight: see the relay.
+   - **On the old VM**, `listen <the port the tunnel already names>` + `proxy_pass
+     https://193.49.175.122` + `proxy_ssl_verify on` with `proxy_ssl_name canari.emse.fr` and the
+     system CA bundle + `proxy_set_header Host <the public name>`. **The certificate is the
+     TRANSPORT identity and the `Host` header carries the real name**, which is why one certificate
+     serves every estate and why the hop is authenticated rather than merely encrypted. The address
+     is `.122` because that is what `canari.emse.fr` resolves to, so certificate, name and address
+     agree; `.67` would work identically and read worse.
+
+   **AND THE `canari` BOX IS NOT THE `cercle` VM, WHICH IS THE ONLY HARD PART.** On the cercle VM
+   the application containers were already gone, so `5173` was free for the relay. On the `canari`
+   box there is **no system nginx at all** - the entry point IS the frontend container, publishing
+   `0.0.0.0:8080` for production and `127.0.0.1:3080` for dev, which are exactly the two ports the
+   tunnel names. So nginx has to be installed there, and it cannot take either port until the
+   estate it belongs to has stopped. That ordering is the window, and it is why step 6 is one step
+   and not two.
 5. **Move the crontab and every remaining path that names the old box - decided 2026-09-24 by the
    user: "le serveur initial n a pas vocation a perdurer pendant des annees apres la migration".**
    The checkouts are step 2; what is left is everything ELSE that was written against
