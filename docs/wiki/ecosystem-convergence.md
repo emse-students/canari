@@ -668,10 +668,10 @@ Operational, not architectural, and each line was learnt by being caught by it.
   (the logs are served as binary and a plain `grep` silently reports "binary file matches"). Flush
   logs with `pm2 flush`, never `rm` - pm2 keeps the descriptor open and an unlinked file grows
   invisibly until the disk is full. **`data-export/` holds PII and is never committed.**
-- **le-cercle (`../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle`) is Aurel's repository**, but
-  our rewrite is merged (!5, !6) and we hold push rights. Reading its pipeline needs `glab`, **run
-  from INSIDE that tree** - it resolves the project from the git remote and answers about Canari
-  from anywhere else.
+- **le-cercle (`../le-cercle`, `gitlab.emse.fr:rootz/le-cercle`) moved from Aurel's personal
+  namespace into the `rootz` group on 2026-09-24** (transferred by Aurel; the project ID, 5291,
+  is unchanged). Reading its pipeline needs `glab`, **run from INSIDE that tree** - it resolves the
+  project from the git remote and answers about Canari from anywhere else.
 - **Canari and Portail-etu are both PUBLIC.** Nothing secret may reach either, in code, in a
   fixture, or in a pasted log.
 
@@ -872,7 +872,7 @@ re-run after the rebase before the push.
 **The tooling migration is merge request !5**, branch `chore/tooling-convergence`, one commit
 (`ac54e17`). oxfmt, oxlint and oxvelte replace prettier, eslint and `lint-staged`; TypeScript 7 is
 adopted; `.bun-version` says 1.4.0. The whole of it, with every measurement, is on that repository's
-own [`docs/wiki/tooling.md`](https://gitlab.emse.fr/aurel.dautry/le-cercle/-/blob/main/docs/wiki/tooling.md) -
+own [`docs/wiki/tooling.md`](https://gitlab.emse.fr/rootz/le-cercle/-/blob/main/docs/wiki/tooling.md) -
 this page keeps only what the ecosystem needs to know:
 
 - **The reformat touched five files.** The oxfmt options are the ones `.prettierrc` carried, and all
