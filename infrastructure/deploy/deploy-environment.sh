@@ -20,7 +20,7 @@
 # tag that already exists in the registry and makes the estate run it.
 #
 # Usage:
-#   deploy-environment.sh --environment prod|dev --path /home/canari/canari --tag latest \
+#   deploy-environment.sh --environment prod|dev --path /srv/canari --tag latest \
 #     [--pull-services "core-service frontend"] [--registry ghcr.io] [--image-prefix owner/repo]
 #
 # GHCR_USERNAME and GHCR_TOKEN are read from the environment when present; without them the script
