@@ -15,6 +15,7 @@ import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
+import { HealthController } from './health.controller';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
@@ -53,6 +54,6 @@ import { MinesweeperModule } from './minesweeper/minesweeper.module';
     PublicModule,
     MinesweeperModule,
   ],
-  controllers: [],
+  controllers: [HealthController],
 })
 export class AppModule {}

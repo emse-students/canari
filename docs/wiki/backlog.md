@@ -7151,18 +7151,6 @@ will merge on the second try and tell nobody.
 of a new one is: name the failure, then name the test that would have caught it. If you cannot name
 the test, the entry is a guess.
 
-### P3 - social-service has no root health route, and the other three do
-
-core-service, media-service and chat-delivery-service each expose `GET /api/health` from a
-`HealthController` with an empty `@Controller()`. social-service exposes none: its nearest liveness
-route is `GET /api/channels/health`, which belongs to `ChannelsController` and answers about the
-channel service specifically. Found while writing the boot test, which has to ask a different URL of
-that one service.
-
-It is P3 because nothing is broken today - but a probe, a load balancer or a future readiness gate
-that assumes the shape the other three share will silently point at nothing here, and an asymmetry
-nobody chose is the kind that gets discovered during an incident.
-
 ### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
 
 **Measured on prod 2026-08-31.** There is no foreign key at all:

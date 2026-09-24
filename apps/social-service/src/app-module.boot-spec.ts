@@ -46,7 +46,11 @@ describe('the real AppModule boots', () => {
       await app.listen(0, '127.0.0.1');
 
       const { port } = app.getHttpServer().address() as { port: number };
-      const response = await fetch(`http://127.0.0.1:${port}/api/channels/health`);
+      // THE SAME URL AS THE OTHER THREE SERVICES, since 2026-09-24. This asked
+      // `/api/channels/health` because social-service had no root health route and this file is
+      // where that asymmetry was first felt - a test that has to ask one service a different
+      // question is the shape of an omission, not of a difference anybody chose.
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
 
       expect(response.status).toBe(200);
     } finally {
