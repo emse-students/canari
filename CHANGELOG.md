@@ -14,6 +14,8 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.22] - 2026-09-24
+
 ### Fixed - le rig ne savait plus composer un sondage, et son garde-fou ne tournait pas sur la PR qui l'a casse
 
 `caption-selftest` verifie que chaque cle Paraglide que le rig epelle existe encore dans
