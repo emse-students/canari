@@ -678,8 +678,16 @@ move**: Docker publishes through the nat table, which firewalld's zone does not 
 published on `0.0.0.0` there is reachable from the whole campus network whatever the zone says - the
 same finding Le Cercle's own compose file already carries a paragraph about.
 
-**IT IS DONE for both estates' data and traffic; the runner flip and the crontab move are the two
-items still open (step 10.6).** Production's window ran `2026-09-24T18:17:50Z`-`18:26:39Z` (8m49s):
+**IT IS DONE, in full, for both estates - data, traffic, the runner and the crontab (step 10.6).**
+The target's org-level `canari` runner is `online` (`gh api orgs/emse-students/actions/runners`);
+the old box's repo-level `Canari` runner is `offline`, stopped and disabled via the docker-chroot
+route (no sudo password on that account). The old box's crontab is gone entirely (`crontab -r`,
+backed up first to `/home/canari/backups/crontab.removed-2026-09-24.bak`) - the three lines it
+carried (nightly backup, object backup, egress probe) already run from the target under
+`gha-runner`, which now also schedules Le Cercle's own backup at 04:15
+([le-cercle deployment](https://gitlab.emse.fr/aurel.dautry/le-cercle/-/blob/main/docs/wiki/deployment.md#state)),
+closing the backup-completeness gap this same audit found. Production's window ran
+`2026-09-24T18:17:50Z`-`18:26:39Z` (8m49s):
 `pg_dump`/restore of `auth_db` plus the three object-storage volumes, verified with the same
 per-table content fingerprint methodology `cercle` and `miconnect` used - **53/53 tables identical**,
 spot-checked against the documented false-positive trap (two sides silently agreeing on the same
@@ -864,9 +872,10 @@ All three estates' data and traffic are on the target: `cercle` and `auth.canari
 midday, `canari-emse.fr` and `dev.canari-emse.fr` since the evening - Canari's own move was two
 estates and a CI runner, not one estate
 ([reasoning](#canari---moved-2026-09-24-it-was-two-estates-and-a-ci-runner-not-one-estate)), and the
-naming and Postgres-timing decisions it raised were settled in section 4. **What is still open is
-narrower than what this list once described**: steps 5 and 6's runner half. The runbook in section 6
-says HOW each step was shaped, and carries Canari's own write-up.
+naming and Postgres-timing decisions it raised were settled in section 4. **Steps 5 and 6's runner
+half is DONE too, as of the same evening** - nothing in this list remains open; phase 1 is complete
+for all three estates. The runbook in section 6 says HOW each step was shaped, and carries Canari's
+own write-up.
 
 1. **DONE 2026-09-24: Canari's runner is registered on the target, STOPPED AND DISABLED.**
    Org-level, name `canari`, group `canari`, `/opt/actions-runner/runners/canari`, `User=gha-runner`.
@@ -915,21 +924,24 @@ says HOW each step was shaped, and carries Canari's own write-up.
    `canari-relay-dev.conf` (`127.0.0.1:3080` -> the target), `nginx -t` passed, `systemctl enable
    --now nginx`, both verified end to end through the real public names with the target's own access
    log naming `10.0.0.3` as the client - the same proof `cercle` and `miconnect` used.
-5. **Move the crontab and every remaining path naming the old box** - three cron lines (the nightly
-   backup, the object backup, a per-minute egress probe) and `MICONNECT_SSH_HOST`, which becomes a
-   hop to the same machine rather than to another one. Decided by the user: the old server has no
-   multi-year future once the estates leave it, so this is part of the move, not a follow-up. A
-   backup that still writes to an unwatched VM is indistinguishable from one that works, until it is
-   needed.
-6. **DONE 2026-09-24 for the data and the relay, NOT YET for the runner.** Prod's window: dump,
-   restore, verify by content fingerprint (53/53 tables), flip the relay, stop the old containers -
-   see the write-up below. Dev was not dumped from the old box at all: it was seeded from the
-   target's own now-live `canari-prod` via `copy-prod-to-dev.sh`, which is the architecturally
-   correct source (dev is always a disposable copy of prod, never independently authoritative -
-   `dev-environment.md`). **Re-enabling the target's runner and disabling the old box's stay open**,
-   deliberately split from the data cutover: nothing depends on the runner to serve traffic, and
-   flipping it is a CI/CD-only change with its own blast radius (a race lands a running release on
-   the wrong box).
+5. **DONE 2026-09-24 - move the crontab and every remaining path naming the old box.** The three
+   cron lines (nightly backup, object backup, per-minute egress probe) already ran from the target
+   under `gha-runner` since the runner flip below; the old box's own crontab was backed up
+   (`/home/canari/backups/crontab.removed-2026-09-24.bak`) then removed entirely (`crontab -r`),
+   confirmed empty. `MICONNECT_SSH_HOST` needed no change: Authentik colocated on the target the
+   same day, so `backup.sh`'s local path (`MICONNECT_PG_CONTAINER`) already applied - see the
+   crontab comment on the target. A backup that still writes to an unwatched VM is indistinguishable
+   from one that works, until it is needed.
+6. **DONE 2026-09-24, in full - data, relay AND runner.** Prod's window: dump, restore, verify by
+   content fingerprint (53/53 tables), flip the relay, stop the old containers - see the write-up
+   below. Dev was not dumped from the old box at all: it was seeded from the target's own now-live
+   `canari-prod` via `copy-prod-to-dev.sh`, which is the architecturally correct source (dev is
+   always a disposable copy of prod, never independently authoritative - `dev-environment.md`). The
+   target's org-level `canari` runner was enabled and started (`gh api
+   orgs/emse-students/actions/runners` confirms `online`); the old box's repo-level `Canari` runner
+   was stopped and disabled the same way every other systemd change on that box went, through the
+   docker-chroot route, since that account's `sudo` needs a password this account does not hold -
+   confirmed `offline` via `gh api repos/emse-students/canari/actions/runners`.
 
 **Loose ends, small and real.** Two manual `authentik_db_2026-09-24_manuel.sql.gz` copies (27 MB
 each, on `canari` and on `mitv`) sit outside the 14-day purge, which only matches `*.tar.gz` - they
