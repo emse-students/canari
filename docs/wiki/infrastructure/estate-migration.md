@@ -1515,9 +1515,11 @@ That is the same finding the Cercle's compose file already carries a paragraph a
    trusts both to self-heal leaves production's first deploy on the new host failing on a directory
    that was never created, while dev comes up and makes the migration look successful.
 3. **Declare `name: canari-prod` and `name: canari-dev` in the two compose files, IN THE SAME COMMIT
-   as the path change, and never before it.** The project name is inferred today from the compose
-   file's own directory, which is why production's project is called `infrastructure`. Declaring it
-   renames the project, and a renamed project looks for volumes that do not exist - so a commit
+   as the path change, and never before it.** Production's project is called `infrastructure`
+   because `docker-compose.prod.yml` DECLARES `name: infrastructure` - it is a declared name that is
+   wrong, not a missing one, which is the opposite of section A's Authentik case and fails in the
+   same direction. Dev already declares `canari-dev`, so it needs nothing. Renaming makes the
+   project look for volumes that do not exist - so a commit
    landing this ahead of the move would, at the next ordinary production deploy on the CURRENT box,
    bring the whole estate up EMPTY and healthy. That is the identical failure this migration already
    met on Authentik, which is section A; the difference is that here it is predictable to the day.
