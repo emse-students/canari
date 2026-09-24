@@ -7207,21 +7207,6 @@ shape. It closes with the P1 that reports a damaged MLS state as a PIN rotation.
 one allowlist entry, and that entry FAILS the day the site stops offending, so it cannot rot while
 the P1 waits.
 
-### P3 - the upload cap is one number set in two places that measure two different things
-
-The client refuses a file over `VITE_MEDIA_MAX_SIZE_MB` (default 100); nginx refuses a body over
-`client_max_body_size 100m`. Same number, neither knowing about the other, **and they measure
-different bytes**: the client measures the PLAINTEXT file, what is uploaded is the ciphertext inside
-a multipart envelope, a couple of hundred bytes larger. So a file of exactly the limit passes the
-client's check and is refused by nginx - and an installed APK carries whatever value it was BUILT
-with, which nothing keeps in step with the box.
-
-The member is no longer misled (the 413 reads "le contenu envoye est trop volumineux" rather than an
-English exception), so this is no longer a user-facing defect - but the two caps should be ONE fact,
-derived, with the envelope accounted for on whichever side does the refusing. **Reproduce the
-boundary before either number moves**: it is an infrastructure change and a build-time variable, and
-nothing has yet observed the gap it predicts.
-
 ### P3 - a group creation that fails tells the member nothing, and closes the modal on a group that does not exist
 
 `createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan group, and
