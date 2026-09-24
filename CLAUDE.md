@@ -218,8 +218,7 @@ only; never re-enumerate it here.
 on 2026-09-03, restating what the linked pages carry - and TWO items had gone FALSE unnoticed.
 Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
 
-1. **THE ESTATE MIGRATION IS THE NEXT CHANTIER, AND ITS PLAN IS THE ONLY COPY** - three VMs onto the
-   Portail-etu host, then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
+1. **THE ESTATE MIGRATION IS IN PROGRESS, AND ITS PLAN IS THE ONLY COPY** - **TWO OF THE THREE SERVE FROM THE TARGET SINCE 2026-09-24**, Canari is last, and what is next is section 10, ordered; then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md#10-the-next-hours---the-ordered-list-written-2026-09-24-after-two-estates-moved)).
 2. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
    SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
    three commands a run owes before any of it is believed are in the campaign section below.

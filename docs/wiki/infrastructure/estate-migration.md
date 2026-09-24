@@ -1345,3 +1345,95 @@ Pointers only. The substance is in
 | Does Portail-etu become a compose project with a declared `name:` and ceilings like the others? | user | it is the only estate that would not, and the standing mandate is homogeneity everywhere |
 | What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |
 | What becomes of the Proxmox host once every VM is off it | user, not yet decided | it is the obvious destination for the reworked backups |
+
+## 10. THE NEXT HOURS - the ordered list, written 2026-09-24 after two estates moved
+
+Two of the three estates are on the target: `cercle` since the morning, `auth.canari-emse.fr` since
+midday. This section is what is left, in the order it should be done, and it is deliberately
+separate from the runbook above - the runbook says HOW, this says WHAT IS NEXT and who owes it.
+
+### A. THE RENAMES, AND THE WINDOW IS ALREADY HALF SHUT - A MISS TO OWN
+
+Section 5 says renaming a compose project renames its volumes, so **the migration is the only
+moment it is free**. Two estates were then migrated without applying it:
+
+| Estate | Project name it got | What section 5 asked for |
+| --- | --- | --- |
+| Le Cercle | `le-cercle` (from the DIRECTORY, declared nowhere) | `cercle`, DECLARED |
+| Authentik | `miconnect` (from the directory) | `authentik` in section 5's list |
+| Canari prod | not moved yet - still `infrastructure` | `canari-prod` |
+
+**It is not free any more, but it is still cheap**, and much cheaper than the years section 5 warns
+about: the dump-and-restore procedure has now been run twice in one day, it takes minutes, and both
+estates are small. **Do it before Canari moves**, because that is the last moment the whole set can
+be made consistent in one pass.
+
+- Le Cercle is the easy one: the payload is a single 106 MB SQLite file in
+  `le-cercle_cercle-data`, so it is a volume copy, not a dump. Declare `name: cercle` in the compose
+  file at the same time, so the name stops depending on what the directory is called.
+- **Authentik's is a QUESTION, not a task.** `miconnect` is the estate's real name - the product is
+  called MiConnect and the public name is `auth.canari-emse.fr` - while section 5's list says
+  `authentik`, which is the software. The volume name is load-bearing (`authentik/README.md`: a
+  differently-named project starts on an EMPTY database instead of failing), so this is decided
+  once and then left alone. **The user decides; do not pick silently.**
+- Canari's `infrastructure` -> `canari-prod` happens AT its move, not before.
+
+### B. CANARI'S MOVE - WHAT CAN BE PREPARED WITH NO OUTAGE AT ALL
+
+**The capacity question is ANSWERED and it is not close.** Measured 2026-09-24: the production
+stack is **~590 MB of RAM across twelve containers** (the largest is `social-service` at 123 MB)
+and **~320 MB of volumes** (`postgres_data_18` 214 MB, `garage_data` 68 MB, `redis_data` 29 MB,
+`garage_meta` 5.7 MB, `media_meta` 95 kB). The target has ~8 GB of RAM available and 27 GB of disk
+free. Nothing about this move is a capacity risk.
+
+**The publish address is chosen by measurement, and `8080` is genuinely gone.** Listening on the
+target, 2026-09-24:
+
+| Loopback port | Held by |
+| --- | --- |
+| `3000` | `portail-etu` |
+| `5173` | `cercle` |
+| `9000` | Authentik |
+| `6060`, `7422`, `8080` | the host's own DSI-managed agent - not ours to move |
+| `8081`, `19010`, `19011` | **free** |
+
+So `canari-prod`'s frontend takes **`127.0.0.1:8081`** - adjacent to the `8080` it used, which
+makes the one-line difference legible in a year - and garage keeps `19010`/`19011`, which are free
+there. That is the host port allocation table section 5 asks for, and it now exists.
+
+Then, in order, none of it visible to a user:
+
+1. Write `/srv/canari/` on the target: the compose file with `name: canari-prod`, the `.env`, the
+   mount directories.
+2. Write the target vhost for `canari-emse.fr` -> `127.0.0.1:8081`, and the relay config on the
+   `canari` box, exactly as the other two were done.
+3. **Decide what `/home/canari/canari` becomes.** It is not a stray checkout: the production deploy
+   does `git reset --hard` into it and the backup crontab runs from it. Whatever the target gets
+   must carry both, or the deploy and the nightly backup break on the day the name moves.
+4. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
+
+### C. OWED BY THE USER, AND NOTHING HERE MOVES WITHOUT IT
+
+- **Send the DSI request.** It is written out in section 7, and every name costs a ticket, so a
+  second request is a second wait.
+- **Decide the Authentik project name** (section A above).
+- **Decide whether Le Cercle keeps SQLite.** Raised by the user 2026-09-24, and the question is
+  real but the premise needs correcting: the database does NOT live outside a container. It is a
+  106 MB SQLite file in the named volume `le-cercle_cercle-data`, which is exactly where mutable
+  state belongs - Canari's PostgreSQL data sits in a named volume too, and neither is "in" the
+  image. **So the choice is homogeneity, not containment**: one backup mechanism instead of two,
+  against a data-layer rewrite touching 68 files and about twenty table modules in a repository
+  declared complete, plus a migration of the 234 366-row ledger. **The recommendation here is to
+  keep SQLite and revisit only if concurrency or the second backup path actually hurts** - but the
+  standing mandate is homogeneity everywhere, so this is the user's call and not an agent's.
+
+### D. LOOSE ENDS FROM 2026-09-24, SMALL AND REAL
+
+- **Two manual `authentik_db_2026-09-24_manuel.sql.gz` copies** (27 MB each, on the `canari` box and
+  on mitv) sit OUTSIDE the 14-day purge, which only matches `*.tar.gz`. They were the safety net
+  taken before the backup chain was repaired. **Delete them once one SCHEDULED run has produced an
+  archive containing Authentik** - not before, and deleting a backup is a gesture for the user.
+- **`fix/batch-diagnostic-reads-the-app-not-the-document` is the one local branch kept**, in the
+  `wt-devtools` worktree. Twelve others were deleted on 2026-09-24 after their content was verified
+  present in `main`; this one is not - it holds an eight-line comment in `initializeConnection.ts`
+  about what a device at the cap sees, and one backlog row. Ship it or drop it deliberately.
