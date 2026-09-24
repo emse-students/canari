@@ -917,16 +917,25 @@ export function useMessaging() {
     const lastInbound = [...brandNew]
       .reverse()
       .find((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId));
-    if (
-      !lastInbound &&
-      brandNew.length &&
-      typeof document !== 'undefined' &&
-      document.visibilityState !== 'visible'
-    ) {
-      // The other half of the same question: a flush that added messages while the tab was away and
+    // AND IT ASKS THE APP, NOT THE DOCUMENT - THIS GUARD WAS THE ONE SITE IN THIS FILE THAT STILL
+    // DID NOT (2026-09-24). `document.visibilityState` is permanently `'visible'` in a backgrounded
+    // Android Tauri WebView - `hidden: false` and `hasFocus: true` too, byte for byte its
+    // foreground answer, measured on device - so `!== 'visible'` was permanently FALSE there and
+    // this line never printed on mobile at all. Not a misleading report: an ABSENT one, on the
+    // platform where a catch-up flush is the common case and where the notification behaviour is
+    // read from logs. `canSeeArrival` and the `away` label above already route mobile through
+    // `isAppInForeground`, which reads the fact the Android activity states for itself; this is the
+    // same predicate, and the label names the state it actually observed rather than the
+    // document's opinion of it.
+    const appAway = isMobileTauriRuntime()
+      ? !isAppInForeground()
+      : typeof document !== 'undefined' && document.visibilityState !== 'visible';
+    if (!lastInbound && brandNew.length && appAway) {
+      // The other half of the same question: a flush that added messages while the app was away and
       // raised nothing has either seen only own/system rows, or lost them to a predicate.
+      const awayState = isMobileTauriRuntime() ? 'backgrounded' : document.visibilityState;
       console.log(
-        `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${document.visibilityState}, none of them an inbound message - nothing to raise.`
+        `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${awayState}, none of them an inbound message - nothing to raise.`
       );
     }
     // AND ONLY AN ARRIVAL IS NEWS. `brandNew` means "not already in the in-memory map", which on a

@@ -3428,7 +3428,7 @@ the read watermark. **The rest were not touched, and they were not measured eith
 | `backgroundPausableInterval.ts:29,38` | pause timers while hidden | never pauses - battery, not correctness |
 | `ChatBackgroundService.svelte:881,953,1218,1237` | four guards around login and reconnection | unmeasured |
 | `MainChatPage.svelte:266` | a guard on a periodic refresh | unmeasured |
-| `useMessaging.svelte.ts:750` | the batch-notify log line | says `visible` about a backgrounded phone in the log, which is misleading rather than wrong |
+| ~~`useMessaging.svelte.ts`~~ | the batch-notify log line | **FIXED 2026-09-24, and the row was wrong in BOTH directions** - see below |
 | `LoginPage.svelte:85` | a retry on becoming visible | unmeasured |
 
 **The first two are the ones worth measuring first**, and the first is the one that could cost
@@ -3441,6 +3441,26 @@ runtime that has a working visibility API, so each site becomes one extra term a
 keep their current behaviour exactly. What is NOT settled is which sites should change - a guard
 that is merely wasteful on mobile is not the same as one that loses state, and they want different
 urgency.
+
+**ONE ROW NEEDED NO RUN, AND READING IT CORRECTED THE ROW ITSELF (2026-09-24).** The table said the
+batch-notify line *"says `visible` about a backgrounded phone in the log, which is misleading rather
+than wrong"*. It is neither. The line is GATED on `document.visibilityState !== 'visible'`, so on a
+phone the guard is permanently false and **the line never printed at all** - an absent report, not a
+misleading one, on the platform where a catch-up flush is the common case and where the notification
+behaviour of sixteen NOTIF rows is read from logs. It reports the one state nothing else can
+distinguish from the outside: a flush that added messages while the app was away and raised nothing
+has either seen only own/system rows, or LOST a real one to a predicate.
+
+It needed no measurement because it decides nothing - it only reports - so the entry's *"which sites
+should change"* judgement does not apply to it: a report that is dead on a platform is wrong on
+every reading of that question. **The predicate was already in this same file, twice** (`canSeeArrival`
+and the `away` label in `notifyInbound`, both routing mobile through `isAppInForeground` for exactly
+this reason); this guard was the one site that still read the document directly. Five tests in
+`useMessaging.mobileNotification.svelte.test.ts` pin both runtimes in both directions, and the guard
+and the label were mutated separately - each fails its own case alone.
+
+**THE OTHER TEN ROWS ARE UNTOUCHED AND STILL WANT THE RUN**, the first two most of all: those decide
+something, and *saying which needs one run, not an argument* still holds for them.
 
 ### P2 - the false LOST-frame accusation is fixed and shipped, and the duplicate delivery inside this entry is still open (2026-09-07)
 
