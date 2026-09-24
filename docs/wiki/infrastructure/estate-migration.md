@@ -623,6 +623,51 @@ idea is the one that carries a TTL, and it is not what is proposed here.
 The real cost is the honest one: this keeps Cloudflare in the public path, which phase 2 exists to
 remove. It is therefore a LANDING, not the target - which is exactly what phase 1 was defined to be.
 
+#### THE OLD ESTATE CAN RELAY WHAT THE NEW ONE CANNOT SEND - MEASURED 2026-09-24
+
+The user's proposal, and it is better than the parade above: **do not make the new host reach the
+edge - make the old one do it on its behalf.** The refused port is refused on ONE machine, and the
+machine that already works sits on the other side of a path we own.
+
+| Measured | Result |
+| --- | --- |
+| `canari` -> the target host, TCP 22 | **OPEN** |
+| `canari` -> the edge, TCP 7844 | **OPEN** (the target host: BLOCKED, measured the same day) |
+| The route `canari` takes | through its OWN gateway, out to the host's public address |
+| The source address the host SEES | **`canari`'s PRIVATE address, preserved end to end** - no NAT rewrites it |
+| Who already relays | `portail-etu-direct` is defined with `ProxyJump canari` - **this relay exists and is used daily** |
+
+The preserved private source is the load-bearing half: it means the target host can pin an allow
+rule to ONE address that is not routable from outside the school, rather than opening a port to the
+internet. The exact addresses are machine-local and stay in agent memory, not in a PUBLIC repo.
+
+**Two things could be relayed, and they cost differently.** The INTERNAL surface - the admin
+interfaces and dev, on `rootz-emse.fr`, behind Access - is what section 4 already routes through a
+tunnel and what the 7844 block actually broke; relaying it changes nothing public and keeps
+Cloudflare off the new machine, which is what the user asked for. The PUBLIC surface could be
+relayed too, and that is attractive for exactly one reason - it needs no DSI name at all, which
+matters now that `canari.emse.fr` will not be reassigned - but it puts Cloudflare back in the public
+path, which is the decision in section 4. **Re-opening that is a choice to be made out loud, which
+is what separates it from the parade above.**
+
+**Two mechanisms for the internal half**, and the difference is who is asked for what:
+
+| | Data path | Costs |
+| --- | --- | --- |
+| A firewall allow | `cloudflared` on the old box proxies to a port bound on the new host's interface, allowed from the relay's address only | a firewall rule on a machine we do not own; nothing to supervise, no keys |
+| An SSH forward | a `systemd` `ssh -N -L` from the old box; services stay loopback-only on the new host | nothing asked of anyone; a key on the old box and a tunnel that can flap |
+
+**And the price, either way, is that the old VM stops being decorative.** Section 4 already keeps it
+alive to answer `canari-emse.fr` with 301s; this makes it load-bearing for the internal door, so
+retiring it later means doing this again somewhere else. That is a real cost and it is the argument
+for asking the DSI once more rather than building the relay.
+
+**ONE FIND FOR THE PORT ALLOCATION TABLE.** The target host carries MORE THAN ONE public address on
+its single interface. The known trap - `sites-enabled/canari.conf` sending `canari.emse.fr` to
+Portail-etu - is a `Host`-header collision on a shared `:443`, and a second address dissolves it by
+letting nginx select on the ADDRESS instead. Whether a name may be pointed at one of them is a DSI
+question, not ours.
+
 The unit is left **INSTALLED and DISABLED**. A service that fails at every boot on somebody else's
 machine is noise; what the runbook needs kept is the configuration, not the retry loop.
 
