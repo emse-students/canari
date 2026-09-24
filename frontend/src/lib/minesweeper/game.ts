@@ -164,18 +164,44 @@ export function createBoard(
   };
 }
 
+/** Neighbor index lists per board shape, built once: the solver reads them millions of times. */
+const neighborTables = new Map<string, ReadonlyArray<readonly number[]>>();
+
+/**
+ * Indices of every in-bounds neighbor of each cell, in {@link NEIGHBOR_DELTAS} order.
+ * The order is load-bearing: it fixes the order of solver constraints, which seeded
+ * generation feeds to the RNG, so changing it changes every ranked board.
+ */
+function neighborTable(
+  board: Pick<MinesweeperBoard, 'width' | 'height'>
+): ReadonlyArray<readonly number[]> {
+  const key = `${board.width}x${board.height}`;
+  const cached = neighborTables.get(key);
+  if (cached) return cached;
+  const table: number[][] = [];
+  for (let y = 0; y < board.height; y++) {
+    for (let x = 0; x < board.width; x++) {
+      const list: number[] = [];
+      for (const [dy, dx] of NEIGHBOR_DELTAS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (inBounds(board, nx, ny)) list.push(idx(board, nx, ny));
+      }
+      table.push(list);
+    }
+  }
+  neighborTables.set(key, table);
+  return table;
+}
+
 function forEachNeighbor(
   board: Pick<MinesweeperBoard, 'width' | 'height' | 'cells'>,
   x: number,
   y: number,
   fn: (nx: number, ny: number, cell: Cell, i: number) => void
 ): void {
-  for (const [dy, dx] of NEIGHBOR_DELTAS) {
-    const nx = x + dx;
-    const ny = y + dy;
-    if (!inBounds(board, nx, ny)) continue;
-    const i = idx(board, nx, ny);
-    fn(nx, ny, board.cells[i], i);
+  for (const i of neighborTable(board)[idx(board, x, y)]) {
+    fn(i % board.width, Math.floor(i / board.width), board.cells[i], i);
   }
 }
 
@@ -187,19 +213,16 @@ function clearMineLayout(board: MinesweeperBoard): void {
 }
 
 function computeAdjacents(board: MinesweeperBoard): void {
-  for (let y = 0; y < board.height; y++) {
-    for (let x = 0; x < board.width; x++) {
-      const i = idx(board, x, y);
-      if (board.cells[i].mine) {
-        board.cells[i].adjacent = 0;
-        continue;
-      }
-      let count = 0;
-      forEachNeighbor(board, x, y, (_nx, _ny, cell) => {
-        if (cell.mine) count++;
-      });
-      board.cells[i].adjacent = count;
+  const table = neighborTable(board);
+  const cells = board.cells;
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i].mine) {
+      cells[i].adjacent = 0;
+      continue;
     }
+    let count = 0;
+    for (const n of table[i]) if (cells[n].mine) count++;
+    cells[i].adjacent = count;
   }
 }
 
@@ -293,35 +316,35 @@ function checkWin(board: MinesweeperBoard): void {
  * Used during play and inside the generation solver.
  */
 function applyAutoFlags(board: SolveState | MinesweeperBoard): boolean {
+  const table = neighborTable(board);
+  const cells = board.cells;
   let any = false;
   let changed = true;
   let guard = 0;
   while (changed && guard < 200) {
     guard++;
     changed = false;
-    for (let y = 0; y < board.height; y++) {
-      for (let x = 0; x < board.width; x++) {
-        const cell = board.cells[idx(board, x, y)];
-        if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
 
-        let flagged = 0;
-        const hiddenCoords: Array<[number, number]> = [];
-        forEachNeighbor(board, x, y, (nx, ny, n) => {
-          if (n.state === 'flagged') flagged++;
-          else if (n.state === 'hidden') hiddenCoords.push([nx, ny]);
-        });
+      let flagged = 0;
+      let hidden = 0;
+      for (const n of table[i]) {
+        const state = cells[n].state;
+        if (state === 'flagged') flagged++;
+        else if (state === 'hidden') hidden++;
+      }
 
-        const remaining = cell.adjacent - flagged;
-        if (remaining <= 0 || remaining !== hiddenCoords.length) continue;
+      const remaining = cell.adjacent - flagged;
+      if (remaining <= 0 || remaining !== hidden) continue;
 
-        for (const [nx, ny] of hiddenCoords) {
-          const n = board.cells[idx(board, nx, ny)];
-          if (n.state !== 'hidden') continue;
-          n.state = 'flagged';
-          board.flagCount++;
-          changed = true;
-          any = true;
-        }
+      for (const n of table[i]) {
+        if (cells[n].state !== 'hidden') continue;
+        cells[n].state = 'flagged';
+        board.flagCount++;
+        changed = true;
+        any = true;
       }
     }
   }
@@ -331,34 +354,35 @@ function applyAutoFlags(board: SolveState | MinesweeperBoard): boolean {
 /** Basic single-cell deductions (auto-flag + auto-open chords). Returns whether anything changed. */
 function applyBasicAssists(board: SolveState | MinesweeperBoard): boolean {
   let changed = applyAutoFlags(board);
+  const table = neighborTable(board);
+  const cells = board.cells;
 
-  for (let y = 0; y < board.height; y++) {
-    for (let x = 0; x < board.width; x++) {
-      const cell = board.cells[idx(board, x, y)];
-      if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
 
-      let flagged = 0;
-      const hiddenCoords: Array<[number, number]> = [];
-      forEachNeighbor(board, x, y, (nx, ny, n) => {
-        if (n.state === 'flagged') flagged++;
-        else if (n.state === 'hidden') hiddenCoords.push([nx, ny]);
-      });
+    let flagged = 0;
+    let hidden = 0;
+    for (const n of table[i]) {
+      const state = cells[n].state;
+      if (state === 'flagged') flagged++;
+      else if (state === 'hidden') hidden++;
+    }
 
-      if (flagged !== cell.adjacent || hiddenCoords.length === 0) continue;
+    if (flagged !== cell.adjacent || hidden === 0) continue;
 
-      for (const [nx, ny] of hiddenCoords) {
-        const n = board.cells[idx(board, nx, ny)];
-        if (n.state !== 'hidden') continue;
-        if (n.mine) {
-          // Should never happen on a consistent no-guess board during solve verification.
-          n.state = 'revealed';
-          board.revealedCount++;
-          board.status = 'lost';
-          return true;
-        }
-        revealFlood(board, nx, ny);
-        changed = true;
+    for (const n of table[i]) {
+      const neighbor = cells[n];
+      if (neighbor.state !== 'hidden') continue;
+      if (neighbor.mine) {
+        // Should never happen on a consistent no-guess board during solve verification.
+        neighbor.state = 'revealed';
+        board.revealedCount++;
+        board.status = 'lost';
+        return true;
       }
+      revealFlood(board, n % board.width, Math.floor(n / board.width));
+      changed = true;
     }
   }
 
@@ -380,26 +404,28 @@ function collectConstraints(board: SolveState | MinesweeperBoard): {
   const frontierSet = new Set<number>();
   const constraints: Constraint[] = [];
 
-  for (let y = 0; y < board.height; y++) {
-    for (let x = 0; x < board.width; x++) {
-      const cell = board.cells[idx(board, x, y)];
-      if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
+  const table = neighborTable(board);
+  const cells = board.cells;
 
-      let flagged = 0;
-      const vars: number[] = [];
-      forEachNeighbor(board, x, y, (_nx, _ny, n, i) => {
-        if (n.state === 'flagged') flagged++;
-        else if (n.state === 'hidden') {
-          vars.push(i);
-          frontierSet.add(i);
-        }
-      });
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    if (cell.state !== 'revealed' || cell.adjacent === 0) continue;
 
-      const count = cell.adjacent - flagged;
-      if (vars.length === 0) continue;
-      if (count < 0 || count > vars.length) continue;
-      constraints.push({ vars, count });
+    let flagged = 0;
+    const vars: number[] = [];
+    for (const n of table[i]) {
+      const state = cells[n].state;
+      if (state === 'flagged') flagged++;
+      else if (state === 'hidden') {
+        vars.push(n);
+        frontierSet.add(n);
+      }
     }
+
+    const count = cell.adjacent - flagged;
+    if (vars.length === 0) continue;
+    if (count < 0 || count > vars.length) continue;
+    constraints.push({ vars, count });
   }
 
   const sea: number[] = [];
@@ -458,50 +484,70 @@ function deduceForced(
   seaSize: number,
   useGlobalMineBounds: boolean
 ): { forcedMines: number[]; forcedSafe: number[] } {
-  const exact = constraints.filter((c) => c.vars.every((v) => vars.includes(v)));
   const n = vars.length;
   if (n === 0 || n > MAX_CSP_VARS) return { forcedMines: [], forcedSafe: [] };
+  const inComponent = new Set(vars);
+  const exact = constraints.filter((c) => c.vars.every((v) => inComponent.has(v)));
   // Local component solve needs at least one fully-contained equation.
   if (!useGlobalMineBounds && exact.length === 0) {
     return { forcedMines: [], forcedSafe: [] };
   }
 
   const indexOf = new Map(vars.map((v, i) => [v, i]));
-  const solutions: boolean[][] = [];
-
   const maxMines = useGlobalMineBounds ? Math.min(n, remainingMinesAfterFlags) : n;
   const minMines = useGlobalMineBounds ? Math.max(0, remainingMinesAfterFlags - seaSize) : 0;
 
-  function valid(assignment: boolean[]): boolean {
-    let mines = 0;
-    for (const bit of assignment) if (bit) mines++;
-    if (mines < minMines || mines > maxMines) return false;
+  // Depth-first over `vars` in order. Each equation tracks the mines placed and the cells
+  // still open, so a branch dies the moment one equation can no longer be met - instead of
+  // building all 2^n assignments and checking every equation against each of them.
+  const equations = exact.map((c) => ({ count: c.count, placed: 0, open: c.vars.length }));
+  const equationsOf: number[][] = vars.map(() => []);
+  exact.forEach((c, ci) => {
+    for (const v of c.vars) equationsOf[indexOf.get(v)!].push(ci);
+  });
+  const assignment: boolean[] = Array.from({ length: n }, () => false);
+  const seenMine: boolean[] = Array.from({ length: n }, () => false);
+  const seenSafe: boolean[] = Array.from({ length: n }, () => false);
+  let anySolution = false;
 
-    for (const c of exact) {
-      let sum = 0;
-      for (const v of c.vars) {
-        if (assignment[indexOf.get(v)!]) sum++;
+  function search(i: number, mines: number): void {
+    if (mines > maxMines || mines + (n - i) < minMines) return;
+    if (i === n) {
+      anySolution = true;
+      for (let k = 0; k < n; k++) {
+        if (assignment[k]) seenMine[k] = true;
+        else seenSafe[k] = true;
       }
-      if (sum !== c.count) return false;
+      return;
     }
-    return true;
+    for (const mine of [false, true]) {
+      let feasible = true;
+      for (const ci of equationsOf[i]) {
+        const eq = equations[ci];
+        eq.open--;
+        if (mine) eq.placed++;
+        if (eq.placed > eq.count || eq.placed + eq.open < eq.count) feasible = false;
+      }
+      if (feasible) {
+        assignment[i] = mine;
+        search(i + 1, mine ? mines + 1 : mines);
+      }
+      for (const ci of equationsOf[i]) {
+        const eq = equations[ci];
+        eq.open++;
+        if (mine) eq.placed--;
+      }
+    }
   }
+  search(0, 0);
 
-  const total = 1 << n;
-  for (let mask = 0; mask < total; mask++) {
-    const assignment = Array.from({ length: n }, (_, i) => ((mask >> i) & 1) === 1);
-    if (valid(assignment)) solutions.push(assignment);
-  }
-
-  if (solutions.length === 0) return { forcedMines: [], forcedSafe: [] };
+  if (!anySolution) return { forcedMines: [], forcedSafe: [] };
 
   const forcedMines: number[] = [];
   const forcedSafe: number[] = [];
   for (let i = 0; i < n; i++) {
-    const allMine = solutions.every((s) => s[i]);
-    const allSafe = solutions.every((s) => !s[i]);
-    if (allMine) forcedMines.push(vars[i]);
-    else if (allSafe) forcedSafe.push(vars[i]);
+    if (!seenSafe[i]) forcedMines.push(vars[i]);
+    else if (!seenMine[i]) forcedSafe.push(vars[i]);
   }
   return { forcedMines, forcedSafe };
 }

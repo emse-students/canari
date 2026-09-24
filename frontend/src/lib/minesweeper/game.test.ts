@@ -6,6 +6,7 @@ import {
   runAutoAssists,
   isSolvableWithoutGuessing,
   verifySolve,
+  hashSeedToU32,
   DEFAULT_CONFIG,
   CHALLENGE,
   type MinesweeperBoard,
@@ -238,6 +239,25 @@ describe('minesweeper', () => {
       b.cells.map((c) => (c.mine ? 1 : 0)).join('')
     );
   });
+
+  it('seeded challenge boards match their recorded fingerprints', () => {
+    // The server replays a ranked game on the board regenerated from its seed, so ANY change
+    // to generation - solver deductions, neighbor order, RNG draws - silently rejects every
+    // challenge still open when it deploys. These fingerprints were recorded before the
+    // solver's 2026-09-24 speed-up; a failure here means the change altered the boards, not
+    // just their cost. Update them only when that is the intent.
+    const fixtures: Array<[string, number, number, number]> = [
+      ['8601e326fcef5ef936a1c69d6ab6ac41', 0, 31, 3410185195],
+      ['8601e326fcef5ef936a1c69d6ab6ac41', 9, 16, 2788063149],
+      ['ranked-golden-fixture-002', 17, 0, 420646431],
+    ];
+    for (const [seed, x, y, fingerprint] of fixtures) {
+      const board = createBoard(CHALLENGE, seed);
+      revealCell(board, x, y);
+      const layout = board.cells.map((c) => (c.mine ? '1' : '0')).join('');
+      expect(hashSeedToU32(layout)).toBe(fingerprint);
+    }
+  }, 30_000);
 
   it('verifySolve rejects empty or incomplete move lists', () => {
     expect(verifySolve('seed', []).ok).toBe(false);
