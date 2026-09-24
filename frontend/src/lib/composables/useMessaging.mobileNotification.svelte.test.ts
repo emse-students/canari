@@ -290,3 +290,102 @@ describe('a message that names the reader is filed on the mentions channel', () 
     expect(sendSystemNotification.mock.calls[0][3]).toBe(false);
   });
 });
+
+/**
+ * THE DIAGNOSTIC THAT DID NOT EXIST ON THE PLATFORM IT WAS FOR.
+ *
+ * A flush that added messages while the app was away and raised NOTHING has either seen only
+ * own/system rows, or lost a real one to a predicate - the two are indistinguishable from the
+ * outside, which is exactly why the line is worth printing. Its guard read
+ * `document.visibilityState !== 'visible'`, permanently FALSE in a backgrounded Android Tauri
+ * WebView, so on mobile it never printed at all: an absent report rather than a misleading one, on
+ * the platform where a catch-up flush is the common case and where notification behaviour is read
+ * from logs.
+ *
+ * BOTH RUNTIMES ARE PINNED, and both directions of each. Asserting only the mobile half would pass
+ * just as well if the web half had been inverted, and the web half is the one that worked.
+ */
+describe('the silent-flush diagnostic asks the app, not the document', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    MOBILE = true;
+  });
+
+  /** Every `console.log` line this flush produced that is the diagnostic under test. */
+  function diagnosticLines() {
+    return (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('none of them an inbound message'));
+  }
+
+  /** One OWN message: brand new, and not an inbound one - the state the line exists to report. */
+  const ownOnly = [{ senderId: ME, content: 'my own message', messageId: 'b-1' }];
+
+  it('THE DEFECT: a backgrounded phone printed nothing, and now says so', async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    // What hardware really reports while backgrounded - the document sees nothing wrong.
+    screen('visible', true, false);
+
+    await messaging.batchAddMessages(ownOnly, CONVO, ctx, 'arrival');
+
+    const lines = diagnosticLines();
+    expect(lines).toHaveLength(1);
+    // AND IT NAMES THE STATE IT OBSERVED, not the document's opinion of it: interpolating
+    // `visibilityState` here would have printed "while visible" about a backgrounded phone.
+    expect(lines[0]).toContain('while backgrounded');
+    expect(lines[0]).toContain('added 1');
+  });
+
+  it('THE CONTROL: a phone in the foreground is not away, and prints nothing', async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    screen('visible', true, true);
+
+    await messaging.batchAddMessages(ownOnly, CONVO, ctx, 'arrival');
+
+    expect(diagnosticLines()).toHaveLength(0);
+  });
+
+  it('THE WEB HALF STILL WORKS, and still names the document state', async () => {
+    MOBILE = false;
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    screen('hidden', false);
+
+    await messaging.batchAddMessages(ownOnly, CONVO, ctx, 'arrival');
+
+    const lines = diagnosticLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('while hidden');
+  });
+
+  it('and its control: a visible web tab prints nothing', async () => {
+    MOBILE = false;
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    screen('visible', true);
+
+    await messaging.batchAddMessages(ownOnly, CONVO, ctx, 'arrival');
+
+    expect(diagnosticLines()).toHaveLength(0);
+  });
+
+  it('and a real inbound message in the batch means there was something to raise', async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    screen('visible', true, false);
+
+    await messaging.batchAddMessages(
+      [...ownOnly, { senderId: PEER, content: 'theirs', messageId: 'b-2' }],
+      CONVO,
+      ctx,
+      'arrival'
+    );
+
+    // The line reports the SILENT flush; a flush that raised something is not one.
+    expect(diagnosticLines()).toHaveLength(0);
+  });
+});
