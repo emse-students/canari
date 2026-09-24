@@ -189,6 +189,21 @@ Both findings this section carried have closed, one of them before it was writte
   three files had drifted out of shape with no red run to show for it. `ci.yml` runs `format:check`
   there now.
 
+### Where each repo's deploy job RUNS, and the one asymmetry that is left
+
+One model in all five: `release.yml` is the only thing that deploys, and its deploy job runs **on
+the machine it deploys to**. Nothing deploys across the network, and after 2026-09-24 that is a
+measurement rather than a taste - the migration target answers `22` from the campus network alone,
+so a GitHub-hosted runner has no route in. **The per-repo table, the runner names, the group
+isolation and the shared-account limit are on [cicd](cicd.md#self-hosted-runner), which is the only
+copy; nothing about runners is restated here.**
+
+What belongs in THIS page is the single divergence: **Canari and Portail-etu use ORG-level runners
+in groups restricted to one repository each, while Sky and MiGallery use REPOSITORY-level runners** -
+although Sky and MiGallery share one machine exactly as the other two will. **Decided 2026-09-24 by
+the user: they converge, AFTER Canari's move**, as their own chantier rather than a second estate
+altered mid-migration.
+
 ### Proving a pipeline runs, without the API that would have said so
 
 The GitLab project is private, `/api/v4/projects/.../pipelines` answers `404 Project Not Found`

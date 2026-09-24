@@ -694,11 +694,63 @@ at - which is what a selective rebuild means.
 
 ## Self-hosted runner
 
-The `deploy-to-server` job runs on a self-hosted GitHub Actions runner (label `self-hosted`) on the production server (`canari`). This runner:
+**THE DEPLOY JOB RUNS ON THE MACHINE IT DEPLOYS, AND AFTER 2026-09-24 THAT IS NOT A PREFERENCE.**
+It reads as one, because the job builds nothing: it checks out, logs in to GHCR, pulls `latest` and
+runs `docker compose up`, all of which a GitHub-hosted runner could do over SSH. **It could not.**
+The migration target's `22` answers from the campus network and times out from anywhere else, while
+`443` answers from the same address that `22` refuses - so it is a per-port filter upstream of the
+host, not a ban on one address, and a GitHub-hosted runner has no route in at all. The measurement
+and the three source addresses it was taken from are on
+[estate-migration](infrastructure/estate-migration.md#b-canaris-move---and-it-is-not-one-estate-it-is-two-estates-and-a-ci-runner).
 
-- Has direct access to the Docker socket (no SSH needed for container management)
-- Has SSH access to `mitv` (offsite backup server)
-- Runs as the `canari` system user
+**So the model is the same in all five repositories, and it is one sentence: `release.yml` is the
+only thing that deploys, and its deploy job runs on the machine it deploys to. Nothing deploys
+across the network.**
+
+| Repository | Forge | Runner | Scope | Machine |
+| --- | --- | --- | --- | --- |
+| **Canari** | GitHub | `canari` | ORG, group `canari`, selected to this repository | the target (**registered 2026-09-24, stopped and disabled until the estates move**) |
+| **Portail-etu** | GitHub | `portail-etu` | ORG, group `portail-etu`, selected to that repository | the target |
+| **Le Cercle** | `gitlab.emse.fr` | `cercle-portail` | project, tag `cercle-portail` | the target, **registered PAUSED** |
+| **MiConnect** | none | - | - | the target, deployed by hand: no pipeline has ever touched it |
+| **Sky** | GitHub | `sky` | REPOSITORY | `mitv` |
+| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | `mitv` |
+
+**Two runners on one machine are kept apart by the GROUP, never by the label.** Every runner here
+carries the same default `self-hosted,Linux,X64`, so a label decides nothing; `visibility=selected`
+on a group naming exactly one repository is what keeps a Canari job off the Portail-etu runner and
+the reverse. `allows_public_repositories` must be `true` for both, because both repositories are
+public - what governs a fork's pull request executing on the box is GitHub's approval requirement
+for outside contributors, and nothing in this repository.
+
+**The last two rows are the inhomogeneity, and it is DECIDED rather than tolerated quietly.** Sky and
+MiGallery share `mitv` exactly as the first two share the target, so the argument for a group is
+identical and they are still repository-scoped. **They convert to org-level groups AFTER Canari's
+move** (user, 2026-09-24), as their own chantier: the change is independent of the migration -
+another machine, two repositories with no release in flight - and doing it now would mean two
+estates being altered at once for a gain that waits perfectly well. Until then, the org runner
+listing is a complete map of who may execute code on the target and an incomplete one of the
+estate, which is the one thing to remember when reading it.
+
+**ONE ACCOUNT, DELIBERATELY, AND THE HALF-MEASURE WAS REFUSED** (user, 2026-09-24: *"Soit on
+separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as `gha-runner` - no
+password, no `sudo`, one group - and that group is `docker`, which is root-equivalent. So the group
+decides WHERE a job lands and not what it may touch once there: a Canari job can reach Portail-etu's
+containers and the reverse.
+
+**A second service account was considered and rejected as exactly the kind of fence that reads as a
+boundary without being one.** It would separate the two `_work` trees, the caches and the runner
+credential files, and it would separate nothing that matters, because both accounts would still hold
+the same socket. And the socket is already wider than this project: the host's `docker` group
+contains accounts belonging to the machine's other administrators, so a fence between our two
+runners would sit inside a field that is already open. **The only shape that would really separate
+them is a rootless daemon per runner**, which is a chantier on a machine this project does not own,
+with consequences for the volumes, the published ports and the backups of three estates already
+running there. It is named here so that nobody later mistakes the shared account for an oversight.
+
+On the `canari` box, until it is switched off, the runner instead runs as the `canari` system user,
+reaches the Docker socket the same way, and holds the SSH access to `mitv` that the offsite backup
+needs.
 
 ### There is one runner, so a workflow that asks for it must say what it may not overlap with
 
@@ -728,7 +780,10 @@ Three details decide the shape, and only the first is obvious.
 
 `deploy-env.test.sh` asserts this, DERIVED from `runs-on: self-hosted` rather than from a list of
 workflow names - there is exactly one such runner, and a typed list would pass on the day somebody
-adds the third workflow. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
+adds the third workflow. **"One" is a statement about what is RUNNING, not about what is
+registered**: from 2026-09-24 this repository has two registered runners, and the second is stopped
+and disabled precisely so the sentence stays true. The window in which both run is the flip itself,
+and the old one stops in the same breath as the new one starts. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
 rule.
 
 **Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the
