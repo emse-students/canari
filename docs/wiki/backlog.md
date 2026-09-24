@@ -4947,10 +4947,31 @@ never writes a body; it can present a body it knows is superseded.
 
 **Why it is not simply a bug to fix.** Taking the bundle's body means trusting a peer's copy of
 another member's message content over our own, and the comment on the deletion branch (D5) shows the
-narrowness there was reasoned rather than accidental. `editSupersedes` now gives the merge a rule it
-did not have when it was written - apply the bundle's body when its `editedAt` is strictly newer -
-which would close this without trusting anything undated. That is a trust-model decision, so it is
-recorded here rather than taken while a campaign is running.
+narrowness there was reasoned rather than accidental.
+
+**AND THE FIX THIS ENTRY PROPOSED IS REFUTED (2026-09-24), WHICH MATTERS MORE THAN THE ENTRY.** It
+said `editSupersedes` *"would close this without trusting anything undated"*. It would not.
+`editSupersedes` decides WHICH of two edits wins; it never decides WHO may edit. The live
+`edit_message` path answers that separately and first, with `mutationIsAuthorised` - *"only the
+author may mutate it"*, checked against the MLS-authenticated sender, for edits and deletes alike.
+**A bundle cannot reproduce that check**: its sender is whichever peer answered the history request,
+not the message's author, and the bundle carries no per-message authorisation. So applying a
+bundle's body on a date comparison alone would let ANY member rewrite ANY other member's message
+body on the receiving device, bypassing the one rule the live path enforces. Anyone acting on the
+old sentence would have shipped that. *A claim that a mechanism closes something must be read
+against what that mechanism actually decides.*
+
+**Why the deletion branch is not the same concession.** It writes a body too, unauthorised, but the
+body is a tombstone - fixed text, not attacker-chosen. The worst a hostile peer gets is destroying a
+message on our device; it cannot put words in another member's mouth. That asymmetry is exactly the
+"reasoned rather than accidental" narrowness above.
+
+**THE SOUND SUBSET, IF THIS IS EVER TAKEN.** Accept the bundle's body only when the responding peer
+IS the message's author - the bundle's MLS-authenticated sender equal to the row's `senderId` - and
+then order it with `editSupersedes` as the live path does. That closes the case where the author
+answers the history request and leaves every other case exactly as narrow as it is now. It is
+strictly smaller than what this entry used to propose, and it needs no trust-model decision at all.
+Anything wider needs the bundle to carry the author's own signed edit, which is a wire change.
 
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
