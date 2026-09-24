@@ -2612,25 +2612,6 @@ The reason it is not that way is visible in the code: only users whose Welcome w
 registered, so inverting the order also changes which users end up registered when a delivery fails.
 That is a real design decision and wants measuring, not guessing.
 
-### P3 - the @mention dropdown offers you yourself, and mentioning yourself can do nothing at all (measured 2026-09-05)
-
-Typing `@` in a channel composer lists the signed-in user among the suggestions. Picking it inserts
-a chip and puts your own id in `mentionedUserIds`, and then nothing happens - `notifyChannelRecipients`
-skips `member.userId === input.senderId` before it looks at any notification level, so a self-mention
-cannot produce a notification for anybody, including you. It is a control whose only possible effect
-is on the message text.
-
-**It was measured because it broke an instrument, not a user.** `mentionInComposer` clicked the top
-suggestion; from W2 the top row for the owner's first word was W2 ITSELF, so MENTION-2 mentioned the
-sender, the server correctly pushed to nobody, and the row recorded `FAIL` against a notification
-level that worked. That half is fixed on the rig's side (the row is addressed by id or by whole
-display name, and an ambiguous list is a refusal). What is left is the product question.
-
-`UserAutocomplete` already takes `excludeIds`, and the composer already knows who is signed in, so
-excluding self is one argument. **Whether it SHOULD be excluded is a judgement, not a bug** - some
-chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
-fix applied inline: it is the user's call.
-
 ### P3 - the PIN form may still want a hidden username field, and the observation is now too old to work from (seen 2026-08-28, autocomplete fixed since)
 
 The classifier half of this entry SHIPPED (2026-08-29 for HEAL-NEW, 2026-08-30 for HEAL-REVOKE) and

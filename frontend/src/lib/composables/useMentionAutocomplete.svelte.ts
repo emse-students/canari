@@ -1,8 +1,9 @@
 import { tick } from 'svelte';
-import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { formatMentionToken } from '$lib/utils/mentions';
+import { currentUserId } from '$lib/stores/userState.svelte';
+import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
 import { seedUserDisplayName } from '$lib/utils/users/displayName';
 
 export type MentionUser = { id: string; displayName: string | null };
@@ -42,17 +43,42 @@ export function useMentionAutocomplete(opts: {
     }
   }
 
+  /**
+   * Asks the search endpoint, then applies the two rules that decide what a picker may offer.
+   *
+   * **THE SIGNED-IN READER IS NEVER OFFERED, AND THAT IS A FACT RATHER THAN A HOUSE STYLE
+   * (2026-09-24).** Picking yourself inserts a chip, puts your own id on the wire, and then reaches
+   * NOTHING on either side: `notifyChannelRecipients` skips `member.userId === input.senderId`
+   * before it looks at any notification level, a post comment's notify block seeds
+   * `alreadyNotified` with the author, and the client's own `mentionsMe` runs only on an INBOUND
+   * frame - which your own message never is, because MLS gives no echo of it. There is also no
+   * mentions inbox anywhere in this app, so the "self-mention as a bookmark" that some chat apps
+   * offer has no surface here to be found again from. It was a control whose only possible effect
+   * was on the text, and offering one is how a reader learns by being ignored what a fact could
+   * have told them. `SidebarNewChatModal` and `ChatGroupPanel` already exclude the reader for the
+   * same reason; this was the last picker that did not.
+   *
+   * It reads `currentUserId()` rather than taking the id as an argument because the decision is
+   * made HERE and the fact is already known globally - three components would otherwise have to
+   * thread a prop through, and any surface added later could forget to.
+   */
   async function search(q: string) {
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
-        let data: MentionUser[] = await res.json();
+        const data: MentionUser[] = await res.json();
         const allowed = opts.allowedUserIds;
-        if (allowed && allowed.length > 0) {
-          const allowedSet = new SvelteSet(allowed.map((id) => id.toLowerCase()));
-          data = data.filter((u) => allowedSet.has(u.id.toLowerCase()));
-        }
-        suggestions = data.slice(0, 6);
+        const me = currentUserId();
+        suggestions = filterUserSuggestions(data, {
+          excludeIds: me ? [me] : [],
+          // AN EMPTY ALLOWLIST MEANS "NO RESTRICTION" HERE, WHICH IS THE OPPOSITE OF WHAT
+          // `filterUserSuggestions` DOES WITH ONE - it would offer nobody. The array is a channel's
+          // member list or a group's roster, and it is legitimately empty before that list has
+          // loaded, so the two readings differ exactly while a reader is typing into a
+          // conversation that has not settled. Passing it only when non-empty keeps the reading
+          // this composable has always had.
+          ...(allowed && allowed.length > 0 ? { filterUserIds: allowed } : {}),
+        }).slice(0, 6);
         open = suggestions.length > 0;
         selectedIdx = -1;
       }
