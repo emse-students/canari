@@ -79,9 +79,41 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
 | **send the DSI the one request that carries every name at once** - the four records, the AAAA, the firewall confirmation, and the two questions the host nginx configuration cannot be written without (the certificate path, and one SAN certificate or one per name). Every name costs a ticket: there is no delegated zone and no wildcard, so a second request is a second wait | 1 message | [estate-migration](infrastructure/estate-migration.md#7-phase-2---the-names) |
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
+| **rotate the Cloudflare run token on both boxes, after moving it out of the unit's command line** - any local user reads it today through `systemctl show -p ExecStart`, on `canari` and on `miconnect`, whatever the file mode. The unit shape that closes it is written down; what needs the user is that the rotation drops the public path to production for the minute between invalidating the old token and restarting the daemon | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
 | **one FIDO touch on `ssh -fN bastion`**, which opens the master connection the whole survey of the target host waits behind. `ControlPersist 48h` means it is owed ONCE per two days, not once per command - and it is the only thing standing between here and the four measurements section 9 of that page lists as open | 1 touch | [estate-migration](infrastructure/estate-migration.md#9-open-questions) |
 
 ## Open defects, in severity order
+
+### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
+
+`cloudflared` runs as `/usr/bin/cloudflared --no-autoupdate tunnel run --token <secret>`. In
+September 2026 that unit was found `644 root:root`, the token reached a terminal transcript, it was
+rotated, and the unit was set `600` on both hosts. **That closed `systemctl cat`, which reads the
+FILE.**
+
+**`systemctl show cloudflared -p ExecStart` reads systemd's in-memory state over D-Bus and answers
+any unprivileged user with the complete command line, token included.** Measured on `canari` and on
+`miconnect` the same minute, as the ordinary login account on each: the unit itself is unreadable
+(`systemctl cat` refused, mode `600 root:root` on both), and the token comes back anyway. So the
+token has now reached a transcript twice, for the same underlying reason.
+
+**No file mode fixes this** - D-Bus does not consult one. The token has to leave the command line:
+an `EnvironmentFile=/etc/cloudflared/token` (`600 root:root`) carrying `TUNNEL_TOKEN=`, with
+`ExecStart` reduced to `tunnel run`. `systemctl show` prints `EnvironmentFile=` as a path and never
+its contents, and the value lands in the process environment at exec time where `/proc/<pid>/environ`
+is root-only. **`Environment=` in the unit would NOT do** - `show` prints that one verbatim.
+
+**Both hosts owe the change, and a rotation after it.** The rotation procedure and its ordering trap
+are on [cloudflare-edge](infrastructure/cloudflare-edge.md#rotating-the-run-token-and-the-order-that-matters):
+step 1 invalidates the old token instantly, so the tunnel - the public path to production - is down
+between it and the restart. That minute is why this is done with the user present rather than alone,
+and it is the only reason it is not already done.
+
+**What this is really an instance of**: the `600` was verified against `systemctl cat`, the mechanism
+that caused the incident, instead of against the question the incident raised - *can a local user
+read this token*. The paragraph recording it has read as though the exposure were closed since
+2026-09-02.
+
 
 ### P3 - `login.mjs` calls a login FAILED while the authorization-code exchange is still running (measured 2026-09-23)
 
