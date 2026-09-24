@@ -645,9 +645,9 @@ internet. The exact addresses are machine-local and stay in agent memory, not in
 interfaces and dev, on `rootz-emse.fr`, behind Access - is what section 4 already routes through a
 tunnel and what the 7844 block actually broke; relaying it changes nothing public and keeps
 Cloudflare off the new machine, which is what the user asked for. The PUBLIC surface could be
-relayed too, and that is attractive for exactly one reason - it needs no DSI name at all, which
-matters now that `canari.emse.fr` will not be reassigned - but it puts Cloudflare back in the public
-path, which is the decision in section 4. **Re-opening that is a choice to be made out loud, which
+relayed too, but the one reason that made it attractive is GONE - see the section below: the name
+already points at the host and already has its certificate, so nothing is owed to the DSI for it -
+and it puts Cloudflare back in the public path, which is the decision in section 4. **Re-opening that is a choice to be made out loud, which
 is what separates it from the parade above.**
 
 **Two mechanisms for the internal half**, and the difference is who is asked for what:
@@ -662,11 +662,28 @@ alive to answer `canari-emse.fr` with 301s; this makes it load-bearing for the i
 retiring it later means doing this again somewhere else. That is a real cost and it is the argument
 for asking the DSI once more rather than building the relay.
 
-**ONE FIND FOR THE PORT ALLOCATION TABLE.** The target host carries MORE THAN ONE public address on
-its single interface. The known trap - `sites-enabled/canari.conf` sending `canari.emse.fr` to
-Portail-etu - is a `Host`-header collision on a shared `:443`, and a second address dissolves it by
-letting nginx select on the ADDRESS instead. Whether a name may be pointed at one of them is a DSI
-question, not ours.
+#### THE NAME ALREADY POINTS AT THE HOST, WITH ITS OWN ADDRESS AND ITS OWN CERTIFICATE - MEASURED 2026-09-24
+
+**Phase 2 owes the DSI nothing for Canari, and a whole class of questions asked here was invented.**
+The user said `canari.emse.fr` "ne sera pas reaffecte" and it was read as *we will not be given that
+name*; it means *that name is not going to move*. Measured:
+
+| | |
+| --- | --- |
+| `canari.emse.fr` resolves | to the target host, on **its OWN address** - not the one Portail-etu answers on |
+| TLS | a certificate **already issued for `CN=canari.emse.fr`** by the school's CA, valid into 2027 |
+| What it serves today | `200`, and the page is **Portail-etu's** |
+
+So the known trap is not a trap and not a collision: `sites-enabled/canari.conf` is simply the wrong
+`root` behind the right name, on an address that is already Canari's. **What phase 2 needs is an
+nginx vhost, and that is the whole of it** - no DNS record, no certificate request, no name to
+negotiate. `cercle.emse.fr` and `miconnect.emse.fr` are the ones that resolve to NOTHING, so those
+two are what the DSI request is still for.
+
+**AND THE LESSON IS A READING, NOT A MEASUREMENT.** One French participle was read in the sense that
+made the plan harder, and four questions were built on top of it - a new production name, an issuer
+change, deep links, two store listings. **A premise that makes the work bigger deserves the probe
+FIRST**, and here the probe was one `nslookup` and one `openssl s_client`.
 
 The unit is left **INSTALLED and DISABLED**. A service that fails at every boot on somebody else's
 machine is noise; what the runbook needs kept is the configuration, not the retry loop.
