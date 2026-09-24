@@ -17,6 +17,186 @@ Le solveur enumerait les 2^n combinaisons de chaque bloc de la bordure ; une rec
 profondeur qui coupe des qu'une equation est impossible, plus une table de voisins, ramene le pire
 cas mesure de 1438 ms a 125 ms, sur 1276 grilles toutes identiques. La case cliquee s'affiche
 enfoncee pendant l'attente ([minesweeper](docs/wiki/frontend/modules/minesweeper.md)).
+### Changed - le runner de deploiement demenage avec les estates, il ne disparait pas
+
+Le plan decidait de le supprimer et de deployer en SSH depuis un runner GitHub. La cible ne repond
+sur `22` que depuis le reseau du campus, et `443` repond depuis l adresse meme ou `22` expire : le
+filtre est par port et en amont de l hote, donc un runner GitHub n a aucune route. Le runner
+`canari` est enregistre sur la cible, dans un groupe restreint a ce depot, et volontairement arrete
+ET desactive jusqu au demenagement. Les quatre jobs gardent `runs-on: self-hosted` inchange.
+[cicd](docs/wiki/cicd.md#self-hosted-runner), [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - le deploiement de production passe enfin par les scripts que dev exerce depuis trois semaines
+
+`serve-prod.yml` tombe de 943 a 306 lignes : 277 lignes de `if [ -n "$X" ]; then upsert; else warn`
+ecrites a la main, plus ses propres copies du pull, du up, des migrations et de l attente de sante,
+remplacees par `render-env.sh` et `deploy-environment.sh`. L equivalence est MESUREE et non supposee :
+le rendu reproduit les 61 cles du `.env` de prod sans une seule valeur differente. Un troisieme
+script, `verify-secrets.sh`, verifie ensuite que les CONTENEURS portent ce qui a ete rendu - derive
+du compose, 51 paires la ou la version ecrite a la main en couvrait 5.
+[cicd](docs/wiki/cicd.md).
+
+### Fixed - le nom du projet compose d Authentik n etait pas declare, il etait deduit du dossier
+
+Sans `name:`, Compose prend le nom du dossier, et le volume avec. La stack n a survecu au
+demenagement que parce que les deux chemins finissaient par `miconnect` : une restauration dans
+un dossier nomme autrement serait remontee sur une base VIDE, saine, en laissant toutes les
+identites dans un volume que plus personne ne lit. Declare des deux cotes, verifie par
+`--dry-run` (`Running`/`Healthy`, aucune recreation). Le Cercle, lui, declarait deja le sien -
+la section 10 du plan disait le contraire et elle est corrigee.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - la liste ordonnee des prochaines heures, et un renommage a moitie manque
+
+Deux estates ont demenage sans que les conteneurs soient renommes comme la section 5 le
+demandait : cercle est parti en projet `le-cercle`, Authentik en `miconnect`. La section 10 du
+plan porte ce qui reste, dans l ordre, avec le tableau des ports mesure sur la cible et la
+capacite disponible pour le demenagement de Canari.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md#10-the-next-hours---the-ordered-list-written-2026-09-24-after-two-estates-moved).
+
+### Fixed - la page d Authentik disait encore que la stack avait sa propre VM
+
+Elle a demenage le matin meme. Corrige avec ce qui en decoule : l ancienne VM garde une copie
+FIGEE et un relais, la derive entre ce depot et la machine est fermee, et la ligne "prendre un
+dump a la main" de la table due a l utilisateur est retiree - c est fait, et la commande qu elle
+donnait viserait desormais la base morte. [authentik](infrastructure/authentik/README.md).
+
+### Fixed - la sauvegarde d Authentik n avait jamais tourne, le correctif dormait dans le depot
+
+94 nuits sans `authentik_db.sql.gz`, pas 93 : le checkout de production etait reste a `0.18.22`,
+donc le script nocturne ne connaissait pas la variable ajoutee la veille. Cle a commande forcee
+installee vers l hote cible, liste blanche attaquee avec temoin, et l echec sur source injoignable
+provoque pour de bon. La valeur passe dans `.env.example`, sinon le prochain deploiement la
+remplacerait par un defaut nommant la VM ou tourne encore une copie figee.
+[backup](infrastructure/backup/README.md).
+
+### Changed - Authentik sert depuis la machine cible, et un proxy n'herite d'aucun defaut
+
+Fenetre de 6 min 37 s, 230 tables prouvees identiques par empreinte de contenu. Le relais est un
+conteneur ici et non un paquet : `nginx` est absent de la VM et `sudo` y demande un mot de passe,
+pas `docker`. Interposer ce relais imposait une limite de corps de 1 Mo a une stack publiee en
+direct jusque-la, donc sans aucune - relevee des deux cotes. Verifie jusqu'au bout : emetteur OIDC,
+executeur de flux et redirection CAS.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - le worker Authentik montait le socket Docker, et rien ne s'en servait
+
+Sur sa propre VM c'est contenu ; sur l'hote partage ou cette stack demenage, c'est un controle
+equivalent-root sur tout le demon, conteneurs des autres locataires compris. Le seul outpost declare
+est l'Embedded Outpost, qui tourne dans le conteneur serveur - verifie en base AVANT de retirer la
+ligne. Le port `9443` part aussi : l'ingress du tunnel atteint la stack en clair sur `9000`, lu sur
+le connecteur. [authentik](infrastructure/authentik/README.md).
+
+### Fixed - BEGIN IMMEDIATE ne prouve rien, et l'endpoint de sante avait raison
+
+L'entree precedente disait que `/api/health` repondait `ok` sur une base impossible a ecrire. Le
+journal du conteneur la refute en une ligne : il a signale la panne trois secondes apres le
+demarrage et renvoye 503. La sonde proposee etait fausse aussi - mesuree contre une reproduction,
+`BEGIN IMMEDIATE` passe sur une connexion en lecture seule. Seule une ecriture reelle dans la
+transaction refuse. [durable-rules](docs/wiki/durable-rules.md).
+
+### Changed - cercle sert depuis la machine cible, et une base qui se lisait ne s'ecrivait pas
+
+Le nom public passe par un relais sur l'ancienne VM, puisqu'un tunnel ne peut pas sortir de l'hote
+cible. Donnees prouvees identiques table par table, empreintes de contenu et non comptes de lignes.
+Le defaut trouve au passage : le repertoire du volume appartenait a root, donc SQLite ne pouvait
+creer ni WAL ni SHM, et `/api/health` repondait `ok` pendant ce temps parce qu'il ne fait que lire.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - le depot public nommait l'inventaire logiciel d'une machine qui n'est pas la notre
+
+Trois noms d'hote d'autres associations, l'agent de securite gere par la DSI, **sa version exacte**
+et l'adresse de son gestionnaire central. Aucun des cinq n'etait porteur : le plan a besoin des roles,
+pas des noms. La regle est etendue, avec le corollaire qui decide du moment - un depot public a un
+historique, donc la reecriture se fait a la redaction. [durable-rules](docs/wiki/durable-rules.md).
+
+### Added - quel conteneur publie quoi, et un port que Canari ne pourra pas garder
+
+La table de loopback de la cible disait ce qui etait pris, jamais ce qui etait demande. Mesure des
+quatre machines : la pile de production Canari n'expose qu'UN port sur le chemin public, et c'est
+`8080`, deja tenu sur la cible par un agent que ce projet n'administre pas. Deux points restent
+ouverts, le `9443` d'Authentik et la paire publiee par garage.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md#5-the-target-shape-and-the-one-thing-it-forces).
+
+### Fixed - l'etape 3 du runbook n'etait pas faite, et la page disait qu'elle l'etait
+
+Mesure sur l'hote : `/srv/le-cercle` existe et est VIDE, et le seul conteneur qui y tourne est celui
+de Portail-etu. L'affirmation a survecu parce que le repertoire et le volume de donnees existent tous
+les deux, ce qui ressemblait a "pret" vu de loin. Ce que demande vraiment la mise en place est
+desormais ecrit, avec l'etat des deux runners, des variables et des droits verifie des deux cotes.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Fixed - seuls 22, 80 et 443 entrent sur l'hote cible, ce qui refute un mecanisme deja choisi
+
+Les regles disaient le contraire : `DOCKER-USER` est un `RETURN` nu et la chaine `DOCKER` accepte
+directement, la forme classique de Docker qui perce le pare-feu. Sonde : le port publie est lu par
+l'hote lui-meme (le temoin) et par personne d'autre - ni l'internet, ni les deux anciennes machines
+sur le reseau prive. Le filtre est le reseau de l'ecole, pas l'hote. Lier un port et le restreindre a
+la source est donc mort, et l'architecture de la section 5 se trouve validee par un pare-feu plutot
+que par un argument. La premiere sonde, sans temoin, ne valait rien.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Fixed - ce sont trois conteneurs LXC, pas trois VM, et la question de capacite a une reponse
+
+`systemd-detect-virt` repond `lxc` sur les trois. Le signe qui a declenche la verification : leur
+`/proc/loadavg` est identique a deux decimales et bouge ensemble, la charge n'etant pas cloisonnee.
+Les chiffres du plan sont donc de l'allocation, pas du materiel. Mesure : 8 vCPU et 20 G alloues,
+environ 2 G reellement residents ; la cible offre 11 G dont 10 libres. La question d'arbitrage que la
+section 9 disait indecidable l'est - mais c'est une lecture au repos, pas une preuve de marge.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - la porte interne ne demenage pas, et le relais sert quand meme: la phase 1 en depend
+
+Decision de l'utilisateur : dev et les interfaces d'admin restent sur l'ancienne VM, dont le tunnel
+marche deja ; la nouvelle machine ne porte que la production, et le connecteur installe la-bas a ete
+SUPPRIME le jour meme. Mais le tunnel avait un SECOND consommateur : toute la phase 1 passe par lui
+(l'etape 4 pointe son ingress, le rollback le repointe). Conclure du premier que le relais etait
+inutile etait faux, et corrige le jour meme. Le relais reste donc, cote ANCIENNE VM - et ce n'est pas
+un mecanisme neuf : mesure, l'ingress de prod nomme DEJA une adresse distante, la VM qui sert cercle
+n'ayant aucun connecteur. Ce qui change au deplacement n'est pas l'ingress mais l'adresse de
+publication, inoffensive sur un reseau prive et exposee aux co-locataires sur l'hote partage.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Fixed - le nom pointe deja sur l'hote cible, et la moitie des questions posees n'existait pas
+
+"ne sera pas reaffecte" a ete lu comme "on ne nous donnera pas ce nom" au lieu de "ce nom ne bougera
+pas", et quatre questions ont ete construites dessus - nouveau nom de prod, issuer OIDC, deep links,
+deux fiches de store. Mesure : `canari.emse.fr` resout deja vers l'hote cible sur SA propre adresse,
+avec un certificat deja emis par l'ecole, et sert simplement le mauvais `root`. Il ne reste qu'un
+vhost nginx. La regle qui en sort : c'est la lecture qui AGRANDIT le travail qui doit la sonde.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md), [durable-rules](docs/wiki/durable-rules.md).
+
+### Changed - le port refuse bloque la porte interne, pas la migration, et l'ancienne machine peut relayer
+
+La parade proposee la veille remettait Cloudflare dans le chemin public, ce que la section 4 du plan
+interdit depuis le 2026-09-23 : elle est marquee REFUTEE plutot que supprimee. La relecture deplace
+le blocage - le public n'a jamais eu besoin du 7844 puisqu'il n'a jamais eu besoin de Cloudflare.
+Mesure ensuite : l'ancienne machine joint l'hote cible et joint l'edge, elle relaie deja SSH, et
+l'hote voit son adresse PRIVEE preservee - de quoi epingler une regle sur une adresse non routable.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - un plan de migration decrivait comment atteindre une machine qu'on ne possede pas
+
+Leon a demande pourquoi un login etait ecrit en dur dans le plan de migration. Il y avait plus que
+ca : le compte utilise sur l'hote partage de la DSI, un second compte a cote, lequel des deux
+detenait `docker`, les fichiers de cles d'un poste et le second facteur qui en avait ete retire -
+une carte d'acces vers la machine d'un tiers, dans un depot PUBLIC. Le scan de secrets ne pouvait
+pas le voir : il authentifie les credentials candidats, et un login n'en est pas un. Tout est parti
+en memoire locale, la page ne garde que les consequences, et la regle existante a ete elargie -
+elle ne nommait que les mesures de production. La reprise a trouve le defaut que le premier cachait :
+la copie publique affirmait encore que les droits n'avaient pas suivi le compte, faux depuis le
+2026-09-23.
+[durable-rules](docs/wiki/durable-rules.md), [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Changed - le tunnel de l'hote cible existe et ne peut pas joindre Cloudflare, et c'est le port 7844
+
+Le connecteur est installe dans la bonne forme des le depart - jeton dans un `EnvironmentFile` 0600,
+rien sur `ExecStart` - mais il ne s'enregistre pas. Mesure depuis la machine : le 443 sortant passe,
+le 7844 est bloque EN AMONT, en UDP comme en TCP, et la politique de sortie de la machine est
+`ACCEPT`. `http2` n'est pas un contournement, il compose le meme 7844. L'unite reste installee et
+DESACTIVEE, l'ouverture rejoint la demande DSI, et comme la phase 2 retire Cloudflare de tout chemin
+public, sauter le tunnel devient une option a part entiere.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - la banniere aveugle d'un salon nomme laquelle de ses quatre conditions a manque
 

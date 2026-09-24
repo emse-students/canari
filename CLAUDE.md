@@ -218,8 +218,7 @@ only; never re-enumerate it here.
 on 2026-09-03, restating what the linked pages carry - and TWO items had gone FALSE unnoticed.
 Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
 
-1. **THE ESTATE MIGRATION IS THE NEXT CHANTIER, AND ITS PLAN IS THE ONLY COPY** - three VMs onto the
-   Portail-etu host, then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
+1. **THE ESTATE MIGRATION IS IN PROGRESS, AND ITS PLAN IS THE ONLY COPY** - **TWO OF THE THREE SERVE FROM THE TARGET SINCE 2026-09-24**, Canari is last, and what is next is section 10, ordered; then four names to `emse.fr`, no Cloudflare on any public path; phase 1 is reversible, phase 2 is not ([estate-migration](docs/wiki/infrastructure/estate-migration.md#10-the-next-hours---the-ordered-list-written-2026-09-24-after-two-estates-moved)).
 2. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
    SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
    three commands a run owes before any of it is believed are in the campaign section below.
@@ -269,9 +268,9 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
 17. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-18. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
-    deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
-    inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
+18. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). ONE open: a dev
+    deploy cannot tell a broken CHANGE from an unreachable REGISTRY ([backlog](docs/wiki/backlog.md)).
+    Both estates share the three deploy scripts since 2026-09-24 ([cicd](docs/wiki/cicd.md)).
 19. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
 20. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND

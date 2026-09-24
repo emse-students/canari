@@ -47,8 +47,14 @@ BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 # echouer la sauvegarde.
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
 # La machine qui porte cette stack. Vide = ce conteneur tourne ici, ce qui
-# etait vrai jusqu au 2026-06-22 et ne l est plus : Authentik a sa propre VM.
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-miconnect@10.0.0.7}"
+# etait vrai jusqu au 2026-06-22 et ne l est plus : Authentik a eu sa propre VM,
+# puis a rejoint l hote mutualise le 2026-09-24.
+#
+# CE DEFAUT A CHANGE AVEC LA MACHINE, ET IL LE DEVAIT. L ancienne VM tourne encore
+# avec une copie FIGEE de la base : un defaut qui la designerait produirait une
+# sauvegarde qui reussit et qui ment, ce qui est pire qu une qui echoue. La valeur
+# est un ALIAS ~/.ssh/config, qui porte la cle dediee et IdentitiesOnly.
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-authentik-target}"
 # Stockage secondaire offsite via SSH/rsync (serveur LAN mitv). Vide pour desactiver.
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
