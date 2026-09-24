@@ -82,12 +82,20 @@ journalctl -u canari-backup.service -f
 | `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | cible offsite (vide = desactive) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | dossier offsite sur mitv |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
-| `MICONNECT_SSH_HOST` | `miconnect@10.0.0.7` | machine qui porte Authentik (vide = conteneur local) |
+| `MICONNECT_SSH_HOST` | `authentik-target` | machine qui porte Authentik (vide = conteneur local) |
 
-## Authentik vit ailleurs, et la sauvegarde l a ignore 93 nuits
+> `authentik-target` est un **alias** `~/.ssh/config` de la boite applicative, et non
+> un `user@hote` : c est lui qui porte la cle dediee et `IdentitiesOnly`. La valeur
+> est aussi dans `.env.example`, sans quoi le prochain deploiement l effacerait.
 
-**Du 2026-06-23 au 2026-09-23, aucune archive n a contenu `authentik_db.sql.gz`** -
-93 nuits d affilee, et l archive du 2026-09-23 est celle ou on l a vu. Ce n etait
+## Authentik vit ailleurs, et la sauvegarde l a ignore 94 nuits
+
+**Du 2026-06-23 au 2026-09-24, aucune archive n a contenu `authentik_db.sql.gz`** -
+94 nuits d affilee, et l archive du 2026-09-23 est celle ou on l a vu. **Le
+correctif ci-dessous a ete ecrit le 2026-09-23 et n a rien change pendant une nuit
+de plus**, pour la raison qu une section entiere plus bas documente : il est reste
+dans le depot. La premiere archive a contenir Authentik est celle du 2026-09-24
+a 13:02, ecrite a la main. Ce n etait
 pas une panne bruyante : la stack Authentik a demenage sur sa propre VM le
 2026-06-22, le `docker inspect` local qui la cherchait ici a cesse de la trouver,
 et la branche de rattrapage ecrivait `WARN conteneur Authentik absent - ignore`
@@ -102,9 +110,10 @@ sortait en 0.
    - autorise a continuer sans elle. Une valeur posee et injoignable fait
    desormais **echouer** la sauvegarde.
 2. **La sauvegarde ne savait pas atteindre la nouvelle machine.** Elle le sait :
-   `MICONNECT_SSH_HOST`.
+   `MICONNECT_SSH_HOST` - **et elle ne l a su sur la BOITE que le 2026-09-24**,
+   parce que savoir dans le depot n est pas savoir sur la machine.
 3. **LE MANIFESTE, LUI, CONTINUAIT D ANNONCER LE MEMBRE.** C etait un texte
-   constant. Pendant 93 nuits, chaque archive a promis des identites qu elle ne
+   constant. Pendant 94 nuits, chaque archive a promis des identites qu elle ne
    contenait pas - et le manifeste est precisement ce qu on lit pour savoir si
    elles sont la. Il est maintenant **derive des fichiers reellement produits**.
    Le meme fichier portait deja la lecon du dump MongoDB de 116 octets ; elle n
@@ -124,7 +133,7 @@ identite - et la direction interessante est l inverse.
 La cle est donc installee avec une **commande forcee** :
 
 ```
-command="/home/miconnect/bin/authentik-pg-dump",restrict ssh-ed25519 AAAA… canari@canari
+command="/home/<compte>/bin/authentik-pg-dump",restrict ssh-ed25519 AAAA… canari@canari
 ```
 
 `authentik-pg-dump.sh` de ce dossier est ce programme, et c est la liste
@@ -133,13 +142,18 @@ qui l on demande `id; cat /etc/shadow` renvoie le dump PostgreSQL, parce que le
 serveur ignore la commande du client. `restrict` refuse en plus pty, agent, X11
 et port forwarding.
 
-Installation sur la boite Authentik (aucun droit root necessaire) :
+Installation sur la machine qui porte Authentik (aucun droit root necessaire) :
 
 ```bash
-scp infrastructure/backup/authentik-pg-dump.sh miconnect:bin/authentik-pg-dump
-ssh miconnect 'chmod 0755 ~/bin/authentik-pg-dump'
+scp infrastructure/backup/authentik-pg-dump.sh <hote>:bin/authentik-pg-dump
+ssh <hote> 'chmod 0755 ~/bin/authentik-pg-dump'
 # puis ajouter la ligne ci-dessus a ~/.ssh/authorized_keys
 ```
+
+> **`<hote>` et `<compte>` ne sont pas nommes ici volontairement.** Depuis le
+> 2026-09-24 cette machine est l hote mutualise de la DSI, et le compte qui y porte
+> la stack est nominatif : nommer l un ou l autre dans un depot PUBLIC, c est
+> publier une carte d acces sur une machine qui ne nous appartient pas.
 
 **La restauration n est deliberement PAS automatique.** L ouvrir demanderait une
 cle d **ecriture** permanente de la boite applicative vers le fournisseur d
@@ -232,3 +246,75 @@ Ou depuis une archive locale precise :
 
 > La restauration est **destructive** : elle ecrase les donnees actuelles.
 > Elle exige le drapeau `--yes`.
+
+## LE CORRECTIF ETAIT DANS LE DEPOT ET LA BOITE NE L AVAIT JAMAIS EU - 2026-09-24
+
+Mesure sur la machine de production le jour ou Authentik a demenage vers l hote
+mutualise, en verifiant ce que la sauvegarde allait sauvegarder ce soir-la.
+
+**Le checkout `/home/canari/canari` etait reste a `0.18.22`.** Le script qui
+tournait chaque nuit ne connaissait pas `MICONNECT_SSH_HOST` - la variable n y
+apparaissait pas une seule fois - et se contentait toujours du `WARN conteneur
+Authentik absent - ignore` que la section precedente decrit comme corrige. La
+preuve tenait en une commande : la derniere archive contenait `MANIFEST.txt`,
+`media_meta.tar.gz` et `postgres_auth_db.sql.gz`, et rien d autre. Aucune cle a
+commande forcee n existait non plus sur cette boite.
+
+**SEULE UNE PUBLICATION DE VERSION MET CE CHECKOUT A JOUR.** Le deploiement de
+production fait bien un `git reset --hard` ici - ce n est donc pas un repertoire
+oublie. Mais il ne tourne qu au moment ou une version STABLE est publiee, et la
+derniere etait `0.18.22`. Les scripts de sauvegarde, eux, s executent depuis les
+fichiers de ce repertoire chaque nuit, par une crontab utilisateur. Donc **un
+correctif apporte a `infrastructure/backup/` reste inerte jusqu a la prochaine
+publication**, meme fusionne, meme avec un pipeline vert. C est exactement "un
+correctif fusionne n est pas un correctif livre", et l ecart se compte ici en
+nuits de sauvegarde.
+
+**ET LE `.env` EST REGENERE A CHAQUE DEPLOIEMENT**, par `cp infrastructure/.env.example
+infrastructure/.env` suivi des secrets reinjectes. Une valeur posee a la main dans
+`infrastructure/.env` NE SURVIT PAS a la prochaine publication : elle disparait, le
+defaut du script reprend, et personne n est prevenu. C est pour cela que
+`MICONNECT_SSH_HOST` est desormais dans `.env.example`, qui est versionne, et que
+le defaut du script a suivi la machine. **Un defaut qui pointe une machine ou
+tourne encore une copie FIGEE est pire qu un defaut absent** : il produit une
+sauvegarde qui reussit et qui ment.
+
+**Ce qui a ete fait le 2026-09-24**, dans cet ordre, et chaque etape verifiee :
+
+| Geste | Verification |
+| --- | --- |
+| Sauvegarde manuelle immediate, avant tout le reste | 230 `CREATE TABLE`, gzip valide, copiee sur mitv |
+| `git pull` du checkout | passe de `0.18.22` a `21cbf3d4e` |
+| Cle dediee `~/.ssh/authentik_backup` sur la boite applicative | ed25519, sans phrase de passe |
+| `authentik-pg-dump` installe sur l hote cible, commande forcee + `restrict` | dump de 230 tables obtenu depuis `canari` |
+| `MICONNECT_SSH_HOST=authentik-target` dans `infrastructure/.env` | alias porte par `~/.ssh/config`, `known_hosts` prealimente |
+| Sauvegarde complete rejouee | archive de 54M, `authentik_db.sql.gz` present, manifeste le nommant |
+
+**LA MACHINE VISEE A CHANGE, ET LA PHRASE "VIDER LA VARIABLE" NE S APPLIQUE PLUS.**
+Le plan de migration prevoyait qu a la reunion des deux stacks `MICONNECT_SSH_HOST`
+redevienne vide. Ce n est vrai qu une fois Canari arrive sur l hote cible : entre
+les deux, Authentik est parti et Canari est reste, donc le saut SSH est plus
+necessaire qu avant, simplement dans une autre direction.
+
+### La liste blanche a ete attaquee, pas seulement lue
+
+`restrict` et la commande forcee ont ete eprouves depuis la boite applicative, et
+un mecanisme de securite non attaque n est qu une intention :
+
+| Tentative | Resultat |
+| --- | --- |
+| `ssh authentik-target whoami` | octets gzip d un dump - la commande demandee est ignoree |
+| Session interactive (`ssh -T`) | idem, le dump |
+| Redirection de port `-L` vers `127.0.0.1:9000`, sollicitee pendant la session | rien ne passe, 25 tentatives |
+| **Temoin** : meme client, meme mecanisme, cle SANS commande forcee | `SSH-2.0-OpenSSH_9.2p` traverse |
+
+Le temoin est ce qui rend le "rien ne passe" lisible : sans lui, il aurait aussi
+bien pu decrire un tunnel jamais ouvert - la forme exacte d une mesure de
+pare-feu ratee le 2026-09-24 au matin.
+
+### Et l echec a ete provoque, pas suppose
+
+Une source configuree et injoignable doit faire **echouer** la sauvegarde. Cette
+branche n avait jamais tourne. En pointant la variable sur un hote inexistant :
+code de sortie `1`, `ERROR dump Authentik impossible`, et **aucune archive
+ecrite**. Le `.env` a ete restaure dans la meme commande, par un `trap`.
