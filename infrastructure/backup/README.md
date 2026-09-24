@@ -9,8 +9,8 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 | Source | Methode | Contenu |
 | --- | --- | --- |
 | PostgreSQL Canari (`auth_db`) | `pg_dump` (dump logique coherent) | users, channels, posts, forms, paiements, **et l historique MLS chiffre** (`queued_message`, `mls_*`) |
-| Garage (`infrastructure_garage_data`, `infrastructure_garage_meta`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
-| media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
+| Garage (`${CANARI_COMPOSE_PROJECT}_garage_data`, `${CANARI_COMPOSE_PROJECT}_garage_meta`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
+| media-service (`${CANARI_COMPOSE_PROJECT}_media_meta`) | tar du volume + depot restic | metadonnees media |
 | PostgreSQL Authentik (`miconnect`, **sur une autre VM**) | `pg_dump` par SSH a commande forcee | identites, config OIDC |
 
 Non sauvegarde car transitoire : Redis.
@@ -83,6 +83,7 @@ journalctl -u canari-backup.service -f
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | dossier offsite sur mitv |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
 | `MICONNECT_SSH_HOST` | `authentik-target` | machine qui porte Authentik (vide = conteneur local) |
+| `CANARI_COMPOSE_PROJECT` | `canari-prod` | nom du projet compose (`docker-compose.prod.yml`'s `name:`) - les volumes ci-dessus sont montes par un `docker run` brut, en dehors de `docker compose`, donc rien ne le resout depuis le fichier |
 
 > `authentik-target` est un **alias** `~/.ssh/config` de la boite applicative, et non
 > un `user@hote` : c est lui qui porte la cle dediee et `IdentitiesOnly`. La valeur
@@ -170,8 +171,9 @@ chiffres cote client, donc incompressibles et immuables - c est exactement le ca
 sauvegarde dedupliquee change tout. Le modele chiffre est dans
 [storage-forecast](../../docs/wiki/infrastructure/storage-forecast.md).
 
-`backup-objects.sh` sauvegarde `infrastructure_garage_data`, `infrastructure_garage_meta` et
-`infrastructure_media_meta` dans un depot **restic** (image jetable, aucune dependance hote),
+`backup-objects.sh` sauvegarde `${CANARI_COMPOSE_PROJECT}_garage_data`,
+`${CANARI_COMPOSE_PROJECT}_garage_meta` et `${CANARI_COMPOSE_PROJECT}_media_meta` dans un depot
+**restic** (image jetable, aucune dependance hote),
 applique une retention 14 jours / 8 semaines / 6 mois, verifie l integrite du depot, puis
 miroite le depot sur `mitv`. Planifie a **04:00**, apres le tar.
 

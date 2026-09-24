@@ -42,6 +42,9 @@ RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/home/canari/.cache/restic}"
 # be backed up off this machine (see infrastructure/MIGRATION.md).
 RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/home/canari/.config/canari/restic-password}"
 RESTIC_IMAGE="${RESTIC_IMAGE:-restic/restic:latest}"
+# The compose project's name (docker-compose.prod.yml's `name:`): the volumes below are
+# mounted by a raw `docker run`, outside `docker compose`, so nothing resolves it for us.
+CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
 
 # Retention: 14 full days (aligned with the tar), then one point per week and per month so a
 # corruption discovered late is still recoverable.
@@ -75,9 +78,9 @@ mkdir -p "$RESTIC_REPO_DIR" "$RESTIC_CACHE_DIR"
 restic() {
   docker run --rm \
     --user "$(id -u):$(id -g)" \
-    -v infrastructure_garage_data:/data/garage_data:ro \
-    -v infrastructure_garage_meta:/data/garage_meta:ro \
-    -v infrastructure_media_meta:/data/media_meta:ro \
+    -v "${CANARI_COMPOSE_PROJECT}_garage_data":/data/garage_data:ro \
+    -v "${CANARI_COMPOSE_PROJECT}_garage_meta":/data/garage_meta:ro \
+    -v "${CANARI_COMPOSE_PROJECT}_media_meta":/data/media_meta:ro \
     -v "$RESTIC_REPO_DIR":/repo \
     -v "$RESTIC_CACHE_DIR":/cache \
     -v "$RESTIC_PASSWORD_FILE":/pw:ro \

@@ -54,7 +54,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
   DOMAIN: canari-emse.fr
-  DEPLOY_PATH: /home/canari/canari
+  DEPLOY_PATH: /srv/canari
 
 jobs:
   # -----------------------------------------------------------------------------------------------
