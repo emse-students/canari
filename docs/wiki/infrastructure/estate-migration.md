@@ -188,9 +188,9 @@ say `1.4.2`.
 | Shape on the new host | **Docker compose projects side by side**, not nested virtualisation | simpler, and it is the shape every future project gets |
 | Public traffic | **No Cloudflare at all** - nginx, ufw and DSI certificates | the School owns the zone and will not delegate it |
 | Internal traffic | stays on **`rootz-emse.fr`** behind a Cloudflare tunnel, with Access | an admin interface does not need a public name, and a gated door does not need a signpost |
-| **Where the internal surface RUNS** (2026-09-24) | **it does not move** - dev and the admin interfaces stay on the OLD VM | see below: this is what makes the refused port stop mattering |
+| **Where dev and the admin surface run** (2026-09-24, REVISED the same day) | **BOTH Canari estates move to the target, dev included** - reached the same way as production, through the old VM's relay, never a new connector | the earlier "stays on the old VM" reading argued from the refused port, but the relay already answers that regardless of which estate sits behind it; keeping dev off the target bought nothing further and cost it rehearsing production less faithfully |
 | The tunnel | **stays where it already works**, on the old VM (2026-09-24) | nothing is installed on the new host for it, so nothing there needs to reach the edge |
-| Dev | **`dev.canari.rootz-emse.fr`**, internal, behind the tunnel, **and hosted on the OLD VM** (2026-09-24) | dev holds a FULL COPY of production data; publishing it under `emse.fr` would expose members' data on a name anyone can reach. Costs no DSI ticket and no third-level certificate |
+| Dev | **`dev.canari.rootz-emse.fr`**, internal, behind the tunnel, **now hosted on the TARGET, reached via the old VM's relay** (revised 2026-09-24) | still not published under `emse.fr` - dev holds a FULL COPY of production data, and that name is anyone's to reach. Only WHERE it runs changed, not its exposure |
 | Certificates | **issued, deposited and renewed by the DSI** at a fixed path | we never hold a private key and never run a renewal |
 | Old domain | `canari-emse.fr` **keeps answering, with 301s, from the old VM** | the less of it on the new installation the better (user) |
 | Old VMs | stay powered on for a while after each cutover | they are the rollback |
@@ -216,30 +216,26 @@ which is the whole point of catching it before it was not one.
 
 ### The 2026-09-24 decision, and why it deletes a chantier instead of solving it
 
-**The new host carries PRODUCTION and nothing else.** Dev and the admin interfaces stay on the old
-VM, where the tunnel already runs and already works. Three days of work on the refused port - the
-probe table, the A/B against production, a parade that had to be refuted, a relay designed and
-measured - were all spent on a door the new host does not need to have.
+**REVISED THE SAME DAY: the new host carries BOTH Canari estates, not production alone.** The
+paragraph below was written when dev was meant to stay behind; the user reversed that once the
+relay proved dev moves through the IDENTICAL mechanism as production, not a new one, so keeping it
+off the target bought nothing. What the original reasoning still settles, unchanged by the reversal:
+no connector is installed on the new host for EITHER estate, so the refused port never mattered to
+begin with, whichever estate sits behind the relay.
 
 | What it settles | |
 | --- | --- |
 | Outbound 7844 on the new host | **no longer a blocker, and not worth a DSI request** |
 | The connector installed there on 2026-09-24 | **REMOVED** the same day - unit, `EnvironmentFile`, binary, apt source and keyring; the host is back to its prior state, and the run token no longer sits on a machine shared with other associations |
-| The relay from the old VM | **NEEDED after all** - not for the internal door, which no longer moves, but for phase 1's PUBLIC path, whose every step goes through the tunnel. See the relay section |
+| The relay from the old VM | **NEEDED, for phase 1's PUBLIC path AND for dev** - every public name and dev's internal one reach their estate through the SAME relay, on a machine we already administer. See the relay section |
 
 **AND IT DOES NOT MAKE PHASE 1 TUNNEL-FREE.** Phase 1 preserves the OLD public names, which reach
 the edge through the tunnel; only the CONNECTOR's location was settled here. The relay section below
-is what carries that, and declaring it unneeded on the strength of this decision was an error made
-and corrected the same day.
+is what carries that.
 
-**The cost the user accepted, stated so nobody re-derives it as a defect**: dev no longer runs on
-the same machine as production, so it rehearses the production environment less faithfully than it
-would have. That is a deliberate trade against building and maintaining a relay.
-
-**AND ONE THING IS NOT SETTLED BY IT.** Authentik's admin interface is a PATH inside Authentik, not
-a separate service, so "the admin interfaces stay on the old VM" cannot hold for it literally: if
-`miconnect` moves, its admin moves with it. Either `miconnect` stays put too, or its admin path is
-reached some other way. **Do not assume this was decided** - it was not asked.
+**RESOLVED, the same way: Authentik's admin interface.** It is a PATH inside Authentik, not a
+separate service, so it could never have stayed behind while the rest of `miconnect` moved - and
+`miconnect` moved in full on 2026-09-24, admin path included. Nothing further to decide here.
 
 ## 5. The target shape, and the one thing it forces
 
@@ -473,12 +469,13 @@ the `http2` fallback transports, to two different edge addresses**, while the sa
 succeeds on the same command. The block is upstream of the machine and there is no port-443 fallback
 for Cloudflare Tunnel, so this would have needed a firewall change or nothing.
 
-**The user took the other option instead** (section 4): dev and the admin interfaces stay on the old
-VM, the new host carries production only, and a machine that needs no tunnel does not care what its
-network refuses. A **proxied Cloudflare `A` record** to the target's own address was drafted as an
-alternative to a tunnel and is REFUTED by that same section-4 decision (no Cloudflare in the public
-path) - kept nowhere else because the only thing worth keeping from it is the reasoning trap it shows:
-a seam solved through the one consumer just discussed, not through all of them.
+**The user took the other option instead** (section 4): no connector is installed on the new host
+for ANY estate, so a machine that needs no tunnel does not care what its network refuses - which
+holds whether one estate sits behind the old VM's relay or several. A **proxied Cloudflare `A`
+record** to the target's own address was drafted as an alternative to a tunnel and is REFUTED by
+that same section-4 decision (no Cloudflare in the public path) - kept nowhere else because the only
+thing worth keeping from it is the reasoning trap it shows: a seam solved through the one consumer
+just discussed, not through all of them.
 
 **The relay that phase 1 actually needs already runs in production.** `cercle.canari-emse.fr` is
 served today by a connector on the OLD VM proxying across the private network to the target with SNI
@@ -837,30 +834,33 @@ order; the runbook in section 6 says HOW each step is shaped.
    estates move could otherwise land on the empty one. **Re-enabling it is step 6, not step 1** - it
    happens last, in the window, with the old runner stopped in the same breath, or the same race
    reopens from the other side.
-2. **Create the two CHECKOUTS on the target - not compose directories, unlike the other two
-   estates.** Canari's estates are clones of THIS repository that the deploy `git reset --hard`s
-   into, and the deploy paths are LITERALS in the workflows (`DEPLOY_PATH: /home/canari/canari` in
-   `serve-prod.yml`, `DEV_DEPLOY_PATH: /home/canari/canari-dev` in `serve-dev.yml`), so moving them
-   is a commit here, not a server-side gesture. **The two halves do not self-heal the same way**:
-   `serve-dev.yml` clones when it finds no `.git`, `serve-prod.yml` assumes the checkout exists - a
-   move that trusts both would leave production's first deploy failing on a missing directory while
-   dev comes up and makes the migration look successful.
-3. **Declare `name: canari-prod` and `name: canari-dev`, IN THE SAME COMMIT as step 2, never
-   before it.** Production's project is `infrastructure` because the compose file DECLARES that
-   name - wrong, not missing, which is why renaming it any earlier would bring the CURRENT box up on
-   volumes that do not exist at the next ordinary deploy, exactly the failure this migration already
-   met once on Authentik. Dev already declares `canari-dev`. At the move the volumes are restored
-   from a dump anyway, so the new names cost nothing.
+2. **DONE 2026-09-24: the two CHECKOUTS exist on the target** - `/srv/canari` and `/srv/canari-dev`,
+   clean clones of `origin/main`, owned by `gha-runner`. Not compose directories, unlike the other
+   two estates: Canari's estates are clones of THIS repository that the deploy `git reset --hard`s
+   into, and the deploy paths are still LITERALS in the workflows today (`DEPLOY_PATH:
+   /home/canari/canari` in `serve-prod.yml`, `DEV_DEPLOY_PATH: /home/canari/canari-dev` in
+   `serve-dev.yml`) - moving them to `/srv/canari` and `/srv/canari-dev` is still a commit owed here,
+   not a server-side gesture, and it is NOT this one. **The two halves do not self-heal the same
+   way**: `serve-dev.yml` clones when it finds no `.git`, `serve-prod.yml` assumes the checkout
+   exists - a move that trusts both would leave production's first deploy failing on a missing
+   directory while dev comes up and makes the migration look successful.
+3. **Declare `name: canari-prod` and `name: canari-dev` and repoint the two `DEPLOY_PATH`
+   literals to `/srv/canari` and `/srv/canari-dev`, IN ONE COMMIT, and DO NOT MERGE IT BEFORE STEP
+   6.** Two hazards, not one, and the ordinary `gh pr create` cycle ships the moment CI is green -
+   there is no draft state in this repository's CI/CD to hold it. Renaming the project ahead of the
+   physical move brings the CURRENT box up on volumes that do not exist at its next ordinary deploy
+   (met once already on Authentik); repointing `DEPLOY_PATH` ahead of it breaks the CURRENT box's
+   very next deploy outright, since `/srv/canari` does not exist there. **Prepare the branch, hold
+   the PR, open it only as part of step 6.**
 4. **Write the target vhosts and the relay, on the pattern `cercle` and `miconnect` already prove.**
-   Four lines each side: on the target, `listen 443 ssl` + `server_name` + the
-   `/etc/certs/canari.emse.fr/` certificate (every estate vhost there presents it, regardless of its
-   own name) + `proxy_pass` to the loopback port; on the old VM, `proxy_pass` to `193.49.175.122`
-   with `proxy_ssl_name canari.emse.fr` and `proxy_set_header Host <the public name>` - the
-   certificate is the transport identity, the `Host` header carries the real name. **The one hard
-   part**: the `canari` box has NO system nginx at all - the frontend container IS the entry point,
-   publishing the two ports the tunnel names - so nginx must be installed there and cannot take
-   those ports until the estate it belongs to has stopped. That ordering is the window, which is why
-   step 6 is one step and not two.
+   **DONE 2026-09-24 on the target's half**: `canari-prod.conf` (`canari-emse.fr` ->
+   `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari.rootz-emse.fr` -> `127.0.0.1:3080`) are
+   written, `nginx -t` passed, reloaded - verified from outside with `Host`-header routing (a clean
+   `502 Connection refused` on each, not a config error, and `cercle`/`miconnect` unaffected by the
+   reload). **The old-VM half is NOT done and cannot be prepared in advance**: the `canari` box has
+   NO system nginx at all - the frontend containers ARE the entry point, publishing the ports the
+   tunnel names - so nginx must be installed there and cannot take those ports until BOTH estates
+   have stopped. That ordering is the window, which is why step 6 is one step and not two.
 5. **Move the crontab and every remaining path naming the old box** - three cron lines (the nightly
    backup, the object backup, a per-minute egress probe) and `MICONNECT_SSH_HOST`, which becomes a
    hop to the same machine rather than to another one. Decided by the user: the old server has no
