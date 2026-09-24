@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - cercle sert depuis la machine cible, et une base qui se lisait ne s'ecrivait pas
+
+Le nom public passe par un relais sur l'ancienne VM, puisqu'un tunnel ne peut pas sortir de l'hote
+cible. Donnees prouvees identiques table par table, empreintes de contenu et non comptes de lignes.
+Le defaut trouve au passage : le repertoire du volume appartenait a root, donc SQLite ne pouvait
+creer ni WAL ni SHM, et `/api/health` repondait `ok` pendant ce temps parce qu'il ne fait que lire.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Security - le depot public nommait l'inventaire logiciel d'une machine qui n'est pas la notre
+
+Trois noms d'hote d'autres associations, l'agent de securite gere par la DSI, **sa version exacte**
+et l'adresse de son gestionnaire central. Aucun des cinq n'etait porteur : le plan a besoin des roles,
+pas des noms. La regle est etendue, avec le corollaire qui decide du moment - un depot public a un
+historique, donc la reecriture se fait a la redaction. [durable-rules](docs/wiki/durable-rules.md).
+
 ### Added - quel conteneur publie quoi, et un port que Canari ne pourra pas garder
 
 La table de loopback de la cible disait ce qui etait pris, jamais ce qui etait demande. Mesure des

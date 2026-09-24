@@ -983,6 +983,25 @@ granted them - **a fact worth hiding is a fact nobody re-reads.**
 An opaque uuid is not an identity and may be written down - it is how a later session finds the same
 group again. A `name` column, a display name and a screenshot caption are identities and may not.
 
+**AND THE THIRD CLASS IS THE HOST'S OWN SOFTWARE INVENTORY, WHICH THE SAME PAGE LEAKED AGAIN ON
+2026-09-24.** Not an account this time and not a person: three other associations' hostnames, the
+count of human accounts, the name of the security agent the DSI manages, **the exact version of that
+agent** and the address of its central manager. The version is the worst of the five, because a
+version number names precisely which published vulnerabilities apply - to a machine whose owner
+never agreed to any of this being written down in public. **Not one of the five was load-bearing**:
+the plan needs "we are moving in beside other associations", "a host-owned agent holds these three
+ports" and "it stays at its version because the DSI's manager is older", and every decision in it
+survives the rewrite untouched. **The mechanical test is therefore subtraction** - replace the
+specific with the role and read the paragraph again; if nothing downstream changes, the specific was
+decoration, and decoration about somebody else's machine is what this rule exists to stop.
+
+**THE COROLLARY THAT DECIDES WHEN, NOT WHETHER: A PUBLIC REPOSITORY HAS A HISTORY.** Redacting a
+line limits what is exposed from now on and removes NOTHING already pushed - the commit, the diff
+and every fork still carry it. So this rewriting happens while the paragraph is being DRAFTED, which
+is the same instruction the people rule gives and for a sharper reason: afterwards it is mitigation,
+and mitigation is not a fix. When a redaction does become necessary, say plainly that the history
+keeps the original rather than reporting the file as clean.
+
 ### A RULE TWO ESTATES MUST AGREE ON IS SHARED AS DATA AND ASSERTED - DESCRIBING IT IN BOTH IS HOW THEY DIVERGE
 
 There is no TypeScript package shared between this repository's services and its frontend, and
