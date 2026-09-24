@@ -85,6 +85,67 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## Open defects, in severity order
 
+### P1 - a member who comes back to a community never gets its past, because every seed request is addressed to someone who is OFFLINE (measured on production 2026-09-24, `v0.18.22`)
+
+**What the user saw.** Members of two communities could not read earlier messages and looked
+desynchronised: they did not see new messages, and others did not see theirs. The case measured end to
+end is the returner's: they left an 8-member community on purpose and came back through its invite
+link one minute later (11:01:53 -> 11:02:10 UTC). Afterwards their phone showed **2 messages** of
+`general` and their browser **0**, where the salon holds **21** - 19 before the return, 2 after. The
+community is `historyVisibility = 'shared'`, so every one of the 19 was theirs to read.
+
+**What is NOT broken, each checked, so nobody re-opens it.**
+- The server: no restart since the `v0.18.22` deploy, no error, the distribution group's commit log
+  linear (`UNIQUE (groupId, baseEpoch)` forbids a fork), seeds fanned out and queued for offline devices.
+- Routing: the leave cut 5 devices (`key distribution cut ... reason=left memberships=5 routes=5
+  queued=35`); WP-REGRANT-1 re-joined each device at its next load (phone 11:02:10, browser 16:15:31),
+  and both have `active` rows in both communities' groups now.
+- The phone's MLS state: logcat shows no error on the community's group (the only MLS errors are
+  `SecretReuse` duplicates on an unrelated DM group). The phone RECEIVES; it is missing seeds - its
+  local `graine` table holds 2 for the community, and every other `session_id` lookup returns 0 rows.
+- The history floor: under `shared`, `historyFloorFor` returns `null` and the answerer hands over
+  everything it holds (`frameHandler.ts`, `gatherCommunityHistory`).
+
+**The cause: the election of WHO answers ignores whether they can.** Leaving drops the returner's seeds,
+so the past has to come back from the members. Three facts, all in `frontend/src/lib/utils/graine/`:
+
+1. **The history request is addressed to `lowestOtherMember(roster, userId)`** (`repair.ts`,
+   `requestCommunityHistory`) - the lowest user id on the roster, online or not. In this community that
+   member's devices hold an undrained queue since 2026-09-22: offline for two days. The request is never
+   answered.
+2. **A per-session request is addressed to the session's SENDER** (`resolveAnswerer`), and the next
+   member is elected only on an explicit "I do not hold it". The 19 messages come from four authors:
+   one offline since 2026-09-03 (8 messages), one since 2026-09-22 (1), the returner themselves (3 -
+   and none of their devices holds those seeds any more), and one sometimes-online member (7). A silent
+   answerer is never replaced, so those sessions wait for ever.
+3. **The phone will never ask for the history again**: `requestCommunityHistory` returns early when the
+   device holds ANY seed of the community (`held.length > 0`). The 2 messages sent after the return
+   brought 2 seeds, and from then on the phone counts its past as settled. The browser, holding none,
+   re-asks at every load (16:43 and 18:12 UTC in the delivery log) - the same offline member each time.
+
+Meanwhile several ONLINE members hold every one of those seeds - the history is shared - and nobody
+asks them. **The server knows who is online** (the gateway's presence keys), and DM history already uses
+it (`[HISTORY_REQ] FORWARDED target=...` / `NO_PEER_ONLINE`). Graine repair does not: this is *"never
+learn by failing what a fact could have told you"*, with presence as the fact left behind.
+
+**The second community is very probably the same cause and is NOT yet measured member by member**: it
+was created that day and joined by 10 devices, each of whose history request went to its lowest-id
+member.
+
+**The fix proposed (not started - awaiting the user's go-ahead):**
+1. Carry presence to the decision: the roster the election reads says, per member, whether they have at
+   least one device online - a fact the server supplies.
+2. Elect among the reachable: the sender if online, else the lowest ONLINE id that has not declined.
+   Still deterministic, over the members who can answer.
+3. Nobody reachable is an EVENT to wait for, not a delay: the want stays parked and is re-sent when a
+   member comes online. No clock.
+4. Delete the `held.length > 0` shortcut: holding some seeds is not holding the history; what is missing
+   is derived from the messages this device cannot open.
+5. An end-to-end row reproducing the returner: leave, rejoin by link, with the lowest-id member and an
+   author offline. It must FAIL on `main` before the fix makes it pass.
+
+A client fix reaches a phone only through a store release: the app embeds its frontend.
+
 ### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
 
 `cloudflared` runs as `/usr/bin/cloudflared --no-autoupdate tunnel run --token <secret>`. In
