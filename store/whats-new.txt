@@ -1,15 +1,5 @@
-version: 0.18.22
+version: 0.18.23
 
-Les sondages se composent option par option, avec une date de fin et un maximum de reponses.
+Aucun changement visible dans l'application.
 
-Modifier un post ne remet plus son sondage a zero.
-
-Publier vous dit tout de suite ce qui manque.
-
-L'export du calendrier reprend le visuel du BDE, et un evenement d'une journee entiere occupe toute sa case.
-
-Le menu lateral s'ouvre de nouveau au survol.
-
-Le nom et le logo d'une association vont ensemble.
-
-L'application publiee n'est plus inspectable depuis un ordinateur.
+Cette version corrige la sauvegarde quotidienne de nos serveurs, qui laissait de cote une partie des donnees, et ajoute les verifications qui manquaient pour s'en apercevoir.
