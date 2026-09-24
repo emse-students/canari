@@ -3826,25 +3826,6 @@ as after the last. **The verdict was three days older than the fix, which is the
 row whose instrument changed is not a row that has been re-measured, and `rows.mjs` says which those
 are.** The four rows above are untouched by it - their premise is still gone.
 
-### P2 - the leader tab does not render a message the follower tab sent, until it re-reads (measured 2026-09-05)
-
-TAB-4b: with two tabs of one account open, a message sent from the SECOND tab renders there, reaches
-the peer, and does NOT appear in the first tab - `counts.tab1: 0`, against `tab2: 1, peer: 1`. The
-reverse direction works (TAB-4c measured `tab2: 1` for a message sent from the first tab), and an
-inbound message reaches both (TAB-4a). It is not loss: a reload of the leader shows it, so the row IS
-persisted - measured directly, the message survives closing the follower and reloading.
-
-What is missing is a live fan-out. `tabMessageSync` carries three events - `outbox_flush_request`,
-`outbox_entry_sent`, `outbox_entry_cancelled` - and the second is a STATUS echo: the follower uses it
-to settle a row it already shows (`patchStatus` needs `findMessage` to succeed). There is no
-"a message was composed" event, so the sibling tab has nothing to render from. The symmetric fix is
-one more event carrying the optimistic row; the throttle question is whose copy wins if both tabs
-hold one.
-
-The row does not assert it - TAB-4b expects the sending tab and the peer - so this is recorded rather
-than failing a cell.
-
-
 ### P1 - twelve of sixteen messages were FETCHED AND DROPPED, and the commit log has a PERMANENT HOLE at epoch 121 (measured on prod 2026-09-02)
 
 **Reported by the user as an impression - *"j'ai l'impression de n'avoir qu'une petite partie des

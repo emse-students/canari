@@ -80,7 +80,7 @@ import {
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
-import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 
 /** Runtime dependencies injected into all messaging operations. */
@@ -674,6 +674,20 @@ export function useMessaging() {
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
       unreadCount: nextUnreadCount,
     });
+
+    // AND THE ONE ANNOUNCEMENT THAT TRAVELS THE OTHER WAY. The call above is leader-only, because
+    // only the leader receives inbound frames and only it can speak for the conversation's counts.
+    // A message composed HERE is the exception: whichever tab composed it is the only one that
+    // knows, and a follower composing one used to tell nobody - TAB-4b, 2026-09-05. `isOwn` is the
+    // discriminator and it is already computed above.
+    if (isOwn) {
+      publishComposedMessage({
+        type: 'own_message_composed',
+        conversationId: normalized,
+        message: newMsg,
+        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+      });
+    }
 
     // READ ON ARRIVAL IS STILL READ. This is the case the unread counter cannot see: the salon is
     // already open, so the message is read the instant it lands and `nextUnreadCount` stays 0 - and

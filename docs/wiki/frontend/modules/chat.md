@@ -355,6 +355,36 @@ The same reasoning is why a follower promoted to leader **reloads** rather than 
 left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
 disk.
 
+**BUT A FOLLOWER IS THE AUTHORITY ON ONE THING, AND SAYING NOTHING ABOUT IT COST A RENDER
+(TAB-4b, measured 2026-09-05; fixed 2026-09-24).** With two tabs of one account open, a message sent
+from the SECOND tab rendered there and reached the peer, and did NOT appear in the first -
+`tab1: 0` against `tab2: 1, peer: 1`. The reverse direction worked (TAB-4c) and an inbound message
+reached both (TAB-4a), which is exactly the asymmetry to expect: **`canari-tab-messages` carried
+conversation updates in one direction only.**
+
+It was never loss. The outbox row is in IndexedDB, which both tabs share, so reloading the leader
+showed the message - the leader's IN-MEMORY list was simply never told. The three outbox events on
+that channel could not close it either: `outbox_entry_sent` is a STATUS echo, and settling a row
+needs `findMessage` to succeed, so it repairs only a row the receiver already shows.
+
+| | who may publish | why |
+| --- | --- | --- |
+| `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
+| `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
+
+The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
+cannot speak for what the leader has read, and has nothing to say about it either, since an own
+message is never unread. The receiver takes it **before it reads its own role** - every other event
+on the channel must be ignored by a leader, and this one is the single exception - and deduplicates
+on the message id, which is what makes it safe to accept from anywhere: the row is already in the
+shared queue, so whichever copy arrives first is the same row. `publishOutboxEntryCancelled` was
+already ungated for the same shape of reason, a cancellation originating wherever the user pressed
+delete.
+
+**TAB-4b does not assert this**, so the row passed throughout - it expects the sending tab and the
+peer. The guard is `tabMessageSync.test.ts`, where the two publishers are pinned as exact mirrors:
+asserting only the new half would pass just as well if the old one had quietly inverted.
+
 **The election is awaited once, however many flushes are waiting on it.** Leadership has three
 states, and `runFlush` awaits the decision when it reads `undecided` rather than treating it as
 "another tab will do it" (WP-OUTBOX-2). Boot, though, asks for a flush per recovering conversation,

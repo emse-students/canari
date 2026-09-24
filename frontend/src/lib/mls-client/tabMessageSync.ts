@@ -17,9 +17,33 @@ export type TabMessageEvent =
       messages: ChatMessage[];
       lastMessageAt: number;
       unreadCount: number;
+    }
+  /**
+   * A message THIS tab just composed, announced by whichever tab composed it.
+   *
+   * **THE ONE EVENT HERE THAT DOES NOT FLOW LEADER -> FOLLOWER, and it is the only kind of message
+   * a follower knows something about that the leader does not.** Everything else on this channel is
+   * the leader relaying what it alone receives; a composed message is the opposite fact, and
+   * suppressing it is what left TAB-4b measuring `tab1: 0` against `tab2: 1, peer: 1` on
+   * 2026-09-05. It was never loss - the outbox row lives in IndexedDB, which both tabs share, so
+   * reloading the leader showed it - the leader's IN-MEMORY list was simply never told.
+   *
+   * **IT CARRIES NO `unreadCount`, deliberately.** A follower cannot speak for the leader's unread
+   * state, and it has nothing to say about it either: an own message is never unread. `lastMessageAt`
+   * is the message's own timestamp, which every tab would derive identically.
+   */
+  | {
+      type: 'own_message_composed';
+      conversationId: string;
+      message: ChatMessage;
+      lastMessageAt: number;
     };
 
-const MESSAGE_EVENT_TYPES = new Set<string>(['message_added', 'messages_batch']);
+const MESSAGE_EVENT_TYPES = new Set<string>([
+  'message_added',
+  'messages_batch',
+  'own_message_composed',
+]);
 
 /**
  * Outbox coordination, follower <-> leader, on the same channel.
@@ -53,6 +77,21 @@ function ensureChannel(): BroadcastChannel | null {
 /** Publishes a conversation update from the leader tab to follower tabs. */
 export function publishTabMessageUpdate(event: TabMessageEvent): void {
   if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage(event);
+}
+
+/**
+ * Announces a message this tab composed, to every other tab of this account.
+ *
+ * **NOT LEADER-GATED, which is the whole of it** - see `own_message_composed` above for why a
+ * follower is the authority on this one fact. The gate it does carry is the mirror image: the
+ * LEADER stays silent here, because its own composed message already goes out as `message_added`
+ * from the same call site, and publishing both would put two copies of one row on the channel for
+ * the receivers to deduplicate. The role is read here rather than at the call site so that the
+ * reason lives next to the rule.
+ */
+export function publishComposedMessage(event: TabMessageEvent & { type: 'own_message_composed' }) {
+  if (getIsTabLeader()) return;
   ensureChannel()?.postMessage(event);
 }
 
