@@ -844,14 +844,24 @@ order; the runbook in section 6 says HOW each step is shaped.
    way**: `serve-dev.yml` clones when it finds no `.git`, `serve-prod.yml` assumes the checkout
    exists - a move that trusts both would leave production's first deploy failing on a missing
    directory while dev comes up and makes the migration look successful.
-3. **Declare `name: canari-prod` and `name: canari-dev` and repoint the two `DEPLOY_PATH`
-   literals to `/srv/canari` and `/srv/canari-dev`, IN ONE COMMIT, and DO NOT MERGE IT BEFORE STEP
-   6.** Two hazards, not one, and the ordinary `gh pr create` cycle ships the moment CI is green -
-   there is no draft state in this repository's CI/CD to hold it. Renaming the project ahead of the
-   physical move brings the CURRENT box up on volumes that do not exist at its next ordinary deploy
-   (met once already on Authentik); repointing `DEPLOY_PATH` ahead of it breaks the CURRENT box's
-   very next deploy outright, since `/srv/canari` does not exist there. **Prepare the branch, hold
-   the PR, open it only as part of step 6.**
+3. **Declare `name: canari-prod` and `name: canari-dev` and repoint EVERY `DEPLOY_PATH` literal
+   to `/srv/canari` and `/srv/canari-dev`, IN ONE COMMIT, and DO NOT MERGE IT BEFORE STEP 6.**
+   THREE literals, not two: `serve-prod.yml`, `serve-dev.yml`, and a hardcoded `path=` inside
+   `scheduled.yml`'s `dev-refresh` job - the plan naming only two here was itself stale until
+   2026-09-24, and would have left the Monday refresh pointed at the OLD box after the cutover with
+   no warning before the next run. A THIRD hazard sits in the same rename: `backup.sh`,
+   `backup-objects.sh` and `restore.sh` each mount named volumes with a raw `docker run`, outside
+   `docker compose`, so nothing in them resolves the project name from the file - they had
+   `infrastructure_garage_data` and its two siblings written IN, which a rename alone would have
+   silently pointed at volumes that do not exist, producing an empty archive with no error.
+   Factored into one `CANARI_COMPOSE_PROJECT` variable (default `canari-prod`) reused across all
+   three scripts and documented in `infrastructure/backup/README.md`, in the SAME commit. None of
+   the three hazards is independent of the others, and the ordinary `gh pr create` cycle ships the
+   moment CI is green - there is no draft state in this repository's CI/CD to hold it. Renaming the
+   project ahead of the physical move brings the CURRENT box up on volumes that do not exist at its
+   next ordinary deploy (met once already on Authentik); repointing the paths ahead of it breaks the
+   CURRENT box's very next deploy, refresh and backup outright, since none of the renamed targets
+   exist there. **Prepare the branch, hold the PR, open it only as part of step 6.**
 4. **Write the target vhosts and the relay, on the pattern `cercle` and `miconnect` already prove.**
    **DONE 2026-09-24 on the target's half**: `canari-prod.conf` (`canari-emse.fr` ->
    `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari-emse.fr` -> `127.0.0.1:3080`) are

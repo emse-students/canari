@@ -252,7 +252,7 @@ jobs:
         id: checkout
         run: |
           set -euo pipefail
-          path="/home/canari/canari-dev"
+          path="/srv/canari-dev"
           if [ ! -d "$path/.git" ]; then
             echo "::error::$path is not a checkout - the dev estate has never been deployed, so there is nothing to refresh. Publish a pre-release first."
             exit 1

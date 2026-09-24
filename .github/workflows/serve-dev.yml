@@ -61,7 +61,7 @@ env:
   # being deployed from - and a separate compose project (`canari-dev`, declared in the file
   # itself) because that is what gives it its own network and its own volumes.
   DEV_DOMAIN: dev.canari-emse.fr
-  DEV_DEPLOY_PATH: /home/canari/canari-dev
+  DEV_DEPLOY_PATH: /srv/canari-dev
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════════════════════

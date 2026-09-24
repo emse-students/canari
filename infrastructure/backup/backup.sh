@@ -42,6 +42,10 @@ ENV_FILE="$INFRA_DIR/.env"
 # ── Configuration (surchargeable via infrastructure/.env) ──────────────────────
 BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+# Le nom du projet compose (docker-compose.prod.yml's `name:`), pas derive d ici :
+# les volumes cibles ci-dessous sont montes par un `docker run` brut, en dehors
+# de `docker compose`, donc rien ne le resout pour nous a partir du fichier.
+CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
 # Stack Authentik (compose separe). Vide pour desactiver son inclusion - et
 # c est le SEUL geste qui l exclut : une valeur posee ici et injoignable fait
 # echouer la sauvegarde.
@@ -100,7 +104,7 @@ log "Dump PostgreSQL auth_db…"
 # ── 2. Metadonnees media-service ──────────────────────────────────────────────
 log "Archivage du volume media_meta…"
 docker run --rm \
-  -v infrastructure_media_meta:/data:ro \
+  -v "${CANARI_COMPOSE_PROJECT}_media_meta":/data:ro \
   -v "$STAGE":/out \
   alpine:latest \
   tar czf /out/media_meta.tar.gz -C /data .

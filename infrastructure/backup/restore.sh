@@ -43,6 +43,10 @@ BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
 # Alias ~/.ssh/config, et non un user@hote : cf backup.sh, meme raison.
 MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-authentik-target}"
+# Le nom du projet compose (docker-compose.prod.yml's `name:`) : les volumes cibles
+# ci-dessous sont montes par un `docker run` brut, en dehors de `docker compose`, donc
+# rien ne le resout pour nous a partir du fichier.
+CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
 
 # Depot restic des blobs medias. Doit rester aligne sur backup-objects.sh : un chemin
 # qui diverge ne casse pas la sauvegarde, il casse la restauration - c est-a-dire le
@@ -132,8 +136,8 @@ if [ -f "$RESTIC_PASSWORD_FILE" ] && [ -d "$RESTIC_REPO_DIR" ]; then
   # emplacements exacts, donc les fichiers atterrissent directement dedans.
   docker run --rm \
     --user "$(id -u):$(id -g)" \
-    -v infrastructure_garage_data:/data/garage_data \
-    -v infrastructure_garage_meta:/data/garage_meta \
+    -v "${CANARI_COMPOSE_PROJECT}_garage_data":/data/garage_data \
+    -v "${CANARI_COMPOSE_PROJECT}_garage_meta":/data/garage_meta \
     -v "$RESTIC_REPO_DIR":/repo:ro \
     -v "$RESTIC_PASSWORD_FILE":/pw:ro \
     -e RESTIC_PASSWORD_FILE=/pw \
@@ -153,7 +157,7 @@ if [ -f "$STAGE/media_meta.tar.gz" ]; then
   log "Restauration du volume media_meta…"
   "${DC[@]}" stop media-service
   docker run --rm \
-    -v infrastructure_media_meta:/data \
+    -v "${CANARI_COMPOSE_PROJECT}_media_meta":/data \
     -v "$STAGE":/in:ro \
     alpine:latest \
     sh -c 'rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar xzf /in/media_meta.tar.gz -C /data'
