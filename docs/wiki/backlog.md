@@ -1186,21 +1186,6 @@ it was done is that shipping an implementation that cannot run is wrong, not tha
 `CALLS_ENABLED = false`, and is NOT to be picked apart for bytes: the five switches move in ONE
 commit at revival.
 
-### P3 - the side panel's heading and its cards are inset by different amounts, and nobody owns the number (measured 2026-09-16)
-
-`ConversationSidePanel`'s header is `px-4`; the four components rendered into it choose their own
-body padding - `p-5 @md:p-6` (group), `p-5 @md:p-8` (channel settings), `p-4 @md:p-5` (members),
-`p-6` (media). So the title and the close button sit 4px inside the cards below them in the column
-and 8px in the drawer, and the offset is a different number per panel. It is visible in the user's
-2026-09-16 screenshot, under the defect that was fixed there.
-
-**The fix is not to pick one of the four - it is to decide WHO owns the inset**, and that is the
-shell: one horizontal padding on the panel, children padding only vertically, which also removes
-the four places a future panel can get it wrong. That touches every side panel at once and none of
-the other three has been laid out and read since they moved into this shell, so it wants its own
-pass with a measurement per panel rather than a line changed in passing. The container is already
-armed (`@container`), so the shell can spell the inset `@md:` like everything else.
-
 ---
 ### P3 - the WASM stub is an iOS-only opt-in, so an Android build carries a WASM module it cannot use (found 2026-09-16)
 
@@ -5953,22 +5938,6 @@ Two constraints, both established 2026-08-22 rather than assumed:
   prod IS the test server, and a `svelte.config.js` that throws when git is absent breaks every
   build including CD. Verify the CI job's checkout depth before relying on `git rev-parse`.
 
-### P3 - six runners carry a dead import, and fixing them now would retire green rows
-
-`oxlint tools/cross-client-harness/` reports eight warnings across `newgroup.mjs`, `msg9.mjs`,
-`ckpt.mjs`, `type.mjs`, `tabguard-selftest.mjs` and `ws1.mjs` - unused imports and one useless
-spread, nothing that changes what any of them measures.
-
-**Deliberately not fixed during the campaign.** `msg9.mjs` and `type.mjs` back MSG and TYPE, both
-green on the board, and `checkSha` hashes the runner's source: touching either supersedes its rows
-(`rows.mjs`), so the ledger would demand a re-run of two finished phases to pay for a dead import.
-Rule 33 is what makes that automatic, and it is right to be - the ledger cannot know the edit was
-cosmetic, and a human waving it through is exactly the judgement the rule exists to remove.
-
-Sweep all eight in ONE commit once the ladder is finished, when a re-run costs nothing. Note the
-harness is NOT oxfmt-formatted (`oxfmt --check` fails on files nobody has touched), so the sweep is
-`oxlint` only - running the formatter would rewrite the whole directory.
-
 ### P3 - the bubble-action and observation helpers live in one runner, and every other runner re-invents them
 
 `mut.mjs` carries `clickBubbleIcon` / `deleteBubble`, which locate a message's controls by their
@@ -6716,7 +6685,7 @@ written only by `register-device`, and 683 of 719 rows on production were NULL -
 escaped the refusal entirely. A console export the user took on 2026-09-18 caught one served 3.88
 days dead, the join failing on every launch. The shipped half, the one-way bound that needs no client
 to speak, and why the two tables need opposite answers are on
-[key-package-pool](docs/wiki/protocols/key-package-pool.md).
+[key-package-pool](protocols/key-package-pool.md).
 
 **What is owed is the half a server cannot do.** `lastResortDeadline` condemns the rows it can
 PROVE dead; the rest are honestly unjudgeable and stay that way until their owner re-enrols,
@@ -7057,13 +7026,15 @@ superseded rather than merged.
 
 ### P1 - TWO CLASSES OF DEPENDENCY UPDATE STILL CANNOT MERGE UNATTENDED, AND EACH NAMES ITS MISSING TEST
 
-**`dependabot-auto-merge.yml` refuses only what this repository has no gate for**, and every refusal
-names its missing test in a comment on the pull request. The standing directive is that a refusal is
+**`ci.yml`'s `Dependency ceiling` check refuses only what this repository has no gate for**, and
+every refusal names its missing test in its own annotation (`::error title=No gate would see this
+fail::`), which is part of `CI passed` and therefore binding rather than advisory. The standing directive is that a refusal is
 never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
 closed is a whole class of update that starts merging on its own. Five rows closed between
 2026-08-31 and 2026-09-15 and are not repeated here - the gates they bought are in `CHANGELOG.md`
-and [cicd](cicd.md). **Quote no refuse COUNT from anywhere**: the hourly sweep's own log prints what
-it merged, refused and held, every pass, and that is the only current reading.
+and [cicd](cicd.md). **Quote no refuse COUNT from anywhere**: the hourly sweep that used to print one
+was deleted 2026-09-04, so the only current reading is `gh pr list --app dependabot` with the
+ceiling check's annotation on each.
 
 | Refused | Why the suite cannot see it | The test that retires it | State |
 | --- | --- | --- | --- |

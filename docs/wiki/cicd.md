@@ -398,7 +398,7 @@ back is precisely how an alpha ends up talking to production.
 ### Package 2: publishing a release (`release.yml`) - the one entry point
 
 **THREE HUMAN GESTURES, AND NOTHING ELSE MOVES** (user, 2026-09-03): open a pull request, which
-`auto-merge.yml` squash-merges onto `main` once `CI passed` is green and which deploys NOTHING;
+`arm-auto-merge.yml` squash-merges onto `main` once `CI passed` is green and which deploys NOTHING;
 publish a pre-release `vX.Y.Z-alpha.N`, which deploys `dev.canari-emse.fr` and feeds the store
 tester programmes; publish a stable `vX.Y.Z`, which deploys production and both store production
 channels.
@@ -514,24 +514,25 @@ for a repository-level ruleset. That was measured, and the ruleset read back unc
 
 **What works is the App that is already installed.** `canari-auto-merge` (app id `4791068`) is an
 organisation installation, so GitHub accepts it as a bypass actor — and
-`dependabot-auto-merge.yml` already mints installation tokens for it. The bump job now does the
+`arm-auto-merge.yml` already mints installation tokens for it. The bump job now does the
 same and checks out with that token, because a later `git push` uses whatever credential the
-checkout persisted. **`auto-merge.yml` mints the same identity for the same asymmetry read the
-other way round** - see below. The token is minted per run and expires in an hour, which is why an App beats a
+checkout persisted. **That same file mints the same identity for the same asymmetry read the
+other way round** - see below. Until 2026-09-04 those were two files, `dependabot-auto-merge.yml`
+and `auto-merge.yml`; `release-chain.test.sh` asserts neither has come back. The token is minted per run and expires in an hour, which is why an App beats a
 long-lived PAT here: there is no secret to rotate before it silently expires.
 
 **One side effect, and why it is harmless HERE.** A push made with an App token *does* raise a
-`push` event, where a `GITHUB_TOKEN` push does not — `dependabot-auto-merge.yml` documents that
+`push` event, where a `GITHUB_TOKEN` push does not — `arm-auto-merge.yml` documents that
 asymmetry and depends on it. The consequence is that `ci.yml` runs once on the bump commit, which is
 useful rather than costly. **It does not double a deploy, only because the three deploy libraries have no trigger at all** - it is
 `workflow_call` only. Anyone giving a deploy workflow a `push` trigger has to read this paragraph
 first.
 
-**AND THE SAME ASYMMETRY IS LOAD-BEARING IN THE OTHER DIRECTION, WHICH IS WHY `auto-merge.yml` USES
+**AND THE SAME ASYMMETRY IS LOAD-BEARING IN THE OTHER DIRECTION, WHICH IS WHY `arm-auto-merge.yml` USES
 AN APP TOO.** Auto-merge merges as whoever armed it. Armed with `GITHUB_TOKEN`, the merge would
 raise no `push` event, `ci.yml` would never run on `main`, the merge commit would carry no
 `CI passed` check - and gate 3 above would then refuse EVERY release, on commits that had in fact
-been tested. Someone "simplifying" `auto-merge.yml` to the default token would break releasing from
+been tested. Someone "simplifying" `arm-auto-merge.yml` to the default token would break releasing from
 a file that has nothing to do with releasing, so `release-chain.test.sh` asserts it does not.
 
 **The first release, `v0.15.0-alpha.1`, sidestepped this rather than fixing it**: the bump was landed
@@ -994,8 +995,8 @@ directory. 33 minutes down.
 sits on `main` until somebody publishes a release, and a `X.X.X-alpha.N` pre-release deploys the dev
 estate - which still carries a copy of production - before any stable does. The honest difference is
 WHO DECIDES: the old mechanism ran with nobody at the keyboard, this one runs when a human publishes
-an alpha. The ceiling in `dependabot-auto-merge.yml` is what still refuses the update classes this
-repository cannot see the failure mode of; it is not a substitute for a rehearsal, and
+an alpha. The ceiling in `ci.yml`'s `Dependency ceiling` check is what still refuses the update classes
+this repository cannot see the failure mode of; it is not a substitute for a rehearsal, and
 [backlog](backlog.md) says so.
 
 **Two cables into CD were cut on 2026-09-03, and one was replaced rather than removed:**

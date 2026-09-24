@@ -37,8 +37,8 @@
 # first, on that same copy of production's data, whenever one is published.
 #
 # THE DIFFERENCE IS WHO DECIDES, and it is worth being honest about: the old mechanism ran with
-# nobody at the keyboard, this one runs when a human publishes an alpha. The ceiling in
-# `dependabot-auto-merge.yml` is what still refuses the update classes this repository cannot see
+# nobody at the keyboard, this one runs when a human publishes an alpha. The ceiling in `ci.yml`'s
+# `Dependency ceiling` check is what still refuses the update classes this repository cannot see
 # the failure mode of; it is not a substitute for a rehearsal, and the backlog says so.
 
 version: 2
@@ -72,8 +72,8 @@ updates:
       include: "scope"
     # TypeScript is held at 6 ON PURPOSE, and it is not laziness - see
     # `docs/wiki/ecosystem-convergence.md`, section 9, for the two measurements. Without this
-    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `dependabot-auto-merge.yml` is
-    # sitting right there. Delete this block only after re-running BOTH checks.
+    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `arm-auto-merge.yml` is sitting
+    # right there. Delete this block only after re-running BOTH checks.
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
@@ -113,8 +113,8 @@ updates:
       include: "scope"
     # TypeScript is held at 6 ON PURPOSE, and it is not laziness - see
     # `docs/wiki/ecosystem-convergence.md`, section 9, for the two measurements. Without this
-    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `dependabot-auto-merge.yml` is
-    # sitting right there. Delete this block only after re-running BOTH checks.
+    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `arm-auto-merge.yml` is sitting
+    # right there. Delete this block only after re-running BOTH checks.
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]

@@ -38,16 +38,19 @@ costs nothing at runtime. What it costs is one row of this table, which is why t
 ### How the hold ends, without anybody watching for it
 
 No `dependabot.yml` ignore, no calendar entry, no ceiling entry in
-[`dependabot-auto-merge.sh`](../../../.github/scripts/dependabot-auto-merge.sh). The pull requests
+[`dependency-ceiling.sh`](../../../.github/scripts/dependency-ceiling.sh). The pull requests
 raising `@nestjs/core` to 12 on those two services are **red, open, and correct to be open**:
 
 1. `framework-boot.spec.ts` fails on them today and prints the violation, which now
    [names its own remedy](../../../apps/chat-delivery-service/src/framework-boot.spec.ts) in both
    directions rather than only listing a mismatch.
 2. The day `@nestjs/throttler` ships a release accepting `^12.0.0`, Dependabot bumps it on `main`.
-3. The hourly sweep marks those branches STALE - their green checks predate what `main` gates on -
-   and updates them, which re-runs CI with the new throttler resolved.
-4. `framework-boot.spec.ts` goes green by itself, and the sweep merges them on the next pass.
+3. Dependabot rebases those branches itself - `rebase-strategy: auto` on every ecosystem in
+   `.github/dependabot.yml` - which re-runs CI with the new throttler resolved.
+4. `framework-boot.spec.ts` goes green by itself, and `arm-auto-merge.yml` has already armed them,
+   so GitHub merges them the moment `CI passed` turns. (Steps 3 and 4 said "the hourly sweep"
+   until 2026-09-24; it was deleted 2026-09-04 and the chain now runs on the two mechanisms named
+   here.)
 
 **Nothing in that chain is a clock or a reminder.** The hold is expressed as an assertion about the
 resolved tree, so it expires exactly when its reason does.
