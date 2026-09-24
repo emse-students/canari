@@ -348,15 +348,16 @@ AVX2"*. The target host therefore already runs, in production, the exact bun Can
 One drift found on the way and still open: `.bun-version` says `1.4.0` while all seven Dockerfiles
 say `1.4.2`.
 
-## 4. The decisions - taken with the user 2026-09-23, NOT TO BE RELITIGATED
+## 4. The decisions - taken with the user 2026-09-23 and 2026-09-24, NOT TO BE RELITIGATED
 
 | Decision | Value | Why |
 | --- | --- | --- |
 | Shape on the new host | **Docker compose projects side by side**, not nested virtualisation | simpler, and it is the shape every future project gets |
 | Public traffic | **No Cloudflare at all** - nginx, ufw and DSI certificates | the School owns the zone and will not delegate it |
 | Internal traffic | stays on **`rootz-emse.fr`** behind a Cloudflare tunnel, with Access | an admin interface does not need a public name, and a gated door does not need a signpost |
-| The tunnel | **a new one**, not the existing one moved | cleaner than carrying years of ingress across |
-| Dev | **`dev.canari.rootz-emse.fr`**, internal, behind the tunnel | dev holds a FULL COPY of production data; publishing it under `emse.fr` would expose members' data on a name anyone can reach. Costs no DSI ticket and no third-level certificate |
+| **Where the internal surface RUNS** (2026-09-24) | **it does not move** - dev and the admin interfaces stay on the OLD VM | see below: this is what makes the refused port stop mattering |
+| The tunnel | **stays where it already works**, on the old VM (2026-09-24) | nothing is installed on the new host for it, so nothing there needs to reach the edge |
+| Dev | **`dev.canari.rootz-emse.fr`**, internal, behind the tunnel, **and hosted on the OLD VM** (2026-09-24) | dev holds a FULL COPY of production data; publishing it under `emse.fr` would expose members' data on a name anyone can reach. Costs no DSI ticket and no third-level certificate |
 | Certificates | **issued, deposited and renewed by the DSI** at a fixed path | we never hold a private key and never run a renewal |
 | Old domain | `canari-emse.fr` **keeps answering, with 301s, from the old VM** | the less of it on the new installation the better (user) |
 | Old VMs | stay powered on for a while after each cutover | they are the rollback |
@@ -368,6 +369,28 @@ say `1.4.2`.
 | Rate limiting | nginx, on the authentication and upload paths | replaces the part of Cloudflare that was actually doing something here |
 | IPv6 | ask for the AAAA, block on nothing | the narrow case is IPv6-only mobile carriers, and their NAT64 already covers it |
 | TURN | **later, and a separate request** | it needs an inbound UDP range, refused more easily than a DNS record - do not attach it to one |
+
+### The 2026-09-24 decision, and why it deletes a chantier instead of solving it
+
+**The new host carries PRODUCTION and nothing else.** Dev and the admin interfaces stay on the old
+VM, where the tunnel already runs and already works. Three days of work on the refused port - the
+probe table, the A/B against production, a parade that had to be refuted, a relay designed and
+measured - were all spent on a door the new host does not need to have.
+
+| What it settles | |
+| --- | --- |
+| Outbound 7844 on the new host | **no longer a blocker, and not worth a DSI request** |
+| The connector installed there on 2026-09-24 | **REMOVED** the same day - unit, `EnvironmentFile`, binary, apt source and keyring; the host is back to its prior state, and the run token no longer sits on a machine shared with other associations |
+| The relay from the old VM | **not needed.** The measurement below stays because it is true and cheap to re-read, not because anything is waiting on it |
+
+**The cost the user accepted, stated so nobody re-derives it as a defect**: dev no longer runs on
+the same machine as production, so it rehearses the production environment less faithfully than it
+would have. That is a deliberate trade against building and maintaining a relay.
+
+**AND ONE THING IS NOT SETTLED BY IT.** Authentik's admin interface is a PATH inside Authentik, not
+a separate service, so "the admin interfaces stay on the old VM" cannot hold for it literally: if
+`miconnect` moves, its admin moves with it. Either `miconnect` stays put too, or its admin path is
+reached some other way. **Do not assume this was decided** - it was not asked.
 
 ## 5. The target shape, and the one thing it forces
 
@@ -577,10 +600,13 @@ target's does not. Nothing is wrong with cloudflared, the token or the tunnel - 
 simply sits behind a network that does not let 7844 out. **The block is UPSTREAM of the machine, on
 7844, in BOTH transports.** `http2` is not a way round
 it - that mode still dials 7844 and merely swaps UDP for TCP. Cloudflare Tunnel has no port-443
-mode, so this is a firewall change or it is nothing, and it joins the certificate question in the
-same request to the DSI. **It also reframes the choice**: phase 2 removes Cloudflare from every
-public path anyway, so "open 7844" and "skip the tunnel and cut straight to the phase-2 shape" are
-now two live options rather than one obvious one. That is the user's call, not this page's.
+mode, so this would have been a firewall change or nothing.
+
+**AND THE USER TOOK THE OTHER OPTION, so none of that was ever asked for** (section 4, 2026-09-24):
+dev and the admin interfaces stay on the old VM, the new host carries production only, and a machine
+that needs no tunnel does not care what its network refuses. **The request to the DSI no longer
+mentions 7844.** The measurements above are kept because they are true and because the A/B is the
+thing a future session would otherwise re-take - not because anything is waiting on them.
 
 #### THE PARADE THAT WAS WRONG, AND WHAT THE BLOCK ACTUALLY BREAKS - 2026-09-24
 
@@ -623,7 +649,12 @@ idea is the one that carries a TTL, and it is not what is proposed here.
 The real cost is the honest one: this keeps Cloudflare in the public path, which phase 2 exists to
 remove. It is therefore a LANDING, not the target - which is exactly what phase 1 was defined to be.
 
-#### THE OLD ESTATE CAN RELAY WHAT THE NEW ONE CANNOT SEND - MEASURED 2026-09-24
+#### THE OLD ESTATE CAN RELAY WHAT THE NEW ONE CANNOT SEND - MEASURED 2026-09-24, AND NOT NEEDED
+
+**NOTHING IS WAITING ON THIS SECTION.** The 2026-09-24 decision in section 4 leaves dev and the
+admin interfaces on the old VM, so the new host never needs a door outwards and this relay was never
+built. It is kept for one reason: the measurements are true, they were expensive to take, and they
+are what a future session would otherwise re-take on the day something does need to cross.
 
 The user's proposal, and it is better than the parade above: **do not make the new host reach the
 edge - make the old one do it on its behalf.** The refused port is refused on ONE machine, and the
@@ -685,8 +716,11 @@ made the plan harder, and four questions were built on top of it - a new product
 change, deep links, two store listings. **A premise that makes the work bigger deserves the probe
 FIRST**, and here the probe was one `nslookup` and one `openssl s_client`.
 
-The unit is left **INSTALLED and DISABLED**. A service that fails at every boot on somebody else's
-machine is noise; what the runbook needs kept is the configuration, not the retry loop.
+The unit was left INSTALLED and DISABLED for a few hours, then **REMOVED ENTIRELY** once the
+2026-09-24 decision made it pointless - unit, `EnvironmentFile`, binary, apt source and keyring, with
+the package purged. **Disabling would have been the wrong disposition**: on a machine shared with
+other associations, a run token in a file is a liability that a disabled unit keeps alive, and the
+configuration worth keeping is the four lines of it written in this page.
 
 **TWO TUNNEL IDENTITIES ARE IN PLAY** - the box carries one, and a second was handed over the same
 morning. Nothing was overwritten, because which one is the keeper is a dashboard-side decision and
@@ -872,7 +906,7 @@ SENT, not documentation prose, and `Portail Etudiant ICM` is not how that site s
 Everything around it stays ASCII like the rest of this repository.
 
 ```text
-Objet : demande d'enregistrements DNS et de certificats pour quatre noms (association Canari)
+Objet : demande d'enregistrements DNS et de certificats pour trois noms (association Canari)
 
 Bonjour,
 
@@ -880,33 +914,26 @@ L'application Canari (association etudiante, actuellement sur canari-emse.fr) et
 services qui l'accompagnent vont etre heberges sur la machine 193.49.175.67, celle qui
 sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse.fr.
 
-1. Creation de trois enregistrements A vers 193.49.175.67 :
+1. Creation de deux enregistrements A vers 193.49.175.67 :
      cercle.emse.fr
      miconnect.emse.fr
-     www.canari.emse.fr
+   Et un enregistrement pour www.canari.emse.fr vers la meme adresse que
+   canari.emse.fr, celle qui vous paraitra la plus coherente.
 
-2. Reaffectation de canari.emse.fr vers 193.49.175.67.
-   Ce nom pointe aujourd'hui vers 193.49.175.122 et sert le Portail Etudiant ICM, dont
-   le certificat a ete renouvele le 22/09/2026. Nous ne demandons cette reaffectation
-   que si ce site n'a plus besoin du nom ; s'il en a besoin, dites-le nous et nous vous
-   proposerons un autre nom pour Canari.
+2. Aucune demande concernant canari.emse.fr : ce nom pointe deja vers 193.49.175.122,
+   qui est une adresse de cette meme machine, et son certificat a ete renouvele le
+   22/09/2026. Nous n'avons donc besoin ni d'un nouvel enregistrement, ni d'un nouveau
+   certificat pour lui. Nous signalons simplement que ce nom servira desormais Canari :
+   il renvoie aujourd'hui le Portail Etudiant ICM, ce qui semble etre une configuration
+   nginx restee en place, et nous la corrigerons cote machine.
 
-3. Un certificat par nom pour les quatre noms ci-dessus, livre comme les autres dans
+3. Un certificat par nom pour les trois noms du point 1, livre comme les autres dans
    /etc/certs/<nom>/ sur 193.49.175.67.
 
 4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
    (la machine sert deja portail-etu.emse.fr, donc nous pensons que oui).
 
 5. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
-
-6. Ouverture du trafic SORTANT vers le port 7844 (TCP et UDP) depuis 193.49.175.67 vers
-   l'infrastructure Cloudflare. Mesure du 24/09 depuis la machine : le 443 sortant passe,
-   le 7844 est bloque en amont (la politique de sortie de la machine elle-meme est
-   ACCEPT). C'est le port qu'utilise un tunnel Cloudflare, et il nous permettrait de
-   basculer les services un par un sans toucher au DNS. Si cette ouverture n'est pas
-   souhaitable, dites-le nous simplement : nous basculerons directement sur les noms
-   emse.fr, et nous n'aurons alors plus besoin de Cloudflare du tout.
-   Ce point ne bloque rien.
 
 Merci d'avance,
 ```
