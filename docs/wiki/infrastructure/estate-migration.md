@@ -1385,16 +1385,47 @@ is the copy that was wrong.
 **Canari's `infrastructure` -> `canari-prod` is the one rename still worth doing**, and it happens
 AT its move, when the volumes are recreated from a restore anyway.
 
-### B. CANARI'S MOVE - WHAT CAN BE PREPARED WITH NO OUTAGE AT ALL
+### B. CANARI'S MOVE - AND IT IS NOT ONE ESTATE, IT IS TWO ESTATES AND A CI RUNNER
 
-**The capacity question is ANSWERED and it is not close.** Measured 2026-09-24: the production
-stack is **~590 MB of RAM across twelve containers** (the largest is `social-service` at 123 MB)
-and **~320 MB of volumes** (`postgres_data_18` 214 MB, `garage_data` 68 MB, `redis_data` 29 MB,
-`garage_meta` 5.7 MB, `media_meta` 95 kB). The target has ~8 GB of RAM available and 27 GB of disk
-free. Nothing about this move is a capacity risk.
+**This section said "the production stack". The box carries THREE things, and the other two are the
+hard ones.** Measured 2026-09-24 on the `canari` box:
 
-**The publish address is chosen by measurement, and `8080` is genuinely gone.** Listening on the
-target, 2026-09-24:
+| What | RAM | Disk | Note |
+| --- | --- | --- | --- |
+| `infrastructure` (production, 12 containers) | 575 MiB | 307 MB of volumes | the one this section knew about |
+| `canari-dev` (11 containers) | 1384 MiB | 217 MB of volumes | `dev.canari-emse.fr`, same box |
+| GitHub Actions runner | - | **5.5 GB** (3.9 GB of `_work`) | `runs-on: self-hosted` |
+| The two checkouts | - | 855 MB + 232 MB | `git reset --hard` targets |
+| Local backups | - | 593 MB | `/home/canari/backups` |
+| Docker images | - | 10.5 GB, 5.5 GB reclaimable | |
+
+**The target has 8.9 GB of RAM available and 27 GB of disk free**, against ~2 GB of RAM and roughly
+13 GB of disk for everything above. It fits, and it stops being comfortable if nothing is pruned
+first - the target itself is carrying 2 GB of build cache and 1.3 GB of reclaimable images.
+
+**BOTH ESTATES MOVE** (user, 2026-09-24). Dev is what makes the old VM switchable-off at all, which
+is the stated goal; and dropping it instead would break release gate 2, which refuses a stable
+unless a pre-release served dev at that commit.
+
+**THE RUNNER DOES NOT MOVE - IT GOES AWAY** (user, 2026-09-24). The deploy job **builds nothing**:
+it checks out, logs in to GHCR, pulls `latest` and runs `docker compose up`. All of that is doable
+over SSH from a GitHub-hosted runner, so keeping a self-hosted runner would put 5.5 GB and the
+execution of arbitrary workflow code on a machine owned by the DSI and shared with other
+associations, to buy nothing. Four jobs carry `runs-on: self-hosted`: `serve-prod`, `serve-dev`,
+and `hosts` + `dev-refresh` in `scheduled.yml`. **`deploy-env.test.sh` derives assertions from that
+literal string**, so it is part of the change, not a follow-up.
+
+#### THE ORDER MATTERS, AND IT IS NOT THE OBVIOUS ONE
+
+**Convert the deploy to SSH FIRST, still pointing at the CURRENT box.** Then the mechanism change
+is provable on its own - publish a pre-release, watch dev come up - with the machine held constant.
+Only then move the estates, at which point the only difference is an address. **Doing both at once
+produces a failure that cannot be attributed**: a deploy that breaks would be equally explained by
+the new transport and by the new host, and that is the position this repository has a rule about.
+
+#### THE PUBLISH ADDRESSES, CHOSEN BY MEASUREMENT
+
+Listening on the target, 2026-09-24 - and `8080` is genuinely gone:
 
 | Loopback port | Held by |
 | --- | --- |
@@ -1402,28 +1433,28 @@ target, 2026-09-24:
 | `5173` | `cercle` |
 | `9000` | Authentik |
 | `6060`, `7422`, `8080` | the host's own DSI-managed agent - not ours to move |
-| `8081`, `19010`, `19011` | **free** |
+| `8081`, `8888`, `19010`, `19011`, `3080`, `19100`, `19101` | **free** |
 
-So `canari-prod`'s frontend takes **`127.0.0.1:8081`** - adjacent to the `8080` it used, which
-makes the one-line difference legible in a year - and garage keeps `19010`/`19011`, which are free
-there. That is the host port allocation table section 5 asks for, and it now exists.
+So `canari-prod`'s frontend takes **`127.0.0.1:8081`** - adjacent to the `8080` it used, which makes
+the one-line difference legible in a year - adminer keeps `8888` and garage `19010`/`19011`; dev
+keeps `3080`, `19100`, `19101`. **Production currently publishes `0.0.0.0:8080`, and that must not
+survive the move**: Docker publishes through the nat table, which firewalld's zone does not govern,
+so a port published on `0.0.0.0` there is reachable from the campus network whatever the zone says.
+That is the same finding the Cercle's compose file already carries a paragraph about.
 
-Then, in order, none of it visible to a user:
+#### THEN, IN ORDER, AND NONE OF IT VISIBLE TO A USER
 
-1. Write `/srv/canari/` on the target: the compose file with `name: canari-prod`, the `.env`, the
-   mount directories.
-2. Write the target vhost for `canari-emse.fr` -> `127.0.0.1:8081`, and the relay config on the
-   `canari` box, exactly as the other two were done.
-3. **Move `/home/canari/canari` WITH the stack - decided 2026-09-24 by the user: "le serveur
-   initial n a pas vocation a perdurer pendant des annees apres la migration".** It is not a stray
-   checkout: the production deploy does `git reset --hard` into it and the backup crontab runs from
-   it. So the checkout, the crontab and the deploy's SSH destination all move to the target, and
-   the old VM is left holding the relay and nothing else. **Every path that names the old box is
-   part of this step, not a follow-up** - the deploy workflow's host secret, the backup crontab,
-   `MICONNECT_SSH_HOST` (which will then be a loopback hop on the same machine), and whatever else
-   a grep for the old address finds. A half-moved estate is the state that breaks on the first
-   release nobody is watching.
-4. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
+1. Convert the four jobs to SSH against the current box, and prove it with a pre-release.
+2. Write `/srv/canari/` and `/srv/canari-dev/` on the target: compose with `name: canari-prod` and
+   `name: canari-dev` DECLARED, the `.env`, the mount directories.
+3. Write the target vhosts and the relays on the `canari` box, exactly as the other two were done.
+4. **Move the checkouts and the crontab too - decided 2026-09-24 by the user: "le serveur initial
+   n a pas vocation a perdurer pendant des annees apres la migration".** The deploy `git reset
+   --hard`s into `/home/canari/canari` and three cron lines run from it: the nightly backup, the
+   object backup, and a per-minute egress probe. **Every path that names the old box is part of
+   this step, not a follow-up** - including `MICONNECT_SSH_HOST`, which becomes a hop to the same
+   machine. A half-moved estate is the state that breaks on the first release nobody is watching.
+5. Only then take the window: dump, restore, verify by content fingerprint, flip the relay.
 
 ### C. DECIDED 2026-09-24, AND THE ONE THING STILL OWED BY THE USER
 
