@@ -126,17 +126,17 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
-commit - **and main's OWN CI run takes ~8 min after a merge, so a release cut in the minute after
-one is REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then
-`gh run rerun` the release, which needs no new tag** (2026-09-07); dev has already served it
-(stables); the notes name it (stables). *A skip flag is a fallback
-path, and reaching one means the primary path failed - so the fix belongs there.* The emergency path
-is a human with admin rights, written into `CHANGELOG.md` when taken.
+commit - **main's OWN CI takes ~8 min after a merge, so a release cut in the minute after one is
+REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
+rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
+SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head
+(three pre-releases for one stable, 2026-09-24, [backlog](docs/wiki/backlog.md)); dev has served it
+(stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
+failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
 **Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` - the hook runs
-them anyway and re-stages, so run them first rather than reading a commit you have not seen. Commit
-AND push in the background: the hook sweeps the whole frontend (2-3 min) and a push here routinely
-exceeds a 5-minute foreground timeout.
+them anyway and re-stages, so run them first rather than reading a commit you have not seen. Then
+commit AND push in the background, for the reason the directive above gives.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,
 and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update SESSION STATE, STOP.
