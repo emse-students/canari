@@ -2623,11 +2623,35 @@ export function dirtOf(rep) {
  * PASS earns a Work Package WITH ITS CAPTURED LOG, and the record is the only thing that survives
  * the session. So the dirt goes in as `dirtOf`, per client, named.
  *
+ * A CLIENT RUNNING A BUNDLE THE ESTATE NO LONGER SERVES DOES NOT MAKE A ROW FAIL - IT MAKES IT
+ * ABSENT, exactly as a mid-run redeploy does, and for the same reason: the ledger stamps `build`
+ * from the REPOSITORY, so such a row names a commit whose code the tab never loaded. Measured
+ * 2026-09-05: TAB-1 was re-run three times against a fixed application and recorded `FAIL` each
+ * time, on a build whose fix its tab had never executed - three probes spent before the stale tab
+ * was the answer, and three rows in the ledger accusing the product of the rig's own state.
+ *
+ * `bundle.mjs` has been able to tell a stale client from a current one since 2026-08-24; what was
+ * missing is that ONLY A RUNNER ASKED IT, one file at a time. `tab1.mjs` learned to reload after
+ * costing those three rows, and `tab3b.mjs`, `tab7.mjs`, `notif.mjs`, `del1.mjs`, `msg4.mjs` and
+ * `mut.mjs` still had not - which is a rule living in six memories rather than in one place.
+ *
+ * IT REFUSES, IT NEVER REPAIRS, and that is not timidity. TAB-7 asserts `neverReloaded`: a recorder
+ * that quietly reloaded a stale client would destroy the very observable some checks exist to
+ * measure, and turn a refusal that can be read into a measurement that cannot be trusted. The
+ * repair is `bundle.mjs --repair`, run deliberately, by a preflight or a person.
+ *
+ * AND A BUNDLE THAT COULD NOT BE READ IS A BLIND SPOT, NEVER A DEMOTION - the same shape as
+ * `deployWindow` below. A demotion on an unreadable id would void every row the moment a `fetch`
+ * to the origin failed, which is precisely when the rig is already having a bad time.
+ *
  * @param {string} verdict the assertion outcome, as the check computed it
  * @param {Record<string, object>} reports label -> the `report()` of that client
+ * @param {{bundles?: {stale?: Record<string, object>, blind?: Record<string, string>}}} [observations]
+ *   what was learnt about the clients themselves, as opposed to what they printed - see
+ *   `observedBundles` in `bundle.mjs`, the only producer.
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
-export function gate(verdict, reports) {
+export function gate(verdict, reports, observations = {}) {
   const entries = Object.entries(reports).filter(([, r]) => r);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
@@ -2659,6 +2683,16 @@ export function gate(verdict, reports) {
       out = 'VACUOUS';
     }
   }
+
+  // THE CLIENT'S OWN BUILD, beside the server's - see the two paragraphs in this function's doc.
+  const blind = observations.bundles?.blind ?? {};
+  if (Object.keys(blind).length) detail.bundleCheck = blind;
+  const stale = observations.bundles?.stale ?? {};
+  if (Object.keys(stale).length) {
+    detail.staleClients = stale;
+    out = 'VACUOUS';
+  }
+
   return { verdict: out, detail };
 }
 

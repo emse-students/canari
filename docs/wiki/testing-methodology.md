@@ -2024,6 +2024,21 @@ already carries for the exit code. So the refusal lives in the two places that c
   `results.mjs` can only see the rows a process wrote, never the rows it owed; the runner is the only
   observer that knows a script was supposed to speak. A silent job now counts against the pass,
   because a phase claiming coverage its record cannot support is the same debt as a dirty window.
+- **`recordObserved()` refuses a row measured on a client the estate no longer serves** (2026-09-24).
+  The ledger stamps `build` from the REPOSITORY, so a check run against a tab left open across a
+  deploy writes a row naming a commit whose code that tab never executed - TAB-1 recorded `FAIL`
+  three times on 2026-09-05 against a fix its tab had never loaded, and three probes were spent
+  before the stale tab was the answer. `bundle.mjs` could tell the two apart since 2026-08-24 and
+  ONLY A RUNNER ever asked it, one file at a time: `tab1.mjs` learned after paying for those rows,
+  six others had not. The recorder is the one place that knows both the verdict and the clients it
+  was observed on, so the question is put there and the row becomes `VACUOUS` - **absent, not
+  failing**, beside `redeployedMidRun`, because the assertions were made against code the row does
+  not name. **It refuses and never repairs**: TAB-7 asserts `neverReloaded`, so a recorder that
+  quietly reloaded a stale client would destroy the observable some checks exist to measure. A
+  bundle that cannot be READ is a blind spot recorded under its label, never a demotion - the same
+  shape as `deployWindow`, and for the same reason. Which clients may be judged is read off the
+  PAGE (`location.origin === SITE`) rather than off a device name, because the labels runners pass
+  to `watch()` are prose; a phone serves its shell from the APK and is skipped.
 - **`record()` refuses a word that is not a verdict, before it writes anything** (2026-09-24). The
   vocabulary was two hand-kept copies - this file accepted whatever string a runner handed it, and
   `rows.mjs` carried a private map of the words it could read back off the board - so a runner

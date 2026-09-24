@@ -105,6 +105,78 @@ export async function sourceIsDeployed(deployed) {
 }
 
 /**
+ * WHICH OF THE CLIENTS A VERDICT WAS OBSERVED ON IS RUNNING SOMETHING THE ESTATE NO LONGER SERVES.
+ *
+ * The IO half of the refusal `gate()` applies - see its doc for why a stale client makes a row
+ * ABSENT rather than failing, and why nothing here reloads anything.
+ *
+ * WHICH CLIENTS IT MAY JUDGE IS READ OFF THE PAGE, NOT OFF A DEVICE NAME. `isOnTheDeployment` above
+ * answers from `ORIGIN[device]`, and a recorder has no device names at all: the labels runners pass
+ * to `watch()` are `sender`, `receiver`, `phone`, `ladder`, `TAB7-W1` - prose, chosen per check. So
+ * the question is put to the client itself. A phone serves its shell out of the APK
+ * (`tauri.localhost`), so its build id legitimately differs from the estate's and it is skipped -
+ * `bundle.mjs` has never been able to judge it and must not start by accident.
+ *
+ * EVERY UNKNOWN IS NAMED RATHER THAN SKIPPED. A handle whose page cannot be evaluated, an origin
+ * that cannot be read, a shell that carries no id: each is a client whose bundle is UNKNOWN, which
+ * is the state this module exists to stop anyone mistaking for "fine". They come back under `blind`,
+ * which `gate()` records and does not demote on.
+ *
+ * @param {Record<string, object>} observers label -> a `watch()` handle or a finished report. Only
+ *   handles carry a `cx` and only those can be asked; a finished report is not a live client.
+ * @returns {Promise<{stale: Record<string, object>, blind: Record<string, string>}>}
+ */
+export async function observedBundles(observers) {
+  const live = Object.entries(observers).filter(([, o]) => o?.cx);
+  const stale = {};
+  const blind = {};
+  if (!live.length) return { stale, blind };
+
+  let deployed;
+  try {
+    deployed = await deployedBundleId();
+  } catch (e) {
+    // ONE FAILURE, ONE SENTENCE, FOR EVERY CLIENT - the origin is what could not be read, so no
+    // client here can be judged and each says so under its own label rather than vanishing.
+    for (const [label] of live) blind[label] = `the estate's build id: ${String(e.message ?? e)}`;
+    return { stale, blind };
+  }
+
+  for (const [label, o] of live) {
+    let origin;
+    try {
+      // THE SOCKET FIRST, BECAUSE A CLOSED ONE ANSWERS IN THIRTY SECONDS OTHERWISE. A check whose
+      // client died is exactly the case where the row still has to be written promptly, and CDP
+      // reports a dead peer only by timing out - see `isOpen` in `cdp.mjs` for the measurement.
+      if (!o.cx.isOpen()) {
+        blind[label] = 'its socket is closed - the client went away before the row was written';
+        continue;
+      }
+      origin = await evaluate(o.cx, 'location.origin');
+    } catch (e) {
+      blind[label] = `its origin: ${String(e.message ?? e)}`;
+      continue;
+    }
+    if (origin !== SITE) continue;
+    let running;
+    try {
+      running = await runningBundleId(o.cx);
+    } catch (e) {
+      blind[label] = `its build id: ${String(e.message ?? e)}`;
+      continue;
+    }
+    // `'none'` is a page with no SvelteKit shell at all - a blank tab, an error page, a document
+    // that navigated away. It is not a stale bundle and it is not a current one; it is unknown.
+    if (running === 'none') {
+      blind[label] = 'the page carries no SvelteKit shell - there is no build id to compare';
+      continue;
+    }
+    if (running !== deployed) stale[label] = { running, deployed };
+  }
+  return { stale, blind };
+}
+
+/**
  * Puts a client onto `deployed`, and PROVES it took.
  *
  * `location.reload(true)` is not it - the boolean has been ignored by browsers for years. The cache

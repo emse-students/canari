@@ -181,7 +181,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-27 scripts.
+28 scripts.
 
 | script | what it is |
 |---|---|
@@ -208,6 +208,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/staleness-selftest.mjs` | A ROW MEASURED ON A BUNDLE THE ESTATE NO LONGER SERVES IS ABSENT, NOT FAILING. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
@@ -266,4 +267,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-205 scripts in total.
+206 scripts in total.
