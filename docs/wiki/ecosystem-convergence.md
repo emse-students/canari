@@ -479,7 +479,7 @@ the container is what proves it.
 
 Both conditions are somebody else's release, so both will look "ready" the day a bot proposes them.
 `dependabot.yml` therefore ignores `typescript` majors on `/frontend` and on the four service
-directories, with a pointer back here - because `dependabot-auto-merge.yml` is enabled on this repo,
+directories, with a pointer back here - because `arm-auto-merge.yml` arms every pull request on this repo,
 and without the ignore the path from "Dependabot opens a PR" to "every backend test suite fails to
 load on main" has no human in it.
 

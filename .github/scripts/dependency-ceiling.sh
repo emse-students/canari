@@ -18,17 +18,16 @@
 # `ci-passed`, the one check the branch ruleset requires. Advisory -> binding is the improvement,
 # not invisible -> visible.
 #
-# THIS IS STAGE ONE OF TWO, AND THE ORDER IS NOT ARBITRARY. This change is purely ADDITIVE: the
-# ceiling becomes a job of `ci.yml` feeding `ci-passed`, which is the one check the branch
-# ruleset requires - so an update with no gate here cannot merge even if something armed it. The
-# sweep is untouched and still merges on its own reading of "green", which now INCLUDES this check,
-# so the two agree rather than compete.
+# THAT WAS STAGE ONE OF TWO, AND BOTH ARE DONE. Stage one was purely ADDITIVE: the ceiling became
+# a job of `ci.yml` feeding `ci-passed`, which is the one check the branch ruleset requires - so an
+# update with no gate here cannot merge even if something armed it. Stage two landed 2026-09-04:
+# the sweep was deleted outright and `arm-auto-merge.yml` arms GitHub's auto-merge for every pull
+# request, Dependabot's included, so nothing merges on its own reading of "green" any more.
 #
-# Stage two - the sweep ARMS GitHub's auto-merge instead of merging, and sheds its own check
-# counting - must come AFTER this is on `main` and observed on a real Dependabot pull request.
-# **Doing them in the other order re-creates the outage**: arming a pull request whose ceiling
-# refusal is not yet a required check would merge `postgres 15-alpine -> 18-alpine` on a fully green
-# suite, which is exactly what cost 33 minutes of production on 2026-09-01.
+# **THE ORDER WAS NOT ARBITRARY, AND IT IS WRITTEN DOWN BECAUSE THE REVERSE RE-CREATES THE OUTAGE**:
+# arming a pull request whose ceiling refusal is not yet a required check would merge
+# `postgres 15-alpine -> 18-alpine` on a fully green suite, which is exactly what cost 33 minutes
+# of production on 2026-09-01.
 #
 # WHY A CEILING EXISTS AT ALL, and it cost 33 minutes of production to learn. On 2026-09-01
 # `postgres 15-alpine -> 18-alpine` merged on a FULLY GREEN suite: every gate in this repository -

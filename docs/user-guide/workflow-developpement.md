@@ -84,7 +84,7 @@ l'ordre :
 
 | # | quand | ce qui se passe |
 |---|---|---|
-| 1 | a l'ouverture | **deux workflows partent en parallele sur le meme evenement**. `auto-merge.yml` arme l'auto-merge de GitHub (5 secondes) ; `ci.yml` demarre |
+| 1 | a l'ouverture | **deux workflows partent en parallele sur le meme evenement**. `arm-auto-merge.yml` arme l'auto-merge de GitHub (5 secondes) ; `ci.yml` demarre |
 | 2 | dans `ci.yml` | `Detect changes` lit les chemins modifies et decide quels jobs tournent, puis ceux-la tournent en parallele : Rust (5 crates), `Boot the real AppModule` (4 services NestJS), tests TS, frontend (vitest + lint + `svelte-check` + build), self-tests du banc d'essai, self-tests des scripts CI |
 | 3 | a cote, **non obligatoires** | CodeQL, recherche de secrets, audit des vulnerabilites de dependances |
 | 4 | quand tout est fini | **`CI passed`** agrege les resultats. `success` **et** `skipped` passent ; `failure` et `cancelled` non |
