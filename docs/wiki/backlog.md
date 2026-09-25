@@ -209,36 +209,23 @@ not own.
 [estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
 
 
-### P2 - CrowdSec cannot see the one log where a password is actually tried (measured 2026-09-25)
+### P3 - a CrowdSec ban on this host closes the co-tenant sites too (measured 2026-09-25)
 
-**This item replaces "no rate limiting exists anywhere", which was measured against the wrong
-mechanism and was wrong.** `grep -r limit_req /etc/nginx` does return nothing on all eight vhosts -
-and that fact says nothing about whether the host is protected, because what protects it is not
-`limit_req`. It is CrowdSec: a Lua bouncer in `conf.d/crowdsec_nginx.conf` calling
-`cs.Allow($remote_addr)` before every request on every vhost, an AppSec WAF on `127.0.0.1:7422`
-virtual-patching CVEs, ~20 enabled `http-*` scenarios including `http-generic-bf`, and both
-`crowdsec` and `crowdsec-firewall-bouncer` `active`. It bans for real: two live decisions on the day
-this was measured. Adding `limit_req` on top would be a second mechanism duplicating a working
-first one, which is not what this needs.
+**The two actionable halves of this item shipped the day it was written and are gone from here.**
+`real_ip` now resolves the client through the tunnel connector on `canari-prod`, `authentik` and
+`cercle`, and CrowdSec's acquisition was widened to those three access logs afterwards - including
+`authentik.access.log`, the one place in this estate where a password is actually submitted, which
+until then no behavioural scenario could see. The mechanism, the ordering trap and the wrong
+trusted address that looked right are on
+[estate-migration](infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost).
 
-**What it does need is narrower, and it is about the identity provider.** CrowdSec's log-parsing
-half reads exactly `/var/log/nginx/access.log`. Of our vhosts only `canari.conf` writes there.
-`authentik.conf` writes to `authentik.access.log`, which nothing parses - and Authentik is the one
-place in this estate where a password is actually submitted, so every behavioural scenario that
-exists to catch credential brute force is pointed away from the only log that would show it.
-
-**The legacy path is the opposite case and must NOT be "fixed" the same way.**
-`canari-prod.access.log` carries 11 935 requests from `10.0.0.3` - the tunnel relay - against 1 from
-a real client, because nothing sets `real_ip` on that vhost. Pointing CrowdSec at it would give it
-one address standing for every visitor, and the first abusive request would ban the relay and take
-`canari-emse.fr` down entirely. Real-IP propagation comes first, or that file stays unparsed.
-
-**Two decisions belong to the machine's owner, not to this repository.** `/etc/crowdsec/acquis.yaml`
-is the DSI's file and it serves co-tenant sites (`gala`, `mep`, `portail-etu-new`) as well as ours;
-and a ban is GLOBAL per address on this box, so a decision taken on Canari traffic already closes
-those sites to that address and theirs closes Canari. Both were true before this measurement and
-neither is written down anywhere else.
-[estate-migration](infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)
+**What is left is not ours to close.** A CrowdSec decision is GLOBAL per address on this machine,
+so a ban earned on Canari traffic already shuts `gala`, `mep` and `portail-etu-new` to that address,
+and a ban earned on theirs shuts Canari. `/etc/crowdsec/acquis.yaml` is likewise the DSI's file.
+Both were true before any of this work and neither is a change this repository may make alone - it
+is a conversation with the machine's owner, and it is recorded here so nobody re-derives it as a
+finding a third time. `canari-dev.access.log` stays deliberately unparsed: dev is reached only
+through the relay, so it still shows one address for every visitor.
 
 
 ### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
