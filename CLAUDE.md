@@ -278,7 +278,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 22. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
 23. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
-    **EMOJI BECOME NOTO SVG PICTURES EVERYWHERE** (user, 2026-09-25: the font never drew on WebKit) - four pull requests, the order and the measurements in [emoji](docs/wiki/frontend/emoji.md).
+    **EMOJI ARE NOTO SVG PICTURES EVERYWHERE, THE FONTS ARE DELETED** (user, 2026-09-25: the font never drew on WebKit) - merged, owed a release and the iPhone rows ([emoji](docs/wiki/frontend/emoji.md), [backlog](docs/wiki/backlog.md)).
 24. **P2 - MICONNECT: THE LAYOUT IS FIXED AND FLAT (LIVE 2026-09-25); THE LANGUAGE AND THE SIGNED-IN ERROR ARE LEFT** - ten English flow titles, a prompt reading "ni ça", and a `denied_action` that should continue ([backlog](docs/wiki/backlog.md)); Authentik lives on the Portail-etu host now ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)). The MiGallery half of that audit is MiGallery's own WIP ([ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)

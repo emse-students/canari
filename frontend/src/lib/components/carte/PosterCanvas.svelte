@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
   import type { CarteStyle } from '$lib/carte/theme';
@@ -109,10 +110,8 @@
 
   // Named so the oxfmt line-wrap (which cannot see inside a template attribute string) never
   // breaks one of these mid-literal - it broke `style:font-family` three times before this.
-  const NUNITO_STACK =
-    "'Nunito Variable', 'Nunito', 'Segoe UI', 'Noto Color Emoji Canari', sans-serif";
-  const FREDOKA_STACK =
-    "'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Noto Color Emoji Canari', sans-serif";
+  const NUNITO_STACK = "'Nunito Variable', 'Nunito', 'Segoe UI', sans-serif";
+  const FREDOKA_STACK = "'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif";
 
   // The unit's whole geometry (layer offsets, card sizing, which members appear in which slot) lives
   // in `layout.ts`, because the PUBLISHER resolves the exact same numbers for the portail showcase -
@@ -485,7 +484,7 @@
       style:color={theme.polaroidTextColor}
       style="overflow-wrap:anywhere;word-break:break-word;"
     >
-      {person.name}
+      <EmojiText text={person.name} />
     </p>
     {#if person.role}
       <p
@@ -498,7 +497,7 @@
         style:color={theme.polaroidTextColor}
         style="opacity:0.72;overflow-wrap:anywhere;word-break:break-word;"
       >
-        {person.role}
+        <EmojiText text={person.role} />
       </p>
     {/if}
   </div>
@@ -554,7 +553,7 @@
         style:margin="0"
         style:color={theme.titleColor}
       >
-        {title}
+        <EmojiText text={title} />
       </h1>
     </div>
 
@@ -681,7 +680,7 @@
               style:color="#ffffff"
               style="overflow-wrap:break-word;text-shadow:0 1px 3px rgba(0,0,0,0.45);"
             >
-              {data.name}
+              <EmojiText text={data.name} />
             </p>
             {#if data.contactEmail}
               <p
@@ -756,8 +755,8 @@
             style:overflow-wrap="break-word"
             style:color={deco.color}
           >
-            {#if deco.content}{deco.content}{:else if editable}<span style:opacity="0.45"
-                >{m.carte_text_placeholder()}</span
+            {#if deco.content}<EmojiText text={deco.content} />{:else if editable}<span
+                style:opacity="0.45">{m.carte_text_placeholder()}</span
               >{/if}
           </div>
 
@@ -840,7 +839,7 @@
                   ? '1.5em'
                   : '0'};margin-bottom:0.8em;font-weight:700;font-family:{FREDOKA_STACK};font-size:1.0em;color:{theme.directoryTextColor};letter-spacing:0.01em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
               >
-                {zone.label}
+                <EmojiText text={zone.label} />
               </div>
               {#each zone.bubbles as asso (asso.assoId)}
                 <div style="break-inside:avoid;margin-bottom:0.9em;">
@@ -857,7 +856,7 @@
                       data-pdf-text
                       style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
                     >
-                      {asso.name}
+                      <EmojiText text={asso.name} />
                     </span>
                   </div>
                   {#if asso.members.length > 0}

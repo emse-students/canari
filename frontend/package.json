@@ -80,7 +80,6 @@
     "emoji-picker-element-data": "1.8.0",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^20.14.5",
-    "harfbuzzjs": "1.6.1",
     "husky": "^9.1.7",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
@@ -92,8 +91,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.3.0",
-    "vitest": "^5.0.1",
-    "wawoff2": "2.0.1"
+    "vitest": "^5.0.1"
   },
   "overrides": {
     "brace-expansion": "^5.0.9",

@@ -6005,55 +6005,46 @@ a Windows path, which is how the killer URL was produced in the first place.
 
 ## Composer and reactions
 
-### Bundled emoji font - the ELEVEN campaign rows, which need real devices
+### Emoji pictures - the campaign rows, which need real devices
 
-The font itself shipped 2026-09-15 and nothing about it is open: provenance, the exact wiring and
-why `emojiUnsupportedMessage` was NOT deleted are the whole of [emoji.md](frontend/emoji.md), the
-only copy. What remains is below - rows for the **second campaign** (see that entry), listed here
-once and not restated there, asked for by the user on 2026-08-23. Every one names the evidence it
-rests on, because "the emoji looked fine" is not an observation.
+The pictures replaced the font on 2026-09-25 and the mechanism is the whole of
+[emoji.md](frontend/emoji.md), the only copy. What remains is below - rows for the **second
+campaign**, asked for by the user on 2026-08-23 and rewritten for pictures. Every one names the
+evidence it rests on, because "the emoji looked fine" is not an observation.
 
 #### What a future campaign owes
 
-1. **The bundled family actually resolved**, per platform, on W1, W2 and A1 - plus an iPhone when one
-   exists. `document.fonts.check()` is necessary and not sufficient: it answers "loaded", not "used".
-   The verdict rests on a rendered-pixel comparison of one known codepoint against the same codepoint
-   with the platform family forced. **Identical pixels mean the bundled font did NOT apply.**
+1. **Pictures, not glyphs**, per platform, on W1, W2 and A1 - and the iPhone, where the font never
+   drew: every emoji of a message is an `img.emoji` with `naturalWidth > 0`, read from the DOM.
 2. **The same codepoint is the same picture on every device.** One message carrying a v1 emoji, a
-   country flag, a ZWJ family, a skin-toned person, an Emoji 16 and an Emoji 17 addition; compare the
-   rendered bubble across W1, W2 and A1. Cross-device identity IS the point of this WP, so this is the
-   row that fails if the font silently did not load on one client.
-3. **A flag and a ZWJ sequence render as ONE glyph**, not as two letters or five people. This is the
-   row Fluent would have failed outright, and a font built without its `GSUB` fails it too.
-4. **The whole set is reachable in the picker**: scroll to the last row of the last group, on a short
-   viewport, with the recents row both empty and full - the two states whose heights differ, which is
-   the arrangement the picker entry above traces the clipping to.
+   country flag, a ZWJ family, a skin-toned person, an Emoji 16 and an Emoji 17 addition, and one sent
+   WITHOUT U+FE0F (`📽`); compare the rendered bubble across the clients.
+3. **A flag and a ZWJ sequence are ONE picture**, not two letters or five people.
+4. **The whole set is reachable in the picker**: scroll to the last row of the last category, on a
+   short viewport, with the recents row both empty and full.
 5. **The panel is entirely inside the viewport** at each anchor: first message, last message, a row at
    the top edge, one at the bottom, on the own side and the peer side.
-6. **French search still finds things** (the FR dataset is load-bearing for keywords) **and English
-   search works with the network off** - the row that would have caught the jsdelivr default.
+6. **French search finds things with a typo** ("ceour") **and English search works with the network
+   off** once the dataset is cached.
 7. **Pick, send, peer**: the codepoint the peer receives equals the one picked, and it is still a
-   CODEPOINT - copy the text out and assert on it. That is the proof the app stayed on the font path
-   and did not drift into image substitution.
+   CODEPOINT on the wire - copy the text out and assert on it. **WebKit's copy is the unmeasured one**
+   (Chromium carries the `alt`, measured).
 8. **A reaction** carrying a flag and a ZWJ sequence survives the round trip, including the
    distinct-reaction limit path.
-9. **The notification shade is drawn by the OS**, so an emoji in a notification body uses the SYSTEM
-   font and will not match the app. Assert what it does; do not assert that it matches.
-10. **Exported artefacts**: an emoji in a poster, a calendar and a trombinoscope export. Whatever this
-    WP decides for PDF, the campaign asserts it.
+9. **The notification shade is drawn by the OS**, so an emoji in a notification body is the SYSTEM
+   glyph. Assert what it does; do not assert that it matches.
+10. **Exported artefacts**: an emoji in a poster, a calendar and a trombinoscope PDF is a picture in
+    the raster (measured in Chromium through snapdom; owed on the phones that export).
 11. **Cold start, offline, on A1**: open the picker with no network and confirm the set is complete AND
-    that no request left the device - an assertion about the absence of an outbound request, which the
-    harness's server window can support.
+    that no request left the device.
+12. **The composer on the iPhone**: its emoji keyboard, a paste, and an IME commit each turn into a
+    picture with the caret after it, and Backspace removes the emoji whole (measured in Chromium only).
 
 #### Limits to state before anyone reports them as bugs
 
-- **The notification shade, the OS share sheet, the keyboard's own emoji panel and every other native
-  surface are drawn by the platform.** Bundling a font changes nothing there. "The notification shows
-  a different emoji" is then expected behaviour, not a regression.
-- A member on an Android WebView older than Chrome 98 gets neither table and falls back to the system
-  emoji font - which on Android is Noto anyway, so the picture is unchanged. `minClientVersion` is not
-  the lever for this.
-
+- **The notification shade, the OS share sheet, the keyboard's own emoji panel, form fields and every
+  other native surface are drawn by the platform.** "The notification shows a different emoji" is
+  expected behaviour, not a regression.
 
 ## Storage and retention
 
@@ -7445,12 +7436,12 @@ initials are today. That is a memory question, and it is owed a measurement rath
 
 ### 2. The bundled emoji font is not active on WebKit - OPEN, P2, cause narrowed to two
 
-**SUPERSEDED BY A DECISION, 2026-09-25 - the probe below is NO LONGER OWED.** The user chose to stop
-drawing emoji with a font at all: every emoji becomes Noto's own SVG as an `<img>`, which WebKit draws
-like every other engine, so which of the two causes it was stops mattering
-([emoji](frontend/emoji.md#pictures-replace-the-font---decided-2026-09-25-in-four-pull-requests)). This
-item closes the day the fourth pull request deletes the font; what stays owed is ONE look on the iPhone
-at a message with emoji, and a copy of it.
+**SUPERSEDED, AND THE FONT IS DELETED (2026-09-25) - the probe below is NO LONGER OWED.** The
+user chose pictures over any font: every emoji is Noto's own SVG as an `<img>`, which WebKit draws like
+every other engine, and the fonts themselves are gone
+([emoji](frontend/emoji.md#pictures-replace-the-font---decided-2026-09-25-in-four-pull-requests)).
+This item is deleted the day a release carries it; what stays owed is the iPhone rows of the emoji
+campaign (pictures drawn, copy, composer keyboard).
 
 *"Il a l'air d'avoir toujours les emojis Apple ?"* - confirmed by cropping the recording: the
 fire and the movie camera are Apple's drawings, unambiguously.

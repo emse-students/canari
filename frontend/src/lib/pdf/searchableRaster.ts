@@ -130,7 +130,9 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       lineHeightPx,
       letterSpacingPx,
       text,
-      hasEmoji: containsEmoji(text),
+      // A picture (`img.emoji`) is not in `textContent`, so the text alone would call this node plain
+      // and hide it - picture included - for the vector pass.
+      hasEmoji: containsEmoji(text) || el.querySelector('img.emoji') !== null,
     });
   }
   return specs;

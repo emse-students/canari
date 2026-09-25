@@ -139,25 +139,10 @@ RUN printf 'server {\n\
     try_files /nonexistent @ssr;\n\
     }\n\
     \n\
-    # The bundled emoji font is 5.7 MB - by a wide margin the largest thing this\n\
-    # origin serves - and its name is stable across deploys, so it is the one asset\n\
-    # here worth a month rather than an hour. No `immutable`: the name carries no\n\
-    # content hash, so a rebuilt font (docs/wiki/frontend/emoji.md records the sha256\n\
-    # of the committed artefact) must stay revalidatable. nginx answers the monthly\n\
-    # conditional request with a 304 off its ETag, so a returning browser downloads\n\
-    # these bytes exactly once.\n\
-    location /fonts/ {\n\
-    try_files $uri =404;\n\
-    add_header Cache-Control "public, max-age=2592000";\n\
-    include /etc/nginx/snippets/csp.conf;\n\
-    add_header X-Content-Type-Options "nosniff" always;\n\
-    add_header X-Frame-Options "DENY" always;\n\
-    }\n\
-    \n\
     # The emoji pictures (docs/wiki/frontend/emoji.md). Their directory is a hash\n\
     # of every name and byte in the set (tools/emoji-svg/build.mjs), so a picture\n\
     # whose content changes changes URL: that is what makes `immutable` for a year\n\
-    # safe here where it is not for /fonts/, and a browser fetch each emoji once.\n\
+    # safe, and a browser fetch each emoji once.\n\
     location /emoji/ {\n\
     try_files $uri =404;\n\
     add_header Cache-Control "public, max-age=31536000, immutable";\n\
@@ -171,7 +156,7 @@ RUN printf 'server {\n\
     #\n\
     # WHAT THIS BLOCK ACTUALLY SERVES, AND WHY ITS HEADERS WERE INVERTED. `try_files\n\
     # $uri @ssr` means nginx answers from THIS block only when the path is a file on\n\
-    # disk - the PWA icons, the web manifest, the emoji data, the emoji font. A page\n\
+    # disk - the PWA icons, the web manifest, the emoji data. A page\n\
     # falls through to @ssr, and a named location handles the request itself, so an\n\
     # `add_header` here never reached one. The `Cache-Control: no-store` that stood\n\
     # here was therefore stamped on every immutable asset in static/ and on none of\n\
