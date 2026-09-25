@@ -178,24 +178,6 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
-### P1 - `canari.emse.fr` cannot carry a WebSocket at all - diagnosed 2026-09-25, still not fixed
-
-`/etc/nginx/sites-available/canari.conf` on the shared host proxies `/` but never forwards
-`Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase
-1, and correct). A WS handshake against `canari.emse.fr` gets a bare nginx `400` with no `Upgrade`
-echoed back - it never reaches the app - while the same handshake against `canari-emse.fr` reaches
-it and gets `401` (unauthenticated, the right answer). Since `canari.emse.fr` is now the primary
-public name, this is real-time chat, presence and calling all silently unreachable on it.
-
-**The fix is written and untaken**: add the two lines `canari-prod.conf` already carries -
-`proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $http_connection;` -
-to `canari.conf`'s single `location /` block, then `nginx -t && systemctl reload nginx`. A backup
-(`canari.conf.bak-2026-09-25-no-websocket-upgrade`) already exists. **This session's own
-[Remote Shell Writes] classifier refused the write four times in a row**; the edit needs either a
-permission rule granted to this session, or the user applying the two lines directly.
-[estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
-
-
 ### P3 - an nginx `proxy_cache` substitute for the lost Cloudflare edge HIT layer is undesigned (found 2026-09-25)
 
 The origin's own `Cache-Control` headers migrated untouched - `canari.emse.fr` serves the identical
