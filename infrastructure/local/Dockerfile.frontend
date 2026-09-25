@@ -154,6 +154,18 @@ RUN printf 'server {\n\
     add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
+    # The emoji pictures (docs/wiki/frontend/emoji.md). Their directory is a hash\n\
+    # of every name and byte in the set (tools/emoji-svg/build.mjs), so a picture\n\
+    # whose content changes changes URL: that is what makes `immutable` for a year\n\
+    # safe here where it is not for /fonts/, and a browser fetch each emoji once.\n\
+    location /emoji/ {\n\
+    try_files $uri =404;\n\
+    add_header Cache-Control "public, max-age=31536000, immutable";\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
+    }\n\
+    \n\
     # No $uri/ here on purpose: every directory under the root has its own\n\
     # location, so the only thing $uri/ can still do is re-open the 403 above.\n\
     #\n\

@@ -3,6 +3,7 @@
   import AppLink from '../shared/AppLink.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
+  import EmojiText from '../shared/EmojiText.svelte';
 
   import type { TextLinkSegment as TextSegment } from '$lib/utils/chat/messageDisplay';
 
@@ -72,7 +73,9 @@
       {:else}
         {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
           {#if part.hit}
-            <mark class="rounded bg-amber-300/60 px-0.5 text-inherit">{part.text}</mark>
+            <mark class="rounded bg-amber-300/60 px-0.5 text-inherit"
+              ><EmojiText text={part.text} /></mark
+            >
           {:else}
             <MessageInlineText text={part.text} />
           {/if}

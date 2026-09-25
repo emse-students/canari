@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '../shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -85,7 +86,7 @@
           ? m.msg_reaction_aria_label_one({ emoji })
           : m.msg_reaction_aria_label({ emoji, count: users.length })}
       >
-        <span class="text-base leading-none drop-shadow-sm">{emoji}</span>
+        <span class="text-base leading-none drop-shadow-sm"><EmojiText text={emoji} /></span>
         {#if users.length > 1}
           <span class="text-2xs font-bold">{users.length}</span>
         {/if}

@@ -493,6 +493,20 @@ h6,
     sans-serif;
 }
 
+/*
+ * AN EMOJI IS A PICTURE, SIZED IN `em` SO IT FOLLOWS THE TEXT IT SITS IN (`EmojiText.svelte`).
+ * Noto's glyph filled about 1.2em of the line in the font it replaces, so the picture takes the same
+ * box and sits on the same baseline; the jumbomoji step (`text-3xl`) scales it with no rule of its
+ * own. `inline-block` keeps a run of pictures wrapping like the characters they stand for.
+ */
+img.emoji {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
+  user-select: text;
+}
+
 @keyframes riseIn {
   from {
     opacity: 0;
