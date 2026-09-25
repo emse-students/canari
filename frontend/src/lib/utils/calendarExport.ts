@@ -1,4 +1,5 @@
 import { contrastColor } from './color';
+import { emojiHtml } from '$lib/utils/emojiSvg';
 import { associationAccentHex } from '$lib/associations/accent';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { getLocale } from '$lib/paraglide/runtime';
@@ -538,7 +539,7 @@ function buildCalendarHtml(
       const mark = breakMark(hasBreak, dayEvents.length);
       const breakStamp =
         mark === 'stamp'
-          ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><span data-pdf-text style="font-size:${BREAK_LABEL_SIZE}px;font-weight:800;color:${opts.textColor};line-height:1.1;white-space:nowrap;transform:rotate(${BREAK_LABEL_ANGLE}deg);${blockShadowCss(BREAK_LABEL_SIZE, opts.accentColor)}">${safe(dayBreaks[0].title)}</span></div>`
+          ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><span data-pdf-text style="font-size:${BREAK_LABEL_SIZE}px;font-weight:800;color:${opts.textColor};line-height:1.1;white-space:nowrap;transform:rotate(${BREAK_LABEL_ANGLE}deg);${blockShadowCss(BREAK_LABEL_SIZE, opts.accentColor)}">${emojiHtml(dayBreaks[0].title)}</span></div>`
           : '';
       const breakStrip =
         mark === 'strip'
@@ -622,14 +623,14 @@ function buildCalendarHtml(
             return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;flex-direction:column;box-sizing:border-box;">
               ${watermark}
               <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:6px 0 0 8px;position:relative;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${titleShadow}${fit.clampCss}">${safe(ev.title)}</span></div>
+              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span></div>
             </div>`;
           }
           // Subsequent slots: no day number, title fully centred.
           const fit = fitEventText(slotH);
           return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
               ${watermark}
-              <span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${titleShadow}${fit.clampCss}">${safe(ev.title)}</span>
+              <span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span>
             </div>`;
         }),
         ...(loneSlot === 0 ? [blankHalf(false)] : []),
@@ -714,7 +715,7 @@ export function buildPreviewInnerHtml(
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
   // Square corners, like the export: the preview's job is to show the sheet that will print, so a
   // decorative radius belongs to the page chrome around it, never to the sheet itself.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${sheetBaseColor(opts)};font-family:'Nunito Variable','Nunito','Segoe UI','Noto Color Emoji Canari',sans-serif;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${sheetBaseColor(opts)};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -758,7 +759,7 @@ export async function exportCalendarMonth(
     width: '1080px',
     height: `${CALENDAR_CONTAINER_HEIGHT}px`,
     background: sheetBaseColor(opts),
-    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", "Noto Color Emoji Canari", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
     // No radius: this box IS the sheet, and a sheet of paper has square corners. A radius here
     // rasterises as four transparent notches at the page edge of the PDF.

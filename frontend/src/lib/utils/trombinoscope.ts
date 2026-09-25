@@ -1,4 +1,5 @@
 import { generateAvatarColor, getInitials } from './avatar';
+import { emojiHtml } from '$lib/utils/emojiSvg';
 import { apiAssetUrl } from './apiUrl';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import type { Association, AssociationMember } from '$lib/associations/api';
@@ -27,7 +28,7 @@ export async function exportTrombinoscope(
     background: '#ffffff',
     padding: '40px',
     color: '#111111',
-    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", "Noto Color Emoji Canari", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
   });
 
@@ -54,8 +55,8 @@ export async function exportTrombinoscope(
                  onerror="this.nextElementSibling.style.display='flex';this.remove();" />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${initials}</div>
           </div>
-          <p data-pdf-text style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${safe(name)}</p>
-          <p data-pdf-text style="font-size:11px;color:#607188;margin:0;">${safe(role)}</p>
+          <p data-pdf-text style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${emojiHtml(name)}</p>
+          <p data-pdf-text style="font-size:11px;color:#607188;margin:0;">${emojiHtml(role)}</p>
         </div>`;
     })
     .join('');
@@ -68,7 +69,7 @@ export async function exportTrombinoscope(
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;padding-bottom:18px;border-bottom:2.5px solid #d9e0ea;">
       ${logoHtml}
       <div>
-        <h1 data-pdf-text style="font-family:'Fredoka Variable','Fredoka','Segoe UI','Noto Color Emoji Canari',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+        <h1 data-pdf-text style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${emojiHtml(asso.name)}</h1>
         ${contactHtml}
       </div>
     </div>

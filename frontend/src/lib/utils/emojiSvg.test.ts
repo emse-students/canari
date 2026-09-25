@@ -1,5 +1,6 @@
 import {
   EMOJI_SVG_BASE,
+  emojiHtml,
   emojiSvgName,
   emojiSvgSrc,
   presentsAsEmoji,
@@ -83,5 +84,13 @@ describe('emojiSvg', () => {
       { kind: 'emoji', value: '🇫🇷', src: at('1f1eb_1f1f7') },
     ]);
     expect(splitEmojiText('')).toEqual([]);
+  });
+
+  it('builds escaped HTML with emoji pictures, for the string-built exports', () => {
+    const html = emojiHtml('<b>Soirée</b> & 🎉');
+    expect(html).toContain('&lt;b&gt;Soirée&lt;/b&gt; &amp; ');
+    expect(html).toContain(`<img class="emoji" src="${at('1f389')}" alt="🎉"`);
+    expect(html).not.toContain('<b>');
+    expect(emojiHtml('© 2026')).toBe('© 2026');
   });
 });

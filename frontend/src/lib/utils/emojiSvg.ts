@@ -104,3 +104,28 @@ export function splitEmojiText(text: string): EmojiTextPart[] {
   if (run) parts.push({ kind: 'text', value: run });
   return parts;
 }
+
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+};
+const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => HTML_ESCAPES[c]);
+
+/**
+ * `text` as ESCAPED HTML, every emoji an `<img>` of its picture - for the exports that build their
+ * markup as a string (the calendar, the trombinoscope) rather than through `EmojiText`.
+ *
+ * The picture's size is inlined: those sheets are rasterised off-page by snapdom, and the style an
+ * export paints must not depend on a stylesheet reaching the serialised copy.
+ */
+export function emojiHtml(text: string): string {
+  return splitEmojiText(text)
+    .map((part) =>
+      part.kind === 'text'
+        ? escapeHtml(part.value)
+        : `<img class="emoji" src="${part.src}" alt="${part.value}" draggable="false" style="display:inline-block;width:1.2em;height:1.2em;vertical-align:-0.2em">`
+    )
+    .join('');
+}

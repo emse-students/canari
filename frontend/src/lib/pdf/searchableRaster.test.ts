@@ -104,4 +104,32 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
     expect(textCalls).toContain('sous-titre');
     root.remove();
   });
+
+  // Since 2026-09-25 an export's emoji is a PICTURE (`emojiHtml`), absent from `textContent`: the
+  // node reads as plain text, and hiding it for the vector pass would hide its picture with it.
+  it('keeps a node holding an emoji PICTURE in the raster, not as vector text', async () => {
+    const root = document.createElement('div');
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
+    });
+    const pictureNode = textNode('titre ');
+    const img = document.createElement('img');
+    img.className = 'emoji';
+    img.alt = '🎉';
+    pictureNode.appendChild(img);
+    root.appendChild(pictureNode);
+    document.body.appendChild(root);
+
+    await exportSearchablePdf(root, {
+      filename: 'test',
+      format: 'a4',
+      orientation: 'portrait',
+      naturalWidth: 1000,
+      naturalHeight: 1000,
+    });
+
+    expect(rasterState.markedDuringRaster).toBe('titre ');
+    expect(textCalls).not.toContain('titre');
+    root.remove();
+  });
 });
