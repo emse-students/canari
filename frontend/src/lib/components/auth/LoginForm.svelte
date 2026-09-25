@@ -20,10 +20,6 @@
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
     onPasswordLogin: () => void;
-    /** Whether a device reset is running; the link is disabled for its duration. */
-    isResetting?: boolean;
-    /** Called when the user clicks the device-reset link. */
-    onReset: () => void;
   }
 
   let {
@@ -33,10 +29,8 @@
     maintenanceNotice = null,
     loginDisabled = false,
     showStoreBadges = false,
-    isResetting = false,
     onLogin,
     onPasswordLogin,
-    onReset,
   }: Props = $props();
 </script>
 
@@ -118,9 +112,9 @@
       {/if}
 
       <!--
-        Discreet secondary actions: rarely used by end users, so styled as
-        low-emphasis text links (like device reset) to keep the primary
-        OIDC button the clear focal point.
+        Discreet secondary action: rarely used by end users (store review),
+        so styled as a low-emphasis text link to keep the primary OIDC
+        button the clear focal point.
       -->
       <div class="text-text-muted mt-8 flex flex-col items-center gap-2.5 text-xs">
         <button
@@ -130,14 +124,6 @@
           class="hover:text-text-main underline transition-colors disabled:cursor-wait disabled:opacity-70"
         >
           {m.auth_test_login_password()}
-        </button>
-        <button
-          type="button"
-          onclick={onReset}
-          disabled={isResetting}
-          class="underline transition-colors hover:text-red-500 disabled:cursor-wait disabled:opacity-70"
-        >
-          {m.auth_reset_device()}
         </button>
       </div>
 

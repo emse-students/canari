@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, Param, Headers, Logger } from '@nestjs/common';
+import { Controller, Delete, Get, Param, Headers, Logger, Post as HttpPost } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
@@ -15,6 +15,8 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { ChannelService } from '../channels/channel.service';
+import { RedisService } from '../common/redis/redis.service';
+import { invalidatePostListCache } from '../posts/post-list-cache';
 
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
@@ -50,8 +52,33 @@ export class InternalController {
     private readonly moderationRepo: Repository<UserModeration>,
     @InjectRepository(ContentReport)
     private readonly reportRepo: Repository<ContentReport>,
-    private readonly channelService: ChannelService
+    private readonly channelService: ChannelService,
+    private readonly redis: RedisService
   ) {}
+
+  /**
+   * Throws the cached feed pages away, for every reader.
+   *
+   * Called by core-service when a block is placed OR LIFTED, and the second half is why this is a
+   * route of its own rather than a line inside `severFollowsBetween`: lifting a block restores no
+   * follow, so the only other internal call a block makes does not fire then. Without it the feed
+   * a reader sees for up to the 30-second TTL is the one computed before their own decision - they
+   * block somebody, open the feed, and the posts are still there. A control that appears not to
+   * have worked is one people press again.
+   *
+   * It drops the WHOLE keyspace rather than the two readers' own pages, because a key carries the
+   * viewer AND the promo filter AND the formation filter AND the page size AND the offset: the
+   * pages belonging to one reader cannot be named without enumerating that product, which is the
+   * mistake `post-list-cache`'s own docblock records. Blocks are rare and the keyspace is a few
+   * hundred entries.
+   */
+  @HttpPost('posts/list-cache/invalidate')
+  async invalidateFeedCache(@Headers('x-internal-secret') headerSecret: string) {
+    assertInternalSecret(headerSecret);
+    const dropped = await invalidatePostListCache(this.redis);
+    this.logger.log(`[INTERNAL_FEED_CACHE_DROP] keys=${dropped}`);
+    return { ok: true, dropped };
+  }
 
   /**
    * Drops every follow relationship between two accounts, in BOTH directions.

@@ -22,6 +22,7 @@ describe('UserBlocksService', () => {
   // Held by name rather than read back off `axios`: referencing the module's own method in an
   // assertion is an unbound-method reference, and oxlint is right to say so.
   let severFollows: jest.Mock;
+  let dropFeedCache: jest.Mock;
 
   beforeEach(() => {
     blockRepo = {
@@ -39,6 +40,8 @@ describe('UserBlocksService', () => {
     };
     severFollows = jest.fn().mockResolvedValue({ data: { ok: true } });
     mockedAxios.delete = severFollows;
+    dropFeedCache = jest.fn().mockResolvedValue({ data: { ok: true, dropped: 0 } });
+    mockedAxios.post = dropFeedCache;
     service = new UserBlocksService(
       blockRepo as unknown as Repository<UserBlock>,
       userRepo as unknown as Repository<User>
@@ -102,6 +105,27 @@ describe('UserBlocksService', () => {
       expect(blockRepo.save).toHaveBeenCalled();
     });
 
+    it('drops the cached feed pages, or the posts stay up for the rest of the TTL', async () => {
+      blockRepo.findOne.mockResolvedValue(null);
+
+      await service.block('alice', 'bob');
+
+      expect(dropFeedCache).toHaveBeenCalledWith(
+        expect.stringContaining('internal/posts/list-cache/invalidate'),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('still blocks when the cache cannot be dropped - a stale page is the whole cost', async () => {
+      blockRepo.findOne.mockResolvedValue(null);
+      dropFeedCache = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+      mockedAxios.post = dropFeedCache;
+
+      await expect(service.block('alice', 'bob')).resolves.toEqual({ ok: true });
+      expect(blockRepo.save).toHaveBeenCalled();
+    });
+
     it('is idempotent: blocking twice writes nothing the second time', async () => {
       blockRepo.findOne.mockResolvedValue({ id: 'existing' } as UserBlock);
 
@@ -136,6 +160,17 @@ describe('UserBlocksService', () => {
     it('deletes only the row the caller owns, so a block cannot be lifted by its target', async () => {
       await service.unblock('alice', 'bob');
       expect(blockRepo.delete).toHaveBeenCalledWith({ blockerId: 'alice', blockedId: 'bob' });
+    });
+
+    it('drops the feed cache too - lifting restores no follow, so nothing else fires here', async () => {
+      await service.unblock('alice', 'bob');
+
+      expect(severFollows).not.toHaveBeenCalled();
+      expect(dropFeedCache).toHaveBeenCalledWith(
+        expect.stringContaining('internal/posts/list-cache/invalidate'),
+        expect.anything(),
+        expect.anything()
+      );
     });
   });
 

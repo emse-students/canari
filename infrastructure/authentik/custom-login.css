@@ -40,10 +40,10 @@ html, body, .pf-c-login, .pf-c-login * {
 }
 
 /* --- Background: blobs behind a dark base ---
- * Only `.pf-c-login` (the page-level wrapper) gets sized to the viewport and
- * flex-centered. `ak-flow-card` and `.pf-c-form__group` are INNER elements -
- * a stage's actual content, or one field group within it - and used to carry
- * the exact same `min-height: 100vh` + flex-centering as their ancestor.
+ * Only `.pf-c-login` (the page-level wrapper) gets sized to the viewport.
+ * `ak-flow-card` and `.pf-c-form__group` are INNER elements - a stage's
+ * actual content, or one field group within it - and used to carry the exact
+ * same `min-height: 100vh` + flex-centering as their ancestor.
  * That stretched the card itself to full viewport height with its (usually
  * short) content pinned to top/center, which is the huge empty gap reported
  * below the error text on the "redirect_uri" page (2026-09-25). They only
@@ -61,10 +61,19 @@ html, body, .pf-c-login, .pf-c-login * {
      * were never visible at all.
      */
     isolation: isolate;
+    /* Clips the blobs, which sit at negative offsets and would otherwise
+     * widen the page into a horizontal scroll. It clips nothing else now that
+     * the card stays inside Authentik's own column (below).
+     */
     overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    /* NO `display` HERE, DELIBERATELY. Authentik lays `.pf-c-login` out as a
+     * GRID (`1fr [main] minmax(min(100%, 560px), 560px) 1fr`) that already
+     * centres the card and stacks locale-select/header/main/footer. A
+     * `display: flex` override put those four SIDE BY SIDE (393px phone:
+     * header 31px, card 314px, footer 48px), and on the error page the row
+     * outgrew the viewport and `overflow: hidden` cut the card's left edge
+     * (Mi 9T, 2026-09-25).
+     */
     min-height: 100vh;
 }
 

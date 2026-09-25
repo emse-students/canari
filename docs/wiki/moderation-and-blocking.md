@@ -162,16 +162,77 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither can **add the other to a group**.
 - Neither can **invite the other into a private salon** - inside a shared community included.
 - The two **follows** are severed, in both directions.
+- Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
+  in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
+  post are exempt**, and the section below is why.
 
 ### What a block does not do
 
-Existing conversations, existing groups, community membership and post visibility are all untouched.
+Existing conversations, existing groups and community membership are untouched.
 The directory (`GET /api/users/directory`) still lists both - it is a browsing view with promo and
 cursus filters, not a target picker, and punching a hole in it would make a block visible in a
 screen that has nothing to do with it. Invitation **links** are out of scope: a block stops somebody
 from pushing you somewhere, not from you walking in.
 
-The blocked person is never notified. No administrator sees anything.
+The blocked person is never notified. No administrator sees anything. They can, since posts started
+being hidden, NOTICE that one reader stopped seeing them - that is what a symmetric hide costs, and
+it was taken knowingly (2026-09-25): "not notified" is about the platform telling them, and the
+alternative was a block that does not do the one thing people expect of it.
+
+### Hiding a post must not become a way to ASK WHO WROTE IT
+
+`PostsService.blockedAuthorSql` filters on `authorId`, so it covers **only a post whose author the
+viewer could already read**. An association post hides its publisher from everyone unconditionally,
+an anonymous one from everyone but a moderator - and filtering either on authorship would answer
+exactly the question those masks exist to refuse:
+
+> block a suspect, watch whether the anonymous post leaves your feed, unblock.
+
+Nobody is notified of a block, no administrator sees one, and lifting it costs a click, so that
+probe is free, silent and repeatable - a dichotomy over the 200-row cap names the author of any
+anonymous post in a handful of rounds. The exemption is the feature, not a gap in it. `listPosts`'s
+`followed` arm already excludes anonymous posts for the neighbouring reason: **presence in a feed is
+itself an answer about authorship**, which is also why that arm EXCLUDES rather than masks.
+
+A comment carries no anonymity of its own - every one has its author's name on it - so it is
+filtered on its author with nothing to weigh against it.
+
+### Where the hide is applied, and why not in JS
+
+| Path | What it does |
+| --- | --- |
+| `listPosts` (4 feed arms) | the clause in the `WHERE`, never on the page after `LIMIT` - filtering a rendered page would hand back short pages |
+| `searchPosts` | same clause |
+| `getById` | `404`, not `403` - the refusal never says a block caused it. **A platform admin passes** (`allowHidden`, the flag that already opens a moderation-hidden post), so a reported post never 404s for the moderator who has to read it |
+| `findPostLinkedToCalendarEvent` | same card, same clause |
+
+The **comment window and the comment count are both filtered in SQL**, in `postSelectBody`. They
+answer two different questions - the window is the last 20 rows, the count is the TOTAL - so a JS
+filter could only correct the window and would leave the count promising comments the viewer is
+never going to be shown. The `associations` feed gets the comment half only: every row there is an
+association post, which the author clause exempts by construction.
+
+Replies to a hidden comment are not re-parented. A reply whose parent is absent renders nowhere,
+which is already what the 20-row window does to an older thread - one behaviour, not two.
+
+### The cache, which is the part that made it look broken
+
+The feed is cached per reader for 30 s, so nothing about a block reached the feed until the TTL ran
+out: block somebody, open the feed, their posts are still there. Core-service now calls
+`POST internal/posts/list-cache/invalidate` on block **and on unblock** - the second is why it is
+its own route rather than a line inside `severFollowsBetween`, which does not run when a block is
+lifted. Best-effort and logged, like the follow severing beside it: the block is already durable,
+and a stale page for the rest of one TTL is the whole cost of a failure.
+
+### Found while wiring it: search served what every feed refused
+
+`searchPosts` carried **none** of the feed's exclusions - not the moderation hide, not the
+store-review service account. A post auto-hidden by the report threshold, which `listPosts` drops
+from every feed, was reachable by anyone who typed a word of it. A search result renders the same
+card as a feed row, so it owes the same exclusions; `hiddenFilterSql` and `serviceAccountFilterSql`
+are now one implementation each, shared by both. The promo cutoff is still absent from search - it
+is a relevance limit rather than a confidentiality one (`promo-visibility.ts`), and it is left
+alone deliberately.
 
 ### Symmetric by construction
 
@@ -191,7 +252,9 @@ internal HTTP hop on the critical path of every group creation would buy a bound
 trip.
 
 **Hiding somebody from a search enforces nothing** - a known uuid is enough to open a conversation.
-So the refusals sit at the mutations:
+The read-time hide above is no different, and is not trying to be: it does not enforce anything, it
+stops putting a person in front of somebody who asked not to see them. Enforcement sits at the
+mutations:
 
 | Refusal | Service | Answer |
 | --- | --- | --- |
