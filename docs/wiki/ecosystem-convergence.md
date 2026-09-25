@@ -1363,7 +1363,7 @@ it fails.
 14. **Every user-visible string through the i18n layer, and every placeholder a message is called
     with exists in it.** *Le Cercle: `stats_rank_value` is called with `{rank}` and has no `{rank}`.*
 
-### Where the chantier stands, and the restart order (paused 2026-09-25 evening)
+### Where the chantier stands, and the restart order (paused 2026-09-26 night)
 
 Everything below is pushed; nothing lives only in a scratch directory. Phone checks are done on the
 Mi 9T (adb reverse to a local rig, or prod).
@@ -1371,20 +1371,30 @@ Mi 9T (adb reverse to a local rig, or prod).
 **Shipped and verified on the phone:** MiGallery v2.3.0 (flat), v2.4.0 (viewer gestures), v2.5.0
 (full-screen viewer, video checked in prod), v2.6.0 (album photos first, justified grid), v2.7.0
 (album opens on its cover over its own blurred cover, Google Photos selection mode, 3 a row with a
-pinch between 2/3/4, aligned menus - checked on the rig and in prod on the Mi 9T); Sky v1.1.0 +
+pinch between 2/3/4, aligned menus - checked on the rig and in prod on the Mi 9T), v2.8.0 (the
+albums list copies Google Photos, the home page no longer repaints its blobs and greeting on hydration,
+the bars no longer overscroll-stretch, Photos CV and Mes photos edge to edge - checked on the rig,
+the release run watched; **not yet looked at in prod**); Sky v1.1.0 +
 v1.1.1 (Sky Map chrome, opens on my star, pinch redraws, no idle redraw) - **v1.1.1 itself is not
 yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
 ([authentik](infrastructure/authentik.md)).
 
 **Restart order:**
 
-1. **MiGallery: every other page copies Google Photos, phone AND desktop (user decision D8,
-   2026-09-25)** - the albums list, Mes photos, Photos CV, Paramètres, admin and the desktop shell
-   (~256 px sidebar, search on top, bottom bar only <= 768 px). The plan is the remaining work-list
-   rows of [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md);
-   measure each page against the Google Photos app on the Mi 9T AND photos.google.com at 1440 before
-   building it (a public shared-album link opens signed-out on the workstation). Owed on hardware from
-   v2.7.0: the grid pinch (CDP stopped answering mid-session) and a multi-file share from a selection.
+1. **MiGallery: the user's seven desktop points (2026-09-26), then the rest of D8.** Open, in the
+   user's order: (1) more room between the album title and its action pill on desktop; (2) the top
+   nav bar should take the pill's translucent look; (3) **Photos CV redesign - yes**: the admin upload
+   panel still comes first (as the album page did before #330), and the user still sees photos
+   overflowing its frame; (4) centring slips - the "Importer une photo" label wraps in the face card,
+   and the rest come from the global rule of item 2; (5) the viewer's title hugs the corner - margins,
+   and a richer "Informations" panel that animates open; (6) "Modifier l'album" is transparent -
+   opaque or blurred backdrop, rework, its scrollbar overlaps other components; (7) the SEO/share
+   image is an old, heavy logo - delete it from the repo and serve the new logo in a light format.
+   Then the rest of D8: Paramètres, admin, the desktop shell (~256 px sidebar, bottom bar only
+   <= 768 px - today it shows up to 1440). Measure each page against the Google Photos app on the Mi
+   9T AND photos.google.com at 1440 first (a public shared-album link opens signed-out). Owed on
+   hardware: the grid pinch and a multi-file share from a selection (v2.7.0), the v2.8.0 albums list
+   in prod.
 2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
    button row that does not state its own alignment - it misaligned the ⋮ menus (#337). Each new
    left-aligned row must state it; consider scoping the global rule.
@@ -1397,8 +1407,8 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
 5. **MiConnect**: the three strings and the signed-in observation in [backlog](backlog.md).
 6. **Le Cercle, two items code cannot close**: menu sections need a category the menu data does not
    have; "coktail passion" is production data to rename on `/gestion/carte`.
-7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database;
-   every rig and the Immich tunnel were stopped at the pause).
+7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
+   Every rig, the Immich tunnel and the other MiGallery worktrees are removed at the pause.
 
 **Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose
 `IMMICH_BASE_URL` was an SSH tunnel to the PRODUCTION Immich; 28 empty `[TEST]` albums landed there
