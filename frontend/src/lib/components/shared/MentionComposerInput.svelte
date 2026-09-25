@@ -5,8 +5,10 @@
   import {
     COMPOSER_EMPTY_LINE_FILLER,
     getMentionChipFromEventTarget,
+    EMOJI_IMAGE_SELECTOR,
     getPlainTextSelection,
     composerMarkdownPreviewEnabled,
+    needsEmojiRender,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
     removeNewlineFillerBeforeCursor,
@@ -137,7 +139,9 @@
 
     const needsMentions = needsMentionChipRender(editorEl, text);
     const needsDom =
-      needsMentions || shouldRerenderComposerDom(text, lastRenderedValue, renderOptions);
+      needsMentions ||
+      needsEmojiRender(editorEl) ||
+      shouldRerenderComposerDom(text, lastRenderedValue, renderOptions);
 
     if (needsDom) {
       applyDomFromPlainText(text, start);
@@ -181,7 +185,10 @@
 
   function handleEditorInput() {
     // Update placeholder state immediately from DOM, before emitEditorChange processing.
-    editorHasContent = (editorEl?.textContent ?? '') !== '';
+    // An editor holding only an emoji picture has an empty `textContent`, and the placeholder would
+    // then sit on top of it.
+    editorHasContent =
+      (editorEl?.textContent ?? '') !== '' || !!editorEl?.querySelector(EMOJI_IMAGE_SELECTOR);
     if (isApplyingDom) return;
     emitEditorChange();
   }
