@@ -925,44 +925,46 @@ storage is the reason it exists.
 | Wiki.js (`mino-wikijs-1`) | `wiki.canari-emse.fr` | `mino.emse.fr` | `mitv` | a name, relayed |
 | Omeka S (`mino-omekas-1`) | - | `archives.emse.fr` | `mitv` | a name, relayed |
 
-**THE NETWORK, MEASURED 2026-09-25 - it decides both shapes.** The School host has ONLY public
-addresses (`193.49.175.67`, `.40`, `.122` on `ens18`) and no route into `10.0.0.0/8`. `mitv` is
-`10.0.0.4/16` behind a NAT at `10.0.0.1` - the same LAN as the old Canari VM and `miconnect` - and
-**its egress address is `193.49.174.63`, a School address**: it is on the School's network, behind a
-NAT. So:
+**THE NETWORK, MEASURED 2026-09-25 - it decides both shapes, and the first reading of it was WRONG.**
+The School host has ONLY public addresses (`193.49.175.67`, `.40`, `.122` on `ens18`) and no
+`10.0.0.0/8` route of its own. `mitv` is `10.0.0.4/16` behind a NAT at `10.0.0.1` - the same LAN as
+the old Canari VM and `miconnect` - and its egress address is `193.49.174.63`, a School address. The
+first pass read the host's routing table, found no `10.0.0.0/8` entry and concluded there was no
+private path. **There is one: the host's DEFAULT gateway `193.49.175.10` routes `10.0.0.4`** -
+`ip route get 10.0.0.4` answers `via 193.49.175.10`, one hop, 0.6 ms. A routing table lists what a
+host knows, never what its gateway knows; `ip route get` and a `curl` are the measurement. So:
 
 - **`mitv` -> School host works directly**: `https://canari.emse.fr/` resolved to `193.49.175.67`
   answers `200` in 0.1 s from the box.
-- **School host -> `mitv` works only through Cloudflare**: `wiki.canari-emse.fr`, `sky.mitv.fr` and
-  `gallery.mitv.fr` each answer `200` from the host, via the public names. There is NO private path,
-  and nothing on the host can address `10.0.0.4`.
+- **School host -> `mitv` works directly too**, in plain HTTP over the School network:
+  `http://10.0.0.4:3002/` (Wiki.js) `200`, `:8081` (Omeka S) `302` to its install page, `:3001`
+  (Sky) `200`, each under 0.25 s. No Cloudflare, no tunnel.
 
-**Sky's move needs no new network at all**, because the direction it needs is the one that works.
-Until `sky.emse.fr` exists, `sky.mitv.fr` stays in `mitv`'s Cloudflare tunnel and its ingress is
-repointed from the local container to the School host on 443 - exactly how `canari-emse.fr` reaches
-the host today, through the old VM's relay. That ingress IS "the link" the user will cut once
-`sky.emse.fr` is live. What the move owes, by analogy with `cercle`: the SQLite file carried across
-(2 MB, `database/sky.db`, with the app stopped - it holds identities AND sessions), Sky's
-`deploy.yml` given a runner and a `DEPLOY_DIR` on the host, a port that collides with nothing
+**Sky's move needs no new network at all.** Until `sky.emse.fr` exists, `sky.mitv.fr` stays in
+`mitv`'s Cloudflare tunnel and its ingress is repointed from the local container to the School host -
+exactly how `canari-emse.fr` reached the host through the old VM's relay. That ingress IS "the link"
+the user will cut once `sky.emse.fr` is live. What the move owes, by analogy with `cercle`: the SQLite
+file carried across (2 MB, `database/sky.db`, with the app stopped - it holds identities AND
+sessions), Sky's `deploy.yml` given a runner and a `DEPLOY_DIR` on the host (two repository
+variables since Sky #128), a port that collides with nothing
 ([measure it first](#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25)
 - CrowdSec's `8080` was the lesson), a vhost carrying `real_ip`, and the GitHub secrets its deploy
 writes into `.env` - never a hand edit on the box
 ([why](#the-name-is-not-in-the-code-of-the-other-four-projects---it-is-an-environment-variable-and-moving-the-default-reaches-nothing-2026-09-25)).
+Its backup takes Canari's shape (Sky #131): a local archive in `/srv/sky-backups` on the host,
+mirrored to `canaribackup@10.0.0.4:/srv/sky-backups` - the private path above, the account Canari's
+own nightly backup uses.
 
-**The two names that stay on `mitv` need the direction that does NOT work directly.** Three shapes,
-none chosen yet:
-
-1. **The School host's nginx forwards to the public Cloudflare name** (`proxy_pass
-   https://wiki.canari-emse.fr` with that `Host` and SNI). Works today, measured. Costs a second trip
-   through Cloudflare on every request, keeps the old `*.canari-emse.fr` / `*.mitv.fr` names alive
-   as a dependency of the new ones, and puts Cloudflare Access in the path if that host is behind it.
-2. **`mitv` dials OUT to the School host** - a WireGuard or SSH reverse tunnel initiated from `mitv`,
-   which is the direction the network allows. A private path with no Cloudflare in it, at the price
-   of one more long-lived process to supervise on each side, on a host that is not ours.
-3. **Cloudflare for SaaS**: the DSI CNAMEs `mino.emse.fr` to a Cloudflare-held name and `mitv`'s
-   tunnel serves it, with no School-host hop at all. Depends on the DSI accepting an `emse.fr` record
-   pointing at Cloudflare, and on certificate validation by Cloudflare rather than GEANT - both are
-   DSI policy questions, not technical ones.
+**The two names that stay on `mitv` are therefore a plain reverse proxy**: a School-host vhost for
+`mino.emse.fr` proxying to `http://10.0.0.4:3002`, one for `archives.emse.fr` to `:8081`, the GEANT
+certificate on the host like every other name there. The three shapes weighed before the measurement
+(forward to the public Cloudflare name, a tunnel dialled out from `mitv`, Cloudflare for SaaS) are
+withdrawn - each paid for a path that already existed. **What that path owes before it carries
+traffic**: those ports answer ANY School address today, not only the host - Sky's old container
+publishes `3001` on every interface too (the moved one binds `127.0.0.1`). `mitv` should admit
+`193.49.175.67` to them and refuse the rest of the School network, an allowlist rather than trust in
+the LAN; and the hop is plain HTTP, so the vhost sets the `X-Forwarded-*` headers the apps need to
+build their own URLs rather than assuming the hop is TLS.
 
 What each rename owes, whatever the shape (every item was a defect or a near-miss for Canari,
 [above](#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)):
