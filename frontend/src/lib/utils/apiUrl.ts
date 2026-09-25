@@ -11,8 +11,11 @@ import { isTauriRuntime } from '$lib/utils/tauriRuntime';
  *
  * Tauri is the one runtime where that origin is useless - `tauri://localhost` / `http://tauri.
  * localhost` never reaches the proxy - so it is the one case that still needs the env var.
+ *
+ * Exported for its own test: Vite inlines `import.meta.env.VITE_*` at transform time, so no test
+ * can make the callers below see a different baked value per case.
  */
-function resolveServiceUrl(envValue: string | undefined, devFallback: string): string {
+export function resolveServiceUrl(envValue: string | undefined, devFallback: string): string {
   if (typeof window !== 'undefined' && !isTauriRuntime()) return window.location.origin;
   const url = envValue?.trim();
   if (url) return url.replace(/\/$/, '');
