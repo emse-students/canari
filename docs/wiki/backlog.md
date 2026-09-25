@@ -180,20 +180,15 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
-### P2 - MiConnect still speaks English and shows an error to anyone already signed in (Mi 9T, 2026-09-25)
+### P3 - MiConnect: three strings left after the French pass (2026-09-25)
 
-The layout half of this entry is SHIPPED - the card clipped on a phone and the flat pass are live
-([authentik](infrastructure/authentik.md#login-page-branding)). What is left, all in Authentik's DB,
-so each one is an `ak shell` write (the user asked for the whole interface in ONE language, clean,
-2026-09-25): **ten flow titles are Authentik's English defaults** - "Welcome to authentik!" on
-`default-authentication-flow` and `initial-setup`, "Welcome to authentik! Please select a username."
-on `default-source-enrollment`, "Redirecting to %(app)s" on both consent flows, "You've logged out of
-%(app)s." on the provider invalidation flow, and the password/MFA/settings flows; the prompts
-`Username`, `Password`, `Password (repeat)`, `Name`, `Email` likewise. On the alumni enrollment
-prompts: "(où année ...)" for "ou", "Elève" for "Élève", and a static prompt `Alumni Force Link
-Continue` whose label is **"ni ça"** - where it renders is not yet read. And the error itself:
-opening `miconnect-auth` while signed in ends on "Le flux ne s'applique pas à l'utilisateur actuel";
-the flow's `denied_action` can CONTINUE instead, which removes the page rather than rewording it.
+The layout, the flat pass, the French titles and prompts, the redirect to Canari and the signed-in
+`continue` are SHIPPED ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)).
+Left, each with its reason on that page: the accentless "Elève" (a VALUE the `is-student` policy and
+`school_status` consumers compare - a coordinated change, not a typo fix), authentik's own
+untranslated "Go back", and the static prompt `Alumni Force Link Continue` labelled "ni ça", whose
+rendering is unread. **One observation owed**: `miconnect-auth` opened while signed in, on the
+Mi 9T, should now go straight through.
 
 #### What the shipped half was
 
