@@ -34,7 +34,7 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
 | `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts` |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |

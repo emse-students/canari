@@ -11,7 +11,7 @@
  * worked; the decision to stay open, to keep the typed text, and to close on success all live in
  * the component that makes the call, and a test of the modal alone would assert none of them.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 
 // The same import-cycle break the other composable suites use: Sidebar -> mediaTouch ->
 // globalChatSingleton, which calls useMessaging() at module scope and reaches back into a half-built
@@ -30,6 +30,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
 import Sidebar from './Sidebar.svelte';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
@@ -43,12 +44,7 @@ const mounted: (() => void)[] = [];
  * Claiming the promise is the fix. Waiting the animation out instead would put a wall clock in five
  * tests to work around one of happy-dom's.
  */
-const nativeAnimate = Element.prototype.animate;
-Element.prototype.animate = function (this: Element, ...args: Parameters<Element['animate']>) {
-  const animation = nativeAnimate.apply(this, args);
-  animation.finished?.catch(() => {});
-  return animation;
-};
+afterAll(adoptTransitionAnimations());
 
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
