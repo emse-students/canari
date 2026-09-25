@@ -1,8 +1,8 @@
-version: 0.18.24
+version: 0.18.25
 
-Les emojis des messages, des recherches et des reactions sont maintenant des images : ils
-s'affichent de la meme facon partout, y compris sur iPhone et sur Safari ou ils restaient
-invisibles.
+Les emojis sont maintenant des images partout ou vous ecrivez, et le selecteur d'emojis a ete
+redessine : ils s'affichent de la meme facon sur tous les appareils, y compris sur iPhone et sur
+Safari ou ils restaient invisibles.
 
 Cette version corrige aussi le deverrouillage par code PIN sur la nouvelle adresse
 canari.emse.fr.

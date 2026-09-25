@@ -912,6 +912,69 @@ without.
 kind of ask and is refused more easily than a DNS record; attaching it would put the whole list at
 risk. It goes in its own request when calls are revived ([calls](../frontend/modules/calls.md)).
 
+### Sky MOVES, the wiki and Omeka only get names - decided by the user 2026-09-25
+
+*"Je veux reellement deplacer Sky sur la machine, a l'instar de cercle ou canari. Des que sky.emse.fr
+sera dispo, on pourra couper le lien. Par contre archives.emse.fr et mino.emse.fr resteront sur le
+NAS mitv."* `mitv` itself is NOT being retired: it keeps Immich, MiGallery and the Mino stack, whose
+storage is the reason it exists.
+
+| Service | Today | Target name | Runs on, at the end | Shape |
+| --- | --- | --- | --- | --- |
+| Sky | `sky.mitv.fr`, on `mitv` | `sky.emse.fr` | **the School host** | a MOVE, like [`cercle`](#cercle-has-moved---2026-09-24-and-it-is-the-shape-the-other-two-follow) |
+| Wiki.js (`mino-wikijs-1`) | `wiki.canari-emse.fr` | `mino.emse.fr` | `mitv` | a name, relayed |
+| Omeka S (`mino-omekas-1`) | - | `archives.emse.fr` | `mitv` | a name, relayed |
+
+**THE NETWORK, MEASURED 2026-09-25 - it decides both shapes.** The School host has ONLY public
+addresses (`193.49.175.67`, `.40`, `.122` on `ens18`) and no route into `10.0.0.0/8`. `mitv` is
+`10.0.0.4/16` behind a NAT at `10.0.0.1` - the same LAN as the old Canari VM and `miconnect` - and
+**its egress address is `193.49.174.63`, a School address**: it is on the School's network, behind a
+NAT. So:
+
+- **`mitv` -> School host works directly**: `https://canari.emse.fr/` resolved to `193.49.175.67`
+  answers `200` in 0.1 s from the box.
+- **School host -> `mitv` works only through Cloudflare**: `wiki.canari-emse.fr`, `sky.mitv.fr` and
+  `gallery.mitv.fr` each answer `200` from the host, via the public names. There is NO private path,
+  and nothing on the host can address `10.0.0.4`.
+
+**Sky's move needs no new network at all**, because the direction it needs is the one that works.
+Until `sky.emse.fr` exists, `sky.mitv.fr` stays in `mitv`'s Cloudflare tunnel and its ingress is
+repointed from the local container to the School host on 443 - exactly how `canari-emse.fr` reaches
+the host today, through the old VM's relay. That ingress IS "the link" the user will cut once
+`sky.emse.fr` is live. What the move owes, by analogy with `cercle`: the SQLite file carried across
+(2 MB, `database/sky.db`, with the app stopped - it holds identities AND sessions), Sky's
+`deploy.yml` given a runner and a `DEPLOY_DIR` on the host, a port that collides with nothing
+([measure it first](#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25)
+- CrowdSec's `8080` was the lesson), a vhost carrying `real_ip`, and the GitHub secrets its deploy
+writes into `.env` - never a hand edit on the box
+([why](#the-name-is-not-in-the-code-of-the-other-four-projects---it-is-an-environment-variable-and-moving-the-default-reaches-nothing-2026-09-25)).
+
+**The two names that stay on `mitv` need the direction that does NOT work directly.** Three shapes,
+none chosen yet:
+
+1. **The School host's nginx forwards to the public Cloudflare name** (`proxy_pass
+   https://wiki.canari-emse.fr` with that `Host` and SNI). Works today, measured. Costs a second trip
+   through Cloudflare on every request, keeps the old `*.canari-emse.fr` / `*.mitv.fr` names alive
+   as a dependency of the new ones, and puts Cloudflare Access in the path if that host is behind it.
+2. **`mitv` dials OUT to the School host** - a WireGuard or SSH reverse tunnel initiated from `mitv`,
+   which is the direction the network allows. A private path with no Cloudflare in it, at the price
+   of one more long-lived process to supervise on each side, on a host that is not ours.
+3. **Cloudflare for SaaS**: the DSI CNAMEs `mino.emse.fr` to a Cloudflare-held name and `mitv`'s
+   tunnel serves it, with no School-host hop at all. Depends on the DSI accepting an `emse.fr` record
+   pointing at Cloudflare, and on certificate validation by Cloudflare rather than GEANT - both are
+   DSI policy questions, not technical ones.
+
+What each rename owes, whatever the shape (every item was a defect or a near-miss for Canari,
+[above](#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)):
+the app's public origin (`SKY_ORIGIN` for Sky - it drives `og:url`, the canonical link AND
+`adapter-node`'s CSRF check; Wiki.js has its own `SITE_URL`), the Authentik callback added BESIDE the
+old one, every neighbour that names it (Canari reads Sky's tree through `SKY_API_URL`), and a sweep
+of the RUNNING environments. A redirect costs Sky's signed-in visitors their session - cheap, since
+it is a cookie a sign-in restores, unlike Canari's MLS state.
+
+**Put all three names in the pending DSI request for `cercle.emse.fr` and `miconnect.emse.fr`** if it
+has not gone yet: every name is a ticket, and one ticket was the point of batching them.
+
 ### The request, written out - copy it, do not rewrite it
 
 **One message, every name at once**, because every name costs a ticket and a second request is a
@@ -1026,6 +1089,67 @@ resolve and be linked to for NEW visits, but an existing session's origin is not
 migration can or should move. If the old host is ever decommissioned, browser users need an explicit,
 in-app warning and a chance to be re-added before their storage becomes unreachable - never a silent
 redirect.
+
+### THE NAME IS NOT IN THE CODE OF THE OTHER FOUR PROJECTS - IT IS AN ENVIRONMENT VARIABLE, AND MOVING THE DEFAULT REACHES NOTHING, 2026-09-25
+
+Every neighbour that talks to Canari reads its address from a variable with a default in the source:
+Sky's `CANARI_API_URL`, le Cercle's `CANARI_BASE_URL`, Portail-etu's `PUBLIC_CANARI_URL`. Four pull
+requests moved those defaults, all four merged, and **not one running container changed** - because
+every deployment sets the variable EXPLICITLY, so the default is dead code in production. A merged
+rename is not a renamed estate, and the artefact that proves it is `docker inspect`, never the diff.
+
+The source of truth is a CI variable in all four, and never the file on the box - each deploy
+rewrites `.env` from it:
+
+| Project | Where the value really lives | What writes the file |
+| --- | --- | --- |
+| Canari | GitHub secret `BASE_URL` | `render-env.sh`, every deploy |
+| Sky | GitHub secret `CANARI_API_URL` | `deploy.yml` line 142, every deploy |
+| le Cercle | GitLab variable `CANARI_BASE_URL` | `.gitlab-ci.yml` line 224, every deploy |
+| Portail-etu | GitHub secret `PUBLIC_CANARI_URL` | `deploy.yml` line 100, every deploy |
+
+**Sky was misread as a hand-maintained `.env` during this very sweep**, and its file was edited on
+`mitv` on that belief. The edit took effect, which is exactly what made the mistake invisible: the
+next deploy would have reverted it, hours or weeks later, with nothing connecting the regression to
+the edit. What settled it was the compose file's own comment - *"Le .env (secrets) est genere par la
+CD depuis les secrets GitHub"* - and then `deploy.yml` itself. **Read what writes the file before
+concluding that nothing does**, and prefer the workflow to the directory listing: a file with a
+plausible mtime and a human owner looks hand-maintained whether it is or not.
+
+**The same fact was also written three times INSIDE Canari's own pipeline, and the flip found the
+copy nobody had moved.** Which name counts as production is asserted before any build bakes it:
+`android.yml` and `ios.yml` carry their own `case` lists, moved in #1089, and `build.yml` read
+`env.DOMAIN: canari-emse.fr` - a variable `serve-prod.yml` also declares, where it means the LEGACY
+apex on purpose (it feeds `ALLOW_ORIGIN`). Once `BASE_URL` moved, the `v0.18.24` stable was refused
+as `unknown` at the web build while BOTH stores took the version, so phones shipped the fix and the
+site did not. `build.yml` now names `PROD_DOMAIN: canari.emse.fr`. Three classifiers of one fact is
+still two too many ([backlog](../backlog.md)).
+
+So editing the box is never the fix here, only ever a stopgap that hides its own expiry. The
+mirror-image mistake cost production earlier the same day:
+[the first automated deploy after this move took it down](#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25),
+because a hand-finished state was one no script knew about.
+
+**A flip only lands at the next deploy of that project**, so the three pipeline-fed ones stay on the
+old apex until each ships - which is not a defect as long as both names resolve, and is exactly why
+the old apex must keep answering rather than merely redirecting.
+
+**Before believing any of this is done, read the environment of what is RUNNING**, on every box:
+
+```sh
+for c in $(docker ps --format '{{.Names}}'); do
+  docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep canari-emse.fr &&
+    echo "  ^ in $c"
+done
+```
+
+Pipe it through a filter that drops `SECRET`, `KEY`, `TOKEN` and `PASSWORD` before it reaches a
+terminal, a log or a transcript: a container's environment is where the credentials are, and this
+sweep prints all of them otherwise.
+
+Three hits are EXPECTED and must not be flipped: `auth.canari-emse.fr` (the OIDC issuer, below),
+`cercle.canari-emse.fr` and `wiki.canari-emse.fr` (subdomain renames, excluded from phase 2), plus
+the whole dev estate, whose `dev.canari-emse.fr` is deliberate.
 
 ### The OIDC issuer
 
