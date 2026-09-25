@@ -73,8 +73,37 @@ function isComposerBlockElement(el: HTMLElement): boolean {
   );
 }
 
-/** Serializes a mention editor DOM tree to plain text with `@[uuid]` tokens. */
-export function serializeMentionEditor(root: HTMLElement): string {
+/**
+ * True when nothing at all follows `node` inside `root` - no element, no text, not even the
+ * composer's own filler. A `<br>` in that position is the browser's placeholder.
+ */
+function nothingFollows(node: Node, root: Node): boolean {
+  for (let n: Node | null = node; n && n !== root; n = n.parentNode) {
+    for (let next = n.nextSibling; next; next = next.nextSibling) {
+      if (next.nodeType === Node.ELEMENT_NODE) return false;
+      if (next.nodeType === Node.TEXT_NODE && (next.textContent ?? '') !== '') return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Serializes a mention editor DOM tree to plain text with `@[uuid]` tokens.
+ *
+ * A `<br>` NOTHING FOLLOWS IS DROPPED (user, 2026-09-26). Browsers leave one as a PLACEHOLDER -
+ * Firefox after a drag or when the field empties, Chromium after some insertions - and it renders no
+ * line. Read as `\n`, it entered the message, and the next rebuild re-drew it as the composer's REAL
+ * trailing newline (`<br>` + `COMPOSER_EMPTY_LINE_FILLER`), which then never went away. That real one
+ * always has the filler after it, so it is still counted.
+ *
+ * `keepTrailingBreak` is for measuring a caret: a range cloned up to a caret sitting just after a
+ * real newline ends on its `<br>` - the filler lies after the caret - and dropping it would put the
+ * caret one character short.
+ */
+export function serializeMentionEditor(
+  root: HTMLElement,
+  { keepTrailingBreak = false }: { keepTrailingBreak?: boolean } = {}
+): string {
   let out = '';
 
   function walkNode(node: Node): void {
@@ -96,6 +125,7 @@ export function serializeMentionEditor(root: HTMLElement): string {
     }
 
     if (el.tagName === 'BR') {
+      if (!keepTrailingBreak && nothingFollows(el, root)) return;
       out += '\n';
       return;
     }
@@ -425,7 +455,7 @@ function measureOffset(root: HTMLElement, container: Node, offset: number): numb
   range.setEnd(container, offset);
   const tmp = document.createElement('div');
   tmp.appendChild(range.cloneContents());
-  return serializeMentionEditor(tmp).length;
+  return serializeMentionEditor(tmp, { keepTrailingBreak: true }).length;
 }
 
 /** Plain-text selection offsets inside the editor. */
