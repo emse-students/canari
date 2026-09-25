@@ -72,8 +72,10 @@ case "$ENVIRONMENT" in
 prod)
   COMPOSE_FILE="infrastructure/docker-compose.prod.yml"
   # The host port the estate's nginx is published on. Read from .env below when it says otherwise;
-  # this is only the fallback, and it matches the compose file's own default.
-  DEFAULT_FRONTEND_PORT=80
+  # this is only the fallback. It was 80 - the compose file's own default, written when production
+  # had a machine to itself. On the shared host 80 belongs to the host's nginx and 8080 to CrowdSec,
+  # so a fallback that fires here must name the port production actually answers on.
+  DEFAULT_FRONTEND_PORT=8081
   ;;
 dev)
   COMPOSE_FILE="infrastructure/docker-compose.dev.yml"

@@ -850,6 +850,46 @@ inventory exactly, none of it Authentik/`miconnect` - a separate stack, on a sep
 alive deliberately as a frozen rollback copy
 ([authentik README](../../../infrastructure/authentik/README.md)).
 
+### THE MOVE WAS FINISHED BY HAND, SO THE FIRST AUTOMATED DEPLOY TOOK PRODUCTION DOWN - 2026-09-25
+
+`v0.18.23` is the first production release cut after the 2026-09-24 move. Every image built, both
+stores took the version, and the estate came up - except `frontend`, which died on
+`driver failed programming external connectivity ... listen tcp4 0.0.0.0:8080: bind: address already
+in use`. Nothing was serving 8081 afterwards, so the host nginx answered `502` on BOTH
+`canari.emse.fr` and `canari-emse.fr`. Production was down for roughly fifteen minutes.
+
+**The cause is the move's own seam.** `compute_frontend_host_port()` in
+`infrastructure/deploy/render-env.sh` returns `8080` for production, and that was correct for as
+long as production had a machine to itself. On the shared host, CrowdSec's Local API has held
+`127.0.0.1:8080` since 2026-09-22 - before Canari arrived. The manual migration worked around it
+without noticing: the frontend was started by hand on **8081**, and `canari.conf` and
+`canari-prod.conf` were written to proxy to 8081. The deploy script was never brought along, and
+nothing ran it until a release did.
+
+**What the machinery got right, and it is worth naming.** `deploy-environment.sh` has a retry that
+removes a stale container holding the port - deliberately allowlisted to this project's own images.
+It looked, found no container (the holder is a systemd service, not a container), refused to touch
+anything and stopped with `resolve the host port 8080 conflict and redeploy`. A denylist would have
+killed CrowdSec. And `release-shipped.sh` refused to move the `prod-released` marker, so the release
+did not report itself shipped while production served the previous one - the check written after
+`v0.16.2` and `v0.16.3` did exactly its job.
+
+**The fix, in three files and one gate.** Production's port is `8081`, in `render-env.sh` (the one
+decider), in `.env.example` and as `DEFAULT_FRONTEND_PORT` in `deploy-environment.sh` - where it had
+been `80`, a fallback that on this host would have collided with the host's own nginx instead. The
+prod compose now publishes on `127.0.0.1` like dev already did, rather than offering the container
+to every other tenant of a machine we do not own. And `deploy-env.test.sh` gained a MEASURED list of
+host ports this machine has already given away (`22`, `80`, `443`, `8080`, each with the reason),
+asserted against every rendered port of both estates. The pre-existing test only asserted that prod
+and dev do not collide with EACH OTHER - which is the 2026-09-01 defect, and not this one.
+
+**Recovery, and why it was not a re-run.** `serve-prod.yml` does `git reset --hard <released sha>`,
+so re-running the failed job replays the released commit and would have failed identically. The
+estate was restored by recreating `frontend` with the correct port, and the host's `.env` and prod
+compose were corrected in place so they match what the fix will render. The `prod-released` marker
+is deliberately left stale: production serves `0.18.23`, but the pipeline did not put it there, and
+the marker is a statement about the pipeline.
+
 ## 7. Phase 2 - the names
 
 `canari-emse.fr` -> `canari.emse.fr`, `cercle.canari-emse.fr` -> `cercle.emse.fr`,
