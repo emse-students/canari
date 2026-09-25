@@ -3,6 +3,7 @@ import {
   assertOkMlsDeliveryResponse,
   deliveryKeepalivePost,
 } from './mlsDeliveryHttp';
+import { deliveryUrl, gatewayUrl } from '$lib/utils/apiUrl';
 
 describe('resolveMlsPublicUrls', () => {
   const origGateway = import.meta.env.VITE_GATEWAY_URL;
@@ -118,12 +119,15 @@ describe('deliveryKeepalivePost', () => {
 });
 
 describe('resolveMlsPublicUrls (SSR / no window)', () => {
-  it('falls back to localhost defaults when window is undefined', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // IT DELEGATES, AND THAT IS ALL THIS FILE CAN ASSERT WITHOUT A WINDOW. The value it returns is
+  // baked from the environment at transform time, so assigning `import.meta.env` here changes
+  // nothing: the localhost defaults this used to expect held on CI (no `.env`) and failed on any
+  // workstation that had one. The fallback itself is asserted on `resolveServiceUrl`, in
+  // `apiUrl.test.ts`, where the baked value is an argument.
+  it('answers the gateway and delivery resolvers, whatever they were baked with', () => {
     vi.stubGlobal('window', undefined);
-    import.meta.env.VITE_GATEWAY_URL = '';
-    import.meta.env.VITE_DELIVERY_URL = '';
-    const u = resolveMlsPublicUrls();
-    expect(u.baseUrl).toBe('http://localhost:3000');
-    expect(u.historyUrl).toBe('http://localhost:3010');
+    expect(resolveMlsPublicUrls()).toEqual({ baseUrl: gatewayUrl(), historyUrl: deliveryUrl() });
   });
 });

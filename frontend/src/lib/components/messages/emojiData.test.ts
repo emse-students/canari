@@ -29,8 +29,9 @@ import { emojiPickerDataSource } from './emojiPickerShared';
 const here = import.meta.dirname;
 const frontendRoot = resolve(here, '../../../..');
 
-// Every mount point of `<emoji-picker>` in the app - both must resolve `data-source` through the
-// same shared, tested function rather than inlining their own copy of the CDN-vs-local decision.
+// The one component that fetches the catalogue since `emoji-picker-element` was replaced
+// (2026-09-25). Both pickers mount it, so it is where the shared resolver must be called.
+const GRID = resolve(here, 'EmojiGrid.svelte');
 const PICKERS = [
   resolve(here, 'MessageEmojiPicker.svelte'),
   resolve(here, '../chat/ComposerEmojiPicker.svelte'),
@@ -56,13 +57,16 @@ describe('the emoji picker serves its own data', () => {
     }
   });
 
-  it('every emoji-picker mount calls the shared resolver, not its own inline expression', () => {
+  it('the grid fetches through the shared resolver, and both pickers mount the grid', () => {
+    const grid = readFileSync(GRID, 'utf8');
+    expect(grid, 'EmojiGrid must load loadEmojiCatalog(emojiPickerDataSource())').toMatch(
+      /loadEmojiCatalog\(emojiPickerDataSource\(\)\)/
+    );
     for (const file of PICKERS) {
       const src = readFileSync(file, 'utf8');
-      expect(
-        src,
-        `${file} must set data-source={emojiPickerDataSource()} rather than inlining its own logic`
-      ).toMatch(/data-source=\{emojiPickerDataSource\(\)\}/);
+      expect(src, `${file} must mount EmojiGrid`).toMatch(/<EmojiGrid\b/);
+      // The library drew with a font inside its shadow root; its return would bring Apple's glyphs back.
+      expect(src, `${file} must not mount <emoji-picker>`).not.toMatch(/<emoji-picker\b/);
     }
   });
 

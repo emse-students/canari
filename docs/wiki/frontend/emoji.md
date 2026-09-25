@@ -49,10 +49,10 @@ native addon crashed Bun 1.4.2, and the WASM build traps on one file and is unus
 
 `frontend/src/lib/utils/emojiSvg.ts`. A grapheme (`Intl.Segmenter`) is a picture only if BOTH:
 
-1. **It presents as an emoji**: it carries U+FE0F, or a code point is `Emoji_Presentation`. Noto draws
-   `©`, `™`, `↔` and every digit, and in `© 2026` those are text. This is `RGI_Emoji` without the regex
-   `v` flag, which the WebKit of iOS 16 cannot parse (a SyntaxError at module load blanks the app).
-2. **A picture exists**: its name is in `emojiSvgNames.json` (`{ set, names }`, 72 kB raw, 11 kB gzip
+1. **It presents as an emoji**: it carries U+FE0F or a skin-tone modifier, or its first code point is
+   NOT in the shipped `textDefault` list. Noto draws `©`, `™`, `↔` and every digit, and in `© 2026`
+   those are text. No Unicode property is asked at runtime - the picker section below says why.
+2. **A picture exists**: its name is in `emojiSvgNames.json` (`{ set, textDefault, names }`, 72 kB raw, 11 kB gzip
    in the bundle). A sequence newer than the pinned Noto, or an unassigned flag pair like `🇿🇿`, stays
    text - never a broken image.
 
@@ -249,45 +249,38 @@ edit away; until then WebKit gets the merged font it already had.
   inline stacks), `calendarExport.ts` (3 stacks, including the two JS-side container assignments),
   `trombinoscope.ts` (2 stacks), `avatar.ts` (the SVG data-URI initials fallback) and
   `MentionComposerInput.svelte`'s monospace stack.
-- The emoji picker (`MessageEmojiPicker.svelte`) sets `--emoji-font-family` on the `<emoji-picker>`
-  element - the library's own shadow-DOM CSS reads `.emoji { font-family: var(--emoji-font-family) }`,
-  so this is the entire change on that side.
 
-## The picker's dataset - already self-hosted, both locales, by a sibling fix
+## The picker - our own grid since 2026-09-25, on the same self-hosted dataset
 
-Both datasets were already served from `frontend/static/` before this entry: `#682` (2026-09-15)
-self-hosted the English half the same way the French half already was, via
-`tools/emoji-data/sync.mjs` (copies `emoji-picker-element-data`, pinned to an EXACT version, verbatim
-into `static/`) and `emojiData.test.ts` (asserts the committed files stay byte-identical to the
-package). This entry only ADDS `--emoji-font-family` on the `<emoji-picker>` element - it does not
-touch the dataset or its sync mechanism.
+`emoji-picker-element` drew with a font inside its shadow root, so it kept Apple's glyphs on WebKit
+after the messages had moved to pictures. It is REMOVED (dependency, `vite.config.js` pre-bundle,
+its i18n table and `attachEmojiPicker`); both pickers - reactions (`MessageEmojiPicker`) and the
+composer's (`ComposerEmojiPicker`) - mount `EmojiGrid.svelte`, which does what the library did for us
+and nothing more:
 
-## The picker's interface strings come from Paraglide, like every other string on screen
+- **The data is unchanged**: the two datasets in `static/`, copied byte for byte from the pinned
+  `emoji-picker-element-data` by `tools/emoji-data/sync.mjs` and held identical by `emojiData.test.ts`.
+  `emojiCatalog.ts` groups them into the nine categories in the dataset's own order - emojibase group
+  2 ("component", the bare tone and hair swatches) is left out, as the library left it out.
+- **Search follows the ecosystem's contract**, applied in the browser by `tolerantSearch.ts` - its
+  first client-side user: folded case and accents (and ligatures: French writes "cœur"), every word
+  must match, closest first, one typo from four letters. "ceour" finds the hearts.
+- **One skin tone at a time**, persisted (`canari_emoji_skin_tone`) and shared by both pickers like the
+  recents; a multi-person entry takes the variant where everyone has that tone, as the library did.
+- **The recents row** stays with each mount, which already owned it, now drawn with `EmojiText`.
+- **The interface strings are Paraglide's** `m.emoji_picker_*`; the five keys only the library read
+  (`unsupported_message`, `favorites_label`, `search_description`, `skin_tone_description`,
+  `category_custom`) are deleted, and `no_results` / `retry` added.
 
-`emoji-picker-element` translates NOTHING from its `locale` attribute - that attribute only chooses
-which search keywords the dataset carries - so the `i18n` PROPERTY has to be set explicitly or the
-search box reads "Search" in a French interface. Until 2026-09-18 that was two hand-written objects
-in `emojiPickerShared.ts` and a `getLocale()` branch picking between them: Paraglide's job, done
-twice by hand, in the one file whose docblock already records what an incomplete table costs.
+Verified in a real Chromium on a throwaway route: 1914 buttons, lazily loaded (697 of them fetched on
+open), a French typo search, a tone applied to a whole category and returned by the click.
 
-It is now one `emojiPickerI18n()` built from 27 `m.emoji_picker_*` keys, spread onto the library's
-own `enI18n` exactly as before. Two properties come out of that shape rather than out of discipline:
-a key present in one locale and missing in the other is no longer expressible, and the table is a
-FUNCTION because `m.*()` reads the locale at call time - a module-level constant would freeze
-whichever locale was live at import, which the two constants it replaced did not do.
-
-`emojiPickerShared.test.ts` asserts the completeness in BOTH locales against `Object.keys(enI18n)`,
-so the crash below is pinned rather than remembered.
-
-## `emojiUnsupportedMessage` - not deleted, and why
-
-`emojiPickerShared.ts`'s i18n table carries an `emojiUnsupportedMessage` string,
-required by `emoji-picker-element`'s own completeness invariant (every i18n key must be present or
-the picker throws - see the docblock above `EMOJI_PICKER_BASE_I18N`). It cannot be deleted without
-breaking that invariant, so it stays; bundling the font everywhere makes the state it describes
-practically unreachable (WebKitGTK, the one engine that might still lack colour-emoji support, is no
-longer a build target - see the backlog entry). This corrects the backlog's own assumption that the
-key could simply be dropped.
+**THE PRESENTATION RULE WAS WRONG ON OLD ENGINES, and this PR is where it was caught.** The first
+version asked `\p{Emoji_Presentation}` at runtime, which answers from the ENGINE's Unicode tables:
+under Node, seven Unicode 16 entries the picker offers (U+1FAEA among them) were not emoji at all, so
+an older WebView would have drawn them as text while holding their picture. The fact now ships in
+`emojiSvgNames.json` (`textDefault`, 230 code points computed by `tools/emoji-svg/build.mjs`), and
+the runtime reads no Unicode property; `emojiSvg.test.ts` pins U+1FAEA under Node.
 
 ## Build-time coverage proof
 

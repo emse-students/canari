@@ -1,58 +1,29 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import enI18n from 'emoji-picker-element/i18n/en';
+import { describe, it, expect, beforeEach } from 'vitest';
 
-import { getLocale, locales, overwriteGetLocale } from '$lib/paraglide/runtime';
+import {
+  getPreferredSkinTone,
+  getRecentEmojis,
+  persistPreferredSkinTone,
+  persistRecentEmoji,
+} from './emojiPickerShared';
 
-import { emojiPickerI18n, getRecentEmojis, persistRecentEmoji } from './emojiPickerShared';
+describe('the skin tone, shared between the reaction picker and the composer', () => {
+  beforeEach(() => localStorage.clear());
 
-const realLocale = getLocale();
-afterAll(() => overwriteGetLocale(() => realLocale));
-
-/** Builds the table as a client with that locale would, and puts the locale back either way. */
-function asLocale<T>(locale: (typeof locales)[number], read: () => T): T {
-  overwriteGetLocale(() => locale);
-  try {
-    return read();
-  } finally {
-    overwriteGetLocale(() => realLocale);
-  }
-}
-
-/**
- * A MISSING KEY HERE IS A CRASH, NOT A MISSING WORD - and it has been one, in production, on every
- * reaction: `emoji-picker-element` calls `.replace()` on `skinToneLabel` inside its own effect, so
- * the thirteen-of-fourteen table we used to hand-write threw from inside the library, with no stack
- * frame naming us. Spreading its defaults is what makes absence impossible; this asserts that the
- * spread is still there, in BOTH locales, rather than trusting the next reader to notice.
- */
-describe('the table handed to the picker is complete, in whichever locale is live', () => {
-  it('carries every key the library itself defines', () => {
-    for (const locale of locales) {
-      const i18n: Record<string, unknown> = asLocale(locale, emojiPickerI18n);
-      for (const key of Object.keys(enI18n)) {
-        expect(i18n[key], `${locale} is missing ${key}`).toBeDefined();
-      }
-    }
+  it('is the default (no tone) with nothing persisted', () => {
+    expect(getPreferredSkinTone()).toBe(0);
   });
 
-  /**
-   * The table used to be two constants and a `getLocale()` branch, which froze nothing because it
-   * was read per call - but a constant built from `m.*()` WOULD freeze at import. Reading it twice
-   * under two locales is what separates the two shapes.
-   */
-  it('answers the locale live at the call, not the one live at import', () => {
-    expect(asLocale('fr', emojiPickerI18n).searchLabel).toBe('Recherche');
-    expect(asLocale('en', emojiPickerI18n).searchLabel).toBe('Search');
+  it('reads back the tone it just persisted', () => {
+    persistPreferredSkinTone(4);
+    expect(getPreferredSkinTone()).toBe(4);
   });
 
-  it('keeps the same category keys and skin-tone count in both locales', () => {
-    const fr = asLocale('fr', emojiPickerI18n);
-    const en = asLocale('en', emojiPickerI18n);
-
-    expect(Object.keys(fr.categories)).toEqual(Object.keys(en.categories));
-    expect(fr.skinTones).toHaveLength(en.skinTones.length);
-    expect(fr.categories['food-drink']).toBe('Nourriture et boissons');
-    expect(en.categories['food-drink']).toBe('Food & Drink');
+  it('answers the default rather than a tone that does not exist', () => {
+    localStorage.setItem('canari_emoji_skin_tone', '9');
+    expect(getPreferredSkinTone()).toBe(0);
+    localStorage.setItem('canari_emoji_skin_tone', 'garbage');
+    expect(getPreferredSkinTone()).toBe(0);
   });
 });
 
