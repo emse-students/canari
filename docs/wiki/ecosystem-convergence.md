@@ -1369,27 +1369,26 @@ Everything below is pushed; nothing lives only in a scratch directory. Phone che
 Mi 9T (adb reverse to a local rig, or prod).
 
 **Shipped and verified on the phone:** MiGallery v2.3.0 (flat), v2.4.0 (viewer gestures), v2.5.0
-(full-screen viewer, video checked in prod), v2.6.0 (an album opens on its photos, justified
-edge-to-edge grid - #330 + #333, checked on the Gala album); Sky v1.1.0 + v1.1.1 (Sky Map chrome,
-opens on my star, pinch redraws, no idle redraw) - **v1.1.1 itself is not yet looked at in prod**;
-Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
+(full-screen viewer, video checked in prod), v2.6.0 (album photos first, justified grid), v2.7.0
+(album opens on its cover over its own blurred cover, Google Photos selection mode, 3 a row with a
+pinch between 2/3/4, aligned menus - checked on the rig and in prod on the Mi 9T); Sky v1.1.0 +
+v1.1.1 (Sky Map chrome, opens on my star, pinch redraws, no idle redraw) - **v1.1.1 itself is not
+yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
 ([authentik](infrastructure/authentik.md)).
 
 **Restart order:**
 
-1. **MiGallery selection mode is the old interface, and it shipped in v2.6.0.** "Sélectionner" opens a
-   floating panel over the top of the grid (count, select all, deselect all, stacked download /
-   remove / delete buttons) while the bottom bar keeps the ALBUM's share and download; the panel is
-   only faded when closed, so its text shows through the header. Google Photos: a tap-and-hold (or
-   "Sélectionner") puts a circle on every tile, the top bar becomes "N sélectionnée(s)" with a close
-   cross, and the bottom bar swaps to the SELECTION's actions. Also decide the album "Télécharger":
-   it offers a ZIP of every photo (707 on the Gala album), heavy on a phone.
-2. **MiGallery grid density**: on a phone the justified rows hold 2 landscape photos (about 145 dp
-   high); Google Photos shows 3-4 and pinches to change the density. Measure Google Photos' row height
-   on the Mi 9T, then lower the target row height and add pinch-to-zoom on the grid. Themes 4, 5 and 7
-   follow ([ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)).
-3. **MiGallery #335** (Immich v3 paged people list, no vitest retry) auto-merges on green CI - confirm
-   it merged. Still owed: the failing "CodeQL" notice for configurations of deleted workflow names
+1. **MiGallery: every other page copies Google Photos, phone AND desktop (user decision D8,
+   2026-09-25)** - the albums list, Mes photos, Photos CV, Paramètres, admin and the desktop shell
+   (~256 px sidebar, search on top, bottom bar only <= 768 px). The plan is the remaining work-list
+   rows of [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md);
+   measure each page against the Google Photos app on the Mi 9T AND photos.google.com at 1440 before
+   building it (a public shared-album link opens signed-out on the workstation). Owed on hardware from
+   v2.7.0: the grid pinch (CDP stopped answering mid-session) and a multi-file share from a selection.
+2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
+   button row that does not state its own alignment - it misaligned the ⋮ menus (#337). Each new
+   left-aligned row must state it; consider scoping the global rule.
+3. **MiGallery CodeQL notice** (#335 shipped the Immich v3 people list). Still owed: the failing "CodeQL" notice for configurations of deleted workflow names
    (delete their analyses through the API if only dead workflows are named, otherwise the one settings
    click goes to the user).
 4. **Sky history purge**: the rehearsal removed all six paths; the user lifts the `main` ruleset, the
@@ -1398,8 +1397,8 @@ Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
 5. **MiConnect**: the three strings and the signed-in observation in [backlog](backlog.md).
 6. **Le Cercle, two items code cannot close**: menu sections need a category the menu data does not
    have; "coktail passion" is production data to rename on `/gestion/carte`.
-7. **Cleanup last**: the worktrees `MiGallery-tooling` (holds the rigs' dev database) and
-   `MiGallery-leftovers`, the dev servers on 5173-5178, and the Immich tunnel.
+7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database;
+   every rig and the Immich tunnel were stopped at the pause).
 
 **Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose
 `IMMICH_BASE_URL` was an SSH tunnel to the PRODUCTION Immich; 28 empty `[TEST]` albums landed there
