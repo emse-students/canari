@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { filesFromTransfer, carriesUninsertableMarkup } from './composerTransfer';
+import {
+  filesFromTransfer,
+  carriesUninsertableMarkup,
+  localFileAddressesFromTransfer,
+} from './composerTransfer';
 
 /**
  * A `DataTransfer` stub shaped like the real thing rather than like the code under test: `files`
@@ -74,5 +78,48 @@ describe('carriesUninsertableMarkup', () => {
 
   it('does not accuse a file drop', () => {
     expect(carriesUninsertableMarkup(transfer({ files: [png], types: ['Files'] }))).toBe(false);
+  });
+});
+
+/** A drop carrying only strings, keyed by type - what a file manager hands a refusing engine. */
+function stringDrop(data: Record<string, string>): DataTransfer {
+  return {
+    files: [],
+    items: [],
+    types: Object.keys(data),
+    getData: (type: string) => data[type] ?? '',
+  } as unknown as DataTransfer;
+}
+
+describe('localFileAddressesFromTransfer', () => {
+  it('recognises what Nemo hands Firefox: a file URI and a path, no file', () => {
+    const dt = stringDrop({
+      'text/uri-list': 'file:///home/leon/Documents/affiche.pdf\r\n',
+      'text/plain': '/home/leon/Documents/affiche.pdf',
+    });
+    expect(filesFromTransfer(dt)).toEqual([]);
+    expect(localFileAddressesFromTransfer(dt)).toEqual(['file:///home/leon/Documents/affiche.pdf']);
+  });
+
+  it('recognises an absolute path alone, one per dragged file', () => {
+    const dt = stringDrop({ 'text/plain': '/tmp/a.png\n/tmp/b.png' });
+    expect(localFileAddressesFromTransfer(dt)).toEqual(['/tmp/a.png', '/tmp/b.png']);
+  });
+
+  it('skips the comment lines a URI list may carry', () => {
+    const dt = stringDrop({ 'text/uri-list': '# from nemo\nfile:///tmp/a.png' });
+    expect(localFileAddressesFromTransfer(dt)).toEqual(['file:///tmp/a.png']);
+  });
+
+  it('leaves ordinary text and web links alone - those ARE text to insert', () => {
+    expect(localFileAddressesFromTransfer(stringDrop({ 'text/plain': 'bonjour' }))).toEqual([]);
+    expect(
+      localFileAddressesFromTransfer(
+        stringDrop({
+          'text/uri-list': 'https://canari-emse.fr',
+          'text/plain': 'https://canari-emse.fr',
+        })
+      )
+    ).toEqual([]);
   });
 });

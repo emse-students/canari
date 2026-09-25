@@ -54,3 +54,36 @@ export function carriesUninsertableMarkup(dt: DataTransfer | null | undefined): 
   const types = Array.from(dt.types ?? []);
   return types.includes('text/html') || types.includes('text/uri-list');
 }
+
+/**
+ * The LOCAL FILE addresses a drop announces when it hands over no file - a file drop the page was
+ * refused, never text to insert.
+ *
+ * Reported 2026-09-25 (Firefox, Nemo): dropping a file into the composer pasted its NAME. Nemo offers
+ * Firefox the file only as a `file:///...` URI (`text/uri-list`) and its path as `text/plain`, so
+ * `files` and `items` are both empty and the drop looked like text. A page cannot read a local file
+ * from its address, so there is no file to recover here - but there is a fact to act on: an address
+ * of a local file, or an absolute path, is what a file manager sends for a FILE, and inserting it is
+ * the wrong reading. The caller refuses the insertion and says why instead.
+ *
+ * @param dt - the transfer from a `DragEvent.dataTransfer`.
+ * @returns the `file:` URIs or absolute paths it carries, one per dragged file; empty otherwise.
+ */
+export function localFileAddressesFromTransfer(dt: DataTransfer | null | undefined): string[] {
+  if (!dt) return [];
+  const lines = (type: string) =>
+    (dt.getData(type) ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      // RFC 2483: a `#` line in a URI list is a comment.
+      .filter((line) => line && !line.startsWith('#'));
+
+  const uris = lines('text/uri-list');
+  if (uris.length > 0 && uris.every((uri) => uri.startsWith('file:'))) return uris;
+
+  const plain = lines('text/plain');
+  if (plain.length > 0 && plain.every((line) => line.startsWith('file:') || line.startsWith('/'))) {
+    return plain;
+  }
+  return [];
+}

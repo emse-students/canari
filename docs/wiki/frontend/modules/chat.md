@@ -33,7 +33,7 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 |---|---|
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
-| `ChatComposer.svelte` | Message input, media picker, reply preview |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
