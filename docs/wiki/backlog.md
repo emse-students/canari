@@ -178,6 +178,42 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
+### P2 - MiConnect's error card is cut off on the left of a phone, because our CSS turns Authentik's grid into a flex row (measured on the Mi 9T, 2026-09-25)
+
+Opening `auth.canari-emse.fr/if/flow/miconnect-auth/` on the Mi 9T while already signed in ends on
+"Permission refusée - Le flux ne s'applique pas à l'utilisateur actuel", in a card half the screen
+wide whose left edge is off screen. The cause is measured, not guessed: Authentik lays out
+`.pf-c-login` as a GRID (`1fr [main] minmax(min(100%, 560px), 560px) 1fr`), and
+`infrastructure/authentik/custom-login.css` forces `display: flex; justify-content: center;
+overflow: hidden` on it. Its children - `ak-locale-select`, `header`, `main`, `footer` - then sit
+SIDE BY SIDE (measured at 393 px on `default-source-authentication`: header 31 px, card 314 px,
+footer 48 px), which already shifts the ordinary card ~17 px off centre. When the header and footer
+carry content, the row outgrows the viewport, centring overflows both edges and `overflow: hidden`
+clips the left one. **Fixed in the file by #1098** (the `display` override is gone, Authentik's grid
+centres the card; `overflow: hidden` stays, it clips the blobs). Open until it is PASTED into the
+Brand and seen on the Mi 9T on the error page, the source-authentication page and the consent page. Same audit, two smaller items on the same
+pages: the default title **"Welcome to authentik!"** (English, on a French flow) is still shown, and
+the error states raw Authentik vocabulary ("Le flux ne s'applique pas") to someone who merely
+opened the page while signed in. The #1081 fixes are still unpasted, so the paste owed there should
+carry this one too ([authentik](infrastructure/authentik.md#login-page-branding)).
+
+
+### P3 - Canari's web login shows developer vocabulary and a glow under the sign-in button (measured on the Mi 9T, 2026-09-25)
+
+Seen at `canari.emse.fr/login` on the Mi 9T, against the ecosystem checklist
+([ecosystem-convergence](ecosystem-convergence.md#12-the-interface-bar---one-checklist-for-every-site-each-rule-tied-to-a-measurement-2026-09-25)):
+"**Connexion externe (service-account)**" is shown to every user; the button carries a yellow
+glow (2 glow elements counted, 0 on the references); the store badges are the English artwork
+("Download on the App Store", "GET IT ON Google Play") though both stores publish French ones; and a
+phone that HAS the app gets no "Ouvrir dans l'application". The signed-in web app was NOT audited:
+a web sign-in registers an MLS device on the account, so it waits for the user to say which account.
+
+**Decided by the user, 2026-09-25**: "Réinitialiser l'appareil" was a developer tool, removed from
+the login page by #1097. "Connexion externe (service-account)" STAYS - the store reviewers sign in
+through it - and its wording stays exactly as it is. The signed-in web app is NOT to be audited
+here: Canari's interface is its own long-running work, and this entry was about the login page only.
+
+
 ### REFUTED - an nginx `proxy_cache` substitute for the lost Cloudflare edge cache buys ~3 ms of a ~80 ms path (measured 2026-09-25)
 
 Raised, approved for building, and then refused by its own measurement. Kept because the reasoning

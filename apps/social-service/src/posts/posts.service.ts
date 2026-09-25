@@ -26,6 +26,7 @@ import {
 } from './post-media-retention.service';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
+import { blockedUserIdsFor } from '../common/blocked-user-ids';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -488,32 +489,27 @@ export class PostsService {
   ): Promise<any[]> {
     const term = q.trim();
     if (!term) return [];
-    const selectBody = `posts.id,
-         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
-         posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
-         posts."linkedCalendarEventId",
-         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
-         (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
-         (
-           SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
-           FROM (
-             SELECT elem, ord
-             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
-               WITH ORDINALITY AS t(elem, ord)
-             ORDER BY ord DESC LIMIT 20
-           ) sub
-         ) AS comments,
-         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
+    const isAdmin = viewer?.isAdmin === true;
+
+    // A SEARCH RESULT RENDERS THE SAME CARD AS A FEED ROW, so it owes the same three exclusions.
+    // It carried NONE of them: a post auto-hidden by the report threshold, which `listPosts` drops
+    // from every feed, was reachable by anyone who typed a word of it - and so was the store-review
+    // service account's. Whatever a feed refuses to show, a search over the same table refuses too.
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewer?.viewerUserId);
+    const bp = blockedIds.length > 0 ? 4 : null;
 
     const rawPosts: any[] = await this.postRepo.manager.query(
-      `SELECT ${selectBody}
+      `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts.markdown ILIKE $3 OR assoc.name ILIKE $3)
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${this.hiddenFilterSql(isAdmin)}
+         ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
+         ${this.blockedAuthorSql(bp)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset, `%${term}%`]
+      [limit, offset, `%${term}%`, ...(blockedIds.length > 0 ? [blockedIds] : [])]
     );
 
     for (const post of rawPosts) {
@@ -553,11 +549,7 @@ export class PostsService {
       );
     }
 
-    const viewerCtx = await this.viewerContext(
-      rawPosts,
-      viewer?.viewerUserId,
-      viewer?.isAdmin === true
-    );
+    const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
     const result = rawPosts.map((p: any) => {
@@ -578,6 +570,91 @@ export class PostsService {
     });
 
     return this.stripBigIntForJson(result);
+  }
+
+  /**
+   * The column list every feed and search query selects, shaped for ONE viewer.
+   *
+   * `blockedParam` is the 1-based placeholder holding the accounts hidden from that viewer, or null
+   * when there are none - in which case not a clause of this is emitted and the query is the one
+   * that ran before blocking touched the feed at all.
+   *
+   * THE COMMENT WINDOW AND THE COMMENT COUNT ARE BOTH FILTERED HERE, IN SQL, because they answer
+   * two different questions: the window is the last 20 rows, the count is the TOTAL. Filtering the
+   * rows in JS after the fact could only correct the window, and would leave the count promising
+   * comments the viewer is never going to be shown.
+   *
+   * A comment carries no anonymity of its own - every one of them has its author's name on it - so
+   * unlike a post it is filtered on its author with nothing to weigh against it.
+   */
+  private postSelectBody(blockedParam: number | null): string {
+    const visibleComment =
+      blockedParam === null
+        ? ''
+        : `WHERE COALESCE(elem->>'userId', '') <> ALL($${blockedParam}::text[])`;
+    const commentCount =
+      blockedParam === null
+        ? `(jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer)`
+        : `(SELECT COUNT(*)::integer
+             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb)) AS elem
+             ${visibleComment})`;
+    return `posts.id,
+         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
+         posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
+         posts."linkedCalendarEventId",
+         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
+         ${commentCount} AS "commentCount",
+         (
+           SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
+           FROM (
+             SELECT elem, ord
+             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
+               WITH ORDINALITY AS t(elem, ord)
+             ${visibleComment}
+             ORDER BY ord DESC LIMIT 20
+           ) sub
+         ) AS comments,
+         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
+  }
+
+  /** Moderation-hidden posts are invisible to every reader but a platform admin. */
+  private hiddenFilterSql(isAdmin: boolean): string {
+    return isAdmin ? '' : `AND NOT COALESCE(posts."hiddenByModeration", false)`;
+  }
+
+  /**
+   * The store-review service account is invisible to every reader but itself and a platform admin.
+   *
+   * `serviceAccountId` is validated as hex at construction, so inlining it is safe.
+   */
+  private serviceAccountFilterSql(isAdmin: boolean, viewerId: string | undefined): string {
+    if (!this.serviceAccountId || isAdmin || viewerId === this.serviceAccountId) return '';
+    return `AND posts."authorId" <> '${this.serviceAccountId}'`;
+  }
+
+  /**
+   * The clause that keeps a blocked account's posts out of one viewer's feed.
+   *
+   * IT COVERS ONLY A POST WHOSE AUTHOR THAT VIEWER COULD ALREADY SEE, and the exemption is the
+   * whole point rather than an oversight. An association post hides its publisher from everyone
+   * unconditionally, an anonymous one from everyone but a moderator; filtering either on `authorId`
+   * would turn a block into a DE-ANONYMISATION ORACLE - block a suspect, watch whether the post
+   * leaves the feed, unblock. Nobody is notified of a block, no administrator sees one and lifting
+   * it costs a click, so that probe would be repeatable until it named the author of every
+   * anonymous post on the platform. `listPosts`'s `followed` arm already excludes anonymous posts
+   * for the neighbouring reason: presence in a feed is itself an answer about authorship.
+   *
+   * It is applied to the `followed` feed too, where severing the two follows has usually removed
+   * these posts already - `UserBlocksService.severFollows` is a cross-service call that is
+   * BEST-EFFORT by design and logs rather than fails, so "usually" is exactly what it is.
+   */
+  private blockedAuthorSql(blockedParam: number | null): string {
+    if (blockedParam === null) return '';
+    return `AND (
+           posts."associationId" IS NOT NULL
+           OR COALESCE(posts.anonymous, false)
+           OR posts."authorId" <> ALL($${blockedParam}::text[])
+         )`;
   }
 
   /**
@@ -619,6 +696,18 @@ export class PostsService {
     // relevance limit rather than a confidentiality one, is in `promo-visibility.ts`.
     const promoCutoff = await promoCutoffFor(this.postRepo.manager, viewerUserId, isAdmin);
 
+    // Read AFTER the cache and never before it: the cache key already names the viewer, so a hit
+    // needs none of this and a miss pays one indexed lookup bounded at 200 rows. A block therefore
+    // reaches the feed at the end of that 30 s window rather than on the next request, which is
+    // the cache's own staleness and not a second mechanism.
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerUserId);
+    const blockedParams = blockedIds.length > 0 ? [blockedIds] : [];
+
+    // The blocked-accounts array is appended LAST to every arm's parameters, so its placeholder is
+    // whichever index that arm leaves free - and null when there is nobody to hide, which emits no
+    // clause at all and leaves the query byte-identical to the one that ran before.
+    const blockedAt = (next: number) => (blockedIds.length > 0 ? next : null);
+
     // SQL fragment added to every query when a promo cutoff applies.
     // The parameter index is computed per-query below.
     const promoSql = (idx: number) =>
@@ -638,42 +727,21 @@ export class PostsService {
       }
     }
 
-    const selectBody = `posts.id,
-         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
-         posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
-         posts."linkedCalendarEventId",
-         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
-         (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
-         (
-           SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
-           FROM (
-             SELECT elem, ord
-             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
-               WITH ORDINALITY AS t(elem, ord)
-             ORDER BY ord DESC LIMIT 20
-           ) sub
-         ) AS comments,
-         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
-
     let rawPosts: any[];
     const promoParam = promo === undefined ? null : promo;
     const formationParam = formation === undefined || formation === '' ? null : formation;
 
-    // Non-admin viewers cannot see posts hidden by moderation.
-    const hiddenFilter = isAdmin ? '' : `AND NOT COALESCE(posts."hiddenByModeration", false)`;
-
-    // The verification service account is invisible in the feed to everyone except global
-    // admins and the account itself. serviceAccountId is validated as hex, so inlining is safe.
-    const canSeeServiceAccount = isAdmin || viewerUserId === this.serviceAccountId;
-    const serviceAccountFilter =
-      !this.serviceAccountId || canSeeServiceAccount
-        ? ''
-        : `AND posts."authorId" <> '${this.serviceAccountId}'`;
+    const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
+    const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
 
     if (feed === 'associations') {
-      // $1=limit, $2=offset, $3=promoCutoff (optional)
+      // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
+      // NO `blockedAuthorSql` HERE, and deliberately: every row in this feed is an association
+      // post, which that clause exempts by design, so emitting it would be a clause that can
+      // never be true. The comments underneath ARE filtered - they carry their author's name.
+      const bp = blockedAt(promoCutoff ? 4 : 3);
       rawPosts = await this.postRepo.manager.query(
-        `SELECT ${selectBody}
+        `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
@@ -683,26 +751,30 @@ export class PostsService {
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : [])]
+        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
       );
     } else if (feed === 'all') {
-      // $1=limit, $2=offset, $3=promoCutoff (optional)
+      // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
+      const bp = blockedAt(promoCutoff ? 4 : 3);
       rawPosts = await this.postRepo.manager.query(
-        `SELECT ${selectBody}
+        `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : [])]
+        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
       );
     } else if (feed === 'followed') {
-      // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional)
+      // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional),
+      // $6=blockedIds (optional)
+      const bp = blockedAt(promoCutoff ? 6 : 5);
       rawPosts = await this.postRepo.manager.query(
-        `SELECT ${selectBody}
+        `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (
@@ -716,15 +788,25 @@ export class PostsService {
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, followedAssocIds, followedUserIds, ...(promoCutoff ? [promoCutoff] : [])]
+        [
+          limit,
+          offset,
+          followedAssocIds,
+          followedUserIds,
+          ...(promoCutoff ? [promoCutoff] : []),
+          ...blockedParams,
+        ]
       );
     } else {
-      // $1=limit, $2=offset, $3=promoParam, $4=formationParam, $5=promoCutoff (optional)
+      // $1=limit, $2=offset, $3=promoParam, $4=formationParam, $5=promoCutoff (optional),
+      // $6=blockedIds (optional)
+      const bp = blockedAt(promoCutoff ? 6 : 5);
       rawPosts = await this.postRepo.manager.query(
-        `SELECT ${selectBody}
+        `SELECT ${this.postSelectBody(bp)}
        FROM posts
        INNER JOIN users u ON u.id = posts."authorId"
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
@@ -734,10 +816,18 @@ export class PostsService {
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, promoParam, formationParam, ...(promoCutoff ? [promoCutoff] : [])]
+        [
+          limit,
+          offset,
+          promoParam,
+          formationParam,
+          ...(promoCutoff ? [promoCutoff] : []),
+          ...blockedParams,
+        ]
       );
     }
 
@@ -893,6 +983,9 @@ export class PostsService {
     viewerId: string | undefined,
     isGlobalAdmin: boolean
   ): Promise<Record<string, unknown> | null> {
+    // The same card as a feed row, so the same block rule and the same two exemptions.
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerId);
+    const bp = blockedIds.length > 0 ? 2 : null;
     const rows: any[] = await this.postRepo.manager.query(
       `SELECT posts.id, posts."authorId", posts.anonymous, posts.markdown, posts."createdAt",
               posts."associationId", posts."linkedCalendarEventId", posts."hiddenByModeration",
@@ -902,9 +995,10 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
          AND NOT COALESCE(posts."hiddenByModeration", false)
+         ${this.blockedAuthorSql(bp)}
        ORDER BY posts."createdAt" DESC
        LIMIT 1`,
-      [eventId]
+      [eventId, ...(blockedIds.length > 0 ? [blockedIds] : [])]
     );
     const post = rows[0];
     if (!post) return null;
@@ -933,10 +1027,37 @@ export class PostsService {
       this.logger.debug(`getById ${id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`);
       throw new NotFoundException('Post not found');
     }
+    // A BLOCK REACHES THIS READ TOO, or the feed filter would be a curtain with a link around it:
+    // this is what "load all comments" and every notification link call. 404 rather than 403, and
+    // rather than a message naming a block - the blocked party learns their posts stopped reaching
+    // one reader, which is what a symmetric block means, but never that this particular read was
+    // refused on purpose. The exemptions are `blockedAuthorSql`'s, for the reason given there,
+    // plus `allowHidden`: that flag already means "a platform admin, doing platform work", and it
+    // is the same one that lets them open a moderation-hidden post the feed refuses them. Their
+    // FEED still honours their own block - hiding a reported post from the moderator who has to
+    // read it is the trap this avoids, and it is the same split `hiddenByModeration` already makes.
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts?.viewerId);
+    if (
+      !post.associationId &&
+      !post.anonymous &&
+      blockedIds.includes(post.authorId) &&
+      !opts?.allowHidden
+    ) {
+      this.logger.debug(`getById ${id} withheld: a block stands between the reader and its author`);
+      throw new NotFoundException('Post not found');
+    }
+
     const shaped = await this.toPublicPostFromEntity(
       post,
       await this.viewerContext([post], opts?.viewerId, opts?.isGlobalAdmin === true)
     );
+    // The entity path carries the WHOLE comment array rather than a window and a count, so unlike
+    // the feed queries it is filtered here, exactly and in one place.
+    if (blockedIds.length > 0 && Array.isArray(shaped.comments)) {
+      shaped.comments = shaped.comments.filter(
+        (c: { userId?: string }) => !blockedIds.includes(c?.userId ?? '')
+      );
+    }
     // Attach author name fields (same source as listPosts - local users table).
     if (!shaped.associationId && shaped.authorId) {
       const rows: {

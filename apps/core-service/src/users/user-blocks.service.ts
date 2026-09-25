@@ -33,9 +33,15 @@ export interface BlockedUserRow {
  *
  * WHAT A BLOCK DOES, exhaustively: the two accounts stop finding each other in target pickers
  * (user search, mention autocomplete), neither can open a 1-to-1 with the other, neither can add
- * the other to a group, and neither can invite the other into a private salon - inside a shared
- * community included. Existing conversations, existing groups, community membership and post
- * visibility are all untouched.
+ * the other to a group, neither can invite the other into a private salon - inside a shared
+ * community included - and neither is shown the other's PERSONAL posts or their comments, in the
+ * feed, in search, by id or under an agenda event. Existing conversations, existing groups and
+ * community membership are untouched.
+ *
+ * AN ASSOCIATION POST AND AN ANONYMOUS ONE ARE EXEMPT FROM THAT LAST ITEM, which is a rule and not
+ * an oversight: their publisher is hidden from the viewer already, so filtering them on authorship
+ * would answer the question the mask exists to refuse - block a suspect, see whether the post
+ * leaves the feed, unblock. `PostsService.blockedAuthorSql` carries the reasoning.
  *
  * WHAT IT IS NOT: it is not a report and not a moderation signal. Nothing about a block reaches an
  * administrator, by the user's decision of 2026-08-27 - these are conflicts between two people, and
@@ -145,6 +151,7 @@ export class UserBlocksService {
 
     await this.blockRepo.save(this.blockRepo.create({ blockerId, blockedId }));
     await this.severFollows(blockerId, blockedId);
+    await this.dropFeedCache();
     return { ok: true };
   }
 
@@ -153,6 +160,9 @@ export class UserBlocksService {
     this.logger.log(`[unblock] blocker=${blockerId} blocked=${blockedId}`);
     const res = await this.blockRepo.delete({ blockerId, blockedId });
     if (!res.affected) throw new NotFoundException('This person is not blocked');
+    // Lifting one restores no follow, so `severFollows` does not run here and this is the only
+    // thing telling the feed its cached pages are answers to a question that has changed.
+    await this.dropFeedCache();
     return { ok: true };
   }
 
@@ -169,6 +179,30 @@ export class UserBlocksService {
       [userId]
     );
     this.logger.log(`[deleteAllFor] user=${userId} rows=${removed}`);
+  }
+
+  /**
+   * Asks social-service to throw its cached feed pages away.
+   *
+   * A block decides what a feed may show, and that feed is cached for 30 seconds per reader - so
+   * without this the person who just blocked somebody opens the feed and finds their posts still
+   * sitting there. BEST-EFFORT AND LOUD, exactly like `severFollows`: the block is already durable
+   * when this runs, so a social-service outage must not fail the request, and a stale page for the
+   * rest of one TTL is the whole cost. It must not pass unnoticed either.
+   */
+  private async dropFeedCache(): Promise<void> {
+    try {
+      await axios.post(
+        socialUrl('internal/posts/list-cache/invalidate'),
+        {},
+        { headers: { 'x-internal-secret': this.internalSecret }, timeout: 5_000 }
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[block] feed cache invalidation failed, a blocked account's posts may linger in a ` +
+          `cached feed page for up to its TTL: ${String(err)}`
+      );
+    }
   }
 
   /** Asks social-service to drop both follow relationships between the two accounts. */

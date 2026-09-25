@@ -1280,3 +1280,85 @@ Not inferred from green ticks - watched:
 **The portal's two pull requests (#61, #62) were opened before the workflow existed and had not been
 rebased**, so nothing had raised an event for them; a `@dependabot rebase` comment is the nudge, and
 it works from a USER account - which is exactly the command an App installation is refused.
+
+## 12. The interface bar - ONE checklist for every site, each rule tied to a measurement (2026-09-25)
+
+The user's mandate is *"de l'homogénéité et les meilleurs standards de partout"*; on 2026-09-25 it
+reached the interfaces, with two instructions attached: **measure against real apps and sites,
+always**, and *"les effets glow c'était cool dans le temps mais c'est pas du tout l'esprit des app de
+2026"*. Each site's work list lives in its own repository - this section holds only what is SHARED,
+so a rule is written once:
+
+| Site | Its work list |
+| --- | --- |
+| MiGallery | `MiGallery/docs/wiki/ui-redesign.md` (the Google Photos redesign, decisions D1-D6 taken) |
+| Sky | `Sky/docs/wiki/ui-audit.md` |
+| Le Cercle | `le-cercle/docs/wiki/ui-audit.md` |
+| MiConnect (Authentik brand CSS) | [backlog](backlog.md), P2 "MiConnect's error card is cut off" |
+| Canari web | the login page only ([backlog](backlog.md), P3); the signed-in app is Canari's own long-running work, out of this audit by the user's decision |
+
+### How it was measured
+
+A **Mi 9T** (Chrome Android, 393 CSS px, DPR 2.75) driven over adb, with real two-finger gestures
+through uiautomator2 (android-mcp's own venv, `C:/Users/jolan/AppData/Roaming/uv/tools/android-mcp`),
+and desktop Chrome at 1440x900. References: the Google Photos app on the same phone and
+`photos.google.com` - Google refuses a sign-in in a DevTools-launched browser, so the reference ran in
+a plain Chrome with `--remote-debugging-port` and its own profile, which it accepts. Effects were
+counted by one script over every element and open shadow root (computed `box-shadow`, `text-shadow`,
+`backdrop-filter`, `filter`, gradient backgrounds, and blur on `::before`/`::after`).
+
+### The effects count
+
+| Page | Glow (coloured or >= 24 px blur shadow) | Glassmorphism (`backdrop-filter`) | `text-shadow` | Blur blobs | Gradients |
+| --- | --- | --- | --- | --- | --- |
+| **Google Photos, albums** (reference) | **0** | **0** | **0** | **0** | **0** |
+| **Google Photos, album** (reference) | **0** | **0** | **0** | **0** | 60 - the scrims that keep a title legible over a cover |
+| MiGallery, albums (signed in) | 1 | **30** | 14 | - | 20 |
+| MiGallery, landing | 2 | 3 | 0 | - | 7 |
+| Sky, landing | 2 (a blue 24 px halo on the logo) | 0 | 0 | - | 1 |
+| Le Cercle, landing | 2 (orange 18 px shadow on each CTA) | 0 | 0 | - | 9 |
+| Canari, login | 2 | 0 | 0 | - | 0 |
+| MiConnect | 0 | 1 | 0 | 2 (80 px) | 1 |
+
+### The checklist - what every site owes
+
+Each line names the measurement or the reference it comes from. A site's work list says which lines
+it fails.
+
+1. **Components are flat; the identity lives in the page background.** No glow, no glassmorphism,
+   no text-shadow on any component; elevation is a tonal surface; a gradient on a component only as a
+   scrim under text laid over an image. *Measured above.* The page BACKGROUND may keep what gives a
+   site its identity and depth - the soft blobs behind the content (user, 2026-09-25: *"il ne faut
+   pas non plus perdre l'identité de l'app evidemment, les blobs en fond par exemple donnent de la
+   profondeur"*).
+2. **One sign-in button** on a signed-out page. *Failed by MiGallery and Le Cercle (header + hero).*
+3. **Navigation by width**: bottom bar (3-5 destinations, opaque, safe-area padded) at <= 768 px
+   only; a left sidebar or header links above. *Google Photos: 256 px sidebar at 1440. Failed by
+   MiGallery (bottom bar to 1440 px) and Le Cercle (see-through bar); Le Cercle's desktop header is
+   the model.*
+4. **One container token** for width and gutter; pages never re-nest `<main>`. *MiGallery: three
+   widths and doubled padding.*
+5. **Titles are never truncated to ambiguity**: wrap to two lines. *Google Photos album cards;
+   MiGallery showed `WANA - C...` for two albums.*
+6. **Destructive actions live in an overflow or behind a confirmation, never beside a primary action
+   or on a list card.** *Google Photos: delete in the overflow. Failed by MiGallery (three places)
+   and Canari's login ("Réinitialiser l'appareil" under "Se connecter").*
+7. **Hover reveals only under `@media (hover: hover)`.** *MiGallery's overlay stays painted on
+   touch.*
+8. **Gestures follow the platform**: a viewer swipes; a zoom is multiplicative and anchored under the
+   fingers (2x spread = 2x zoom), bounded by "everything fits". *Google Photos, Google Maps. Failed by
+   MiGallery (no swipe) and Sky (additive, unanchored, lower bound 0.01).*
+9. **A bottom sheet is draggable and opens at a peek** so the content it describes stays visible.
+   *Maps. Failed by Sky (80% at open, no handle).*
+10. **Colour carries meaning once**: red is a debt, an error or a destructive action - not a positive
+    balance, not "leave this mode". *Failed by Le Cercle (balance) and Sky ("Sortir").*
+11. **A closed menu or a hidden overlay is out of the accessibility tree** (`inert` or not rendered).
+    *Failed by Sky (avatar menu) and MiGallery (per-thumbnail buttons).*
+12. **No developer vocabulary or untranslated default in the UI**: "Welcome to authentik!", "Le
+    flux ne s'applique pas", "All time". *MiConnect, Le Cercle.* One deliberate exception: Canari's
+    "Connexion externe (service-account)" is the store reviewers' way in and keeps its wording (user,
+    2026-09-25).
+13. **Images are served at the density they are shown**, within the bandwidth rule of each estate.
+    *MiGallery D1.*
+14. **Every user-visible string through the i18n layer, and every placeholder a message is called
+    with exists in it.** *Le Cercle: `stats_rank_value` is called with `{rank}` and has no `{rank}`.*

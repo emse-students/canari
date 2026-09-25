@@ -221,10 +221,9 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 1. **PHASE 1 IS FULLY DONE, ALL THREE ESTATES; PHASE 2 (`canari-emse.fr` -> `canari.emse.fr` ONLY, cercle/miconnect renames excluded) IS DONE TOO, 2026-09-24** - the app-side config PR (#1078) and the one-line vhost fix (no DSI ticket was ever needed) both merged/live; `canari.emse.fr` now serves Canari, verified. **NEW DURABLE RULE FROM THIS WORK, THEN OVERRULED BY THE USER 2026-09-25**: a browser's IndexedDB/cookies do not follow a host change the way a native app's filesystem state does, so a redirected web session loses its history to a healing path at ~3 in 10 - told that, the user chose to redirect every browser visitor anyway, so the old name serves APPS ONLY. Document navigation only, and armed only once the new host is verified working ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)). OIDC issuer rename and the cercle/miconnect DSI ticket stay deferred, not in this scope.
 2. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election ignores presence the server already knows; fix proposed, awaiting the go-ahead ([backlog](docs/wiki/backlog.md)).
 3. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
-   three commands a run owes before any of it is believed are in the campaign section below.
-   PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
-   on a clean pass ([backlog](docs/wiki/backlog.md)).
+   SETTLES IT - NO COUNT HERE; run it.** A green cell is not yet a measurement, and the three
+   commands a run owes before it is believed are in the campaign section below. PIN's four rows
+   change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
 4. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
    reclaims refuted (`0 expired`), EXPIRY CLOSED. Re-measured 2026-09-22: the undated last-resort
    rows are a CLIENT VERSION (`< 0.18.10`, exact in 759) draining ~20/day, so **both repairs are
@@ -280,6 +279,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
 23. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
     **EMOJI BECOME NOTO SVG PICTURES EVERYWHERE** (user, 2026-09-25: the font never drew on WebKit) - four pull requests, the order and the measurements in [emoji](docs/wiki/frontend/emoji.md).
+24. **P2 - MICONNECT'S ERROR CARD IS CUT OFF ON A PHONE: OUR CSS TURNS AUTHENTIK'S GRID INTO A FLEX ROW** (Mi 9T, 2026-09-25) - cause measured, fix is one rule, ships in the SAME Brand paste the #1081 fixes still owe ([backlog](docs/wiki/backlog.md)). The MiGallery half of that audit is MiGallery's own WIP ([ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
