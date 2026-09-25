@@ -77,6 +77,7 @@ The SSH key for `canaribackup@10.0.0.4` must be pre-authorized on the offsite se
 | `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | Offsite rsync destination (empty to disable) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | Offsite directory |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | Authentik PostgreSQL container name (empty to skip) |
+| `MICONNECT_SSH_HOST` | `authentik-target` | `~/.ssh/config` alias of the box running Authentik (empty = the container runs on this machine) |
 | `POSTGRES_USER` | (required) | PostgreSQL user for `pg_dump` |
 
 ## Restore
@@ -91,7 +92,8 @@ See `infrastructure/backup/README.md` for the full restore procedure.
 
 - The backup dumps are **logical** (not physical), so they are portable across PostgreSQL minor versions.
 - media_meta is backed up as a volume tar (and again into restic) — a restore replaces the entire volume.
-- The Authentik backup is optional; if the container is absent (e.g. on a dev machine), it is skipped with a warning.
+- **An EMPTY value is a decision, an UNSET one takes the default.** The three variables whose empty value means something - `BACKUP_SSH_HOST`, `MICONNECT_PG_CONTAINER`, `MICONNECT_SSH_HOST` - are read with `${VAR-default}`, never `${VAR:-default}`: `:-` treats empty as unset and puts the default back, so until 2026-09-25 none of the three "empty to ..." rows above was true, and the escape hatch `restore.sh` itself names (`MICONNECT_PG_CONTAINER=`) did not exist. Found by the same construction failing a live test of Sky's backup.
+- **The Authentik backup is NOT skipped when its container is absent - the backup FAILS.** Only an empty `MICONNECT_PG_CONTAINER` excludes it, because a value that is set and unreachable is a backup that would succeed without the identities.
 - No S3 offsite in the current setup (the `BACKUP_S3_*` variables exist in the script but are not actively used).
 - **The restic password is not in `infrastructure/.env` and not a GitHub secret**, because the CD
   rewrites that file on every deploy and a repository whose password changes is unreadable forever.

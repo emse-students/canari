@@ -7,9 +7,14 @@
  * twice, and a drag that ends elsewhere - cancelled, or leaving the window - whose closing
  * `dragleave` (no `relatedTarget`) lands wherever the pointer was. Both are asserted here.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatComposer from './ChatComposer.svelte';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// Every case here ends the drag while the badge's `fade` is still playing - an OUTRO cancelled
+// mid-flight, whose rejected `finished` happy-dom leaves unowned (7 unhandled errors on CI).
+afterAll(adoptTransitionAnimations());
 
 const mounted: (() => void)[] = [];
 

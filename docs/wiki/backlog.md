@@ -180,20 +180,15 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
-### P2 - MiConnect still speaks English and shows an error to anyone already signed in (Mi 9T, 2026-09-25)
+### P3 - MiConnect: three strings left after the French pass (2026-09-25)
 
-The layout half of this entry is SHIPPED - the card clipped on a phone and the flat pass are live
-([authentik](infrastructure/authentik.md#login-page-branding)). What is left, all in Authentik's DB,
-so each one is an `ak shell` write (the user asked for the whole interface in ONE language, clean,
-2026-09-25): **ten flow titles are Authentik's English defaults** - "Welcome to authentik!" on
-`default-authentication-flow` and `initial-setup`, "Welcome to authentik! Please select a username."
-on `default-source-enrollment`, "Redirecting to %(app)s" on both consent flows, "You've logged out of
-%(app)s." on the provider invalidation flow, and the password/MFA/settings flows; the prompts
-`Username`, `Password`, `Password (repeat)`, `Name`, `Email` likewise. On the alumni enrollment
-prompts: "(où année ...)" for "ou", "Elève" for "Élève", and a static prompt `Alumni Force Link
-Continue` whose label is **"ni ça"** - where it renders is not yet read. And the error itself:
-opening `miconnect-auth` while signed in ends on "Le flux ne s'applique pas à l'utilisateur actuel";
-the flow's `denied_action` can CONTINUE instead, which removes the page rather than rewording it.
+The layout, the flat pass, the French titles and prompts, the redirect to Canari and the signed-in
+`continue` are SHIPPED ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)).
+Left, each with its reason on that page: the accentless "Elève" (a VALUE the `is-student` policy and
+`school_status` consumers compare - a coordinated change, not a typo fix), authentik's own
+untranslated "Go back", and the static prompt `Alumni Force Link Continue` labelled "ni ça", whose
+rendering is unread. **One observation owed**: `miconnect-auth` opened while signed in, on the
+Mi 9T, should now go straight through.
 
 #### What the shipped half was
 
@@ -6973,6 +6968,46 @@ none new; what it owes, and why the Wiki and Omeka do NOT move but need a relay,
 [estate-migration](infrastructure/estate-migration.md#sky-moves-the-wiki-and-omeka-only-get-names---decided-by-the-user-2026-09-25),
 the only copy. The first step owes nothing to the DSI: the move can land while `sky.mitv.fr` stays in
 `mitv`'s tunnel, pointed at the School host.
+
+**STATE AT THE PAUSE, 2026-09-25 evening - HALF DONE, AND PRODUCTION IS STILL `mitv`'s container.**
+Done: the deploy target is two repository variables (Sky #128), now **`SKY_RUNNER_LABEL=sky-ecole`,
+`SKY_DEPLOY_DIR=/srv/sky`** - so **every Sky release from here deploys to the School host**, not to
+`mitv`. `v1.1.1` did: `sky-sky-1` runs healthy in `/srv/sky`, bound to `127.0.0.1:3001`, on a
+REHEARSAL copy of `sky.db` taken live at ~20:56 (md5 identical both ends). The backup scripts are in
+(Sky #131). The vhost `/etc/nginx/sites-available/sky.conf` is ENABLED on the host (`server_name
+sky.mitv.fr`, `canari.emse.fr` certificate, `real_ip` trusting `10.0.0.4` only - `mitv` arrives from
+that address, measured) - that file and its comments are its record. The relay is STAGED, not running:
+`/etc/sky-relay/default.conf` on `mitv` (`nginx:alpine`, `--network host`, `listen 127.0.0.1:3001`,
+TLS verified with SNI `canari.emse.fr`, `X-Forwarded-For` from `Cf-Connecting-IP` - on a docker
+bridge every visitor would share the bridge address), `nginx -t` passed.
+
+**FOUND AT THE PAUSE, AND IT BLOCKS THE WINDOW: `sky.db` IS NOT THE WHOLE OF SKY'S STATE.**
+`database/sky-legacy.db` is the pre-rebuild snapshot `/admin/legacy` reads, written by
+`scripts/rebuild-db.js` ONCE, whenever it is absent - so the target's first start wrote a FRESH one
+from today's data, which is wrong (`mitv`'s is dated 2026-06-23). And `positions.json` is recomputed
+only on a mutation (`recalculatePositions()`), not at start, so a copy without it shows a clumped map
+until the next edit. Both must cross in the window, and **Sky #131's `backup.sh` archives neither** -
+its manifest's "sky.db is the whole of Sky's state" is false. Fix that first, in a Sky PR.
+
+**THE REST, IN ORDER.** (1) Sky PR: `backup.sh`/`restore.sh` carry `sky-legacy.db` (VACUUM INTO,
+like `sky.db`) and `positions.json`; correct the manifest text and `MIGRATION.md`. (2) Window on
+`mitv`: `docker compose -f /home/mitv/Sky/docker-compose.prod.yml --project-directory /home/mitv/Sky
+stop sky`, then **`docker update --restart=no sky-sky-1`** (its `restart: always` would bring it back
+on the relay's port at the next reboot); copy `sky.db`, `sky-legacy.db`, `positions.json` to
+`/srv/sky/database` with the target's Sky stopped, `cat` into place (keeps owner), fingerprint
+against the source (`people`, `relationships`, `sessions`, `metadata` counts + a content hash); start
+it. (3) `docker run -d --name sky-relay --restart unless-stopped --network host -v
+/etc/sky-relay/default.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine` on `mitv` - the tunnel's
+`localhost:3001` ingress is unchanged. (4) Verify: `https://sky.mitv.fr` 200, the host's
+`/var/log/nginx/sky.access.log` naming VISITOR addresses (not `10.0.0.4`, not `127.0.0.1`), a real
+sign-in, `/admin/legacy` showing the June data. (5) Cron on the host (gha-runner):
+`45 4 * * * /srv/sky/scripts/backup.sh >> /srv/sky-backups/backup.log 2>&1`, then one run by hand
+and its offsite copy seen on `mitv:/srv/sky-backups`. (6) Remove `mitv` root's `15 5 * * *
+.../backup-offsite.sh` line; keep the old container stopped, not deleted, as the rollback (reverse =
+stop the relay, `docker update --restart=always`, start). (7) After a good first backup: delete
+`~/sky-offsite` on the old Canari VM, and `~/migallery-offsite` only once MiGallery's own backup is
+seen elsewhere (user, 2026-09-25: *"Apres le basculement de Sky"*). (8) `sky.emse.fr`: SEO pass,
+`SKY_ORIGIN`, Authentik callback beside the old one, then cut the relay.
 
 ### P2 - A DEFECT REPORTED AFTER A DEPLOY HAS NO EVIDENCE, BECAUSE A DEPLOY DESTROYS IT (measured on production 2026-09-21)
 

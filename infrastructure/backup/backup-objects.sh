@@ -52,7 +52,7 @@ KEEP_DAILY="${RESTIC_KEEP_DAILY:-14}"
 KEEP_WEEKLY="${RESTIC_KEEP_WEEKLY:-8}"
 KEEP_MONTHLY="${RESTIC_KEEP_MONTHLY:-6}"
 
-BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
+BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 
 log() { printf '[backup-objects] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
