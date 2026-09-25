@@ -83,3 +83,52 @@ describe('mentionEditor - emoji pictures', () => {
     expect(serializeMentionEditor(root)).toBe(text);
   });
 });
+
+/**
+ * A `<br>` NOTHING FOLLOWS IS THE BROWSER'S PLACEHOLDER, NOT A NEWLINE (user, 2026-09-26).
+ *
+ * Firefox leaves one after a drag or when the field empties, Chromium after some insertions. It
+ * renders no line. Read as `\n`, it entered the message, and the next rebuild (an emoji pasted or
+ * picked) re-drew it as the composer's REAL trailing newline - `<br>` plus the filler - which then
+ * never went away. Our own trailing newline always has the filler after its `<br>`, so it counts.
+ */
+describe('mentionEditor - a trailing <br> with nothing after it', () => {
+  let root: HTMLDivElement;
+
+  beforeEach(() => {
+    root = document.createElement('div');
+    root.contentEditable = 'true';
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => root.remove());
+
+  it('is not a newline', () => {
+    root.innerHTML = 'salut <img class="emoji" data-emoji="🎉" alt="🎉"><br>';
+    expect(serializeMentionEditor(root)).toBe('salut 🎉');
+  });
+
+  it('is not a newline inside a trailing block the browser made either', () => {
+    // The shape a browser splits lines into, with its placeholder at the end of the last one.
+    root.innerHTML = '<div>a</div><div>b<br></div>';
+    expect(serializeMentionEditor(root)).toBe('a\nb');
+  });
+
+  it('still counts the composer own trailing newline, which has the filler after it', () => {
+    renderPlainTextToMentionEditor(root, 'ligne\n');
+    expect(serializeMentionEditor(root)).toBe('ligne\n');
+  });
+
+  it('still counts a <br> followed by text, and only drops the last of two', () => {
+    root.innerHTML = 'a<br>b';
+    expect(serializeMentionEditor(root)).toBe('a\nb');
+    root.innerHTML = 'a<br><br>';
+    expect(serializeMentionEditor(root)).toBe('a\n');
+  });
+
+  it('keeps the caret after a real newline where it was', () => {
+    renderPlainTextToMentionEditor(root, 'a\nb');
+    setPlainTextSelection(root, 2);
+    expect(getPlainTextSelection(root).start).toBe(2);
+  });
+});

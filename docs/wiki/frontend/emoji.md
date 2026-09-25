@@ -101,7 +101,13 @@ editor holding only an emoji has an empty `textContent`.
 Measured in a real Chromium on a throwaway route: typing then inserting `😀` draws it and the next
 keystrokes land after it; seven Backspaces remove " ça va" and then the emoji whole; pasting
 ` 🇫🇷 et 👍🏽` draws two pictures; the value handed back is the exact text every time; no page error.
-**The iPhone keyboard and its IME are owed on the device.** Native undo across a rebuild is what it
+**A `<br>` nothing follows is the browser's placeholder, not a newline** (user, 2026-09-26): Firefox
+leaves one after a drag or when the field empties, Chromium after some insertions, and
+`serializeMentionEditor` read it as `\n` - the next rebuild (an emoji pasted or picked) then re-drew
+it as the composer's REAL trailing newline (`<br>` + filler) and it never went away. It is dropped
+now; the real one always has the filler after it, and caret measurement keeps it
+(`keepTrailingBreak`). Reproduced in Chromium (a paste ending in an emoji gained a trailing `\n`)
+and gone after the fix. **The iPhone keyboard and its IME are owed on the device.** Native undo across a rebuild is what it
 already was with mentions and the markdown preview: the rebuild replaces the DOM.
 
 ### The gate
