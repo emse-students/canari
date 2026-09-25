@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -87,7 +88,7 @@
           href={associationHref}
           class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
-          {post.association.name}
+          <EmojiText text={post.association.name} />
         </a>
       {:else if identityHidden}
         <span class="text-text-main text-sm font-bold">{m.post_anonymous_label()}</span>
@@ -96,7 +97,7 @@
           href="/profile/{encodeURIComponent(post.authorId ?? '')}"
           class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
-          {getPostAuthorName()}
+          <EmojiText text={getPostAuthorName()} />
         </a>
       {/if}
     </div>

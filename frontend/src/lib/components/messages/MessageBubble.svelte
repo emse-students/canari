@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -628,7 +629,7 @@
         : ''}"
     >
       <Info size={14} class="shrink-0 opacity-60" />
-      <span>{textContent}</span>
+      <span><EmojiText text={textContent} /></span>
     </div>
   {/if}
 {:else}

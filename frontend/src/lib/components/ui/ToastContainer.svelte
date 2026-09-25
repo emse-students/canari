@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { fade, fly } from 'svelte/transition';
   import { X, TriangleAlert, Info, CircleX } from '@lucide/svelte';
   import { toastStore, dismissToast } from '$lib/stores/toast.svelte';
@@ -34,7 +35,7 @@
             <Info size={16} />
           {/if}
         </span>
-        <p class="flex-1 text-sm leading-snug font-medium">{toast.message}</p>
+        <p class="flex-1 text-sm leading-snug font-medium"><EmojiText text={toast.message} /></p>
         <button
           onclick={() => dismissToast(toast.id)}
           class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"

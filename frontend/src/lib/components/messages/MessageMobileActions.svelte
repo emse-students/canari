@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Reply,
     Forward,
@@ -202,7 +203,7 @@
                 onClose?.();
               }}
             >
-              {emoji}
+              <EmojiText text={emoji} />
             </button>
           {/each}
           <button

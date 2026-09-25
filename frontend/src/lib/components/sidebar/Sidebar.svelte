@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
@@ -532,7 +533,7 @@
         class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
       >
         <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
-          {selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()}
+          <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />
         </h2>
 
         <div class="flex items-center gap-1">
@@ -672,7 +673,7 @@
                   {/if}
                 </span>
                 <span class="flex-1 truncate font-medium {unjoined ? 'opacity-60' : ''}"
-                  >{channel.name}</span
+                  ><EmojiText text={channel.name} /></span
                 >
                 <!-- The admin sees the salon EXISTS and can enter it in one click. Nothing else is
                      served until they do: no message, no roster, no seed - all three go through

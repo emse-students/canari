@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { Snippet } from 'svelte';
   import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -84,7 +85,7 @@
   >
     {#if userReaction}
       <span class="text-lg" aria-hidden="true"
-        >{reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'}</span
+        ><EmojiText text={reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'} /></span
       >
     {:else}
       <FaceSlightlySmiling size={20} />
@@ -129,7 +130,7 @@
           aria-pressed={userReaction === reaction.type}
         >
           <!-- The name is on the button, so the glyph itself is decoration and must not be read twice. -->
-          <span aria-hidden="true">{reaction.emoji}</span>
+          <span aria-hidden="true"><EmojiText text={reaction.emoji} /></span>
         </button>
       {/each}
     </div>

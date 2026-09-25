@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Search, Forward, Hash } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -183,7 +184,7 @@
               {#if cand.community}
                 <span class="text-text-muted flex items-center gap-1 truncate text-xs">
                   <Hash size={11} class="shrink-0" />
-                  {cand.community}
+                  <EmojiText text={cand.community} />
                 </span>
               {/if}
             </span>

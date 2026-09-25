@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   /**
    * A QUOTED MESSAGE IS A SECOND BUBBLE STACKED FLUSH ABOVE THE REPLY, NOT A STRIP INSIDE IT.
    *
@@ -112,7 +113,7 @@
   -->
   <div class="text-text-muted mb-1 flex max-w-full items-center gap-1 px-3 text-xs">
     <CornerUpLeft size={13} class="shrink-0" aria-hidden="true" />
-    <span class="truncate">{caption}</span>
+    <span class="truncate"><EmojiText text={caption} /></span>
   </div>
 
   <!--
@@ -136,6 +137,6 @@
     title={m.msg_go_to_quoted_message_label()}
     aria-label={m.msg_go_to_quoted_message_label()}
   >
-    <span class="block truncate">{previewText}</span>
+    <span class="block truncate"><EmojiText text={previewText} /></span>
   </button>
 </div>

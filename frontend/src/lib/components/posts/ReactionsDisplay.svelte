@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
 
   interface Props {
@@ -66,7 +67,7 @@
           : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
         title={reaction?.type}
       >
-        <span class="text-lg">{reaction?.emoji ?? '😊'}</span>
+        <span class="text-lg"><EmojiText text={reaction?.emoji ?? '😊'} /></span>
         <span class="text-text-main text-sm font-bold">{count}</span>
       </button>
     {/each}

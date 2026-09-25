@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
 
   interface Props {
@@ -27,8 +28,8 @@
   <a
     href="/profile/{encodeURIComponent(userId)}"
     class="{className} hover:underline"
-    onclick={(e) => e.stopPropagation()}>{displayName}</a
+    onclick={(e) => e.stopPropagation()}><EmojiText text={displayName} /></a
   >
 {:else}
-  <span class={className}>{displayName}</span>
+  <span class={className}><EmojiText text={displayName} /></span>
 {/if}

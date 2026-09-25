@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
@@ -272,7 +273,11 @@
                   class="hover:text-text-main transition-colors"
                   onclick={(e) => e.stopPropagation()}
                 >
-                  {firstNameOnly(resolvedSenderNames[msg.senderId] || m.user_unknown_label())}
+                  <EmojiText
+                    text={firstNameOnly(
+                      resolvedSenderNames[msg.senderId] || m.user_unknown_label()
+                    )}
+                  />
                 </a>
               </div>
             {/if}

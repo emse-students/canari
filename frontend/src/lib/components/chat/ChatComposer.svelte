@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Send,
     Paperclip,
@@ -552,7 +553,7 @@
             >
           </div>
           <div class="text-text-muted truncate text-xs leading-snug font-medium">
-            {replyPreviewText}
+            <EmojiText text={replyPreviewText} />
           </div>
         </div>
         {#if onCancelReply}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -194,7 +195,7 @@
                   onclick={() => onPickPeer?.(peer.peerId)}
                   class="text-text-main w-full rounded-xl px-2 py-2.5 text-left text-sm font-medium transition-colors outline-none hover:bg-amber-100/50 focus-visible:bg-amber-100/50 dark:hover:bg-amber-900/30 dark:focus-visible:bg-amber-900/30"
                 >
-                  {peer.displayName}
+                  <EmojiText text={peer.displayName} />
                 </button>
               </li>
             {/each}

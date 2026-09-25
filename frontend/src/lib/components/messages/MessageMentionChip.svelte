@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { goto } from '$app/navigation';
   import { peekUserDisplayName, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
@@ -47,5 +48,5 @@
   onclick={openProfile}
   class="inline cursor-pointer rounded-full bg-amber-500/10 px-1 align-baseline text-[0.9em] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
 >
-  @{resolved ?? ''}
+  @<EmojiText text={resolved ?? ''} />
 </button>
