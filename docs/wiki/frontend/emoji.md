@@ -7,6 +7,70 @@ picker never depends on a third-party CDN. Why Noto over Microsoft's Fluent Emoj
 coverage: no flags, no ZWJ families, frozen at Unicode 15.1), the exact numbers measured on Noto's
 git tree, and the licence terms are all in the backlog entry - not restated here.
 
+## PICTURES REPLACE THE FONT - decided 2026-09-25, in four pull requests
+
+**The user's decision**: the font never drew on WebKit (Safari and the iOS app showed Apple's glyphs,
+[backlog](../backlog.md)), so every emoji becomes Noto's own SVG drawn as an `<img>` - on every
+platform, one mechanism, the same pictures the font carried. Four pull requests, in this order: **(1)**
+the pictures, the runtime rule, the build gate, and the first surfaces (message text, search hits,
+reaction pills); **(2)** every other surface; **(3)** the picker drawn by our own grid; **(4)** the fonts
+deleted. Everything below this section describes the font, and stays true until (4) removes it.
+
+**Decided with the user, not to be re-opened**: Noto rather than Twemoji (same art as the font, the
+2026-08-23 coverage argument unchanged); pictures EVERYWHERE rather than on Apple only (one mechanism);
+the composer keeps the platform glyph while typing (`MentionComposerInput` is a `contenteditable`, so
+pictures there are possible - the decision is about risk, not ability).
+
+### The pictures, and how they were made
+
+`tools/emoji-svg/build.mjs` (header comment = the procedure) takes noto-emoji at commit
+`e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e`: the union of `2D/svg` and
+`third_party/region-flags/waved-svg` (the waved flags the font drew, subdivisions included), **4012
+pictures**, no overlap between the two. Licences sit next to them: Apache 2.0 (`2D/svg/LICENSE`) and
+public domain (region flags). They are written to `frontend/static/emoji/<set>/`, where `<set>` is a
+12-hex hash of every name and byte - so nginx serves `/emoji/` `immutable` for a year and a browser
+fetches each picture once, ever.
+
+**svgo is NOT lossless on this set with its default preset - measured, and three plugins are off.**
+Every original and its optimised copy drawn by Chromium at 64 px and compared per pixel (a pixel counts
+when a channel moves by more than 32):
+
+| svgo@4.1.0 preset-default, `multipass` | pictures over 40 px changed | worst | compressed |
+| --- | --- | --- | --- |
+| everything on | 1 of 402 sampled | U+1FAE2, **1307 / 4096** | 1.00 MB / 2.09 MB sample |
+| `convertTransform` off | 3 of 4012 | U+1F69F, 99 | - |
+| **also `convertShapeToPath`, `convertPathData` off (shipped)** | **0 of 4012** | **U+26D3, 37 (edge antialiasing)** | **12.9 MB / 21.1 MB** |
+
+Each plugin was found by disabling the preset's plugins one at a time against the damaged files; the
+regenerated set is byte-identical to the one measured. resvg could not do this measurement: the
+native addon crashed Bun 1.4.2, and the WASM build traps on one file and is unusable afterwards.
+
+### The rule, in one module
+
+`frontend/src/lib/utils/emojiSvg.ts`. A grapheme (`Intl.Segmenter`) is a picture only if BOTH:
+
+1. **It presents as an emoji**: it carries U+FE0F, or a code point is `Emoji_Presentation`. Noto draws
+   `©`, `™`, `↔` and every digit, and in `© 2026` those are text. This is `RGI_Emoji` without the regex
+   `v` flag, which the WebKit of iOS 16 cannot parse (a SyntaxError at module load blanks the app).
+2. **A picture exists**: its name is in `emojiSvgNames.json` (`{ set, names }`, 72 kB raw, 11 kB gzip
+   in the bundle). A sequence newer than the pinned Noto, or an unassigned flag pair like `🇿🇿`, stays
+   text - never a broken image.
+
+`EmojiText.svelte` renders the split: text nodes and `<img class="emoji" alt="<the emoji>">`, no
+wrapper, sized `1.2em` by `app.css` so it follows the text it sits in (jumbomoji included).
+
+**Copying keeps the emoji, measured**: in Chromium the clipboard carries the `alt` (`salut 😀 ça va`
+round-trips), and Firefox is known to do the same. `Selection.toString()` does NOT include it, which is
+why the clipboard, not the selection, was measured. **WebKit's copy is unmeasured** - owed on the
+iPhone, and not written against before it is seen.
+
+### The gate
+
+`check-emoji-coverage.mjs` (in `bun run build`) now checks the pictures first, importing the runtime's
+own `emojiSvgSrc` rather than re-implementing it: `static/emoji/` holds exactly one set, the one the
+list names; the list and the files agree; and every emoji the picker offers, **skin tones included
+(7906, where the font half checks 7692 without them)**, has a picture.
+
 ## The format problem, and why one file solves it - and why it is then split in two
 
 No single colour-font table is read by every engine Canari ships on:

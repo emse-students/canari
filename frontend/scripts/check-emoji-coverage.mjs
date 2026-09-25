@@ -27,7 +27,7 @@
  * the same woff2 save), so it is a harfbuzzjs limitation, not a defect in the merge. `wawoff2`
  * decompresses the bytes back to a plain TTF in memory first, which is what every check here shapes.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as hb from 'harfbuzzjs';
@@ -52,6 +52,62 @@ function fail(message) {
   process.exit(1);
 }
 
+// ── THE PICTURES (the path the app draws with since 2026-09-25) ───────────────────────────────
+// Imported, not re-implemented: the gate applies the RUNTIME's own rule (`emojiSvgSrc`), both halves
+// of it - Unicode presentation and "a picture exists" - so a gate that passes is a picker whose every
+// offer is drawn, skin tones included, which the font half below never checked.
+const { emojiSvgSrc } = await import('../src/lib/utils/emojiSvg.ts');
+const { set: svgSet, names: svgNames } = JSON.parse(
+  readFileSync(join(ROOT, 'src/lib/utils/emojiSvgNames.json'), 'utf8')
+);
+const sets = readdirSync(join(ROOT, 'static/emoji'), { withFileTypes: true }).filter((d) =>
+  d.isDirectory()
+);
+if (sets.length !== 1 || sets[0].name !== svgSet) {
+  fail(
+    `static/emoji/ must hold exactly the set emojiSvgNames.json names (${svgSet}), found: ` +
+      `${sets.map((d) => d.name).join(', ') || 'none'}. Re-run tools/emoji-svg/build.mjs.`
+  );
+}
+const svgFiles = readdirSync(join(ROOT, 'static/emoji', svgSet))
+  .filter((f) => f.endsWith('.svg'))
+  .map((f) => f.slice(0, -4));
+
+const listed = new Set(svgNames);
+const onDisk = new Set(svgFiles);
+const unlisted = svgFiles.filter((n) => !listed.has(n));
+const missingFiles = svgNames.filter((n) => !onDisk.has(n));
+if (unlisted.length > 0 || missingFiles.length > 0) {
+  fail(
+    `static/emoji/${svgSet}/ and emojiSvgNames.json disagree - ${missingFiles.length} listed without a file ` +
+      `(${missingFiles.slice(0, 10).join(', ')}), ${unlisted.length} files never listed ` +
+      `(${unlisted.slice(0, 10).join(', ')}). Re-run tools/emoji-svg/build.mjs; never edit either by hand.`
+  );
+}
+
+const undrawn = [];
+let offered = 0;
+for (const relPath of DATASETS) {
+  for (const entry of JSON.parse(readFileSync(join(ROOT, relPath), 'utf8'))) {
+    for (const emoji of [entry.emoji, ...(entry.skins ?? []).map((skin) => skin.emoji)]) {
+      offered++;
+      if (emojiSvgSrc(emoji) === null)
+        undrawn.push(`  ${relPath}: "${emoji}" (${entry.annotation})`);
+    }
+  }
+}
+if (undrawn.length > 0) {
+  fail(
+    `${undrawn.length} of ${offered} offered emoji (skin tones included) have no picture:\n${undrawn.join('\n')}\n` +
+      `  Each is a Noto commit to move forward (tools/emoji-svg/build.mjs) or an entry the picker must not offer.`
+  );
+}
+console.log(
+  `[check-emoji-coverage] ${offered} offered emoji (skin tones included) across ${DATASETS.length} dataset(s) ` +
+    `all have a picture, and the ${svgNames.length} pictures match their list`
+);
+
+// ── THE FONT (removed with the font itself, once nothing draws with it) ────────────────────────
 const misses = [];
 let checked = 0;
 

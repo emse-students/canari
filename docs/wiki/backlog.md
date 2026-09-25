@@ -7348,6 +7348,13 @@ initials are today. That is a memory question, and it is owed a measurement rath
 
 ### 2. The bundled emoji font is not active on WebKit - OPEN, P2, cause narrowed to two
 
+**SUPERSEDED BY A DECISION, 2026-09-25 - the probe below is NO LONGER OWED.** The user chose to stop
+drawing emoji with a font at all: every emoji becomes Noto's own SVG as an `<img>`, which WebKit draws
+like every other engine, so which of the two causes it was stops mattering
+([emoji](frontend/emoji.md#pictures-replace-the-font---decided-2026-09-25-in-four-pull-requests)). This
+item closes the day the fourth pull request deletes the font; what stays owed is ONE look on the iPhone
+at a message with emoji, and a copy of it.
+
 *"Il a l'air d'avoir toujours les emojis Apple ?"* - confirmed by cropping the recording: the
 fire and the movie camera are Apple's drawings, unambiguously.
 

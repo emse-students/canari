@@ -1,6 +1,7 @@
 <script lang="ts">
   import { splitTextWithMentions } from '$lib/utils/mentions.parse';
   import MessageMentionChip from './MessageMentionChip.svelte';
+  import EmojiText from '../shared/EmojiText.svelte';
 
   /**
    * ONE PLAIN-TEXT RUN OF A MESSAGE, WITH ITS MENTIONS AND HASHTAGS RENDERED AS SUCH.
@@ -48,6 +49,6 @@
          hide the word completely, which is the defect being fixed, made worse. -->
     <span class="font-semibold">#{part.value}</span>
   {:else}
-    {part.value}
+    <EmojiText text={part.value} />
   {/if}
 {/each}

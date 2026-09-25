@@ -48,6 +48,7 @@ const BROWSER_FACING = new Set([
   '/_app/immutable/',
   '~* \\.mjs$',
   '/fonts/',
+  '/emoji/',
   '/',
   '@ssr',
   '@app_shell',
