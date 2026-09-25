@@ -32,7 +32,9 @@ function escapeRegExp(value: string): string {
  * than a TLD heuristic - there is no way to tell "canari-emse.fr" from "cher.e.s" or "auteur.rice"
  * by shape alone, and a broad "known extension" list (`.fr`, `.io`, ...) would linkify both.
  */
-const BARE_DOMAIN_WHITELIST = ['canari-emse.fr', 'gallery.mitv.fr'];
+// Both of Canari's public names: a message typed before the rename still says the old one, and
+// a message typed after says the new one. Additive, and neither is going away soon.
+const BARE_DOMAIN_WHITELIST = ['canari.emse.fr', 'canari-emse.fr', 'gallery.mitv.fr'];
 
 /**
  * Matches one of `BARE_DOMAIN_WHITELIST`, or any subdomain of `emse.fr` (including the bare

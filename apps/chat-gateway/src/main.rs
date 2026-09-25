@@ -193,11 +193,18 @@ mod tests {
     use axum::http::{Request, header};
     use tower::ServiceExt;
 
-    /// The exact value CD writes into `infrastructure/.env`. Pinned here so a change to the
-    /// deployed list has to change a test that says what each entry is for.
-    const PRODUCTION_ALLOW_ORIGIN: &str = "https://canari-emse.fr,https://dev.canari-emse.fr,\
-         http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,\
-         https://tauri.localhost,tauri://localhost";
+    /// The value CD writes into `infrastructure/.env` once `BASE_URL` names the canonical
+    /// apex. Pinned here so a change to the deployed list has to change a test that says
+    /// what each entry is for.
+    ///
+    /// BOTH public apexes are present, deliberately: the estate answers on `canari.emse.fr`
+    /// and on the legacy `canari-emse.fr`, which apps already installed on a phone still
+    /// call. While the secret still names the legacy one, `compute_allow_origin`
+    /// deduplicates and emits the seven-entry list this used to pin - so this is the shape
+    /// the renderer produces, not a claim about what is in the secret today.
+    const PRODUCTION_ALLOW_ORIGIN: &str = "https://canari.emse.fr,https://canari-emse.fr,\
+         https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,\
+         http://tauri.localhost,https://tauri.localhost,tauri://localhost";
 
     /// Minimal router carrying only the CORS layer, so what is asserted is the layer and nothing
     /// downstream of it.
@@ -230,7 +237,7 @@ mod tests {
     #[test]
     fn keeps_every_segment_of_the_production_list() {
         let origins = parse_allowed_origins(PRODUCTION_ALLOW_ORIGIN);
-        assert_eq!(origins.len(), 7, "one entry lost: {origins:?}");
+        assert_eq!(origins.len(), 8, "one entry lost: {origins:?}");
     }
 
     #[test]
@@ -242,6 +249,7 @@ mod tests {
     #[tokio::test]
     async fn answers_every_canari_client_with_its_own_origin() {
         for origin in [
+            "https://canari.emse.fr",
             "https://canari-emse.fr",
             "https://dev.canari-emse.fr",
             "http://localhost:1420",

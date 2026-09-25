@@ -23,7 +23,7 @@ export const GET: RequestHandler = () => {
     .sort()
     .map((prefix) => `Disallow: ${prefix}`)
     .join('\n');
-  const body = `# Canari - https://canari-emse.fr
+  const body = `# Canari - https://canari.emse.fr
 User-agent: *
 Allow: /posts
 Allow: /associations

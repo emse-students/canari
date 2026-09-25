@@ -1,5 +1,6 @@
 <script lang="ts">
   import '../app.css';
+  import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
   import { beforeNavigate, goto } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
@@ -156,7 +157,7 @@
       // Small delay lets the Android Activity bind to the UI before the native permission prompt.
       const timer = setTimeout(() => {
         startPushService(
-          globalSession.historyBaseUrl || 'https://canari-emse.fr',
+          globalSession.historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN,
           globalSession.authToken,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));

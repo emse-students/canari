@@ -108,13 +108,22 @@ secret_value() {
 # `https://dev.<domain>` because that name is a proxied CNAME onto production's own tunnel today,
 # so a list built from FRONTEND_URL alone would refuse a hostname production itself serves. Dev's
 # list does NOT carry production's origin - dev has no business accepting it.
+#
+# PRODUCTION CARRIES BOTH PUBLIC APEXES, and that is the third way these two lists differ. The
+# estate answers on `canari.emse.fr` (canonical, what FRONTEND_URL names) and on the legacy
+# `canari-emse.fr`, which `DOMAIN` still spells because it is also the Cloudflare zone name and
+# dev's suffix. A list built from FRONTEND_URL alone drops whichever of the two it does not name,
+# and the entry that disappears costs a real client the gateway with no server-side error - exactly
+# what the paragraph above warns about. Deduplicated, because while the secret still names the
+# legacy apex the two are the same string and the rendered list must not grow a twin.
 compute_allow_origin() {
   local frontend_url="$1" tauri
   tauri="http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
   if [ "$ENVIRONMENT" = "dev" ]; then
     printf '%s,%s' "$frontend_url" "$tauri"
   else
-    printf '%s,https://dev.%s,%s' "$frontend_url" "$DOMAIN" "$tauri"
+    printf '%s,https://%s,https://dev.%s,%s' "$frontend_url" "$DOMAIN" "$DOMAIN" "$tauri" |
+      awk -v RS=, -v ORS= '!seen[$0]++ { printf "%s%s", (n++ ? "," : ""), $0 }'
   fi
 }
 

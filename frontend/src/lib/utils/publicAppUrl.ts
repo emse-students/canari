@@ -1,7 +1,19 @@
 import { m } from '$lib/paraglide/messages';
 
-/** Production web origin used for shareable links when the WebView runs on Tauri. */
-export const DEFAULT_PUBLIC_APP_ORIGIN = 'https://canari-emse.fr';
+/**
+ * The canonical public web origin - the one name Canari is advertised under.
+ *
+ * It moved from `canari-emse.fr` to `canari.emse.fr` on 2026-09-25. The old name keeps ANSWERING
+ * indefinitely, because apps already installed on a phone call it for `/api/`, `/ws` and `/media/`
+ * and cannot be told otherwise - but it is no longer canonical, and no browser is meant to stay on
+ * it: the user decided every web visitor is redirected off it
+ * (docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25).
+ * So this is what share links, canonical tags and previews must carry.
+ */
+export const DEFAULT_PUBLIC_APP_ORIGIN = 'https://canari.emse.fr';
+
+/** The name that is served for compatibility only, and is never canonical. */
+export const LEGACY_PUBLIC_APP_ORIGIN = 'https://canari-emse.fr';
 
 /**
  * Hostnames treated as in-app navigation targets (not external browser).
@@ -38,11 +50,17 @@ function isNonPublicWebViewOrigin(origin: string): boolean {
  */
 export function publicAppOrigin(): string {
   const fromEnv = (import.meta.env.VITE_FRONTEND_URL as string | undefined)?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  // A build that baked the legacy apex must still hand out the canonical name: this function mints
+  // links for OTHER people, and sending them to a host every browser is redirected off adds a hop
+  // for no reason. Every other baked value (dev's own origin, a preview) is left alone.
+  if (fromEnv && fromEnv.replace(/\/$/, '') !== LEGACY_PUBLIC_APP_ORIGIN) {
+    return fromEnv.replace(/\/$/, '');
+  }
+  if (fromEnv) return DEFAULT_PUBLIC_APP_ORIGIN;
 
   if (typeof window !== 'undefined') {
     const origin = window.location.origin.replace(/\/$/, '');
-    if (!isNonPublicWebViewOrigin(origin)) return origin;
+    if (!isNonPublicWebViewOrigin(origin) && origin !== LEGACY_PUBLIC_APP_ORIGIN) return origin;
   }
 
   return DEFAULT_PUBLIC_APP_ORIGIN;

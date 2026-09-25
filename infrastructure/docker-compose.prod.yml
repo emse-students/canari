@@ -407,8 +407,8 @@ services:
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=success
-      STRIPE_CANCEL_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=cancel
+      STRIPE_SUCCESS_URL: ${FRONTEND_URL:-https://canari.emse.fr}/posts?registration=success
+      STRIPE_CANCEL_URL: ${FRONTEND_URL:-https://canari.emse.fr}/posts?registration=cancel
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
@@ -451,7 +451,7 @@ services:
       # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
       # This read `${ALLOW_ORIGIN}` until 2026-08-30 and was measured holding all five entries of
       # it, comma-separated, as a single origin.
-      ORIGIN: ${FRONTEND_URL:-https://canari-emse.fr}
+      ORIGIN: ${FRONTEND_URL:-https://canari.emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
