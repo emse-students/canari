@@ -100,7 +100,12 @@ probe_container() {
 	printf ','
 	probe_host 'gallery' 'https://gallery.mitv.fr/api/health'
 	printf ','
-	probe_host 'self' 'https://canari-emse.fr/api/version'
+	probe_host 'self' 'https://canari.emse.fr/api/version'
+	printf ','
+	# The legacy name too, and as a SECOND measurement rather than a replacement: it arrives over
+	# the old box's relay and the Cloudflare tunnel, while the canonical name reaches this host
+	# directly. They can fail independently, and which one failed is the diagnosis.
+	probe_host 'self_legacy' 'https://canari-emse.fr/api/version'
 	printf ','
 	probe_host 'control' 'https://1.1.1.1/'
 	printf ','

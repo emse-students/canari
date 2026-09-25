@@ -117,6 +117,7 @@ mod tests {
             "http://tauri.localhost/a%20b",
             // The desktop dev server, and the public site a link may point back at.
             "http://localhost:1430/",
+            "https://canari.emse.fr/posts/1",
             "https://canari-emse.fr/posts/1",
             // The OIDC authorize URL, which the desktop WebView really does navigate to.
             "https://auth.canari-emse.fr/application/o/authorize/?client_id=x&state=y",
