@@ -343,20 +343,44 @@ VERIFIED only where it was actually probed, not inferred from the intent that sh
 | Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported - and RE-VERIFIED, not merely re-asserted, 2026-09-25.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means, and it does: `canari.emse.fr` serves `Cache-Control: public, max-age=31536000, immutable` on `/_app/immutable/*` and `public, max-age=0, s-maxage=60` on the shell, byte-identical to what `canari-emse.fr` sends today - the ORIGIN half of this was never Cloudflare's to begin with and the migration changed nothing about it. What is genuinely gone, confirmed by `curl -I` carrying no `cf-cache-status` header at all on `canari.emse.fr` where `canari-emse.fr` answers `HIT`/`REVALIDATED`: every request for the same bytes now reaches the origin container instead of a warm edge node. A local substitute (nginx `proxy_cache` on the shared host, keyed the same way) would recover the shared-cache EFFECT without a CDN, but is a NEW build, not a port, and is a separate open item below rather than folded into this "deliberate, not ported" row | **YES - origin headers identical on both hostnames; no edge layer exists on either the new host or a viable substitute for it** |
 | The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` | N/A - deliberate |
 | Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` | N/A - out of scope |
-| DDoS absorption, bot filtering | promised as "nginx rate limiting on the authentication and upload paths" | **NO - NOT DONE.** `grep -r limit_req /etc/nginx` on the target host returns nothing, on any vhost. This is a real gap, open below |
+| DDoS absorption, bot filtering | **CROWDSEC, AND IT WAS ALREADY THERE - the first answer to this row was measured against the wrong mechanism.** `grep -r limit_req /etc/nginx` returns nothing on any vhost, which is true and was read as "nothing protects this host". What protects it is `conf.d/crowdsec_nginx.conf`: a Lua bouncer running `cs.Allow($remote_addr)` in `access_by_lua_block` on EVERY request of EVERY vhost, an AppSec/WAF at `127.0.0.1:7422` doing CVE virtual-patching, and ~20 enabled `http-*` scenarios including `http-generic-bf`. Both `crowdsec` and `crowdsec-firewall-bouncer` are `active`, and it bans for real - two live decisions on 2026-09-25 (`appsec-vpatch`, `http-bad-user-agent`) | **YES, and the coverage is SPLIT - see below** |
 | `0rtt`, BIC, Rocket Loader | Rocket Loader and BIC have no nginx equivalent and were already `off`/scoped to the auth subdomain (out of scope); 0-RTT is a TLS 1.3 server option nginx does not enable by default, matching the zone's `off` | N/A - all three end up equivalent to "off" either way |
 
-**OPEN: no rate limiting exists on the authentication or upload paths on the target host, on any
-vhost.** This was stated as done in this table before being checked and was not; it needs a design
-(zones, keyed by IP, which exact paths) rather than a one-line port, and is tracked as its own item
-rather than folded into the WebSocket fix above ([backlog](../backlog.md)).
+#### CROWDSEC COVERS THIS HOST IN TWO HALVES, AND ONLY ONE OF THEM REACHES EVERY VHOST
 
-**OPEN: an nginx `proxy_cache` substitute for the lost edge HIT layer** would need its own zone
-(disk-backed, sized for the `/_app/immutable/` set plus one shell entry), a key that does not
-conflate `canari.emse.fr` and `canari-emse.fr` responses if both are ever proxied by the same host,
-and an invalidation step in the deploy scripts mirroring what `CLOUDFLARE_CACHE_PURGE_TOKEN` did for
-the shell - a design decision, not a default to just turn on, and not requested yet
-([backlog](../backlog.md)).
+Measured 2026-09-25, and it revises the row above rather than adding to it.
+
+**The IN-LINE half reaches everything.** `access_by_lua_block` runs before every request on every
+`server` block, so the bouncer's ban list and the AppSec WAF apply to all EIGHT vhosts this machine
+carries - and there are eight, not five: `gala.conf` (2019) and `mep.conf` (2021) are co-tenant
+sites this project does not own, alongside `portail-etu-new.conf`.
+
+**The LOG-PARSING half reaches only what writes to the shared `access.log`.** CrowdSec's acquisition
+names exactly `/var/log/nginx/access.log` and `/var/log/nginx/error.log`. Of our vhosts only
+`canari.conf` writes there; `canari-prod.conf`, `canari-dev.conf`, `cercle.conf` and
+`authentik.conf` each write to their own file, which nothing parses. So every behavioural scenario -
+`http-generic-bf` included - is blind to them.
+
+**AND THE LEGACY PATH COULD NOT BE ADDED EVEN IF SOMEONE WANTED TO, WHICH IS THE POINT.**
+`canari-prod.access.log` carries **11 935 requests from `10.0.0.3` against 1 from a real client**:
+the tunnel relay is the source address of essentially all of it, because nothing sets `real_ip`
+there. Pointing CrowdSec at that file would hand it one address standing for every visitor - the
+first abusive request bans the relay and takes the whole legacy hostname down with it. `access.log`,
+by contrast, carries genuine client addresses (Googlebot, a Sentry prober, campus and home IPs), so
+`canari.emse.fr` is the one Canari name CrowdSec can reason about correctly today.
+
+**What that leaves genuinely open is narrower than "no rate limiting", and it is about the IdP.**
+Authentik is where a password is actually tried, and `authentik.access.log` is parsed by nothing.
+Bans are also GLOBAL per address on this box, so a decision taken on Canari traffic already closes
+the co-tenant sites to that address, and theirs closes ours. Both are decisions for the machine's
+owner, not one-line ports ([backlog](../backlog.md)).
+
+**REFUTED: an nginx `proxy_cache` substitute for the lost edge cache.** It was proposed here and
+approved, then refused by its own measurement: timed on the host, the origin answers the SSR shell
+in 2.6-5.2 ms and an immutable asset in 0.8-1.2 ms, so a cache one hop above it removes those
+milliseconds of local work and not one metre of the network path Cloudflare's edge actually
+shortened. The reasoning, and what would have to be true for it to come back, are on
+[backlog](../backlog.md).
 
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 
