@@ -287,7 +287,7 @@ the same "stop scoping, cover the whole flow" fix already applied to the submit 
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
 phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turns `ak-locale-select`,
 the header, the card and the footer into ONE ROW; on the error page that row outgrows a 393 px
-viewport and `overflow: hidden` cuts the card's left edge. Open, with the measurement, in
+viewport and `overflow: hidden` cuts the card's left edge. Removed from the file by #1098, NOT yet pasted into the live Brand (with the #1081 fixes); open in
 [backlog](../backlog.md). A rule that changes a PatternFly wrapper's `display` has to be checked
 against every flow LAYOUT that reuses the wrapper, not just the login stage it was written for.
 

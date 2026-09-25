@@ -280,7 +280,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
 23. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
     **EMOJI BECOME NOTO SVG PICTURES EVERYWHERE** (user, 2026-09-25: the font never drew on WebKit) - four pull requests, the order and the measurements in [emoji](docs/wiki/frontend/emoji.md).
-24. **P2 - MICONNECT'S ERROR CARD IS CUT OFF ON A PHONE: OUR CSS TURNS AUTHENTIK'S GRID INTO A FLEX ROW** (Mi 9T, 2026-09-25) - cause measured, fix is one rule, ships in the SAME Brand paste the #1081 fixes still owe ([backlog](docs/wiki/backlog.md)). The MiGallery half of that audit is MiGallery's own WIP ([ui-redesign](../MiGallery/docs/wiki/ui-redesign.md)).
+24. **P2 - MICONNECT'S ERROR CARD IS CUT OFF ON A PHONE: OUR CSS TURNS AUTHENTIK'S GRID INTO A FLEX ROW** (Mi 9T, 2026-09-25) - cause measured, fix is one rule, ships in the SAME Brand paste the #1081 fixes still owe ([backlog](docs/wiki/backlog.md)). The MiGallery half of that audit is MiGallery's own WIP ([ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
