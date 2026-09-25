@@ -6,6 +6,7 @@
  * This file is intentionally thin: reactive state, SessionContext construction,
  * and delegation to the session/* sub-modules.
  */
+import { deliveryUrl } from '$lib/utils/apiUrl';
 import { createMlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
@@ -106,11 +107,9 @@ export function useChatSession() {
   /** Unrecoverable MLS error requiring user action (OOM, private mode, keystore lost). */
   let mlsFatalError = $state<'oom' | 'private_mode' | 'keystore_lost' | null>(null);
 
-  const historyBaseUrl = (() => {
-    const env = import.meta.env.VITE_DELIVERY_URL;
-    if (env?.trim()) return env;
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
-  })();
+  // Through `apiUrl.ts` rather than re-deriving it: a browser must address its own origin, and
+  // this was the third copy of that decision written with the old polarity.
+  const historyBaseUrl = deliveryUrl();
 
   /** Box holding the timers so the sub-modules can mutate them. */
   const timers: SessionContext['timers'] = {

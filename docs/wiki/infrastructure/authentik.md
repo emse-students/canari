@@ -93,7 +93,7 @@ other.** `fr.emse.canari://callback` is on all three because the SAME packaged a
 three: a build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an
 identifier. `Canari` (pk 1) carries TWO web origins since 2026-09-25, additively: `canari-emse.fr`
 stays until the estate migration's browser-storage rule
-([estate-migration](estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---there-must-never-be-one))
+([estate-migration](estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25))
 lets it retire, `canari.emse.fr` was added the same way the vhost was - by hand, via `ak shell`, the
 admin UI's `redirect_uris` textarea reads as a single string but the field is actually a list of
 `RedirectURI` objects that must be REASSIGNED whole (`p.redirect_uris = [...]`), not mutated in

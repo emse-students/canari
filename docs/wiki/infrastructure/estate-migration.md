@@ -899,7 +899,7 @@ configuration migrates totally, and `canari-emse.fr` keeps answering with 301s i
 old domain is not decommissioned at the end of this chantier, and no date is written for it until
 the stores say the old builds are gone.
 
-### A browser cannot follow a redirect and keep its state - there must never be one
+### A browser cannot follow a redirect and keep its state - AND THE USER TOOK THAT COST KNOWINGLY, 2026-09-25
 
 Native apps are unaffected by which public host is used: `mls.bin`, the SQLite message database and
 the device key all live on the OS filesystem under the app's own identity (`fr.emse.canari`), not
@@ -916,6 +916,26 @@ moves IndexedDB, `localStorage` or a cookie between them. A browser session that
 ratchet state, no refresh-token cookie (forced re-login), and cryptographically it looks exactly like
 adding a brand-new device to every conversation that browser was in - which depends on the healing/
 welcome path the queue already documents as unreliable (item 6, ~3 successes in 10).
+
+**THE PROHIBITION WAS OVERRULED BY THE USER ON 2026-09-25, AND THE MEASUREMENT BELOW STANDS.**
+The cost above was put to them in those terms - a redirected web session looks like a brand-new
+device, and the healing path behind that is ~3 in 10 - and they chose to redirect **every** browser
+visitor unconditionally anyway, so that `canari-emse.fr` exists only for app compatibility
+(*"canari-emse.fr ne doit etre la que pour la compatibilite des apps"*). That is a decision, not a
+refutation: nothing measured here changed, and it is NOT to be relitigated by a later session
+reading the paragraphs below and concluding the redirect is a defect.
+
+**Two constraints the decision does not remove, both load-bearing.**
+
+1. **It is NOT a blanket 301 on the vhost.** Installed native apps keep talking to
+   `canari-emse.fr` for `/api/`, `/ws` and `/media/`, and their universal-link association files
+   under `/.well-known/` must keep answering there too - an app already on a phone cannot be told
+   otherwise. Only document navigation is redirected; every path an app uses stays proxied.
+2. **The new host must WORK before the redirect is armed.** Arming it while
+   `canari.emse.fr` still had the `pin-salt` defect would have sent every web user to a host where
+   their session could not unlock at all - a worse outcome than the state loss the redirect was
+   accepted for. The ordering is: ship the same-origin fix, verify an unlock on the new host, then
+   redirect.
 
 **Measured 2026-09-24: nothing in this repository or on the target's nginx does this today.**
 `canari-prod.conf` and `canari.conf` carry no cross-host redirect in either direction, and
