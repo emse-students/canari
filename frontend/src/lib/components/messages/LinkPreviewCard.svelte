@@ -398,7 +398,7 @@
         </span>
 
         <p
-          class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-sm dark:group-hover:text-amber-300"
+          class="text-text-main line-clamp-3 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-sm dark:group-hover:text-amber-300"
         >
           {cardTitle}
         </p>
