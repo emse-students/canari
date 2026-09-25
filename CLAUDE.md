@@ -221,10 +221,9 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 1. **PHASE 1 IS FULLY DONE, ALL THREE ESTATES; PHASE 2 (`canari-emse.fr` -> `canari.emse.fr` ONLY, cercle/miconnect renames excluded) IS DONE TOO, 2026-09-24** - the app-side config PR (#1078) and the one-line vhost fix (no DSI ticket was ever needed) both merged/live; `canari.emse.fr` now serves Canari, verified. **NEW DURABLE RULE FROM THIS WORK, THEN OVERRULED BY THE USER 2026-09-25**: a browser's IndexedDB/cookies do not follow a host change the way a native app's filesystem state does, so a redirected web session loses its history to a healing path at ~3 in 10 - told that, the user chose to redirect every browser visitor anyway, so the old name serves APPS ONLY. Document navigation only, and armed only once the new host is verified working ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)). OIDC issuer rename and the cercle/miconnect DSI ticket stay deferred, not in this scope.
 2. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election ignores presence the server already knows; fix proposed, awaiting the go-ahead ([backlog](docs/wiki/backlog.md)).
 3. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
-   three commands a run owes before any of it is believed are in the campaign section below.
-   PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
-   on a clean pass ([backlog](docs/wiki/backlog.md)).
+   SETTLES IT - NO COUNT HERE; run it.** A green cell is not yet a measurement, and the three
+   commands a run owes before it is believed are in the campaign section below. PIN's four rows
+   change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
 4. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
    reclaims refuted (`0 expired`), EXPIRY CLOSED. Re-measured 2026-09-22: the undated last-resort
    rows are a CLIENT VERSION (`< 0.18.10`, exact in 759) draining ~20/day, so **both repairs are
