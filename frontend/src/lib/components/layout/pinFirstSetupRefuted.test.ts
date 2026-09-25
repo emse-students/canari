@@ -13,7 +13,7 @@ import { join } from 'node:path';
  * could not be opened and that only a reset restores access - with the reset nowhere on screen,
  * because `{#if !isFirstSetup}` in `PinModal.svelte` gates BOTH exits it names, the old-PIN
  * recovery and the reset. A reader in that state cannot unlock and cannot reach the one remedy
- * they were given. It is reachable in production the same way `auth_reset_device_partial` is: a
+ * they were given. It is reachable in production: a
  * `pin-reset` whose server half lands and whose `resetDeviceAsFresh` half does not leaves exactly
  * this pair, so the trap is produced by the very control that escapes it.
  *
