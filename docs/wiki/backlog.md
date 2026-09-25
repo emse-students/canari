@@ -2135,6 +2135,23 @@ between the `git fetch` that read the head and the `gh release create` that tagg
 succeeded only because a peer session was asked to freeze its merges, and held that freeze until the
 stable run concluded. Three pre-releases for one stable, and the freeze was arranged by hand.
 
+**It recurred the next day, and the freeze could NOT be arranged** (shipping `v0.18.24`, 2026-09-25):
+`alpha.1` was overtaken DURING its own run by #1093, and `alpha.2` was cut at the new head while
+#1094 sat one check from its own auto-merge - both from a session that `ListAgents` did not list,
+so there was nobody to ask. **The hand-arranged freeze only works when the merging session is
+reachable**, and an auto-merge armed by a session that has since gone quiet merges with nobody at
+the other end. Which is the argument for the design above: the window is not a coordination problem
+between sessions, it is a gate that reads a sha a human chose instead of the head the machine sees.
+
+### P3 - WHICH NAME IS PRODUCTION IS ASSERTED THREE TIMES, AND ONE COPY STOPPED A STABLE (2026-09-25)
+
+`build.yml`, `android.yml` and `ios.yml` each classify the baked backend URL as dev, production or
+unknown, with their own lists; the rename moved two and missed the third, and `v0.18.24` reached both
+stores but not the site ([estate-migration](infrastructure/estate-migration.md)). They even disagree
+now: the native two accept both apexes, the web build only the canonical one. One function in
+`.github/scripts/lib/`, sourced by all three and covered by a test that feeds it each name, is the
+shape; until then, a change to what production is called is a change to three files.
+
 **A rerun does not substitute for the freeze, and believing it does costs a cycle.** `gh run rerun`
 re-evaluates gate 2 against the SAME tag; it rescues a release whose `CI passed` had not concluded
 yet (gate 3), never one whose `main` has moved. The released tree still carries the pre-release

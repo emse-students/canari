@@ -67,7 +67,11 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
-  DOMAIN: canari-emse.fr
+  # The name a PRODUCTION build must bake - the canonical one, NOT `serve-prod.yml`'s `DOMAIN`,
+  # which is the legacy apex on purpose (it feeds ALLOW_ORIGIN, where the old name must stay). The
+  # two meant different things under one name, and the day `BASE_URL` moved to `canari.emse.fr`
+  # this assertion refused the v0.18.24 stable as `unknown` (2026-09-25).
+  PROD_DOMAIN: canari.emse.fr
   DEV_DOMAIN: dev.canari-emse.fr
 
 jobs:
@@ -283,7 +287,7 @@ jobs:
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
-          EXPECTED_PROD_DOMAIN: ${{ env.DOMAIN }}
+          EXPECTED_PROD_DOMAIN: ${{ env.PROD_DOMAIN }}
           EXPECTED_DEV_DOMAIN: ${{ env.DEV_DOMAIN }}
         run: |
           set -euo pipefail
