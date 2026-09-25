@@ -22,11 +22,24 @@ describe('emojiSvg', () => {
     expect(emojiSvgName('🏳️‍🌈')).toBe('1f3f3_200d_1f308');
   });
 
-  it('keeps text-presentation characters as text', () => {
-    // Noto draws every one of these; in running text they are not emoji.
-    for (const text of ['©', '™', '↔', '0', '#', '☺', '❤']) {
+  it('keeps the characters that are really text as text: #, *, digits, ©, ®, ™', () => {
+    for (const text of ['©', '®', '™', '0', '7', '#', '*']) {
       expect(presentsAsEmoji(text)).toBe(false);
       expect(emojiSvgSrc(text)).toBeNull();
+    }
+  });
+
+  it('draws every other emoji even without U+FE0F, as keyboards and pastes often send them', () => {
+    // U+1F4FD, reported by the user 2026-09-25: Unicode calls it text-default, every platform draws it.
+    expect(emojiSvgSrc('\u{1F4FD}')).toBe(at('1f4fd'));
+    expect(emojiSvgSrc('\u{1F4FD}\uFE0F')).toBe(at('1f4fd'));
+    for (const [text, name] of [
+      ['❤', '2764'],
+      ['☺', '263a'],
+      ['↔', '2194'],
+      ['\u{1F576}', '1f576'],
+    ] as const) {
+      expect(emojiSvgSrc(text)).toBe(at(name));
     }
   });
 

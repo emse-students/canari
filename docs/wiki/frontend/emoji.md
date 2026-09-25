@@ -50,10 +50,10 @@ native addon crashed Bun 1.4.2, and the WASM build traps on one file and is unus
 
 `frontend/src/lib/utils/emojiSvg.ts`. A grapheme (`Intl.Segmenter`) is a picture only if BOTH:
 
-1. **It presents as an emoji**: it carries U+FE0F or a skin-tone modifier, or its first code point is
-   NOT in the shipped `textDefault` list. Noto draws `©`, `™`, `↔` and every digit, and in `© 2026`
-   those are text. No Unicode property is asked at runtime - the picker section below says why.
-2. **A picture exists**: its name is in `emojiSvgNames.json` (`{ set, textDefault, names }`, 72 kB raw, 11 kB gzip
+1. **It is not one of the few characters that are really text**: `#`, `*`, the digits, `©`, `®` and
+   `™` are a picture only with U+FE0F (in `© 2026` or `#1` they are text); every other emoji is a
+   picture with or without it - Twemoji's and Discord's rule. No Unicode property is asked at runtime.
+2. **A picture exists**: its name is in `emojiSvgNames.json` (`{ set, names }`, 72 kB raw, 11 kB gzip
    in the bundle). A sequence newer than the pinned Noto, or an unassigned flag pair like `🇿🇿`, stays
    text - never a broken image.
 
@@ -296,9 +296,15 @@ open), a French typo search, a tone applied to a whole category and returned by 
 **THE PRESENTATION RULE WAS WRONG ON OLD ENGINES, and this PR is where it was caught.** The first
 version asked `\p{Emoji_Presentation}` at runtime, which answers from the ENGINE's Unicode tables:
 under Node, seven Unicode 16 entries the picker offers (U+1FAEA among them) were not emoji at all, so
-an older WebView would have drawn them as text while holding their picture. The fact now ships in
-`emojiSvgNames.json` (`textDefault`, 230 code points computed by `tools/emoji-svg/build.mjs`), and
-the runtime reads no Unicode property; `emojiSvg.test.ts` pins U+1FAEA under Node.
+an older WebView would have drawn them as text while holding their picture. The runtime now reads no
+Unicode property; `emojiSvg.test.ts` pins U+1FAEA under Node.
+
+**AND UNICODE'S OWN TEXT-DEFAULT LIST WAS TOO STRICT, found by the user the same day.** The second
+version shipped the 230 code points Unicode calls text-default and drew them as text without U+FE0F.
+`📽` (U+1F4FD) stayed a character - keyboards and pastes routinely send such pictographs without the
+selector, and every platform draws them as emoji regardless. The list is now the fifteen characters
+with a real typographic life (`#`, `*`, `0`-`9`, `©`, `®`, `™`), fixed in `emojiSvg.ts`; the computed
+list and its code in `tools/emoji-svg/build.mjs` are gone.
 
 ## Build-time coverage proof
 
