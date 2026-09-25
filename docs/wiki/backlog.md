@@ -74,6 +74,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
+| **declare `canari-emse.fr` -> `canari.emse.fr` in Google Search Console** ("Change of address"), once the redirect is a `301` - both names verified in one account | 1 click | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
+| **say whether MiGallery should be indexed at all** - a private gallery, whose default is `noindex` | decision | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
 | delete the remote branch `perf/le-blob-ne-traverse-plus-le-pont` (#825, merged 2026-09-17). It is left standing on purpose as the evidence for the row beside it; its content is in `main` and nothing depends on it | 1 click | [P3 - a merged branch that is still there](#p3---a-merged-branch-that-is-still-there-was-not-left-behind-it-was-pushed-back-measured-2026-09-22) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 | **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
@@ -6925,6 +6927,46 @@ one allowlist entry, and that entry FAILS the day the site stops offending, so i
 the P1 waits.
 
 ## Infrastructure
+
+### P2 - EVERY PROJECT OWES AN SEO PASS, AND EACH ONE IS DUE WHEN ITS NAME IS FINAL (user, 2026-09-25)
+
+*"Il va bientot falloir revoir tout ce qui est SEO de tous les projets pour que tout le monde soit bien
+reference haut dans les moteurs de recherche."* **Not one cross-project pass now**: ranking attaches to
+a URL, so optimising `sky.mitv.fr` today is work redone at `sky.emse.fr`. Each project's pass is due
+the day its name is final, and the order follows the renames.
+
+What each site answered on 2026-09-25, before any of it:
+
+| Site | `robots.txt` | `sitemap.xml` | canonical | Due |
+| --- | --- | --- | --- | --- |
+| `canari.emse.fr` | 200 | 200 | `canari-emse.fr/posts` before `v0.18.25`, **`canari.emse.fr/posts` after** | **now** |
+| `portail-etu.emse.fr` | 200 | 200 | itself | any time - its name is already final |
+| `sky.mitv.fr` | 200 | `302` | itself | at `sky.emse.fr` |
+| `cercle.canari-emse.fr` | 200 | `303` | **none** | at `cercle.emse.fr` |
+| `gallery.mitv.fr` | 200 | 404 | itself | first decide whether it is indexed at all |
+
+**Canari, now - three gestures, in order.** (1) `v0.18.25` moved the canonical to the new name, done.
+(2) Promote the legacy name's redirect from `302` to `301` once it has been seen in use: a `302`
+transfers no ranking, which is the price of arming it cautiously
+([estate-migration](infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)).
+(3) The user declares the change of address in Google Search Console, with both names verified in
+one account - a one-off, [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+Most of Canari sits behind a sign-in, so what can rank is the public surface only: the landing page,
+public association and post pages, and the calendar feed.
+
+**Two `3xx` sitemaps and a missing canonical are defects in their own right**, not SEO polish: a
+crawler that is redirected away from `sitemap.xml` reads no sitemap, and a page with no canonical lets
+the engine pick one. **MiGallery is a private gallery**, so its default is `noindex` rather than
+ranking - that is the user's to confirm before anyone optimises it.
+
+### P2 - SKY MOVES ONTO THE SCHOOL HOST, THEN TAKES `sky.emse.fr` (user, 2026-09-25)
+
+*"Je veux reellement deplacer Sky sur la machine, a l'instar de cercle ou canari. Des que sky.emse.fr
+sera dispo, on pourra couper le lien."* The network needed was measured the same day and the move needs
+none new; what it owes, and why the Wiki and Omeka do NOT move but need a relay, is on
+[estate-migration](infrastructure/estate-migration.md#sky-moves-the-wiki-and-omeka-only-get-names---decided-by-the-user-2026-09-25),
+the only copy. The first step owes nothing to the DSI: the move can land while `sky.mitv.fr` stays in
+`mitv`'s tunnel, pointed at the School host.
 
 ### P2 - A DEFECT REPORTED AFTER A DEPLOY HAS NO EVIDENCE, BECAUSE A DEPLOY DESTROYS IT (measured on production 2026-09-21)
 
