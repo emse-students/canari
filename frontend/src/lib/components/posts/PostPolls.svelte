@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from '@lucide/svelte';
   import type { Poll } from '$lib/posts/api';
   import { pollSelectionIsFull } from '$lib/posts/pollVote';
@@ -147,7 +148,7 @@
           </div>
           <div class="min-w-0 flex-1">
             <h4 class="text-text-main text-base leading-snug font-bold">
-              {poll.question}
+              <EmojiText text={poll.question} />
             </h4>
             <div class="mt-1.5 flex flex-wrap items-center gap-2">
               {#if poll.multipleChoice}
@@ -249,7 +250,7 @@
                     neighbours (2026-09-23).
                   -->
                   <span class="text-text-main text-sm leading-snug font-bold wrap-break-word">
-                    {option.label}
+                    <EmojiText text={option.label} />
                   </span>
                 </div>
 

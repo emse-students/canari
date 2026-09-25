@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { portal } from '$lib/actions/portal';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -103,12 +104,12 @@
     onmouseleave={scheduleHide}
   >
     <p class="text-2xs mb-1.5 font-bold tracking-wide text-white/60 uppercase">
-      {emoji}{#if label}&nbsp;{label}{/if}
+      <EmojiText text={emoji} />{#if label}&nbsp;{label}{/if}
     </p>
     {#if names.size > 0}
       <ul class="space-y-0.5">
         {#each userIds as id (id)}
-          <li class="truncate">{names.get(id) ?? id}</li>
+          <li class="truncate"><EmojiText text={names.get(id) ?? id} /></li>
         {/each}
       </ul>
     {:else}

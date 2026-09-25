@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     ChevronLeft,
     LockKeyhole,
@@ -170,7 +171,7 @@
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
-      {effectiveDisplayName}
+      <EmojiText text={effectiveDisplayName} />
     </h2>
 
     {#if isChannel}

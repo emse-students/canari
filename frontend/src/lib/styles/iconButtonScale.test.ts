@@ -166,6 +166,10 @@ const MARK = '@@ICON@@';
 function isIconOnly(body: string): boolean {
   let s = body;
   s = withoutComments(s);
+  // `EmojiText` is TEXT - an emoji a reader reads, drawn as Noto's picture - never an icon. Before
+  // 2026-09-25 those buttons held `{emoji}` and read as text here; wrapping it in a component must
+  // not turn a reaction button into an icon button (docs/wiki/frontend/emoji.md).
+  s = s.replace(/<EmojiText\b[^>]*\/>/g, 'text');
   s = s.replace(/<svg\b[\s\S]*?<\/svg>/g, MARK);
   s = s.replace(/<[A-Z][\w.]*\b[^>]*\/>/g, MARK);
   s = s.replace(/<span\b[^>]*sr-only[^>]*>[\s\S]*?<\/span>/g, '');

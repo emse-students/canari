@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     ChevronDown,
     ChevronUp,
@@ -20,20 +21,12 @@
   import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import PostMentionLink from './PostMentionLink.svelte';
-  import PostCodeBlock from './PostCodeBlock.svelte';
-  import PostCodespan from './PostCodespan.svelte';
+  import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-
-  const mentionRenderers = {
-    link: PostMentionLink,
-    code: PostCodeBlock,
-    codespan: PostCodespan,
-  };
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -393,7 +386,7 @@
             href="/profile/{encodeURIComponent(comment.userId)}"
             class="text-text-main mb-0.5 block text-xs font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
           >
-            {getCommentAuthorName(comment)}
+            <EmojiText text={getCommentAuthorName(comment)} />
           </a>
           {#if isReply}
             <!-- "In reply to" badge on rendered replies. -->
@@ -403,7 +396,7 @@
                 class="text-text-muted text-2xs mb-1 flex items-center gap-1 font-semibold opacity-75"
               >
                 <CornerDownRight size={11} />
-                {getCommentAuthorName(parentComment)}
+                <EmojiText text={getCommentAuthorName(parentComment)} />
               </span>
             {/if}
           {/if}
@@ -418,7 +411,7 @@
             >
               <SvelteMarkdown
                 source={preprocessPostMarkdown(comment.text)}
-                renderers={mentionRenderers}
+                renderers={POST_MARKDOWN_RENDERERS}
                 options={{ gfm: true, breaks: true }}
               />
             </div>

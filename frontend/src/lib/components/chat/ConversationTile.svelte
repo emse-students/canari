@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Hash } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -183,7 +184,7 @@
     <div class="mb-0.5 flex items-center justify-between gap-3">
       <!-- Conversation name -->
       <span class="text-text-main truncate text-sm {unreadCount > 0 ? 'font-bold' : 'font-bold'}">
-        {effectiveDisplayName}
+        <EmojiText text={effectiveDisplayName} />
       </span>
 
       <!-- Badges area (unread, sync) -->
@@ -221,7 +222,7 @@
         ? 'text-text-main font-semibold'
         : 'text-text-muted opacity-90'}"
     >
-      {previewText || m.chat_e2e_established_preview()}
+      <EmojiText text={previewText || m.chat_e2e_established_preview()} />
     </div>
   </div>
 </button>

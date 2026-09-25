@@ -3,9 +3,7 @@
   import type { PostEntity, PostMediaRef } from '$lib/posts/api';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
-  import PostMentionLink from './PostMentionLink.svelte';
-  import PostCodeBlock from './PostCodeBlock.svelte';
-  import PostCodespan from './PostCodespan.svelte';
+  import { POST_MARKDOWN_RENDERERS as renderers } from './postMarkdownRenderers';
   import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
@@ -70,8 +68,6 @@
     if (lightboxIndex === null || lightboxMedia.length === 0) return;
     lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
-
-  const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
 
   const isTruncatable = $derived(!fullContent && (post.markdown?.length ?? 0) > MAX_CHARS);
   const rawMarkdown = $derived(

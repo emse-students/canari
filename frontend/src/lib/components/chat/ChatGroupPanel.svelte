@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
   import {
     Clock,
@@ -245,7 +246,7 @@
     {/if}
     <div class="min-w-0 flex-1">
       <div class="text-text-main mb-1 truncate text-base font-bold">
-        {effectiveDisplayName}
+        <EmojiText text={effectiveDisplayName} />
       </div>
       <div
         class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold tracking-wider uppercase"
@@ -575,7 +576,7 @@
   <div class="space-y-5 px-1">
     <p class="text-text-muted text-sm leading-relaxed font-medium">
       {m.chat_group_invite_description_prefix()}
-      <span class="text-text-main font-bold">{effectiveDisplayName}</span>
+      <span class="text-text-main font-bold"><EmojiText text={effectiveDisplayName} /></span>
       {m.chat_group_invite_description_suffix()}
     </p>
 

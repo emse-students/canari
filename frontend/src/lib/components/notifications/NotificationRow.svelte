@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     AtSign,
     CornerDownLeft,
@@ -171,7 +172,7 @@
     >
       {#if notif.type === 'reaction'}
         <span class="leading-none" style:font-size="{glyph}px"
-          >{reactionTypeToEmoji(notif.text)}</span
+          ><EmojiText text={reactionTypeToEmoji(notif.text)} /></span
         >
       {:else if notif.type === 'mention'}
         <AtSign size={glyph} strokeWidth={2.75} />
@@ -205,7 +206,9 @@
       colour carries is "have I seen this" and nothing else.
     -->
     <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
-      <span class="font-semibold">{notif.actorName || m.notif_actor_unknown()}</span>
+      <span class="font-semibold"
+        ><EmojiText text={notif.actorName || m.notif_actor_unknown()} /></span
+      >
       {#if notif.type === 'reaction'}
         {m.notif_reaction_text()}
       {:else if notif.type === 'mention'}
@@ -213,7 +216,7 @@
       {:else if notif.type === 'reply'}
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
-        {bodyText}
+        <EmojiText text={bodyText} />
       {:else if isEventNotif}
         <!-- Built HERE, in the reader's own locale, from a type and a title - never printed back
              from a sentence the server composed. That is the whole repair. -->
@@ -228,13 +231,15 @@
                 : notif.type === 'event_pending'
                   ? m.notif_event_pending_text()
                   : m.notif_event_deleted_text()}
-        <span class="italic">{eventTitle}</span>{#if eventReason}&#32;&#8212; {eventReason}{/if}
+        <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
+            text={eventReason}
+          />{/if}
       {:else if isPostNotif}
         {m.notif_post_text()}
-        <span class="italic">{bodyText}</span>
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else}
         {m.notif_comment_text()}
-        <span class="italic">{bodyText}</span>
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {/if}
     </p>
     <!--

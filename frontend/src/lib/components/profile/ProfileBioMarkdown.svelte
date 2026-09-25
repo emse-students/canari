@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import PostMentionLink from '$lib/components/posts/PostMentionLink.svelte';
-  import PostCodeBlock from '$lib/components/posts/PostCodeBlock.svelte';
-  import PostCodespan from '$lib/components/posts/PostCodespan.svelte';
+  import { POST_MARKDOWN_RENDERERS as renderers } from '$lib/components/posts/postMarkdownRenderers';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
 
@@ -30,7 +28,6 @@
   });
 
   const rendered = $derived(preprocessPostMarkdown(source.trim()));
-  const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
 
   /**
    * Heading sizes are `em`, not `rem`, even in the non-compact case: several callers shrink this

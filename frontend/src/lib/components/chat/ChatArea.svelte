@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
   import {
@@ -1172,7 +1173,7 @@
                     void navigateToMessageEnsureLoaded(pid);
                   }}
                 >
-                  {pinnedPreview(pid) ?? m.chat_pinned_message_default_label()}
+                  <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
                 </button>
                 {#if onTogglePin}
                   <button

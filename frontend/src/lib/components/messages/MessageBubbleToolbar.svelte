@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Reply,
     Forward,
@@ -319,7 +320,7 @@
             aria-pressed={isActive}
             title={m.msg_react_with_emoji({ emoji })}
           >
-            {emoji}
+            <EmojiText text={emoji} />
           </button>
         {/each}
         {#if onToggleEmojiPicker}

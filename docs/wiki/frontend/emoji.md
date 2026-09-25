@@ -64,6 +64,27 @@ round-trips), and Firefox is known to do the same. `Selection.toString()` does N
 why the clipboard, not the selection, was measured. **WebKit's copy is unmeasured** - owed on the
 iPhone, and not written against before it is seen.
 
+### Where the pictures are drawn - and the rule for a new surface
+
+**Any user-written text printed into the page goes through `EmojiText`** (or reaches it through one
+of the three chokepoints below); an app string from Paraglide, a count and anything in an attribute
+(`title`, `aria-label`, `alt`) stay text - an attribute cannot hold a picture, and the platform glyph
+there is expected.
+
+| Chokepoint | Covers |
+| --- | --- |
+| `MessageInlineText` (and the search `<mark>` beside it in `MessageTextBody`) | message bodies, media captions, search hits |
+| `POST_MARKDOWN_RENDERERS.rawtext` (`postMarkdownRenderers.ts`, the ONE renderer set for posts, comments and bios - it was three copies) | every Markdown leaf of prose; code blocks and inline code keep characters |
+| `EmojiText` directly | reply quotes and the composer's reply preview, pinned messages, conversation names and previews, mention chips, system lines, every reaction surface (pills, quick reactions, the mobile sheet, the reactors panel, post reactions), notifications, poll questions and options, post and comment authors, community, salon and user names, toasts |
+
+`postMarkdownRenderers.svelte.test.ts` proves the `rawtext` override is REACHED (the library honours
+it only because it looks for one), with a control: without the key, the picture count fails.
+`iconButtonScale.test.ts` reads `<EmojiText />` as text, so a reaction button stays a text button.
+
+**Deliberately NOT pictures**: the composer while typing (decided with the user), the message edit
+`<textarea>` and comment edit `<input>` (form fields cannot hold one), the OS notification shade and
+anything else the platform draws.
+
 ### The gate
 
 `check-emoji-coverage.mjs` (in `bun run build`) now checks the pictures first, importing the runtime's
