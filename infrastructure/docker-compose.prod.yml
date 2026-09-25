@@ -476,7 +476,11 @@ services:
       # `frontend/.env` before `bun run build`). They are gone - all three took their value from
       # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
     ports:
-      - "${FRONTEND_HOST_PORT:-80}:80"
+      # 127.0.0.1 ONLY, as dev already does. The host's own nginx is the single public entry point
+      # and reaches this over the loopback; publishing on 0.0.0.0 offered it to every other tenant
+      # of a machine this project does not own. The default is the shared host's real port, not 80,
+      # which belongs to that nginx - see `compute_frontend_host_port` in deploy/render-env.sh.
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:80"
     depends_on:
       frontend-ssr:
         condition: service_started

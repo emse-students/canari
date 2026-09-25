@@ -162,8 +162,15 @@ transform_value() {
 # The lesson is the shape, not the numbers: an "add it if absent" default is only a default when the
 # key can actually be absent. Computed here instead, so ONE place decides and `render-env.sh` upserts
 # it over whatever the template said.
+#
+# PRODUCTION IS 8081 AND NOT 8080, AND THAT IS NOT A PREFERENCE: on the shared host, CrowdSec's
+# Local API has held 127.0.0.1:8080 since 2026-09-22, so a publish of 0.0.0.0:8080 fails outright
+# with `bind: address already in use`. 8080 was correct for as long as production had a machine to
+# itself; the move on 2026-09-24 started the frontend by hand on 8081 and taught nginx 8081 in
+# `canari.conf` and `canari-prod.conf`, and nothing brought this function along - so the first
+# AUTOMATED production deploy after the move (v0.18.23) took production down. Do not "tidy" it back.
 compute_frontend_host_port() {
-  if [ "$ENVIRONMENT" = "dev" ]; then printf '3080'; else printf '8080'; fi
+  if [ "$ENVIRONMENT" = "dev" ]; then printf '3080'; else printf '8081'; fi
 }
 
 # Garage's S3 API and admin ports. Published on 127.0.0.1 only, on both estates, and offset for dev.

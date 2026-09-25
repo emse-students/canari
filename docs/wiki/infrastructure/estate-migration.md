@@ -355,25 +355,37 @@ Measured 2026-09-25, and it revises the row above rather than adding to it.
 carries - and there are eight, not five: `gala.conf` (2019) and `mep.conf` (2021) are co-tenant
 sites this project does not own, alongside `portail-etu-new.conf`.
 
-**The LOG-PARSING half reaches only what writes to the shared `access.log`.** CrowdSec's acquisition
-names exactly `/var/log/nginx/access.log` and `/var/log/nginx/error.log`. Of our vhosts only
-`canari.conf` writes there; `canari-prod.conf`, `canari-dev.conf`, `cercle.conf` and
-`authentik.conf` each write to their own file, which nothing parses. So every behavioural scenario -
-`http-generic-bf` included - is blind to them.
+**The LOG-PARSING half reached only what writes to the shared `access.log`, AND IT WAS EXTENDED THE
+SAME DAY.** CrowdSec's acquisition named exactly `/var/log/nginx/access.log` and
+`/var/log/nginx/error.log`. Of our vhosts only `canari.conf` writes there; `canari-prod.conf`,
+`canari-dev.conf`, `cercle.conf` and `authentik.conf` each write to their own file, so every
+behavioural scenario - `http-generic-bf` included - was blind to them. A new
+`/etc/crowdsec/acquis.d/canari.yaml` now adds `authentik.access.log`, `canari-prod.access.log` and
+`cercle.access.log` with the `nginx` label, and `cscli metrics` confirms all three being read
+(authentik 5 lines, canari-prod 72, cercle 3 within minutes of the reload). `canari-dev.access.log`
+is DELIBERATELY excluded: dev is served only through the relay and still shows one address for every
+visitor, so parsing it buys nothing and risks everything.
 
-**AND THE LEGACY PATH COULD NOT BE ADDED EVEN IF SOMEONE WANTED TO, WHICH IS THE POINT.**
-`canari-prod.access.log` carries **11 935 requests from `10.0.0.3` against 1 from a real client**:
-the tunnel relay is the source address of essentially all of it, because nothing sets `real_ip`
-there. Pointing CrowdSec at that file would hand it one address standing for every visitor - the
-first abusive request bans the relay and takes the whole legacy hostname down with it. `access.log`,
-by contrast, carries genuine client addresses (Googlebot, a Sentry prober, campus and home IPs), so
-`canari.emse.fr` is the one Canari name CrowdSec can reason about correctly today.
+**THE LEGACY PATH COULD NOT BE ADDED UNTIL `real_ip` WAS SET, AND THAT ORDERING IS THE LESSON.**
+`canari-prod.access.log` carried **11 935 requests from `10.0.0.3` against 1 from a real client**:
+the tunnel relay was the source address of essentially all of it, because nothing set `real_ip`
+there. Pointing CrowdSec at that file in that state would have handed it one address standing for
+every visitor - the first abusive request bans the relay and takes the whole legacy hostname down
+with it, a self-inflicted outage produced by switching on a protection. So `real_ip` went FIRST:
+`canari-prod.conf`, `authentik.conf` and `cercle.conf` now carry `set_real_ip_from 10.0.0.3;`
+(the connector), `set_real_ip_from 127.0.0.1;`, `real_ip_header X-Forwarded-For;` and
+`real_ip_recursive on;`, and only then was the acquisition widened. **The trusted address is the
+CONNECTOR's, not the service's own VM**: the first attempt trusted `10.0.0.7` on authentik and
+`10.0.0.6` on cercle - the VMs those services used to run on - and the logs kept showing `10.0.0.3`,
+which is what public traffic actually arrives from. `realip` runs in nginx's POST_READ phase, ahead
+of ACCESS, so it also changes what the in-line Lua bouncer sees: the same edit fixes both halves at
+once. `cscli decisions list` carries no ban against any `10.0.0.x` address, which is the check that
+this landed correctly.
 
-**What that leaves genuinely open is narrower than "no rate limiting", and it is about the IdP.**
-Authentik is where a password is actually tried, and `authentik.access.log` is parsed by nothing.
-Bans are also GLOBAL per address on this box, so a decision taken on Canari traffic already closes
-the co-tenant sites to that address, and theirs closes ours. Both are decisions for the machine's
-owner, not one-line ports ([backlog](../backlog.md)).
+**What that leaves genuinely open is narrower still, and it is not ours to close.** Bans are GLOBAL
+per address on this box, so a decision taken on Canari traffic already closes the co-tenant sites
+`gala`, `mep` and `portail-etu-new` to that address, and theirs closes ours. That is a decision for
+the machine's owner, not a one-line port ([backlog](../backlog.md)).
 
 **REFUTED: an nginx `proxy_cache` substitute for the lost edge cache.** It was proposed here and
 approved, then refused by its own measurement: timed on the host, the origin answers the SSR shell
@@ -381,6 +393,31 @@ in 2.6-5.2 ms and an immutable asset in 0.8-1.2 ms, so a cache one hop above it 
 milliseconds of local work and not one metre of the network path Cloudflare's edge actually
 shortened. The reasoning, and what would have to be true for it to come back, are on
 [backlog](../backlog.md).
+
+#### THE LEGACY HOSTNAME WAS ANSWERING 502 AT THE ORIGIN AND THE EDGE CACHE HID IT, 2026-09-25
+
+Found while probing something else, which is the only reason it was found at all.
+`curl` straight at the origin for `canari-emse.fr` returned **502**, while a browser loading
+`canari-emse.fr` got a perfectly normal page: Cloudflare was serving the shell from its own cache
+and re-validating rarely enough that nobody had yet met a miss. `dev.canari-emse.fr`, which has no
+warm cache to hide behind, was visibly 502 too - the same defect, one estate where it showed.
+
+**Cause**: `upstream sent too big header while reading response header from upstream`, 30 of them in
+the error log. SvelteKit emits a `Link: <...>; rel=modulepreload` response header listing every
+chunk of the route, ~7.5 KB on the app shell, against nginx's default `proxy_buffer_size` of 4 KB.
+The vhost written LAST, `canari.conf`, already carried the three lines that fix it, because it was
+written after that lesson. The four written EARLIER did not: `canari-prod.conf` and `canari-dev.conf`
+on the target host, and `canari-relay-prod.conf` / `canari-relay-dev.conf` on the old box, which
+proxy on to the target and hit the same oversized header a second time.
+
+**Fix**: `proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;` added to all
+four, `nginx -t && systemctl reload nginx` on both hosts, backups kept as `*.bak-2026-09-25-*`. Both
+origins went 502 -> 200, verified with `curl` at the origin rather than through the edge.
+
+**Two things this is evidence for.** A CDN in front of a broken origin does not merely hide the
+breakage, it removes the signal that would have reported it - so an origin is probed AT the origin,
+never through its cache. And a correct setting on the vhost you are looking at says nothing about
+the four you are not: this fix existed, in this repo, on one file out of five.
 
 ### THE FRONTEND BAKES ONE ABSOLUTE ORIGIN PER BUILD, AND PHASE 2 GAVE IT TWO - LOGIN BROKE, 2026-09-25
 
@@ -812,6 +849,46 @@ is the only copy from this point on. Verified before deleting: every name matche
 inventory exactly, none of it Authentik/`miconnect` - a separate stack, on a separate old VM, kept
 alive deliberately as a frozen rollback copy
 ([authentik README](../../../infrastructure/authentik/README.md)).
+
+### THE MOVE WAS FINISHED BY HAND, SO THE FIRST AUTOMATED DEPLOY TOOK PRODUCTION DOWN - 2026-09-25
+
+`v0.18.23` is the first production release cut after the 2026-09-24 move. Every image built, both
+stores took the version, and the estate came up - except `frontend`, which died on
+`driver failed programming external connectivity ... listen tcp4 0.0.0.0:8080: bind: address already
+in use`. Nothing was serving 8081 afterwards, so the host nginx answered `502` on BOTH
+`canari.emse.fr` and `canari-emse.fr`. Production was down for roughly fifteen minutes.
+
+**The cause is the move's own seam.** `compute_frontend_host_port()` in
+`infrastructure/deploy/render-env.sh` returns `8080` for production, and that was correct for as
+long as production had a machine to itself. On the shared host, CrowdSec's Local API has held
+`127.0.0.1:8080` since 2026-09-22 - before Canari arrived. The manual migration worked around it
+without noticing: the frontend was started by hand on **8081**, and `canari.conf` and
+`canari-prod.conf` were written to proxy to 8081. The deploy script was never brought along, and
+nothing ran it until a release did.
+
+**What the machinery got right, and it is worth naming.** `deploy-environment.sh` has a retry that
+removes a stale container holding the port - deliberately allowlisted to this project's own images.
+It looked, found no container (the holder is a systemd service, not a container), refused to touch
+anything and stopped with `resolve the host port 8080 conflict and redeploy`. A denylist would have
+killed CrowdSec. And `release-shipped.sh` refused to move the `prod-released` marker, so the release
+did not report itself shipped while production served the previous one - the check written after
+`v0.16.2` and `v0.16.3` did exactly its job.
+
+**The fix, in three files and one gate.** Production's port is `8081`, in `render-env.sh` (the one
+decider), in `.env.example` and as `DEFAULT_FRONTEND_PORT` in `deploy-environment.sh` - where it had
+been `80`, a fallback that on this host would have collided with the host's own nginx instead. The
+prod compose now publishes on `127.0.0.1` like dev already did, rather than offering the container
+to every other tenant of a machine we do not own. And `deploy-env.test.sh` gained a MEASURED list of
+host ports this machine has already given away (`22`, `80`, `443`, `8080`, each with the reason),
+asserted against every rendered port of both estates. The pre-existing test only asserted that prod
+and dev do not collide with EACH OTHER - which is the 2026-09-01 defect, and not this one.
+
+**Recovery, and why it was not a re-run.** `serve-prod.yml` does `git reset --hard <released sha>`,
+so re-running the failed job replays the released commit and would have failed identically. The
+estate was restored by recreating `frontend` with the correct port, and the host's `.env` and prod
+compose were corrected in place so they match what the fix will render. The `prod-released` marker
+is deliberately left stale: production serves `0.18.23`, but the pipeline did not put it there, and
+the marker is a statement about the pipeline.
 
 ## 7. Phase 2 - the names
 

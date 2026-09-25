@@ -216,6 +216,40 @@ for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
   fi
 done
 
+# AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
+# asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
+# - and it is not what the 2026-09-25 outage was. Production asked for 8080, CrowdSec's Local API
+# had held 127.0.0.1:8080 since 2026-09-22, and the frontend container could not bind at all: the
+# first automated production deploy after the move to the shared host took production down.
+#
+# This list is MEASURED on that host, not assumed, and it is the only thing here that can go stale.
+# Re-measure it with `ss -lntp` on the target and correct it; a port removed from the host belongs
+# out of this list, and a new listener belongs in it. It cannot be derived - the machine is not
+# ours and CI cannot reach it.
+# One line per port, "<port> <reason>", looked up with awk - no dynamic variable names, no loop
+# whose result would have to escape a subshell.
+reserved_host_ports() {
+  cat <<'PORTS'
+22 the DSI sshd
+80 the host nginx, which fronts all eight vhosts
+443 the host nginx, which fronts all eight vhosts
+8080 CrowdSec's Local API
+PORTS
+}
+
+for env_name in prod dev; do
+  for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
+    value="$(port_of "$TMP/ports-$env_name.env" "$key")"
+    [ -n "$value" ] || continue
+    why="$(reserved_host_ports | awk -v p="$value" '$1 == p { $1 = ""; sub(/^ /, ""); print }')"
+    if [ -n "$why" ]; then
+      fail "$env_name asks for host port $value, which belongs to $why on the shared host - the container cannot bind it and the estate will not come up"
+    else
+      pass "$env_name's $key ($value) is not a port the shared host has already given away"
+    fi
+  done
+done
+
 # THE TEMPLATE MUST NOT BE WHAT DECIDES, which is the defect above stated as a property: dev's
 # rendered value has to differ from what `.env.example` says, because the template carries
 # production's numbers and dev's file is built from it.
