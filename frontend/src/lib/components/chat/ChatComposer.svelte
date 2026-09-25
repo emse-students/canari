@@ -380,6 +380,34 @@
     }
   }
 
+  /**
+   * THE BADGE ENDS WHEN THE DRAG ENDS, WHEREVER THAT HAPPENS (user, 2026-09-25: *"l'indicateur de
+   * depot des fichiers reste si on annule le depot"*).
+   *
+   * The panel's own handlers miss two endings: a drop on the EDITOR, which stops propagation so the
+   * file is attached once rather than twice (`MentionComposerInput`), and a drag that ends elsewhere -
+   * cancelled, or carried out of the window - whose closing `dragleave` has no `relatedTarget` and
+   * fires wherever the pointer was. So the end is read at the WINDOW: `drop` in the capture phase
+   * (before the editor stops it), `dragleave` with nowhere next, and `dragend` for an in-page drag.
+   */
+  $effect(() => {
+    if (isMobileViewport) return;
+    const endDrag = () => {
+      isDragOver = false;
+    };
+    const onWindowDragLeave = (event: DragEvent) => {
+      if (event.relatedTarget === null) endDrag();
+    };
+    window.addEventListener('drop', endDrag, true);
+    window.addEventListener('dragleave', onWindowDragLeave);
+    window.addEventListener('dragend', endDrag);
+    return () => {
+      window.removeEventListener('drop', endDrag, true);
+      window.removeEventListener('dragleave', onWindowDragLeave);
+      window.removeEventListener('dragend', endDrag);
+    };
+  });
+
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDragOver = false;
