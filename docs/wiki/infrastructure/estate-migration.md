@@ -1068,27 +1068,55 @@ reading the paragraphs below and concluding the redirect is a defect.
 **Two constraints the decision does not remove, both load-bearing.**
 
 1. **It is NOT a blanket 301 on the vhost.** Installed native apps keep talking to
-   `canari-emse.fr` for `/api/`, `/ws` and `/media/`, and their universal-link association files
-   under `/.well-known/` must keep answering there too - an app already on a phone cannot be told
-   otherwise. Only document navigation is redirected; every path an app uses stays proxied.
+   `canari-emse.fr` for everything under `/api/` (the WebSocket is `/api/ws`, media is `/api/media`
+   - there is no separate `/ws` or `/media/` prefix, which this paragraph used to claim), and their
+   universal-link association files under `/.well-known/` must keep answering there too - an app
+   already on a phone cannot be told otherwise. Only document navigation is redirected; every path
+   an app uses stays proxied.
 2. **The new host must WORK before the redirect is armed.** Arming it while
    `canari.emse.fr` still had the `pin-salt` defect would have sent every web user to a host where
    their session could not unlock at all - a worse outcome than the state loss the redirect was
    accepted for. The ordering is: ship the same-origin fix, verify an unlock on the new host, then
    redirect.
 
-**Measured 2026-09-24: nothing in this repository or on the target's nginx does this today.**
-`canari-prod.conf` and `canari.conf` carry no cross-host redirect in either direction, and
-`DEFAULT_PUBLIC_APP_ORIGIN` in `publicAppUrl.ts` deliberately stays `canari-emse.fr` - outbound share
-links are not migrated either. The "`canari-emse.fr` keeps answering with 301s indefinitely" line
-above is about its ordinary HTTP-to-HTTPS upgrade, not a cross-domain one.
+**ARMED 2026-09-25, after the user verified the new host with a real unlock** - PIN accepted, and the
+history recovered in a second window from a session on the old name. `v0.18.25` was the first
+release to reach the site with the same-origin fix (`v0.18.24` reached both stores and not the web,
+[below](#the-name-is-not-in-the-code-of-the-other-four-projects---it-is-an-environment-variable-and-moving-the-default-reaches-nothing-2026-09-25)).
 
-**The rule going forward: no server-side redirect and no client-side canonicalization may ever send
-an existing `canari-emse.fr` browser session to `canari.emse.fr`.** `canari.emse.fr` may exist,
-resolve and be linked to for NEW visits, but an existing session's origin is not something this
-migration can or should move. If the old host is ever decommissioned, browser users need an explicit,
-in-app warning and a chance to be re-added before their storage becomes unreachable - never a silent
-redirect.
+The redirect lives in `/etc/nginx/sites-available/canari-prod.conf` on the target host, the vhost
+whose `server_name` is `canari-emse.fr`. Like every vhost there it is NOT in this repository, so this
+paragraph is its record; the pre-edit copy is `canari-prod.conf.bak-2026-09-25-before-redirect`.
+Two locations:
+
+- `location ~ ^/(api/|\.well-known/|_app/|fonts/|emoji/)` - **proxied to `127.0.0.1:8081`,
+  never redirected**. `/api/` is every call an installed app makes (a cross-origin `fetch` is
+  refused by CORS, a WebSocket does not follow a redirect); `/.well-known/` is where App Links and
+  Universal Links are verified, and Apple's CDN does not follow a redirect, so losing it would unlink
+  every installed iOS app; `/_app/`, `/fonts/` and `/emoji/` are what a tab ALREADY OPEN on the old
+  name lazy-loads - a module script across origins needs CORS headers the canonical host does not
+  send, so redirecting them would break a live session mid-use instead of at its next navigation.
+- `location /` - **`302` to `https://canari.emse.fr$request_uri`, with `Cache-Control: no-store`**.
+  Path and query are kept. Not a `301`: a 301 is cached by every browser that sees it and by the
+  edge, and cannot be recalled if the redirect turns out wrong.
+
+Measured through Cloudflare the same hour: `/`, `/posts?x=1` and `/auth/callback` answer `302` to
+the same path on the new name; `/api/version`, the calendar `feed.ics`, both association files, a
+`/_app/` chunk, a font and an emoji SVG answer `200`; `/api/mls/...` answers `401` and an `/api/ws`
+handshake `401`, both from the backend. The native OIDC callback is `fr.emse.canari://callback`, a
+custom scheme, so redirecting `/auth/callback` on the old name touches no app login. The web build
+has no service worker, so no cached shell can pin a browser to the old origin.
+
+**OWED: promote it to `301`**, once it has been seen in use. A `302` tells a search engine the move is
+temporary, so it transfers no ranking - the prudence has an SEO price and must stay short. Then the
+user declares the change of address in Google Search Console (both names verified in one account),
+a one-off gesture the [SEO item](../backlog.md) carries.
+
+**What stays true, and what does not.** The IndexedDB measurement above is unchanged: a browser
+arriving on the new name from the old one still starts as a new device. What was withdrawn is the
+rule that no redirect may ever do that - it was the user's to overrule, and they did. If the old name
+is ever decommissioned, installed apps still need a version that bakes the new one to be the floor
+(`minClientVersion`) first; browsers no longer do.
 
 ### THE NAME IS NOT IN THE CODE OF THE OTHER FOUR PROJECTS - IT IS AN ENVIRONMENT VARIABLE, AND MOVING THE DEFAULT REACHES NOTHING, 2026-09-25
 
