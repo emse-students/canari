@@ -14,6 +14,14 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.25] - 2026-09-25
+
+### Fixed - the production web build refused `canari.emse.fr` and `v0.18.24` never reached the site
+
+`build.yml` checked the baked backend against `DOMAIN: canari-emse.fr`, a name `serve-prod.yml` uses
+for the LEGACY apex; once `BASE_URL` moved, the stable was refused as `unknown` while both stores took
+it. Now `PROD_DOMAIN: canari.emse.fr` ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
+
 ## [0.18.24] - 2026-09-25
 
 ### Changed - `canari.emse.fr` is the canonical name everywhere, and the old one is compatibility only
