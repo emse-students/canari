@@ -311,6 +311,55 @@ which the old `.pf-c-brand` rule never centred (10 px left, 105 px right), and t
 120 px with 64 px of top padding, so a taller logo spills onto the title. Effects on the error page
 after the pass: 0 glow, 0 blur, 0 gradient on components; the background blobs stay (identity). A rule that changes a PatternFly wrapper's `display` has to be checked
 against every flow LAYOUT that reuses the wrapper, not just the login stage it was written for.
+The flat file on `main` (#1102) is LIVE since 2026-09-25 evening, applied through `ak shell`; the
+signed-out fallback flow on the Mi 9T reads 0 glow, 0 blur, 0 gradient, frameless and centred.
+
+## Signing in to MiConnect lands on Canari, and admins keep the admin UI (2026-09-25)
+
+The user asked that signing in to Authentik itself go to Canari by default. The brand's
+`default_application` was ALREADY Canari and did nothing: authentik only redirects a user whose
+`type` is external or a service account (`authentik/core/views/interface.py`, both
+`BrandDefaultRedirectView` for `/` and the user interface's `redirect_to_app`), and every MiConnect
+account was `internal` - `miconnect-enrollment-write` created them so. Changed that day, with the
+user's go-ahead:
+
+- the 594 accounts that are internal AND in no superuser group are `external`; the 5 admins stay
+  `internal`, so `https://auth.canari-emse.fr/if/admin/` still opens for them, unredirected - that
+  is the bypass;
+- `miconnect-enrollment-write.user_type` is `external`, so a new sign-up lands on Canari too;
+- the Canari application's `meta_launch_url` is `https://canari.emse.fr` (it named the old apex).
+
+An external account cannot open authentik's user interface at all (profile, sessions): it is sent
+to the default application every time. **Rollback**: set those accounts back to `internal` - the
+list of primary keys was printed by the script and kept out of this public repo - and the
+enrollment stage back to `internal`. Anything that grants admin must go through a superuser GROUP,
+since the predicate that kept the 5 internal was group membership.
+
+## One language: French, in the ecosystem's "tu" (2026-09-25)
+
+Flow titles and prompt labels are rows in authentik's DB, not locale strings, so the French locale
+never translated them. Fourteen flow titles and eight prompts were set that day through `ak shell`
+(every replaced value printed first, for rollback): "Connexion à MiConnect", "Redirection vers
+%(app)s", "Tu es déconnecté de %(app)s.", "Bienvenue sur MiConnect ! Choisis un nom d'utilisateur.",
+"Modifier tes informations", "Mot de passe", "Nom d'utilisateur", "E-mail", "Langue"... and the
+promotion prompt's "(où année ..." became "ou". **The register is "tu"**, like Sky, Le Cercle and the
+custom error text of this very flow - a first pass in "vous" was corrected the same evening.
+
+`miconnect-auth.denied_action` is `continue` (was `message_continue`): opening the flow while
+already signed in no longer stops on "Le flux ne s'applique pas à l'utilisateur actuel". Not yet
+observed signed in on a phone.
+
+Deliberately left:
+
+- **"Elève" keeps its missing accent.** It is a radio-button VALUE, not a label: the `is-student`
+  expression policy compares `custom_statut == "Elève"`, and `Merge attributes` copies it into
+  `school_status`, which the applications receive. Correcting it is a coordinated change across the
+  policy and every consumer, not a typo fix.
+- **"Go back"** on the access-denied stage is authentik's own UI string, untranslated in its French
+  bundle (2026.8); nothing in this DB carries it.
+- **The static prompt `Alumni Force Link Continue`** (label "ni ça", field key a joke): where, if
+  anywhere, the label renders is still unread.
+- `initial-setup` keeps "Welcome to authentik!" - only the first admin ever sees it.
 
 ## Database and backup
 
