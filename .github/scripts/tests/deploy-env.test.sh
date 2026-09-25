@@ -226,7 +226,8 @@ done
 # Re-measure it with `ss -lntp` on the target and correct it; a port removed from the host belongs
 # out of this list, and a new listener belongs in it. It cannot be derived - the machine is not
 # ours and CI cannot reach it.
-# One line per port, "<port> <reason>", so nothing here needs a dynamically named variable.
+# One line per port, "<port> <reason>", looked up with awk - no dynamic variable names, no loop
+# whose result would have to escape a subshell.
 reserved_host_ports() {
   cat <<'PORTS'
 22 the DSI sshd
@@ -240,17 +241,12 @@ for env_name in prod dev; do
   for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
     value="$(port_of "$TMP/ports-$env_name.env" "$key")"
     [ -n "$value" ] || continue
-    clash=0
-    while read -r reserved why; do
-      [ -n "$reserved" ] || continue
-      if [ "$value" = "$reserved" ]; then
-        fail "$env_name asks for host port $value, which belongs to $why on the shared host - the container cannot bind it and the estate will not come up"
-        clash=1
-      fi
-    done <<PORTS
-$(reserved_host_ports)
-PORTS
-    [ "$clash" = 0 ] && pass "$env_name's $key ($value) is not a port the shared host has already given away"
+    why="$(reserved_host_ports | awk -v p="$value" '$1 == p { $1 = ""; sub(/^ /, ""); print }')"
+    if [ -n "$why" ]; then
+      fail "$env_name asks for host port $value, which belongs to $why on the shared host - the container cannot bind it and the estate will not come up"
+    else
+      pass "$env_name's $key ($value) is not a port the shared host has already given away"
+    fi
   done
 done
 
