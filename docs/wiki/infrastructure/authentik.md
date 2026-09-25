@@ -284,6 +284,13 @@ rule was gated on `input[type='text'|'password'|'email']`, so a field with no `t
 the same "stop scoping, cover the whole flow" fix already applied to the submit button above.
 **Not yet pasted into the live Brand** - it needs the same manual admin-UI step as any edit here.
 
+**`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
+phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turns `ak-locale-select`,
+the header, the card and the footer into ONE ROW; on the error page that row outgrows a 393 px
+viewport and `overflow: hidden` cuts the card's left edge. Open, with the measurement, in
+[backlog](../backlog.md). A rule that changes a PatternFly wrapper's `display` has to be checked
+against every flow LAYOUT that reuses the wrapper, not just the login stage it was written for.
+
 ## Database and backup
 
 The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
