@@ -91,8 +91,7 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
  * `PinVerifier` row for this account - and it hides both remedies the modal can offer: the
  * old-PIN recovery and the reset. `local_state_unopenable` is a LOCAL fact, and the two can be
  * true at once: a `pin-reset` whose server half lands and whose `resetDeviceAsFresh` half does
- * not leaves exactly that pair, and `auth_reset_device_partial` exists because that half can
- * fail. The modal then tells its reader that only a reset restores access, while `isFirstSetup`
+ * not leaves exactly that pair, and that half can fail on its own. The modal then tells its reader that only a reset restores access, while `isFirstSetup`
  * keeps the reset off the screen. Measured on W2, 2026-09-21.
  */
 export function provesLocalStateExists(code: LoginErrorCode): boolean {
