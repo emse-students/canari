@@ -23,14 +23,22 @@ describe('resolveMlsPublicUrls', () => {
     expect(u.historyUrl).toBe('https://app.example');
   });
 
-  it('uses trimmed non-empty env values', () => {
-    import.meta.env.VITE_GATEWAY_URL = ' https://gw.test ';
+  // THE BAKED ORIGIN LOSES TO THE PAGE'S OWN, and this assertion is inverted from what it used to
+  // be. The estate answers on two public hostnames; a build bakes one. Preferring the baked value
+  // is what sent `/api/mls/security/pin-salt` at the legacy origin from a page served by the new
+  // one, where CSP's `connect-src 'self'` refused it and the session could not unlock.
+  it('ignores the baked env values in a real browser and uses the page origin', () => {
+    import.meta.env.VITE_GATEWAY_URL = 'https://gw.test';
     import.meta.env.VITE_DELIVERY_URL = 'https://delivery.test';
-    vi.stubGlobal('window', { location: { origin: 'https://ignored' } });
+    vi.stubGlobal('window', { location: { origin: 'https://served-from.example' } });
     const u = resolveMlsPublicUrls();
-    expect(u.baseUrl).toBe('https://gw.test');
-    expect(u.historyUrl).toBe('https://delivery.test');
+    expect(u.baseUrl).toBe('https://served-from.example');
+    expect(u.historyUrl).toBe('https://served-from.example');
   });
+
+  // The Tauri half of this contract is NOT asserted here on purpose: `import.meta.env` is baked at
+  // transform time, so no test at this level can make the delegate see a different value. It is
+  // covered where the value is an argument - `resolveServiceUrl` in `apiUrl.test.ts`.
 });
 
 describe('assertOkMlsDeliveryResponse', () => {

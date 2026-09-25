@@ -1,4 +1,5 @@
 import { writable, get } from 'svelte/store';
+import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { canari } from '../proto/canari.js';
@@ -591,9 +592,13 @@ export class CallService {
   }
 
   private async connectToSfu(roomId: string) {
-    const callBaseUrl =
-      import.meta.env.VITE_CALL_URL ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
+    // `apiUrl.ts` owns this decision - see `resolveServiceUrl`. Calling is held off behind
+    // CALLS_ENABLED, so this path is not exercised today; it is fixed with its siblings rather
+    // than left as the one copy that still prefers the baked origin.
+    const callBaseUrl = resolveServiceUrl(
+      (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_CALL_URL,
+      ''
+    );
 
     const wsBase = callBaseUrl.replace(/^https?:/, (m: string) =>
       m === 'https:' ? 'wss:' : 'ws:'

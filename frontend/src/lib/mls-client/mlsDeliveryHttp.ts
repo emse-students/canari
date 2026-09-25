@@ -1,28 +1,20 @@
+import { deliveryUrl, gatewayUrl } from '$lib/utils/apiUrl';
+
 /** Resolved public URLs for chat-gateway (WS) and chat-delivery (MLS HTTP). */
 export type MlsPublicUrls = { baseUrl: string; historyUrl: string };
 
 /**
- * Prefer `VITE_GATEWAY_URL` / `VITE_DELIVERY_URL`; fall back to same-origin in the browser
- * (reverse proxy routes `/api/ws` and `/api/mls/`). Empty env strings mean "not configured".
+ * Resolves the gateway and delivery origins through the ONE resolver in `apiUrl.ts`.
+ *
+ * This used to read `VITE_GATEWAY_URL` / `VITE_DELIVERY_URL` first and treat same-origin as their
+ * fallback - the polarity that broke every call once the estate answered on two public hostnames.
+ * It survived the first fix because that fix enumerated `apiUrl.ts` and its two known duplicates
+ * and not the callers that had rebuilt the same logic elsewhere: `/api/mls/security/pin-salt` is
+ * fetched from here, so unlocking a session still addressed the legacy origin and died on CSP
+ * while login itself had started working.
  */
 export function resolveMlsPublicUrls(): MlsPublicUrls {
-  const envGateway = import.meta.env.VITE_GATEWAY_URL;
-  const baseUrl =
-    envGateway && String(envGateway).trim()
-      ? String(envGateway).trim()
-      : typeof window !== 'undefined'
-        ? window.location.origin
-        : 'http://localhost:3000';
-
-  const envHistory = import.meta.env.VITE_DELIVERY_URL;
-  const historyUrl =
-    envHistory && String(envHistory).trim()
-      ? String(envHistory).trim()
-      : typeof window !== 'undefined'
-        ? window.location.origin
-        : 'http://localhost:3010';
-
-  return { baseUrl, historyUrl };
+  return { baseUrl: gatewayUrl(), historyUrl: deliveryUrl() };
 }
 
 /** Throws a descriptive error if the HTTP response status is not 2xx, including up to 300 chars of body. */
