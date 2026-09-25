@@ -1362,3 +1362,39 @@ it fails.
     *MiGallery D1.*
 14. **Every user-visible string through the i18n layer, and every placeholder a message is called
     with exists in it.** *Le Cercle: `stats_rank_value` is called with `{rank}` and has no `{rank}`.*
+
+### Where the chantier stands, and the restart order (paused 2026-09-25 evening)
+
+A session limit stopped two agents mid-task. Everything below is pushed; nothing lives only in a
+scratch directory. The phone checks are done on the Mi 9T (adb reverse to a local rig, or prod).
+
+**Shipped and verified on the phone:** MiGallery v2.3.0 (flat), v2.4.0 (viewer gestures), v2.5.0
+(full-screen viewer, video checked in prod); Sky v1.1.0 + v1.1.1 (Sky Map chrome, opens on my star,
+pinch redraws, no idle redraw) - **v1.1.1 itself is not yet looked at in prod**; Le Cercle dashboard
+(MR !20); MiConnect flat + French + lands on Canari ([authentik](infrastructure/authentik.md)).
+
+**Restart order:**
+
+1. **MiGallery #330 (album page, photos first) is MERGED, UNVERIFIED, UNRELEASED.** Check it on the
+   phone, then a release (bump PR, then `gh release create`, then `gh run rerun` once main's CI is
+   green - the gate refuses a tag cut before it).
+2. **MiGallery theme 3, the grid: branch `feat/photo-grid` (commit `7a6daf0`, justified rows, edge to
+   edge, virtualised) is pushed with NO pull request.** Its agent stopped while restarting the rig.
+   Rebase on main, run the gates, open the PR, verify on the phone, release. Themes 4, 5 and 7 follow
+   ([ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)).
+3. **MiGallery branch `fix/people-v3-and-retries` is a WIP commit, UNTESTED**: `/api/people/people`
+   reads Immich v3's `{people: [...]}` shape (prod runs v3.2.0), and `retry: 1` leaves
+   `vitest.config.ts`. Still owed: two consecutive green `bun run test`, the PR, and the stale CodeQL
+   configurations of deleted workflow names (delete their analyses through the API if only dead
+   workflows are named, otherwise the one settings click goes to the user).
+4. **Sky history purge**: the rehearsal removed all six paths; the user lifts the `main` ruleset, the
+   rewrite is force-pushed on a fresh mirror, the ruleset comes back, and the user sends GitHub
+   Support the request for `refs/pull/*` (text to be written).
+5. **MiConnect**: the three strings and the signed-in observation in [backlog](backlog.md).
+6. **Cleanup last**: the local worktrees (`Sky-*`, `le-cercle-p2`, `MiGallery-*`, `Canari-akfr`), the
+   dev servers on 5173-5178, and the Immich tunnel.
+
+**Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose
+`IMMICH_BASE_URL` was an SSH tunnel to the PRODUCTION Immich; 28 empty `[TEST]` albums landed there
+and were deleted with the user's go-ahead. Since #332 the suite runs on its own disposable database
+with no Immich and no `.env`, so **a local rig may point at the tunnel, a test run never can**.
