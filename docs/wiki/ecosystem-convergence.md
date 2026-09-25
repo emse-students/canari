@@ -1381,20 +1381,17 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
 
 **Restart order:**
 
-1. **MiGallery: the user's seven desktop points (2026-09-26), then the rest of D8.** Open, in the
-   user's order: (1) more room between the album title and its action pill on desktop; (2) the top
-   nav bar should take the pill's translucent look; (3) **Photos CV redesign - yes**: the admin upload
-   panel still comes first (as the album page did before #330), and the user still sees photos
-   overflowing its frame; (4) centring slips - the "Importer une photo" label wraps in the face card,
-   and the rest come from the global rule of item 2; (5) the viewer's title hugs the corner - margins,
-   and a richer "Informations" panel that animates open; (6) "Modifier l'album" is transparent -
-   opaque or blurred backdrop, rework, its scrollbar overlaps other components; (7) the SEO/share
-   image is an old, heavy logo - delete it from the repo and serve the new logo in a light format.
-   Then the rest of D8: Paramètres, admin, the desktop shell (~256 px sidebar, bottom bar only
-   <= 768 px - today it shows up to 1440). Measure each page against the Google Photos app on the Mi
-   9T AND photos.google.com at 1440 first (a public shared-album link opens signed-out). Owed on
-   hardware: the grid pinch and a multi-file share from a selection (v2.7.0), the v2.8.0 albums list
-   in prod.
+1. **MiGallery: two releases the USER publishes, then the rest of D8.** The user's seven desktop
+   points (2026-09-26) are all merged: the new logo everywhere (#346, and Portail-etu #87), bars in
+   the pill's blurred material, dialogs opaque over a blurred page, the viewer's margins and richer
+   Informations panel, the face card (#347), Photos CV like the albums list (#349). Publishing was
+   refused to the agent as a production deploy, so it is the user's: **MiGallery `v2.9.0`** at the
+   bump commit `008d97d` (#348; #349 then goes in the next one, or tag the head once #349 has merged
+   and its CI is green) and **Portail-etu `v1.0.2`** at `c01c775` (it also ships #85, the
+   `canari.emse.fr` links). Then the rest of D8: Paramètres, admin, the desktop shell (~256 px
+   sidebar, bottom bar only <= 768 px - today it shows up to 1440). Measure each page against the
+   Google Photos app on the Mi 9T AND photos.google.com at 1440 first. Owed on hardware: the grid
+   pinch and a multi-file share from a selection (v2.7.0), the albums list and Photos CV in prod.
 2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
    button row that does not state its own alignment - it misaligned the ⋮ menus (#337). Each new
    left-aligned row must state it; consider scoping the global rule.
