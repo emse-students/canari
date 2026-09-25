@@ -243,7 +243,7 @@ jobs:
             APP_URL="$BASE_URL"
             IDP_URL="$AUTHENTIK_URL"
             IDP_CLIENT="$AUTHENTIK_CLIENT_ID"
-            EXPECTED_HOST="canari-emse.fr"
+            EXPECTED_HOST="canari.emse.fr or canari-emse.fr"
           fi
 
           for name in APP_URL IDP_URL IDP_CLIENT; do
@@ -253,9 +253,13 @@ jobs:
             fi
           done
 
+          # BOTH production apexes classify as production. `canari.emse.fr` is the canonical name
+          # since 2026-09-24 and `canari-emse.fr` still answers for apps already installed, so a
+          # build baked against either one IS a production build. `dev.` is matched first because
+          # it is a substring of the legacy apex.
           case "$APP_URL" in
             *"dev.canari-emse.fr"*) URL_ENVIRONMENT=dev ;;
-            *"canari-emse.fr"*) URL_ENVIRONMENT=production ;;
+            *"canari.emse.fr"* | *"canari-emse.fr"*) URL_ENVIRONMENT=production ;;
             *) URL_ENVIRONMENT=unknown ;;
           esac
           if [ "$IS_PRERELEASE" = "true" ] && [ "$URL_ENVIRONMENT" != "dev" ]; then

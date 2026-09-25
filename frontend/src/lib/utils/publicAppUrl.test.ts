@@ -23,14 +23,21 @@ describe('publicAppUrl', () => {
   beforeEach(() => vi.stubEnv('VITE_FRONTEND_URL', ''));
   afterEach(() => vi.unstubAllEnvs());
 
-  it('uses the production origin on the Tauri WebView', () => {
+  // The restore is in a `finally` because it used to sit after the assertion: when this test went
+  // red, `window.location` stayed a plain object with no `href`, and the next two tests failed with
+  // `null` for a reason that had nothing to do with them. A test that poisons its neighbours on
+  // failure hides the one defect it did find.
+  it('uses the canonical origin on the Tauri WebView', () => {
     const prior = window.location;
     Object.defineProperty(window, 'location', {
       configurable: true,
       value: { ...prior, origin: 'https://tauri.localhost' },
     });
-    expect(publicAppUrl('/posts/abc')).toBe('https://canari-emse.fr/posts/abc');
-    Object.defineProperty(window, 'location', { configurable: true, value: prior });
+    try {
+      expect(publicAppUrl('/posts/abc')).toBe('https://canari.emse.fr/posts/abc');
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: prior });
+    }
   });
 
   it('detects canari-emse.fr links', () => {

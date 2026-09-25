@@ -314,6 +314,25 @@ else
     printf '       production: %s\n       render: %s\n' "$want" "$got"
   fi
 
+  # AND THE LEGACY APEX MUST SURVIVE THE SECRET MOVING, which is the case the assertion above
+  # cannot see: it renders with BASE_URL still naming `canari-emse.fr`, so the deduplication in
+  # `compute_allow_origin` collapses both apexes into the seven-entry list production serves today
+  # and the change is invisible. The moment BASE_URL names the canonical apex, dropping the legacy
+  # one would shut the gateway to every browser still on the old host - with no server-side error.
+  canon_out="$TMP/allow-origin-canonical.env"
+  # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
+  render prod "$canon_out" $(prod_env) BASE_URL=https://canari.emse.fr >"$TMP/canon.log" 2>&1 || true
+  canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | head -1)"
+  canon_want="ALLOW_ORIGIN=https://canari.emse.fr,https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
+  if [ "$canon_got" = "$canon_want" ]; then
+    pass "with BASE_URL on the canonical apex, BOTH public names are allowed"
+  else
+    fail "the canonical apex renders an ALLOW_ORIGIN that is not both names"
+    printf '       want: %s
+       got:  %s
+' "$canon_want" "$canon_got"
+  fi
+
   if grep -q '^CALL_E2E_ENCRYPTION=false$' "$out"; then
     pass "CALL_E2E_ENCRYPTION is the literal false, as production has always had"
   else

@@ -1,4 +1,4 @@
-import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
+import { DEFAULT_PUBLIC_APP_ORIGIN, LEGACY_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
 
 /** Public site branding and default copy for search / social previews. */
 export const SITE = {
@@ -41,10 +41,19 @@ export const SITE = {
     'Logo Canari : canari stylisé jaune, bec ouvert, sur un carré bleu marine aux coins arrondis.',
 } as const;
 
-/** Absolute site origin for canonical URLs and sitemaps (build-time / SSR). */
+/**
+ * Absolute site origin for canonical URLs and sitemaps (build-time / SSR).
+ *
+ * Delegates to {@link publicAppOrigin}'s canonical rule rather than reading the baked value
+ * directly, because the two must never disagree: a page served from `canari.emse.fr` was declaring
+ * `<link rel="canonical" href="https://canari-emse.fr/posts">` and the same `og:url`, telling every
+ * search engine and every link unfurler that the real page lives on the host browsers are being
+ * redirected AWAY from. Measured on production 2026-09-25, before this was changed.
+ */
 export function siteOrigin(): string {
   const fromEnv = (import.meta.env.VITE_FRONTEND_URL as string | undefined)?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  const baked = fromEnv?.replace(/\/$/, '');
+  if (baked && baked !== LEGACY_PUBLIC_APP_ORIGIN) return baked;
   return DEFAULT_PUBLIC_APP_ORIGIN;
 }
 
