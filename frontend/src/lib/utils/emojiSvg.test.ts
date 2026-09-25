@@ -43,6 +43,15 @@ describe('emojiSvg', () => {
     expect(emojiSvgSrc('🏴󠁧󠁢󠁳󠁣󠁴󠁿')).toBe(at('1f3f4_e0067_e0062_e0073_e0063_e0074_e007f'));
   });
 
+  it('knows the newest emoji are emoji whatever the engine running it (Unicode 16, U+1FAEA)', () => {
+    // Node's own tables miss this one; the rule must not ask them.
+    expect(emojiSvgSrc(String.fromCodePoint(0x1faea))).toBe(at('1faea'));
+  });
+
+  it('draws a text-default base carrying a skin tone', () => {
+    expect(emojiSvgSrc('☝🏽')).toBe(at('261d_1f3fd'));
+  });
+
   it('leaves a sequence Noto does not draw as text rather than a broken image', () => {
     // A well-formed flag pair for a region that has no flag (ZZ).
     expect(presentsAsEmoji('🇿🇿')).toBe(true);

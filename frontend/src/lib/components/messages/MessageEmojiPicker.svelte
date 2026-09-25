@@ -4,7 +4,6 @@
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
   import {
     MAX_DISTINCT_MESSAGE_REACTIONS,
     canAddDistinctReactionEmoji,
@@ -14,13 +13,9 @@
     pickerAnchor,
     type MessagePickerOrigin,
   } from '$lib/utils/chat/reactionPicker';
-  import {
-    attachEmojiPicker,
-    emojiPickerDataSource,
-    getRecentEmojis,
-    persistRecentEmoji,
-  } from './emojiPickerShared';
-  import 'emoji-picker-element';
+  import { getRecentEmojis, persistRecentEmoji } from './emojiPickerShared';
+  import EmojiGrid from './EmojiGrid.svelte';
+  import EmojiText from '../shared/EmojiText.svelte';
 
   interface Props {
     /**
@@ -173,82 +168,12 @@
             class="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl text-lg shadow-sm transition-all hover:scale-110 hover:bg-black/10 hover:shadow-md dark:hover:bg-white/10"
             aria-label={m.msg_react_with_emoji({ emoji })}
           >
-            {emoji}
+            <EmojiText text={emoji} />
           </button>
         {/each}
       </div>
     {/if}
 
-    <!-- Composant Web emoji-picker -->
-    <!-- data-source pointe vers un dataset emojibase AUTO-HÉBERGÉ, dans les DEUX langues :
-         `locale` ne traduit que l'UI, les mots-clés de recherche viennent du data-source. Sans lui,
-         la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile").
-
-         ET IL N'EST JAMAIS `undefined`. C'ÉTAIT UN APPEL SORTANT VERS UN CDN TIERS. Sans attribut,
-         emoji-picker-element va chercher ses données sur
-         `cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json` : l'IP de chaque
-         membre part chez un tiers dès l'ouverture du sélecteur, le sélecteur ne peut pas s'ouvrir
-         hors ligne - donc pas du tout dans les applications mobiles - et `@^1` ne fixe rien, donc
-         l'ensemble des emojis proposés pouvait changer sans commit. Les deux fichiers sont copiés
-         d'un paquet épinglé à une version EXACTE par `tools/emoji-data/sync.mjs` et vérifiés par
-         `emojiData.test.ts`. -->
-    <!--
-      `flex-auto`, AND NOT `flex-1`, AND THAT ONE WORD IS WHY THE LIST WOULD NOT SCROLL.
-      Measured on the running app 2026-09-04, at every panel size: `section.picker` inside the
-      element's shadow root was **1017 px tall inside a 417 px host**, so its `.tabpanel` was
-      content-sized (880 of 880), `scrollHeight === clientHeight`, nothing to scroll - and everything
-      past the host's height was clipped away by this panel's `overflow-hidden`. Not an edge case:
-      every open, at 460 px, at 300 px and at 200 px of panel alike.
-      THE CAUSE IS THE FLEX BASIS. `flex-1` is `flex: 1 1 0%`, so the host's main size is GROWN from
-      zero rather than resolved from a length, and the library sizes `section.picker` against the
-      host's own `height: 400px` (its `:host` rule) - which a zero basis has thrown away.
-      `flex: 1 1 auto` keeps that 400 px as the basis, so the section tracks the host exactly, and it
-      keeps tracking it when the flex algorithm SHRINKS it - measured at 400/400, 257/257, 157/157
-      and 97/97, scrolling in all four. That last property is the one that matters: a fix that only
-      worked in the roomy case would leave the cramped one broken, and cramped is where a user meets
-      it, near a viewport edge.
-      AND THE INLINE `height:` IS GONE. It was a hard-coded guess at the height of everything above
-      (`- 3rem`, or `- 5.5rem` with recents) and it was wrong three ways: the recents row wraps to two
-      lines well before twelve buttons, the reactions-at-limit banner is not in the guess at all, and
-      **deleting it alone does not fix the scroll** - measured: with `flex-1` kept, the section was
-      still 973 px inside 417. The layout knows the answer; a second constant would be wrong the next
-      time this header gains a line.
-    -->
-    <emoji-picker
-      use:attachEmojiPicker={handleEmojiClick}
-      class="min-h-0 w-full flex-auto"
-      style:--emoji-font-family="'Noto Color Emoji Canari'"
-      locale={getLocale() === 'en' ? 'en' : 'fr'}
-      data-source={emojiPickerDataSource()}
-    ></emoji-picker>
+    <EmojiGrid onPick={(emoji) => handleEmojiClick(emoji)} />
   </div>
 {/if}
-
-<style>
-  /* Stylisation globale du composant emoji-picker-element pour qu'il se fonde
-    dans notre design Glassmorphism sans casser ses bordures.
-  */
-  emoji-picker {
-    --background: transparent;
-    --border-color: transparent;
-    --input-border-radius: 1rem;
-    --input-padding: 0.5rem 1rem;
-    --indicator-color: #f59e0b; /* Couleur Amber-500 de Tailwind */
-    --category-emoji-size: 1.1rem;
-    --emoji-size: 1.5rem;
-    --input-font-size: 0.875rem;
-    --num-columns: 8;
-  }
-
-  /* Adaptation parfaite au mode sombre */
-  :global(:root[data-theme='dark']) emoji-picker {
-    --button-hover-background: rgba(255, 255, 255, 0.1);
-    --button-active-background: rgba(255, 255, 255, 0.2);
-    --search-background: rgba(0, 0, 0, 0.4);
-    --search-focus-background: rgba(0, 0, 0, 0.6);
-    --search-icon-color: rgba(255, 255, 255, 0.5);
-    --text-color: rgba(255, 255, 255, 0.9);
-    --category-button-color: rgba(255, 255, 255, 0.5);
-    --category-button-active-color: #f59e0b;
-  }
-</style>

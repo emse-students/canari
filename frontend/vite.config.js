@@ -227,8 +227,6 @@ export default defineConfig(async () => ({
       '@tauri-apps/plugin-store',
       '@tauri-apps/plugin-websocket',
       '@zumer/snapdom',
-      'emoji-picker-element',
-      'emoji-picker-element/i18n/en',
       'highlight.js/lib/core',
       'highlight.js/lib/languages/bash',
       'highlight.js/lib/languages/c',

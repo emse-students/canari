@@ -1632,7 +1632,7 @@ utilisent maintenant la constante partagee.
 
 Les 27 libelles du selecteur etaient deux tableaux ecrits a la main avec un aiguillage de langue -
 le travail de Paraglide, fait deux fois ; une cle ajoutee d'un cote et oubliee de l'autre ne se
-voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-pickers-interface-strings-come-from-paraglide-like-every-other-string-on-screen).
+voyait nulle part. [emoji](docs/wiki/frontend/emoji.md#the-picker---our-own-grid-since-2026-09-25-on-the-same-self-hosted-dataset).
 
 ### Changed - dix-neuf messages d'erreur et de journal etaient en francais, alors qu'aucun n'est lu par un utilisateur
 

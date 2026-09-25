@@ -23,9 +23,10 @@
  *      the `emoji_u` prefix. `<set>` is a hash of every name and every byte, so a picture whose
  *      content changes changes URL - which is what lets nginx serve `/emoji/` as `immutable` for a
  *      year, and a browser fetch each picture once, ever.
- *   5. Writes `frontend/src/lib/utils/emojiSvgNames.json` - `{ set, names }`, the sorted names: the
- *      only source the runtime consults before emitting an `<img>`, so a sequence Noto does not draw
- *      stays text instead of becoming a broken image.
+ *   5. Writes `frontend/src/lib/utils/emojiSvgNames.json` - `{ set, textDefault, names }`: the sorted
+ *      names (the only source the runtime consults before emitting an `<img>`, so a sequence Noto
+ *      does not draw stays text instead of becoming a broken image), and the code points among them
+ *      whose default presentation is text - a fact computed here so no engine's Unicode tables decide it.
  *   6. Copies both licences next to the pictures (Apache 2.0 for Noto, public domain for the flags).
  *
  * svgo is lossless by design, and that was MEASURED for this set rather than assumed: every original
@@ -149,7 +150,21 @@ for (const name of names) {
   bytes += statSync(join(setDir, `${name}.svg`)).size;
 }
 for (const { from, to } of LICENCES) copyFileSync(join(noto, from), join(outDir, to));
-writeFileSync(namesFile, `${JSON.stringify({ set, names })}\n`);
+// THE PRESENTATION FACT SHIPS WITH THE PICTURES, instead of being asked of the engine at runtime.
+// `\p{Emoji_Presentation}` answers from the ENGINE's Unicode tables, so an older WebView does not know
+// the newest emoji are emoji - measured 2026-09-25: Node's tables miss seven Unicode 16 entries the
+// picker offers (U+1FAEA among them), and a phone would have drawn them as text or tofu while holding
+// their picture. So it is computed ONCE, here, with this tool's own tables: of the code points that
+// START a drawn sequence, the ones whose default presentation is TEXT (`©`, `↔`, the digits...).
+// The runtime reads that list and never a Unicode property.
+const textDefault = [
+  ...new Set(
+    names
+      .map((name) => name.split('_')[0])
+      .filter((hex) => !/\p{Emoji_Presentation}/u.test(String.fromCodePoint(parseInt(hex, 16))))
+  ),
+].sort();
+writeFileSync(namesFile, `${JSON.stringify({ set, textDefault, names })}\n`);
 rmSync(scratch, { recursive: true, force: true });
 
 console.log(`wrote ${names.length} pictures (${bytes} bytes) to frontend/static/emoji/${set}/`);

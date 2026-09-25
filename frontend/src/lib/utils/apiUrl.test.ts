@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveServiceUrl } from './apiUrl';
 
 const TAURI_MARKER = '__TAURI_INTERNALS__';
@@ -14,6 +14,7 @@ function pretendTauri(): void {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   delete (window as unknown as Record<string, unknown>)[TAURI_MARKER];
 });
 
@@ -62,6 +63,18 @@ describe('resolveServiceUrl', () => {
     pretendTauri();
 
     expect(resolveServiceUrl(`${BAKED}/`, DEV_FALLBACK)).toBe(BAKED);
+  });
+
+  /**
+   * No window at all (SSR, a worker): the baked value when there is one, the dev fallback otherwise.
+   * Asserted HERE, on the decision, because a caller's own test cannot vary the baked value - the
+   * `mlsDeliveryHttp` test that tried passed on CI and failed on any workstation with a `.env`.
+   */
+  it('without a window, uses the baked value, else the dev fallback', () => {
+    vi.stubGlobal('window', undefined);
+
+    expect(resolveServiceUrl(BAKED, DEV_FALLBACK)).toBe(BAKED);
+    expect(resolveServiceUrl('', DEV_FALLBACK)).toBe(DEV_FALLBACK);
   });
 
   it('treats a blank baked value as absent rather than as an origin', () => {
