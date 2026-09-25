@@ -14,6 +14,80 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.24] - 2026-09-25
+
+### Changed - `canari.emse.fr` is the canonical name everywhere, and the old one is compatibility only
+
+Pages served from `canari.emse.fr` were declaring `canari-emse.fr` in their canonical tag and
+`og:url`, telling every search engine and link unfurler that the real page lived on the host
+browsers are about to be redirected away from. Share links, the canonical origin, `robots.txt` and
+the bare-domain linkifier now carry the new name; the CORS list, the deep-link claims and the
+`wss://` allowlist carry BOTH, because apps already installed on a phone still call the old one
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#7-phase-2---the-names)).
+
+### Changed - CrowdSec can now reason about the other vhosts, and about real clients
+
+`canari-prod`, `authentik` and `cercle` resolve the client address through the tunnel connector
+(`real_ip`) instead of logging `10.0.0.3` for every visitor, and CrowdSec's acquisition was then
+widened to their three access logs. The order matters: aimed at those logs first, the first abusive
+request would have banned the relay and taken the hostname down
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
+
+### Changed - le selecteur d'emojis est une grille maison, dessinee avec les images Noto
+
+emoji-picker-element dessinait avec une police, donc en Apple sur WebKit : il est remplace par
+une grille sur le meme jeu de donnees, avec recherche tolerante (le contrat de recherche) et un
+ton de peau memorise. Les emojis les plus recents ne dependent plus de la version d'Unicode du
+navigateur ([emoji](docs/wiki/frontend/emoji.md)).
+
+### Changed - les emojis sont les images Noto partout ou un utilisateur ecrit
+
+Publications, commentaires, bios, citations, liste des conversations, noms, sondages,
+notifications et toutes les reactions affichent desormais les dessins Noto ; le code et les
+champs de saisie gardent le caractere ([emoji](docs/wiki/frontend/emoji.md)).
+
+### Changed - les emojis des messages et des reactions sont les images SVG de Noto, et plus une police
+
+La police couleur n'a jamais ete dessinee par WebKit (Safari, app iOS). Les messages, les
+recherches et les reactions affichent desormais les dessins Noto en images, sur toutes les
+plateformes ; le reste suit en trois PR ([emoji](docs/wiki/frontend/emoji.md)).
+
+### Fixed - the legacy origin was answering 502 and the edge cache hid it
+
+`canari-emse.fr` returned `502` at its own origin while browsers kept getting a normal page from
+Cloudflare's cache; `dev.canari-emse.fr`, with no warm cache, was visibly broken. SvelteKit's
+~7.5 KB `Link: rel=modulepreload` header overflowed nginx's default 4 KB `proxy_buffer_size` on the
+four vhosts written before that lesson (`canari-prod`, `canari-dev` and both relays). Buffers raised
+on both hosts; both origins now answer `200`
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-legacy-hostname-was-answering-502-at-the-origin-and-the-edge-cache-hid-it-2026-09-25)).
+
+### Fixed - the first automated production deploy after the move could not bind its port
+
+`v0.18.23` brought the whole estate up except `frontend`: production asked for host port 8080, which
+CrowdSec's Local API has held on the shared host since before Canari arrived, and both public
+hostnames answered `502` for about fifteen minutes. The manual migration had started the container
+on 8081 and taught nginx 8081 without bringing `render-env.sh` along. Production's port is now 8081
+everywhere it is declared, the container publishes on the loopback like dev, and the deploy tests
+assert every rendered port against a measured list of what this machine has already given away
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25)).
+
+### Changed - the last live mentions of the old apex
+
+The egress probe now measures `canari.emse.fr` and keeps `canari-emse.fr` as a SECOND probe rather
+than a replacement: the two arrive by different paths - one straight to the shared host, the other
+through the old box's relay and the Cloudflare tunnel - so they can fail independently and which
+one failed is the diagnosis. The Cercle runbook and the Tauri navigation fixture follow
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#7-phase-2---the-names)).
+
+### Fixed - unlocking a session still addressed the old hostname
+
+Login itself worked on `canari.emse.fr`, then `Verifying PIN` died: `/api/mls/security/pin-salt` is
+fetched from `mlsDeliveryHttp.ts`, which had rebuilt the same base-URL decision with the old
+polarity and was missed when `apiUrl.ts` was fixed. Three callers had their own copy - the MLS
+gateway/delivery pair, `useChatSession`'s history base, and `CallService` - and all three now
+delegate to the one resolver
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-frontend-bakes-one-absolute-origin-per-build-and-phase-2-gave-it-two---login-broke-2026-09-25)).
+
 ## [0.18.23] - 2026-09-25
 
 ### Fixed - 93 nuits sans sauvegarde d'Authentik, et le manifeste les annoncait quand meme
