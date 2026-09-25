@@ -69,8 +69,8 @@ his host, and neither is ours to do.
 
 | What | Value |
 | --- | --- |
-| Canari | `https://canari-emse.fr` |
-| Canari cotisant endpoint | `GET https://canari-emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<userId>` |
+| Canari | `https://canari.emse.fr` |
+| Canari cotisant endpoint | `GET https://canari.emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<userId>` |
 | Cercle webhook endpoint | `POST https://cercle.canari-emse.fr/api/canari/topup` |
 | OIDC issuer | `https://auth.canari-emse.fr/application/o` |
 | OIDC JWKS | `https://auth.canari-emse.fr/application/o/cercle/jwks/` |
@@ -148,7 +148,7 @@ Check the tier setup from the outside before going further (the key is in
 
 ```sh
 curl -s -H "X-Api-Key: $CERCLE_API_KEY" \
-  "https://canari-emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<a-real-cotisant-userId>"
+  "https://canari.emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<a-real-cotisant-userId>"
 ```
 
 `tier` must be a **named** key. A `null` tier on a real cotisant means the base tier was never
