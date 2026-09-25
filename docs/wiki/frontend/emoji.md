@@ -18,8 +18,9 @@ deleted. Everything below this section describes the font, and stays true until 
 
 **Decided with the user, not to be re-opened**: Noto rather than Twemoji (same art as the font, the
 2026-08-23 coverage argument unchanged); pictures EVERYWHERE rather than on Apple only (one mechanism);
-the composer keeps the platform glyph while typing (`MentionComposerInput` is a `contenteditable`, so
-pictures there are possible - the decision is about risk, not ability).
+and pictures in the composer too, while typing (user, 2026-09-25: *"ce que discord fait, c'est aussi
+inserer l'emoji en svg dans l'input"* - the first answer, "keep the platform glyph", rested on this
+page's author calling the composer a textarea, which it is not).
 
 ### The pictures, and how they were made
 
@@ -81,9 +82,26 @@ there is expected.
 it only because it looks for one), with a control: without the key, the picture count fails.
 `iconButtonScale.test.ts` reads `<EmojiText />` as text, so a reaction button stays a text button.
 
-**Deliberately NOT pictures**: the composer while typing (decided with the user), the message edit
-`<textarea>` and comment edit `<input>` (form fields cannot hold one), the OS notification shade and
-anything else the platform draws.
+**Deliberately NOT pictures**: the message edit `<textarea>` and comment edit `<input>` (form fields
+cannot hold one), code in the composer (as once sent), the OS notification shade and anything else
+the platform draws.
+
+### In the composer, an emoji is an atom
+
+`MentionComposerInput` is a `contenteditable` rebuilt from plain text, and every caller reads plain
+text, so the picture must be invisible to all of them. It is modelled on the mention chip
+(`mentionEditor.ts`): an `<img class="emoji" data-emoji="...">` that `serializeMentionEditor` writes
+back as the emoji, that the caret functions count as the emoji's UTF-16 length and never land inside,
+and that native Backspace removes whole. Emoji arrive as TEXT - the keyboard, a paste, an IME commit -
+so `needsEmojiRender` (a text node outside code holding a drawable emoji) joins the mention and
+markdown triggers that rebuild the DOM at the caret. The placeholder test reads the pictures too: an
+editor holding only an emoji has an empty `textContent`.
+
+Measured in a real Chromium on a throwaway route: typing then inserting `😀` draws it and the next
+keystrokes land after it; seven Backspaces remove " ça va" and then the emoji whole; pasting
+` 🇫🇷 et 👍🏽` draws two pictures; the value handed back is the exact text every time; no page error.
+**The iPhone keyboard and its IME are owed on the device.** Native undo across a rebuild is what it
+already was with mentions and the markdown preview: the rebuild replaces the DOM.
 
 ### The gate
 

@@ -1,4 +1,5 @@
 import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
+import { splitEmojiText } from '$lib/utils/emojiSvg';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
   classifyComposerLines,
@@ -14,6 +15,21 @@ import {
 import { resolveUserDisplayName } from '$lib/utils/users/displayName';
 
 export const MENTION_CHIP_CLASS = 'mention-editor-chip';
+
+/**
+ * AN EMOJI IN THE COMPOSER IS NOTO'S PICTURE, LIKE IN THE MESSAGE IT BECOMES (user, 2026-09-25 -
+ * *"ce que discord fait, c'est aussi inserer l'emoji en svg dans l'input"*).
+ *
+ * It is an ATOM, modelled on the mention chip: the element carries the emoji in `data-emoji`,
+ * `serializeMentionEditor` writes that back, and the caret functions count it as the emoji's length
+ * and never land inside it - so the plain text every caller reads (send, drafts, mentions,
+ * markdown) is exactly what it was. `class="emoji"` is the same class `EmojiText` draws with, so
+ * `app.css` sizes both identically. Code (inline and fenced) keeps the characters, as it does once
+ * sent.
+ */
+export const EMOJI_IMAGE_SELECTOR = 'img[data-emoji]';
+/** Composer spans whose text is code: emoji inside them stay characters. */
+const CODE_SELECTOR = '.md-composer-code, .md-composer-fenced-code';
 export const MENTION_CHIP_SELECTOR = `[data-mention-id].${MENTION_CHIP_CLASS}`;
 
 export const MD_MUTED_CLASS = 'md-composer-muted';
@@ -74,6 +90,10 @@ export function serializeMentionEditor(root: HTMLElement): string {
       out += formatMentionToken(mentionId);
       return;
     }
+    if (el.dataset.emoji !== undefined) {
+      out += el.dataset.emoji;
+      return;
+    }
 
     if (el.tagName === 'BR') {
       out += '\n';
@@ -107,6 +127,29 @@ export function serializeMentionEditor(root: HTMLElement): string {
   return stripComposerDomFillers(out);
 }
 
+/** Appends `text` as text nodes and emoji pictures (see `EMOJI_IMAGE_SELECTOR`). */
+function appendTextWithEmoji(parent: Node, text: string): void {
+  for (const part of splitEmojiText(text)) {
+    if (part.kind === 'text') {
+      parent.appendChild(document.createTextNode(part.value));
+      continue;
+    }
+    const img = document.createElement('img');
+    img.className = 'emoji';
+    img.src = part.src;
+    img.alt = part.value;
+    img.draggable = false;
+    img.dataset.emoji = part.value;
+    parent.appendChild(img);
+  }
+}
+
+/** Replaces `el`'s content with `text`, emoji drawn as pictures. */
+function setTextWithEmoji(el: HTMLElement, text: string): void {
+  el.textContent = '';
+  appendTextWithEmoji(el, text);
+}
+
 function createMentionChip(userId: string, label: string): HTMLSpanElement {
   const span = document.createElement('span');
   span.className = MENTION_CHIP_CLASS;
@@ -114,19 +157,22 @@ function createMentionChip(userId: string, label: string): HTMLSpanElement {
   span.dataset.mentionId = userId;
   span.setAttribute('role', 'link');
   span.tabIndex = -1;
-  span.textContent = `@${label}`;
+  setTextWithEmoji(span, `@${label}`);
   void resolveUserDisplayName(userId).then((resolved) => {
     if (resolved && span.isConnected && span.dataset.mentionId === userId) {
-      span.textContent = `@${resolved}`;
+      setTextWithEmoji(span, `@${resolved}`);
     }
   });
   return span;
 }
 
-function appendTextWithBreaks(parent: HTMLElement, text: string): void {
+function appendTextWithBreaks(parent: HTMLElement, text: string, drawEmoji = true): void {
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i]) parent.appendChild(document.createTextNode(lines[i]));
+    if (lines[i]) {
+      if (drawEmoji) appendTextWithEmoji(parent, lines[i]);
+      else parent.appendChild(document.createTextNode(lines[i]));
+    }
     if (i < lines.length - 1) parent.appendChild(document.createElement('br'));
   }
   if (text.endsWith('\n')) {
@@ -156,7 +202,7 @@ const MD_STYLE_CLASS: Record<InlineMarkdownStyle, string> = {
 function appendFormattedSpan(parent: HTMLElement, className: string, text: string): void {
   const span = document.createElement('span');
   span.className = className;
-  appendTextWithBreaks(span, text);
+  appendTextWithBreaks(span, text, className !== MD_CODE_CLASS);
   parent.appendChild(span);
 }
 
@@ -328,6 +374,21 @@ export function shouldRerenderComposerDom(
   return formattedNow;
 }
 
+/**
+ * True when a text node of the editor still holds an emoji the composer draws as a picture - one
+ * typed from the keyboard, pasted, or committed by an IME arrives as TEXT, and the DOM has to be
+ * rebuilt to show it. Code spans are skipped: their emoji stay characters by design, and counting
+ * them would rebuild the DOM on every keystroke inside them.
+ */
+export function needsEmojiRender(root: HTMLElement): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.parentElement?.closest(CODE_SELECTOR)) continue;
+    if (splitEmojiText(node.textContent ?? '').some((part) => part.kind === 'emoji')) return true;
+  }
+  return false;
+}
+
 /** True when plain text has `@[uuid]` tokens not yet rendered as chips. */
 export function needsMentionChipRender(root: HTMLElement, plainText: string): boolean {
   const expected = countMentionTokens(plainText);
@@ -450,6 +511,19 @@ function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node;
         const parent = el.parentNode ?? root;
         const index = Array.from(parent.childNodes).indexOf(el);
         found = { node: parent, offset: Math.max(0, index) };
+        return true;
+      }
+      remaining -= len;
+      return false;
+    }
+
+    if (el.dataset.emoji !== undefined) {
+      // An atom: the caret lands before it (nothing consumed yet) or after it, never inside.
+      const len = el.dataset.emoji.length;
+      if (remaining <= len) {
+        const parent = el.parentNode ?? root;
+        const index = Array.from(parent.childNodes).indexOf(el);
+        found = { node: parent, offset: remaining === 0 ? index : index + 1 };
         return true;
       }
       remaining -= len;
