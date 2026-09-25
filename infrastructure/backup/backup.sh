@@ -49,7 +49,7 @@ CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
 # Stack Authentik (compose separe). Vide pour desactiver son inclusion - et
 # c est le SEUL geste qui l exclut : une valeur posee ici et injoignable fait
 # echouer la sauvegarde.
-MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
+MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
 # La machine qui porte cette stack. Vide = ce conteneur tourne ici, ce qui
 # etait vrai jusqu au 2026-06-22 et ne l est plus : Authentik a eu sa propre VM,
 # puis a rejoint l hote mutualise le 2026-09-24.
@@ -58,9 +58,12 @@ MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
 # avec une copie FIGEE de la base : un defaut qui la designerait produirait une
 # sauvegarde qui reussit et qui ment, ce qui est pire qu une qui echoue. La valeur
 # est un ALIAS ~/.ssh/config, qui porte la cle dediee et IdentitiesOnly.
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST:-authentik-target}"
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-authentik-target}"
 # Stockage secondaire offsite via SSH/rsync (serveur LAN mitv). Vide pour desactiver.
-BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
+# `-` et non `:-`, ici et pour les deux MICONNECT_* : `:-` traite le vide comme
+# l absence et remet le defaut, et "vide pour desactiver" serait un commentaire
+# que le code dement - il l a ete jusqu au 2026-09-25.
+BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 
 log() { printf '[backup] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
