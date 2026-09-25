@@ -338,6 +338,40 @@ consumers before choosing**, which is what the standing rule about auditing a se
 | DDoS absorption, bot filtering | nginx rate limiting on the authentication and upload paths, plus whatever the School already runs upstream |
 | `min_tls_version`, `0rtt`, BIC, Rocket Loader | nginx configuration, or they stop existing |
 
+### THE FRONTEND BAKES ONE ABSOLUTE ORIGIN PER BUILD, AND PHASE 2 GAVE IT TWO - LOGIN BROKE, 2026-09-25
+
+`.github/workflows/build.yml`'s "Create frontend .env" step bakes a single `BASE_URL` secret into
+every `VITE_*_URL` (`FRONTEND`/`GATEWAY`/`CALL`/`DELIVERY`/`MEDIA`/`SOCIAL`/`CORE`) as one absolute
+URL, with its own comment saying why: "Every URL is the estate's own origin; nginx routes /ws,
+/api/ and /media/ on that host." True when `canari-prod` answered on exactly one public hostname.
+Phase 2 gave it two - `canari-emse.fr` (legacy, still tunnelled) and `canari.emse.fr` (new, primary)
+- and one build now serves both with one hardcoded absolute API origin baked into its JS.
+
+**Symptom, reported live**: loading `canari.emse.fr` and logging in, every call built from
+`frontend/src/lib/utils/apiUrl.ts` (`coreUrl()`, `gatewayUrl()`, `deliveryUrl()`, `socialUrl()`) and
+its two duplicates (`media.ts`'s `MediaService` constructor, `associations/api.ts`'s
+`mediaPublicBaseUrl()`) read the `VITE_*_URL` env var FIRST, so they addressed
+`https://canari-emse.fr` instead of the page's own origin. CSP's `connect-src 'self'` blocks a
+cross-origin fetch by design, so the OIDC callback `POST` died with a `NetworkError` - and even had
+CSP allowed it through, the fix would still have been wrong: it would have set auth cookies on the
+WRONG origin, the same browser-storage rule as the redirect prohibition above.
+
+**Fix, same day**: these functions now check `window.location.origin` FIRST in any real browser tab
+- ahead of the env var, not merely as its fallback - because nginx proxies `/api/`, `/ws` and
+`/media/` identically regardless of which public hostname served the page, so the page's own origin
+is always the right answer there. The env var is now consulted only when `isTauriRuntime()` is true
+(`tauri://localhost` never reaches the proxy, so Tauri/mobile genuinely needs the absolute baked
+URL) or when there is no `window` at all (SSR, or a browserless build step). `isTauriRuntime()`
+moved out of `openExternal.ts` into a new dependency-free `utils/tauriRuntime.ts`, re-exported from
+its old home for its existing callers, so `apiUrl.ts` could use it without a cycle through
+`openExternal.ts` -> `checkLinkSafety.ts` -> `apiUrl.ts`. The two duplicated media-URL readers now
+both call the new `mediaUrl()` export instead of re-deriving the same logic a third time.
+
+**What this does not touch**: a Tauri/store build still bakes exactly one absolute origin at build
+time and cannot be re-pointed afterwards - untouched here, because a packaged app was never
+reachable at two hostnames the way the web deploy now is. `ios.yml` and `android.yml` keep setting
+these vars unconditionally, and still should.
+
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 
 The DSI drops a new file in `/etc/certs/<name>/` - the path is measured, not assumed, since

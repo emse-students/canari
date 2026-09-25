@@ -1,6 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
-import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
+import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import {
   setAssociationSuperAdmin,
   setContentModerator,
@@ -341,11 +341,7 @@ export async function listLinkableValidatedCalendarEvents(
 
 /** Media API base for resolving `/api/media/…` paths (Tauri needs an absolute URL). */
 export function mediaPublicBaseUrl(): string {
-  const fromEnv =
-    typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
-  if (typeof window !== 'undefined') return window.location.origin.replace(/\/$/, '');
-  return 'http://localhost:3011';
+  return mediaUrl();
 }
 
 /** Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). */
