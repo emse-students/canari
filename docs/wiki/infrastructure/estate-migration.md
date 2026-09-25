@@ -328,15 +328,59 @@ consumers before choosing**, which is what the standing rule about auditing a se
 
 ### What the edge did that the origin must now do
 
-| Edge mechanism today | After phase 2 |
-| --- | --- |
-| TLS termination | host nginx, DSI certificates |
-| `www.` -> apex redirect | host nginx |
-| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means |
-| The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` |
-| Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` |
-| DDoS absorption, bot filtering | nginx rate limiting on the authentication and upload paths, plus whatever the School already runs upstream |
-| `min_tls_version`, `0rtt`, BIC, Rocket Loader | nginx configuration, or they stop existing |
+**Re-audited against the live zone and the live host, 2026-09-25** - every deliberate Cloudflare
+setting is in [cloudflare-edge.md](cloudflare-edge.md#settings-that-are-deliberate); this table is
+what each one becomes once `canari.emse.fr` never reaches that zone at all. A claim below is
+VERIFIED only where it was actually probed, not inferred from the intent that shipped it.
+
+| Edge mechanism today | After phase 2 | Verified 2026-09-25 |
+| --- | --- | --- |
+| TLS termination, `min_tls_version: 1.2` | host nginx, DSI certificates | **YES** - `--tlsv1.0 --tls-max 1.0` refused (connection failure), 1.2 and 1.3 both `200` |
+| `www.` -> apex redirect | N/A - no `www.canari.emse.fr` DNS record exists at all (the row was dropped from the DSI request, item 1) | **YES** - `www.canari.emse.fr` does not resolve/connect; nothing to redirect |
+| CSP header | N/A - was never a Cloudflare setting. `http_response_headers_transform` on the zone is empty by design; nginx has always owned every response header, unaffected by which hostname is used | N/A |
+| CSRF protection | N/A - Cloudflare has no CSRF-specific feature; this was always application-level (SvelteKit/NestJS origin checks), unaffected by the zone | N/A |
+| `websockets: on` (zone setting, "Required by `/api/ws`") | **WAS NOT PORTED, FOUND 2026-09-25 - AND FIXED THE SAME DAY.** `sites-available/canari.conf` on the target host proxied `/` but never forwarded `Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase 1, and correct). A WS handshake against `canari.emse.fr` got a bare nginx `400` with no `Upgrade` echoed back. Fixed by adding the same two lines `canari-prod.conf` already carries - `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $http_connection;` - to `canari.conf`'s single `location /` block, then `nginx -t && systemctl reload nginx`. The pre-edit backup is `canari.conf.bak-2026-09-25-no-websocket-upgrade` | **YES, both before (`400`, no `Upgrade` echoed) and after (`401`, unauthenticated - the same correct answer `canari-emse.fr` has always given)** |
+| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported - and RE-VERIFIED, not merely re-asserted, 2026-09-25.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means, and it does: `canari.emse.fr` serves `Cache-Control: public, max-age=31536000, immutable` on `/_app/immutable/*` and `public, max-age=0, s-maxage=60` on the shell, byte-identical to what `canari-emse.fr` sends today - the ORIGIN half of this was never Cloudflare's to begin with and the migration changed nothing about it. What is genuinely gone, confirmed by `curl -I` carrying no `cf-cache-status` header at all on `canari.emse.fr` where `canari-emse.fr` answers `HIT`/`REVALIDATED`: every request for the same bytes now reaches the origin container instead of a warm edge node. A local substitute (nginx `proxy_cache` on the shared host, keyed the same way) would recover the shared-cache EFFECT without a CDN, but is a NEW build, not a port, and is a separate open item below rather than folded into this "deliberate, not ported" row | **YES - origin headers identical on both hostnames; no edge layer exists on either the new host or a viable substitute for it** |
+| The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` | N/A - deliberate |
+| Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` | N/A - out of scope |
+| DDoS absorption, bot filtering | **CROWDSEC, AND IT WAS ALREADY THERE - the first answer to this row was measured against the wrong mechanism.** `grep -r limit_req /etc/nginx` returns nothing on any vhost, which is true and was read as "nothing protects this host". What protects it is `conf.d/crowdsec_nginx.conf`: a Lua bouncer running `cs.Allow($remote_addr)` in `access_by_lua_block` on EVERY request of EVERY vhost, an AppSec/WAF at `127.0.0.1:7422` doing CVE virtual-patching, and ~20 enabled `http-*` scenarios including `http-generic-bf`. Both `crowdsec` and `crowdsec-firewall-bouncer` are `active`, and it bans for real - two live decisions on 2026-09-25 (`appsec-vpatch`, `http-bad-user-agent`) | **YES, and the coverage is SPLIT - see below** |
+| `0rtt`, BIC, Rocket Loader | Rocket Loader and BIC have no nginx equivalent and were already `off`/scoped to the auth subdomain (out of scope); 0-RTT is a TLS 1.3 server option nginx does not enable by default, matching the zone's `off` | N/A - all three end up equivalent to "off" either way |
+
+#### CROWDSEC COVERS THIS HOST IN TWO HALVES, AND ONLY ONE OF THEM REACHES EVERY VHOST
+
+Measured 2026-09-25, and it revises the row above rather than adding to it.
+
+**The IN-LINE half reaches everything.** `access_by_lua_block` runs before every request on every
+`server` block, so the bouncer's ban list and the AppSec WAF apply to all EIGHT vhosts this machine
+carries - and there are eight, not five: `gala.conf` (2019) and `mep.conf` (2021) are co-tenant
+sites this project does not own, alongside `portail-etu-new.conf`.
+
+**The LOG-PARSING half reaches only what writes to the shared `access.log`.** CrowdSec's acquisition
+names exactly `/var/log/nginx/access.log` and `/var/log/nginx/error.log`. Of our vhosts only
+`canari.conf` writes there; `canari-prod.conf`, `canari-dev.conf`, `cercle.conf` and
+`authentik.conf` each write to their own file, which nothing parses. So every behavioural scenario -
+`http-generic-bf` included - is blind to them.
+
+**AND THE LEGACY PATH COULD NOT BE ADDED EVEN IF SOMEONE WANTED TO, WHICH IS THE POINT.**
+`canari-prod.access.log` carries **11 935 requests from `10.0.0.3` against 1 from a real client**:
+the tunnel relay is the source address of essentially all of it, because nothing sets `real_ip`
+there. Pointing CrowdSec at that file would hand it one address standing for every visitor - the
+first abusive request bans the relay and takes the whole legacy hostname down with it. `access.log`,
+by contrast, carries genuine client addresses (Googlebot, a Sentry prober, campus and home IPs), so
+`canari.emse.fr` is the one Canari name CrowdSec can reason about correctly today.
+
+**What that leaves genuinely open is narrower than "no rate limiting", and it is about the IdP.**
+Authentik is where a password is actually tried, and `authentik.access.log` is parsed by nothing.
+Bans are also GLOBAL per address on this box, so a decision taken on Canari traffic already closes
+the co-tenant sites to that address, and theirs closes ours. Both are decisions for the machine's
+owner, not one-line ports ([backlog](../backlog.md)).
+
+**REFUTED: an nginx `proxy_cache` substitute for the lost edge cache.** It was proposed here and
+approved, then refused by its own measurement: timed on the host, the origin answers the SSR shell
+in 2.6-5.2 ms and an immutable asset in 0.8-1.2 ms, so a cache one hop above it removes those
+milliseconds of local work and not one metre of the network path Cloudflare's edge actually
+shortened. The reasoning, and what would have to be true for it to come back, are on
+[backlog](../backlog.md).
 
 ### THE FRONTEND BAKES ONE ABSOLUTE ORIGIN PER BUILD, AND PHASE 2 GAVE IT TWO - LOGIN BROKE, 2026-09-25
 

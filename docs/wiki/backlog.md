@@ -178,6 +178,69 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
+### REFUTED - an nginx `proxy_cache` substitute for the lost Cloudflare edge cache buys ~3 ms of a ~80 ms path (measured 2026-09-25)
+
+Raised, approved for building, and then refused by its own measurement. Kept because the reasoning
+is what stops it being raised a third time.
+
+The origin's own `Cache-Control` headers migrated untouched - `canari.emse.fr` serves the identical
+`max-age=31536000, immutable` on `/_app/immutable/*` and `max-age=0, s-maxage=60` on the shell that
+`canari-emse.fr` always has, confirmed byte-for-byte on both hostnames. What is gone is the SHARED
+cache: `canari-emse.fr` still answers `cf-cache-status: HIT`/`REVALIDATED` through Cloudflare,
+`canari.emse.fr` carries no such header at all. So an nginx `proxy_cache` on the shared host was
+proposed to recover the effect locally, mirroring the two Cloudflare Cache Rules.
+
+**It recovers almost nothing, because it is the wrong layer.** Timed on the host itself, against
+the frontend container it would sit in front of: the SSR shell answers in **2.6-5.2 ms** and an
+immutable asset in **0.8-1.2 ms**. A cache one hop above that can only remove those milliseconds of
+local work - the request still crosses the network exactly as before. Cloudflare's cache was worth
+having because it TERMINATED the request hundreds of kilometres nearer the browser; the ~80 ms this
+page records from the user's own line is that network path, and no cache on this box shortens it.
+
+**What would have to be true for this to come back**: the origin's own answer becoming slow enough
+to matter (it is 3 ms), or `frontend-ssr` becoming a throughput bottleneck under real concurrency
+(at 3 ms one process serves ~300 req/s sequentially, which this estate does not approach). Measure
+that first; do not re-derive the idea from the missing `cf-cache-status` header, which is what
+prompted it here.
+
+**And it would not have been free**: `proxy_cache_path` lives in the `http` block, which on this
+machine means the DSI's shared `conf.d/`, on a host carrying three co-tenant sites this project does
+not own.
+[estate-migration](infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do)
+
+
+### P2 - CrowdSec cannot see the one log where a password is actually tried (measured 2026-09-25)
+
+**This item replaces "no rate limiting exists anywhere", which was measured against the wrong
+mechanism and was wrong.** `grep -r limit_req /etc/nginx` does return nothing on all eight vhosts -
+and that fact says nothing about whether the host is protected, because what protects it is not
+`limit_req`. It is CrowdSec: a Lua bouncer in `conf.d/crowdsec_nginx.conf` calling
+`cs.Allow($remote_addr)` before every request on every vhost, an AppSec WAF on `127.0.0.1:7422`
+virtual-patching CVEs, ~20 enabled `http-*` scenarios including `http-generic-bf`, and both
+`crowdsec` and `crowdsec-firewall-bouncer` `active`. It bans for real: two live decisions on the day
+this was measured. Adding `limit_req` on top would be a second mechanism duplicating a working
+first one, which is not what this needs.
+
+**What it does need is narrower, and it is about the identity provider.** CrowdSec's log-parsing
+half reads exactly `/var/log/nginx/access.log`. Of our vhosts only `canari.conf` writes there.
+`authentik.conf` writes to `authentik.access.log`, which nothing parses - and Authentik is the one
+place in this estate where a password is actually submitted, so every behavioural scenario that
+exists to catch credential brute force is pointed away from the only log that would show it.
+
+**The legacy path is the opposite case and must NOT be "fixed" the same way.**
+`canari-prod.access.log` carries 11 935 requests from `10.0.0.3` - the tunnel relay - against 1 from
+a real client, because nothing sets `real_ip` on that vhost. Pointing CrowdSec at it would give it
+one address standing for every visitor, and the first abusive request would ban the relay and take
+`canari-emse.fr` down entirely. Real-IP propagation comes first, or that file stays unparsed.
+
+**Two decisions belong to the machine's owner, not to this repository.** `/etc/crowdsec/acquis.yaml`
+is the DSI's file and it serves co-tenant sites (`gala`, `mep`, `portail-etu-new`) as well as ours;
+and a ban is GLOBAL per address on this box, so a decision taken on Canari traffic already closes
+those sites to that address and theirs closes Canari. Both were true before this measurement and
+neither is written down anywhere else.
+[estate-migration](infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)
+
+
 ### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
 
 `tauri-plugin-notification` creates a channel on plugin load whose name and description are the
