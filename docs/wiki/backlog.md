@@ -180,7 +180,22 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
-### P2 - MiConnect's error card is cut off on the left of a phone, because our CSS turns Authentik's grid into a flex row (measured on the Mi 9T, 2026-09-25)
+### P2 - MiConnect still speaks English and shows an error to anyone already signed in (Mi 9T, 2026-09-25)
+
+The layout half of this entry is SHIPPED - the card clipped on a phone and the flat pass are live
+([authentik](infrastructure/authentik.md#login-page-branding)). What is left, all in Authentik's DB,
+so each one is an `ak shell` write (the user asked for the whole interface in ONE language, clean,
+2026-09-25): **ten flow titles are Authentik's English defaults** - "Welcome to authentik!" on
+`default-authentication-flow` and `initial-setup`, "Welcome to authentik! Please select a username."
+on `default-source-enrollment`, "Redirecting to %(app)s" on both consent flows, "You've logged out of
+%(app)s." on the provider invalidation flow, and the password/MFA/settings flows; the prompts
+`Username`, `Password`, `Password (repeat)`, `Name`, `Email` likewise. On the alumni enrollment
+prompts: "(où année ...)" for "ou", "Elève" for "Élève", and a static prompt `Alumni Force Link
+Continue` whose label is **"ni ça"** - where it renders is not yet read. And the error itself:
+opening `miconnect-auth` while signed in ends on "Le flux ne s'applique pas à l'utilisateur actuel";
+the flow's `denied_action` can CONTINUE instead, which removes the page rather than rewording it.
+
+#### What the shipped half was
 
 Opening `auth.canari-emse.fr/if/flow/miconnect-auth/` on the Mi 9T while already signed in ends on
 "Permission refusée - Le flux ne s'applique pas à l'utilisateur actuel", in a card half the screen

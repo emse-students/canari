@@ -12,6 +12,18 @@
     --rootz-blue: #009bb4;
     --rootz-bg-dark: #001a23;
     --rootz-bg-med: #004d61;
+    /* The card's fill, and the fill of every box drawn inside it. One token, so
+     * no inner element can come out a different shade: the "black boxes" behind
+     * the user badge and the error were `--rootz-bg-dark` forced on inner
+     * elements sitting on a lighter card (Mi 9T, 2026-09-25).
+     */
+    --mc-surface: #00222d;
+    --mc-surface-raised: #002e3b;
+    --mc-border: rgba(255, 255, 255, 0.1);
+    --mc-text: #eaf6f8;
+    --mc-text-muted: rgba(234, 246, 248, 0.68);
+    --mc-accent: #00c8e6;
+    --mc-accent-hover: #33d6ee;
     /* PatternFly theming tokens (best-effort): unlike class selectors, custom
      * property VALUES inherit through Shadow DOM boundaries, so this can
      * reach the primary button even if it renders inside a stage web
@@ -78,7 +90,7 @@ html, body, .pf-c-login, .pf-c-login * {
 }
 
 .pf-c-login ak-flow-card, .pf-c-login .pf-c-form__group {
-    background-color: var(--rootz-bg-dark) !important;
+    background-color: var(--mc-surface) !important;
 }
 
 .pf-c-login::before, .pf-c-login::after {
@@ -113,30 +125,42 @@ html, body, .pf-c-login, .pf-c-login * {
     50% { transform: translate(30px, 30px) scale(1.05); }
 }
 
-/* --- Card: dark glassmorphism, matching the rest of Canari --- */
+@media (prefers-reduced-motion: reduce) {
+    .pf-c-login::before, .pf-c-login::after {
+        animation: none;
+    }
+}
+
+/* --- Card: FLAT, the ecosystem rule (Canari docs/wiki/ecosystem-convergence.md
+ * section 12): one solid tonal fill, a hairline border, no blur, no gradient, no
+ * shadow. The background blobs above stay - they are the identity.
+ */
 .pf-c-login__main {
-    background: linear-gradient(
-        160deg,
-        rgba(0, 77, 97, 0.55),
-        rgba(0, 26, 35, 0.85)
-    ) !important;
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    border-radius: 20px;
-    border: 1px solid rgba(0, 229, 255, 0.25);
-    box-shadow:
-        0 20px 60px rgba(0, 0, 0, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    background: var(--mc-surface) !important;
+    border-radius: 16px;
+    border: 1px solid var(--mc-border);
+    box-shadow: none !important;
     padding: 2rem !important;
-    max-width: 450px;
+    max-width: 420px;
     width: 100%;
     margin: auto;
 }
 
-@media (max-width: 480px) {
+/* On a phone the card frame goes, as on Google's own sign-in: a framed card
+ * inside a 16 px margin left the content pressed against both edges (measured
+ * 17 px on the Mi 9T, 2026-09-25). The content sits on the page with a 24 px
+ * gutter instead, and the surface token follows so inner boxes stay invisible.
+ */
+@media (max-width: 600px) {
+    .pf-c-login {
+        --mc-surface: transparent;
+    }
     .pf-c-login__main {
-        max-width: 92vw;
+        max-width: none;
+        border: 0;
+        border-radius: 0;
         padding: 1.5rem !important;
+        margin: 0;
     }
 }
 
@@ -145,24 +169,57 @@ html, body, .pf-c-login, .pf-c-login * {
  */
 .pf-c-login__main, .pf-c-login .pf-c-title, .pf-c-login__main-header-desc,
 .pf-c-login .pf-c-form__group {
-    color: #eaf6f8 !important;
+    color: var(--mc-text) !important;
     text-align: center;
     padding-inline: 0 !important;
 }
 
 .pf-c-login .pf-c-title {
     margin-top: 1rem;
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 600;
 }
 
-.pf-c-brand {
-    margin: 0 auto;
+/* The logo is `img.branding-logo`: the old rule named `.pf-c-brand` only, so the
+ * logo was never centred (10 px left, 105 px right inside the card, Mi 9T,
+ * 2026-09-25) and filled 287 of the card's 400 px. Centred, and a sign-in
+ * sized mark.
+ */
+.pf-c-brand, .branding-logo {
     display: block;
+    margin-inline: auto;
+    max-height: 120px;
+    width: auto;
+    max-width: 100%;
+}
+
+/* The header box is a FIXED 120 px with 64 px of top padding (border-box), sized
+ * for Authentik's own small logo: a taller mark overflows it onto the title. Let
+ * it take the logo's height instead.
+ */
+.pf-c-login__main-header {
+    height: auto !important;
+    padding-top: 0.5rem !important;
+}
+
+/* The signed-in user badge: the avatar sat on the text baseline, above the name. */
+.pf-c-login .pf-c-avatar {
+    vertical-align: middle;
+    margin-right: 0.5rem;
+}
+
+/* The access-denied stage puts a bare `<hr>` between its title and its reason,
+ * drawn in the browser's default grey inset style - the white line across the
+ * error. A hairline in the border token.
+ */
+.pf-c-login hr {
+    border: 0;
+    border-top: 1px solid var(--mc-border);
+    margin: 0.5rem 0;
 }
 
 .pf-c-login__main-header-desc {
-    color: rgba(234, 246, 248, 0.65) !important;
+    color: var(--mc-text-muted) !important;
     font-size: 14px;
     margin-bottom: 2rem;
 }
@@ -214,20 +271,24 @@ html, body, .pf-c-login, .pf-c-login * {
  * the button consistently across every other stage of the flow (MFA, etc.),
  * which is correct for brand-wide CSS anyway.
  */
-button[type='submit'].pf-c-button.pf-m-primary {
-    background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
+.pf-c-button.pf-m-primary {
+    background: var(--mc-accent) !important;
     border: none !important;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
-    color: #001a23 !important;
+    color: var(--rootz-bg-dark) !important;
     padding: 12px;
     border-radius: 12px;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: none !important;
+    transition: background-color 0.15s ease;
 }
 
-button[type='submit'].pf-c-button.pf-m-primary:hover {
-    box-shadow: 0 8px 24px rgba(0, 229, 255, 0.35);
-    transform: translateY(-1px);
+/* Hover is a lighter fill, never a glow or a lift - the flat rule. It also
+ * covers `a.pf-c-button` ("Retourner a l'accueil"), which kept PatternFly's
+ * default blue because the old rule named `button[type='submit']` only.
+ */
+.pf-c-button.pf-m-primary:hover {
+    background: var(--mc-accent-hover) !important;
 }
 
 .pf-c-button.pf-m-primary::after {
@@ -240,12 +301,32 @@ button[type='submit'].pf-c-button.pf-m-primary:hover {
     text-align: center;
 }
 
-.pf-c-login__main-footer-links a, .pf-c-login__main-footer a {
-    color: var(--rootz-cyan) !important;
+.pf-c-login__main-footer-links a, .pf-c-login__main-footer a, .pf-c-login a:not(.pf-c-button) {
+    color: var(--mc-accent) !important;
+}
+
+/* --- Alerts and the user badge: the same surface, one step raised, no
+ * PatternFly top rule. They used to be black boxes on a lighter card, with a
+ * white line across the error.
+ */
+.pf-c-alert {
+    background: var(--mc-surface-raised) !important;
+    border: 0 !important;
+    border-radius: 12px;
+    box-shadow: none !important;
+    color: var(--mc-text) !important;
+}
+
+.pf-c-alert::before {
+    display: none !important;
+}
+
+.pf-c-alert__title, .pf-c-alert__description {
+    color: var(--mc-text) !important;
 }
 
 .pf-c-login__main-footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--mc-border);
 }
 
 .pf-c-page__drawer {

@@ -7,10 +7,12 @@ Canari uses Authentik as its OpenID Connect identity provider. Authentik is depl
 
 ## The box, and the log that settles an OIDC question
 
-Authentik does NOT run on `canari`. It is its own host, reached as **`ssh miconnect`** (via
-ProxyJump through `canari`, so PowerShell and not Bash - see
-[databases](databases.md#reaching-it-from-a-workstation)). Its containers are `miconnect-server-1`,
-`miconnect-worker-1` and `miconnect-postgresql-1`.
+Authentik does NOT run on `canari`. **Since 2026-09-24 it runs on the Portail-etu host**, reached
+as **`ssh portail-etu-direct`** ([estate-migration](estate-migration.md)); its containers kept their
+names, `miconnect-server-1`, `miconnect-worker-1` and `miconnect-postgresql-1`. `ssh miconnect` still
+answers, but that VM now runs only `miconnect-relay` and a `miconnect-postgresql-1` of its own -
+measured with `docker ps` on both hosts, 2026-09-25 - so a log or a shell read there is the WRONG
+Authentik.
 
 **`docker logs miconnect-server-1` is an ACCESS LOG**, and it is the instrument for any question
 about a login that failed on a client you cannot attach a debugger to. Every
@@ -285,10 +287,29 @@ the same "stop scoping, cover the whole flow" fix already applied to the submit 
 **Not yet pasted into the live Brand** - it needs the same manual admin-UI step as any edit here.
 
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
-phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turns `ak-locale-select`,
-the header, the card and the footer into ONE ROW; on the error page that row outgrows a 393 px
-viewport and `overflow: hidden` cuts the card's left edge. Removed from the file by #1098, NOT yet pasted into the live Brand (with the #1081 fixes); open in
-[backlog](../backlog.md). A rule that changes a PatternFly wrapper's `display` has to be checked
+phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turned `ak-locale-select`,
+the header, the card and the footer into ONE ROW; on the error page that row outgrew a 393 px
+viewport and `overflow: hidden` cut the card's left edge. Removed by #1098 and LIVE since
+2026-09-25 - the error page was re-measured signed in on the Mi 9T: grid, header, card and footer
+stacked. The #1081 fixes this page called unpasted were already live: the live CSS read back that day
+differed from the file by the #1098 lines only.
+
+**Applying the file to the Brand needs no admin UI.** It was done on 2026-09-25 through `ak shell`
+in `miconnect-server-1`: read `Brand.objects.get(default=True).branding_custom_css` back first (keep
+it - it is the rollback), write the file's content, save, read the length back. Then check a flow page
+on a phone before calling it done. **A layout change is previewed BEFORE it is applied**: swap the
+page's brand stylesheet in a real browser over CDP (`adoptedStyleSheets` / the `<style>` holding
+`--rootz-cyan` or `--mc-surface`, `replaceSync` with the new file) - nothing on the server moves,
+and the flat redesign of that day was iterated that way on the Mi 9T.
+
+**The flat pass (2026-09-25).** The card is one solid tonal fill (`--mc-surface`) with a hairline
+border, no blur, no gradient, no shadow; every `.pf-c-button.pf-m-primary` - `a` included, which is
+why "Retourner a l'accueil" had kept PatternFly's blue - is a flat accent fill; on a phone
+(`<= 600px`) the card frame goes, Google-style, and the content sits on the page with a 24 px gutter
+(the framed card had 17 px of margin). Two defects found on the way: the logo is `img.branding-logo`,
+which the old `.pf-c-brand` rule never centred (10 px left, 105 px right), and the header is a FIXED
+120 px with 64 px of top padding, so a taller logo spills onto the title. Effects on the error page
+after the pass: 0 glow, 0 blur, 0 gradient on components; the background blobs stay (identity). A rule that changes a PatternFly wrapper's `display` has to be checked
 against every flow LAYOUT that reuses the wrapper, not just the login stage it was written for.
 
 ## Database and backup
