@@ -1377,24 +1377,38 @@ Mi 9T (adb reverse to a local rig, or prod).
 pinch between 2/3/4, aligned menus - checked on the rig and in prod on the Mi 9T), v2.8.0 (the
 albums list copies Google Photos, the home page no longer repaints its blobs and greeting on hydration,
 the bars no longer overscroll-stretch, Photos CV and Mes photos edge to edge - checked on the rig,
-the release run watched; **not yet looked at in prod**); Sky v1.1.0 +
+the release run watched; **not yet looked at in prod**), v2.9.0 (the 2026 logo everywhere - prod
+serves `og-image.jpg` 42 KB, `MiGallery.png` is a 404 -, bars in the action pill's blurred material,
+opaque dialogs over a blurred page, viewer margins and a Google-Photos Informations panel, Photos CV
+like the albums list, real plurals instead of "(s)"); Portail-etu v1.0.2 (MiGallery's new icon,
+checked live at 7466 bytes); Sky v1.1.0 +
 v1.1.1 (Sky Map chrome, opens on my star, pinch redraws, no idle redraw) - **v1.1.1 itself is not
 yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
 ([authentik](infrastructure/authentik.md)).
 
 **Restart order:**
 
-1. **MiGallery: two releases the USER publishes, then the rest of D8.** The user's seven desktop
-   points (2026-09-26) are all merged: the new logo everywhere (#346, and Portail-etu #87), bars in
-   the pill's blurred material, dialogs opaque over a blurred page, the viewer's margins and richer
-   Informations panel, the face card (#347), Photos CV like the albums list (#349). Publishing was
-   refused to the agent as a production deploy, so it is the user's: **MiGallery `v2.9.0`** at the
-   bump commit `008d97d` (#348; #349 then goes in the next one, or tag the head once #349 has merged
-   and its CI is green) and **Portail-etu `v1.0.2`** at `c01c775` (it also ships #85, the
-   `canari.emse.fr` links). Then the rest of D8: Paramètres, admin, the desktop shell (~256 px
-   sidebar, bottom bar only <= 768 px - today it shows up to 1440). Measure each page against the
-   Google Photos app on the Mi 9T AND photos.google.com at 1440 first. Owed on hardware: the grid
-   pinch and a multi-file share from a selection (v2.7.0), the albums list and Photos CV in prod.
+1. **MiGallery, then Canari's viewers (user, 2026-09-26).** Three pieces, in this order:
+   - **The drop overlay** (`UploadZone.svelte`, `variant="page"`, `.drop-overlay`): it covers the
+     whole window in an opaque grey while files are dragged over the album or Photos CV. Make it
+     translucent over a blurred page, like the dialogs (`Modal.svelte` since #347), and animate it in
+     (fade + slight scale), reduced-motion respected.
+   - **The rest of D8**: Paramètres as a list (row #18), admin, the desktop shell (~256 px sidebar,
+     bottom bar only <= 768 px - today it shows up to 1440, row #9), Mes photos' header (#16), the
+     albums chips and sort (#15), the glass/glow recount (#25), the P3 rows (#19-#23; the manifest is
+     cheap now that the icons exist). Prune the rows that shipped (#5, #6, #17, parts of #15/#16)
+     from [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)'s
+     work list first. Measure each page against the Google Photos app on the Mi 9T AND
+     photos.google.com at 1440 before building it.
+   - **Canari's viewers take what MiGallery's viewer learnt** (v2.5.0 to v2.9.0: full-screen black,
+     side margins on a desktop, a bar that fades, swipe between items, swipe-down to dismiss, an
+     Informations panel that slides in with an icon per fact). Canari has two:
+     `frontend/src/lib/components/shared/MediaLightbox.svelte` (with `lightboxSwipeDismiss.ts`) and
+     `FullScreenViewer.svelte`. Read MiGallery's `PhotoModal.svelte`, `viewer-gestures` and
+     `viewer-info` first; Canari's media is E2E-encrypted, so there is no EXIF from a server - an
+     info panel there shows what the client knows (sender, date, size, dimensions).
+   Owed on hardware: the grid pinch and a multi-file share from a selection (v2.7.0), and v2.8.0 +
+   v2.9.0 on the Mi 9T in prod (albums list, Photos CV, the viewer panel, the bars).
 2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
    button row that does not state its own alignment - it misaligned the ⋮ menus (#337). Each new
    left-aligned row must state it; consider scoping the global rule.
