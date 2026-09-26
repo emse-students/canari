@@ -134,6 +134,37 @@ export class RedisService implements OnModuleDestroy {
     return deleted;
   }
 
+  /**
+   * Of `userIds`, the ones with at least one device online right now, lower-cased.
+   *
+   * The gateway writes `user:online:{userId}:{deviceId}` (TTL 20 s, refreshed on every pong) in
+   * this same Redis, and it is the only liveness fact the estate has. It is keyed per DEVICE, so a
+   * user is online when any key under their prefix exists - which no single `EXISTS` can ask
+   * without knowing the device ids. ONE `SCAN` over the whole `user:online:` prefix answers the
+   * roster in a single pass, where the gateway's per-user scan would walk the keyspace once per
+   * member.
+   *
+   * Throws on a Redis failure rather than answering "nobody": an empty set is a statement that
+   * every member is offline, and a caller would act on it.
+   */
+  async onlineUserIds(userIds: readonly string[]): Promise<Set<string>> {
+    const wanted = new Set(userIds.map((id) => id.trim().toLowerCase()));
+    const online = new Set<string>();
+    if (wanted.size === 0) return online;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', 'user:online:*', 'COUNT', 1000);
+      cursor = next;
+      for (const key of keys) {
+        // `user:online:{userId}:{deviceId}` - the user id is the third field, and neither id
+        // carries a colon.
+        const userId = key.split(':')[2]?.toLowerCase();
+        if (userId && wanted.has(userId)) online.add(userId);
+      }
+    } while (cursor !== '0');
+    return online;
+  }
+
   /** Wraps publish for channel events: emits to `chat:channel_events` with the target userIds so the gateway delivers only to matching WebSocket connections. */
   async publishChannelEvent(
     eventType: string,

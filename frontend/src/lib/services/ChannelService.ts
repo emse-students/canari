@@ -211,6 +211,11 @@ export interface ChannelMemberDto {
   userId: string;
   role: string;
   joinedAt: string;
+  /**
+   * Whether the member has a device online right now. Present only when the roster was read with
+   * `presence: true` - the Graine repair election, which must not address an offline member.
+   */
+  online?: boolean;
 }
 
 /**
@@ -828,14 +833,19 @@ export class ChannelService {
 
   /**
    * Lists the channel's own members. Pass `scope: 'workspace'` for the whole community roster -
-   * a private channel otherwise answers only the people who may actually read it.
+   * a private channel otherwise answers only the people who may actually read it. `presence: true`
+   * adds each member's `online` flag.
    */
   async listMembers(
     channelId: string,
-    scope: 'channel' | 'workspace' = 'channel'
+    scope: 'channel' | 'workspace' = 'channel',
+    { presence = false }: { presence?: boolean } = {}
   ): Promise<ChannelMemberDto[]> {
     const cid = this.normalizeChannelId(channelId);
-    const query = scope === 'workspace' ? '?scope=workspace' : '';
+    const params = new URLSearchParams();
+    if (scope === 'workspace') params.set('scope', 'workspace');
+    if (presence) params.set('presence', '1');
+    const query = params.size > 0 ? `?${params}` : '';
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members${query}`);
     await this.handleError(res);
     return res.json();
@@ -847,9 +857,13 @@ export class ChannelService {
    * Used by the Graine layer at join time, when no salon has been opened yet and the device still
    * has to name the one member it will ask for history.
    */
-  async listWorkspaceMembers(workspaceId: string): Promise<ChannelMemberDto[]> {
+  async listWorkspaceMembers(
+    workspaceId: string,
+    { presence = false }: { presence?: boolean } = {}
+  ): Promise<ChannelMemberDto[]> {
+    const query = presence ? '?presence=1' : '';
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members`
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members${query}`
     );
     await this.handleError(res);
     return res.json();

@@ -43,6 +43,29 @@ vi.mock('$lib/services/ChannelService', () => ({
   },
 }));
 
+/**
+ * The presence waiters the repair parked, in order. Presence itself is not exercised here - the
+ * store has its own tests - so a test says "this member came online" by calling the waiter.
+ */
+let presenceWaiters: { userIds: string[]; fn: (userIds: string[]) => void; cancelled: boolean }[];
+vi.mock('$lib/stores/presenceStore', () => ({
+  whenAnyComesOnline(userIds: string[], fn: (userIds: string[]) => void) {
+    const waiter = { userIds, fn, cancelled: false };
+    presenceWaiters.push(waiter);
+    return () => {
+      waiter.cancelled = true;
+    };
+  },
+}));
+
+/** Fires the live waiter watching `userId`, as the presence store does when they come online. */
+function comesOnline(userId: string): void {
+  const live = presenceWaiters.filter((w) => !w.cancelled && w.userIds.includes(userId));
+  expect(live).toHaveLength(1);
+  live[0].cancelled = true;
+  live[0].fn([userId]);
+}
+
 let sendMessage: ReturnType<typeof vi.fn>;
 /** What the fake store answers for the community - empty means "this device has no history". */
 let heldSessions: StoredGraineSession[];
@@ -59,7 +82,12 @@ let distributionEpoch: number;
 
 beforeEach(() => {
   resetGraineRepairState();
-  const roster = [{ userId: 'Bob' }, { userId: 'alice' }, { userId: 'carol' }];
+  presenceWaiters = [];
+  const roster = [
+    { userId: 'Bob', online: true },
+    { userId: 'alice', online: true },
+    { userId: 'carol', online: true },
+  ];
   // CLEARED, NOT JUST RE-STUBBED. These two are module-level `vi.fn()`s, so their call lists were
   // accumulating across the whole file - which means no test here could ever assert a call COUNT,
   // and one that tried would read the previous tests' work as its own.
@@ -130,7 +158,7 @@ describe('noteMissingSeed', () => {
     // THE WHOLE OF COMM-18, END TO END: a salon in a community whose only member is us, one message
     // sent by our laptop, met by a phone that holds no seed for it. Before 2026-08-25 this asked
     // nobody at all and the message stayed unreadable for good.
-    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
     ownDevices = ['device-1', 'device-2'];
 
     noteMissingSeed('chan-1', 'sess-1', 'alice', SENT_AT);
@@ -240,8 +268,8 @@ describe('requestCommunityHistory (WP-34)', () => {
     // and asked nobody, while the laptop holding the seed sat online in the same group. A community
     // with no second MEMBER still has a second DEVICE, and a request names a user - so it reaches
     // our other devices and only them.
-    listMembers.mockResolvedValue([{ userId: 'alice' }]);
-    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
     ownDevices = ['device-1', 'device-2'];
 
     await requestCommunityHistory('ws-1');
@@ -253,8 +281,8 @@ describe('requestCommunityHistory (WP-34)', () => {
   });
 
   it('says so rather than asking when we are alone with a single device', async () => {
-    listMembers.mockResolvedValue([{ userId: 'alice' }]);
-    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await requestCommunityHistory('ws-1');
@@ -278,8 +306,8 @@ describe('requestCommunityHistory (WP-34)', () => {
    * phone showed an empty community until it was restarted.
    */
   it('re-asks once the roster moves, having found nobody to ask', async () => {
-    listMembers.mockResolvedValue([{ userId: 'alice' }]);
-    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
 
     await requestCommunityHistory('ws-1');
     expect(sendMessage).not.toHaveBeenCalled();
@@ -295,8 +323,8 @@ describe('requestCommunityHistory (WP-34)', () => {
   });
 
   it('does not re-ask while the roster has not moved, however many passes it gets', async () => {
-    listMembers.mockResolvedValue([{ userId: 'alice' }]);
-    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await requestCommunityHistory('ws-1');
@@ -314,27 +342,35 @@ describe('requestCommunityHistory (WP-34)', () => {
 });
 
 describe('resolveAnswerer', () => {
+  /** Everyone online - the election as it read before presence, for the tests about its order. */
+  const all = (roster: Set<string>) => roster;
+  const ask = (answerer: string) => ({ kind: 'ask', answerer });
+
   it('addresses the sender whenever they are still in the community', () => {
-    expect(resolveAnswerer('Bob', new Set(['alice', 'bob', 'carol']), 'alice')).toBe('bob');
+    const roster = new Set(['alice', 'bob', 'carol']);
+    expect(resolveAnswerer('Bob', roster, all(roster), 'alice')).toEqual(ask('bob'));
   });
 
   it('falls back to the lowest user id, which every device computes identically', () => {
     // No clock, no election, nothing for a race to decide: a total order every device already has.
-    expect(resolveAnswerer('dave', new Set(['carol', 'alice', 'bob']), 'zoe')).toBe('alice');
+    const roster = new Set(['carol', 'alice', 'bob']);
+    expect(resolveAnswerer('dave', roster, all(roster), 'zoe')).toEqual(ask('alice'));
   });
 
   it('does not address ourselves with no second device to reach', () => {
     // A request reaches the USER it names, so naming ourselves reaches our other devices - and with
     // none, only the device that is asking precisely because it does not hold the seed.
-    expect(resolveAnswerer('alice', new Set(['alice', 'bob']), 'alice')).toBe('bob');
-    expect(resolveAnswerer('dave', new Set(['alice', 'bob']), 'alice')).toBe('bob');
+    const roster = new Set(['alice', 'bob']);
+    expect(resolveAnswerer('alice', roster, all(roster), 'alice')).toEqual(ask('bob'));
+    expect(resolveAnswerer('dave', roster, all(roster), 'alice')).toEqual(ask('bob'));
   });
 
   it('addresses our own other device FIRST when it minted the session', () => {
     // The sender always holds the seed, and a sender that is our own user is another device of ours:
     // the surest holder in the roster, excluded by name until 2026-08-25 (COMM-18).
-    expect(resolveAnswerer('alice', new Set(['alice', 'bob']), 'alice', undefined, true)).toBe(
-      'alice'
+    const roster = new Set(['alice', 'bob']);
+    expect(resolveAnswerer('alice', roster, all(roster), 'alice', undefined, true)).toEqual(
+      ask('alice')
     );
   });
 
@@ -342,27 +378,171 @@ describe('resolveAnswerer', () => {
     // A device that merely happened to be online is a weaker guess than any named member, so it is
     // the end of the walk rather than the start of it.
     const roster = new Set(['alice', 'bob', 'carol']);
-    expect(resolveAnswerer('dave', roster, 'alice', undefined, true)).toBe('bob');
-    expect(resolveAnswerer('dave', roster, 'alice', new Set(['bob', 'carol']), true)).toBe('alice');
+    expect(resolveAnswerer('dave', roster, all(roster), 'alice', undefined, true)).toEqual(
+      ask('bob')
+    );
+    expect(
+      resolveAnswerer('dave', roster, all(roster), 'alice', new Set(['bob', 'carol']), true)
+    ).toEqual(ask('alice'));
   });
 
-  it('answers null when nobody is left who could hold the seed', () => {
-    expect(resolveAnswerer('dave', new Set(), 'alice')).toBeNull();
-    expect(resolveAnswerer('dave', new Set(['alice']), 'alice')).toBeNull();
+  it('answers exhausted when nobody is left who could hold the seed', () => {
+    const exhausted = { kind: 'exhausted' };
+    expect(resolveAnswerer('dave', new Set(), new Set(), 'alice')).toEqual(exhausted);
+    expect(resolveAnswerer('dave', new Set(['alice']), new Set(['alice']), 'alice')).toEqual(
+      exhausted
+    );
     // Our own devices are a finite candidate too: asked and declined, the walk still ENDS.
     expect(
-      resolveAnswerer('alice', new Set(['alice']), 'alice', new Set(['alice']), true)
-    ).toBeNull();
+      resolveAnswerer('alice', new Set(['alice']), new Set(), 'alice', new Set(['alice']), true)
+    ).toEqual(exhausted);
   });
 
   it('walks past everyone who has already declined, sender included', () => {
     const roster = new Set(['alice', 'bob', 'carol']);
     // Determinism is what makes the election safe and is also what would make it a dead end: the
     // same member would be chosen on every retry. `tried` is what turns one election into a walk.
-    expect(resolveAnswerer('bob', roster, 'alice', new Set(['bob']))).toBe('carol');
-    expect(resolveAnswerer('dave', roster, 'alice', new Set(['bob']))).toBe('carol');
-    // Exhausted: null is the PROOF that ends the walk, not a step in it.
-    expect(resolveAnswerer('bob', roster, 'alice', new Set(['bob', 'carol']))).toBeNull();
+    expect(resolveAnswerer('bob', roster, all(roster), 'alice', new Set(['bob']))).toEqual(
+      ask('carol')
+    );
+    expect(resolveAnswerer('dave', roster, all(roster), 'alice', new Set(['bob']))).toEqual(
+      ask('carol')
+    );
+    // Exhausted is the PROOF that ends the walk, not a step in it.
+    expect(resolveAnswerer('bob', roster, all(roster), 'alice', new Set(['bob', 'carol']))).toEqual(
+      { kind: 'exhausted' }
+    );
+  });
+
+  it('never addresses a member with no device online, sender or stand-in', () => {
+    // Production 2026-09-24: a request is transport, dropped for an offline member, and nothing ever
+    // replaces a SILENT answerer - so the offline author and the offline lowest id were asked, and
+    // the online members holding every seed never were.
+    const roster = new Set(['alice', 'bob', 'carol', 'dave']);
+    const online = new Set(['alice', 'carol']);
+    expect(resolveAnswerer('dave', roster, online, 'alice')).toEqual(ask('carol'));
+  });
+
+  it('WAITS on the members who could answer when none of them is online', () => {
+    const roster = new Set(['alice', 'bob', 'carol']);
+    // Declined members are not waited on: they have already said they hold nothing.
+    expect(resolveAnswerer('carol', roster, new Set(['alice']), 'alice', new Set(['bob']))).toEqual(
+      { kind: 'wait', offline: ['carol'] }
+    );
+    expect(resolveAnswerer('carol', roster, new Set(['alice']), 'alice')).toEqual({
+      kind: 'wait',
+      offline: ['bob', 'carol'],
+    });
+  });
+});
+
+describe('the returner (production 2026-09-24)', () => {
+  /**
+   * The case measured end to end: a member leaves an 8-member community and comes back through its
+   * link. Leaving dropped their seeds. The lowest id and the salon's authors are OFFLINE, other
+   * members online hold every seed. Before the fix every request went to an offline member and the
+   * salon stayed blank on both devices.
+   */
+  const returnerRoster = [
+    { userId: 'alice', online: true }, // us, back
+    { userId: 'bob', online: false }, // the lowest other id, offline for two days
+    { userId: 'carol', online: true }, // online, holds the shared past
+    { userId: 'dave', online: false }, // an author, offline for weeks
+  ];
+
+  beforeEach(() => {
+    listMembers.mockResolvedValue(returnerRoster);
+    listWorkspaceMembers.mockResolvedValue(returnerRoster);
+  });
+
+  it('asks an ONLINE member for the history, not the offline lowest id', async () => {
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.answererUserId).toBe(
+      'carol'
+    );
+    expect(listWorkspaceMembers).toHaveBeenCalledWith('ws-1', { presence: true });
+  });
+
+  it("asks an ONLINE member for an offline author's session", async () => {
+    noteMissingSeed('chan-1', 'sess-dave', 'dave', SENT_AT);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.answererUserId).toBe(
+      'carol'
+    );
+    expect(listMembers).toHaveBeenCalledWith('chan-1', 'workspace', { presence: true });
+  });
+
+  it('asks nobody while every holder is offline, then asks the one who comes back', async () => {
+    const offlineRoster = returnerRoster.map((m) => ({ ...m, online: m.userId === 'alice' }));
+    listMembers.mockResolvedValue(offlineRoster);
+    noteMissingSeed('chan-1', 'sess-dave', 'dave', SENT_AT);
+    await settle();
+    // A frame to nobody is not an ask: the want waits, on presence and not on a clock.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(presenceWaiters.map((w) => w.userIds)).toEqual([['bob', 'carol', 'dave']]);
+
+    listMembers.mockResolvedValue(
+      offlineRoster.map((m) => ({ ...m, online: m.userId === 'alice' || m.userId === 'dave' }))
+    );
+    comesOnline('dave');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.answererUserId).toBe(
+      'dave'
+    );
+  });
+
+  it('keeps ONE waiter per channel however many batches find nobody', async () => {
+    listMembers.mockResolvedValue(returnerRoster.map((m) => ({ ...m, online: false })));
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    noteMissingSeed('chan-1', 'sess-2', 'carol', SENT_AT);
+    await settle();
+
+    // The second batch joined the first rather than stacking a second waiter over the same people.
+    expect(presenceWaiters.filter((w) => !w.cancelled)).toHaveLength(1);
+
+    listMembers.mockResolvedValue(returnerRoster);
+    comesOnline('carol');
+    await settle();
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.answererUserId).toBe('carol');
+    expect(request?.sessionIds?.slice().sort()).toEqual(['sess-1', 'sess-2']);
+  });
+
+  it('parks the history request too, and asks once a member is back', async () => {
+    const offlineRoster = returnerRoster.map((m) => ({ ...m, online: m.userId === 'alice' }));
+    listWorkspaceMembers.mockResolvedValue(offlineRoster);
+
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    listWorkspaceMembers.mockResolvedValue(returnerRoster);
+    comesOnline('carol');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.kind).toBe(
+      canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+    );
+  });
+
+  it('elects as if online a member the server gave no presence for, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    listMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+    noteMissingSeed('chan-1', 'sess-bob', 'bob', SENT_AT);
+    await settle();
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.answererUserId).toBe(
+      'bob'
+    );
+    expect(warn.mock.calls.flat().join(' ')).toContain('without presence');
+    warn.mockRestore();
   });
 });
 

@@ -2757,7 +2757,8 @@ export class ChannelService {
   async listChannelMembers(
     channelId: string,
     actorUserId: string,
-    scope: 'channel' | 'workspace' = 'channel'
+    scope: 'channel' | 'workspace' = 'channel',
+    withPresence = false
   ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -2787,7 +2788,7 @@ export class ChannelService {
       );
     };
 
-    return members.filter(belongsToChannel).map((m) => {
+    const rows = members.filter(belongsToChannel).map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {
@@ -2797,6 +2798,24 @@ export class ChannelService {
         joinedAt: m.createdAt,
       };
     });
+    return withPresence ? this.withPresence(rows) : rows;
+  }
+
+  /**
+   * Marks each roster row with whether that member has a device online RIGHT NOW.
+   *
+   * Asked for by the Graine repair election and nothing else, hence opt-in: a seed request is a
+   * transport frame, dropped for a member with no device online, so electing an offline member is
+   * a request nobody ever answers - on production 2026-09-24 every request of a returning member
+   * went to one, and the salon stayed blank (`docs/wiki/protocols/channel-encryption.md`, WP-33).
+   * The member lists the UI draws do not pay a keyspace scan for a fact they never show.
+   */
+  private async withPresence<T extends { userId: string }>(
+    rows: T[]
+  ): Promise<(T & { online: boolean })[]> {
+    const online = await this.redis.onlineUserIds(rows.map((r) => r.userId));
+    this.logger.debug(`[ROSTER] presence read: ${online.size}/${rows.length} member(s) online`);
+    return rows.map((r) => ({ ...r, online: online.has(r.userId.trim().toLowerCase()) }));
   }
 
   /**
@@ -2808,14 +2827,14 @@ export class ChannelService {
    * ask for history, before any salon has been opened. Reaching for an arbitrary channel to get a
    * community's roster is the kind of indirection that breaks the first time the list is empty.
    */
-  async listWorkspaceMembers(workspaceId: string, actorUserId: string) {
+  async listWorkspaceMembers(workspaceId: string, actorUserId: string, withPresence = false) {
     await this.assertWorkspaceMember(workspaceId, actorUserId);
 
     const members = await this.memberRepo.find({ where: { workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId } });
     const roleMap = new Map(roles.map((r) => [r.id, r]));
 
-    return members.map((m) => {
+    const rows = members.map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {
@@ -2825,6 +2844,7 @@ export class ChannelService {
         joinedAt: m.createdAt,
       };
     });
+    return withPresence ? this.withPresence(rows) : rows;
   }
 
   // ================= MESSAGES =================

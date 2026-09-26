@@ -40,6 +40,54 @@ export function onPeersCameOnline(fn: (userIds: string[]) => void): () => void {
 }
 
 /**
+ * Calls `fn` ONCE, the first time one of `userIds` is seen online AFTER this call, then detaches.
+ * Returns a cancel function.
+ *
+ * **Measured against the map as it stands at registration, not against the previous poll** - which
+ * is what {@link onPeersCameOnline} reads, and why it cannot serve a caller that has just learnt
+ * from elsewhere (a server roster) that these users are offline. A user this client has never
+ * polled has no previous value, so their first poll answering `true` is no edge there and the
+ * caller would wait for ever on someone already back. Here, a user not known online at
+ * registration counts as back the moment the map says so. A user the map still calls online - a
+ * value up to one poll stale, contradicting the caller's own fresher read - must be seen offline
+ * first, so a stale `true` can never fire a retry that finds them offline again and re-registers.
+ *
+ * Starts polling them, and never stops: the watchlist is shared with the UI and not reference
+ * counted, so unwatching here could silence a presence dot a component still shows.
+ */
+export function whenAnyComesOnline(userIds: string[], fn: (userIds: string[]) => void): () => void {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  const before = get(presenceMap);
+  const armed = new Set(ids.filter((id) => before[id] !== true));
+  const seenOnline = new Set(ids.filter((id) => before[id] === true));
+  let done = false;
+  let unsubscribe: (() => void) | null = null;
+  const detach = () => {
+    done = true;
+    unsubscribe?.();
+  };
+  unsubscribe = presenceMap.subscribe((map) => {
+    if (done) return;
+    for (const id of seenOnline) {
+      if (map[id] === false) {
+        seenOnline.delete(id);
+        armed.add(id);
+      }
+    }
+    const back = [...armed].filter((id) => map[id] === true);
+    if (back.length === 0) return;
+    detach();
+    try {
+      fn(back);
+    } catch (err) {
+      console.warn('Presence waiter threw', err);
+    }
+  });
+  watchUsers(ids);
+  return detach;
+}
+
+/**
  * Adds the given user IDs to the polling watchlist and starts the polling loop
  * if it is not already running. The loop automatically pauses when the page is
  * hidden and resumes when visible.

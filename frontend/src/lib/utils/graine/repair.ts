@@ -6,7 +6,8 @@ import {
   scopeLabel,
   workspaceScope,
 } from '$lib/mls-client/distributionScope';
-import { ChannelService } from '$lib/services/ChannelService';
+import { type ChannelMemberDto, ChannelService } from '$lib/services/ChannelService';
+import { whenAnyComesOnline } from '$lib/stores/presenceStore';
 import { requireGraineRuntime, scopeForChannel } from './runtime';
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
@@ -112,6 +113,22 @@ const historyAsked = new Set<string>();
  */
 const historyUnanswerableAt = new Map<string, number>();
 
+/**
+ * Per channel, the sessions for which no holder has a device online, each with the members who
+ * could answer it once they do - and the waiter that re-asks the moment one of them comes back.
+ *
+ * **Nobody reachable is an EVENT to wait for, never a delay to sit out.** A request is a transport
+ * frame, dropped for a member with no device online, so addressing one anyway is a request nobody
+ * ever answers - and until 2026-09-26 that is exactly what happened: on production every request of
+ * a member who had just come back to a community went to an offline member, and the salon stayed
+ * blank (`docs/wiki/protocols/channel-encryption.md`, WP-33). The want stays in {@link wants}; only
+ * the sending waits, and what ends the wait is presence, not a clock.
+ */
+const parked = new Map<string, { sessions: Map<string, string[]>; cancel: () => void }>();
+
+/** Communities whose history request waits for a member to come online, with that waiter's cancel. */
+const historyParked = new Map<string, () => void>();
+
 /** True while a flush is in flight, so the accumulator keeps filling instead of racing it. */
 let flushing = false;
 
@@ -186,6 +203,8 @@ interface RepairTargets {
   groupId: string;
   /** Who is in the community, lower-cased - the population an answerer is chosen from. */
   roster: Set<string>;
+  /** Of {@link roster}, who has a device online right now - the only members a request reaches. */
+  online: Set<string>;
   /** Whether another device of OURS sits on the group - see {@link ownDevicesOnTheGroup}. */
   ownOtherDevices: boolean;
 }
@@ -203,15 +222,55 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   // members, and asking the community's would name an answerer who cannot even see the request -
   // it travels on the salon's group, which they are not in.
   const memberScope = scope.kind === 'channel' ? 'channel' : 'workspace';
-  const members = (await channels().listMembers(channelId, memberScope)).map((m) =>
-    String(m.userId).toLowerCase()
+  const { roster, online } = electionRoster(
+    await channels().listMembers(channelId, memberScope, { presence: true }),
+    `channel ${channelId.slice(0, 8)}`
   );
   return {
     workspaceId,
     groupId,
-    roster: new Set(members),
+    roster,
+    online,
     ownOtherDevices: await ownDevicesOnTheGroup(scope),
   };
+}
+
+/**
+ * A roster read with presence, as the election consumes it: who is in it, and who of them has a
+ * device online.
+ *
+ * **Presence is carried TO the decision** rather than learnt by failing: the server reads the
+ * gateway's liveness keys when it answers the roster, so the device electing an answerer knows
+ * whether the frame it is about to send can reach them.
+ *
+ * A row WITHOUT the flag is a server that did not answer the question - never "offline". It is
+ * elected as if online, because this is a bandwidth decision and parking a want on a missing field
+ * would strand it; and it is said at warn level, because reaching it means the server half of the
+ * contract is not deployed where this client runs.
+ */
+function electionRoster(
+  rows: ChannelMemberDto[],
+  label: string
+): {
+  roster: Set<string>;
+  online: Set<string>;
+} {
+  const roster = new Set<string>();
+  const online = new Set<string>();
+  let unanswered = 0;
+  for (const row of rows) {
+    const id = String(row.userId).toLowerCase();
+    roster.add(id);
+    if (typeof row.online !== 'boolean') unanswered++;
+    if (row.online !== false) online.add(id);
+  }
+  if (unanswered > 0) {
+    console.warn(
+      `[GRAINE] the roster of ${label} came back without presence for ${unanswered} member(s) - ` +
+        `electing them as if online; the social service answering it predates the presence field`
+    );
+  }
+  return { roster, online };
 }
 
 /**
@@ -267,7 +326,7 @@ async function ownDevicesOnTheGroup(scope: DistributionScope): Promise<boolean> 
 async function requestSeedsForChannel(
   channelId: string,
   sessions: Map<string, MissingSeed>,
-  { workspaceId, groupId, roster, ownOtherDevices }: RepairTargets
+  { workspaceId, groupId, roster, online, ownOtherDevices }: RepairTargets
 ): Promise<void> {
   const { mlsService, userId } = requireGraineRuntime('cannot ask for a missing seed');
 
@@ -293,15 +352,21 @@ async function requestSeedsForChannel(
   // otherwise answer at once, so a salon of three hundred would pay three hundred bundles for one
   // missing session.
   const byAnswerer = new Map<string, string[]>();
+  const waiting = new Map<string, string[]>();
   for (const [sessionId, { senderId }] of sessions) {
-    const answerer = resolveAnswerer(
+    const election = resolveAnswerer(
       senderId,
       roster,
+      online,
       userId,
       declined.get(sessionId),
       ownOtherDevices
     );
-    if (!answerer) {
+    if (election.kind === 'wait') {
+      waiting.set(sessionId, election.offline);
+      continue;
+    }
+    if (election.kind === 'exhausted') {
       // The roster is exhausted: everyone who could have held it has been asked and has said no.
       // That is the walk TERMINATING on a proof, so the want is dropped rather than left to be
       // retried for ever - and it is said once, here, rather than discovered as a permanently blank
@@ -318,8 +383,10 @@ async function requestSeedsForChannel(
       declined.delete(sessionId);
       continue;
     }
+    const { answerer } = election;
     byAnswerer.set(answerer, [...(byAnswerer.get(answerer) ?? []), sessionId]);
   }
+  if (waiting.size > 0) parkUntilOnline(channelId, waiting);
 
   for (const [answerer, sessionIds] of byAnswerer) {
     const frame = encodeAppMessage(
@@ -380,9 +447,29 @@ async function withheldFromUs(
     .map(([sessionId]) => sessionId);
 }
 
+/** What the election decided for one session. */
+export type Election =
+  /** Send the request to this member. */
+  | { kind: 'ask'; answerer: string }
+  /**
+   * Nobody who could answer has a device online. `offline` is who could, once back - the want is
+   * parked on their presence ({@link parkUntilOnline}).
+   */
+  | { kind: 'wait'; offline: string[] }
+  /** Everyone who could have held it has declined: the walk has terminated on a proof. */
+  | { kind: 'exhausted' };
+
 /**
  * Who to address a request to: the session's own sender, or the lowest user id still in the
- * community that has not already declined.
+ * community that has not already declined - AMONG THE MEMBERS WITH A DEVICE ONLINE.
+ *
+ * **Only a member who can receive the frame is a candidate.** A request is transport, dropped for a
+ * member with no device online, so electing one is a request nobody answers - and nothing ever
+ * replaces a SILENT answerer, only one that declines. On production 2026-09-24 a member back in an
+ * 8-member community asked the lowest id (offline two days) for its history and each author (two
+ * of them offline for weeks) for their sessions, while several online members held every seed; the
+ * salon stayed blank. The order is unchanged and still total over what every device sees; it is
+ * taken over the reachable members, and when there are none the answer is to WAIT, not to guess.
  *
  * The sender always holds the seed, so they are the answer whenever they are still reachable. When
  * they are not, SOME member has to be picked and every device has to pick the same one without
@@ -410,6 +497,7 @@ async function withheldFromUs(
  *
  * @param senderId Who minted the session; the first candidate whenever they are still a member.
  * @param roster Community members, lower-cased.
+ * @param online Of `roster`, who has a device online - the only other members a request reaches.
  * @param self This user - a candidate only through another device, see above.
  * @param tried Members who have already answered that they do not hold it.
  * @param ownOtherDevices Whether another device of ours is on the group to receive the request.
@@ -417,31 +505,75 @@ async function withheldFromUs(
 export function resolveAnswerer(
   senderId: string,
   roster: Set<string>,
+  online: ReadonlySet<string>,
   self: string,
   tried?: ReadonlySet<string>,
   ownOtherDevices = false
-): string | null {
+): Election {
   const sender = senderId.toLowerCase();
   const me = self.toLowerCase();
-  const reachable = (id: string) => (id === me ? ownOtherDevices : true) && !tried?.has(id);
-  if (roster.has(sender) && reachable(sender)) return sender;
-  const other = lowestOtherMember(roster, me, tried);
-  if (other) return other;
-  // Every named member is exhausted. One of our own devices may still have been online when the
+  const untried = (id: string) => !tried?.has(id);
+  // Our own presence says nothing about our OTHER devices - this one is online by definition - so
+  // for us the server's device rows decide, exactly as before.
+  const reachable = (id: string) => untried(id) && (id === me ? ownOtherDevices : online.has(id));
+  if (roster.has(sender) && reachable(sender)) return { kind: 'ask', answerer: sender };
+  const other = lowestOtherMember(roster, me, tried, online);
+  if (other) return { kind: 'ask', answerer: other };
+  // Every online member is exhausted. One of our own devices may still have been online when the
   // seed went out, and asking is the difference between one frame and a message nobody can open.
-  return reachable(me) ? me : null;
+  if (reachable(me)) return { kind: 'ask', answerer: me };
+  const offline = [...roster].filter((id) => id !== me && untried(id)).sort();
+  return offline.length > 0 ? { kind: 'wait', offline } : { kind: 'exhausted' };
 }
 
 /**
- * The lowest user id in the roster that is neither us nor already tried, or null when there is
- * nobody left - which is the proof that ends the walk.
+ * The lowest user id in the roster that is neither us nor already tried and has a device online,
+ * or null when there is nobody such.
  */
 function lowestOtherMember(
   roster: Set<string>,
   self: string,
-  tried?: ReadonlySet<string>
+  tried: ReadonlySet<string> | undefined,
+  online: ReadonlySet<string>
 ): string | null {
-  return [...roster].filter((id) => id !== self && !tried?.has(id)).sort()[0] ?? null;
+  return (
+    [...roster].filter((id) => id !== self && !tried?.has(id) && online.has(id)).sort()[0] ?? null
+  );
+}
+
+/**
+ * Holds `sessions` of `channelId` until one of the members who could answer them comes online,
+ * then asks again - through {@link noteMissingSeed}, so the re-ask is an ordinary election over a
+ * fresh roster rather than a replay of a stale one.
+ *
+ * Merged per channel: a later batch finding nobody either joins the one already waiting rather than
+ * stacking a second waiter over the same people.
+ *
+ * @param sessions Session id -> the members (lower-cased) who could answer it once online.
+ */
+function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): void {
+  const previous = parked.get(channelId);
+  previous?.cancel();
+  const merged = new Map([...(previous?.sessions ?? []), ...sessions]);
+  const candidates = [...new Set([...merged.values()].flat())];
+  console.info(
+    `[GRAINE] ${merged.size} seed(s) of channel ${channelId.slice(0, 8)} wait for a holder to come ` +
+      `online - ${candidates.length} member(s) could answer and none has a device online`
+  );
+  const cancel = whenAnyComesOnline(candidates, (back) => {
+    parked.delete(channelId);
+    const stillWanted = [...merged.keys()].filter((sessionId) => wants.has(sessionId));
+    if (stillWanted.length === 0) return;
+    console.info(
+      `[GRAINE] ${back.length} member(s) came online - asking again for ${stillWanted.length} ` +
+        `seed(s) of channel ${channelId.slice(0, 8)}`
+    );
+    for (const sessionId of stillWanted) {
+      const want = wants.get(sessionId);
+      if (want) noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt);
+    }
+  });
+  parked.set(channelId, { sessions: merged, cancel });
 }
 
 /**
@@ -467,6 +599,13 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
     'cannot ask for community history'
   );
 
+  // HOLDING SOME SEEDS IS NOT HOLDING THE PAST - a member back in a community holds exactly the
+  // seeds sent since the return. That past is not this request's to fetch: every row this device
+  // cannot open names its session and asks for it ({@link noteMissingSeed}), which is what derives
+  // what is missing from the messages themselves. On 2026-09-24 that path failed too, only because
+  // it addressed offline members; it elects among the online ones now. Asking the whole bundle again
+  // here at every start, of one member, for seeds this device mostly holds, would buy nothing that
+  // path does not already deliver session by session.
   const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
   if (held.length > 0) return;
 
@@ -481,16 +620,27 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   const epoch = distributionEpochFor(mlsService, scope);
   if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
 
-  const roster = new Set(
-    (await channels().listWorkspaceMembers(workspaceId)).map((m) => String(m.userId).toLowerCase())
+  const { roster, online } = electionRoster(
+    await channels().listWorkspaceMembers(workspaceId, { presence: true }),
+    `community ${workspaceId.slice(0, 8)}`
   );
   // OUR OWN OTHER DEVICES ARE MEMBERS TOO. A community whose only MEMBER is us is not a community
   // with nobody to ask: the seeds are held by whichever device of ours minted them, and that device
   // is on this very group. Read as "nothing to ask for", this line was the whole of COMM-18's
   // failure on 2026-08-25 - a phone that had just joined a solo community, sitting in front of a
   // message its owner's laptop held the seed for, having asked no one.
+  //
+  // AND ONLY A MEMBER WITH A DEVICE ONLINE, for the reason {@link resolveAnswerer} gives: the lowest
+  // id regardless of presence was, on production 2026-09-24, a member offline for two days, asked at
+  // every load and never answering.
   const answerer =
-    lowestOtherMember(roster, userId) ?? ((await ownDevicesOnTheGroup(scope)) ? userId : null);
+    lowestOtherMember(roster, userId, undefined, online) ??
+    ((await ownDevicesOnTheGroup(scope)) ? userId : null);
+  const offline = [...roster].filter((id) => id !== userId && !online.has(id)).sort();
+  if (!answerer && offline.length > 0) {
+    parkHistoryUntilOnline(workspaceId, offline);
+    return;
+  }
   if (!answerer) {
     // Genuinely nobody RIGHT NOW: no second member, and no second device of ours on the group. Said
     // once per roster rather than retried on every load - and it is a roster this device does not
@@ -515,12 +665,40 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   );
   await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
   historyAsked.add(workspaceId);
+  historyParked.get(workspaceId)?.();
+  historyParked.delete(workspaceId);
   // A request IS outstanding now, and `historyAsked` is what says so. Leaving a stale epoch here
   // would be a second thing claiming to decide the same question.
   historyUnanswerableAt.delete(workspaceId);
   console.info(
     `[GRAINE] asked ${answerer} for the history of community ${workspaceId.slice(0, 8)}`
   );
+}
+
+/**
+ * Holds a community's history request until one of its `offline` members comes online, then asks
+ * again from the top - a fresh roster, a fresh election.
+ */
+function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
+  historyParked.get(workspaceId)?.();
+  console.info(
+    `[GRAINE] the history of community ${workspaceId.slice(0, 8)} waits for a member to come ` +
+      `online - ${offline.length} member(s) could answer and none has a device online`
+  );
+  const cancel = whenAnyComesOnline(offline, (back) => {
+    historyParked.delete(workspaceId);
+    console.info(
+      `[GRAINE] ${back.length} member(s) of community ${workspaceId.slice(0, 8)} came online - ` +
+        `asking for its history`
+    );
+    requestCommunityHistory(workspaceId).catch((e) =>
+      console.warn(
+        `[GRAINE] could not ask for the history of community ${workspaceId.slice(0, 8)}: ` +
+          String(e)
+      )
+    );
+  });
+  historyParked.set(workspaceId, cancel);
 }
 
 /**
@@ -588,6 +766,10 @@ export function forgetWorkspaceRepairState(
 ): void {
   historyAsked.delete(workspaceId);
   historyUnanswerableAt.delete(workspaceId);
+  historyParked.get(workspaceId)?.();
+  historyParked.delete(workspaceId);
+  // A parked channel waiter of this community may still fire; it re-asks only what is still in
+  // `wants`, which the loop below empties of this community's sessions.
   for (const sessionId of sessionIds) forgetAskedSession(sessionId);
 }
 
@@ -599,5 +781,9 @@ export function resetGraineRepairState(): void {
   outstanding.clear();
   historyAsked.clear();
   historyUnanswerableAt.clear();
+  for (const { cancel } of parked.values()) cancel();
+  parked.clear();
+  for (const cancel of historyParked.values()) cancel();
+  historyParked.clear();
   flushing = false;
 }

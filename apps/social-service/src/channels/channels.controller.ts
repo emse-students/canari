@@ -364,18 +364,21 @@ export class ChannelsController {
   /**
    * Returns the channel's own members. `?scope=workspace` returns the whole community roster
    * instead - needed by the settings panel to offer people who are not in the channel yet.
+   * `?presence=1` adds each member's `online` flag (Graine repair election).
    */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/members')
   listChannelMembers(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Query('scope') scope?: string
+    @Query('scope') scope?: string,
+    @Query('presence') presence?: string
   ) {
     return this.service.listChannelMembers(
       channelId,
       xUserId.trim().toLowerCase(),
-      scope === 'workspace' ? 'workspace' : 'channel'
+      scope === 'workspace' ? 'workspace' : 'channel',
+      presence === '1'
     );
   }
 
@@ -457,14 +460,22 @@ export class ChannelsController {
     );
   }
 
-  /** Returns the whole community roster, for a caller holding no channel id (Graine history). */
+  /**
+   * Returns the whole community roster, for a caller holding no channel id (Graine history).
+   * `?presence=1` adds each member's `online` flag.
+   */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/:workspaceId/members')
   listWorkspaceMembers(
     @Headers('x-user-id') xUserId: string,
-    @Param('workspaceId') workspaceId: string
+    @Param('workspaceId') workspaceId: string,
+    @Query('presence') presence?: string
   ) {
-    return this.service.listWorkspaceMembers(workspaceId, xUserId.trim().toLowerCase());
+    return this.service.listWorkspaceMembers(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      presence === '1'
+    );
   }
 
   /** Sets what this community lets a newcomer read (`shared` or `joined`). */
