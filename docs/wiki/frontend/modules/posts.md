@@ -163,6 +163,15 @@ the filler run and leaves the key's default to take the one visible step - measu
 ArrowLeft then types at the end of the line above (`helloX<br>`) where it used to type at the start
 of the new line (`hello<br>X`). Ctrl/Alt/Meta jumps stay the browser's.
 
+**And every EMPTY line carries its own filler, with the caret inside text - Firefox demands both.**
+Pressed on an empty line, `insertNewlineAtCursor` split in front of that line's filler, pushed it down
+with the caret and left `a<br><br><br>` behind, the caret at the parent's child index. From there
+Firefox moved two lines or straight to the top (measured 2026-09-26 on Firefox 155, user: *"pressing
+left should bring me up one line, not to the top"*); Chromium happened to cope. The insertion now puts
+the caret inside the text it splits off, and `anchorEmptyLineBefore` refills the line it leaves -
+the shape `renderMentionEditor` already draws. Measured in both engines on the real component:
+Shift+Enter three times on an empty composer, then each ArrowLeft/ArrowRight moves one line.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes

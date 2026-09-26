@@ -16,6 +16,7 @@
     renderPlainTextToMentionEditor,
     serializeMentionEditor,
     setPlainTextSelection,
+    stripComposerDomFillers,
     shouldRerenderComposerDom,
   } from '$lib/utils/mentions/mentionEditor';
   import {
@@ -333,10 +334,45 @@
       zwsp.data = COMPOSER_EMPTY_LINE_FILLER;
       range.setStart(zwsp, 1);
       range.collapse(true);
+    } else {
+      // INSIDE the text that follows, never at the parent's child index. Pressed on an empty line,
+      // the caret sat in front of that line's filler, so the split pushed the filler down onto the
+      // new line and `setStartAfter(br)` left the caret at the parent between the `<br>` and it.
+      // Firefox moves from such a position by two lines or straight to the top (measured
+      // 2026-09-26, user: "pressing left should bring me up one line, not to the top"). After any
+      // leading filler, like the branch above.
+      let lead = 0;
+      while (after.data[lead] === COMPOSER_EMPTY_LINE_FILLER) lead++;
+      range.setStart(after, lead);
+      range.collapse(true);
     }
+    anchorEmptyLineBefore(br);
     sel.removeAllRanges();
     sel.addRange(range);
     editorEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  }
+
+  /**
+   * Gives the line ending at `br` a filler when that line is now empty.
+   *
+   * The split above can leave the line it came from holding nothing, or an empty text node - the
+   * filler it had went down with the caret. A line with no character in it is a caret position
+   * only at the PARENT's child index, which Firefox steps over by two lines or to the top
+   * (measured 2026-09-26: `a<br><br><br>` with the caret on the last line, one ArrowLeft landed
+   * after "a"). With a filler on every empty line, the arrows move one line per press in Firefox
+   * and Chromium alike - the same shape `renderMentionEditor` already draws for an empty line.
+   */
+  function anchorEmptyLineBefore(br: HTMLBRElement) {
+    const before = br.previousSibling;
+    const beforeIsEmpty = before instanceof Text && stripComposerDomFillers(before.data) === '';
+    const lineStart = beforeIsEmpty ? before.previousSibling : before;
+    // With nothing before it, the line is empty only if `br` opens the editor itself - inside an
+    // inline element, the line may well begin with text outside it.
+    const empty =
+      lineStart === null ? br.parentNode === editorEl : lineStart instanceof HTMLBRElement;
+    if (!empty) return;
+    if (beforeIsEmpty) before.data = COMPOSER_EMPTY_LINE_FILLER;
+    else br.before(document.createTextNode(COMPOSER_EMPTY_LINE_FILLER));
   }
 
   /**
