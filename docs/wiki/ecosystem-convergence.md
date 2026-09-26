@@ -1402,8 +1402,15 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
    rewrite is force-pushed on a fresh mirror, the ruleset comes back, and the user sends GitHub
    Support the request for `refs/pull/*` (text to be written).
 5. **MiConnect**: the three strings and the signed-in observation in [backlog](backlog.md).
-6. **Le Cercle, two items code cannot close**: menu sections need a category the menu data does not
-   have; "coktail passion" is production data to rename on `/gestion/carte`.
+6. **Le Cercle: the tiles of Accueil and Compte need a real order (user, 2026-09-26: "l'ordre des
+   tuiles n'a actuellement aucun sens + est moche").** Measured on the user's screenshots at ~1200 px:
+   on Compte the Solde card is as tall as "Dernières opérations" and mostly empty, "Ta conso
+   préférée" sits alone beside the spending chart, the identity card (name, badges, formation,
+   promo) comes fifth, below the money, and leaves a hole to its right; Accueil repeats "Dernières
+   opérations" and the balance that Compte shows. Decide what each page is FOR, then one column of
+   priority on a phone and a grid with no holes on a desktop. Plus two items code cannot close:
+   menu sections need a category the menu data does not have; "coktail passion" is production data
+   to rename on `/gestion/carte`.
 7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
    Every rig, the Immich tunnel and the other MiGallery worktrees are removed at the pause.
 
