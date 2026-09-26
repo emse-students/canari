@@ -1363,7 +1363,10 @@ it fails.
 14. **Every user-visible string through the i18n layer, and every placeholder a message is called
     with exists in it.** *Le Cercle: `stats_rank_value` is called with `{rank}` and has no `{rank}`.*
 
-### Where the chantier stands, and the restart order (paused 2026-09-26 night)
+### Where the chantier stands, and the restart order
+
+Last paused 2026-09-26, night. The date lives here and not in the heading: CLAUDE.md and a
+changelog entry link to this section's anchor, and a dated heading broke both at the first update.
 
 Everything below is pushed; nothing lives only in a scratch directory. Phone checks are done on the
 Mi 9T (adb reverse to a local rig, or prod).
