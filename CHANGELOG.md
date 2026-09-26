@@ -14,6 +14,111 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.26] - 2026-09-26
+
+### Changed - a blocked account's posts and comments leave the feed, in both directions
+
+Feed, search, single-post read and agenda card now hide a blocked account's personal posts and
+their comments, symmetrically. An association post and an anonymous one are exempt on purpose:
+filtering those on authorship would turn a block into a way to ask who wrote them
+([moderation-and-blocking](docs/wiki/moderation-and-blocking.md)).
+
+### Fixed - search served posts every feed refused
+
+`searchPosts` carried neither the moderation-hide nor the store-review account exclusion, so a post
+auto-hidden by the report threshold was reachable by anyone who typed a word of it
+([moderation-and-blocking](docs/wiki/moderation-and-blocking.md#found-while-wiring-it-search-served-what-every-feed-refused)).
+
+### Fixed - an empty backup variable disables what it says it disables
+
+`BACKUP_SSH_HOST`, `MICONNECT_PG_CONTAINER` and `MICONNECT_SSH_HOST` were read with `:-`, which puts
+the default back on an empty value, so none of the three could be switched off - including the
+escape hatch `restore.sh` prints. Now `-` ([backup](docs/wiki/infrastructure/backup.md#important-notes)).
+
+### Fixed - un apercu de publication partage dans une discussion prenait toute la largeur
+
+La carte s'etirait sur toute la colonne, titre sur une ligne au-dessus d'une bande d'affiche
+floue : elle est plafonnee a la largeur d'une carte de lien, et le titre passe sur trois lignes
+([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - on several empty lines, the left arrow jumped to the top of the composer (Firefox)
+
+Every empty line now keeps its own invisible anchor, so each arrow press moves one line ([posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips)).
+
+### Fixed - after a new line in the composer, the left arrow took two presses to reach the line above
+
+The arrows now step over the invisible character that anchors the caret on an empty line ([posts](docs/wiki/frontend/modules/posts.md#the-filler-holding-the-caret-must-be-the-character-the-serialiser-strips)).
+
+### Fixed - un emoji choisi ou colle pouvait ajouter un retour a la ligne indelogeable au message
+
+Le `<br>` que le navigateur laisse en fin de champ (apres un glisser, ou un champ vide) etait lu
+comme un vrai retour a la ligne, puis redessine comme tel a chaque emoji
+([emoji](docs/wiki/frontend/emoji.md)).
+
+### Fixed - l'indicateur « Deposez vos fichiers ici » restait affiche apres un depot annule
+
+Un depot sur le champ de saisie ou un glisser annule ne prevenait jamais le panneau ; la fin du
+glisser se lit desormais au niveau de la fenetre ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - glisser un fichier depuis Nemo dans Firefox collait son nom dans le message
+
+Firefox ne recoit de Nemo que l'adresse du fichier, sans le fichier : le compositeur n'insere plus
+rien et explique qu'il faut passer par le bouton de piece jointe
+([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Changed - le champ de saisie affiche aussi les emojis en images Noto, pendant la frappe
+
+Comme Discord : un emoji tape, colle ou choisi devient l'image Noto dans le champ, et le texte
+envoye reste exactement le meme ; le code garde les caracteres
+([emoji](docs/wiki/frontend/emoji.md)).
+
+### Removed - les deux polices d'emoji (7,7 Mo), les exports passent aux images Noto
+
+Plus rien ne dessinait avec la police : elle part, avec son controle harfbuzz et ses deux
+dependances. L'affiche, le calendrier et le trombinoscope affichent les images Noto, et le PDF
+les garde dans son image au lieu de les masquer ([emoji](docs/wiki/frontend/emoji.md)).
+
+### Fixed - un emoji envoye sans selecteur de variante, comme 📽, s'affichait en caractere
+
+La regle suivait la liste Unicode des caracteres « texte par defaut » (230) ; seuls #, *, les
+chiffres, ©, ® et ™ restent desormais du texte sans U+FE0F, comme chez Twemoji et Discord
+([emoji](docs/wiki/frontend/emoji.md)).
+
+### Fixed - a member back in a community got none of its past: every seed request went to an offline member
+
+The seed-repair election now reads each member's presence from the roster and elects only an online holder; with nobody online, the request waits for one to come back ([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-33-and-the-answerer-nobody-elects)).
+
+### Changed - The interface chantier has a written restart point
+
+What shipped, what is pushed but unverified, and the order to pick it back up ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)).
+
+### Changed - `canari-emse.fr` sends every page to `canari.emse.fr` and keeps serving the apps
+
+The legacy vhost now answers a document with a `302` to the same path on the new name, and still
+proxies `/api/`, `/.well-known/` and the assets an open tab loads
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)).
+
+### Removed - the web login page no longer offers "Reinitialiser l'appareil"
+
+A developer tool under the sign-in button; the link, its only caller `resetThisDeviceOnRequest` and its six messages are gone ([auth](docs/wiki/frontend/modules/auth.md#the-same-erasure-when-the-user-asks-and-the-three-things-the-button-never-did)).
+
+### Fixed - MiConnect's card is no longer clipped on a phone
+
+`custom-login.css` stops forcing `display: flex` on `.pf-c-login`, whose GRID is what stacks and centres the card; still to be pasted into the Brand by hand ([authentik](docs/wiki/infrastructure/authentik.md#login-page-branding)).
+
+### Changed - MiConnect's sign-in pages are flat, centred and full-width on a phone
+
+No glass, gradient or glow on the card and buttons, the logo centred at a sign-in size, the error's grey rule and default-blue button brought into the palette ([authentik](docs/wiki/infrastructure/authentik.md#login-page-branding)).
+
+### Changed - MiConnect speaks French, and signing in to it lands on Canari
+
+Flow titles and prompts in French with the ecosystem's "tu"; accounts are external so the brand's default application (Canari) applies, and the five admins stay internal to keep the admin UI ([authentik](docs/wiki/infrastructure/authentik.md#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25)).
+
+### Changed - the School host reaches `mitv` privately, so the wiki and Omeka are a plain reverse proxy
+
+The "no private path" reading came from a routing table; the default gateway routes `10.0.0.4` in one
+hop. The three relay designs are withdrawn ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moves-the-wiki-and-omeka-only-get-names---decided-by-the-user-2026-09-25)).
+
 ## [0.18.25] - 2026-09-25
 
 ### Fixed - the production web build refused `canari.emse.fr` and `v0.18.24` never reached the site
