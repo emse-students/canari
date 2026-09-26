@@ -135,7 +135,7 @@ learn by failing what a fact could have told you"*, with presence as the fact le
 was created that day and joined by 10 devices, each of whose history request went to its lowest-id
 member.
 
-**FIXED 2026-09-26, merged and NOT YET RELEASED** - the mechanism is in
+**FIXED 2026-09-26, SHIPPED in `v0.18.26` (production and both stores submitted 2026-09-27)** - the mechanism is in
 [channel-encryption](protocols/channel-encryption.md#wp-33-and-the-answerer-nobody-elects):
 1. the roster the election reads carries each member's `online` flag (`?presence=1`, one `SCAN` of the
    gateway's presence keys in social-service);
@@ -151,8 +151,7 @@ member.
    on `main`'s election it asks `bob` (the offline lowest id) and `dave` (the offline author), exactly
    what production did. **Not yet an end-to-end harness row** - still owed.
 
-**Still owed:** the release (server half deploys with it, the client half reaches phones through the
-stores); a reading of the returner's devices once they run it (`[GRAINE] asked <online member>` or
+**Still owed:** a reading of the returner's devices once they run it (`[GRAINE] asked <online member>` or
 `wait for a holder to come online`, then the salon filling); the second community, member by member;
 the harness row. **Residue, not fixed:** a backgrounded Android can hold its socket and look online
 while unable to answer - the elected member is then silent and the next start re-asks.
