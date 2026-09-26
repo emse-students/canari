@@ -672,6 +672,48 @@ export function removeNewlineFillerBeforeCursor(root: HTMLElement): boolean {
   return true;
 }
 
+/**
+ * Moves the caret (or, with `extend`, the selection's focus) past the run of
+ * `COMPOSER_EMPTY_LINE_FILLER` it touches in `direction`, and does nothing else - the arrow key's
+ * own default action then takes the step the user asked for.
+ *
+ * The filler is invisible but is still a character to the browser's caret movement, so right after
+ * `insertNewlineAtCursor` (caret anchored AFTER the filler) ArrowLeft first crossed the filler,
+ * moving nothing on screen, and only a second press reached the line above (user, 2026-09-26).
+ * Same cause as {@link removeNewlineFillerBeforeCursor}, on the key that moves rather than deletes.
+ *
+ * @returns Whether the caret was moved.
+ */
+export function stepOverFillerBesideCaret(
+  root: HTMLElement,
+  direction: 'backward' | 'forward',
+  extend = false
+): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.focusNode || !root.contains(sel.focusNode)) return false;
+
+  let node: Node = sel.focusNode;
+  let offset = sel.focusOffset;
+  // A caret between two children of an element: look into the text node it faces.
+  if (!(node instanceof Text)) {
+    const faced = node.childNodes[direction === 'backward' ? offset - 1 : offset];
+    if (!(faced instanceof Text)) return false;
+    node = faced;
+    offset = direction === 'backward' ? faced.data.length : 0;
+  }
+  const data = (node as Text).data;
+  let target = offset;
+  if (direction === 'backward') {
+    while (target > 0 && data[target - 1] === COMPOSER_EMPTY_LINE_FILLER) target--;
+  } else {
+    while (target < data.length && data[target] === COMPOSER_EMPTY_LINE_FILLER) target++;
+  }
+  if (target === offset && node === sel.focusNode) return false;
+  if (extend) sel.extend(node, target);
+  else sel.collapse(node, target);
+  return true;
+}
+
 export function getMentionChipFromEventTarget(target: EventTarget | null): string | null {
   if (!(target instanceof HTMLElement)) return null;
   const chip = target.closest(MENTION_CHIP_SELECTOR);

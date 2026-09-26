@@ -76,6 +76,14 @@ function pressBackspace(editorEl: HTMLElement) {
   flushSync();
 }
 
+/** Dispatches a real arrow keydown. Its default movement is the browser's; happy-dom performs none. */
+function pressArrow(editorEl: HTMLElement, key: 'ArrowLeft' | 'ArrowRight', shiftKey = false) {
+  const event = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true });
+  editorEl.dispatchEvent(event);
+  flushSync();
+  return event;
+}
+
 describe('MentionComposerInput.insertNewlineAtCursor', () => {
   it('inserts a real newline at the caret, with the caret anchored right after it', () => {
     const { app, props } = mountEditor('hello');
@@ -168,6 +176,54 @@ describe('MentionComposerInput.insertNewlineAtCursor', () => {
 
     expect(props.value).toBe('hello');
     expect(app.getEditorElement()!.querySelectorAll('br')).toHaveLength(0);
+  });
+
+  it('ArrowLeft right after a fresh newline steps over the invisible filler, not as a keypress of its own', () => {
+    // User, 2026-09-26: "I have to press left arrow two times to get back to the line before". The
+    // caret is anchored AFTER the filler, which the browser's own movement counts as a character,
+    // so the first press moved nothing visible. The filler is crossed here and the key's default
+    // (not prevented) then takes the one visible step.
+    const { app } = mountEditor('hello');
+    app.setSelectionRange(5, 5);
+    app.insertNewlineAtCursor();
+    flushSync();
+
+    const event = pressArrow(app.getEditorElement()!, 'ArrowLeft');
+
+    const sel = window.getSelection()!;
+    expect(sel.focusNode?.textContent).toBe('\u200B');
+    expect(sel.focusOffset).toBe(0);
+    expect(sel.isCollapsed).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('ArrowRight in front of the filler steps over it the same way, and Shift extends instead', () => {
+    const { app } = mountEditor('hello');
+    app.setSelectionRange(5, 5);
+    app.insertNewlineAtCursor();
+    flushSync();
+    const filler = window.getSelection()!.focusNode!;
+    window.getSelection()!.collapse(filler, 0);
+
+    pressArrow(app.getEditorElement()!, 'ArrowRight');
+    expect(window.getSelection()!.focusOffset).toBe(1);
+
+    pressArrow(app.getEditorElement()!, 'ArrowLeft', true);
+    const sel = window.getSelection()!;
+    expect(sel.anchorOffset).toBe(1);
+    expect(sel.focusOffset).toBe(0);
+  });
+
+  it('leaves the caret alone beside a real character', () => {
+    const { app } = mountEditor('hello');
+    app.setSelectionRange(3, 3);
+    const before = window.getSelection()!;
+    const [node, offset] = [before.focusNode, before.focusOffset];
+
+    pressArrow(app.getEditorElement()!, 'ArrowLeft');
+
+    expect(window.getSelection()!.focusNode).toBe(node);
+    expect(window.getSelection()!.focusOffset).toBe(offset);
   });
 
   it('a second newline after typing on the first one lands after the typed text, not before it', () => {

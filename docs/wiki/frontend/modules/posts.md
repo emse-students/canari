@@ -153,6 +153,16 @@ stripper is written against, so the two cannot drift apart again. The test asser
 constant rather than against "some invisible thing", which is the only way the difference shows up
 in a diff at all.
 
+**Invisible to the eye, never to the caret - so every key that crosses it is handled by hand.**
+The browser counts the filler as a character. Native Backspace deleted the filler and left the `<br>`
+(then doubled it), which is why `removeNewlineFillerBeforeCursor` removes both at once. The arrows had
+the same defect until 2026-09-26 (user: *"I have to press left arrow two times to get back to the line
+before"*): the caret sits AFTER the filler, so the first ArrowLeft crossed it and moved nothing on
+screen. `stepOverFillerBesideCaret` now moves the caret (or, with Shift, the selection's focus) past
+the filler run and leaves the key's default to take the one visible step - measured in Chromium, one
+ArrowLeft then types at the end of the line above (`helloX<br>`) where it used to type at the start
+of the new line (`hello<br>X`). Ctrl/Alt/Meta jumps stay the browser's.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes

@@ -12,6 +12,7 @@
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
     removeNewlineFillerBeforeCursor,
+    stepOverFillerBesideCaret,
     renderPlainTextToMentionEditor,
     serializeMentionEditor,
     setPlainTextSelection,
@@ -218,6 +219,22 @@
       e.preventDefault();
       emitEditorChange();
       return;
+    }
+    // NOT prevented: only the invisible filler is stepped over here, and the arrow's own default
+    // then moves the caret the one visible position the user asked for. Word and line jumps
+    // (Ctrl, Alt, Meta) are left to the browser.
+    if (
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+      editorEl &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey
+    ) {
+      stepOverFillerBesideCaret(
+        editorEl,
+        e.key === 'ArrowLeft' ? 'backward' : 'forward',
+        e.shiftKey
+      );
     }
     // `markdownPreview` (not `composerMarkdownPreviewEnabled(...)`, a check on the CURRENT text,
     // removed 2026-09-16) is what tells apart the two callers of this component: a free-text
