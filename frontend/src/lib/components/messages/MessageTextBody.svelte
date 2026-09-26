@@ -85,5 +85,12 @@
   </p>
 {/if}
 {#if firstLink && !isGifUrl(firstLink)}
-  <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
+  <!-- CAPPED IN A CONVERSATION, NOT IN THE FEED (user, 2026-09-25). The bubble is `w-fit` and holds
+       no width of its own, so a card with a long title stretched across the whole thread - a single
+       line of title over a band of blurred poster. `max-w-sm` is a link card's width in Messenger's
+       order of magnitude; the feed's `PostContent` mounts the card without this wrapper and keeps the
+       post's own column. -->
+  <div class="w-full max-w-sm">
+    <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
+  </div>
 {/if}
