@@ -1,8 +1,10 @@
-version: 0.18.25
+version: 0.18.26
 
-Les emojis sont maintenant des images partout ou vous ecrivez, et le selecteur d'emojis a ete
-redessine : ils s'affichent de la meme facon sur tous les appareils, y compris sur iPhone et sur
-Safari ou ils restaient invisibles.
+Un membre qui quitte une communaute puis la rejoint retrouve maintenant ses anciens messages :
+ils sont demandes a un membre connecte, ou des qu'un membre se reconnecte.
 
-Cette version corrige aussi le deverrouillage par code PIN sur la nouvelle adresse
-canari.emse.fr.
+Les emojis s'affichent en images pendant la frappe, et les publications d'un compte bloque
+quittent le fil.
+
+Le champ de saisie est corrige : fleches et retours a la ligne, glisser-deposer de fichiers, et
+apercus de publications moins larges dans les discussions.
