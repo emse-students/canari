@@ -214,6 +214,40 @@ describe('MentionComposerInput.insertNewlineAtCursor', () => {
     expect(sel.focusOffset).toBe(0);
   });
 
+  it('keeps a filler on EVERY empty line, and the caret inside text, across repeated newlines', () => {
+    // User, 2026-09-26: Shift+Enter three times, then ArrowLeft went to the top instead of one line
+    // up (Firefox). Each newline pressed on an empty line pushed that line's filler down with the
+    // caret, leaving `<br><br><br>` and a caret at the parent's child index - positions Firefox
+    // steps over by two lines or to the top. Measured: with a filler per empty line, both engines
+    // move one line per press.
+    const { app, props } = mountEditor('');
+    const editorEl = app.getEditorElement()!;
+    app.setSelectionRange(0, 0);
+    for (let i = 0; i < 3; i++) {
+      app.insertNewlineAtCursor();
+      flushSync();
+    }
+
+    const lines = [...editorEl.childNodes].map((n) =>
+      n.nodeName === 'BR' ? 'BR' : n instanceof Text ? JSON.stringify(n.data) : n.nodeName
+    );
+    const f = JSON.stringify('\u200B');
+    expect(lines).toEqual([f, 'BR', f, 'BR', f, 'BR', f]);
+    expect(window.getSelection()!.focusNode).toBe(editorEl.lastChild);
+    expect(props.value).toBe('\n\n\n');
+  });
+
+  it('puts the caret inside the text a newline splits off, not at the parent', () => {
+    const { app } = mountEditor('helloworld');
+    app.setSelectionRange(5, 5);
+    app.insertNewlineAtCursor();
+    flushSync();
+
+    const sel = window.getSelection()!;
+    expect(sel.focusNode?.textContent).toBe('world');
+    expect(sel.focusOffset).toBe(0);
+  });
+
   it('leaves the caret alone beside a real character', () => {
     const { app } = mountEditor('hello');
     app.setSelectionRange(3, 3);
