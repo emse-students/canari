@@ -17,8 +17,14 @@
     setPlainTextSelection,
     shouldRerenderComposerDom,
   } from '$lib/utils/mentions/mentionEditor';
-  import { filesFromTransfer, carriesUninsertableMarkup } from '$lib/utils/composerTransfer';
+  import {
+    filesFromTransfer,
+    carriesUninsertableMarkup,
+    localFileAddressesFromTransfer,
+  } from '$lib/utils/composerTransfer';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     value?: string;
@@ -433,6 +439,17 @@
         return;
       }
       onmedia(files);
+      return;
+    }
+
+    // A FILE THE ENGINE WITHHELD IS NOT TEXT. Firefox given a file by Nemo receives only its address
+    // and path; inserting that pasted the file's name into the message (reported 2026-09-25).
+    const refused = localFileAddressesFromTransfer(event.dataTransfer);
+    if (refused.length > 0) {
+      console.warn(
+        `[COMPOSER] drop announced ${refused.length} local file(s) but handed over none - the file manager did not give the browser the file`
+      );
+      showToast(m.composer_drop_file_unreadable());
       return;
     }
 

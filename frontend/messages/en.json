@@ -269,6 +269,7 @@
   "chat_insert_emoji_label": "Insert {emoji}",
   "chat_composer_group_label": "Text input and file drop area",
   "chat_drag_files_badge": "Drop your files here",
+  "composer_drop_file_unreadable": "Your file manager did not hand this file to the browser. Use the attachment button instead.",
   "chat_enlarge_preview_label": "Enlarge preview",
   "chat_remove_file_label": "Remove file",
   "common_remove_label": "Remove",
