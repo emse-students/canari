@@ -5,6 +5,7 @@ import {
   presenceMap,
   resetPresenceForTests,
   watchUsers,
+  whenAnyComesOnline,
 } from './presenceStore';
 
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: vi.fn() }));
@@ -141,5 +142,56 @@ describe('noticing that a peer came back', () => {
     await checkPresenceNow();
 
     expect(seen).toEqual([]);
+  });
+});
+
+describe('whenAnyComesOnline', () => {
+  // The waiter reads the map, whoever writes it; the poll it starts answers nothing here, so every
+  // transition below is one the test wrote.
+  beforeEach(() => fetchMock.mockImplementation(() => presenceResponse({})));
+
+  it('fires on the FIRST answer for a user this client had never polled', () => {
+    // A server roster has just said they are offline; the presence poll has never seen them. The
+    // poll-to-poll edge `onPeersCameOnline` reads would never fire here: there is no previous value.
+    const fn = vi.fn();
+    whenAnyComesOnline(['bob'], fn);
+
+    presenceMap.set({ bob: true });
+
+    expect(fn).toHaveBeenCalledWith(['bob']);
+  });
+
+  it('ignores a stale online value until the user has been seen offline', () => {
+    // The map still says online from a poll older than the roster that said offline. Firing on it
+    // would re-elect, find them offline again and park again - a loop driven by a stale value.
+    presenceMap.set({ bob: true });
+    const fn = vi.fn();
+    whenAnyComesOnline(['bob'], fn);
+
+    presenceMap.set({ bob: true, carol: false });
+    expect(fn).not.toHaveBeenCalled();
+    presenceMap.set({ bob: false, carol: false });
+    expect(fn).not.toHaveBeenCalled();
+    presenceMap.set({ bob: true, carol: false });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires once, then detaches; a cancelled waiter never fires', () => {
+    const once = vi.fn();
+    const cancelled = vi.fn();
+    whenAnyComesOnline(['bob'], once);
+    whenAnyComesOnline(['bob'], cancelled)();
+
+    presenceMap.set({ bob: true });
+    presenceMap.set({ bob: false });
+    presenceMap.set({ bob: true });
+
+    expect(once).toHaveBeenCalledTimes(1);
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it('starts polling the users it waits on', () => {
+    whenAnyComesOnline(['bob'], vi.fn());
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('users=bob');
   });
 });

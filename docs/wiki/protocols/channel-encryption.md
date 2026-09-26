@@ -195,8 +195,10 @@ without adding it to both**, and that is a product decision, not a protocol one.
 
 A request names WHO must answer, so that N members do not all answer at once and no election is
 needed: **the session's own sender always holds its seed**, so the request is addressed to them. If
-they have left the community, it is addressed to the current member with the lowest user id. Both
-rules are deterministic, need no clock and no coordination, and leave nothing for a race to decide.
+they have left the community or have no device online, it is addressed to the ONLINE member with the
+lowest user id; with nobody online, the request waits for one to come back. Both rules are
+deterministic, need no clock and no coordination, and leave nothing for a race to decide - see
+[WP-33](#wp-33-and-the-answerer-nobody-elects) for why presence is part of the rule.
 
 ### 4.6 Ordering rule: remove, THEN distribute
 
@@ -718,6 +720,46 @@ they always hold it - and the lowest user id in the roster when they are not. Th
 every device already has, computed identically everywhere with no clock, no election and nothing for
 a race to decide.
 
+**Only a member with a device ONLINE is elected (2026-09-26).** A request is `DELIVERY.transport`,
+and chat-delivery drops a transport frame for a recipient with no device online. So an election that
+ignored presence addressed requests nobody would ever receive, and nothing replaces a SILENT answerer
+- only one that declines (below). Measured on production 2026-09-24 (`v0.18.22`): a member left an
+8-member community and came back through its link one minute later, and saw 2 of the 21 messages of
+`general` on the phone and 0 on the browser. The history request went to the lowest id, offline for
+two days; the per-session requests went to the sessions' authors, two of them offline for weeks; and
+several online members held every seed and were never asked. The fix carries presence TO the
+decision, rather than learning it by failing:
+
+- the roster the election reads comes back with each member's `online` flag -
+  `GET /api/channels/:id/members?presence=1` and `GET /api/channels/workspaces/:id/members?presence=1`.
+  social-service answers it with ONE `SCAN` over the gateway's `user:online:{userId}:{deviceId}` keys
+  (`RedisService.onlineUserIds`), opt-in so the member lists the UI draws do not pay for it;
+- `resolveAnswerer` takes the sender when online, else the lowest ONLINE member not yet tried, else
+  our own other device (unchanged), and answers `{ kind: 'wait', offline }` when the only members who
+  could answer are offline - distinct from `exhausted`, where everyone has declined;
+- a `wait` PARKS the want, one waiter per channel (`parkUntilOnline`; the history request has its
+  own, `parkHistoryUntilOnline`), on `presenceStore.whenAnyComesOnline`. The first of those members
+  seen online re-runs an ordinary election over a FRESH roster. No clock: the event is presence.
+  The waiter compares against the presence map AS IT STOOD AT REGISTRATION, not against the previous
+  poll: a member this client has never polled has no previous value, so `onPeersCameOnline` would
+  never fire for them, and a stale `true` must be seen `false` first or a retry would find them
+  offline and park again, in a loop;
+- a row the server returned WITHOUT the flag is elected as if online and accused at warn level: that
+  is a social service predating the field, and a bandwidth decision must not strand a want on it.
+
+**What presence does not see.** A backgrounded Android can hold its socket open, so `user:online` can
+be true for a device that will not process the frame (the DM history election randomises for that
+reason). Here the elected member is then silent, the ask stays in the in-memory asked-set, and the
+next start asks again - the pre-existing residue, now limited to a frozen member instead of every
+offline one.
+
+**Holding some seeds is still a reason not to request the whole HISTORY.** The returner's phone held
+the 2 seeds sent since the return, so `requestCommunityHistory` did not ask - and that was not the
+defect. The past such a device lacks is derived from the messages it cannot open: each names its
+session and is asked for by the per-session repair, which failed only because it addressed offline
+members. Re-requesting the full bundle at every start, of one member, for seeds the device mostly
+holds, buys nothing that path does not deliver.
+
 **An empty hand is answered, never met with silence (WP-63, 2026-08-18).** Determinism is what makes
 the election safe and was also what made it a dead end: a member elected by the rule but not holding
 the seed was elected again by every device and on every retry, and answering nothing left the session
@@ -727,8 +769,8 @@ answerer turned out **not** to hold, and the requester strikes them off and elec
 told you*, applied on the wire: *"I hold none of these"*, *"I never saw your request"* and *"I am
 offline"* are three different facts an empty wire cannot separate, and only the first one means ask
 somebody else. **The walk terminates on a proof, not on a count or a clock**: each decline removes one
-member from a finite roster, so it ends either on the seed arriving or on `resolveAnswerer` returning
-`null`, which is logged as *no reachable holder* rather than left as a permanently blank salon. A
+member from a finite roster, so it ends either on the seed arriving or on `resolveAnswerer` answering
+`exhausted`, which is logged as *no reachable holder* rather than left as a permanently blank salon. A
 history refusal stays silent on purpose - it is the one case the requester can already derive, since
 the visibility rule is broadcast by the server.
 
@@ -842,9 +884,11 @@ answerer may simply have been offline. Neither is a clock. The ask sits in
 possible, and a device that joined while its answerer was offline must still ask on the next start.
 It is best-effort and never fails the join.
 
-**The answerer is the lowest OTHER member.** `resolveAnswerer` never names this user, and that fixed
-a real hole in WP-33 as well: a session's sender can be another device of ours, so a repair could
-address a request to the very device that was asking - a round trip that answers nothing.
+**The answerer is the lowest OTHER member with a device online** (presence since 2026-09-26, see
+[WP-33](#wp-33-and-the-answerer-nobody-elects)). This user is named only when another device of
+ours sits on the group (`ownDevicesOnTheGroup`, COMM-18, 2026-08-25): a request names a USER and MLS
+never hands a sender its own message back, so it then reaches our other devices and nobody else -
+first when one of them minted the session, last otherwise.
 
 **A community roster now has its own route.** `GET /workspaces/:id/members` exists because the
 caller that needs it - a device that has just joined and opened no salon yet - holds no channel id,

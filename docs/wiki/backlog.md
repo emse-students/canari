@@ -135,17 +135,27 @@ learn by failing what a fact could have told you"*, with presence as the fact le
 was created that day and joined by 10 devices, each of whose history request went to its lowest-id
 member.
 
-**The fix proposed (not started - awaiting the user's go-ahead):**
-1. Carry presence to the decision: the roster the election reads says, per member, whether they have at
-   least one device online - a fact the server supplies.
-2. Elect among the reachable: the sender if online, else the lowest ONLINE id that has not declined.
-   Still deterministic, over the members who can answer.
-3. Nobody reachable is an EVENT to wait for, not a delay: the want stays parked and is re-sent when a
-   member comes online. No clock.
-4. Delete the `held.length > 0` shortcut: holding some seeds is not holding the history; what is missing
-   is derived from the messages this device cannot open.
-5. An end-to-end row reproducing the returner: leave, rejoin by link, with the lowest-id member and an
-   author offline. It must FAIL on `main` before the fix makes it pass.
+**FIXED 2026-09-26, merged and NOT YET RELEASED** - the mechanism is in
+[channel-encryption](protocols/channel-encryption.md#wp-33-and-the-answerer-nobody-elects):
+1. the roster the election reads carries each member's `online` flag (`?presence=1`, one `SCAN` of the
+   gateway's presence keys in social-service);
+2. the sender if online, else the lowest ONLINE member not yet tried - in both `resolveAnswerer` and
+   `requestCommunityHistory`;
+3. nobody online PARKS the want on `presenceStore.whenAnyComesOnline` and re-elects on a fresh roster
+   the moment one of them is seen online. No clock;
+4. **the `held.length > 0` shortcut was KEPT, deliberately, against the proposal**: the phone's missing
+   past is what the per-session repair derives from the rows it cannot open, and that path failed only
+   because it asked offline members. Dropping the shortcut would re-send the whole bundle at every
+   start, from one member, for seeds the device mostly holds;
+5. the returner's case is a unit row in `repair.test.ts` (`the returner (production 2026-09-24)`):
+   on `main`'s election it asks `bob` (the offline lowest id) and `dave` (the offline author), exactly
+   what production did. **Not yet an end-to-end harness row** - still owed.
+
+**Still owed:** the release (server half deploys with it, the client half reaches phones through the
+stores); a reading of the returner's devices once they run it (`[GRAINE] asked <online member>` or
+`wait for a holder to come online`, then the salon filling); the second community, member by member;
+the harness row. **Residue, not fixed:** a backgrounded Android can hold its socket and look online
+while unable to answer - the elected member is then silent and the next start re-asks.
 
 A client fix reaches a phone only through a store release: the app embeds its frontend.
 

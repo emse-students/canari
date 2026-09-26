@@ -98,6 +98,7 @@ describe('ChannelService security hardening', () => {
     };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
+      onlineUserIds: jest.fn((_ids: readonly string[]) => Promise.resolve(new Set<string>())),
     };
 
     const service = new ChannelService(
@@ -807,6 +808,9 @@ describe('ChannelService security hardening', () => {
       isPrivate: false,
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+    // The accepted row fans out to the channel's audience; an unstubbed roster made both the live
+    // event and the push fail with a TypeError in the log of a test that passes.
+    memberRepo.find.mockResolvedValue([]);
     messageRepo.create.mockImplementation((row: any) => row);
     messageRepo.save.mockImplementation(async (row: any) => ({
       ...row,
@@ -1290,7 +1294,10 @@ describe('ChannelService security hardening', () => {
     const members = await service.listChannelMembers('ch1', 'boss');
 
     // `outsider` is in the community but cannot read the channel, so it is not in its roster.
-    expect(members.map((m) => m.userId).sort()).toEqual(['boss', 'guest']);
+    expect(members.map((m) => m.userId).sort((a, b) => a.localeCompare(b))).toEqual([
+      'boss',
+      'guest',
+    ]);
   });
 
   it('listChannelMembers with scope=workspace still returns the whole community roster', async () => {
@@ -1300,7 +1307,48 @@ describe('ChannelService security hardening', () => {
     // The settings picker grants access to people who are not in the channel yet.
     const members = await service.listChannelMembers('ch1', 'boss', 'workspace');
 
-    expect(members.map((m) => m.userId).sort()).toEqual(['boss', 'guest', 'outsider']);
+    expect(members.map((m) => m.userId).sort((a, b) => a.localeCompare(b))).toEqual([
+      'boss',
+      'guest',
+      'outsider',
+    ]);
+  });
+
+  it('listChannelMembers marks who is online only when presence is asked for', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
+    redis.onlineUserIds.mockResolvedValue(new Set(['guest']));
+
+    const plain = await service.listChannelMembers('ch1', 'boss');
+    // The lists the UI draws never pay the keyspace scan.
+    expect(redis.onlineUserIds).not.toHaveBeenCalled();
+    expect(plain.every((m) => !('online' in m))).toBe(true);
+
+    const marked = await service.listChannelMembers('ch1', 'boss', 'channel', true);
+    expect(marked.map((m) => [m.userId, 'online' in m && m.online])).toEqual([
+      ['boss', false],
+      ['guest', true],
+    ]);
+  });
+
+  it('listWorkspaceMembers marks who is online when presence is asked for', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'boss', roleIds: [] });
+    memberRepo.find.mockResolvedValue([
+      { id: 'm1', userId: 'boss', roleIds: [], createdAt: 'now' },
+      { id: 'm2', userId: 'Guest', roleIds: [], createdAt: 'now' },
+    ]);
+    roleRepo.find.mockResolvedValue([]);
+    redis.onlineUserIds.mockResolvedValue(new Set(['guest']));
+
+    const marked = await service.listWorkspaceMembers('ws1', 'boss', true);
+
+    // Presence keys are compared lower-cased, whatever the row's own spelling.
+    expect(marked.map((m) => [m.userId, 'online' in m && m.online])).toEqual([
+      ['boss', false],
+      ['Guest', true],
+    ]);
   });
 
   it('listChannelMembers refuses a private channel roster to a member without access', async () => {

@@ -64,7 +64,10 @@ let scopes: DistributionScope[];
 beforeEach(() => {
   resetGraineRepairState();
   forgetMirror.mockClear();
-  listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+  listWorkspaceMembers.mockResolvedValue([
+    { userId: 'alice', online: true },
+    { userId: 'bob', online: true },
+  ]);
   held = [mkSession(), mkSession({ sessionId: 's-2', channelId: 'chan-2' })];
   deleted = [];
   sendMessage = vi.fn().mockResolvedValue(undefined);
