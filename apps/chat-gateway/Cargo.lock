@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "chat-gateway"
-version = "0.18.26-alpha.1"
+version = "0.18.26-alpha.2"
 dependencies = [
  "axum",
  "base64 0.23.1",
