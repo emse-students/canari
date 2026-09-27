@@ -2046,6 +2046,17 @@ export class ChannelService {
     const wasPrivate = channel.isPrivate;
     const previousAllowed = new Set(channel.allowedUsers || []);
     const nextAllowed = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    // MAKING A SALON PRIVATE GRANTS WHOEVER DID IT, the rule `createChannel` already applies to a
+    // salon created private. The panel offers its allowlist only once the SERVER holds the salon
+    // private (members are granted one at a time, at once), so the flip always arrives with an empty
+    // list - and an empty private salon is one nobody can open, its maker included, which is the
+    // state `chat_no_allowed_members_warning` names. COMM-23 granted the owner by hand for this.
+    if (isPrivate && !wasPrivate && !nextAllowed.includes(actorUserId)) {
+      this.logger.log(
+        `[CHANNEL_ACCESS] made private by ${actorUserId.slice(0, 8)}, granting them channel=${channelId}`
+      );
+      nextAllowed.push(actorUserId);
+    }
     // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
     // and that retirement supersedes every per-user cut - evicting people who are about to regain
     // access as ordinary community members would be work with no reader.

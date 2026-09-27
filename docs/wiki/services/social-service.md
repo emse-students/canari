@@ -169,6 +169,12 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 - **Channel access.** `canAccessChannel`: a **public** channel is readable by every workspace
   member; a **private** channel is readable only by users listed in `channels.allowedUsers` **plus**
   any admin (`workspace.manage`) - admins reach every channel without being explicitly added.
+- **Making a salon private grants whoever did it** (2026-09-27), in `updateChannelAccess`, as
+  `createChannel` grants the creator of a salon created private. The settings panel writes the
+  allowlist ONE MEMBER AT A TIME, AT ONCE - "Ajouter" is final like the trash beside each row - and
+  offers it only once the server holds the salon private, so a flip always arrives with an empty
+  list. Before that, "Ajouter" only staged a local list that "Enregistrer" sent: production showed
+  a member added, a reload, and no `PATCH /access` in five hours of edge log.
 - **Channel roster.** `GET /:channelId/members` answers the CHANNEL's members, not the workspace's:
   for a private channel that is the same set `canAccessChannel` admits, resolved from the roles the
   handler already loaded rather than one query per member, and the caller is refused outright if

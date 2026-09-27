@@ -57,13 +57,6 @@
      * or deleting a channel there is nothing left for this panel to show.
      */
     onClose: () => void;
-    /** Callback fired when channel access settings are updated. */
-    onUpdateChannelAccess?: (
-      channelId: string,
-      isPrivate: boolean,
-      allowedUserIds: string[],
-      writePolicy?: ChannelWritePolicy
-    ) => void;
   }
 
   let {
@@ -73,7 +66,6 @@
     onDeleteChannel,
     onLeaveChannel,
     onClose,
-    onUpdateChannelAccess,
   }: Props = $props();
 
   let activeTab = $state<'general' | 'access'>('general');
@@ -101,9 +93,16 @@
   let accessSaving = $state(false);
   let accessSaved = $state(false);
   let accessIsPrivate = $state(false);
+  /**
+   * Whether the SERVER holds this salon as private - not the toggle. The allowlist is written the
+   * moment it changes, so it is only offered once there is a private salon to write it to.
+   */
+  let storedIsPrivate = $state(false);
   let accessAllowedUserIds = $state<string[]>([]);
-  let accessLoaded = $state(false);
+  /** The channel whose access settings are on screen; '' until one has loaded. */
+  let accessLoadedFor = $state('');
   let addingUserId = $state('');
+  let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
 
   // ── Member access list (for removing users from private channel) ───────
@@ -114,39 +113,43 @@
   >([]);
   let memberRemoving = $state<Record<string, boolean>>({});
 
+  /*
+   * (Re)load the access settings whenever the tab is shown for a channel they were not loaded for.
+   *
+   * KEYED ON THE CHANNEL, because the panel is NOT remounted when the selected channel changes. The
+   * reset that used to live here was guarded by `!open` - `window.open`, never false (see the
+   * notification effect below) - so it never ran: switching salons with this tab open kept the
+   * previous salon's allowlist on screen, and "Enregistrer" would have written it onto the new one.
+   */
   $effect(() => {
-    if (activeTab === 'access' && selectedChannelId && !accessLoaded) {
-      void loadChannelAccess();
-    }
-    if (!open) {
-      activeTab = 'general';
-      accessLoaded = false;
-      accessSaved = false;
-      accessError = '';
-      accessIsPrivate = false;
-      accessAllowedUserIds = [];
-      addingUserId = '';
-      writePolicy = 'everyone';
-      channelMembers = [];
-      membersError = '';
-      memberRemoving = {};
+    if (activeTab === 'access' && selectedChannelId && accessLoadedFor !== selectedChannelId) {
+      void loadChannelAccess(selectedChannelId);
     }
   });
 
   /** Derived list of workspace member IDs for filtering the user autocomplete. */
   let workspaceMemberIds = $derived(channelMembers.map((m) => m.userId));
 
-  async function loadChannelAccess() {
+  async function loadChannelAccess(channelId: string) {
+    Log.d('channelSettings.loadChannelAccess', channelId);
+    accessLoadedFor = channelId;
     accessLoading = true;
     accessError = '';
+    accessSaved = false;
+    addingUserId = '';
+    memberRemoving = {};
     try {
-      const data = await channelService.getChannelAccess(selectedChannelId);
+      const data = await channelService.getChannelAccess(channelId);
+      if (channelId !== selectedChannelId) {
+        Log.d('channelSettings.loadChannelAccess superseded', channelId);
+        return;
+      }
       accessIsPrivate = data.isPrivate;
+      storedIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
       writePolicy = data.writePolicy ?? 'everyone';
       // Always load the member list so the user autocomplete is scoped to workspace members.
       await loadMembers();
-      accessLoaded = true;
     } catch (e) {
       Log.d('channelSettings.loadChannelAccess failed', e);
       accessError = m.chat_channel_access_load_error();
@@ -181,12 +184,8 @@
         accessAllowedUserIds,
         writePolicy
       );
-      onUpdateChannelAccess?.(
-        selectedChannelId,
-        accessIsPrivate,
-        accessAllowedUserIds,
-        writePolicy
-      );
+      storedIsPrivate = accessIsPrivate;
+      if (!accessIsPrivate) accessAllowedUserIds = [];
       accessSaved = true;
       setTimeout(() => {
         accessSaved = false;
@@ -199,16 +198,35 @@
     }
   }
 
-  function addAllowedUser() {
+  /**
+   * Grants one person access to the private salon, ON THE SERVER, at once.
+   *
+   * It used to append to a local list that only "Enregistrer" sent, while the trash beside each row
+   * removed on the server immediately. Production received no save at all for a salon whose owner
+   * had added a member and reloaded (2026-09-27): the two controls of one list disagreed about
+   * whether a click was final. Both are final now. The visibility and the write policy are left to
+   * "Enregistrer": `isPrivate` is sent as the server already holds it, and no write policy at all.
+   */
+  async function addAllowedUser() {
     const uid = addingUserId.trim().toLowerCase();
-    if (uid && !accessAllowedUserIds.includes(uid)) {
-      accessAllowedUserIds = [...accessAllowedUserIds, uid];
+    Log.d('channelSettings.addAllowedUser', { channelId: selectedChannelId, userId: uid });
+    if (!uid || accessAllowedUserIds.includes(uid)) {
+      addingUserId = '';
+      return;
     }
-    addingUserId = '';
-  }
-
-  function removeAllowedUser(userId: string) {
-    accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
+    memberAdding = true;
+    accessError = '';
+    const next = [...accessAllowedUserIds, uid];
+    try {
+      await channelService.updateChannelAccess(selectedChannelId, storedIsPrivate, next);
+      accessAllowedUserIds = next;
+      addingUserId = '';
+    } catch (e) {
+      Log.d('channelSettings.addAllowedUser failed', e);
+      membersError = m.chat_channel_add_access_error();
+    } finally {
+      memberAdding = false;
+    }
   }
 
   async function handleRemoveMemberFromChannel(userId: string) {
@@ -602,19 +620,25 @@
                   {m.chat_channel_who_can_write()}
                 </p>
               </div>
+              <!-- The native arrow stays: `appearance-none` drew this choice as a text field. -->
               <select
-                class="bg-cn-surface w-full appearance-none rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+                class="bg-cn-surface text-text-main w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
                 bind:value={writePolicy}
               >
                 <option value="everyone">{m.chat_channel_write_everyone()}</option>
                 <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
                 <option value="admins">{m.chat_channel_write_admins()}</option>
               </select>
-              <p class="text-text-muted text-xs">{m.chat_channel_admins_join_hint()}</p>
             </div>
 
-            <!-- ═══ Member allowlist (only when private) ═══ -->
-            {#if accessIsPrivate}
+            <!-- ═══ Member allowlist (only once the SERVER holds the salon private) ═══ -->
+            {#if accessIsPrivate && !storedIsPrivate}
+              <p
+                class="text-text-muted border-t border-black/5 pt-4 text-xs italic dark:border-white/10"
+              >
+                {m.chat_channel_private_save_first_hint()}
+              </p>
+            {:else if accessIsPrivate}
               <div class="space-y-3 border-t border-black/5 pt-4 dark:border-white/10">
                 <p
                   class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
@@ -622,6 +646,11 @@
                   <Lock size={13} />
                   {m.chat_allowed_members_label()}
                 </p>
+                <!-- Moved from under the write policy, which it says nothing about. -->
+                <p class="text-text-muted text-xs">{m.chat_channel_admins_join_hint()}</p>
+                {#if membersError}
+                  <p class="text-red-err text-xs font-medium" role="alert">{membersError}</p>
+                {/if}
 
                 <!-- Existing allowed users -->
                 {#if accessAllowedUserIds.length === 0}
@@ -645,13 +674,14 @@
                           type="button"
                           onclick={() => handleRemoveMemberFromChannel(uid)}
                           disabled={memberRemoving[uid]}
-                          class="hover:text-red-err shrink-0 text-red-500 transition-colors disabled:opacity-50"
+                          class="text-red-err hover:bg-red-err/10 shrink-0 rounded-lg p-1.5 transition-all disabled:cursor-not-allowed disabled:opacity-50"
                           title={m.chat_channel_remove_access_title()}
+                          aria-label={m.chat_channel_remove_access_title()}
                         >
                           {#if memberRemoving[uid]}
-                            <Loader size={14} class="animate-spin" />
+                            <Loader size={16} class="animate-spin" />
                           {:else}
-                            <Trash2 size={14} strokeWidth={2.5} />
+                            <Trash2 size={16} strokeWidth={2.25} />
                           {/if}
                         </button>
                       </li>
@@ -666,8 +696,9 @@
                   >
                     {m.chat_channel_add_user_label()}
                   </p>
-                  <div class="flex items-start gap-2">
-                    <div class="flex-1">
+                  <!-- Wraps rather than squeezing the search to a sliver on a phone-width panel. -->
+                  <div class="flex flex-wrap items-start justify-end gap-2">
+                    <div class="min-w-48 flex-1">
                       <!--
                           Already-granted users are not offered again. `addAllowedUser` deduped
                           them silently, so picking one looked like it worked and changed nothing.
@@ -675,18 +706,24 @@
                       <UserAutocomplete
                         value={addingUserId}
                         onValueChange={(v) => (addingUserId = v)}
+                        onSubmit={() => void addAllowedUser()}
                         placeholder={m.chat_search_user_placeholder()}
+                        inputId="channel-access-autocomplete"
                         filterUserIds={workspaceMemberIds}
                         excludeIds={accessAllowedUserIds}
                       />
                     </div>
                     <button
                       type="button"
-                      onclick={addAllowedUser}
-                      disabled={!addingUserId.trim()}
+                      onclick={() => void addAllowedUser()}
+                      disabled={!addingUserId.trim() || memberAdding}
                       class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Check size={14} strokeWidth={3} />
+                      {#if memberAdding}
+                        <Loader size={14} class="animate-spin" />
+                      {:else}
+                        <Check size={14} strokeWidth={3} />
+                      {/if}
                       {m.common_add_button()}
                     </button>
                   </div>

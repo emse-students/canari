@@ -651,6 +651,11 @@ export async function setChannelWritePolicy(cx, policy) {
  * screen never shows, so the only path to a valid id is the one a person takes. The suggestion is
  * clicked by its rendered name, and the "add" button is asserted enabled first - it stays disabled
  * until a suggestion has actually been chosen, so a click before that is discarded in silence.
+ *
+ * THE ADD IS IMMEDIATE since 2026-09-27, like the trash: it writes the allowlist on the server and
+ * the row appears when that request lands, so the row is waited for rather than read at once. The
+ * allowlist is only offered on a salon the server already holds private - a flip is saved first,
+ * and the flip itself grants whoever made it.
  */
 export async function grantChannelAccess(cx, displayName) {
   const placeholder = caption('chat_search_user_placeholder');
@@ -671,6 +676,15 @@ export async function grantChannelAccess(cx, displayName) {
     8000
   );
   await realClick(cx, `text=${add}`);
+  await until(
+    cx,
+    `(function () {
+       return [].slice.call(document.querySelectorAll('li')).some(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(displayName)}) >= 0;
+       });
+     })()`,
+    15000
+  );
   return channelAccessState(cx);
 }
 

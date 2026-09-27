@@ -1461,32 +1461,34 @@ out of the tester programme instead forces an uninstall, which wipes the very st
 *"Que ce soit sur mobile ou sur web, l'interface du panneau est vraiment nulle, plein d'éléments
 sont invisibles."* Then: *"pourquoi les membres que j'ajoute au canal ne survivent pas au
 rafraichissement de la page ?"*, and a notification reading *"Nouveau message dans #general"*.
-The user's words: *"Il va falloir rapidement régler tous les problèmes de communauté."* Nothing
-below has been investigated yet. It is what three screenshots SHOW, and each point must be measured
-on web (390 and 1280) and on the Mi 9T before anything is changed.
+The user's words: *"Il va falloir rapidement régler tous les problèmes de communauté."*
 
-- **P1 - a member added to a private channel is gone after a reload.** "Membres autorisés" lists
-  two people and "Enregistrer" is pressed. After a refresh only the user remains. Settle first
-  whether the add ever reached the server, then which of the three is wrong: the add, the save or
-  the reload. Read the network tab and the backend log; do not start from the component.
-- **P1 - a community message notified as "Nouveau message dans #general".** This is the fallback
-  body, so the push could not decrypt the message. Take the device and the time from the user,
-  then read the NSE/FCM log and the MLS state for that community channel. A fallback is a signal:
-  find out which primary path failed.
-- **P2 - the panels, as the screenshots show them** ("Paramètres de la communauté > Membres" and
-  "Paramètres du canal > Accès", mobile width):
-  - the tab bar overflows with nothing to show it scrolls, and the first tab is cut to "d'ensemble";
-  - the member search field is squeezed down to its icon and one glyph, beside the role `select`
-    and "Générer une invitation";
-  - the delete buttons of each row are a faint outline, and the trash icon is barely visible;
-  - "Rechercher u..." and a selected "Nathan CRUZ" are cut off in the add-user field, and "Ajouter"
-    keeps its disabled pale look after a pick;
-  - "Qui peut écrire ?" looks like a text input, not a choice. The hint under it talks about
-    admins seeing a private channel, which is not what that field is about;
-  - it is unclear whether "Enregistrer" saves only the members or the whole card, and nothing
-    confirms a save (this may be the P1 above).
-
-Paused when reported; to be picked up FIRST at the next session.
+- **FIXED, owed ONE look on web and the Mi 9T - the added member.** Salon `bureau` was created
+  private at 14:35 with its creator alone, and the edge log holds NO `PATCH /access` for it in the
+  five hours after: the add never reached the server. "Ajouter" staged a local list for
+  "Enregistrer" while the trash removed at once. Now the add is final too (user's choice), and the
+  flip to private grants its maker ([social-service](services/social-service.md#roles-membership-and-channel-access)).
+  Two more on the way: the access tab kept the PREVIOUS salon's list when the channel changed (a
+  reset guarded by `!open`, i.e. `window.open`), and `membersError` was set three times and shown
+  nowhere. `ChannelSettingsPanel.access.svelte.test.ts` pins all three.
+- **FIXED BY CODE, NOT YET SEEN - the panels at phone width** (the rig's Chrome profile was held
+  by another browser, so nothing was rendered): the member search has its own row (it shared
+  `1fr auto auto` and got the remainder), the delete buttons are a 16 px red icon, the roles tab
+  reads "Rôles" so three tabs fit, "Qui peut écrire ?" has its native arrow back (`appearance-none`
+  drew it as a text field), the admins hint moved to the allowlist, the add row wraps, and a
+  parent clearing `UserAutocomplete`'s `value` now clears the field (the prop was read by nobody).
+  **Owed: a render at 390 and 1280, light and dark, before calling it done.**
+- **P1, OPEN - "Nouveau message dans #general" on the user's Pixel 6a, "courant, reproductible"
+  (user).** Measured on production: every `#general` message of the day is under 3 KB, so the
+  ciphertext WAS inlined - the fallback is `CanariFirebaseMessagingService.postChannelNotification`
+  without a seed, or a decrypt `ok=false`. The logcat line names which (`missing=seed`, `seed absent
+  -> ... HELD`, `decrypt ok=false`), and **only the Pixel 6a's logcat can say it: connect it by USB
+  and send one message from another account.** A second lead, same data: at 15:23:05 the seed
+  frame (`send-fd8a844a`, group `17d0281e`) was pushed to FOUR devices while the message 3 s later
+  went to NINE users - five recipients, likely the day's invite-link joiners, got no seed at all.
+  Settle whether those five are on the community's distribution group before touching the client.
+  Every message of the user's own sender opened a NEW Graine session (four in ten minutes), which
+  is the lazy rotation on membership change and multiplies the chances of a late seed.
 
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 
