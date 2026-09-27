@@ -312,7 +312,7 @@ function toUnit(bubble: PositionedBubble, data: PosterBubble): PublishedCarteUni
       y: NAME_TOP,
       w: nameW,
       size: px(assoNameFontSize(data.name)),
-      emailSize: px(assoEmailFontSize(data.name)),
+      emailSize: px(assoEmailFontSize(data.name, bubble.scale)),
     },
     cards,
   };

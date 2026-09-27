@@ -24,6 +24,8 @@
     indexBubbleContent,
     createTextDecoration,
     sanitizeDecorations,
+    findUnitOverlaps,
+    unitInkBox,
     STAGE_HEIGHT,
     TEXT_BASE_WIDTH,
     type PositionedBubble,
@@ -61,6 +63,7 @@
     Pencil,
     Globe,
     GlobeLock,
+    TriangleAlert,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -189,6 +192,30 @@
   const selectedTextDeco = $derived(
     selectedDecoration?.kind === 'text' ? selectedDecoration : null
   );
+
+  // ── Overlapping units ────────────────────────────────────────────────────────
+  // Decided with the user on 2026-09-27: an overlap is SHOWN and never repaired. Moving a unit
+  // would undo a placement made by hand, and only the author knows which of the two should give
+  // way. Six pairs were crossing on the published map without anything ever saying so.
+
+  /** Every pair of units drawn over each other, worst first. */
+  const overlaps = $derived(
+    findUnitOverlaps(
+      positioned.map((bubble) => ({
+        assoId: bubble.assoId,
+        box: unitInkBox(bubble, content[bubble.assoId]?.members ?? []),
+      }))
+    )
+  );
+  /** The units named by at least one crossing, so the stage can outline them. */
+  const overlapIds = $derived(new Set(overlaps.flatMap((o) => [o.a, o.b])));
+  /**
+   * Whether the stage outlines them. Off by default and cleared before an export, for the reason
+   * the selection is: the element captured for the PDF is the live editor stage.
+   */
+  let showOverlaps = $state(false);
+  /** An association's name, for the list of crossings. */
+  const assoName = (id: string): string => content[id]?.name ?? id;
 
   // ── Scaled preview (poster renders at its natural A2 frame, scaled to fit the column width) ──
   let previewWidth = $state(0);
@@ -436,9 +463,10 @@
     if (!posterEl || !project || exporting) return;
     exporting = true;
     error = null;
-    // Clear selections so no outline + resize handles are captured in the PDF.
+    // Clear selections and the overlap outlines so none of them is captured in the PDF.
     selectedId = null;
     selectedDecorationId = null;
+    showOverlaps = false;
     await tick();
     try {
       await exportPosterPdf(posterEl, project.name);
@@ -593,6 +621,33 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
 
+      <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->
+      {#if canEdit && overlaps.length > 0}
+        <div
+          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+        >
+          <TriangleAlert size={18} class="text-cn-yellow mt-0.5 shrink-0" />
+          <div class="min-w-0">
+            <p class="text-text-main text-sm font-bold">
+              {m.carte_overlaps_title({ count: overlaps.length })}
+            </p>
+            <p class="text-text-muted mt-0.5 text-sm">{m.carte_overlaps_body()}</p>
+            <ul class="text-text-muted mt-1.5 space-y-0.5 text-sm">
+              {#each overlaps as pair (pair.a + pair.b)}
+                <li>{m.carte_overlaps_pair({ a: assoName(pair.a), b: assoName(pair.b) })}</li>
+              {/each}
+            </ul>
+            <button
+              type="button"
+              onclick={() => (showOverlaps = !showOverlaps)}
+              class="text-text-main mt-2 text-sm font-bold underline"
+            >
+              {showOverlaps ? m.carte_overlaps_hide() : m.carte_overlaps_show()}
+            </button>
+          </div>
+        </div>
+      {/if}
+
       {#if !canEdit}
         <div
           class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
@@ -664,6 +719,7 @@
                   {viewScale}
                   {selectedId}
                   {selectedDecorationId}
+                  flaggedIds={showOverlaps ? overlapIds : undefined}
                   title={project.name}
                   onSelect={(id) => (selectedId = id)}
                   onSelectDecoration={(id) => (selectedDecorationId = id)}

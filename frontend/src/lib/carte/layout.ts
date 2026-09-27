@@ -100,9 +100,37 @@ export function assoNameFontSize(name: string): number {
   return 11.5;
 }
 
-/** Font size (px) of the contact-email line under the association name. */
-export function assoEmailFontSize(name: string): number {
-  return Math.max(5, assoNameFontSize(name) * 0.35);
+/**
+ * Points one poster pixel is worth on the printed sheet.
+ *
+ * The poster is printed on A0 landscape and ONLY on A0 (decided 2026-09-27): 3370 pt of page for
+ * {@link STAGE_WIDTH} poster px. Every readability floor in this file is stated in poster px and
+ * derived through this number, so a floor can be read back as a size on paper.
+ */
+export const PT_PER_POSTER_PX = 3370 / STAGE_WIDTH;
+
+/**
+ * Smallest text the poster prints, in poster px: ~9.5 pt on A0.
+ *
+ * Measured on the published map on 2026-09-27: the smallest vector text in the exported PDF was
+ * 4.4 pt (1.6 mm), which is not read at arm's length on a wall. Nothing drawn at a unit's own scale
+ * may fall below this ONCE SCALED, which is why the helpers taking a floor also take the scale.
+ */
+export const MIN_POSTER_TEXT_PX = 4.5;
+
+/**
+ * Font size (px, at the unit's own scale) of the contact-email line under the association name.
+ *
+ * Five of the 31 associations set one, and at 0.35 x the name inside a unit scaled to 0.46 it
+ * printed at ~3 pt - present, unreadable, and therefore worse than absent. It is raised to
+ * {@link MIN_POSTER_TEXT_PX} on the SHEET, so the size grows as the unit shrinks. The address wraps
+ * on any character, so the extra height stays inside the blob's name band.
+ *
+ * @param unitScale - The unit's scale; everything in a unit is drawn through it.
+ */
+export function assoEmailFontSize(name: string, unitScale = 1): number {
+  const floor = MIN_POSTER_TEXT_PX / Math.max(unitScale, 0.01);
+  return round2(Math.max(floor, assoNameFontSize(name) * 0.35));
 }
 
 // ── Member cards (poster px, scale 1) ───────────────────────────────────────────────────
@@ -214,6 +242,156 @@ export function memberCardMetrics(name: string, slot: MemberSlot): MemberCardMet
 /** Rounds to 2 decimals: sub-pixel accuracy without a wall of float noise in the payload. */
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+// The card's own box, as `PosterCanvas` writes it: padding, the gaps above the two text lines and
+// their line heights. They live here because the height below is an estimate of THAT markup, and an
+// estimate that drifts from the markup it describes reports overlaps that are not there.
+const CARD_PAD_TOP = 6;
+const CARD_PAD_BOTTOM = 7;
+const NAME_GAP = 4;
+const NAME_LINE_HEIGHT = 1.1;
+const ROLE_GAP = 1;
+const ROLE_LINE_HEIGHT = 1.05;
+
+/**
+ * Lines a string takes in a box, wrapping where the browser would: on spaces and hyphens.
+ *
+ * Greedy, like every line breaker, and fed by the same deliberately pessimistic {@link textWidthEm}
+ * the card sizing uses - so it over-counts rather than under-counts, and a unit's estimated box is
+ * never smaller than what is drawn in it.
+ */
+function wrappedLineCount(text: string, fontSize: number, boxWidth: number): number {
+  const words = text.split(/(?<=[\s-])/).filter((w) => w.trim() !== '');
+  if (words.length === 0) return 0;
+  const em = boxWidth / Math.max(fontSize, 0.01);
+  let lines = 1;
+  let used = 0;
+  for (const word of words) {
+    const w = textWidthEm(word.trim());
+    if (used > 0 && used + w > em) {
+      lines++;
+      used = w;
+      continue;
+    }
+    used += w;
+  }
+  return lines;
+}
+
+/**
+ * Estimated drawn height of a member card (poster px, at the unit's scale).
+ *
+ * The DOM sizes the real card, so nothing can ASK it for this height outside a browser - and the
+ * two things that need it, the overlap warning and the published document, are computed where there
+ * is no layout. It is an estimate and it is used for a WARNING, never to place anything.
+ */
+export function memberCardHeight(
+  person: { name: string; role: string },
+  card: MemberCardMetrics
+): number {
+  const box = (card.w - CARD_PAD_X) * FIT_MARGIN;
+  const nameLines = Math.max(1, wrappedLineCount(person.name, card.nameSize, box));
+  const roleLines = wrappedLineCount(person.role, card.roleSize, box);
+  const role = roleLines === 0 ? 0 : ROLE_GAP + roleLines * card.roleSize * ROLE_LINE_HEIGHT;
+  return round2(
+    CARD_PAD_TOP +
+      card.photo +
+      NAME_GAP +
+      nameLines * card.nameSize * NAME_LINE_HEIGHT +
+      role +
+      CARD_PAD_BOTTOM
+  );
+}
+
+/** A box on the stage, in poster px. */
+export interface UnitBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * The box a unit actually covers on the stage - its INK, not its slot.
+ *
+ * {@link CARD_WIDTH} x {@link CARD_HEIGHT} is the seed grid's cell and is mostly empty, so two
+ * units whose cells cross very often do not touch on the page. What a reader sees crossing is the
+ * blob, the crown of member cards around its top and the president's card under it, which is what
+ * this measures - the difference is the reason the warning is worth reading at all.
+ *
+ * The hero logo is ignored: it is centered on the blob and {@link LOGO_BASE} is small enough that
+ * no frame shape reaches past the blob's rim.
+ */
+export function unitInkBox(bubble: PositionedBubble, members: PosterMemberRef[]): UnitBox {
+  const { president, bureau } = resolveUnitMembers(bubble, members);
+  let left = UNIT_CX - BLOB_SIZE / 2;
+  let right = UNIT_CX + BLOB_SIZE / 2;
+  let top = BLOB_CY - BLOB_SIZE / 2;
+  let bottom = BLOB_CY + BLOB_SIZE / 2;
+  const cover = (x: number, y: number, w: number, h: number): void => {
+    left = Math.min(left, x);
+    right = Math.max(right, x + w);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y + h);
+  };
+
+  bureau.forEach((member, i) => {
+    const card = memberCardMetrics(member.name, 'bureau');
+    const offset = bureauCrownOffset(i);
+    cover(
+      UNIT_CX + offset.x - card.w / 2,
+      BUREAU_CROWN_CY + offset.y - card.base / 2,
+      card.w,
+      memberCardHeight(member, card)
+    );
+  });
+  if (president) {
+    const card = memberCardMetrics(president.name, 'president');
+    cover(UNIT_CX - card.w / 2, PRES_TOP, card.w, memberCardHeight(president, card));
+  }
+
+  return {
+    x: round2(bubble.x + left * bubble.scale),
+    y: round2(bubble.y + top * bubble.scale),
+    w: round2((right - left) * bubble.scale),
+    h: round2((bottom - top) * bubble.scale),
+  };
+}
+
+/** Two units drawn over each other, and by how much. */
+export interface UnitOverlap {
+  /** The two associations, in the order the caller gave them. */
+  a: string;
+  b: string;
+  /** Area of the intersection, in poster px squared. */
+  area: number;
+}
+
+/**
+ * Every pair of units whose ink boxes cross, worst first.
+ *
+ * Decided with the user on 2026-09-27 (D7): an overlap is WARNED and never repaired. Nudging a unit
+ * would undo a placement made by hand, and the author is the only one who knows which of the two
+ * should move - so this reports, and the editor draws the boxes it names.
+ *
+ * @param units - Each association's box, as {@link unitInkBox} returns it.
+ * @returns One entry per crossing pair, largest intersection first. Touching edges are not a
+ *   crossing: a zero area would put the poster's neatest placements at the top of a warning list.
+ */
+export function findUnitOverlaps(units: { assoId: string; box: UnitBox }[]): UnitOverlap[] {
+  const found: UnitOverlap[] = [];
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const a = units[i].box;
+      const b = units[j].box;
+      const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (w <= 0 || h <= 0) continue;
+      found.push({ a: units[i].assoId, b: units[j].assoId, area: round2(w * h) });
+    }
+  }
+  return found.sort((x, y) => y.area - x.area);
 }
 
 /**

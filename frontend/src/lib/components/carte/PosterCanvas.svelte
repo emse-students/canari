@@ -40,6 +40,7 @@
     assoEmailFontSize,
     memberCardMetrics,
     resolveUnitMembers,
+    unitInkBox,
     type MemberCardMetrics,
     type PositionedBubble,
     type Decoration,
@@ -79,6 +80,13 @@
     onChange?: (id: string, patch: Partial<PositionedBubble>) => void;
     /** Fired continuously during a decoration drag / resize with the changed placement fields. */
     onChangeDecoration?: (id: string, patch: Partial<Decoration>) => void;
+    /**
+     * Units to draw an ink-box outline around: the ones a crossing named.
+     *
+     * Editor-only, like the selection handles - the element captured for the PDF is this one, so
+     * the parent clears it before an export.
+     */
+    flaggedIds?: Set<string>;
     /** Bound to the parent so it can rasterise this exact node for PDF export. */
     el?: HTMLElement;
   }
@@ -96,6 +104,7 @@
     viewScale = 1,
     selectedId = null,
     selectedDecorationId = null,
+    flaggedIds,
     onSelect,
     onSelectDecoration,
     onChange,
@@ -596,6 +605,22 @@
           onpointerdown={(e) =>
             beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
         >
+          <!-- The box the overlap warning measured, drawn where it was measured: the unit's INK,
+               not its cell, since two cells cross long before anything a reader sees does. -->
+          {#if editable && flaggedIds?.has(bubble.assoId)}
+            {@const ink = unitInkBox({ ...bubble, x: 0, y: 0, scale: 1 }, data.members)}
+            <div
+              style:position="absolute"
+              style:left="{ink.x}px"
+              style:top="{ink.y}px"
+              style:width="{ink.w}px"
+              style:height="{ink.h}px"
+              style:border="{2 / visualScale}px dashed #ef4444"
+              style:border-radius="12px"
+              style:pointer-events="none"
+            ></div>
+          {/if}
+
           <!-- Blob silhouette (back layer): a plain brand-color shape the other layers sit on. -->
           <div
             style:position="absolute"
@@ -686,7 +711,7 @@
               <p
                 data-pdf-text
                 style:margin="2px 0 0"
-                style:font-size="{assoEmailFontSize(data.name)}px"
+                style:font-size="{assoEmailFontSize(data.name, bubble.scale)}px"
                 style:font-weight="600"
                 style:color="rgba(255, 255, 255, 0.85)"
                 style="word-break:break-all;"
