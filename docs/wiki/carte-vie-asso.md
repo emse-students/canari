@@ -138,7 +138,7 @@ read at ~9-10 pt on the printed sheet must be ~4.5 poster px AFTER every scale a
 The phasing below still says "A2" in places, and so do the comments in `layout.ts` and
 `PosterCanvas.svelte`: that was the target before the searchable-raster move and is not what the
 export does. The measured audit of the A0 output, and the open work it produced, are in
-[backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-four-decisions-taken-the-rest-still-to-ask).
+[backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build).
 
 ## The directory is ordered by FAMILY NAME, and that needs two columns
 
