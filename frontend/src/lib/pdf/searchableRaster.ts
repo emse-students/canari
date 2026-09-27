@@ -11,6 +11,12 @@
  * auto-shrink already applied on screen are reproduced for free. Overlay text uses the app's real
  * embedded fonts (see {@link registerAppFonts}), so it matches the on-screen typography exactly.
  *
+ * WHERE A LINE BREAKS IS THE BROWSER'S ANSWER, AND IT IS READ, NEVER RE-DERIVED. A wrapped run is
+ * measured line by line ({@link groupCharsIntoLines}) and each line is drawn at its own baseline.
+ * Handing jsPDF a width and letting it re-break the string cannot work: it measures in its own
+ * metrics, and it broke "Lounes BRIAND--RAVIDAT" as "BRIAND--R / AVIDAT" - mid-word - while the
+ * preview showed it whole. A run that fits one line is drawn as one string, with nothing to decide.
+ *
  * MARKUP CONTRACT: put `data-pdf-text` on the element whose box IS the text's line box - a bare
  * `<span>`, not a padded or flex-centred container. A run is anchored to the TOP of the marked box
  * ({@link drawTextSpecs}); padding and vertical centring are invisible here, so marking a container
@@ -24,7 +30,115 @@
  */
 import { rasterizeElementToCanvas, type RasterizeOptions } from '$lib/utils/pdfRaster';
 import { containsEmoji } from '$lib/utils/emoji';
+import { Log } from '$lib/utils/Log';
 import { registerAppFonts, pickAppFont } from './appFonts';
+
+/**
+ * One line of a run, exactly as the BROWSER laid it out, in the root's natural coordinate space.
+ *
+ * The whole point of measuring these is that nothing downstream re-decides where a line breaks:
+ * see {@link measureLineBoxes}.
+ */
+interface LineBox {
+  /** The line's text, trimmed - a trailing space at a wrap hangs and is not drawn. */
+  text: string;
+  /** Left / right extent of the line's INKED glyphs (whitespace excluded), natural px. */
+  left: number;
+  right: number;
+  /** This line's alphabetic baseline, natural px. */
+  baselineY: number;
+}
+
+/** One measured character: its glyph box, or null where the browser gave it no box at all. */
+export interface MeasuredChar {
+  ch: string;
+  rect: { top: number; left: number; right: number; height: number } | null;
+}
+
+/** A line as {@link groupCharsIntoLines} returns it, still in the coordinate space it measured in. */
+export interface GroupedLine {
+  text: string;
+  left: number;
+  right: number;
+  top: number;
+}
+
+/**
+ * Groups per-character boxes into the lines the browser actually produced.
+ *
+ * A new line starts where a character's box steps DOWN by more than half a glyph height - the one
+ * signal that survives justification, centring and a hanging trailing space, none of which move a
+ * glyph vertically. Kept pure (it takes measurements, not a DOM) because it is the half that can be
+ * wrong, and the half a test can pin down: jsdom lays nothing out, so a DOM-reading version of this
+ * could only ever be exercised in a real browser.
+ *
+ * A character the browser gave no box - the collapsed space AT a wrap - joins the current line's
+ * text and is then trimmed away, rather than starting a line of its own.
+ *
+ * @param chars - Characters in document order, each with its measured box.
+ * @returns One entry per line; `left`/`right` span the INKED glyphs only, so a centred line's
+ *   midpoint is where the browser centred it.
+ */
+export function groupCharsIntoLines(chars: MeasuredChar[]): GroupedLine[] {
+  const lines: GroupedLine[] = [];
+  let current: GroupedLine | null = null;
+
+  for (const { ch, rect } of chars) {
+    // No box: a collapsed wrap space. It belongs to the line being built, and to no new one.
+    if (!rect || (rect.height === 0 && rect.right === rect.left)) {
+      if (current) current.text += ch;
+      continue;
+    }
+    if (current === null || rect.top - current.top > Math.max(1, rect.height * 0.5)) {
+      current = { text: ch, left: rect.left, right: rect.right, top: rect.top };
+      lines.push(current);
+      continue;
+    }
+    current.text += ch;
+    // Whitespace does not widen a line: a trailing space hangs past the edge the browser aligned on.
+    if (ch.trim() !== '') {
+      current.left = Math.min(current.left, rect.left);
+      current.right = Math.max(current.right, rect.right);
+    }
+  }
+
+  return lines.map((l) => ({ ...l, text: l.text.trim() })).filter((l) => l.text !== '');
+}
+
+/**
+ * Reads the lines a run was laid out on, straight from the browser, via one Range per character.
+ *
+ * WHY PER CHARACTER: `Range.getClientRects()` over the whole run returns one rect per line, but
+ * says nothing about WHICH characters are on each - and the text is exactly what has to be drawn.
+ * Walking the characters gives both at once. Only multi-line runs pay for it (see the caller), so
+ * the overwhelming majority of runs - a name, a date, a heading - measure nothing at all.
+ *
+ * @returns The run's lines, or an EMPTY array where the browser laid nothing out (jsdom, a
+ *   detached node): the caller treats that as a measurement failure, never as "no text".
+ */
+function measureLineBoxes(el: HTMLElement): GroupedLine[] {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const chars: MeasuredChar[] = [];
+  const range = document.createRange();
+  let measured = false;
+
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const data = (node as Text).data;
+    for (let i = 0; i < data.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const r = range.getBoundingClientRect();
+      const empty = r.width === 0 && r.height === 0;
+      if (!empty) measured = true;
+      chars.push({
+        ch: data[i],
+        rect: empty ? null : { top: r.top, left: r.left, right: r.right, height: r.height },
+      });
+    }
+  }
+
+  return measured ? groupCharsIntoLines(chars) : [];
+}
 
 /** One measured text run to re-draw as vector text over the raster. */
 interface TextSpec {
@@ -58,6 +172,27 @@ interface TextSpec {
   text: string;
   /** True when `text` contains emoji - captured by the raster pass instead of drawn as vector text. */
   hasEmoji: boolean;
+  /**
+   * The lines the BROWSER broke this run into, when it needed more than one. Empty for a run that
+   * fits one line (nothing to decide) and for one whose measurement failed - {@link drawTextSpecs}
+   * tells those apart by {@link wrapUnmeasured}.
+   */
+  lines: LineBox[];
+  /** True when the run wraps on screen but no line box could be read - a defect, and it is logged. */
+  wrapUnmeasured: boolean;
+}
+
+/**
+ * Applies a CSS `text-transform` to a string.
+ *
+ * It has to be applied to every drawn run AND to every measured line: a line's text is read from
+ * the DOM text node, which holds the ORIGINAL case, while the glyphs on screen are the transformed
+ * ones. Drawing the node's own text would print "lundi" over a raster that says "LUNDI".
+ */
+function applyTextTransform(text: string, textTransform: string): string {
+  if (textTransform === 'uppercase') return text.toUpperCase();
+  if (textTransform === 'lowercase') return text.toLowerCase();
+  return text;
 }
 
 /** Parses a CSS `rgb()/rgba()` color into 0-255 components (defaults to black on parse failure). */
@@ -123,14 +258,10 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
   const k = rootRect.width > 0 ? naturalWidth / rootRect.width : 1;
   const specs: TextSpec[] = [];
   for (const el of root.querySelectorAll<HTMLElement>('[data-pdf-text]')) {
-    let text = (el.textContent ?? '').trim();
-    if (!text) continue;
+    const raw = (el.textContent ?? '').trim();
+    if (!raw) continue;
     const cs = getComputedStyle(el);
-    if (cs.textTransform === 'uppercase') {
-      text = text.toUpperCase();
-    } else if (cs.textTransform === 'lowercase') {
-      text = text.toLowerCase();
-    }
+    const text = applyTextTransform(raw, cs.textTransform);
     const r = el.getBoundingClientRect();
     const rawAlign = cs.textAlign;
     const align = rawAlign === 'center' ? 'center' : rawAlign === 'right' ? 'right' : 'left';
@@ -162,12 +293,30 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
     const dy = (base.y - rootRect.top) * k - cy;
     const theta = (angleDeg * Math.PI) / 180;
 
+    // WHERE A LINE BREAKS IS THE BROWSER'S ANSWER, AND IT IS READ HERE RATHER THAN RE-DERIVED.
+    // Only a run that actually wraps is measured: a rotated run is a one-line stamp by construction,
+    // and a run no taller than its line height has nothing to break.
+    const h = r.height * k;
+    const wraps = Math.abs(angleDeg) <= 0.5 && h > lineHeightPx * 1.2;
+    const measured = wraps ? measureLineBoxes(el) : [];
+    // The gap from a line box's top to its baseline is the same on every line of a run (one font,
+    // one line height), so the baseline measured on the first line places all the others.
+    const baselineFromTop = measured.length > 0 ? base.y - measured[0].top : 0;
+    const lines: LineBox[] = measured.map((l) => ({
+      text: applyTextTransform(l.text, cs.textTransform),
+      left: (l.left - rootRect.left) * k,
+      right: (l.right - rootRect.left) * k,
+      baselineY: (l.top + baselineFromTop - rootRect.top) * k,
+    }));
+
     specs.push({
+      lines,
+      wrapUnmeasured: wraps && lines.length === 0,
       el,
       x: (r.left - rootRect.left) * k,
       y: (r.top - rootRect.top) * k,
       w: r.width * k,
-      h: r.height * k,
+      h,
       baselineY: (base.y - rootRect.top) * k,
       angleDeg,
       cx,
@@ -233,6 +382,17 @@ export async function exportSearchablePdf(
 
   // 1. Measure the text runs while they are still visible (so colors/sizes are the real ones).
   const specs = collectTextSpecs(el, opts.naturalWidth);
+
+  // A run that wraps on screen and yielded no line box is a DEFECT, not a variant: the export is
+  // about to let jsPDF re-break that text in its own metrics, which is exactly what this pipeline
+  // exists to avoid. Named here so it accuses rather than passing silently.
+  const unmeasured = specs.filter((s) => s.wrapUnmeasured);
+  if (unmeasured.length > 0) {
+    Log.d('searchableRaster:wrapUnmeasured', {
+      count: unmeasured.length,
+      samples: unmeasured.slice(0, 3).map((s) => s.text.slice(0, 40)),
+    });
+  }
 
   // An emoji-carrying node is marked so the stylesheet below can exempt it from the hide rule -
   // it has no vector form (see the module docstring), so it must survive into the raster instead.
@@ -373,6 +533,26 @@ function drawTextSpecs(
         cy + lx * Math.sin(theta) + ly * Math.cos(theta),
         { angle: -s.angleDeg, charSpace }
       );
+      continue;
+    }
+
+    // THE BROWSER ALREADY BROKE THIS RUN, SO NOTHING HERE BREAKS IT AGAIN: each line is drawn at
+    // its own measured baseline, anchored on its own inked extent. Re-deriving the breaks from a
+    // width is what split "Lounes BRIAND--R / AVIDAT" across two lines mid-word while the preview
+    // showed it whole - jsPDF measures in its own metrics and cannot reach the browser's answer.
+    if (s.lines.length > 0) {
+      for (const line of s.lines) {
+        const anchor =
+          s.align === 'center'
+            ? (line.left + line.right) / 2
+            : s.align === 'right'
+              ? line.right
+              : line.left;
+        pdf.text(line.text, anchor * mmPerPx, (line.baselineY + yOffset) * mmPerPx, {
+          align: s.align,
+          charSpace,
+        });
+      }
       continue;
     }
 

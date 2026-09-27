@@ -432,6 +432,33 @@ produce an oversized polaroid.
 compacted, everything after it renumbers, and the output looks like a correct render of *different
 data* instead of showing the gap - which is the version nobody notices.
 
+### The PDF breaks its lines where the browser did
+
+**A width is not a line break, and handing one to jsPDF asks it to guess again.** The vector text
+layer used to re-wrap every run with `splitTextToSize`, which measures in jsPDF's own metrics rather
+than the browser's. Measured on the production A0 export, 2026-09-27: "Lounes BRIAND--RAVIDAT" came
+out as "Lounes BRIAND--R / AVIDAT", broken mid-word, while the preview - and the raster underneath
+the text - showed the browser's own break, "Lounes BRIAND-- / RAVIDAT". "Jeanne BOUSSONNIERE" went
+the other way, set on one line with an empty line where its second should have been. Both are the
+same defect: two engines deciding the same question.
+
+**So the break is READ.** A run that wraps is measured character by character with one `Range`, the
+boxes are grouped into the lines the browser produced (`groupCharsIntoLines`, kept pure so a test
+can pin it - jsdom lays nothing out), and each line is drawn at its own measured baseline, anchored
+on its own inked extent so a centred line stays centred. A run that fits one line is measured not at
+all and drawn as one string.
+
+**Only a wrapped run pays for it.** Measured on the live poster (31 associations, 326 marked runs):
+65 wrap, and measuring all of them takes 25 ms.
+
+**Two traps the measurement has to answer.** A line's text comes from the DOM text node, which holds
+the ORIGINAL case, so `text-transform` must be applied to each line or an uppercased run draws
+lowercase over an uppercase raster. And the space AT a wrap collapses to no box at all: it belongs to
+the line being built, never to a new one, and it is trimmed away rather than drawn.
+
+**A run that wraps and yields no line box is a DEFECT, and it says so** (`searchableRaster:wrapUnmeasured`).
+It means the export is about to let jsPDF re-break that text - the very thing this exists to prevent.
+
 ### The PDF re-draw anchors to the marked box
 
 `data-pdf-text` goes on the box that **is** the text line. The vector re-draw anchors to the marked
