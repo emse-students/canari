@@ -765,6 +765,8 @@
               {textContent}
               {isOwn}
               {textSegments}
+              {senderId}
+              sentAt={timestamp}
               onNear={() => (isNearViewport = true)}
             />
 

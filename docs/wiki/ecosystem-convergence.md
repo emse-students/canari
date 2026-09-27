@@ -1407,6 +1407,7 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
      `FullScreenViewer.svelte`. Read MiGallery's `PhotoModal.svelte`, `viewer-gestures` and
      `viewer-info` first; Canari's media is E2E-encrypted, so there is no EXIF from a server - an
      info panel there shows what the client knows (sender, date, size, dimensions).
+   **Canari's viewers are DONE (2026-09-27)**: [posts](frontend/modules/posts.md#the-photo-viewer-takes-migallerys-frame-gestures-and-information-panel-2026-09-27).
    **Decided by the user 2026-09-27:** the drop overlay is DONE (MiGallery v2.10.0); D8's desktop
    shell is a Google-Photos left sidebar from 769 px up, the bottom bar for phones only; Canari's
    viewers DO get the Informations panel, with those simple facts; and MiGallery releases after each

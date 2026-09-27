@@ -954,6 +954,7 @@
     open={true}
     onClose={() => (lightboxIndex = null)}
     title={currentEntry.entry.file.name}
+    info={{ fileName: currentEntry.entry.file.name, sizeBytes: currentEntry.entry.file.size }}
     onDownload={downloadLightboxImage}
     showPrev={lightboxIndex > 0}
     showNext={lightboxIndex < imageEntries.length - 1}

@@ -20,6 +20,7 @@
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -67,6 +68,8 @@
      * site that knows the media is on screen is unaffected.
      */
     deferred?: boolean;
+    /** The post's publisher and date, for the viewer's title and information panel. */
+    postInfo?: Pick<MediaViewerInfo, 'senderName' | 'sentAt'>;
   }
 
   let {
@@ -76,6 +79,7 @@
     galleryMode = false,
     letterbox = false,
     deferred = false,
+    postInfo,
   }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
@@ -440,6 +444,13 @@
       ariaLabel={mediaType === 'image' ? m.post_image_enlarged_alt() : m.post_fullscreen_label()}
       title={media.fileName ??
         (mediaType === 'image' ? m.post_image_label() : m.post_media_video_label())}
+      info={{
+        ...postInfo,
+        fileName: media.fileName,
+        sizeBytes: media.size,
+        width: media.width,
+        height: media.height,
+      }}
       onDownload={blobUrl
         ? () =>
             downloadBlob(blobUrl!, media.fileName ?? (mediaType === 'image' ? 'image' : 'video'))

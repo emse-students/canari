@@ -7,7 +7,7 @@
   import { Clock, VenetianMask } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { postAuthorName } from '$lib/posts/postAuthorName';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -28,17 +28,9 @@
   /** True whenever the reader can see WHO published an anonymous post - drives the badge alone. */
   const anonymousBadge = $derived(!!post.anonymous && !!post.authorId);
 
-  /** Returns the display name for the post author: association name for association posts, "Anonyme" when the identity is hidden, "firstName lastName" / displayName / userId otherwise. */
+  /** The post's publisher name - see `postAuthorName`, shared with the media viewer. */
   function getPostAuthorName(): string {
-    if (post.association) return post.association.name;
-    if (identityHidden) return m.post_anonymous_label();
-    const first = post.authorFirstName?.trim();
-    const last = post.authorLastName?.trim();
-    if (first && last) return `${first} ${last}`;
-    if (first) return first;
-    if (last) return last;
-    if (post.authorDisplayName?.trim()) return post.authorDisplayName.trim();
-    return getUserDisplayNameSync(post.authorId ?? '');
+    return postAuthorName(post);
   }
 
   const associationHref = $derived(

@@ -9,6 +9,7 @@
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import { postAuthorName } from '$lib/posts/postAuthorName';
   import {
     mediaAspectStyle,
     resolveMediaType,
@@ -50,6 +51,10 @@
   // Compacted on purpose: a document is skipped. A grid position is therefore NOT
   // a lightbox index - openLightbox is always given the index in THIS array.
   const lightboxMedia = $derived<PostMediaRef[]>(postMedia.filter(isLightboxable));
+
+  /** Who published the post and when: the media viewer's title and information panel. */
+  const postInfo = $derived({ senderName: postAuthorName(post), sentAt: post.createdAt });
+  const lightboxItem = $derived(lightboxIndex === null ? null : lightboxMedia[lightboxIndex]);
 
   function openLightbox(i: number) {
     lightboxIndex = i;
@@ -135,6 +140,7 @@
             {authToken}
             letterbox={reserved}
             deferred={!nearMedia.has(media.mediaId)}
+            {postInfo}
           />
         </div>
         {#if media.caption}
@@ -181,6 +187,13 @@
     open={lightboxIndex !== null}
     onClose={closeLightbox}
     ariaLabel={m.post_gallery_label()}
+    info={{
+      ...postInfo,
+      fileName: lightboxItem?.fileName,
+      sizeBytes: lightboxItem?.size,
+      width: lightboxItem?.width,
+      height: lightboxItem?.height,
+    }}
     showPrev={lightboxMedia.length > 1}
     showNext={lightboxMedia.length > 1}
     onPrev={prevMedia}

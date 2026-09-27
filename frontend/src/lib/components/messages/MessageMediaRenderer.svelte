@@ -50,6 +50,10 @@
      * has exactly one whenever there is media at all.
      */
     onNear?: () => void;
+    /** Who sent the message, for the viewer's information panel. */
+    senderId?: string;
+    /** When the message was sent: the viewer's title and its information panel. */
+    sentAt?: Date;
   }
 
   let {
@@ -62,6 +66,8 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    senderId,
+    sentAt,
   }: Props = $props();
 
   let showLightbox = $state(false);
@@ -393,6 +399,14 @@
     open={showLightbox}
     onClose={closeLightbox}
     title={mediaRef.fileName ?? m.msg_media_label()}
+    info={{
+      senderId,
+      sentAt,
+      fileName: mediaRef.fileName,
+      sizeBytes: mediaRef.size,
+      width: mediaRef.width,
+      height: mediaRef.height,
+    }}
     onDownload={() => downloadBlob(blobUrl, mediaRef.fileName ?? 'media')}
   >
     {#if mediaRef.type === 'image'}
