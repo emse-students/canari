@@ -2374,3 +2374,24 @@ the group does not. A refusal now logs `[COMMITS_SINCE] refused ... keyDistribut
 AFTER the message it opens (FCM does not order the two pushes; the server sends the seed first). The
 banner goes up generic and is redrawn by `drainPendingChannelFrames` - measured on the same phone,
 Rootz `#general`, 20:13:56 -> 20:13:57. See the [backlog](../backlog.md).
+
+## 17. Anybody holding a key group's id could add themselves to it - FIXED 2026-09-27
+
+**Found by the audit that followed section 16**: every `dm_group_members` gate in
+chat-delivery-service was read against the question "does a key-distribution device reach it".
+None still refuses one wrongly. One ADMITTED somebody it should not.
+
+`POST mls/groups/:groupId/members` (`MembersController.addGroupMember`) lets a creator register
+itself into an EMPTY group - the bootstrap in `assertCallerMayMutateMembership` passes when the
+caller adds itself and `dm_group_members` holds no row for the group. A key-distribution group holds
+no such row BY CONSTRUCTION (section 16), so to that gate it is permanently "an empty group". A user
+who knew the id - a member removed from the community keeps it - could add themselves, which also
+wrote them pending device rows, then pass `getGroupInfo` on the row just written, external-commit
+into the group that carries every salon seed, and read seeds past social-service's scope gate.
+
+**The fix refuses the route for the whole kind**: a group with `distributionWorkspaceId` or
+`distributionChannelId` set answers `403 KEY_DISTRIBUTION_GROUP` and logs
+`[ADD_MEMBER] REFUSED key-distribution group=...`. Nothing legitimate ever came through it: these
+groups are entered by external commit, authorised by social-service. With no `dm_group_members` row
+possible on them, the `getGroupInfo` / `storeGroupInfo` gates that read that table become sound
+again. **Production held no such row on any of its eight key groups**, so the hole was never used.

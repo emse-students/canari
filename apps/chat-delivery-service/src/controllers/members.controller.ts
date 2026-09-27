@@ -338,6 +338,24 @@ export class MembersController {
     const traceId = this.makeTraceId('add-member');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    // A GRAINE KEY-DISTRIBUTION GROUP IS NEVER POPULATED HERE, and letting one through was a
+    // self-join. Its roster is community (or salon) membership, held by social-service, and its
+    // devices enter by external commit - so it carries ZERO `dm_group_members` rows by construction,
+    // which is exactly what the creation bootstrap below reads as "an empty group its creator is
+    // registering into". Anybody who knew the id (a member removed from the community, say) could
+    // therefore add themselves, pass `getGroupInfo` on the row just written, and external-join the
+    // group that carries every salon seed. Audited 2026-09-27; production held no such row.
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
+    if (group?.distributionWorkspaceId || group?.distributionChannelId) {
+      this.logger.warn(
+        `[ADD_MEMBER] REFUSED key-distribution group=${safeGroupId} user=${safeUserId.slice(0, 8)}`
+      );
+      throw new ForbiddenException({
+        code: 'KEY_DISTRIBUTION_GROUP',
+        message:
+          'A key-distribution group is joined through its community, not through this route.',
+      });
+    }
     await this.assertCallerMayMutateMembership(
       safeGroupId,
       safeUserId,

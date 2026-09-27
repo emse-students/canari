@@ -27,6 +27,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
   let keyPackageRepo: { find: jest.Mock };
   let blockQuery: jest.Mock;
   let transaction: jest.Mock;
+  let groupRepo: { findOne: jest.Mock };
 
   const GROUP = 'g-1';
   const CALLER = 'alice';
@@ -39,13 +40,14 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     keyPackageRepo = { find: jest.fn().mockResolvedValue([]) };
     blockQuery = jest.fn().mockResolvedValue([]);
     transaction = jest.fn().mockResolvedValue(undefined);
+    groupRepo = { findOne: jest.fn().mockResolvedValue({ id: GROUP }) };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
       providers: [
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
         { provide: getRepositoryToken(UserDismissedGroup), useValue: {} },
-        { provide: getRepositoryToken(Group), useValue: {} },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         {
@@ -62,6 +64,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
 
     controller = module.get(MembersController);
     jest.spyOn(controller['logger'], 'log').mockImplementation(() => undefined);
+    jest.spyOn(controller['logger'], 'warn').mockImplementation(() => undefined);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -120,4 +123,26 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     ).resolves.toEqual({ status: 'added' });
     expect(blockQuery).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['community', { distributionWorkspaceId: 'ws-1' }],
+    ['private salon', { distributionChannelId: 'ch-1' }],
+  ])(
+    'refuses a self-join into a %s key-distribution group, which holds no member row to bootstrap past',
+    async (_scope, flag) => {
+      // The shape of the escalation: a non-member, an empty `dm_group_members`, adding itself.
+      groupMemberRepo.count.mockResolvedValue(0);
+      groupRepo.findOne.mockResolvedValue({ id: GROUP, ...flag });
+
+      const err = await controller
+        .addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'KEY_DISTRIBUTION_GROUP',
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    }
+  );
 });
