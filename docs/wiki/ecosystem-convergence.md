@@ -1407,6 +1407,10 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
      `FullScreenViewer.svelte`. Read MiGallery's `PhotoModal.svelte`, `viewer-gestures` and
      `viewer-info` first; Canari's media is E2E-encrypted, so there is no EXIF from a server - an
      info panel there shows what the client knows (sender, date, size, dimensions).
+   **Decided by the user 2026-09-27:** the drop overlay is DONE (MiGallery v2.10.0); D8's desktop
+   shell is a Google-Photos left sidebar from 769 px up, the bottom bar for phones only; Canari's
+   viewers DO get the Informations panel, with those simple facts; and MiGallery releases after each
+   finished, verified step rather than once at the end.
    Owed on hardware: the grid pinch and a multi-file share from a selection (v2.7.0), and v2.8.0 +
    v2.9.0 on the Mi 9T in prod (albums list, Photos CV, the viewer panel, the bars).
 2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
