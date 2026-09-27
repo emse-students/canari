@@ -1456,6 +1456,38 @@ out of the tester programme instead forces an uninstall, which wipes the very st
 
 ---
 
+## Reported by the USER on 2026-09-27 - the community settings panels, and two community defects behind them
+
+*"Que ce soit sur mobile ou sur web, l'interface du panneau est vraiment nulle, plein d'éléments
+sont invisibles."* Then: *"pourquoi les membres que j'ajoute au canal ne survivent pas au
+rafraichissement de la page ?"*, and a notification reading *"Nouveau message dans #general"*.
+The user's words: *"Il va falloir rapidement régler tous les problèmes de communauté."* Nothing
+below has been investigated yet. It is what three screenshots SHOW, and each point must be measured
+on web (390 and 1280) and on the Mi 9T before anything is changed.
+
+- **P1 - a member added to a private channel is gone after a reload.** "Membres autorisés" lists
+  two people and "Enregistrer" is pressed. After a refresh only the user remains. Settle first
+  whether the add ever reached the server, then which of the three is wrong: the add, the save or
+  the reload. Read the network tab and the backend log; do not start from the component.
+- **P1 - a community message notified as "Nouveau message dans #general".** This is the fallback
+  body, so the push could not decrypt the message. Take the device and the time from the user,
+  then read the NSE/FCM log and the MLS state for that community channel. A fallback is a signal:
+  find out which primary path failed.
+- **P2 - the panels, as the screenshots show them** ("Paramètres de la communauté > Membres" and
+  "Paramètres du canal > Accès", mobile width):
+  - the tab bar overflows with nothing to show it scrolls, and the first tab is cut to "d'ensemble";
+  - the member search field is squeezed down to its icon and one glyph, beside the role `select`
+    and "Générer une invitation";
+  - the delete buttons of each row are a faint outline, and the trash icon is barely visible;
+  - "Rechercher u..." and a selected "Nathan CRUZ" are cut off in the add-user field, and "Ajouter"
+    keeps its disabled pale look after a pick;
+  - "Qui peut écrire ?" looks like a text input, not a choice. The hint under it talks about
+    admins seeing a private channel, which is not what that field is about;
+  - it is unclear whether "Enregistrer" saves only the members or the whole card, and nothing
+    confirms a save (this may be the P1 above).
+
+Paused when reported; to be picked up FIRST at the next session.
+
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 
 *"Contrairement aux autres boutons, il n'y a rien qui se passe quand je le survole, et on pourrait
