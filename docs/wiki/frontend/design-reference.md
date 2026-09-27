@@ -2693,3 +2693,32 @@ WHAT THIS DELIBERATELY DID NOT DO: media, link, GIF and poll messages still keep
 when they carry a quote, where the reference stacks the quote above a naked image. Those four
 already have their own "render naked" paths with their own corner logic, and opening them was beyond
 what was asked.
+
+## 30. The app launcher - one control for the other student sites
+
+The user asked on 2026-09-27 for an easy way from Canari to the gallery, Le Cercle's site and Sky,
+with their logos, and then added Portail-etu. Three placements were put to them: a Google-style grid
+launcher in the header, logos at the foot of the desktop rail with a section on the profile page for
+phones, or the profile page alone. **They chose the launcher, links in a NEW TAB.**
+
+- **One control, both widths.** `EcosystemLauncher.svelte` sits left of the avatar in the desktop
+  `Navbar` and in the phone `MobileHeader`, on every route. It opens a portalled 2x2 grid of logos
+  placed by `bindFixedPopover`, the same mechanism as `PostActionsMenu`.
+- **A new tab, never the same one.** Leaving Canari in its own tab drops the socket and the MLS state.
+  On the native shells the global link handler (`handleAppLinkClick`) already sends an external
+  anchor to the system browser, so the component has no runtime branch.
+- **The addresses are one list**, `ECOSYSTEM_SITES` in `frontend/src/lib/navigation/ecosystemSites.ts`,
+  pinned by its test (bare https origin, bundled logo, a name in every locale). Each site moves to an
+  `emse.fr` name when its certificate lands ([estate-migration](../infrastructure/estate-migration.md)),
+  and that is one line there, changed only once the new name answers over TLS.
+- **The logos are bundled** (`frontend/static/ecosystem/`, 96px webp): hotlinking them would tie the
+  header to four origins that are being renamed. Le Cercle's icon is cut to its circle, because its
+  source has a square beige ground. The Portail-etu lamp is trimmed of the transparent margin that
+  made it half the height of the others.
+
+**The fifth control cost the phone brand its name at 360px, and that is by design.** On `/posts` the
+header already carried `+`, search and the bell. With the launcher and the avatar that makes five
+44px controls, leaving the brand 100px against its measured 127px. The wordmark would have run
+under the `+`. `CanariBrand`'s `fitContainer` draws the name only when its `@container` (the brand
+link, now `flex-1`) is at least 8rem wide. Measured on 2026-09-27: at 360px, bird only; at 390px,
+name drawn with 3px to spare; on every non-feed tab, name drawn.

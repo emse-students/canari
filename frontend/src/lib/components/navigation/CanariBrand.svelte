@@ -4,11 +4,17 @@
   interface Props {
     /** When true, hides the text on small screens. */
     compact?: boolean;
+    /**
+     * When true, the name is drawn only if the enclosing `@container` leaves it room (8rem, the
+     * brand's measured 127px), and the bird alone otherwise. For a header whose controls vary by
+     * route: at 360px the phone header's five feed controls leave the brand 100px.
+     */
+    fitContainer?: boolean;
     /** Optional tagline displayed below the brand name. Defaults to the localized brand tagline. */
     subtitle?: string;
   }
 
-  let { compact = false, subtitle: subtitleProp }: Props = $props();
+  let { compact = false, fitContainer = false, subtitle: subtitleProp }: Props = $props();
   const subtitle = $derived(subtitleProp ?? m.brand_subtitle());
 
   /** Every May 27th, a small tribute replaces the brand name. */
@@ -31,7 +37,13 @@
   </div>
 
   <!-- Conteneur du texte -->
-  <div class="flex flex-col justify-center gap-0.5 {compact ? 'hidden sm:flex' : 'flex'}">
+  <div
+    class="flex flex-col justify-center gap-0.5 {compact
+      ? 'hidden sm:flex'
+      : fitContainer
+        ? 'hidden @min-[8rem]:flex'
+        : 'flex'}"
+  >
     <p
       class="font-brand text-text-main text-xl font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
     >

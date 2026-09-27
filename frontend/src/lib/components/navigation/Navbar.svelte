@@ -1,6 +1,7 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
   import CanariBrand from './CanariBrand.svelte';
+  import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
@@ -41,6 +42,9 @@
     <div class="ml-auto flex shrink-0 items-center gap-2">
       <StatusPill isConnected={globalSession.isWsConnected} />
       <SessionActionButtons onLogout={handleLogout} />
+      {#if globalSession.isLoggedIn}
+        <EcosystemLauncher />
+      {/if}
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"
