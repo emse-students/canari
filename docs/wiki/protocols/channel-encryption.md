@@ -2395,3 +2395,56 @@ into the group that carries every salon seed, and read seeds past social-service
 groups are entered by external commit, authorised by social-service. With no `dm_group_members` row
 possible on them, the `getGroupInfo` / `storeGroupInfo` gates that read that table become sound
 again. **Production held no such row on any of its eight key groups**, so the hole was never used.
+
+## 18. The catch-up opened the seed and then threw it away - FIXED 2026-09-27
+
+**Found by `NOTIF-19` the moment §16 stopped answering 403.** With the commits served
+(`fetchCommitsFromBackend: 2 commit(s) since epoch=8`), the phone still logged
+`decryptProtoWithCommits: ok=false -> catch-up insufficient` for every seed frame, and the salon
+banner stayed generic. `decrypt_push_message_with_commits_with_key` (`mobile/background.rs`) kept
+only a result with `ok: true`, i.e. a chat message with a text; Graine key material is `ok: false`
+with `reason: graine-key-material` by design (it must ring nobody), so a seed that needed the
+catch-up was decrypted and dropped. The Kotlin side had the same narrowing: its catch-up returned a
+`DecryptedMessage` or null, never `PushDecrypt.KeyMaterial`.
+
+**One classifier and one reader now serve both paths.** `classify_plaintext` in `background.rs` is
+the only place deciding what a decrypted frame is, and both push decrypts return its shape;
+`parseNativeDecrypt` in `CanariFirebaseMessagingService.kt` is the only reader of that shape, so
+the recovery ladder's `catchUp` passes a `KeyMaterial` through to `absorbGraineSeeds` like any
+other. Pinned by `a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up`.
+
+**What this left unseen, and why nothing said so.** Not one `[PushBG]` line reaches logcat when the
+app is dead: the Rust logger is installed by `tauri_plugin_log` when TAURI starts, and a push
+handled in a killed app calls Rust through JNI without Tauri. See the [backlog](../backlog.md).
+
+## 19. Design: the seed travels with the message - DECIDED BY THE USER 2026-09-27
+
+*"La clé voyage avec le message."* The alternative - post the generic banner silent and let only the
+redraw alert - keeps two pushes and a race; this removes the race.
+
+**The rule.** A session this device minted keeps its own seed frame `{groupId, protoB64}` - the MLS
+ciphertext `sendMessage` already returns and nothing kept - and EVERY message sealed under it carries
+that frame. A session without one is rotated (one rotation per channel and sender at upgrade). On
+the phone: the mirror first, then the attached frame (through the catch-up of §18 when behind), and
+the hold of §14 only for a push with no frame - a sender on an older version.
+
+**Why every message, not the first.** A push can be suppressed (notification level, mentions only),
+so the first message a phone RECEIVES under a session is not always the first one sent.
+
+**The budget.** A seed frame is ~280 bytes (~430 in the push with its group id), estimated from RFC
+9420 framing with the suite in `mls-core/src/group.rs`. The fixed `ciphertext <= 3000` in
+`notifyChannelRecipients` becomes a computed budget, and `{ciphertext, seedFrame, seedGroupId}` are
+inlined all or nothing. That needs `sendPushToUser` to stop sending the data AND the APNs block to
+every token, the duplication `sendFcmForQueued` already stopped for its own pushes.
+
+**What social-service may do with it.** Pass it through, never store it, never put it in the
+WebSocket event, and refuse a `seedGroupId` that is not the salon's key group (the private salon's
+own, or the community's) with a typed code. It is an MLS private message: social-service learns
+nothing it could open, and Google and Apple already carry the same bytes on the seed push.
+
+**What stays.** The seed push on the key group remains the durable copy for the foreground, other
+devices and history. It also fixes iOS: the frame rides the ALERT push that wakes the notification
+extension, so nothing depends on a silent wake (§14, what is left).
+
+**Proved by `NOTIF-20`**: a rotation forced by a join while A1 is dead, `seed source=frame` in
+logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.

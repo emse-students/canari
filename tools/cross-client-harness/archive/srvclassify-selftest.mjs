@@ -836,5 +836,37 @@ check(
   false
 );
 
+// ── what a new device's enrolment and the v0.18.26 election print (NOTIF-19, 2026-09-27) ──────────
+check(
+  'the membership door narrating an activation is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - LOG [MessagingService] [INVITATION_STATUS] group=2f49349b-6470-449a-a9a6-d834099c30d9 device=abc:web-abc'),
+  true
+);
+check(
+  'the same door removing a device from the tree is NOT',
+  matches(NOTABLE_RULES, '[Nest] 1 - LOG [MessagingService] [INVITATION_STATUS] group=2f49349b-6470-449a-a9a6-d834099c30d9 device=abc:web-abc kicked'),
+  false
+);
+check(
+  'a signed-out boot asking for a refresh it cannot have is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [AuthController] Refresh refused: no canari_refresh cookie. cookies=[] x-canari-refresh=absent client=0.18.27 origin=http://localhost:8081 ua=Mozilla'),
+  true
+);
+check(
+  'a refresh refused with a credential PRESENT is NOT',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [AuthController] Refresh refused: no canari_refresh cookie. cookies=[x] x-canari-refresh=present client=0.18.27'),
+  false
+);
+check(
+  'a sign-in finding no legacy cotisation is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [LegacyCotisationService] [legacy] no match key for user=f7a9bb80 (promo=2024)'),
+  true
+);
+check(
+  'the seed-request election reading presence is reported, nobody online included',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [ChannelService] [ROSTER] presence read: 0/2 member(s) online'),
+  true
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

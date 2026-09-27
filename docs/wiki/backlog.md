@@ -1491,8 +1491,9 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   line redrawn to its text. The server sent the seed frame FIRST (-1 s); FCM does not order two
   pushes. Every membership change rotates every sender's session, so it is the first message of
   each sender after any join. The user chose the deterministic direction over a silent generic
-  banner: the seed frame travels IN the first message's own push, so the phone never holds one
-  without the other. `NOTIF-19` (`archive/notif19.mjs`) is the row that reaches the catch-up half.
+  banner: the seed frame travels IN every message's own push, so the phone never holds one without
+  the other - designed in [channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27),
+  proved by `NOTIF-20` once built. `NOTIF-19` found the catch-up dropping seeds (§18, fixed).
 - **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
   `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
   commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
@@ -1510,6 +1511,19 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   can mark a group as distribution with no scope, and `groupInfoChannel` then falls through to
   chat-delivery, which answers 403. Whether an epoch gap can reach such a group is what decides it;
   `routeDistributionFrame` returns early without a scope, so it looks unreachable.
+- **OPEN, ASKED FOR BY THE USER 2026-09-27 - ONE USER-LEVEL CONTRACT FOR A SALON AND A CONVERSATION.**
+  *"Même si la machine est différente, on devrait avoir homogénéité en tant qu'utilisateur"*, then
+  *"je veux que tout ce que tu as nommé soit réglé, testable et testé puis envoyé en prod"*. The two
+  mechanisms differ (one push against two, Welcome against external commit, user rows against device
+  rows) and every defect of this section is code written for one kind receiving the other. So the
+  SAME rows run on a DM and on a salon, and both must show the plaintext: phone shut, right after a
+  membership change, a sender's first message, a new device. `NOTIF-19` is the salon half of the
+  second; its conversation twin, and the other three pairs, are owed.
+- **P2, OPEN - the Rust half of a push handled in a KILLED app logs nowhere.** `tauri_plugin_log`
+  installs the logger when Tauri starts; a push in a dead app calls Rust through JNI without it, so
+  every `[PushBG]` line is lost exactly where it is needed (§18 was diagnosed from Kotlin alone).
+  Installing one in `JNI_OnLoad` would take the global slot from the plugin when the app starts
+  normally, so the two must be reconciled, not stacked.
 
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 

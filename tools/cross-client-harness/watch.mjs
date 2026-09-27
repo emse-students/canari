@@ -212,6 +212,10 @@ const BENIGN = [
   // nothing at all, which is what made an invitation card that never appeared unreadable in a log.
   /^\[ADD_MSG\] Batch into "[^"]*": \d+ added, \d+ upgraded/,
   /^\[ADD_MSG\] Batch into "[^"]*": \d+ message\(s\), all already held$/,
+  // A HISTORY BUNDLE LANDING, NARRATED AS THE DECISION IT IS: a restore raises nothing. A new device
+  // asking for history (NOTIF-19 mints one, W3) makes every holder receive one, so it was that row's
+  // whole web-side dirt on 2026-09-27. Copied from `useMessaging.svelte.ts`.
+  /^\[NOTIF\] Batch into "[^"]*" restored \d+ message\(s\) from an archive - a replay is not an arrival, nothing raised\.$/,
   // The salon's own row changed under this client: a rename, or the server's verdict on whether it
   // may still post here. Both are a sidebar update and neither is a fault.
   /^\[CHANNEL\] #\S+ updated - canWrite=(true|false|unchanged)$/,
@@ -2266,7 +2270,16 @@ export function logcatReport(lines, label = 'A1') {
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
     // alternation, which would let a failed message decrypt pass as a seed.
-    ['fcm-graine-material', /^decryptProto: graine key material, \d+ seed\(s\)$/],
+    // BOTH READERS, since the catch-up keeps key material too (channel-encryption section 18): the
+    // prefix names which one - the direct decrypt, or the one run after applying missing commits.
+    ['fcm-graine-material', /^(decryptProto|decryptProtoWithCommits): graine key material, \d+ seed\(s\)$/],
+    // A COMMIT APPLIED, NOTHING TO DRAW - `parseNativeDecrypt` on `control-frame`, which Rust returns
+    // only AFTER the frame was processed. Every roster change pushes one to each device, and NOTIF-19
+    // makes one on purpose. The frame that could NOT be decrypted is another line and stays out.
+    ['fcm-control-frame', /^(decryptProto|decryptProtoWithCommits): control frame applied - state advanced, nothing to render$/],
+    ['fcm-silent-nothing', /^Silent push group=[0-9a-f]+ shows nothing - nothing to render in it$/],
+    // THE PROMISED REDRAW KEPT: the seed a held banner waited on landed, and the banner is redrawn.
+    ['fcm-channel-drain', /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/],
     ['fcm-graine-absorb', /^absorbGraineSeeds: stored \d+ seed\(s\) group=[0-9a-f]+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // ── the silent half of the notification surface, which the list knew nothing about ──

@@ -41,6 +41,15 @@ const CASES = [
   // readable either way.
   [line('D', 'CanariFCM', 'type=channel → groupId=6333a324-72ae-4c76-bf5e-b28ace09bb0c - background channel notification'), 'explained'],
   [line('D', 'CanariFCM', 'decryptProto: graine key material, 1 seed(s)'), 'explained'],
+  // The catch-up's own reader since channel-encryption section 18 (NOTIF-19, 2026-09-27), and the
+  // commit it applies on the way: both ordinary. A frame the catch-up could NOT open is another line.
+  [line('D', 'CanariFCM', 'decryptProtoWithCommits: graine key material, 15 seed(s)'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProto: control frame applied - state advanced, nothing to render'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProtoWithCommits: control frame applied - state advanced, nothing to render'), 'explained'],
+  [line('D', 'CanariFCM', 'Silent push group=2513c207 shows nothing - nothing to render in it'), 'explained'],
+  [line('D', 'CanariFCM', 'Silent push group=2513c207 shows nothing - it could not be decrypted'), 'unexplained'],
+  // The held banner's redraw is the second half of the two-push pair below, so `notable` like it.
+  [line('I', 'CanariFCM', 'drainPendingChannelFrames: 1 banner(s) waiting on this key material -> redrawing'), 'notable'],
   [line('D', 'CanariFCM', 'absorbGraineSeeds: stored 1 seed(s) group=2513c207'), 'explained'],
   [line('D', 'CanariFCM', 'handleChannelMessage: notification title=Venue - #salon body=Nouveau message mentionsMe=false'), 'explained'],
   // BOTH HALVES OF THE TWO-PUSH SEQUENCE ARE `notable`, NOT `explained`, AND THE PAIR IS THE POINT.

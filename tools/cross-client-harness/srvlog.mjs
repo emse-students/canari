@@ -673,6 +673,21 @@ const NOTABLE = [
   // longer read. Matching the tag would have forgiven that number along with the noise, which is the
   // way a classifier earns the right to be ignored.
   /\[DEVICE_MEMBERSHIPS\] .*stranded=0(?![0-9])/,
+  // THE MEMBERSHIP DOOR ITSELF, the service-side twin of the controller's `[INVITATION_STATUS]`
+  // line above: `activateDeviceMembership` / its pending sibling write the row and say so. A new
+  // device enrolling (NOTIF-19 mints one, W3) crosses it once per conversation. ` kicked` is NOT
+  // matched - a device leaving a tree is not routine.
+  /\[MessagingService\] \[INVITATION_STATUS\] group=[0-9a-f-]+ device=\S+$/,
+  // A signed-out browser booting asks for a refresh it cannot have: the client cannot see an
+  // HttpOnly cookie, so asking is the only way to learn there is none. Every wipe produces it
+  // (`newdevice.mjs`), and the refusal of a PRESENT but bad credential is another spelling.
+  /\[AuthController\] Refresh refused: no canari_refresh cookie\. cookies=\[\] x-canari-refresh=absent /,
+  // The legacy-cotisation claim looked up at sign-in and finding no row for this account - the
+  // ordinary answer for most accounts ([cotisations](../../docs/wiki/cotisations.md)).
+  /\[LegacyCotisationService\] \[legacy\] no match key for user=\S+ \(promo=\d+\)$/,
+  // THE SEED-REQUEST ELECTION READING PRESENCE (v0.18.26) - including `0/N`, where the request
+  // waits for a member to come online, which is the mechanism working rather than failing.
+  /\[ChannelService\] \[ROSTER\] presence read: \d+\/\d+ member\(s\) online$/,
   // THE RECONCILIATION PROTOCOL, SERVER SIDE. The pattern above matches `history_request` with an
   // underscore; the service logs `[HISTORY_REQ]`, so every forwarded and unanswerable history ask
   // was landing in `unexplained` instead of the bucket a reader looks at. `NO_PEER_ONLINE` is the

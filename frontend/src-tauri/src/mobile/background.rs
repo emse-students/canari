@@ -471,7 +471,17 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    let info = extract_full_message_info(&plaintext);
+    classify_plaintext(&plaintext)
+}
+
+/// What a DECRYPTED push frame is, in the one shape both push decrypt paths return.
+///
+/// A renderable message comes back as its info (`ok: true`); anything else as a `refused` reason,
+/// Graine key material carrying its seeds. SHARED BECAUSE THE CATCH-UP PATH LOST SEEDS WITHOUT IT:
+/// `decrypt_push_message_with_commits_with_key` kept only `ok: true`, so a seed sealed one commit
+/// ahead of the device was decrypted after the catch-up and then thrown away (NOTIF-19, 2026-09-27).
+fn classify_plaintext(plaintext: &[u8]) -> serde_json::Value {
+    let info = extract_full_message_info(plaintext);
     if info["ok"].as_bool().unwrap_or(false) {
         return info;
     }
@@ -520,7 +530,8 @@ pub fn background_group_epoch_with_key(
     manager.get_epoch(group_id).ok()
 }
 
-/// Decrypts an MLS push payload after applying `commits` in memory, read-only.
+/// Decrypts an MLS push payload after applying `commits` in memory, read-only, answering in the
+/// same shape as [`decrypt_push_message_with_key`] - key material included.
 ///
 /// `commits` are ordered by ascending base epoch. They are applied to the loaded manager only
 /// to reach the sender's epoch; the result is never written back, so the foreground stays the
@@ -533,8 +544,11 @@ pub fn decrypt_push_message_with_commits_with_key(
     group_id: &str,
     commits: &[Vec<u8>],
     ciphertext: &[u8],
-) -> Option<serde_json::Value> {
-    let (mut manager, _key) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)?;
+) -> serde_json::Value {
+    let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
+    else {
+        return refused("state-unreadable");
+    };
 
     for commit in commits {
         match manager.process_incoming_message(group_id, commit) {
@@ -549,21 +563,16 @@ pub fn decrypt_push_message_with_commits_with_key(
     let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
         Ok(Some(p)) => p,
         Ok(None) => {
-            log::warn!("[PushBG] key-based catch-up decrypt: Ok(None)");
-            return None;
+            log::debug!("[PushBG] key-based catch-up: control frame applied, nothing to render");
+            return refused("control-frame");
         }
         Err(e) => {
             log::error!("[PushBG] key-based catch-up decrypt failed: {e}");
-            return None;
+            return refused("mls-refused");
         }
     };
 
-    let info = extract_full_message_info(&plaintext);
-    if info["ok"].as_bool().unwrap_or(false) {
-        Some(info)
-    } else {
-        None
-    }
+    classify_plaintext(&plaintext)
 }
 
 #[cfg(test)]
@@ -822,6 +831,75 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0]["channelId"], "ch-salon");
         assert_eq!(seeds[0]["sessionId"], "sess-abc");
+        assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+    }
+
+    /// NOTIF-19, 2026-09-27: a seed sealed ONE COMMIT AHEAD of the device must come out of the
+    /// catch-up as key material. It was decrypted there and then dropped for having no text, so a
+    /// shut phone behind its community's key group never received the seed of any new session.
+    #[test]
+    fn a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up() {
+        let (mut alice, bob, group_id) = joined_pair("graine-ahead");
+        let key = decode_base64_to_32_bytes(&key_b64(13)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        // A newcomer joins: the commit bob's saved state has never seen.
+        let carol = MlsManager::load_or_create("graine-ahead-carol", "dev-c", None)
+            .expect("carol load_or_create");
+        let kp = carol.generate_key_package().expect("carol key package");
+        let (commit, _welcome, _added, _skipped) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add commit");
+
+        let seed = [7u8; 32];
+        let frame = super::super::proto_fields::build_graine_app_message(
+            "ch-salon",
+            "sess-new",
+            &seed,
+            1_700_000_000_000,
+        );
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let out = send_messages_background_with_key(
+            &temp_dir("graine-ahead"),
+            &alice_state,
+            &key_b64(13),
+            "graine-ahead-alice",
+            "dev-a",
+            &[entry("seed-ahead", &group_id, &frame)],
+        )
+        .expect("alice encrypts the seed frame");
+        let ciphertext = &ciphertexts_of(&out)[0];
+
+        // Without the commit the frame is out of reach, which is what makes this a catch-up case.
+        let direct = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(13),
+            "graine-ahead-bob",
+            "dev-b",
+            &group_id,
+            ciphertext,
+        );
+        assert_eq!(direct["reason"], "mls-refused");
+
+        let info = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(13),
+            "graine-ahead-bob",
+            "dev-b",
+            &group_id,
+            &[commit],
+            ciphertext,
+        );
+        assert_eq!(info["ok"], false, "key material must still ring nobody");
+        assert_eq!(info["reason"], "graine-key-material");
+        let seeds = info["seeds"]
+            .as_array()
+            .expect("seeds travel with the reason");
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0]["sessionId"], "sess-new");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
     }
 
