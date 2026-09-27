@@ -497,6 +497,41 @@ outlines the boxes it measured.
 **The outline is editor-only and is cleared before an export**, for the same reason the selection
 handles are: the element captured for the PDF is the live editor stage.
 
+### The directory's line is written ONCE, and prints no role that says nothing
+
+The poster and the published document both print the roster, and each built the line itself - so a
+change to one was a change only half the readers saw. `directoryLine()` in `carte/generator.ts` is
+the only implementation.
+
+**"(Membre)" is not printed** (user, D5): being in the list already says it, and it appeared ~100
+times in 8,200 characters of directory. The directory's font is FITTED to its column, so every
+character it does not print is font size the names that matter get back. The test names the spellings
+that count as generic - accents and case included.
+
+**An association with nobody on it keeps its place** (user, D10). The editor names those
+associations instead, because an empty blob and an empty directory line otherwise read as a broken
+render rather than a roster nobody has filled in.
+
+### A capture cannot wait for an animation frame
+
+The directory's font fit ran in a `requestAnimationFrame` inside a `PosterCanvas` effect, and **a
+browser throttles rAF in a hidden tab**: the first export measured on 2026-09-27 captured the
+UNFITTED 13 px base and three associations fell below the panel and off the page, while the live DOM
+later fitted to 8 px. The same throttling is why that export took minutes instead of ten seconds.
+
+The fit is therefore a function in `carte/directoryFit.ts` that **the exporter runs itself, before
+the capture**. It is idempotent - it starts from the base size every time - so running it on an
+already-fitted poster answers the same thing rather than compounding the last answer. The two boxes
+it measures are found by `data-` attributes, which is what lets it be reached from outside the
+component that draws them.
+
+**The tab being in the background is still the user's to fix**, so the editor says so while an
+export runs rather than leaving a button that looks hung.
+
+`RASTER_SCALE` is 4.5 (user, D8): 1600 x 4.5 = 7200 px over 1189 mm is **154 dpi**, against 102 at
+the previous 3. The raster is the export's whole memory and time budget and it grows with the square
+of that number - the cost is accepted, and owed a measurement on the dev pre-release.
+
 ### The PDF breaks its lines where the browser did
 
 **A width is not a line break, and handing one to jsPDF asks it to guess again.** The vector text

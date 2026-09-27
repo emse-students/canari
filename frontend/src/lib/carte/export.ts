@@ -1,5 +1,16 @@
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { STAGE_WIDTH, STAGE_HEIGHT } from './layout';
+import { fitDirectoryFontIn } from './directoryFit';
+
+/**
+ * snapdom scale for the background raster.
+ *
+ * A0 landscape is 1189 mm wide, so 1600 x 4.5 = 7200 px is **154 dpi** on the printed sheet; the
+ * previous 3 gave 102 dpi, and photos and logos were visibly soft next to the vector text drawn
+ * over them. Decided with the user on 2026-09-27 (D8), cost accepted: the raster is the export's
+ * whole memory and time budget, and it grows with the square of this number.
+ */
+const RASTER_SCALE = 4.5;
 
 /**
  * Exports the live poster element as a large, searchable A0-landscape PDF.
@@ -15,12 +26,17 @@ import { STAGE_WIDTH, STAGE_HEIGHT } from './layout';
  * @param filename - Base filename (sanitised; ".pdf" appended).
  */
 export async function exportPosterPdf(el: HTMLElement, filename: string): Promise<void> {
+  // The directory's fit normally runs in an animation frame, which a hidden tab throttles - and a
+  // capture that beat it printed the unfitted list off the page. It is idempotent, so running it
+  // here costs nothing when the poster is already fitted.
+  fitDirectoryFontIn(el);
   await exportSearchablePdf(el, {
     filename,
     format: 'a0',
     orientation: 'landscape',
     naturalWidth: STAGE_WIDTH,
     naturalHeight: STAGE_HEIGHT,
+    rasterScale: RASTER_SCALE,
     // The app's *Variable* families, so the raster background embeds the real Canari fonts.
     fonts: [
       "700 40px 'Fredoka Variable'",
