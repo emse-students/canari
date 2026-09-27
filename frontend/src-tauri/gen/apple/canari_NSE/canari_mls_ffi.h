@@ -50,6 +50,11 @@ char *canari_native_decrypt_graine_message(const char *seed_b64, const char *ses
                                            uint32_t message_index, const char *nonce_b64,
                                            const char *ciphertext_b64);
 
+/// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
+/// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were
+/// kept, or -1 when the payload is not a JSON array. Channel-encryption section 19.
+int32_t canari_native_store_graine_seeds(const char *data_dir, const char *seeds_json);
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
 /// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)
 /// from the MLS-decrypted MediaMsg; cipher_ptr/cipher_len point at the downloaded ciphertext||tag.

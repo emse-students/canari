@@ -66,7 +66,8 @@ function fakeMls(epoch: number | null) {
       getEpoch: () => epoch ?? 0,
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
-        return new Uint8Array();
+        // What MLS would hand back: the sealed frame, which the session keeps (section 19).
+        return new Uint8Array([0xca, 0xfe]);
       },
     } as never,
   };
@@ -92,6 +93,24 @@ describe('sealing', () => {
     // One frame on the community's distribution group: O(1), whatever the member count.
     expect(sent).toHaveLength(1);
     expect(sent[0].groupId).toBe('g-1');
+  });
+
+  it('carries the seed frame on EVERY message of the session, not only the one that minted it', async () => {
+    const { storage } = fakeStorage();
+    const { mls, sent } = fakeMls(4);
+    wire(storage, mls);
+
+    const first = await sealChannelMessage(CHANNEL, new Uint8Array([1]));
+    const second = await sealChannelMessage(CHANNEL, new Uint8Array([2]));
+
+    // A push can be withheld (a salon set to mentions), so the first message a phone RECEIVES under a
+    // session is not always the first one sent - the frame has to ride them all.
+    expect(sent).toHaveLength(1);
+    expect(second.senderSessionId).toBe(first.senderSessionId);
+    for (const sealed of [first, second]) {
+      expect(sealed.seedFrame).toBe('yv4=');
+      expect(sealed.seedGroupId).toBe('g-1');
+    }
   });
 
   it('refuses a channel belonging to no community this session loaded', async () => {
@@ -229,6 +248,17 @@ describe('a private salon seals on its OWN group', () => {
     // declining to serve its ciphertext: the seed is never even sent to the community's roster.
     expect(sent).toHaveLength(1);
     expect(sent[0].groupId).toBe('g-salon');
+  });
+
+  it('names the salon group as the one its seed frame was sealed on', async () => {
+    const { storage } = fakeStorage();
+    const { mls } = fakeMls(4);
+    wire(storage, mls, true);
+
+    const sealed = await sealChannelMessage(CHANNEL, new Uint8Array([1, 2, 3]));
+
+    // The server checks this against the salon's own key group before passing the frame on.
+    expect(sealed.seedGroupId).toBe('g-salon');
   });
 
   it('refuses to seal when the salon group is not in hand, rather than using the community one', async () => {

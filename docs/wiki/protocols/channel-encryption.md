@@ -2448,3 +2448,21 @@ extension, so nothing depends on a silent wake (§14, what is left).
 
 **Proved by `NOTIF-20`**: a rotation forced by a join while A1 is dead, `seed source=frame` in
 logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.
+
+### How it is built (2026-09-27)
+
+| Where | What it does |
+| --- | --- |
+| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `shouldRotateGraineSession` rotates a session without one |
+| `channelSeal.ts`, `channelCrypto.ts` | every non-silent send carries `seedFrame` + `seedGroupId`; a silent one (a reaction) carries neither, since it pushes nobody |
+| social-service `assertSeedFrame` | both or neither, base64, at most `MAX_SEED_FRAME_CHARS` (2048); `seedGroupId` must be the private salon's own group, the community's otherwise - `CHANNEL_SEED_FRAME_INVALID` / `CHANNEL_SEED_FRAME_GROUP_MISMATCH`. Never stored, never in `channel.message.created`. The controller used to REBUILD every refusal from its status and message, dropping `code`; a typed refusal now leaves as thrown |
+| social-service `notifyChannelRecipients` | hands `{ciphertext, seedFrame, seedGroupId}` to `internal/push/notify` as `inline`, apart from the fields every push carries; the fixed `ciphertext <= 3000` is gone |
+| chat-delivery `sendPushToUser` | ONE half per token - the data map for Android, the APNs request for iOS - as `sendFcmForQueued` already did; `withInlineGroup` adds the inline group when ALL of it fits that platform's 4 096 B and none of it otherwise, and says so in `[PUSH_SIZE]` |
+| Kotlin `openSeedFrame`, `SeedFrameLadder` | on a mirror miss, the frame is decrypted like the seed push would be; `LOCAL` -> commit catch-up, `ABSENT` / `UNKNOWN` said and NOT waited on (not a join in flight); the seed is absorbed by the one writer and read back from the mirror. `seed source=mirror|frame` names which |
+| Kotlin dispatch | the salon push runs on the MLS lane (`runSerializedWithWakeLock("fcm_channel")`), beside the seed push. On two lanes they overlapped: the frame decrypt waited 5 s on a state lock the seed push held for ~10 s of Argon2, gave up, and fell back to the hold. Serialised, FCM's order decides the source and never the outcome |
+| Rust `with_graine_mirror` | every edit of `graine_seeds.json` holds an OS file lock (`graine_seeds.lock`, threads and processes alike - the iOS extension is another process) and writes by rename. Two writers used to read-modify-write it unordered, so one could erase the other's seed |
+| iOS NSE `openSeedFrame` + `canari_native_store_graine_seeds` | the same path; the frame rides the ALERT push, so it is the one way an iPhone gets a new session's seed while shut |
+| `canari_push.mm` (app alive) | does NOT open the frame: it decrypts no MLS frame at all, and the live engine already holds the seed. `channelPushFields.test.ts` asserts that fact, so the exemption fails the day it stops being true |
+
+What stays for an older sender - the hold and redraw of §14 - is in
+[legacy-compatibility](../legacy-compatibility.md), with its removal condition.

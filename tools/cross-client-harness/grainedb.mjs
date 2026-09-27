@@ -306,6 +306,40 @@ export function groupState(groupId) {
 }
 
 /**
+ * The live one-to-one conversation between two accounts: its group, its epoch, its device roster.
+ *
+ * NOTIF-2 needs it for the reason NOTIF-19 needs `communityDistribution`: the row is only a
+ * measurement if the group ADVANCED past the epoch the dead phone holds, and that is a fact about
+ * the server's `activeEpoch`, never about a screen. A DM is `isGroup = false`, carries no
+ * distribution scope, and has exactly the two users as members - anything else (a key group, a
+ * named group that happens to hold the same two people) is a different mechanism and must not be
+ * picked. More than one match answers null rather than a guess.
+ *
+ * @returns `{ groupId, epoch, devices: [{ userId, deviceId, status }] }`, or null.
+ */
+export function directConversation(userA, userB) {
+  const found = rows(
+    psql(
+      `SELECT g.id, g."activeEpoch" FROM dm_groups g ` +
+        `WHERE g."isGroup" = false AND g."deletedAt" IS NULL ` +
+        `AND g."distributionWorkspaceId" IS NULL AND g."distributionChannelId" IS NULL ` +
+        `AND (SELECT count(*) FROM dm_group_members m WHERE m."groupId" = g.id) = 2 ` +
+        `AND EXISTS (SELECT 1 FROM dm_group_members m WHERE m."groupId" = g.id AND m."userId" = '${userA}') ` +
+        `AND EXISTS (SELECT 1 FROM dm_group_members m WHERE m."groupId" = g.id AND m."userId" = '${userB}')`
+    )
+  );
+  if (found.length !== 1) return null;
+  const [groupId, epoch] = found[0];
+  const devices = rows(
+    psql(
+      `SELECT "userId", "deviceId", status FROM dm_device_group_memberships ` +
+        `WHERE "groupId" = '${groupId}' ORDER BY "userId", "deviceId"`
+    )
+  ).map(([userId, deviceId, status]) => ({ userId, deviceId, status }));
+  return { groupId, epoch: Number(epoch), devices };
+}
+
+/**
  * A member's community role AS THE SERVER HOLDS IT: `admin`, `moderator`, `member`, or null.
  *
  * WHY NOT READ THE SCREEN. The modal shows an admin a `<select>` whose value is the role and shows

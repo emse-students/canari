@@ -11,6 +11,7 @@ import {
   Query,
   HttpException,
   HttpStatus,
+  Logger,
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -47,6 +48,8 @@ import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 /** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
 export class ChannelsController {
+  private readonly logger = new Logger(ChannelsController.name);
+
   constructor(private readonly service: ChannelService) {}
 
   /** Returns the health status of the channel service. */
@@ -559,6 +562,11 @@ export class ChannelsController {
     try {
       return await this.service.sendMessage(channelId, { ...body, senderId: userId });
     } catch (err: any) {
+      // A refusal the service TYPED goes out as it was thrown: rebuilding it from `status` and
+      // `message` dropped its `code`, and a client left to tell CHANNEL_SEED_FRAME_GROUP_MISMATCH
+      // from CHANNEL_SESSION_REQUIRED by their prose is the branch-on-a-message this repo forbids.
+      if (err instanceof HttpException) throw err;
+      this.logger.error(`[CHANNEL] send failed channel=${channelId}: ${err?.message ?? err}`);
       throw new HttpException(
         {
           statusCode: err.status || 500,

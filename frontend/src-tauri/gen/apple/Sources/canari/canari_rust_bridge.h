@@ -45,6 +45,11 @@ char *canari_native_decrypt_graine_message(
     const char *nonce_b64,
     const char *ciphertext_b64);
 
+/// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
+/// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were
+/// kept, or -1 when the payload is not a JSON array. Channel-encryption section 19.
+int32_t canari_native_store_graine_seeds(const char *data_dir, const char *seeds_json);
+
 unsigned char *canari_native_decrypt_media(
     const char *key_b64,
     const char *iv_b64,

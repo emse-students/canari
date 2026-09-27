@@ -221,6 +221,29 @@ pub unsafe extern "C" fn canari_native_decrypt_graine_message(
     }
 }
 
+/// Writes the seeds of a key-material frame into `{data_dir}/graine_seeds.json`, and returns how
+/// many it kept, or -1 when the arguments or the payload could not be read at all.
+///
+/// `seeds_json` is the `seeds` array of a `graine-key-material` refusal, exactly as
+/// `canari_native_decrypt_message` returned it. The extension calls this when it opens the seed
+/// frame a salon push carries (channel-encryption section 19). `data_dir` is the App Group
+/// directory both the app and the extension read the mirror from. FFI mirror of the Android JNI
+/// `nativeStoreGraineSeeds`, and the same implementation behind it.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_store_graine_seeds(
+    data_dir: *const c_char,
+    seeds_json: *const c_char,
+) -> i32 {
+    if data_dir.is_null() || seeds_json.is_null() {
+        log::error!("[GRAINE_PUSH] ffi: null argument");
+        return -1;
+    }
+    crate::commands::push::store_graine_seeds_json(
+        &path_from_c_str(data_dir),
+        &str_from_c_str(seeds_json),
+    )
+}
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
 /// (WP-XP-3). `key_b64`/`iv_b64` are the CEK (32 bytes) + IV (12 bytes) in base64, extracted from
 /// the MLS-decrypted `MediaMsg`; `cipher_ptr`/`cipher_len` point at the `ciphertext||tag`

@@ -212,6 +212,17 @@ export interface SendChannelMessageDto {
    * it is worth a push. Whether to ring a phone is the ONLY thing this flag says.
    */
   silent?: boolean;
+  /**
+   * The MLS frame that carries this message's Graine seed (base64), and the key group it was
+   * sealed on (channel-encryption section 19).
+   *
+   * Passed to the recipients' pushes so a phone opens the seed from the message itself rather than
+   * racing a second push; never stored and never in the WebSocket event. Both or neither, and
+   * `seedGroupId` must be the salon's own key group. Absent from a silent message and from a
+   * sender older than the rule.
+   */
+  seedFrame?: string;
+  seedGroupId?: string;
 }
 
 export interface GetChannelMessagesQuery {

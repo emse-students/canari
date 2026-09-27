@@ -12,7 +12,12 @@
 // a hand-written double would get wrong silently.
 import 'fake-indexeddb/auto';
 import { IndexedDbStorage } from './indexeddb';
-import { decodeGraineSession, graineClearColumns, byNewestSession } from './graineCodec';
+import {
+  decodeGraineSession,
+  encodeGraineSensitive,
+  graineClearColumns,
+  byNewestSession,
+} from './graineCodec';
 import { decryptData } from '$lib/encryption';
 import type { StoredGraineSession } from './types';
 
@@ -44,6 +49,17 @@ describe('Graine sessions in IndexedDB', () => {
   it('round-trips a session through encryption', async () => {
     const storage = await freshStorage();
     const s = session();
+    await storage.saveGraineSession(s, KEY);
+
+    expect(await storage.getGraineSession('sess-1', KEY)).toEqual(s);
+  });
+
+  it('round-trips the distribution frame a sender keeps with its session', async () => {
+    const storage = await freshStorage();
+    const s = session({
+      sentCount: 3,
+      distributionFrame: { groupId: 'g-1', protoB64: 'ZnJhbWU=' },
+    });
     await storage.saveGraineSession(s, KEY);
 
     expect(await storage.getGraineSession('sess-1', KEY)).toEqual(s);
@@ -179,6 +195,22 @@ describe('graineCodec - the seam both backends share', () => {
   it('survives a payload that lost its seed rather than throwing', () => {
     expect(decodeGraineSession(graineClearColumns(session()), {}).seedB64).toBe('');
     expect(decodeGraineSession(graineClearColumns(session()), null).seedB64).toBe('');
+  });
+
+  it('keeps the frame inside the SEALED half, never in a clear column', () => {
+    const s = session({ distributionFrame: { groupId: 'g-1', protoB64: 'ZnJhbWU=' } });
+
+    expect(JSON.stringify(graineClearColumns(s))).not.toContain('ZnJhbWU=');
+    expect(encodeGraineSensitive(s).distributionFrame).toEqual(s.distributionFrame);
+  });
+
+  it('reads a malformed frame as absent, so the session rotates instead of sending a broken one', () => {
+    for (const distributionFrame of [{ groupId: 'g-1' }, { protoB64: 7 }, 'frame', null]) {
+      expect(
+        decodeGraineSession(graineClearColumns(session()), { seedB64: 'abc', distributionFrame })
+          .distributionFrame
+      ).toBeUndefined();
+    }
   });
 
   it('orders ties by session id, so two devices keep the same sessions', () => {

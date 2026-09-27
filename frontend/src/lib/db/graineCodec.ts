@@ -6,11 +6,13 @@
  *  - clear columns (`sessionId`, `workspaceId`, `channelId`, `senderId`, `firstIndex`,
  *    `createdAt`, `sentCount`): everything needed to LIST, order, count and purge sessions without
  *    the device key, which is what makes a purge on leaving a community possible at all;
- *  - an encrypted blob holding the seed alone. It is the only secret in the row, and encrypting it
- *    with the device key puts it in exactly the same posture as a stored message.
+ *  - an encrypted blob holding the seed - the only secret in the row, so encrypting it with the
+ *    device key puts it in exactly the same posture as a stored message - and, on a session this
+ *    device minted, the frame that distributed it. The frame is not secret (an MLS ciphertext), it
+ *    rides in the blob because that needs no column in either store and a backup carries it as is.
  */
 
-import type { EncryptedGraineRow, StoredGraineSession } from './types';
+import type { EncryptedGraineRow, GraineDistributionFrame, StoredGraineSession } from './types';
 
 /** Non-encrypted columns of a persisted Graine row. */
 export interface GraineClearColumns {
@@ -38,9 +40,20 @@ export function graineClearColumns(session: StoredGraineSession): GraineClearCol
   };
 }
 
-/** The payload that gets encrypted: the seed, and nothing else. */
+/** The payload that gets encrypted: the seed, and the distribution frame when this device minted it. */
 export function encodeGraineSensitive(session: StoredGraineSession): Record<string, unknown> {
-  return { seedB64: session.seedB64 };
+  return session.distributionFrame
+    ? { seedB64: session.seedB64, distributionFrame: session.distributionFrame }
+    : { seedB64: session.seedB64 };
+}
+
+/** The frame out of a decrypted payload, or undefined for anything that is not one - an older row. */
+function frameOf(payload: unknown): GraineDistributionFrame | undefined {
+  const f = (payload as { distributionFrame?: { groupId?: unknown; protoB64?: unknown } } | null)
+    ?.distributionFrame;
+  return f && typeof f.groupId === 'string' && typeof f.protoB64 === 'string'
+    ? { groupId: f.groupId, protoB64: f.protoB64 }
+    : undefined;
 }
 
 /**
@@ -69,6 +82,7 @@ export function decodeGraineSession(
     sentCount: Number.isFinite(sentCount) ? sentCount : undefined,
     distributionEpoch: Number.isFinite(distributionEpoch) ? distributionEpoch : undefined,
     seedB64: typeof seed === 'string' ? seed : '',
+    distributionFrame: frameOf(payload),
   };
 }
 

@@ -224,31 +224,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     let dir: String = dir.into();
     let json: String = json.into();
 
-    let Ok(seeds) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
-        log::error!("[GRAINE_PUSH] seeds payload is not a JSON array");
-        return -1;
-    };
-
-    let path = std::path::Path::new(&dir);
-    let mut stored = 0i32;
-    for seed in &seeds {
-        let channel_id = seed["channelId"].as_str().unwrap_or_default();
-        let session_id = seed["sessionId"].as_str().unwrap_or_default();
-        let seed_b64 = seed["seedB64"].as_str().unwrap_or_default();
-        let created_at = seed["createdAt"].as_i64().unwrap_or(0);
-        if channel_id.is_empty() || session_id.is_empty() || seed_b64.is_empty() {
-            log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
-            continue;
-        }
-        // PER SEED, so a bundle does not lose its tail to its first bad entry.
-        match commands::push::merge_graine_seed(path, channel_id, session_id, seed_b64, created_at)
-        {
-            Ok(_) => stored += 1,
-            Err(e) => log::error!("[GRAINE_PUSH] merge failed for session {session_id}: {e}"),
-        }
-    }
-    log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
-    stored
+    commands::push::store_graine_seeds_json(std::path::Path::new(&dir), &json)
 }
 
 #[cfg(target_os = "android")]

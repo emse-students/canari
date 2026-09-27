@@ -1,6 +1,6 @@
 import { GraineInputError, newGraineSeed, newGraineSessionId } from '$lib/crypto/graine';
 import { GRAINE_ROTATE_AFTER_MESSAGES, GRAINE_ROTATE_AFTER_MS } from '$lib/crypto/graineConstants';
-import type { IStorage, StoredGraineSession } from '$lib/db/types';
+import type { GraineDistributionFrame, IStorage, StoredGraineSession } from '$lib/db/types';
 import { toBase64 } from '$lib/utils/hex';
 
 /**
@@ -38,9 +38,10 @@ export interface GraineOutboundDeps {
    * Hands a freshly minted session to the community over the distribution group.
    *
    * MUST throw when the seed did not go out. It is awaited BEFORE the session is persisted, so a
-   * failure leaves nothing behind: see {@link reserveOutboundSlot}.
+   * failure leaves nothing behind: see {@link reserveOutboundSlot}. Answers the frame it posted,
+   * which the session keeps so every message sealed under it can carry it.
    */
-  distribute: (session: StoredGraineSession) => Promise<void>;
+  distribute: (session: StoredGraineSession) => Promise<GraineDistributionFrame>;
   /** Injectable clock, for tests. Never used to decide anything but the age threshold. */
   now?: () => number;
 }
@@ -70,6 +71,11 @@ export interface GraineOutboundSlot {
  * A session predating the column carries no epoch and is rotated for the same reason - "minted
  * under a roster nobody recorded" is not evidence of a roster that still holds.
  *
+ * **And one with no distribution frame is rotated too**, since 2026-09-27: every message sealed
+ * under a session carries the frame that distributed its seed (channel-encryption section 19), and
+ * a session minted before that was kept has nothing to carry. One rotation per (channel, sender) at
+ * upgrade, and never again.
+ *
  * An ADD advances the epoch too, and rotates a session it did not have to. That is deliberate: the
  * cost is one extra O(1) seed distribution, and the alternative - a durable "somebody LEFT" marker -
  * is state that has to be written by every device, kept until every session has cycled past it, and
@@ -87,6 +93,7 @@ export function shouldRotateGraineSession(
   if (!session) return true;
   return (
     session.distributionEpoch !== at.distributionEpoch ||
+    !session.distributionFrame ||
     (session.sentCount ?? 0) >= GRAINE_ROTATE_AFTER_MESSAGES ||
     at.now - session.createdAt >= GRAINE_ROTATE_AFTER_MS
   );
@@ -172,8 +179,8 @@ async function reserve(
     sentCount: 0,
     distributionEpoch: deps.distributionEpoch,
   };
-  await deps.distribute(minted);
-  const stored: StoredGraineSession = { ...minted, sentCount: 1 };
+  const distributionFrame = await deps.distribute(minted);
+  const stored: StoredGraineSession = { ...minted, sentCount: 1, distributionFrame };
   await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);
   // Rare by design - once per 100 messages, per week, or per membership change - so a console full
   // of these says the epoch is moving for a reason nobody has looked at yet. It does NOT say which
@@ -181,7 +188,7 @@ async function reserve(
   // read is a distinction nothing can act on.
   console.info(
     `[GRAINE] new outbound session ${minted.sessionId} for channel ${scope.channelId.slice(0, 8)} ` +
-      `at distribution epoch ${deps.distributionEpoch}`
+      `at distribution epoch ${deps.distributionEpoch}, frame ${distributionFrame.protoB64.length} chars`
   );
   return { session: stored, index: 0, minted: true };
 }

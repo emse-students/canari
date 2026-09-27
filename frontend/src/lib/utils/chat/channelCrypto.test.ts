@@ -52,6 +52,8 @@ beforeEach(() => {
     nonce: 'bm9uY2U=',
     senderSessionId: 'sess-1',
     messageIndex: 7,
+    seedFrame: 'ZnJhbWU=',
+    seedGroupId: 'dist-group',
   });
   sendMessage.mockResolvedValue(undefined);
 });
@@ -62,11 +64,14 @@ describe('sendEncryptedChannelMessage', () => {
 
     expect(sealChannelMessage).toHaveBeenCalledWith(RAW, PAYLOAD);
     // Both fields, or the message is one nobody can open: the key is HKDF(seed, session, index).
+    // ...and the seed frame, so a phone opens the seed from this message's own push (section 19).
     expect(sendMessage).toHaveBeenCalledWith(RAW, {
       ciphertext: 'Y2lwaGVy',
       nonce: 'bm9uY2U=',
       senderSessionId: 'sess-1',
       messageIndex: 7,
+      seedFrame: 'ZnJhbWU=',
+      seedGroupId: 'dist-group',
     });
   });
 
@@ -123,6 +128,9 @@ describe('sendChannelReaction (WP-40)', () => {
     const body = sendMessage.mock.calls[0][1];
     // Silent, or every heart in the community becomes a push and the channel gets muted.
     expect(body.silent).toBe(true);
+    // A silent message raises no push, so the frame would travel for nobody.
+    expect(body.seedFrame).toBeUndefined();
+    expect(body.seedGroupId).toBeUndefined();
     const frame = decodeAppMessage(sealChannelMessage.mock.calls[0][1]);
     expect(frame?.reaction?.messageId).toBe('target-1');
     expect(frame?.reaction?.removed).toBe(true);

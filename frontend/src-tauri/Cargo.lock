@@ -617,6 +617,7 @@ dependencies = [
  "base64 0.22.1",
  "hkdf 0.12.4",
  "jni",
+ "libc",
  "log",
  "mls-core",
  "serde",

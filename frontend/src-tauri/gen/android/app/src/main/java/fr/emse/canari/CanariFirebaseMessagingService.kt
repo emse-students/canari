@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.SeedFrameLadder
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -231,13 +232,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Held across BOTH the seed lookup and the registry write, which is the whole point.
          *
-         * The two paths overlap by construction - `handleChannelMessage` runs under
-         * `runWithWakeLock("fcm_channel")` and the absorber under
-         * `runSerializedWithWakeLock("fcm_decrypt")`, and FCM promises no order between the two
-         * sends. A lookup that missed and THEN registered would let the absorber store the seed and
-         * find an empty registry in between, and the message would stay generic for ever. Asking
-         * the mirror inside the lock deletes that window rather than healing it: either the seed is
-         * already there, or the entry is already registered when the absorber looks.
+         * The two paths USED to overlap by construction - `handleChannelMessage` ran on its own
+         * `fcm_channel` thread and the absorber on the MLS lane. Since channel-encryption section 19
+         * both run on the MLS lane, so the window this lock closed (a lookup that missed, the seed
+         * stored, THEN the registration) cannot open any more; with the `genericStamp == 0` claim
+         * in the drain and `arrivedMeanwhile` in the handler, it is the last of the two-lane
+         * machinery. It all serves the HOLD alone, which only a push with no seed frame reaches -
+         * a sender older than section 19 - and it leaves with that population
+         * ([legacy-compatibility](../../../../../../../../../../docs/wiki/legacy-compatibility.md)).
          */
         private val PENDING_CHANNEL_LOCK = Any()
 
@@ -2167,11 +2169,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // Community (channel) encrypted message: AES-256-GCM under a Graine message key, derived
-        // from the seed mirrored in graine_seeds.json.
-        // Not MLS: no mls.bin, no MlsStateLock - decryption is stateless and read-only.
+        // from the seed mirrored in graine_seeds.json - or opened from the seed frame the message
+        // carries (channel-encryption section 19), which IS an MLS decrypt.
+        //
+        // ON THE MLS LANE, BECAUSE THE SEED PUSH IS THERE. Both pushes consume the same key
+        // material: the seed push absorbs it, this one either finds it or opens the frame. On two
+        // lanes they overlapped - this one missed the mirror while the other was mid-Argon2 under
+        // the state lock, and a frame decrypt waiting 5 s on a lock held for ~10 s gave up and fell
+        // back to the hold and the redraw section 19 exists to remove. Serialised, FCM's own
+        // delivery order decides: seed first and this reads the mirror, message first and this
+        // opens the frame. Both draw the plaintext the first time, and neither waits on a lock.
         if (msgType == "channel") {
             Log.d(TAG, "type=channel → groupId=${data["channelId"]} - background channel notification")
-            runWithWakeLock("fcm_channel") {
+            runSerializedWithWakeLock("fcm_channel") {
                 handleChannelMessage(data)
             }
             return
@@ -2952,8 +2962,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         inlineProto: String?,
     ): PushDecrypt {
-        if (queuedMessageId == null) {
-            Log.w(TAG, "tryDecrypt: queuedMessageId absent -> abort")
+        // The id is only what FETCHES a proto that did not travel inline. A seed frame riding on a
+        // salon push (channel-encryption §19) has no queued row of its own and needs none.
+        if (queuedMessageId == null && inlineProto == null) {
+            Log.w(TAG, "tryDecrypt: neither a queuedMessageId nor an inline proto -> abort")
             return PushDecrypt.Refused
         }
 
@@ -2968,7 +2980,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // up to ~11s (2 attempts x 5s timeout + 1s sleep). Holding the lock during that
         // time would block tryDecrypt on the other threads for the whole duration.
         val protoB64: String = inlineProto
-            ?: fetchProtoFromBackend(queuedMessageId, ctx)
+            ?: fetchProtoFromBackend(queuedMessageId!!, ctx)
                 .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend failed") }
             ?: return PushDecrypt.Refused
 
@@ -3318,12 +3330,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         inlineProto: String?,
     ): PushDecrypt? {
-        if (queuedMessageId.isNullOrEmpty() || groupId.isEmpty()) return null
+        if (groupId.isEmpty() || (queuedMessageId.isNullOrEmpty() && inlineProto == null)) return null
         val ctx = MlsContextLoader.loadPushContext(this) ?: return null
         val secret = retrievePushSecret(this) ?: return null
 
-        // Fetch the ciphertext (outside the lock, as tryDecrypt does).
-        val protoB64: String = inlineProto ?: fetchProtoFromBackend(queuedMessageId, ctx) ?: return null
+        // Fetch the ciphertext (outside the lock, as tryDecrypt does) - unless it travelled inline,
+        // which a seed frame always does and which is why it may come with no queued id at all.
+        val protoB64: String = inlineProto ?: fetchProtoFromBackend(queuedMessageId!!, ctx) ?: return null
         val cipherBytes = try {
             Base64.decode(protoB64, Base64.DEFAULT)
         } catch (e: Exception) {
@@ -3925,12 +3938,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // owns a different generic line to replace, so keying on the session alone would lose one.
         val pendingKey = "$channelId:$sessionId:$messageIndex"
 
-        val seedB64 = if (!openable) null else synchronized(PENDING_CHANNEL_LOCK) {
+        // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption §19). A seed the
+        // mirror already holds costs a file read; the frame costs an MLS load under the state lock,
+        // so it is opened only for a session this device has not seen - the first message of it.
+        val framed = if (openable && lookupGraineSeed(channelId, sessionId) == null) {
+            openSeedFrame(data, channelId, sessionId)
+        } else {
+            null
+        }
+
+        val seedB64 = if (!openable) null else framed ?: synchronized(PENDING_CHANNEL_LOCK) {
             val seed = lookupGraineSeed(channelId, sessionId)
             // A COPY: the frame outlives the delivery, and FCM's map is backed by the Bundle the
             // service was handed. Eight of these at most, a few kB each.
             if (seed == null) PENDING_CHANNEL_FRAMES[pendingKey] = PendingChannelFrame(data.toMap())
             seed
+        }
+        if (seedB64 != null) {
+            Log.i(TAG, "handleChannelMessage: seed source=${if (framed != null) "frame" else "mirror"} channel=$channelId session=$sessionId index=$messageIndex")
         }
         if (openable && seedB64 == null) {
             // A FALLBACK IS A SIGNAL. It says the key frame lost a race it was never ordered to
@@ -3964,6 +3989,50 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.i(TAG, "handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=$channelId index=$messageIndex")
             postChannelNotification(data, arrivedMeanwhile, supersedes = stamp)
         }
+    }
+
+    /**
+     * Opens the seed frame a salon push carries and returns the seed of THIS message's session, or
+     * null - and the caller then holds the message for the seed push, as it did before §19.
+     *
+     * The frame is the very MLS message the sender distributed the seed with on the salon's key
+     * group, so it is decrypted exactly as that push would be - read-only, nothing persisted - and
+     * what it yields goes through the one writer, [absorbGraineSeeds], which also redraws any other
+     * banner waiting on the same key material. The answer is then read back from the MIRROR, the
+     * state that actually exists, never from the payload: a frame for another session opens
+     * nothing for this message, and saying so is the difference between a sender bug and a race.
+     *
+     * Null with no frame at all is a sender older than §19, the one population the hold is for.
+     */
+    private fun openSeedFrame(data: Map<String, String>, channelId: String, sessionId: String): String? {
+        val frame = data["seedFrame"]?.takeIf { it.isNotEmpty() }
+        val groupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() }
+        if (frame == null || groupId == null) {
+            Log.d(TAG, "openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=$channelId session=$sessionId")
+            return null
+        }
+        val outcome = SeedFrameLadder.open(
+            initial = tryDecrypt(null, groupId, frame),
+            groupTag = groupId.take(8),
+            isRefused = { it is PushDecrypt.Refused },
+            locality = { groupLocality(groupId) },
+            catchUp = { tryDecryptWithCommitCatchup(null, groupId, frame) },
+            log = { Log.w(TAG, "openSeedFrame: $it") },
+        )
+        val keyMaterial = outcome as? PushDecrypt.KeyMaterial
+        if (keyMaterial == null) {
+            // Yielded is the foreground holding the state, which the WebSocket serves; everything
+            // else is a frame that should have opened and did not, which is why this is a warning.
+            val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
+            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)} channel=$channelId session=$sessionId")
+            return null
+        }
+        absorbGraineSeeds(keyMaterial.seedsJson, groupId)
+        val seed = lookupGraineSeed(channelId, sessionId)
+        if (seed == null) {
+            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${groupId.take(8)} channel=$channelId session=$sessionId")
+        }
+        return seed
     }
 
     /**
@@ -4093,8 +4162,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 MlsContextLoader.tauriDataDir(this).absolutePath,
                 seedsJson,
             )
+            // HOW MANY WERE HANDED OVER, so a writer that kept fewer ACCUSES. The native side logs
+            // why per seed, and in a killed app that log goes nowhere (no logger is installed
+            // outside Tauri), so this count is the only witness left: NOTIF-20's first run read
+            // `stored 0 seed(s)` at debug level on every frame while the lock under the writer
+            // failed on Android, and nothing else said a word.
+            val offered = try { JSONArray(seedsJson).length() } catch (e: Exception) { -1 }
             if (stored < 0) {
                 Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
+            } else if (offered > 0 && stored < offered) {
+                Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${groupId.take(8)} - the rest never reached the mirror")
+                if (stored > 0) drainPendingChannelFrames()
             } else {
                 Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${groupId.take(8)}")
                 // THE OTHER HALF OF THE ORDER-INDEPENDENCE. A seed is only useful against the

@@ -1,3 +1,4 @@
+import { BadRequestException, HttpException } from '@nestjs/common';
 import { ChannelsController } from './channels.controller';
 
 /**
@@ -76,5 +77,28 @@ describe('ChannelsController routing', () => {
     expect(floor).toBeGreaterThanOrEqual(0);
     expect(catchAll).toBeGreaterThan(salon);
     expect(catchAll).toBeGreaterThan(floor);
+  });
+});
+
+describe('ChannelsController - what a refused send tells the client', () => {
+  it('passes a typed refusal on with its code, never rebuilt from its message', async () => {
+    const refusal = new BadRequestException({
+      code: 'CHANNEL_SEED_FRAME_GROUP_MISMATCH',
+      message: 'seedGroupId is not the key group of this channel',
+    });
+    const service = { sendMessage: jest.fn().mockRejectedValue(refusal) };
+    const controller = new ChannelsController(service as never);
+
+    const thrown = await controller.sendMessage('u1', 'ch1', {} as never).then(
+      () => null,
+      (e: HttpException) => e
+    );
+
+    // The client decides what to do on the code; a body carrying only the prose would make it
+    // branch on a sentence, which is the distinction exactly one call site ever makes.
+    expect(thrown).toBe(refusal);
+    expect((refusal.getResponse() as { code?: string }).code).toBe(
+      'CHANNEL_SEED_FRAME_GROUP_MISMATCH'
+    );
   });
 });

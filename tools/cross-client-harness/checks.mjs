@@ -194,6 +194,13 @@ export const PHASES = {
       // group, so the seed is sealed one epoch ahead of the phone and only the background catch-up
       // can open it. Last because it wipes W3, and it sweeps its salon like 18.
       'notif19.mjs',
+      // 19 WITH THE SEED ON THE MESSAGE (channel-encryption section 19): the same advance, then the
+      // first banner must be in clear with no hold, and a second message with the mirror removed must
+      // be opened from its own frame. Wipes W3 and sweeps its salon like 19.
+      'notif20.mjs',
+      // 19's TWIN ON A DM (user, 2026-09-27: a DM and a salon behave the same): the same W3
+      // advance, into the owner<->peer DM, and the bar is the same plaintext. Wipes W3; mints nothing.
+      'notif2.mjs',
     ],
     // W3 IS HERE BECAUSE `notif15.mjs` PARKS IT, AND FOR A DAY NOTHING SAID SO. That row kills the
     // phone and needs every OTHER owner device out of the conversation first - a read receipt from
