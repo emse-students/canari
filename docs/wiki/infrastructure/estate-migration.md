@@ -955,6 +955,38 @@ Its backup takes Canari's shape (Sky #131): a local archive in `/srv/sky-backups
 mirrored to `canaribackup@10.0.0.4:/srv/sky-backups` - the private path above, the account Canari's
 own nightly backup uses.
 
+#### Sky moved, 2026-09-27
+
+Window 10:03:10-10:03:38 (28 s of downtime). The old container stopped on `mitv` and set
+`restart=no` - its `restart: always` would otherwise have taken the relay's port back at the next
+reboot. `sky.db`, `sky-legacy.db` and `positions.json` carried with both ends stopped (journal mode
+`delete`, no WAL left), md5 identical on all three, counts read back on the target (748 people, 703
+relationships). The public name then served the School host's build, and its access log named the
+VISITOR's address. The rollback, kept armed: on `mitv`, `docker rm -f sky-relay; docker update
+--restart=always sky-sky-1; docker compose ... start sky`.
+
+The two files that ARE the record, neither in a repository:
+
+- **`/etc/nginx/sites-available/sky.conf` on the host** - `server_name sky.mitv.fr`, the
+  `canari.emse.fr` certificate, `real_ip` trusting `10.0.0.4` only (what `mitv` arrives as,
+  measured), proxy to `127.0.0.1:3001`.
+- **`/etc/sky-relay/default.conf` on `mitv`**, run as `docker run -d --name sky-relay --restart
+  unless-stopped --network host -v /etc/sky-relay/default.conf:/etc/nginx/conf.d/default.conf:ro
+  nginx:alpine`. `listen 127.0.0.1:3001` - the tunnel's `localhost:3001` ingress never changed, and
+  the port that was open on every interface is now loopback only. TLS to `193.49.175.67` VERIFIED
+  with SNI `canari.emse.fr`, `Host: sky.mitv.fr`, and `X-Forwarded-For` taken from
+  `Cf-Connecting-IP`: on a docker bridge, `$remote_addr` would have been the bridge address and every
+  visitor would have shared it on the host.
+
+**Two traps, both found before they cost anything.** `sky.db` is not the whole state:
+`sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
+regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132
+archives both and refuses to restore without the first. And the host's `gha-runner` crontab sets
+`BACKUP_DIR=/srv/canari-backups` for every job, so Sky's line names its own
+(`45 4 * * * BACKUP_DIR=/srv/sky-backups /srv/sky/scripts/backup.sh`). First run by hand: archive
+written, mirrored to `mitv:/srv/sky-backups`. The old `mitv` cron line is removed (its crontab saved
+as `/root/crontab.bak-2026-09-27-before-sky-move`) and `~/sky-offsite` on the old VM deleted.
+
 **The two names that stay on `mitv` are therefore a plain reverse proxy**: a School-host vhost for
 `mino.emse.fr` proxying to `http://10.0.0.4:3002`, one for `archives.emse.fr` to `:8081`, the GEANT
 certificate on the host like every other name there. The three shapes weighed before the measurement
