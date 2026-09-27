@@ -1246,6 +1246,39 @@ survive it, and a forced re-login of every member has been accepted for exactly 
 Several issuers are accepted during the transition; the end state is one. The redirect URIs live in
 Authentik's database, not in this repository - see [authentik](authentik.md).
 
+#### What the rename touches, read from Authentik 2026-09-27 (`ak shell`, read-only)
+
+**Every provider is `issuer_mode=per_provider`, and Authentik builds the issuer from the REQUEST's
+host**: `https://<host>/application/o/<app-slug>/`. So the issuer a client sees changes the moment
+that client's `MICONNECT_BASE_URL` (or equivalent) changes - never before, and never for the
+others. That is what makes the rename doable ONE CLIENT AT A TIME: each app flips its base URL and
+its own `iss` expectation in one release, and `auth.canari-emse.fr` keeps answering the rest.
+
+| Provider (app slug) | Callback(s) today | Owed at the rename |
+| --- | --- | --- |
+| Canari (`canari`) | `canari-emse.fr`, **`canari.emse.fr`** already, `tauri.localhost`, `localhost:1420/1421`, `fr.emse.canari://callback` | nothing new on the callback side; the base URL + issuer in its config |
+| Canari Dev / Canari Local | `dev.canari-emse.fr`, localhost | nothing (dev keeps its name) |
+| Cercle (`cercle`) | `cercle.canari-emse.fr`, localhost | add `https://cercle.emse.fr/auth/callback` |
+| Sky (`sky`) | `sky.mitv.fr` | add `https://sky.emse.fr/auth/callback` |
+| MinoWiki (`mino-wiki`) | `wiki.canari-emse.fr/login/<strategy-uuid>/callback` | add the same path on `mino.emse.fr` |
+| Archives MINO (`archives`) - Omeka | **`archives.canari-emse.fr`** `/oidc/redirect` and `/s/memoires-des-mines/` | add both on `archives-mino.emse.fr` once the DSI accepts that name |
+| MiGallery (`migallery`) | `gallery.mitv.fr` | nothing (no rename planned) |
+| Portail Etu (`portail-etu`) | `portail-etu.emse.fr` | nothing |
+
+**The brand** is one, `domain=auth.canari-emse.fr`, `default=True` - so `miconnect.emse.fr` already
+gets it (a default brand answers any host); its `domain` moves at the end, not before.
+
+**Two sources are registered ON THE OTHER SIDE, and neither is ours to change:**
+
+- **`cas-emse`** - an OIDC source against `cas.emse.fr`. Its callback
+  (`/source/oauth/callback/cas-emse/`) is registered at the DSI's CAS under the OLD host; a member
+  reaching Authentik on `miconnect.emse.fr` and choosing the School login would be refused by CAS
+  until that host is added there. **This is a DSI request**, and it must land BEFORE any client
+  points at the new name.
+- **`alumni`** - a SAML source. Its entity ID and ACS URL carry the host, so the alumni IdP's
+  metadata names the old one. Who operates that IdP is not recorded here - an open question for the
+  user.
+
 ## 8. What is owed by the USER
 
 Pointers only. The substance is in
