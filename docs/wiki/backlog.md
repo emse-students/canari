@@ -193,10 +193,14 @@ read this token*. The paragraph recording it has read as though the exposure wer
 
 The layout, the flat pass, the French titles and prompts, the redirect to Canari and the signed-in
 `continue` are SHIPPED ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)).
-Left, each with its reason on that page: the accentless "Elève" (a VALUE the `is-student` policy and
-`school_status` consumers compare - a coordinated change, not a typo fix), authentik's own
-untranslated "Go back", and the static prompt `Alumni Force Link Continue` labelled "ni ça", whose
-rendering is unread. **One observation owed**: `miconnect-auth` opened while signed in, on the
+Left, each with its reason on that page:
+
+- the accentless "Elève": its LABEL can become "Élève" while the value the policy and the apps
+  compare stays, through a `{label, value}` choice. The expression is written and waits for the
+  user's go-ahead on a production write;
+- authentik's own untranslated "Go back".
+
+The static prompt "ni ça" is CLOSED: its stage is bound to no flow, so it renders nowhere. **One observation owed**: `miconnect-auth` opened while signed in, on the
 Mi 9T, should now go straight through.
 
 #### What the shipped half was

@@ -351,14 +351,23 @@ observed signed in on a phone.
 
 Deliberately left:
 
-- **"Elève" keeps its missing accent.** It is a radio-button VALUE, not a label: the `is-student`
-  expression policy compares `custom_statut == "Elève"`, and `Merge attributes` copies it into
-  `school_status`, which the applications receive. Correcting it is a coordinated change across the
-  policy and every consumer, not a typo fix.
+- **"Elève" keeps its missing accent as a VALUE, and the label can be fixed alone (read
+  2026-09-27).** The `is-student` expression policy compares `custom_statut == "Elève"`, and
+  `Merge attributes` copies it into `school_status`, which the applications receive, so the value
+  must not change. But authentik 2026.8 takes a choice as `{"label": ..., "value": ...}` as well as
+  a bare string (`stages/prompt/models.py`, where the choices are built). So the prompt `School Worker`
+  (`custom_statut`, stage `Request School Status`, flow `miconnect-enrollment-cas`) can show
+  "Élève" and still submit "Elève". Its placeholder expression is today
+  `return ["Elève", "Personnel de l'école"]`, and the change is
+  `return [{"label": "Élève", "value": "Elève"}, "Personnel de l'école"]`. **It waits for the
+  user's go-ahead**, because it is a write to the production identity provider.
 - **"Go back"** on the access-denied stage is authentik's own UI string, untranslated in its French
   bundle (2026.8); nothing in this DB carries it.
-- **The static prompt `Alumni Force Link Continue`** (label "ni ça", field key a joke): where, if
-  anywhere, the label renders is still unread.
+- **The static prompt `Alumni Force Link Continue` renders NOWHERE (read 2026-09-27).** Its only
+  stage, `Force Link Alumni Notice`, is bound to no flow. A static prompt draws its
+  `initial_value` ("Veuillez lier votre compte Mines Saint-Etienne Alumni...", in "vous") and never
+  its label, so "ni ça" would not show even if the stage were bound. Whoever binds that stage
+  rewrites the text in "tu" first.
 - `initial-setup` keeps "Welcome to authentik!" - only the first admin ever sees it.
 
 ## Database and backup
