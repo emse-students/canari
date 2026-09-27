@@ -1,10 +1,8 @@
-version: 0.18.26
+version: 0.18.27
 
-Un membre qui quitte une communaute puis la rejoint retrouve maintenant ses anciens messages :
-ils sont demandes a un membre connecte, ou des qu'un membre se reconnecte.
+Les photos s'ouvrent dans une nouvelle visionneuse : date en titre, panneau d'informations,
+telechargement, et gestes au doigt pour zoomer, passer d'une photo a l'autre ou fermer en
+glissant vers le bas.
 
-Les emojis s'affichent en images pendant la frappe, et les publications d'un compte bloque
-quittent le fil.
-
-Le champ de saisie est corrige : fleches et retours a la ligne, glisser-deposer de fichiers, et
-apercus de publications moins larges dans les discussions.
+Un nouveau bouton en haut de l'ecran ouvre nos autres sites : la galerie, le Cercle, Sky et le
+portail etudiant.
