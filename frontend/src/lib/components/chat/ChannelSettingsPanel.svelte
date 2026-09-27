@@ -597,7 +597,7 @@
                 onclick={() => {
                   accessIsPrivate = !accessIsPrivate;
                 }}
-                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
+                class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors {accessIsPrivate
                   ? 'bg-amber-500'
                   : 'bg-black/10 dark:bg-white/20'}"
                 role="switch"
@@ -674,7 +674,7 @@
                           type="button"
                           onclick={() => handleRemoveMemberFromChannel(uid)}
                           disabled={memberRemoving[uid]}
-                          class="text-red-err hover:bg-red-err/10 shrink-0 rounded-lg p-1.5 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                          class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_channel_remove_access_title()}
                           aria-label={m.chat_channel_remove_access_title()}
                         >

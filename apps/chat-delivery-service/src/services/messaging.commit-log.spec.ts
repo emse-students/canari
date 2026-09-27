@@ -447,6 +447,43 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       );
     });
 
+    /**
+     * A KEY-DISTRIBUTION GROUP RECORDS ITS MEMBERS PER DEVICE, and only there. On production
+     * 2026-09-27 all eight held zero `dm_group_members` rows, so the user-table gate refused every
+     * catch-up on them (`push/commits` 403 x173 in eight hours) and a shut phone one commit behind
+     * showed every salon message as "Nouveau message".
+     */
+    it('serves a key-distribution group to a user with an active device in it', async () => {
+      groupRepo.findOne.mockResolvedValue({
+        id: 'group-1',
+        activeEpoch: 5,
+        distributionWorkspaceId: 'ws-1',
+      });
+      groupMemberRepo.findOne.mockResolvedValue(null);
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      commitLogRepo.find.mockResolvedValue([{ baseEpoch: 4, commit: 'c4' }]);
+      commitLogRepo.findOne.mockResolvedValue({ baseEpoch: 4 });
+
+      const res = await service.getCommitsSince('group-1', 4, 'member-1');
+
+      expect(res.commits).toEqual([{ baseEpoch: 4, proto: 'c4' }]);
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', userId: 'member-1', status: 'active' },
+      });
+    });
+
+    it('refuses a key-distribution group to a user with no active device in it', async () => {
+      groupRepo.findOne.mockResolvedValue({
+        id: 'group-1',
+        activeEpoch: 5,
+        distributionChannelId: 'salon-1',
+      });
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+      await expect(service.getCommitsSince('group-1', 0, 'stranger')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+    });
+
     it('returns ordered commits and belowFloor=false when the floor is covered', async () => {
       groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });

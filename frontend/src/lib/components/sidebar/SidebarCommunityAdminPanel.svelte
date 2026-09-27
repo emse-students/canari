@@ -617,38 +617,38 @@
   <div class="flex h-full min-h-0 flex-col">
     <!-- Tab strip -->
     <div
-      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
+      class="bg-cn-surface flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
     >
       <button
         onclick={() => (activeTab = 'overview')}
-        class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'overview'
           ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
-        <Settings size={18} />
+        <Settings size={16} />
         {m.chat_community_overview_tab()}
       </button>
       {#if canManage}
         <button
           onclick={() => (activeTab = 'roles')}
-          class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+          class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
           'roles'
             ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
             : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
         >
-          <Shield size={18} />
+          <Shield size={16} />
           {m.chat_community_roles_tab_short()}
         </button>
       {/if}
       <button
         onclick={() => (activeTab = 'members')}
-        class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'members'
           ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
-        <Users size={18} />
+        <Users size={16} />
         {m.common_members_label()}
       </button>
     </div>
@@ -885,7 +885,7 @@
                           type="button"
                           onclick={() => handleRemoveMember(member.userId)}
                           disabled={memberRemoving[member.userId]}
-                          class="text-red-err hover:bg-red-err/10 rounded-lg p-1.5 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                          class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
                           aria-label={m.chat_community_remove_member_title()}
                         >

@@ -1530,14 +1530,32 @@ export class MessagingService {
   ): Promise<CommitsSinceResult> {
     // Serve the commit-log ONLY to members of the group (the commits are ciphertext, but ordering
     // metadata still gates on membership). x-user-id is injected by the proxy after JWT validation.
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId: requesterUserId },
-    });
-    if (!membership) {
+    //
+    // MEMBERSHIP IS ASKED OF THE TABLE THAT RECORDS IT FOR THIS KIND OF GROUP. A key-distribution
+    // group (a community's, or a private salon's) is entered by each DEVICE's external commit and is
+    // recorded in `dm_device_group_memberships` alone; `dm_group_members` never names anyone for it.
+    // Asking the user table refused every one of them: on production 2026-09-27 all eight
+    // distribution groups held ZERO user rows, and `POST mls/push/commits` answered 403 173 times in
+    // eight hours - so a shut phone one commit behind (any newcomer to the community advances the
+    // epoch) could never catch up, refused every seed that followed, and showed "Nouveau message dans
+    // #general" for every salon message until the app was next opened. `putGroupInfo` records the
+    // same absence for the WRITE of a group info. For a replay the device table is the right roster
+    // rather than community membership: whoever holds an active leaf already reads these commits, and
+    // a member cut from the community loses that row with their leaf.
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
+    const isKeyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    const isMember = isKeyDistribution
+      ? !!(await this.deviceGroupRepo.findOne({
+          where: { groupId, userId: requesterUserId, status: 'active' },
+        }))
+      : !!(await this.groupMemberRepo.findOne({ where: { groupId, userId: requesterUserId } }));
+    if (!isMember) {
+      this.logger.warn(
+        `[COMMITS_SINCE] refused group=${groupId} user=${requesterUserId.slice(0, 8)} keyDistribution=${isKeyDistribution}`
+      );
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
 
-    const group = await this.groupRepo.findOne({ where: { id: groupId } });
     const activeEpoch = group?.activeEpoch ?? 0;
 
     const rows = await this.commitLogRepo.find({

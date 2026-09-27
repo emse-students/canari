@@ -1471,24 +1471,33 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   Two more on the way: the access tab kept the PREVIOUS salon's list when the channel changed (a
   reset guarded by `!open`, i.e. `window.open`), and `membersError` was set three times and shown
   nowhere. `ChannelSettingsPanel.access.svelte.test.ts` pins all three.
-- **FIXED BY CODE, NOT YET SEEN - the panels at phone width** (the rig's Chrome profile was held
-  by another browser, so nothing was rendered): the member search has its own row (it shared
-  `1fr auto auto` and got the remainder), the delete buttons are a 16 px red icon, the roles tab
-  reads "Rôles" so three tabs fit, "Qui peut écrire ?" has its native arrow back (`appearance-none`
-  drew it as a text field), the admins hint moved to the allowlist, the add row wraps, and a
-  parent clearing `UserAutocomplete`'s `value` now clears the field (the prop was read by nobody).
-  **Owed: a render at 390 and 1280, light and dark, before calling it done.**
-- **P1, OPEN - "Nouveau message dans #general" on the user's Pixel 6a, "courant, reproductible"
-  (user).** Measured on production: every `#general` message of the day is under 3 KB, so the
-  ciphertext WAS inlined - the fallback is `CanariFirebaseMessagingService.postChannelNotification`
-  without a seed, or a decrypt `ok=false`. The logcat line names which (`missing=seed`, `seed absent
-  -> ... HELD`, `decrypt ok=false`), and **only the Pixel 6a's logcat can say it: connect it by USB
-  and send one message from another account.** A second lead, same data: at 15:23:05 the seed
-  frame (`send-fd8a844a`, group `17d0281e`) was pushed to FOUR devices while the message 3 s later
-  went to NINE users - five recipients, likely the day's invite-link joiners, got no seed at all.
-  Settle whether those five are on the community's distribution group before touching the client.
-  Every message of the user's own sender opened a NEW Graine session (four in ten minutes), which
-  is the lazy rotation on membership change and multiplies the chances of a late seed.
+- **FIXED AND RENDERED on the local estate (W1, 390 and 1280, light and dark), owed one look on
+  hardware - the panels**: the member search has its own row (it shared
+  `1fr auto auto` and got the remainder), the delete buttons are a red `ui-icon-button`, the roles
+  tab reads "Rôles" and the strip is tighter so three tabs fit at 390, "Qui peut écrire ?" has its
+  native arrow back (`appearance-none` drew it as a text field), the private switch no longer
+  shrinks under its label, the admins hint moved to the allowlist, the add row wraps, and a parent
+  clearing `UserAutocomplete`'s `value` now clears the field (the prop was read by nobody). An add
+  followed by a reload was checked on the same estate: the member stayed.
+- **FIXED, owed ONE reading on the Pixel 6a after the release - the notification that STAYS
+  generic.** The Pixel's logcat named it: Gala's key group at epoch 4 on the phone, the seed frame
+  refused as ahead, and the catch-up `POST mls/push/commits` answered 403 - 173 times in eight hours
+  on production, because the gate read `dm_group_members`, which names nobody in a distribution
+  group ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
+  The reading owed: a salon message in Gala with the Pixel shut, and `fetchCommitsFromBackend`
+  answering 200 before the banner.
+- **P2, OPEN, DECISION DEFERRED BY THE USER ("investigate first") - the seed of a new session lands
+  ~1 s AFTER its message.** Rootz `#general`, 20:13:56 generic banner, 20:13:57 seed absorbed and the
+  line redrawn to its text. The server sent the seed frame FIRST (-1 s); FCM does not order two
+  pushes. Every membership change rotates every sender's session, so it is the first message of
+  each sender after any join. Two directions were put to the user: the seed rides in the message's
+  own push, or the generic banner is posted silent and only the redraw alerts. Re-measure AFTER the
+  403 fix ships - with the catch-up working, only this race is left, and its rate can be counted.
+- **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
+  `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
+  commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
+  not to `17d0281e`. They receive every salon push and never a seed. Read their clients' side before
+  anything else.
 
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 
