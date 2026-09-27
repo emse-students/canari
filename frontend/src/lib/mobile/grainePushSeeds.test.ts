@@ -48,6 +48,7 @@ const background = readFileSync(BACKGROUND_RS, 'utf8');
 const protoFields = readFileSync(PROTO_FIELDS_RS, 'utf8');
 const pushRs = readFileSync(PUSH_RS, 'utf8');
 const libRs = readFileSync(LIB_RS, 'utf8');
+const iosFfi = readFileSync(resolve(here, '../../../src-tauri/src/mobile/ios_ffi.rs'), 'utf8');
 
 describe('the cleartext fact that decides whether a silent frame is opened at all', () => {
   it('the server sends it, from the column that already answers it', () => {
@@ -87,9 +88,19 @@ describe('the reason token the native decrypt chooses and the Kotlin switches on
 describe('the shape of one seed, from the frame to the mirror to the reader', () => {
   const FIELDS = ['channelId', 'sessionId', 'seedB64', 'createdAt'];
 
-  it.each(FIELDS)('%s is named by the parser and by the JNI writer alike', (field) => {
+  // THE WRITER IS `store_graine_seeds_json` IN push.rs SINCE 2026-09-27, shared by the JNI entry and
+  // the iOS FFI (the seed that travels with the message is absorbed by both). The field names are
+  // therefore read there, and each native entry must delegate to it rather than carry a copy.
+  const writer = /fn store_graine_seeds_json[\s\S]*?\n\}/.exec(pushRs)?.[0] ?? '';
+
+  it.each(FIELDS)('%s is named by the parser and by the native writer alike', (field) => {
     expect(protoFields).toContain(`"${field}"`);
-    expect(libRs).toContain(`"${field}"`);
+    expect(writer).toContain(`"${field}"`);
+  });
+
+  it('both native entries delegate to the one writer', () => {
+    expect(libRs).toContain('commands::push::store_graine_seeds_json(');
+    expect(iosFfi).toContain('store_graine_seeds_json(');
   });
 
   it('the mirror keys the Rust writes are the ones the Kotlin reader asks for', () => {
