@@ -1365,7 +1365,7 @@ it fails.
 
 ### Where the chantier stands, and the restart order
 
-Last paused 2026-09-26, night. The date lives here and not in the heading: CLAUDE.md and a
+Last updated 2026-09-27. The date lives here and not in the heading: CLAUDE.md and a
 changelog entry link to this section's anchor, and a dated heading broke both at the first update.
 
 Everything below is pushed; nothing lives only in a scratch directory. Phone checks are done on the
@@ -1388,51 +1388,35 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
 
 **Restart order:**
 
-1. **MiGallery, then Canari's viewers (user, 2026-09-26).** Three pieces, in this order:
-   - **The drop overlay** (`UploadZone.svelte`, `variant="page"`, `.drop-overlay`): it covers the
-     whole window in an opaque grey while files are dragged over the album or Photos CV. Make it
-     translucent over a blurred page, like the dialogs (`Modal.svelte` since #347), and animate it in
-     (fade + slight scale), reduced-motion respected.
-   - **The rest of D8**: Paramètres as a list (row #18), admin, the desktop shell (~256 px sidebar,
-     bottom bar only <= 768 px - today it shows up to 1440, row #9), Mes photos' header (#16), the
-     albums chips and sort (#15), the glass/glow recount (#25), the P3 rows (#19-#23; the manifest is
-     cheap now that the icons exist). Prune the rows that shipped (#5, #6, #17, parts of #15/#16)
-     from [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md)'s
-     work list first. Measure each page against the Google Photos app on the Mi 9T AND
-     photos.google.com at 1440 before building it.
-   - **Canari's viewers take what MiGallery's viewer learnt** (v2.5.0 to v2.9.0: full-screen black,
-     side margins on a desktop, a bar that fades, swipe between items, swipe-down to dismiss, an
-     Informations panel that slides in with an icon per fact). Canari has two:
-     `frontend/src/lib/components/shared/MediaLightbox.svelte` (with `lightboxSwipeDismiss.ts`) and
-     `FullScreenViewer.svelte`. Read MiGallery's `PhotoModal.svelte`, `viewer-gestures` and
-     `viewer-info` first; Canari's media is E2E-encrypted, so there is no EXIF from a server - an
-     info panel there shows what the client knows (sender, date, size, dimensions).
-   **Canari's viewers are DONE (2026-09-27)**: [posts](frontend/modules/posts.md#the-photo-viewer-takes-migallerys-frame-gestures-and-information-panel-2026-09-27).
-   **Decided by the user 2026-09-27:** the drop overlay is DONE (MiGallery v2.10.0); D8's desktop
-   shell is a Google-Photos left sidebar from 769 px up, the bottom bar for phones only; Canari's
-   viewers DO get the Informations panel, with those simple facts; and MiGallery releases after each
-   finished, verified step rather than once at the end.
-   Owed on hardware: the grid pinch and a multi-file share from a selection (v2.7.0), and v2.8.0 +
-   v2.9.0 on the Mi 9T in prod (albums list, Photos CV, the viewer panel, the bars).
-2. **The app-wide `button { justify-content: center }` rule** in MiGallery's app.css centres every
-   button row that does not state its own alignment - it misaligned the ⋮ menus (#337). Each new
-   left-aligned row must state it; consider scoping the global rule.
-3. **MiGallery CodeQL notice** (#335 shipped the Immich v3 people list). Still owed: the failing "CodeQL" notice for configurations of deleted workflow names
-   (delete their analyses through the API if only dead workflows are named, otherwise the one settings
-   click goes to the user).
-4. **Sky history purge**: the rehearsal removed all six paths; the user lifts the `main` ruleset, the
-   rewrite is force-pushed on a fresh mirror, the ruleset comes back, and the user sends GitHub
-   Support the request for `refs/pull/*` (text to be written).
-5. **MiConnect**: the three strings and the signed-in observation in [backlog](backlog.md).
-6. **Le Cercle: the tiles of Accueil and Compte need a real order (user, 2026-09-26: "l'ordre des
-   tuiles n'a actuellement aucun sens + est moche").** Measured on the user's screenshots at ~1200 px:
-   on Compte the Solde card is as tall as "Dernières opérations" and mostly empty, "Ta conso
-   préférée" sits alone beside the spending chart, the identity card (name, badges, formation,
-   promo) comes fifth, below the money, and leaves a hole to its right; Accueil repeats "Dernières
-   opérations" and the balance that Compte shows. Decide what each page is FOR, then one column of
-   priority on a phone and a grid with no holes on a desktop. Plus two items code cannot close:
-   menu sections need a category the menu data does not have; "coktail passion" is production data
-   to rename on `/gestion/carte`.
+1. **Nothing of the interface chantier is left to BUILD (2026-09-27).** Shipped that day:
+   - Canari `v0.18.27`: its viewers take MiGallery's frame, gestures and an Informations panel
+     ([posts](frontend/modules/posts.md#the-photo-viewer-takes-migallerys-frame-gestures-and-information-panel-2026-09-27)),
+     and a launcher opens MiGallery, Le Cercle, Sky and Portail-etu
+     ([design-reference](frontend/design-reference.md)).
+   - MiGallery v2.14.0 (one page gutter, one sign-in on a landing that no longer scrolls, rows
+     #19-#23, a real manifest) and v2.15.0 (#25 recounted to zero glow and zero backdrop-filter
+     outside dialogs, the bottom bar on Canari's Instagram reference - 48 px, no visible label -,
+     the global `button` centring scoped to `.btn`), then v2.15.1 (every photo tile named, not only
+     the loaded ones; the year count read as a phrase; `theme-color` follows the painted theme). Its work list is pruned in
+     [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md).
+   - Le Cercle MR !21 (Accueil is "what is happening now", Compte is the account in Lydia/Revolut
+     order, one column of priority at every width) and MR !22 (the operation disc was invisible in
+     dark, `bg-subtle` on a card).
+   - MiConnect: the two strings read; see item 3.
+2. **Owed on hardware (Mi 9T, prod):** Canari's viewer feel and the launcher; MiGallery's grid
+   pinch and a multi-file share from a selection (v2.7.0), v2.8.0 to v2.15.1 signed in; Le Cercle's
+   two pages signed in. None of these was seen signed in on a production site.
+3. **Owed to the user, each a decision or a click:**
+   - MiGallery's stale CodeQL configurations (`cd.yml`, `ci-cd.yml`; `code-analysis.yml` names a
+     file that still exists) - Settings -> Code security -> Tool status -> CodeQL. The API delete
+     was refused as an external write.
+   - MiGallery's two remaining blurs (dialog backdrop, drop overlay): keep or drop.
+   - MiConnect's "Élève" label: the write is ready in [authentik](infrastructure/authentik.md).
+   - Le Cercle: menu categories (the data has none), "coktail passion" (production data), and
+     whether Accueil keeps its Carte/Perms shortcuts, which repeat the tab bar on a phone.
+   - Sky history purge: the rehearsal removed all six paths; the user lifts the `main` ruleset, the
+     rewrite is force-pushed on a fresh mirror, the ruleset comes back, and the user sends GitHub
+     Support the request for `refs/pull/*`.
 7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
    Every rig, the Immich tunnel and the other MiGallery worktrees are removed at the pause.
 
