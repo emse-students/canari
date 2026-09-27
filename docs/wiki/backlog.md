@@ -1449,6 +1449,23 @@ out of the tester programme instead forces an uninstall, which wipes the very st
 
 ---
 
+## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
+
+*"Contrairement aux autres boutons, il n'y a rien qui se passe quand je le survole, et on pourrait
+homogénéiser l'ouverture du panneau à d'autres, avec une petite animation non ?"* - on the desktop
+header, beside "Connecté", the logout button and the avatar.
+
+- **The hover.** `EcosystemLauncher.svelte` gives its button `hover:text-text hover:bg-cn-surface`.
+  Unverified suspicion: `text-text` names no token (the scale has `text-text-main`), and
+  `cn-surface` may paint the header's own colour, so the hover changes nothing visible. Read the
+  computed styles on hover first, then take the hover of the header's other icon buttons rather
+  than inventing one.
+- **The opening.** The 2x2 panel appears at once. Give it the entrance the app's other popovers use
+  (find the shared one - the avatar menu is the neighbour to match), reduced motion respected, and
+  the same close.
+
+Paused when reported; to be picked up at the restart.
+
 ## Reported by the USER on 2026-09-18 - eleven items, verbatim
 
 **WHAT IS WRITTEN UNDER EACH ITEM IS WHAT IS STILL OWED, AND NOTHING ELSE.** An item whose work
