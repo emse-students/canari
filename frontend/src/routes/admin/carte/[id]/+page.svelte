@@ -35,6 +35,9 @@
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import { MonitorSmartphone } from '@lucide/svelte';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { exactDate } from '$lib/utils/time';
+  import { createSerialSaver, layoutFingerprint } from '$lib/carte/editorPersistence';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
     ArrowLeft,
@@ -85,12 +88,45 @@
   let decorations = $state<Decoration[]>([]);
   let selectedDecorationId = $state<string | null>(null);
 
+  /** Bumped wherever the background image is replaced or cleared - see `LayoutFingerprintParts`. */
+  let bgVersion = $state(0);
+
+  /** The persisted layout, rebuilt from the live editor state. */
+  function buildLayout(): PosterLayout {
+    return {
+      version: 1,
+      titleColor,
+      background: { dataUrl: bgDataUrl, scrimOpacity },
+      bubbles: positioned,
+      directoryVisible,
+      decorations,
+    };
+  }
+
+  /** Everything that gets persisted, as one comparable string. */
+  const fingerprint = $derived(
+    layoutFingerprint({
+      titleColor,
+      scrimOpacity,
+      directoryVisible,
+      bubbles: positioned,
+      decorations,
+      bgVersion,
+    })
+  );
+  /** The fingerprint of the last state the server accepted; null until the project has loaded. */
+  let savedFingerprint = $state<string | null>(null);
+  /** Whether the editor holds anything the server has not taken yet. */
+  const unsavedChanges = $derived(savedFingerprint !== null && fingerprint !== savedFingerprint);
+
   let saving = $state(false);
   let saved = $state(false);
   let exporting = $state(false);
   let publishing = $state(false);
   /** Whether THIS poster is the one currently live on the showcase (at most one ever is). */
   const isPublished = $derived(Boolean(project?.publishedAt));
+  /** When it went live, for the status chip. */
+  const publishedOn = $derived(project?.publishedAt ? exactDate(project.publishedAt) : '');
 
   // ── Inline rename ─────────────────────────────────────────────────────────────
   let editingName = $state(false);
@@ -121,8 +157,6 @@
   function cancelRename() {
     editingName = false;
   }
-  /** True once a project has finished loading, so autosave never fires on the initial hydration. */
-  let hydrated = $state(false);
   /** Pending debounced-autosave timer (cleared on every change). */
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -216,8 +250,10 @@
         ? (layout.bubbles as PositionedBubble[])
         : [];
       positioned = mergeBubbleLayout(savedBubbles, built);
-      // Arm autosave only now, so hydrating the state above doesn't schedule a spurious save.
-      hydrated = true;
+      // What was just loaded IS what the server holds, so the editor opens with nothing to save.
+      // A flag armed here instead would make opening a project write it back - every open rewrote
+      // the layout 4 s later, and a new association was reseeded with a RANDOM shape on the way.
+      savedFingerprint = fingerprint;
     } catch (e) {
       Log.d('admin.carte.id.loadData failed', e);
       error = m.common_load_error();
@@ -278,88 +314,118 @@
     const reader = new FileReader();
     reader.onload = () => {
       bgDataUrl = typeof reader.result === 'string' ? reader.result : null;
+      bgVersion++;
     };
     reader.readAsDataURL(file);
   }
 
-  async function handleSave() {
-    if (!project || saving) return;
+  /** Writes the current layout to the server. Always called through {@link handleSave}. */
+  async function persistLayout(): Promise<void> {
+    if (!project) return;
+    // Pinned BEFORE the request: anything the author changes while it is in flight must still read
+    // as unsaved afterwards, which recording the post-response state would quietly swallow.
+    const pinned = fingerprint;
+    Log.d('admin.carte.id.persistLayout', { projectId: project.id });
     saving = true;
     saved = false;
     error = null;
     try {
-      const layout: PosterLayout = {
-        version: 1,
-        titleColor,
-        background: { dataUrl: bgDataUrl, scrimOpacity },
-        bubbles: positioned,
-        directoryVisible,
-        decorations,
-      };
       project = await updatePosterProject(project.id, {
-        layout: layout as unknown as Record<string, unknown>,
+        layout: buildLayout() as unknown as Record<string, unknown>,
       });
+      savedFingerprint = pinned;
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (e) {
-      Log.d('admin.carte.id.handleSave failed', e);
+      Log.d('admin.carte.id.persistLayout failed', e);
       error = m.common_save_error();
+      throw e;
     } finally {
       saving = false;
     }
   }
 
   /**
-   * Debounced autosave: 4s after the last change to any persisted field, save silently. Reads only
-   * the content fields (not `project`), so the save's own `project` update never re-triggers it.
+   * Saves, BEHIND whatever save is already in flight.
+   *
+   * It used to return immediately while one was running, which is what let a publish send a state
+   * the server had never been given: `handlePublish` saves first precisely so the live map can be
+   * reproduced by reopening the project, and that guarantee died on the early return.
+   *
+   * @returns Whether the layout is now on the server; false means the error is already on screen.
+   */
+  const saver = createSerialSaver(persistLayout);
+  const handleSave = (): Promise<boolean> => saver.save();
+
+  /**
+   * Debounced autosave: 4 s after the last CHANGE, save silently. It is armed by the state
+   * differing from what the server holds, so merely opening a project arms nothing.
    */
   $effect(() => {
-    // Track every persisted field so any edit re-arms the timer.
-    void positioned;
-    void decorations;
-    void bgDataUrl;
-    void scrimOpacity;
-    void directoryVisible;
-    void titleColor;
-    if (!hydrated) return;
+    if (!unsavedChanges) return;
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => void handleSave(), 4000);
     return () => clearTimeout(autosaveTimer);
   });
 
   /**
-   * Publishes this poster to the public showcase (portail-etu), or takes it offline.
-   *
-   * Saves first: publishing a state the editor holds but the server has not persisted would put a
-   * map online that no reopen could reproduce. Publishing replaces whatever was live - the server
-   * allows exactly one published map at a time.
+   * Publishes this poster to the public showcase (portail-etu), replacing whatever was live - the
+   * server allows exactly one published map at a time.
    */
   async function handlePublish() {
     if (!project || publishing) return;
+    Log.d('admin.carte.id.handlePublish', { projectId: project.id });
     publishing = true;
     error = null;
     try {
-      if (isPublished) {
-        project = await unpublishPosterProject(project.id);
-      } else {
-        await handleSave();
-        project = await publishPosterProject(
-          project.id,
-          buildPublishedCarte({
-            bubbles: positioned,
-            content,
-            model: model ?? { zones: [], totalAssos: 0 },
-            decorations,
-            background: { dataUrl: bgDataUrl, scrimOpacity },
-            style: theme,
-            title: project.name,
-            directoryVisible,
-            directoryHeading: m.carte_directory_heading(),
-          })
-        );
-      }
+      // A publish saves FIRST, and abandons if that save failed: putting a map online that no
+      // reopen could reproduce is worse than not publishing at all.
+      if (!(await handleSave())) return;
+      project = await publishPosterProject(
+        project.id,
+        buildPublishedCarte({
+          bubbles: positioned,
+          content,
+          model: model ?? { zones: [], totalAssos: 0 },
+          decorations,
+          background: { dataUrl: bgDataUrl, scrimOpacity },
+          style: theme,
+          title: project.name,
+          directoryVisible,
+          directoryHeading: m.carte_directory_heading(),
+        })
+      );
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
+      error = m.common_save_error();
+    } finally {
+      publishing = false;
+    }
+  }
+
+  /**
+   * Takes this poster off the showcase, on its own confirmed action.
+   *
+   * It is deliberately NOT the other face of a toggle: being live is a STATE, and the control that
+   * ends it destroys the only map the portail has - after which the portail shows none at all.
+   * One misread click did that silently.
+   */
+  async function handleUnpublish() {
+    if (!project || publishing) return;
+    if (
+      !(await showConfirm(m.carte_unpublish_confirm(), {
+        danger: true,
+        confirmLabel: m.carte_unpublish_button(),
+      }))
+    )
+      return;
+    Log.d('admin.carte.id.handleUnpublish', { projectId: project.id });
+    publishing = true;
+    error = null;
+    try {
+      project = await unpublishPosterProject(project.id);
+    } catch (e) {
+      Log.d('admin.carte.id.handleUnpublish failed', e);
       error = m.common_save_error();
     } finally {
       publishing = false;
@@ -472,27 +538,45 @@
                 {m.carte_saved_label()}
               {:else}
                 <Save size={16} />
-                {saving ? m.carte_saving_label() : m.carte_save_button()}
+                {saving
+                  ? m.carte_saving_label()
+                  : unsavedChanges
+                    ? m.carte_unsaved_label()
+                    : m.carte_save_button()}
               {/if}
             </button>
           {/if}
-          <button
-            type="button"
-            onclick={handlePublish}
-            disabled={publishing}
-            title={isPublished ? m.carte_unpublish_hint() : m.carte_publish_hint()}
-            class="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50 {isPublished
-              ? 'border-green-600/40 bg-green-600/10 text-green-700 hover:bg-green-600/20 dark:text-green-400'
-              : 'border-cn-border text-text-main hover:bg-cn-bg'}"
-          >
-            {#if isPublished}
+          <!-- BEING LIVE IS A STATE, NOT A BUTTON. The status only reports; taking the map off the
+               portail is its own action, and it confirms. -->
+          {#if isPublished}
+            <span
+              class="inline-flex items-center gap-2 rounded-xl border border-green-600/40 bg-green-600/10 px-3 py-2 text-sm font-bold text-green-700 dark:text-green-400"
+            >
+              <Globe size={16} />
+              {m.carte_published_since({ date: publishedOn })}
+            </span>
+            <button
+              type="button"
+              onclick={handleUnpublish}
+              disabled={publishing}
+              title={m.carte_unpublish_hint()}
+              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+            >
               <GlobeLock size={16} />
               {publishing ? m.carte_publishing_label() : m.carte_unpublish_button()}
-            {:else}
+            </button>
+          {:else}
+            <button
+              type="button"
+              onclick={handlePublish}
+              disabled={publishing}
+              title={m.carte_publish_hint()}
+              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+            >
               <Globe size={16} />
               {publishing ? m.carte_publishing_label() : m.carte_publish_button()}
-            {/if}
-          </button>
+            </button>
+          {/if}
           <button
             type="button"
             onclick={handleExport}
@@ -629,7 +713,10 @@
                 {#if bgDataUrl}
                   <button
                     type="button"
-                    onclick={() => (bgDataUrl = null)}
+                    onclick={() => {
+                      bgDataUrl = null;
+                      bgVersion++;
+                    }}
                     class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
                   >
                     <X size={15} />

@@ -369,6 +369,39 @@ because the publisher needs the same numbers the renderer uses.
 it: `sanitizePublishedCarte` returns null without `units`, and the showcase omits the map and logs
 why. The poster itself lives in `layout`, untouched - one republish is the whole migration.
 
+### Opening a project is not editing it, and being live is not a button
+
+Three things the editor got wrong about its own saving, all reported by the user on 2026-09-27
+(*"le bouton Enregistrer ne publie pas la nouvelle version En ligne"*).
+
+**An open used to write the project back.** The debounced autosave was armed by a `hydrated` flag
+set at the end of the load - which is itself a state change, so the timer was scheduled 4 s later
+with nothing edited. It was not harmless: `mergeBubbleLayout` reseeds an association it has never
+seen with a RANDOM silhouette, so merely opening a project could persist a shape nobody chose.
+**The autosave is now armed by the state DIFFERING from what the server holds**
+(`layoutFingerprint` in `carte/editorPersistence.ts`), which an open cannot do by construction.
+
+**The fingerprint must not carry the background image.** It is a data URL of up to 6 MB and it is
+recomputed on every pointer frame of a drag, so the image is represented by a COUNTER bumped where
+it is replaced or cleared - exact, unlike a length or a hash of its tail.
+
+**A publish could send what the server had never been given.** `handleSave` returned immediately
+while a save was in flight, so a publish that "saves first" could sail straight past a running save
+and publish the editor's own state. The point of saving first is that the live map can be reproduced
+by reopening the project; that guarantee died on the early return. Saves are now serialised
+(`createSerialSaver`), a publish WAITS for the one in flight, and it abandons if that save failed.
+
+**Being live is a STATE, so it is not a button.** The green control read "En ligne" and looked like
+a status, but one click took the map off the portail - after which the portail shows no map at all.
+It is now a status chip that says since when, plus a separate "Retirer du portail" action that
+confirms.
+
+**What is still open**: the editor does not yet say that the LIVE map is older than what has been
+saved. `updatedAt` cannot answer it - `publish()` writes the row, so TypeORM's `@UpdateDateColumn`
+moves with `publishedAt` in the same statement, and separating them would mean trusting a clock by
+a millisecond. It needs a durable record of WHICH layout was published
+([backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
+
 ### Rules
 
 - **At most one map is live**, and that is a database invariant, not a convention: a partial unique
