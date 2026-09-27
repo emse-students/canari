@@ -1486,18 +1486,30 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   group ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
   The reading owed: a salon message in Gala with the Pixel shut, and `fetchCommitsFromBackend`
   answering 200 before the banner.
-- **P2, OPEN, DECISION DEFERRED BY THE USER ("investigate first") - the seed of a new session lands
-  ~1 s AFTER its message.** Rootz `#general`, 20:13:56 generic banner, 20:13:57 seed absorbed and the
+- **P2, OPEN, DECIDED BY THE USER 2026-09-27 (*"La clé voyage avec le message"*) - the seed of a new
+  session lands ~1 s AFTER its message.** Rootz `#general`, 20:13:56 generic banner, 20:13:57 seed absorbed and the
   line redrawn to its text. The server sent the seed frame FIRST (-1 s); FCM does not order two
   pushes. Every membership change rotates every sender's session, so it is the first message of
-  each sender after any join. Two directions were put to the user: the seed rides in the message's
-  own push, or the generic banner is posted silent and only the redraw alerts. Re-measure AFTER the
-  403 fix ships - with the catch-up working, only this race is left, and its rate can be counted.
+  each sender after any join. The user chose the deterministic direction over a silent generic
+  banner: the seed frame travels IN the first message's own push, so the phone never holds one
+  without the other. `NOTIF-19` (`archive/notif19.mjs`) is the row that reaches the catch-up half.
 - **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
   `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
   commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
   not to `17d0281e`. They receive every salon push and never a seed. Read their clients' side before
   anything else.
+- **FIXED - anybody holding a key group's id could add themselves to it** (P1, security, found by
+  the gate audit that followed §16). `addGroupMember`'s creation bootstrap read a key group's empty
+  `dm_group_members` as a new group; it now refuses the kind
+  ([channel-encryption §17](protocols/channel-encryption.md#17-anybody-holding-a-key-groups-id-could-add-themselves-to-it---fixed-2026-09-27)).
+  Production held no such row.
+- **P2, OPEN - no report watches a key group losing its last holder.** `reportSingleHolderGroups`
+  (`app.controller.ts`) counts `dm_group_members`, so it never sees a key group - the kind with no
+  Welcome fallback, where one holder left matters most. It should count active device rows.
+- **P3, OPEN, UNSETTLED BY THE AUDIT - a key group the client has only NOTED.** `reconcileAbsentLocalGroup`
+  can mark a group as distribution with no scope, and `groupInfoChannel` then falls through to
+  chat-delivery, which answers 403. Whether an epoch gap can reach such a group is what decides it;
+  `routeDistributionFrame` returns early without a scope, so it looks unreachable.
 
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 
