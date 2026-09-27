@@ -1062,6 +1062,23 @@ name-mismatch** - `/etc/certs/` holds only canari, gala, handimines, mep and por
 certificates are what is owed now**, one per name as above, and nothing moves to a new name before
 its certificate is in `/etc/certs/<name>/`.
 
+**THE FOUR VHOSTS ARE IN, BEFORE THEIR CERTIFICATES, 2026-09-27.** `cercle-emse.conf`,
+`miconnect-emse.conf`, `sky-emse.conf`, `mino-emse.conf` in `sites-enabled/` on the host (the
+directories before them saved in `/root/nginx-sites-bak-2026-09-27-before-emse-names.tgz`), each
+proxying to the SAME backend as the old name (`mino` to `http://10.0.0.4:3002` on the private path)
+and each carrying **the `canari.emse.fr` certificate as a placeholder** - the name-mismatch those
+names already gave, nothing worse. Each file says what to swap when `/etc/certs/<name>/` lands. No
+application setting moved and nothing redirects: the old names still serve everyone. Measured with
+`curl -k`: `cercle` 200, `miconnect` 302 (Authentik's own flow redirect), `sky` 200, `mino` 200.
+The wiki being public on its old name, `mino` opens nothing new.
+
+**PORT 80 IS CLOSED ON `193.49.175.122` AT THE SCHOOL'S BORDER, AND OPEN ON `.67`.** `http://`
+to `portail-etu`/`mep` (on `.67`) answers `301`; to `canari.emse.fr` and every CNAME of it (on
+`.122`) the connection fails, while the host's own nginx answers `301` locally - so it is the
+border, not the box. Only `https://` reaches the new names. A browser that tries `https` first hides
+it; a typed `http://` link does not. **Owed in the DSI request**: open 80 on `.122`, or point
+`canari` at `.67`.
+
 ### The deep links are the one thing a redirect cannot fix
 
 `applinks:canari-emse.fr` in the iOS entitlements and `android:host="canari-emse.fr"` in the
