@@ -169,7 +169,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     let group_id_str = str_from_c_str(group_id);
     let commits = decode_commits_b64_json(&str_from_c_str(commits_json));
 
-    match decrypt_push_message_with_commits_with_key(
+    json_to_c_string(decrypt_push_message_with_commits_with_key(
         state_bytes,
         &device_key_str,
         &user_id_str,
@@ -177,10 +177,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
         &group_id_str,
         &commits,
         ciphertext,
-    ) {
-        Some(v) => json_to_c_string(v),
-        None => json_to_c_string(serde_json::json!({ "ok": false })),
-    }
+    ))
 }
 
 /// Decrypts a community-channel message sealed under a Graine session (AES-256-GCM, outside MLS).

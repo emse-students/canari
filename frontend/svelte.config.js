@@ -22,7 +22,13 @@ const buildsForWeb = !!process.env.BUILD_WEB;
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: buildsForWeb ? adapterNode() : adapterStatic({ fallback: 'index.html' }),
+    // NO PRECOMPRESS: nothing serves the result. nginx serves `build/client` from its own COPY
+    // (infrastructure/local/Dockerfile.frontend) with no `gzip_static`, so every `.gz`/`.br` was
+    // copied into the image and never read. Writing them all at once is also what failed: 2026-09-27
+    // a local build died on `EMFILE: too many open files` over the ~4400 Noto emoji pictures.
+    adapter: buildsForWeb
+      ? adapterNode({ precompress: false })
+      : adapterStatic({ fallback: 'index.html' }),
     // RELATIVE ASSET PATHS ARE RIGHT FOR TAURI AND WRONG FOR THE WEB, and the default is relative.
     //
     // SvelteKit writes `./_app/immutable/...` into every prerendered page, which a browser resolves

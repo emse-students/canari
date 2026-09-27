@@ -457,7 +457,6 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             &commits,
             &cipher_vec,
         )
-        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
     })();
 
     let json_str = result.to_string();

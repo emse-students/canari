@@ -157,9 +157,12 @@ await until(cx, `!!document.querySelector('[role="dialog"]')`, 20_000);
 // loads. Reading it before that settles returns zero rows, which is indistinguishable from an account
 // with no other device: the first W2 run reported "0 deletable" for an account holding five.
 //
-// The string it waits for is `chat_devices_count_label`, "{devices} appareil(s) enregistre(s)". This
-// predicate used to read /APPAREIL(S) CONNECT/i, which the product has never rendered, so the wait
-// timed out after 45 s on a panel loaded the whole time. Matched on `enregistr` to clear the accent.
+// The string it waits for is `chat_devices_count_label`, now a real plural - "1 appareil enregistre",
+// "3 appareils enregistres". This predicate read /APPAREIL(S) CONNECT/i until 2026-08, which the
+// product never rendered, and then the LITERAL "appareil(s)", which it stopped rendering when the
+// label went plural: both timed out after 45 s on a panel loaded the whole time, and the second one
+// silently left every mint's abandoned device enrolled (`purged: false`, NOTIF-19, 2026-09-27). So it
+// matches the count and either number, never the parenthesis. `enregistr` clears the accent.
 //
 // THE LOAD ERROR IS A THIRD OUTCOME, AND IT IS REPORTED RATHER THAN WAITED ON.
 // `chat_devices_load_error` ("Impossible de charger les appareils lies a votre compte.") satisfied no
@@ -175,7 +178,7 @@ await until(
      var t = d.innerText || '';
      if (t.includes('Impossible de charger les appareils')) return true;
      return !t.includes('Synchronisation des appareils') &&
-            (/appareil\\(s\\)\\s*enregistr/i.test(t) || t.includes('Aucun appareil'));
+            (/\\d+\\s*appareils?\\s*enregistr/i.test(t) || t.includes('Aucun appareil'));
    })()`,
   45_000,
 );

@@ -2300,7 +2300,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     retryDecrypt = { tryDecrypt(queuedMessageId, groupId, inlineProto) },
                     catchUp = {
                         tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
-                            ?.let { PushDecrypt.Message(it) }
                     },
                     pause = {
                         try {
@@ -3194,6 +3193,91 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         OutboxRetryWorker.enqueueIfHealthy(this)
     }
 
+    /**
+     * Reads the JSON a native push decrypt answered - direct or after a commit catch-up, the two
+     * return the same shape (`classify_plaintext` in `mobile/background.rs`) - into a [PushDecrypt].
+     *
+     * ONE READER FOR BOTH, because two was how seeds were lost: the catch-up had its own that kept
+     * only a text, so a seed sealed one commit ahead of this device was decrypted after the catch-up
+     * and dropped (NOTIF-19, 2026-09-27). [where] names the caller in each line.
+     */
+    private fun parseNativeDecrypt(jsonStr: String, where: String): PushDecrypt {
+        val json = JSONObject(jsonStr)
+        if (!json.optBoolean("ok", false)) {
+            // THE REASON IS THE POINT. `{"ok": false}` came back from ELEVEN distinct places -
+            // six JNI marshalling faults, an unreadable state, a control frame, an MLS refusal,
+            // an unrenderable plaintext - and all eleven printed this one sentence. It sat in
+            // the cross-client campaign's dirt on NOTIF-4 and NOTIF-10 as an unattributable
+            // line for days. `refused()` in `mobile/background.rs` now names each.
+            //
+            // A CONTROL FRAME IS NOT A FAILURE. A commit or a proposal is applied and yields no
+            // application message: the MLS state ADVANCED and there is simply nothing to show.
+            // Calling that `decryption failed` at warn level is a line that accuses correct
+            // work, and teaches its reader to skip the ones that do not.
+            //
+            // Branching on a TOKEN the producer chose, never on prose - the distinction is made
+            // where it is known, and a sentence is a distinction exactly one call site makes.
+            //
+            // AND THE TOKEN DECIDES THE OUTCOME, NOT JUST THE LOG LEVEL. `control-frame` and
+            // `plaintext-not-renderable` are both returned by `background.rs` only AFTER
+            // `process_incoming_message` succeeded, so neither is an epoch gap and neither can
+            // be helped by a commit catch-up or a worker retry - which is what they were both
+            // put through, at 32 seconds of MLS work each. See `PushDecrypt.NothingToRender`.
+            return when (val reason = json.optString("reason", "unspecified")) {
+                "control-frame" -> {
+                    Log.d(TAG, "$where: control frame applied - state advanced, nothing to render")
+                    PushDecrypt.NothingToRender
+                }
+                "plaintext-not-renderable" -> {
+                    Log.d(TAG, "$where: decrypted, nothing renderable in it - no catch-up is owed")
+                    PushDecrypt.NothingToRender
+                }
+                "graine-key-material" -> {
+                    // The seeds ride ON the refusal, because `ok: false` is what the
+                    // notification path reads and this frame must still ring nobody.
+                    val seeds = json.optJSONArray("seeds")?.toString() ?: "[]"
+                    Log.d(TAG, "$where: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
+                    PushDecrypt.KeyMaterial(seeds)
+                }
+                "graine-request" -> {
+                    // A PEER ASKING, NOT A PEER GIVING. Only the foreground can answer one -
+                    // it needs the group's history and a send - so the background states what
+                    // it saw and stops, rather than retrying a frame no ladder can help.
+                    Log.d(TAG, "$where: a peer asks for a seed - the foreground answers those")
+                    PushDecrypt.NothingToRender
+                }
+                else -> {
+                    Log.w(TAG, "$where: no message to show, reason=$reason")
+                    PushDecrypt.Refused
+                }
+            }
+        }
+        val type = json.optString("type", "text")
+        // Call signaling (WP-XP-5) legitimately has an empty text ("call_control"); every
+        // other type without text is unrenderable -> null (generic fallback path).
+        val isCall = type == "call_invite" || type == "call_control"
+        // `ok` with no text is the same fact as `plaintext-not-renderable`: it decrypted and
+        // there is nothing to draw. It was a `null` too, and inherited the same wasted ladder.
+        val text = json.optString("text").takeIf { it.isNotEmpty() || isCall }
+            ?: return PushDecrypt.NothingToRender
+        Log.d(TAG, "$where: success type=$type -> \"${text.take(60)}\"")
+        return PushDecrypt.Message(DecryptedMessage(
+            text      = text.take(200),
+            messageId = json.optString("messageId"),
+            sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
+            type      = type,
+            replyTo   = json.optJSONObject("replyTo"),
+            mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+            mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
+            mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
+            mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
+            mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
+            callId    = json.optString("callId").takeIf { it.isNotEmpty() },
+            callEnded = json.optBoolean("callEnded", false),
+            hasVideo  = json.optBoolean("hasVideo", false),
+        ))
+    }
+
     /** Parses the JSON returned by nativeDecryptMessageWithKey and returns a structured DecryptedMessage. */
     private fun decryptProto(
         stateBytes: ByteArray,
@@ -3207,80 +3291,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
             val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, cipherBytes)
-            val json = JSONObject(jsonStr)
-            if (!json.optBoolean("ok", false)) {
-                // THE REASON IS THE POINT. `{"ok": false}` came back from ELEVEN distinct places -
-                // six JNI marshalling faults, an unreadable state, a control frame, an MLS refusal,
-                // an unrenderable plaintext - and all eleven printed this one sentence. It sat in
-                // the cross-client campaign's dirt on NOTIF-4 and NOTIF-10 as an unattributable
-                // line for days. `refused()` in `mobile/background.rs` now names each.
-                //
-                // A CONTROL FRAME IS NOT A FAILURE. A commit or a proposal is applied and yields no
-                // application message: the MLS state ADVANCED and there is simply nothing to show.
-                // Calling that `decryption failed` at warn level is a line that accuses correct
-                // work, and teaches its reader to skip the ones that do not.
-                //
-                // Branching on a TOKEN the producer chose, never on prose - the distinction is made
-                // where it is known, and a sentence is a distinction exactly one call site makes.
-                //
-                // AND THE TOKEN DECIDES THE OUTCOME, NOT JUST THE LOG LEVEL. `control-frame` and
-                // `plaintext-not-renderable` are both returned by `background.rs` only AFTER
-                // `process_incoming_message` succeeded, so neither is an epoch gap and neither can
-                // be helped by a commit catch-up or a worker retry - which is what they were both
-                // put through, at 32 seconds of MLS work each. See `PushDecrypt.NothingToRender`.
-                return when (val reason = json.optString("reason", "unspecified")) {
-                    "control-frame" -> {
-                        Log.d(TAG, "decryptProto: control frame applied - state advanced, nothing to render")
-                        PushDecrypt.NothingToRender
-                    }
-                    "plaintext-not-renderable" -> {
-                        Log.d(TAG, "decryptProto: decrypted, nothing renderable in it - no catch-up is owed")
-                        PushDecrypt.NothingToRender
-                    }
-                    "graine-key-material" -> {
-                        // The seeds ride ON the refusal, because `ok: false` is what the
-                        // notification path reads and this frame must still ring nobody.
-                        val seeds = json.optJSONArray("seeds")?.toString() ?: "[]"
-                        Log.d(TAG, "decryptProto: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
-                        PushDecrypt.KeyMaterial(seeds)
-                    }
-                    "graine-request" -> {
-                        // A PEER ASKING, NOT A PEER GIVING. Only the foreground can answer one -
-                        // it needs the group's history and a send - so the background states what
-                        // it saw and stops, rather than retrying a frame no ladder can help.
-                        Log.d(TAG, "decryptProto: a peer asks for a seed - the foreground answers those")
-                        PushDecrypt.NothingToRender
-                    }
-                    else -> {
-                        Log.w(TAG, "decryptProto: no message to show, reason=$reason")
-                        PushDecrypt.Refused
-                    }
-                }
-            }
-            val type = json.optString("type", "text")
-            // Call signaling (WP-XP-5) legitimately has an empty text ("call_control"); every
-            // other type without text is unrenderable -> null (generic fallback path).
-            val isCall = type == "call_invite" || type == "call_control"
-            // `ok` with no text is the same fact as `plaintext-not-renderable`: it decrypted and
-            // there is nothing to draw. It was a `null` too, and inherited the same wasted ladder.
-            val text = json.optString("text").takeIf { it.isNotEmpty() || isCall }
-                ?: return PushDecrypt.NothingToRender
-            Log.d(TAG, "decryptProto: success type=$type -> \"${text.take(60)}\"")
-            PushDecrypt.Message(DecryptedMessage(
-                text      = text.take(200),
-                messageId = json.optString("messageId"),
-                sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
-                type      = type,
-                replyTo   = json.optJSONObject("replyTo"),
-                mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
-                mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
-                mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
-                mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
-                mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
-                callId    = json.optString("callId").takeIf { it.isNotEmpty() },
-                callEnded = json.optBoolean("callEnded", false),
-                hasVideo  = json.optBoolean("hasVideo", false),
-            ))
+            parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
             PushDecrypt.Refused
@@ -3298,14 +3309,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * message fails as an epoch gap. Here we read the current epoch, fetch the missing ordered commits
      * (PushSecret), and apply them in memory to decrypt this message - producing a real notification
      * instead of a generic fallback. NEVER persists mls.bin; the foreground commit-log replay catches
-     * the durable state up on next open. Returns null (caller falls back) when no commits are
-     * available or the message still cannot be decrypted.
+     * the durable state up on next open. Answers the same [PushDecrypt] as [tryDecrypt] - a Graine
+     * seed sealed one commit ahead comes back as [PushDecrypt.KeyMaterial] - and null only when no
+     * outcome was reached (no commit to apply, lock not acquired, proto unreadable).
      */
     private fun tryDecryptWithCommitCatchup(
         queuedMessageId: String?,
         groupId: String,
         inlineProto: String?,
-    ): DecryptedMessage? {
+    ): PushDecrypt? {
         if (queuedMessageId.isNullOrEmpty() || groupId.isEmpty()) return null
         val ctx = MlsContextLoader.loadPushContext(this) ?: return null
         val secret = retrievePushSecret(this) ?: return null
@@ -3418,7 +3430,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return locality
     }
 
-    /** Parses the JSON from nativeDecryptMessageWithCommitsWithKey into a DecryptedMessage (mirror of decryptProto). */
+    /**
+     * Decrypts after applying [commitsJson] in memory, read through [parseNativeDecrypt] - so key
+     * material that needed a catch-up is absorbed like any other, rather than dropped for lack of
+     * a text.
+     */
     private fun decryptProtoWithCommits(
         stateBytes: ByteArray,
         userId: String,
@@ -3427,33 +3443,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         commitsJson: String,
         cipherBytes: ByteArray,
         deviceKeyB64: String? = null,
-    ): DecryptedMessage? {
+    ): PushDecrypt {
         return try {
-            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return null
+            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
             val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, commitsJson, cipherBytes)
-            val json = JSONObject(jsonStr)
-            if (!json.optBoolean("ok", false)) {
-                Log.w(TAG, "decryptProtoWithCommits: ok=false -> catch-up insufficient")
-                return null
-            }
-            val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
-            Log.d(TAG, "decryptProtoWithCommits: success after catch-up -> \"${text.take(60)}\"")
-            DecryptedMessage(
-                text      = text.take(200),
-                messageId = json.optString("messageId"),
-                sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
-                type      = json.optString("type", "text"),
-                replyTo   = json.optJSONObject("replyTo"),
-                mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
-                mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
-                mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
-                mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
-                mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
-            )
+            parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); null
+            Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
         } catch (e: Exception) {
-            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.message}"); null
+            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.message}"); PushDecrypt.Refused
         }
     }
 

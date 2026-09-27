@@ -190,6 +190,10 @@ export const PHASES = {
       // by side they say which half of "first contact" the server owes a dead device. It also mints
       // and SWEEPS its own salon, so it leaves the estate as it found it.
       'notif18.mjs',
+      // 18 WITH ONE COMMIT BETWEEN THE KILL AND THE SEND: W3 becomes a new device and joins the key
+      // group, so the seed is sealed one epoch ahead of the phone and only the background catch-up
+      // can open it. Last because it wipes W3, and it sweeps its salon like 18.
+      'notif19.mjs',
     ],
     // W3 IS HERE BECAUSE `notif15.mjs` PARKS IT, AND FOR A DAY NOTHING SAID SO. That row kills the
     // phone and needs every OTHER owner device out of the conversation first - a read receipt from
