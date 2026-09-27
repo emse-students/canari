@@ -84,10 +84,9 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **rotate the Cloudflare run token on both boxes, after moving it out of the unit's command line** - any local user reads it today through `systemctl show -p ExecStart`, on `canari` and on `miconnect`, whatever the file mode. The unit shape that closes it is written down; what needs the user is that the rotation drops the public path to production for the minute between invalidating the old token and restarting the daemon | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala`, a repository that now answers `404`; the repository that looks like its successor does not contain that commit. Nothing runs from it and nothing points at it, so this is not a technical question but somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
-| **answer the seven carte questions** (directory roster, blob email, overlaps, raster sharpness, the shared PDF pipeline, empty associations, delivery) - the session paused on 2026-09-27 with four decisions taken and these seven not yet asked | 7 decisions | [The Carte de la Vie Asso chantier](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-four-decisions-taken-the-rest-still-to-ask) |
 | **one FIDO touch on `ssh -fN bastion`**, which opens the master connection the whole survey of the target host waits behind. `ControlPersist 48h` means it is owed ONCE per two days, not once per command - and it is the only thing standing between here and the four measurements section 9 of that page lists as open | 1 touch | [estate-migration](infrastructure/estate-migration.md#9-open-questions) |
 
-## The Carte de la Vie Asso chantier - audited 2026-09-27, four decisions taken, the rest still to ask
+## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
 Asked by the user on 2026-09-27: *"Fais moi une liste de ce que tu penses améliorable sur tout ce qui
 concerne la cartographie des associations [...] Exporte le PDF (avec les données prod), observe les
@@ -105,7 +104,7 @@ v2 document carries the same resolved geometry the poster draws). **Export with 
 FOREGROUND**: a hidden tab throttles `requestAnimationFrame`, the export took minutes instead of 10 s,
 and it captured the directory before its fit ran (C4).
 
-### Decided by the user, 2026-09-27
+### Decided by the user, 2026-09-27 - eleven answers, nothing left to ask
 
 | # | Decision |
 | --- | --- |
@@ -113,6 +112,13 @@ and it captured the directory before its fit ran (C4).
 | D2 | **Publishing: a badge and an explicit update.** Autosave stays; when the live `publication` differs from the saved layout, the editor shows "Modifications non publiées" and a "Mettre à jour la version en ligne" button. Nothing reaches the portail without a gesture - an autosave that republished would put half-arranged layouts online. |
 | D3 | **Unpublishing is its own action.** The green button becomes a non-clickable status ("En ligne depuis le ..."), and "Retirer du portail" moves to a menu with a confirmation. |
 | D4 | **Member text leaves the unit's scale.** Names and roles get ONE readable size across the whole poster, independent of `bubble.scale`; the card widens instead. Small units will take more room - accepted. |
+| D5 | **The directory lists EVERY member, without "(Membre)".** Only a real role goes in parentheses; the ~10 % it frees goes back into the font size. |
+| D6 | **The blob email stays, and becomes readable.** Shown where it is set, raised to the A0 floor - not dropped. |
+| D7 | **Overlaps are WARNED, never moved.** The editor highlights and lists units whose boxes intersect; nothing is nudged automatically, so a hand placement is never undone. |
+| D8 | **The raster goes to ~150 dpi on A0** (`rasterScale` ~4.5), whatever the cost - measure time, memory and size so the cost is known, but the decision is taken. |
+| D9 | **The PDF line-break fix (C1) ships FIRST, in its own PR**, re-verified on all three exports (carte, agenda, trombinoscope); the carte PRs build on it. |
+| D10 | **An association with no member stays on the poster, and the editor says so** ("aucun membre renseigné") so its bureau fills it in. |
+| D11 | **One PR per group** (A publishing, B card text, C PDF, D content), then a pre-release on `dev.canari-emse.fr`: the agent exports an A0 PDF there and measures it, **then the user looks at it before the stable.** |
 
 ### Findings, in the order to work them
 
@@ -143,11 +149,11 @@ and it captured the directory before its fit ran (C4).
   `MIN_NAME_SIZE` ("never UP"), so "Thomas DELLESTABLE" is 4.6 px beside a neighbour's 6.4 px in the
   same unit. With D4, one size per poster; long names widen the card or wrap on spaces.
 - **B3 - P3 - the contact email in the blob is 0.35 x the name** (down to ~3 pt) and only 5 of 31
-  associations have one - see Q2.
+  associations have one - D6.
 - **B4 - P3 - measured overlaps between neighbours** (published geometry, estimated card heights):
   MTM's Tristan FELIX card over BDA (1182 px2, the clearest), then Humani'Mines <-> BDS, AME -> BDE,
   L'Associflard -> Gala, BDE -> BDI. D4 enlarges small units, so these get WORSE before they get
-  better - see Q3.
+  better - D7.
 
 **C - the PDF differs from the preview**
 
@@ -158,7 +164,7 @@ and it captured the directory before its fit ran (C4).
   (`Range.getClientRects` per text node) and draw each line where it was measured. **Shared by the
   agenda and the trombinoscope exports** - the fix is in the pipeline, and all three re-verify.
 - **C2 - P3 - photos and logos print at ~102 dpi on A0** (`rasterScale` 3 -> 4800 px). ~150 dpi
-  needs `rasterScale` ~4.5; memory and time cost to measure first - see Q4.
+  needs `rasterScale` ~4.5; D8 takes it; measure the cost anyway.
 - **C3 - P3 - a hidden tab exports in minutes, with nothing on screen saying why.**
 - **C4 - P2 - the directory can overflow in the PDF.** Its font fit runs in a `requestAnimationFrame`
   inside an `$effect` of `PosterCanvas.svelte`, and the export does not wait for it: the first export
@@ -169,19 +175,20 @@ and it captured the directory before its fit ran (C4).
 **D - content**
 
 - **D-1 - P3 - the directory is noisy.** "(Membre)" appears ~100 times in 8,200 characters; the roster
-  prints at 11 pt on A0 once fitted. See Q1.
+  prints at 11 pt on A0 once fitted. D5.
 - **D-2 - data, not code - EMSE Finance has no members on Canari**: an empty blob and an empty directory
   line. For its bureau to fill in, or the editor to flag.
 
-### Still to ask the user (the session paused on 2026-09-27 before these)
+### The order to build it in (D9, D11)
 
-- **Q1** - directory: drop "(Membre)" and keep only real roles? List bureaus only? Keep everyone?
-- **Q2** - the email in the blob: remove it, keep it where set, or show every association's?
-- **Q3** - overlaps: a warning in the editor only, or automatic nudging?
-- **Q4** - a sharper raster (C2) at the cost of a slower, heavier export: worth it?
-- **Q5** - C1 changes the shared PDF pipeline (agenda, trombinoscope too): one PR, or the pipeline first?
-- **Q6** - associations with no members (D-2): hide them from the poster, or show them as they are?
-- **Q7** - delivery: one PR per group (A, B, C, D) or one for the whole chantier, and a pre-release to dev before prod?
+1. **C1 alone** - the shared PDF pipeline takes the browser's line boxes; agenda, trombinoscope and
+   carte exports re-verified.
+2. **A** - publishing: A2, A3, then the badge + update (D2) and the separate unpublish (D3).
+3. **B** - card text out of scale (D4) with one poster-wide size, the email raised (D6), the overlap
+   warning (D7).
+4. **C** - C4 (fit before capture), C2 at 150 dpi (D8), C3.
+5. **D** - the directory without "(Membre)" (D5), the no-member notice (D10).
+6. Pre-release on dev, an A0 export measured there, the user's look, then the stable (D11).
 
 ## Open defects, in severity order
 
