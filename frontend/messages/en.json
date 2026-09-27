@@ -1412,6 +1412,20 @@
   "carte_published_since": "Live since {date}",
   "carte_unpublish_confirm": "Take this map off the student portal? The portal will show no map at all until you publish another one.",
   "carte_unsaved_label": "Unsaved changes",
+  "carte_overlaps_title": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} overlap",
+        "countPlural=other": "{count} overlaps"
+      }
+    }
+  ],
+  "carte_overlaps_body": "These associations are drawn over each other. Nothing is moved for you: you choose which one gives way.",
+  "carte_overlaps_show": "Show them on the map",
+  "carte_overlaps_hide": "Hide",
+  "carte_overlaps_pair": "{a} and {b}",
   "carte_directory_toggle": "Show directory",
   "carte_title_color_label": "Title color",
   "carte_zoom_in": "Zoom in",

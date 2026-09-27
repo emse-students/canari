@@ -465,6 +465,38 @@ produce an oversized polaroid.
 compacted, everything after it renumbers, and the output looks like a correct render of *different
 data* instead of showing the gap - which is the version nobody notices.
 
+### A floor is a size on PAPER, and a unit's scale is between the two
+
+The poster is printed on A0 and only on A0 (user, 2026-09-27), so `PT_PER_POSTER_PX` = 3370 / 1600 =
+**2.106 pt per poster px** and every readability floor in `carte/layout.ts` is stated in poster px
+through it. `MIN_POSTER_TEXT_PX` = 4.5 px is ~9.5 pt on the sheet.
+
+**Nothing drawn inside a unit is the size its constant says.** A unit is one CSS
+`transform: scale(bubble.scale)`, and the seed range is 0.2 to 0.6 - so a constant of 6 px is 2.8 px
+on the poster at the scale most units actually carry. The contact address, at 0.35 x the association
+name, printed at **~3 pt**: present, unreadable, and therefore worse than absent. A helper holding a
+floor therefore takes the unit scale and divides by it, so the floor is held **on the sheet**.
+
+### An overlap is reported against the INK, and never repaired
+
+`CARD_WIDTH` x `CARD_HEIGHT` is the seed grid's *cell*, and it is mostly empty: two cells cross long
+before anything a reader sees does, so a warning drawn on cells is a warning nobody keeps reading.
+`unitInkBox()` measures what is drawn instead - the blob, the crown of member cards, the president's
+card - and `findUnitOverlaps()` reports the crossing pairs worst first.
+
+**The card heights it needs cannot be asked of anything.** The DOM sizes a real card, and both
+callers (the warning and the published document) run where there is no layout, so
+`memberCardHeight()` estimates it from the markup's own constants and the same deliberately
+pessimistic `textWidthEm` the card sizing uses. It over-counts rather than under-counts, and it
+feeds a WARNING - never a placement.
+
+**Nothing is nudged** (user, D7): moving a unit undoes a placement made by hand, and only the author
+knows which of two crossing units should give way. The editor lists the pairs and, on demand,
+outlines the boxes it measured.
+
+**The outline is editor-only and is cleared before an export**, for the same reason the selection
+handles are: the element captured for the PDF is the live editor stage.
+
 ### The PDF breaks its lines where the browser did
 
 **A width is not a line break, and handing one to jsPDF asks it to guess again.** The vector text

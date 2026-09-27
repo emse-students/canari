@@ -1437,6 +1437,20 @@
   "carte_published_since": "En ligne depuis le {date}",
   "carte_unpublish_confirm": "Retirer cette carte du portail des élèves ? Le portail n'affichera plus aucune carte tant que vous n'en publiez pas une autre.",
   "carte_unsaved_label": "Modifications non enregistrées",
+  "carte_overlaps_title": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} chevauchement",
+        "countPlural=other": "{count} chevauchements"
+      }
+    }
+  ],
+  "carte_overlaps_body": "Ces associations se dessinent l'une sur l'autre. Rien n'est déplacé automatiquement : à vous de choisir laquelle bouge.",
+  "carte_overlaps_show": "Les montrer sur la carte",
+  "carte_overlaps_hide": "Masquer",
+  "carte_overlaps_pair": "{a} et {b}",
   "carte_directory_toggle": "Afficher l'annuaire",
   "carte_title_color_label": "Couleur du titre",
   "carte_zoom_in": "Zoomer",
