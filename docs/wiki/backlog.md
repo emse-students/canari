@@ -122,22 +122,11 @@ and it captured the directory before its fit ran (C4).
 
 ### Findings, in the order to work them
 
-**A - publishing (D2, D3)**
-
-- **A1 - P2 - "Enregistrer" never reaches the portail.** `handleSave` writes `layout` only;
-  `publication` is a snapshot built in `handlePublish` (`routes/admin/carte/[id]/+page.svelte`). Once
-  live, the only refresh path today is unpublish -> publish. Needs a "live differs from saved"
-  predicate - compare a hash of what `buildPublishedCarte` would produce now against the stored
-  document, NOT `updatedAt` vs `publishedAt` (every autosave, including the one on open, moves
-  `updatedAt`).
-- **A2 - P2 - opening the editor saves.** Setting `hydrated = true` re-runs the autosave `$effect`,
-  so every open writes the layout 4 s later (the "Enregistré" on the user's screenshot). A new
-  association also gets `getRandomShape()`, so an open is not even idempotent. Fix at the effect:
-  arm on the first CHANGE after hydration, not on hydration.
-- **A3 - P2 - publishing during an autosave publishes unsaved state.** `handleSave` returns at once
-  when `saving` is true, then `handlePublish` builds from local state anyway - contradicting "a publish
-  saves first". Await the in-flight save, then save again.
-- **A4 - P3 - one click unpublishes** (D3).
+**A - publishing (D2, D3)** - A2, A3 and A4 merged 2026-09-27 (#1144): opening a project no longer
+writes it back (the autosave is armed by the state DIFFERING from the server's, which an open cannot
+do), a publish waits for the save in flight and abandons if it failed, and being live is a status
+with a separate confirmed "Retirer du portail". **A1/D2 is what is left** - see the order below for
+why a column, not a comparison of timestamps, is what it needs.
 
 **B - member-card text (D1, D4)**
 
@@ -148,12 +137,11 @@ and it captured the directory before its fit ran (C4).
 - **B2 - P2 - two sizes in one crown.** `memberCardMetrics`' length ladder goes BELOW
   `MIN_NAME_SIZE` ("never UP"), so "Thomas DELLESTABLE" is 4.6 px beside a neighbour's 6.4 px in the
   same unit. With D4, one size per poster; long names widen the card or wrap on spaces.
-- **B3 - P3 - the contact email in the blob is 0.35 x the name** (down to ~3 pt) and only 5 of 31
-  associations have one - D6.
-- **B4 - P3 - measured overlaps between neighbours** (published geometry, estimated card heights):
-  MTM's Tristan FELIX card over BDA (1182 px2, the clearest), then Humani'Mines <-> BDS, AME -> BDE,
-  L'Associflard -> Gala, BDE -> BDI. D4 enlarges small units, so these get WORSE before they get
-  better - D7.
+- ~~**B3 - the contact email in the blob is 0.35 x the name** (down to ~3 pt)~~ - raised to the
+  poster floor in #1145; five of the 31 associations set one.
+- ~~**B4 - measured overlaps between neighbours**~~ - the six pairs are now LISTED in the editor
+  (#1145), worst first, and outlined on demand. Nothing is moved. D4 will enlarge small units, so
+  the list is what reports the cost.
 
 **C - the PDF differs from the preview**
 
@@ -183,9 +171,17 @@ and it captured the directory before its fit ran (C4).
 
 1. **C1 alone** - the shared PDF pipeline takes the browser's line boxes; agenda, trombinoscope and
    carte exports re-verified.
-2. **A** - publishing: A2, A3, then the badge + update (D2) and the separate unpublish (D3).
-3. **B** - card text out of scale (D4) with one poster-wide size, the email raised (D6), the overlap
-   warning (D7).
+2. ~~**A** - publishing: A2, A3, the separate unpublish (D3)~~ - merged 2026-09-27 (#1144). **D2, the
+   "live is older than saved" badge, is NOT done and is not a matter of writing it**: `updatedAt`
+   cannot answer the question, because `publish()` writes the row and TypeORM's `@UpdateDateColumn`
+   moves with `publishedAt` in the same statement. Separating them would mean trusting a clock by a
+   millisecond, so it needs a durable record of WHICH layout was published - a schema decision.
+3. **B** - ~~the email raised (D6), the overlap warning (D7)~~ - #1145. **D4 is open**: taking the
+   card text out of the unit's scale grows the crown of cards while the blob it surrounds does not,
+   and at the scale most units carry (0.46) the crown's levels are ~94 px apart for a card already
+   ~82 px tall, so cards collide INSIDE the unit before they become readable. Either the crown
+   radii grow with the text - the unit takes more room, and #1145's warning is what then reports the
+   cost - or the floor is held only as far as the crown clears. **The user's call.**
 4. **C** - C4 (fit before capture), C2 at 150 dpi (D8), C3.
 5. **D** - the directory without "(Membre)" (D5), the no-member notice (D10).
 6. Pre-release on dev, an A0 export measured there, the user's look, then the stable (D11).
