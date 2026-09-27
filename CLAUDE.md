@@ -219,67 +219,67 @@ on 2026-09-03, restating what the linked pages carry - and TWO items had gone FA
 Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
 
 1. **`canari.emse.fr` IS CANARI'S NAME AND THE OLD ONE SERVES APPS ONLY (2026-09-25)** - `v0.18.25` is the first release the site took on it; the legacy vhost `302`s every document there and keeps serving `/api/`, `/.well-known/` and an open tab's assets - the user overruled the no-redirect rule knowing a redirected web session heals at ~3 in 10 ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)). **OWED: that `302` becomes a `301`.** NEXT: Sky MOVES onto the School host, then takes `sky.emse.fr`; Wiki.js and Omeka stay on `mitv` behind `mino.`/`archives.emse.fr`, relay undecided ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moves-the-wiki-and-omeka-only-get-names---decided-by-the-user-2026-09-25)); each project's SEO pass is due the day its name is final ([backlog](docs/wiki/backlog.md)). OIDC issuer rename and the cercle/miconnect DSI ticket stay deferred.
-2. **THE CARTE DE LA VIE ASSO CHANTIER (user, 2026-09-27: *"on part sur ce projet"*) - AUDITED ON A PROD A0 EXPORT; ELEVEN DECISIONS TAKEN, NOTHING LEFT TO ASK - BUILD IN THE ORDER THE ENTRY GIVES, THE PDF PIPELINE FIRST** - "Enregistrer" never reaches the portail, member names print at 4.4 pt, the PDF re-wraps what the browser laid out; plus a P2 met on the way: a tab open across a deploy loses every lazy import ([backlog](docs/wiki/backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
-3. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election now reads presence and waits for a member to come online; **shipped in `v0.18.26` (2026-09-27), owed ONE reading on the returner's devices** ([backlog](docs/wiki/backlog.md)).
-4. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT HERE; run it.** A green cell is not yet a measurement, and the three
-   commands a run owes before it is believed are in the campaign section below. PIN's four rows
-   change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
-5. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
+2. **P1 - COMMUNITIES, REPORTED BY THE USER 2026-09-27, TAKEN FIRST (*"rapidement régler tous les problèmes de communauté"*)** - the lost channel member and both panels are FIXED and RENDERED (390/1280, light/dark), owed one look on hardware; the salon push that STAYED generic is FIXED (the background catch-up answered 403 on every community's key group), owed a Pixel reading; **OPEN: a new session's seed lands ~1 s after its message (user: investigate first), and two Gala members hold no device in its key group** ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
+3. **THE CARTE DE LA VIE ASSO CHANTIER (user, 2026-09-27: *"on part sur ce projet"*) - AUDITED ON A PROD A0 EXPORT; ELEVEN DECISIONS TAKEN, NOTHING LEFT TO ASK - BUILD IN THE ORDER THE ENTRY GIVES, THE PDF PIPELINE FIRST** - "Enregistrer" never reaches the portail, member names print at 4.4 pt, the PDF re-wraps what the browser laid out; plus a P2 met on the way: a tab open across a deploy loses every lazy import ([backlog](docs/wiki/backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
+4. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election now reads presence and waits for a member to come online; **shipped in `v0.18.26` (2026-09-27), owed ONE reading on the returner's devices** ([backlog](docs/wiki/backlog.md)).
+5. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
+   SETTLES IT - NO COUNT HERE; run it.** PIN's four rows change a PIN or restart a browser, hence
+   last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
+6. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES.** All three
    reclaims refuted (`0 expired`), EXPIRY CLOSED. Re-measured 2026-09-22: the undated last-resort
    rows are a CLIENT VERSION (`< 0.18.10`, exact in 759) draining ~20/day, so **both repairs are
    REFUTED - client code cannot reach them** ([backlog](docs/wiki/backlog.md)).
-6. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
+7. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
-7. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
+8. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-8. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
+9. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
    and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
    WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
    so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
-9. **P1 - THE TUNNEL RUN TOKEN IS READ BY ANY LOCAL USER ON BOTH PROD BOXES** - `600` closes
+10. **P1 - THE TUNNEL RUN TOKEN IS READ BY ANY LOCAL USER ON BOTH PROD BOXES** - `600` closes
    `systemctl cat` and NOT `show -p ExecStart`, which answers from systemd's memory. `EnvironmentFile`
    first, rotation WITH the user ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md)).
-10. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
+11. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
    CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
-11. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+12. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
-12. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
+13. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
-13. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+14. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-14. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
+15. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
-15. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
+16. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
     path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
     **ONE OBSERVATION OWED** - he is on `0.18.14` ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
-16. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+17. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-17. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract and audit in [backlog](docs/wiki/backlog.md).
-18. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+18. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract and audit in [backlog](docs/wiki/backlog.md).
+19. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2 ([backlog](docs/wiki/backlog.md)).
-19. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+20. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-20. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). ONE open: a dev
+21. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). ONE open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY ([backlog](docs/wiki/backlog.md)).
     Both estates share the three deploy scripts since 2026-09-24 ([cicd](docs/wiki/cicd.md)).
-21. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
+22. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
     blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
-22. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
+23. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
     TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-23. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
+24. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
     ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-24. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
+25. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
     **EMOJI ARE NOTO SVG PICTURES EVERYWHERE, THE FONTS ARE DELETED** (user, 2026-09-25: the font never drew on WebKit) - merged, owed a release and the iPhone rows ([emoji](docs/wiki/frontend/emoji.md), [backlog](docs/wiki/backlog.md)).
-25. **P3 - MICONNECT IS FLAT, FRENCH AND LANDS ON CANARI (LIVE 2026-09-25); THREE STRINGS AND ONE SIGNED-IN OBSERVATION ARE LEFT** - admins stay internal so `/if/admin/` is the bypass ([authentik](docs/wiki/infrastructure/authentik.md#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25), [backlog](docs/wiki/backlog.md)); Authentik lives on the Portail-etu host now ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)). **THE INTERFACE CHANTIER HAS NOTHING LEFT TO BUILD (2026-09-27) - what is owed on hardware and to the user is [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)**.
+26. **P3 - MICONNECT IS FLAT, FRENCH AND LANDS ON CANARI (LIVE 2026-09-25); THREE STRINGS AND ONE SIGNED-IN OBSERVATION ARE LEFT** - admins stay internal so `/if/admin/` is the bypass ([authentik](docs/wiki/infrastructure/authentik.md#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25), [backlog](docs/wiki/backlog.md)); Authentik lives on the Portail-etu host now ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)). **THE INTERFACE CHANTIER HAS NOTHING LEFT TO BUILD (2026-09-27) - what is owed on hardware and to the user is [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)**.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

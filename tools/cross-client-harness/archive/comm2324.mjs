@@ -28,7 +28,6 @@ import {
   channelAccessState,
   createChannel,
   enterCommunities,
-  grantChannelAccess,
   inPanel,
   openChannelAccess,
   openCommunity,
@@ -107,8 +106,8 @@ await step('flip the visibility', async () => {
   await openChannelAccess(w1);
   const moved = await setChannelPrivate(w1, !startPrivate);
   if (!moved) throw new Error('the toggle was already where the check wanted it');
-  // A grant is staged and committed by the save, so it belongs INSIDE the open panel and before it.
-  if (!startPrivate) await grantChannelAccess(w1, OWNER_NAME);
+  // The owner is not granted here any more: since 2026-09-27 the SERVER grants whoever makes a salon
+  // private, as it grants whoever creates one private, and the panel offers no allowlist until then.
   return saveChannelAccess(w1);
 });
 

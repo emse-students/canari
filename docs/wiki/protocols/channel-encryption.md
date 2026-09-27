@@ -2341,3 +2341,36 @@ a private salon too; nothing is reached for when the load has no MLS client; and
 channel-to-community map is written BEFORE the join, so a refused GroupInfo cannot also cost the
 mapping. The rejection is deliberately not caught - `onChannelMemberJoined` already logs it as
 `[GRAINE] could not prepare joined channel`, and a `try` here would make that line unreachable.
+
+## 16. A shut phone one commit behind could never catch up, in any community - FIXED 2026-09-27
+
+**Measured on the user's Pixel 6a, production, 2026-09-27.** Every Gala salon push arrived as
+"Nouveau message dans #general" and stayed that way. The seed frame DID reach the phone; the
+logcat said why it was not opened:
+
+```
+groupLocality: epoch=4 group=17d0281e     <- the community's distribution group
+tryDecrypt refused                         <- the frame is ahead of the persisted state
+fetchCommitsFromBackend: HTTP 403          <- the catch-up (POST mls/push/commits) is REFUSED
+Silent push group=17d0281e shows nothing - it could not be decrypted
+```
+
+**The gate asked the wrong table.** `MessagingService.getCommitsSince` served the commit log only
+to a user with a `dm_group_members` row. A distribution group is entered by each DEVICE's external
+commit and is recorded in `dm_device_group_memberships` alone - on production all eight held ZERO
+user rows - so the catch-up refused every one of them: `POST mls/push/commits` answered 403 **173
+times in eight hours**, against one success. Any newcomer to a community advances its epoch, so
+every shut phone fell one commit behind at the first join and every seed after it was unreadable
+until the app was next opened. `putGroupInfo` had already recorded the same absence for the WRITE
+of a group info; the replay had never been told.
+
+**The fix asks the table that records membership for the group's KIND**: a key-distribution group
+(`distributionWorkspaceId` or `distributionChannelId` set) answers from an ACTIVE device row, any
+other group from `dm_group_members` as before. A device holding an active leaf already reads these
+commits, and `evictFromDistributionGroup` deletes a leaver's rows at once, so this admits nobody
+the group does not. A refusal now logs `[COMMITS_SINCE] refused ... keyDistribution=<bool>`.
+
+**Still open, and a different defect**: the seed of a NEW session reaches the phone about a second
+AFTER the message it opens (FCM does not order the two pushes; the server sends the seed first). The
+banner goes up generic and is redrawn by `drainPendingChannelFrames` - measured on the same phone,
+Rootz `#general`, 20:13:56 -> 20:13:57. See the [backlog](../backlog.md).

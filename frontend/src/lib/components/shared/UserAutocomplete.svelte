@@ -93,6 +93,18 @@
     });
   });
 
+  /*
+   * A PARENT CLEARING `value` CLEARS THE FIELD. The prop used to be read by nobody, so a caller that
+   * reset it after acting on a pick (the private-salon allowlist, 2026-09-27) left the chosen name
+   * sitting in the input beside a disabled button - it read as a pick that had not been taken.
+   */
+  $effect(() => {
+    if (_value === '' && selectedUser) {
+      selectedUser = null;
+      inputText = '';
+    }
+  });
+
   // Cancel pending debounce/blur timers on unmount to avoid API calls on a destroyed component.
   onDestroy(() => {
     if (debounceTimer !== null) clearTimeout(debounceTimer);

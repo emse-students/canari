@@ -1456,6 +1456,49 @@ out of the tester programme instead forces an uninstall, which wipes the very st
 
 ---
 
+## Reported by the USER on 2026-09-27 - the community settings panels, and two community defects behind them
+
+*"Que ce soit sur mobile ou sur web, l'interface du panneau est vraiment nulle, plein d'éléments
+sont invisibles."* Then: *"pourquoi les membres que j'ajoute au canal ne survivent pas au
+rafraichissement de la page ?"*, and a notification reading *"Nouveau message dans #general"*.
+The user's words: *"Il va falloir rapidement régler tous les problèmes de communauté."*
+
+- **FIXED, owed ONE look on web and the Mi 9T - the added member.** Salon `bureau` was created
+  private at 14:35 with its creator alone, and the edge log holds NO `PATCH /access` for it in the
+  five hours after: the add never reached the server. "Ajouter" staged a local list for
+  "Enregistrer" while the trash removed at once. Now the add is final too (user's choice), and the
+  flip to private grants its maker ([social-service](services/social-service.md#roles-membership-and-channel-access)).
+  Two more on the way: the access tab kept the PREVIOUS salon's list when the channel changed (a
+  reset guarded by `!open`, i.e. `window.open`), and `membersError` was set three times and shown
+  nowhere. `ChannelSettingsPanel.access.svelte.test.ts` pins all three.
+- **FIXED AND RENDERED on the local estate (W1, 390 and 1280, light and dark), owed one look on
+  hardware - the panels**: the member search has its own row (it shared
+  `1fr auto auto` and got the remainder), the delete buttons are a red `ui-icon-button`, the roles
+  tab reads "Rôles" and the strip is tighter so three tabs fit at 390, "Qui peut écrire ?" has its
+  native arrow back (`appearance-none` drew it as a text field), the private switch no longer
+  shrinks under its label, the admins hint moved to the allowlist, the add row wraps, and a parent
+  clearing `UserAutocomplete`'s `value` now clears the field (the prop was read by nobody). An add
+  followed by a reload was checked on the same estate: the member stayed.
+- **FIXED, owed ONE reading on the Pixel 6a after the release - the notification that STAYS
+  generic.** The Pixel's logcat named it: Gala's key group at epoch 4 on the phone, the seed frame
+  refused as ahead, and the catch-up `POST mls/push/commits` answered 403 - 173 times in eight hours
+  on production, because the gate read `dm_group_members`, which names nobody in a distribution
+  group ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
+  The reading owed: a salon message in Gala with the Pixel shut, and `fetchCommitsFromBackend`
+  answering 200 before the banner.
+- **P2, OPEN, DECISION DEFERRED BY THE USER ("investigate first") - the seed of a new session lands
+  ~1 s AFTER its message.** Rootz `#general`, 20:13:56 generic banner, 20:13:57 seed absorbed and the
+  line redrawn to its text. The server sent the seed frame FIRST (-1 s); FCM does not order two
+  pushes. Every membership change rotates every sender's session, so it is the first message of
+  each sender after any join. Two directions were put to the user: the seed rides in the message's
+  own push, or the generic banner is posted silent and only the redraw alerts. Re-measure AFTER the
+  403 fix ships - with the catch-up working, only this race is left, and its rate can be counted.
+- **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
+  `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
+  commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
+  not to `17d0281e`. They receive every salon push and never a seed. Read their clients' side before
+  anything else.
+
 ## Reported by the USER on 2026-09-27 - the launcher neither answers a hover nor opens like its peers
 
 *"Contrairement aux autres boutons, il n'y a rien qui se passe quand je le survole, et on pourrait

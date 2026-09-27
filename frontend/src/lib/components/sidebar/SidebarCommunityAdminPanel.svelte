@@ -617,38 +617,38 @@
   <div class="flex h-full min-h-0 flex-col">
     <!-- Tab strip -->
     <div
-      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
+      class="bg-cn-surface flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
     >
       <button
         onclick={() => (activeTab = 'overview')}
-        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'overview'
           ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
-        <Settings size={18} />
+        <Settings size={16} />
         {m.chat_community_overview_tab()}
       </button>
       {#if canManage}
         <button
           onclick={() => (activeTab = 'roles')}
-          class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+          class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
           'roles'
             ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
             : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
         >
-          <Shield size={18} />
-          {m.chat_community_roles_tab()}
+          <Shield size={16} />
+          {m.chat_community_roles_tab_short()}
         </button>
       {/if}
       <button
         onclick={() => (activeTab = 'members')}
-        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'members'
           ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
-        <Users size={18} />
+        <Users size={16} />
         {m.common_members_label()}
       </button>
     </div>
@@ -797,15 +797,22 @@
             </div>
             {#if canManage}
               <div class="border-cn-border bg-cn-bg space-y-2.5 border-b px-4 py-3">
-                <div class="grid grid-cols-1 gap-2.5 @md:grid-cols-[1fr_auto_auto]">
+                <!--
+                  THE SEARCH HAS A ROW OF ITS OWN. Sharing one with the role select and the button
+                  (`1fr auto auto`) left it the remainder, which at a phone's panel width was its
+                  icon and one glyph (user, 2026-09-27).
+                -->
+                <div class="grid grid-cols-[1fr_auto] gap-2.5">
                   <!-- Members of this community are already here; inviting them again is not an action. -->
-                  <UserAutocomplete
-                    value={inviteUserId}
-                    onValueChange={(v) => (inviteUserId = v)}
-                    placeholder={m.chat_community_search_user_placeholder()}
-                    inputId="community-invite-autocomplete"
-                    excludeIds={communityMembers.map((member) => member.userId)}
-                  />
+                  <div class="col-span-2">
+                    <UserAutocomplete
+                      value={inviteUserId}
+                      onValueChange={(v) => (inviteUserId = v)}
+                      placeholder={m.chat_community_search_user_placeholder()}
+                      inputId="community-invite-autocomplete"
+                      excludeIds={communityMembers.map((member) => member.userId)}
+                    />
+                  </div>
                   <select
                     bind:value={inviteRole}
                     class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/40 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
@@ -878,13 +885,14 @@
                           type="button"
                           onclick={() => handleRemoveMember(member.userId)}
                           disabled={memberRemoving[member.userId]}
-                          class="border-red-err/20 bg-red-err/5 text-red-err hover:bg-red-err/10 rounded-lg border px-2 py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                          class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
                           title={m.chat_community_remove_member_title()}
+                          aria-label={m.chat_community_remove_member_title()}
                         >
                           {#if memberRemoving[member.userId]}
-                            <Loader size={12} class="animate-spin" />
+                            <Loader size={16} class="animate-spin" />
                           {:else}
-                            <Trash2 size={12} strokeWidth={2.5} />
+                            <Trash2 size={16} strokeWidth={2.25} />
                           {/if}
                         </button>
                       </div>

@@ -484,6 +484,22 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
   });
 
   /**
+   * THE FLIP GRANTS WHOEVER MADE IT, as a creation does. The panel offers the allowlist only once
+   * the salon IS private, so the flip always arrives empty - and an empty private salon is one
+   * nobody can open, its maker included.
+   */
+  it('grants the actor, and announces to them, when a public salon is made private with no roster', async () => {
+    const { service, redis, channel } = makeService({ isPrivate: false, allowedUsers: [] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, []);
+
+    expect(channel.allowedUsers).toEqual([ADMIN]);
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([ADMIN]);
+  });
+
+  /**
    * THE MIRROR IMAGE, with no MLS consequence and a screen consequence all the same: the salon does
    * not exist for these people, and `channel.updated` maps over the rows a client already holds
    * without ever creating one.
