@@ -217,6 +217,20 @@
   /** An association's name, for the list of crossings. */
   const assoName = (id: string): string => content[id]?.name ?? id;
 
+  /**
+   * Associations placed on the poster whose roster is empty.
+   *
+   * They keep their place (user, D10) - an association with nobody registered on Canari is still an
+   * association of the school. The editor names them so their bureau can fill the roster in, since
+   * an empty blob and an empty directory line otherwise read as a broken render.
+   */
+  const memberlessNames = $derived(
+    positioned
+      .map((bubble) => content[bubble.assoId])
+      .filter((asso) => asso !== undefined && asso.members.length === 0)
+      .map((asso) => asso.name)
+  );
+
   // ── Scaled preview (poster renders at its natural A2 frame, scaled to fit the column width) ──
   let previewWidth = $state(0);
   let posterEl = $state<HTMLElement>();
@@ -619,6 +633,29 @@
 
       {#if error}
         <p class="text-sm text-red-500" role="alert">{error}</p>
+      {/if}
+
+      <!-- A background tab throttles the animation frames the capture runs on, and an export that
+           took minutes looked like a hung button. Say so while it runs. -->
+      {#if exporting}
+        <p class="text-text-muted text-sm">{m.carte_export_foreground_hint()}</p>
+      {/if}
+
+      <!-- Associations whose roster is empty. They stay on the poster (D10) - this is for their
+           bureau to act on, and an empty blob otherwise looks like a broken render. -->
+      {#if canEdit && memberlessNames.length > 0}
+        <div
+          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+        >
+          <TriangleAlert size={18} class="text-text-muted mt-0.5 shrink-0" />
+          <div class="min-w-0">
+            <p class="text-text-main text-sm font-bold">
+              {m.carte_no_members_title({ count: memberlessNames.length })}
+            </p>
+            <p class="text-text-muted mt-0.5 text-sm">{m.carte_no_members_body()}</p>
+            <p class="text-text-muted mt-1.5 text-sm">{memberlessNames.join(' - ')}</p>
+          </div>
+        </div>
       {/if}
 
       <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->

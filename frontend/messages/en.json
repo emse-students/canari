@@ -1426,6 +1426,18 @@
   "carte_overlaps_show": "Show them on the map",
   "carte_overlaps_hide": "Hide",
   "carte_overlaps_pair": "{a} and {b}",
+  "carte_export_foreground_hint": "Keep this tab in the foreground: in the background the browser throttles rendering and the export can take minutes.",
+  "carte_no_members_title": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} association with no members at all",
+        "countPlural=other": "{count} associations with no members at all"
+      }
+    }
+  ],
+  "carte_no_members_body": "They stay on the poster, with an empty blob and an empty directory line. Filling their roster in on Canari is their own bureau's to do.",
   "carte_directory_toggle": "Show directory",
   "carte_title_color_label": "Title color",
   "carte_zoom_in": "Zoom in",

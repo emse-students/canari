@@ -76,6 +76,39 @@ export function orderByFamilyName(members: PosterMemberRef[]): PosterMemberRef[]
   });
 }
 
+/**
+ * Roles that say nothing: being in the list already says the person is a member.
+ *
+ * Measured on the published map: "(Membre)" appeared ~100 times in 8,200 characters of directory,
+ * and the directory's font is fitted to its column - so every character it does not print is font
+ * size the names that matter get back.
+ */
+const GENERIC_ROLES = new Set(['membre', 'member', 'adherent', 'adherente']);
+
+/** Whether a role is one of those, ignoring case and accents. */
+function isGenericRole(role: string): boolean {
+  const plain = role
+    .normalize('NFD')
+    .replaceAll(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return GENERIC_ROLES.has(plain);
+}
+
+/**
+ * One association's roster, formatted exactly as the printed directory reads it.
+ *
+ * Lives here because the poster and the PUBLISHED document both print it and must print the same
+ * thing - it was written twice, and a change to one was a change only half the readers saw.
+ *
+ * Only a role that says something goes in parentheses (user, D5).
+ */
+export function directoryLine(asso: Pick<PosterBubble, 'members'>): string {
+  return orderByFamilyName(asso.members)
+    .map((mem) => (mem.role && !isGenericRole(mem.role) ? `${mem.name} (${mem.role})` : mem.name))
+    .join(' - ');
+}
+
 /** One association rendered as a colored blob unit on the poster. */
 export interface PosterBubble {
   assoId: string;

@@ -143,29 +143,24 @@ why a column, not a comparison of timestamps, is what it needs.
   (#1145), worst first, and outlined on demand. Nothing is moved. D4 will enlarge small units, so
   the list is what reports the cost.
 
-**C - the PDF differs from the preview**
+**C - the PDF differs from the preview** - C1 merged (#1143), the other three in #1146.
 
-- **C1 - P2 - the vector text layer re-wraps every line itself.** `pdf.splitTextToSize` in
-  `src/lib/pdf/searchableRaster.ts` decides the breaks instead of the browser's. Seen: "Lounès
-  BRIAND--R / AVIDAT" broken mid-word on the Pist'on Fire card (whole on his Gala card), and "Jeanne
-  BOUSSONNIÈRE" set on one line with an empty line before her role. Fix: take the browser's line boxes
-  (`Range.getClientRects` per text node) and draw each line where it was measured. **Shared by the
-  agenda and the trombinoscope exports** - the fix is in the pipeline, and all three re-verify.
-- **C2 - P3 - photos and logos print at ~102 dpi on A0** (`rasterScale` 3 -> 4800 px). ~150 dpi
-  needs `rasterScale` ~4.5; D8 takes it; measure the cost anyway.
-- **C3 - P3 - a hidden tab exports in minutes, with nothing on screen saying why.**
-- **C4 - P2 - the directory can overflow in the PDF.** Its font fit runs in a `requestAnimationFrame`
-  inside an `$effect` of `PosterCanvas.svelte`, and the export does not wait for it: the first export
-  printed the UNFITTED 13 px base (17.8 pt), and MINO, Mines Space and Mines, Études et Projets fell
-  below the panel and off the page. The live DOM later fitted to 8 px (908 of 937 px). The export must
-  run the fit itself, synchronously, before capturing.
+- ~~**C1 - the vector text layer re-wraps every line itself**~~ - the exporter takes the browser's
+  own line boxes since #1143; shared by the agenda and trombinoscope exports, all three re-verified.
+- ~~**C2 - photos and logos print at ~102 dpi on A0**~~ - `RASTER_SCALE` 4.5 is 154 dpi (D8).
+  **OWED: the cost MEASURED** - time, memory and PDF size - on the dev pre-release, as D8 asks.
+- ~~**C3 - a hidden tab exports in minutes with nothing saying why**~~ - the editor says so while an
+  export runs.
+- ~~**C4 - the directory can overflow in the PDF**~~ - the fit is a function the exporter runs
+  itself before the capture, not an animation frame a hidden tab throttles. It printed the unfitted
+  13 px base and dropped MINO, Mines Space and Mines, Études et Projets off the page.
 
-**D - content**
+**D - content** - both in #1146.
 
-- **D-1 - P3 - the directory is noisy.** "(Membre)" appears ~100 times in 8,200 characters; the roster
-  prints at 11 pt on A0 once fitted. D5.
-- **D-2 - data, not code - EMSE Finance has no members on Canari**: an empty blob and an empty directory
-  line. For its bureau to fill in, or the editor to flag.
+- ~~**D-1 - the directory is noisy.**~~ "(Membre)" was printed ~100 times in 8,200 characters; only a
+  role that says something is printed now (D5), and the line is written ONCE rather than twice.
+- ~~**D-2 - EMSE Finance has no members on Canari**~~ - it keeps its place (D10) and the editor names
+  it. **OWED, and it is the USER's, not the code's: its bureau fills its roster in.**
 
 ### The order to build it in (D9, D11)
 
@@ -182,8 +177,9 @@ why a column, not a comparison of timestamps, is what it needs.
    ~82 px tall, so cards collide INSIDE the unit before they become readable. Either the crown
    radii grow with the text - the unit takes more room, and #1145's warning is what then reports the
    cost - or the floor is held only as far as the crown clears. **The user's call.**
-4. **C** - C4 (fit before capture), C2 at 150 dpi (D8), C3.
-5. **D** - the directory without "(Membre)" (D5), the no-member notice (D10).
+4. ~~**C** - C4 (fit before capture), C2 at 150 dpi (D8), C3~~ - #1146. **D8 still owes the cost
+   measured** on the dev pre-release: time, memory, PDF size.
+5. ~~**D** - the directory without "(Membre)" (D5), the no-member notice (D10)~~ - #1146.
 6. Pre-release on dev, an A0 export measured there, the user's look, then the stable (D11).
 
 ## Open defects, in severity order

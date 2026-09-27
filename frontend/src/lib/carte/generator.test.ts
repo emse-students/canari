@@ -1,5 +1,10 @@
 import { bureauCrownOffset } from './layout';
-import { buildPosterModel, orderByFamilyName, type PosterMemberRef } from './generator';
+import {
+  buildPosterModel,
+  directoryLine,
+  orderByFamilyName,
+  type PosterMemberRef,
+} from './generator';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
 
 /** The one association every test in this file groups its roster under. */
@@ -112,6 +117,34 @@ describe('carte generator', () => {
       ref('u5', 'Paul Van Dupont', 'Paul', 'Van Dupont'),
     ]);
     expect(ordered.map((mem) => mem.userId)).toEqual(['u2', 'u4', 'u1', 'u3', 'u5']);
+  });
+
+  describe('directoryLine - only a role that says something is printed', () => {
+    const ref = (userId: string, name: string, lastName: string, role = '') =>
+      ({ userId, name, firstName: null, lastName, role, isAdmin: false }) as PosterMemberRef;
+    const line = (members: PosterMemberRef[]) => directoryLine({ members });
+
+    it('keeps a real role in parentheses', () => {
+      expect(line([ref('u1', 'Zoe Bernard', 'Bernard', 'Presidente')])).toBe(
+        'Zoe Bernard (Presidente)'
+      );
+    });
+
+    // "(Membre)" appeared ~100 times in 8,200 characters of the published directory, and being in
+    // the list already says it.
+    it.each(['Membre', 'membre', 'Member', 'Adherent', 'Adhérente'])('drops "%s"', (role) => {
+      expect(line([ref('u1', 'Zoe Bernard', 'Bernard', role)])).toBe('Zoe Bernard');
+    });
+
+    it('reads by family name, whatever order the roster comes in', () => {
+      expect(line([ref('u1', 'Alice Martin', 'Martin'), ref('u2', 'Zoe Bernard', 'Bernard')])).toBe(
+        'Zoe Bernard - Alice Martin'
+      );
+    });
+
+    it('is empty for an association with nobody on it', () => {
+      expect(line([])).toBe('');
+    });
   });
 
   it('places the bureau crown according to the fixed angles', () => {

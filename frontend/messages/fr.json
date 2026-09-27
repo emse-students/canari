@@ -1451,6 +1451,18 @@
   "carte_overlaps_show": "Les montrer sur la carte",
   "carte_overlaps_hide": "Masquer",
   "carte_overlaps_pair": "{a} et {b}",
+  "carte_export_foreground_hint": "Gardez cet onglet au premier plan : en arrière-plan, le navigateur ralentit le rendu et l'export peut prendre plusieurs minutes.",
+  "carte_no_members_title": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} association sans aucun membre",
+        "countPlural=other": "{count} associations sans aucun membre"
+      }
+    }
+  ],
+  "carte_no_members_body": "Elles restent sur l'affiche, avec une bulle vide et une ligne d'annuaire vide. C'est à leur bureau de renseigner ses membres sur Canari.",
   "carte_directory_toggle": "Afficher l'annuaire",
   "carte_title_color_label": "Couleur du titre",
   "carte_zoom_in": "Zoomer",

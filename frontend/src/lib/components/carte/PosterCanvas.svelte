@@ -3,7 +3,7 @@
   import { getInitials } from '$lib/utils/avatar';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
   import type { CarteStyle } from '$lib/carte/theme';
-  import { orderByFamilyName } from '$lib/carte/generator';
+  import { directoryLine } from '$lib/carte/generator';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
     STAGE_WIDTH,
@@ -46,6 +46,11 @@
     type Decoration,
   } from '$lib/carte/layout';
   import { shapeRadius, logoShape } from '$lib/carte/shapes';
+  import {
+    fitDirectoryFont,
+    DIRECTORY_BODY_ATTR,
+    DIRECTORY_CONTENT_ATTR,
+  } from '$lib/carte/directoryFit';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -422,10 +427,11 @@
   let dirContentEl = $state<HTMLElement>();
 
   /**
-   * Shrinks the directory font until every member fits the fixed column (which would otherwise be
-   * clipped for a large roster). Sizes are applied imperatively (not via reactive state) so the
-   * measurement loop never re-triggers itself; item text is in em, so scaling the wrapper font-size
-   * scales the whole list. Re-runs when the roster or the directory visibility changes.
+   * Fits the directory to its column whenever the roster or the directory's visibility changes.
+   *
+   * The fit itself is in `carte/directoryFit.ts` because the EXPORT has to be able to run it too: a
+   * hidden tab throttles this rAF, and a PDF captured before it ran printed the unfitted list off
+   * the page.
    */
   $effect(() => {
     // Establish reactive deps.
@@ -434,16 +440,7 @@
     const body = dirBodyEl;
     const contentNode = dirContentEl;
     if (!visible || !body || !contentNode || zones.length === 0) return;
-    const raf = requestAnimationFrame(() => {
-      const avail = body.clientHeight;
-      let font = DIRECTORY_BASE_FONT;
-      contentNode.style.fontSize = `${font}px`;
-      // Step down until it fits or we hit a readable floor.
-      while (contentNode.scrollHeight > avail && font > DIRECTORY_BASE_FONT * 0.5) {
-        font -= 0.5;
-        contentNode.style.fontSize = `${font}px`;
-      }
-    });
+    const raf = requestAnimationFrame(() => fitDirectoryFont(body, contentNode));
     return () => cancelAnimationFrame(raf);
   });
 </script>
@@ -851,9 +848,14 @@
         {m.carte_directory_heading()}
       </h2>
       <!-- Fixed-height, clipped body: the effect above shrinks the font here until every name fits. -->
-      <div bind:this={dirBodyEl} style="flex:1 1 auto;min-height:0;overflow:hidden;">
+      <div
+        bind:this={dirBodyEl}
+        {...{ [DIRECTORY_BODY_ATTR]: '' }}
+        style="flex:1 1 auto;min-height:0;overflow:hidden;"
+      >
         <div
           bind:this={dirContentEl}
+          {...{ [DIRECTORY_CONTENT_ATTR]: '' }}
           style="columns:{DIRECTORY_COLUMNS};column-gap:{DIRECTORY_COLUMN_GAP}px;font-size:{DIRECTORY_BASE_FONT}px;"
         >
           {#each model.zones as zone (zone.categoryId ?? 'none')}
@@ -892,11 +894,7 @@
                       style:line-height="1.35"
                       style:color={theme.directoryMutedColor}
                     >
-                      {orderByFamilyName(asso.members)
-                        .map((mem: PosterMemberRef) =>
-                          mem.role ? `${mem.name} (${mem.role})` : mem.name
-                        )
-                        .join(' - ')}
+                      {directoryLine(asso)}
                     </p>
                   {/if}
                 </div>
