@@ -1414,8 +1414,8 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
    - MiGallery's two remaining blurs (dialog backdrop, drop overlay) STAY.
    - MiConnect's "Élève" label is WRITTEN ([authentik](infrastructure/authentik.md)).
    - Le Cercle: the two misspelled menu rows are renamed in production ("Cocktail passion",
-     "Cocktail soft"; the purchase ledger keeps its history as written); the Accueil shortcuts go
-     and menu categories arrive, in the MR that follows.
+     "Cocktail soft"; the purchase ledger keeps its history as written); the Accueil shortcuts are gone
+     and menu categories arrived (MR !23, schema 3); nothing is classified yet, the managers do that.
    - Sky's history is REWRITTEN: four SQLite files gone from every commit
      ([Sky deployment](https://github.com/emse-students/Sky/blob/main/docs/wiki/deployment.md)).
      **Owed: the user sends GitHub Support the `refs/pull/*` garbage-collection request.**
