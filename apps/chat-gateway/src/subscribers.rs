@@ -250,6 +250,15 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
                                         }
                                     });
                                 }
+                            } else if !found && is_control {
+                                // A CONTROL FRAME HAS NO QUEUE ROW, so the sentence below would be
+                                // false for it: nothing waits in the DB for a reconnect. Seen on a
+                                // device revocation signalled to a device already gone (NOTIF-20,
+                                // 2026-09-27), which is the frame working, not a loss.
+                                tracing::info!(
+                                    "[PubSub] {} not connected to this gateway - control frame not delivered (it has no queue row; the device reads its state on reconnect).",
+                                    key
+                                );
                             } else if !found {
                                 tracing::info!(
                                     "[PubSub] {} not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId={}).",

@@ -146,8 +146,9 @@ const BENIGN_CASES = [
   `${NEST}[InternalController] [INTERNAL_MLS_DEVICES] user=aaaaaaaa count=1`,
   `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a] No push token for user=a device=web-a-b`,
   // The per-device half of the same fan-out, which `comm14.mjs` reads as its instrument.
-  `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] sent user=aaaaaaaaaaaaaaaa device=tauri-aaaa-b-c`,
+  `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] sent user=aaaaaaaaaaaaaaaa device=tauri-aaaa-b-c platform=android inline=true bytes=1204`,
   `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] No token for user=aaaaaaaaaaaaaaaa`,
+  `${NEST}[ChannelService] [CHANNEL_PUSH] channel=00000000-0000-4000-8000-000000000001 message=00000000-0000-4000-8000-000000000002 recipients=2 seedFrame=392ch`,
   `${NEST}[AuthSessionsService] Swept 4 expired session(s)`,
   `${NEST}[MinesweeperService] minesweeper challenge started user=a id=b`,
   `${NEST}[PublicController] public getPublishedCarte`,
@@ -832,6 +833,32 @@ check(
   matches(
     NOTABLE_RULES,
     '[Nest] 1 - LOG [InvitationsController] [DEVICE_MEMBERSHIPS] user=abc device=web-abc count=5 stranded=3 statuses=g1:active'
+  ),
+  false
+);
+
+// ── the scratch browser's previous device being deleted before a re-enrolment (NOTIF-20) ─────────
+check(
+  'a device deletion is reported',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
+  ),
+  true
+);
+check(
+  'its control signal reaching an absent device is reported',
+  matches(
+    NOTABLE_RULES,
+    '2026-09-27T20:44:24Z  INFO chat_gateway::subscribers: [PubSub] abc:web-abc not connected to this gateway - control frame not delivered (it has no queue row; the device reads its state on reconnect).'
+  ),
+  true
+);
+check(
+  'the MLS spelling of an offline recipient is NOT forgiven by that rule',
+  matches(
+    NOTABLE_RULES,
+    '2026-09-27T20:44:24Z  INFO chat_gateway::subscribers: [PubSub] abc:web-abc not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId=).'
   ),
   false
 );

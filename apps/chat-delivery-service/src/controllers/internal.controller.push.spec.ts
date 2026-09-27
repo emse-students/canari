@@ -119,9 +119,79 @@ describe('InternalController - POST internal/push/notify', () => {
     expect(msg.apns.headers['apns-push-type']).toBe('alert');
     expect(msg.apns.payload.aps['mutable-content']).toBe(1);
     expect(msg.apns.payload.aps['thread-id']).toBe('channel_chan-42');
-    // The data map still reaches Android unchanged.
-    expect(msg.data.type).toBe('channel');
-    expect(msg.data.mentioned).toBe('true');
+    // The APNs payload is self-contained: the extension reads the fields from it, and the data
+    // map an iPhone never reads is not sent to it - that duplication is what FCM sized as one.
+    expect(msg.apns.payload).toMatchObject({ type: 'channel', mentioned: 'true' });
+    expect(msg.data).toBeUndefined();
+  });
+
+  it('sends an Android token the data map alone, title and body included', async () => {
+    pushTokenRepo.find.mockResolvedValue([
+      { id: 2, userId: 'u1', deviceId: 'pixel', token: 'tok-android', platform: 'android' },
+    ]);
+
+    await controller.notifyUser(SECRET, {
+      userId: 'u1',
+      title: 'general',
+      body: '',
+      data: { type: 'channel', channelId: 'chan-42' },
+    });
+
+    const msg = fcmSend.mock.calls[0][0] as { data: Record<string, string>; apns?: unknown };
+    expect(msg.data).toMatchObject({ type: 'channel', channelId: 'chan-42', title: 'general' });
+    expect(msg.apns).toBeUndefined();
+  });
+
+  describe('the inline group - a salon message and the seed frame that opens it', () => {
+    const inline = { ciphertext: 'Y2lwaGVy', seedFrame: 'ZnJhbWU=', seedGroupId: 'dist-group' };
+    const tokens = [
+      { id: 1, userId: 'u1', deviceId: 'iphone', token: 'tok-ios', platform: 'ios' },
+      { id: 2, userId: 'u1', deviceId: 'pixel', token: 'tok-android', platform: 'android' },
+    ];
+    const payloadOf = (i: number): Record<string, unknown> => {
+      const msg = fcmSend.mock.calls[i][0] as {
+        data?: Record<string, string>;
+        apns?: { payload: Record<string, unknown> };
+      };
+      return msg.apns ? msg.apns.payload : (msg.data ?? {});
+    };
+
+    it('rides whole on both platforms when it fits', async () => {
+      pushTokenRepo.find.mockResolvedValue(tokens);
+
+      await controller.notifyUser(SECRET, {
+        userId: 'u1',
+        title: 'general',
+        body: '',
+        data: { type: 'channel', channelId: 'chan-42' },
+        inline,
+      });
+
+      expect(fcmSend).toHaveBeenCalledTimes(2);
+      for (const i of [0, 1]) expect(payloadOf(i)).toMatchObject(inline);
+    });
+
+    it('rides not at all when the whole of it does not fit - never one field without the other', async () => {
+      pushTokenRepo.find.mockResolvedValue(tokens);
+
+      await controller.notifyUser(SECRET, {
+        userId: 'u1',
+        title: 'general',
+        body: '',
+        data: { type: 'channel', channelId: 'chan-42' },
+        // The ciphertext alone would fit; with the frame it does not. A frame without its message
+        // opens nothing, and a message without its frame is the race section 19 removes.
+        inline: { ...inline, ciphertext: 'A'.repeat(3700), seedFrame: 'B'.repeat(420) },
+      });
+
+      for (const i of [0, 1]) {
+        const payload = payloadOf(i);
+        expect(payload.channelId).toBe('chan-42');
+        expect(payload.ciphertext).toBeUndefined();
+        expect(payload.seedFrame).toBeUndefined();
+        expect(payload.seedGroupId).toBeUndefined();
+      }
+    });
   });
 
   it('carries an apns background block for a silent channel_read frame', async () => {

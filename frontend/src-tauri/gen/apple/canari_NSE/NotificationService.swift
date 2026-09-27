@@ -552,6 +552,14 @@ class NotificationService: UNNotificationServiceExtension {
   private func decryptProto(
     ctx: PushContext, groupId: String, protoB64: String, state: Data
   ) -> DecryptResult? {
+    Self.parseDecrypted(decryptProtoJson(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state))
+  }
+
+  /// The raw JSON of a direct decrypt - a message, or a refusal carrying its `reason` - or nil
+  /// when nothing could be attempted. Split out for the seed frame, whose answer is a refusal.
+  private func decryptProtoJson(
+    ctx: PushContext, groupId: String, protoB64: String, state: Data
+  ) -> String? {
     guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let cipher = Data(base64Encoded: protoB64, options: .ignoreUnknownCharacters),
       !cipher.isEmpty
@@ -568,7 +576,7 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
-    return Self.parseDecrypted(json)
+    return json
   }
 
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
@@ -576,6 +584,11 @@ class NotificationService: UNNotificationServiceExtension {
   private func decryptWithCommitCatchup(
     ctx: PushContext, groupId: String, protoB64: String
   ) -> DecryptResult? {
+    Self.parseDecrypted(catchupJson(ctx: ctx, groupId: groupId, protoB64: protoB64))
+  }
+
+  /// The raw JSON of a commit catch-up, as `decryptProtoJson` is to a direct decrypt.
+  private func catchupJson(ctx: PushContext, groupId: String, protoB64: String) -> String? {
     guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let state = loadMlsState() else { return nil }
 
@@ -611,7 +624,7 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
-    return Self.parseDecrypted(json)
+    return json
   }
 
   /// Whether the group exists in the persisted MLS state - or whether that could not be
@@ -849,9 +862,21 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var body: String?
-    if !ciphertext.isEmpty, !nonce.isEmpty, let index = messageIndex,
-      let seedB64 = lookupGraineSeed(channelId: channelId, sessionId: sessionId)
-    {
+    let openable = !ciphertext.isEmpty && !nonce.isEmpty && messageIndex != nil
+    // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption section 19). The
+    // extension has no second chance at a banner - nothing redraws it once `finish()` runs - and a
+    // seed that only arrives on its own silent push does not even wake the extension. The frame is
+    // how this banner gets one.
+    var seedB64 = openable ? lookupGraineSeed(channelId: channelId, sessionId: sessionId) : nil
+    var seedSource = "mirror"
+    if openable, seedB64 == nil {
+      seedB64 = openSeedFrame(userInfo: userInfo, channelId: channelId, sessionId: sessionId)
+      seedSource = "frame"
+    }
+    if seedB64 != nil {
+      NSLog("[CanariNSE] handleChannelMessage: seed source=\(seedSource) channel=\(channelId) session=\(sessionId)")
+    }
+    if openable, let index = messageIndex, let seedB64 = seedB64 {
       if let raw = canari_native_decrypt_graine_message(seedB64, sessionId, index, nonce, ciphertext)
       {
         let json = String(cString: raw)
@@ -896,6 +921,79 @@ class NotificationService: UNNotificationServiceExtension {
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
+  }
+
+  /// Opens the seed frame a salon push carries and returns the seed of THIS message's session, or nil.
+  ///
+  /// The frame is the MLS message the sender distributed the seed with on the salon's key group, so
+  /// it is decrypted as that push would be - read-only, against the persisted state, through the
+  /// commit catch-up when the key group is behind (a member joined while the phone was shut, which is
+  /// what rotated the session). A key group this device does not hold is SAID and not waited on: it
+  /// is not a join in flight, and the extension's budget is seconds. What the frame yields goes
+  /// through the one writer (`canari_native_store_graine_seeds`), and the answer is read back from
+  /// the MIRROR - a frame for another session opens nothing for this message.
+  /// Android twin: `CanariFirebaseMessagingService.openSeedFrame`.
+  private func openSeedFrame(userInfo: [AnyHashable: Any], channelId: String, sessionId: String) -> String? {
+    guard let frame = Self.nonEmpty(Self.string(userInfo["seedFrame"])),
+      let groupId = Self.nonEmpty(Self.string(userInfo["seedGroupId"]))
+    else {
+      NSLog("[CanariNSE] openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=\(channelId)")
+      return nil
+    }
+    guard let ctx = loadPushContext(), let state = loadMlsState(), let dir = Self.appGroupDir() else {
+      NSLog("[CanariNSE] openSeedFrame: push context, MLS state or App Group unavailable group=\(groupId.prefix(8))")
+      return nil
+    }
+    var json = decryptProtoJson(ctx: ctx, groupId: groupId, protoB64: frame, state: state)
+    if Self.refusalReason(json) == "mls-refused" {
+      switch groupLocality(groupId: groupId, ctx: ctx) {
+      case .local:
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
+        json = catchupJson(ctx: ctx, groupId: groupId, protoB64: frame) ?? json
+      case .absent:
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; no join to wait for")
+      case .unknown:
+        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
+      }
+    }
+    guard let seedsJson = Self.keyMaterialSeeds(json) else {
+      NSLog("[CanariNSE] openSeedFrame: frame did not yield key material reason=\(Self.refusalReason(json) ?? "none") group=\(groupId.prefix(8)) channel=\(channelId)")
+      return nil
+    }
+    let stored = canari_native_store_graine_seeds(dir.path, seedsJson)
+    // How many were handed over, so a writer that kept fewer SAYS so: the native side's own
+    // reasons go to no logger in the extension. Android twin: `absorbGraineSeeds`.
+    let offered = (try? JSONSerialization.jsonObject(with: Data(seedsJson.utf8)) as? [Any])?.count ?? -1
+    if offered > 0 && stored < offered {
+      NSLog("[CanariNSE] openSeedFrame: ERROR the native writer kept \(stored) of \(offered) seed(s) group=\(groupId.prefix(8))")
+    } else {
+      NSLog("[CanariNSE] openSeedFrame: stored \(stored) seed(s) group=\(groupId.prefix(8))")
+    }
+    let seed = lookupGraineSeed(channelId: channelId, sessionId: sessionId)
+    if seed == nil {
+      NSLog("[CanariNSE] openSeedFrame: the frame opened and holds no seed for this message's session group=\(groupId.prefix(8)) channel=\(channelId) session=\(sessionId)")
+    }
+    return seed
+  }
+
+  /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
+  private static func refusalReason(_ json: String?) -> String? {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      (dict["ok"] as? Bool) != true
+    else { return nil }
+    return dict["reason"] as? String
+  }
+
+  /// The `seeds` array of a `graine-key-material` answer, re-serialised for the native writer.
+  private static func keyMaterialSeeds(_ json: String?) -> String? {
+    guard refusalReason(json) == "graine-key-material",
+      let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let seeds = dict["seeds"] as? [Any],
+      let out = try? JSONSerialization.data(withJSONObject: seeds)
+    else { return nil }
+    return String(data: out, encoding: .utf8)
   }
 
   /// Looks up a Graine session's raw base64 seed in the mirrored graine_seeds.json.

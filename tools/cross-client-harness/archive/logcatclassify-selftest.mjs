@@ -51,6 +51,16 @@ const CASES = [
   // The held banner's redraw is the second half of the two-push pair below, so `notable` like it.
   [line('I', 'CanariFCM', 'drainPendingChannelFrames: 1 banner(s) waiting on this key material -> redrawing'), 'notable'],
   [line('D', 'CanariFCM', 'absorbGraineSeeds: stored 1 seed(s) group=2513c207'), 'explained'],
+  // ── the seed the message carries (channel-encryption section 19) ─────────────────────────────
+  [line('I', 'CanariFCM', 'handleChannelMessage: seed source=frame channel=c0ffee00 session=sess-1 index=0'), 'explained'],
+  [line('I', 'CanariFCM', 'handleChannelMessage: seed source=mirror channel=c0ffee00 session=sess-1 index=3'), 'explained'],
+  [line('W', 'CanariFCM', 'openSeedFrame: seed frame refused group=2513c207 locality=LOCAL -> commit catch-up'), 'notable'], // explained, and reported: it carries `refused`
+  // NOTIF-20's first RED, as the line that now says it: the writer's lock failed on Android and
+  // every seed was dropped, reported only as `stored 0` at debug level.
+  [line('E', 'CanariFCM', 'absorbGraineSeeds: the native writer kept 0 of 1 seed(s) group=2513c207 - the rest never reached the mirror'), 'errors'],
+  // Every other shape of the frame path is a defect on a rig whose clients are all current.
+  [line('W', 'CanariFCM', "openSeedFrame: seed frame refused group=2513c207 locality=ABSENT -> this device is not in the salon's key group; no join to wait for"), 'notable'],
+  [line('E', 'CanariFCM', "openSeedFrame: the frame opened and holds no seed for this message's session group=2513c207 channel=c0ffee00 session=sess-1"), 'errors'],
   [line('D', 'CanariFCM', 'handleChannelMessage: notification title=Venue - #salon body=Nouveau message mentionsMe=false'), 'explained'],
   // BOTH HALVES OF THE TWO-PUSH SEQUENCE ARE `notable`, NOT `explained`, AND THE PAIR IS THE POINT.
   // A generic banner is the undecrypted state; it is legitimate only because the seed arrives on a

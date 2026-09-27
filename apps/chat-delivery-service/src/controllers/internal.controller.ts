@@ -115,6 +115,10 @@ export class InternalController {
    * notified Android correctly and the endpoint reported `sent`.
    *
    * Two copies of a send are two contracts, and only one of them was maintained.
+   *
+   * `inline` is the group of fields that ride together or not at all (a salon message's ciphertext
+   * and its seed frame), sized per device by `sendPushToUser`. A caller that sends none keeps
+   * sending everything in `data`, exactly as before.
    */
   @Post('push/notify')
   async notifyUser(
@@ -125,11 +129,12 @@ export class InternalController {
       title: string;
       body: string;
       data?: Record<string, string>;
+      inline?: Record<string, string>;
     }
   ) {
     this.assertInternalSecret(headerSecret);
 
-    const { userId, title, body: notifBody, data = {} } = body;
+    const { userId, title, body: notifBody, data = {}, inline = {} } = body;
     if (!userId || !title) {
       this.logger.warn(
         `[INTERNAL_PUSH] refused: userId=${userId ? 'set' : 'missing'} title=${title ? 'set' : 'missing'}`
@@ -137,7 +142,13 @@ export class InternalController {
       return { sent: 0, failed: 0 };
     }
 
-    const result = await this.messagingService.sendPushToUser(userId, title, notifBody, data);
+    const result = await this.messagingService.sendPushToUser(
+      userId,
+      title,
+      notifBody,
+      data,
+      inline
+    );
     this.logger.log(
       `[INTERNAL_PUSH] type=${data.type ?? 'none'} user=${userId} sent=${result.sent} failed=${result.failed}`
     );

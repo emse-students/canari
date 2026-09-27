@@ -1,9 +1,9 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
-import type { StoredGraineSession } from '$lib/db/types';
+import type { GraineDistributionFrame, StoredGraineSession } from '$lib/db/types';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { encodeAppMessage, mkGraine } from '$lib/proto/codec';
-import { fromBase64 } from '$lib/utils/hex';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
@@ -60,12 +60,16 @@ export function distributionEpochFor(
  * Throws rather than reporting a boolean: the caller mints a session and distributes it before
  * persisting anything, so a failure here has to unwind that, and a false would have to be turned
  * back into a throw by every caller anyway.
+ *
+ * **Returns the frame it posted**, which the session keeps and every message sealed under it
+ * carries - so a phone opens the seed from the message's own push instead of racing a second one
+ * (channel-encryption section 19). It is the exact ciphertext the key group's members receive.
  */
 export async function distributeGraineSeed(
   mlsService: IMlsService,
   scope: DistributionScope,
   session: StoredGraineSession
-): Promise<void> {
+): Promise<GraineDistributionFrame> {
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
@@ -79,5 +83,6 @@ export async function distributeGraineSeed(
     }),
     sentAt: session.createdAt,
   });
-  await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.keyMaterial);
+  const sealed = await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.keyMaterial);
+  return { groupId, protoB64: toBase64(sealed) };
 }

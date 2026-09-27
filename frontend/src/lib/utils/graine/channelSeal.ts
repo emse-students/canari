@@ -31,6 +31,13 @@ export interface SealedChannelMessage {
   nonce: string;
   senderSessionId: string;
   messageIndex: number;
+  /**
+   * The frame that distributed this session's seed, and the key group it was sealed on - on EVERY
+   * message, not the first: a push can be withheld (a salon set to mentions), so the first message a
+   * phone RECEIVES under a session is not always the first one sent (channel-encryption section 19).
+   */
+  seedFrame: string;
+  seedGroupId: string;
 }
 
 /** The three fields opening a message needs, exactly as the server hands them back. */
@@ -135,6 +142,15 @@ export async function sealChannelMessage(
     await mirrorGraineSeed(slot.session);
   }
 
+  // GUARANTEED BY THE ROTATION, NOT HOPED FOR: `shouldRotateGraineSession` mints a new session for
+  // any that lacks a frame, so reaching here without one is a broken invariant and says so.
+  const frame = slot.session.distributionFrame;
+  if (!frame) {
+    throw new Error(
+      `[GRAINE] session ${slot.session.sessionId} reached the seal with no distribution frame`
+    );
+  }
+
   const sealed = await sealWithGraine(
     fromBase64(slot.session.seedB64),
     slot.session.sessionId,
@@ -146,6 +162,8 @@ export async function sealChannelMessage(
     nonce: sealed.nonce,
     senderSessionId: slot.session.sessionId,
     messageIndex: slot.index,
+    seedFrame: frame.protoB64,
+    seedGroupId: frame.groupId,
   };
 }
 

@@ -63,3 +63,10 @@ tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
 jni = { version = "0.21", default-features = false }
 log = "0.4"
 
+
+# `flock` for the Graine seed mirror (`commands::push::with_graine_mirror`). std's `File::lock`
+# returns `Unsupported` on Android - its target is not in std's list - and every seed write failed
+# silently in a killed app (NOTIF-20, 2026-09-27). Already in the tree through Tauri; named here
+# because this crate now calls it directly.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

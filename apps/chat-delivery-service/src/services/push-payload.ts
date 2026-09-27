@@ -405,3 +405,85 @@ export function buildInternalApnsRequest(
     priority: 10,
   };
 }
+
+/** One platform's half of an internal push, and whether the inline group made it in. */
+export interface InternalPushHalf<T> {
+  /** What is handed to FCM for this platform: the Android `data` map, or the APNs request. */
+  payload: T;
+  /** True when every field of the inline group rides in `payload`; false when none does. */
+  inlined: boolean;
+  /** Bytes of `payload` as its transport counts them, for the `[PUSH_SIZE]` evidence. */
+  bytes: number;
+}
+
+/**
+ * Adds a caller's INLINE GROUP to one platform's payload when ALL of it fits, and none of it
+ * otherwise.
+ *
+ * **ALL OR NOTHING, BECAUSE THE FIELDS ARE ONLY USEFUL TOGETHER.** A salon push inlines the
+ * message ciphertext AND the seed frame that opens it (channel-encryption section 19): a frame
+ * without its message opens nothing, and dropping one field of a group to make the rest fit would
+ * make "which half arrived" a question every device has to answer. Absent, the device fetches the
+ * message and draws the fallback, which is what an oversized ciphertext has always done.
+ *
+ * **SIZED PER PLATFORM, ON WHAT THAT PLATFORM IS SENT.** The fixed `ciphertext <= 3000` this
+ * replaces was a guess about the rest of the payload; the payload is right here, so it is measured
+ * - FCM counting keys and values of the data map, APNs the JSON of its request.
+ *
+ * @param build  - Builds the platform's payload from a flat data map.
+ * @param measure - Its size as the transport counts it.
+ * @param limit  - That transport's budget.
+ * @param data   - The fields every push carries.
+ * @param inline - The group inlined together or not at all; empty means there is none.
+ */
+export function withInlineGroup<T>(
+  build: (fields: Record<string, string>) => T,
+  measure: (payload: T) => number,
+  limit: number,
+  data: Record<string, string>,
+  inline: Record<string, string>
+): InternalPushHalf<T> {
+  if (Object.keys(inline).length > 0) {
+    const full = build({ ...data, ...inline });
+    const fullBytes = measure(full);
+    if (fullBytes <= limit) return { payload: full, inlined: true, bytes: fullBytes };
+  }
+  const bare = build(data);
+  return { payload: bare, inlined: false, bytes: measure(bare) };
+}
+
+/**
+ * The Android half of an internal push: the data map the service reads, with the title and body
+ * the Kotlin side draws before it decrypts anything.
+ */
+export function buildInternalAndroidHalf(
+  title: string,
+  body: string,
+  data: Record<string, string>,
+  inline: Record<string, string>
+): InternalPushHalf<Record<string, string>> {
+  return withInlineGroup(
+    (fields) => ({ ...fields, title, body }),
+    measureDataFields,
+    FCM_DATA_LIMIT,
+    data,
+    inline
+  );
+}
+
+/** The iOS half of an internal push: the APNs request for one device's language. */
+export function buildInternalApnsHalf(
+  title: string,
+  body: string,
+  data: Record<string, string>,
+  inline: Record<string, string>,
+  locale?: string | null
+): InternalPushHalf<ApnsRequest> {
+  return withInlineGroup(
+    (fields) => buildInternalApnsRequest(title, body, fields, locale),
+    (request) => measureApnsPayload(request.payload),
+    APNS_PAYLOAD_LIMIT,
+    data,
+    inline
+  );
+}

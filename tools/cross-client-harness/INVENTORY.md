@@ -98,7 +98,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-75 scripts.
+77 scripts.
 
 | script | what it is |
 |---|---|
@@ -165,6 +165,8 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/notif17b.mjs` | NOTIF-17b - a first message into a conversation this device has NO RECORD OF, arriving as a PUSH. |
 | `archive/notif18.mjs` | NOTIF-18 - a salon message sealed under a Graine session MINTED WHILE THE PHONE WAS DEAD. |
 | `archive/notif19.mjs` | NOTIF-19 - a salon message whose seed was sealed ONE COMMIT AHEAD of a dead phone. |
+| `archive/notif2.mjs` | NOTIF-2 - a DM message sealed ONE COMMIT AHEAD of a dead phone: NOTIF-19's exact twin, on a DM. |
+| `archive/notif20.mjs` | NOTIF-20 - the seed travels with the message: a dead phone draws a salon message in clear on the |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
@@ -268,4 +270,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-207 scripts in total.
+209 scripts in total.

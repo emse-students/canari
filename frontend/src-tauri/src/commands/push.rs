@@ -299,6 +299,116 @@ pub(crate) fn read_outbox_mirror(app: tauri::AppHandle) -> Vec<serde_json::Value
     entries
 }
 
+/// An exclusive OS lock on `file`, held until it is closed.
+///
+/// `flock` directly on every Unix, NOT `File::lock`: std implements that for Linux and the Apple
+/// targets but returns `Unsupported` on Android, whose target is not in its list. It shipped that
+/// way for one run - every seed write in a killed app failed, `stored 0 seed(s)` on a frame that
+/// carried one, and the Rust error went to no logger (NOTIF-20 RED, 2026-09-27). Windows keeps
+/// std's, which is implemented there and is what a host `cargo test` runs.
+#[cfg(unix)]
+fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: the descriptor is owned by `file`, which outlives the call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    file.lock()
+}
+
+/// Reads the seed mirror, hands its map to `edit`, and writes it back when `edit` says it changed.
+///
+/// **THE ONE WAY THIS FILE IS WRITTEN, AND IT IS SERIALISED ACROSS PROCESSES.** Several writers
+/// share the file and nothing ordered them: the foreground command, the MLS push lane absorbing a
+/// seed push, and - since channel-encryption section 19 - the salon push opening the seed frame a
+/// message carries, often for the SAME seed within the same second. On iOS the notification
+/// extension is another PROCESS. Each read the map, added its session and wrote the whole file
+/// back, so the later of two overlapping writers erased the earlier one's seed: a banner that
+/// decrypted, and a later one of the same session that did not.
+///
+/// So every edit holds an exclusive lock on `graine_seeds.lock` (`lock_exclusive`, an OS file lock:
+/// it orders threads and processes alike, and the OS releases it if the holder dies), and writes
+/// through a temporary file renamed over the old one: `fs::write` truncates in place, and a
+/// reader - `lookupGraineSeed` on either platform - could open a half-written file and read a
+/// present seed as absent. An absent or unparsable file reads as an empty map, as it always has.
+///
+/// `edit` returns its result and whether the map changed; nothing is written when it did not.
+fn with_graine_mirror<R>(
+    data_dir: &std::path::Path,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(R, bool), String>,
+) -> Result<R, String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(data_dir.join("graine_seeds.lock"))
+        .map_err(|e| format!("open graine_seeds.lock: {e}"))?;
+    // Released when `lock` is dropped at the end of this function, on every return path.
+    lock_exclusive(&lock).map_err(|e| format!("lock graine_seeds.lock: {e}"))?;
+    let path = data_dir.join("graine_seeds.json");
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|e| {
+            log::warn!("[GRAINE_MIRROR] mirror unparsable, rebuilt from empty: {e}");
+            serde_json::json!({})
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+    let map = root
+        .as_object_mut()
+        .ok_or("graine_seeds.json is not an object")?;
+    let (result, changed) = edit(map)?;
+    if changed {
+        let tmp = data_dir.join("graine_seeds.json.tmp");
+        std::fs::write(&tmp, root.to_string()).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    }
+    Ok(result)
+}
+
+/// Writes the seeds a background decrypt found in a key-material frame - the `seeds` array of a
+/// `graine-key-material` refusal - into the mirror, and says how many it kept.
+///
+/// ONE IMPLEMENTATION FOR BOTH PUSH PATHS: the Android JNI (`nativeStoreGraineSeeds`) and the iOS
+/// extension (`canari_native_store_graine_seeds`) hand it the same JSON, so the per-seed skip and
+/// the count cannot drift between the platforms.
+///
+/// Returns -1 when the payload is not a JSON array at all, which is a different fact from "zero
+/// seeds were usable" and must not read as the same one.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) -> i32 {
+    let Ok(seeds) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
+        log::error!("[GRAINE_PUSH] seeds payload is not a JSON array");
+        return -1;
+    };
+
+    let mut stored = 0i32;
+    for seed in &seeds {
+        let channel_id = seed["channelId"].as_str().unwrap_or_default();
+        let session_id = seed["sessionId"].as_str().unwrap_or_default();
+        let seed_b64 = seed["seedB64"].as_str().unwrap_or_default();
+        let created_at = seed["createdAt"].as_i64().unwrap_or(0);
+        if channel_id.is_empty() || session_id.is_empty() || seed_b64.is_empty() {
+            log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
+            continue;
+        }
+        // PER SEED, so a bundle does not lose its tail to its first bad entry.
+        match merge_graine_seed(data_dir, channel_id, session_id, seed_b64, created_at) {
+            Ok(_) => stored += 1,
+            Err(e) => log::error!("[GRAINE_PUSH] merge failed for session {session_id}: {e}"),
+        }
+    }
+    log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
+    stored
+}
+
 /// How many Graine sessions per channel the mirror keeps. Mirrors
 /// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
 const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
@@ -345,32 +455,19 @@ pub(crate) fn merge_graine_seed(
     seed_b64: &str,
     created_at: i64,
 ) -> Result<usize, String> {
-    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    let path = data_dir.join("graine_seeds.json");
-
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
-    };
-
-    let map = root
-        .as_object_mut()
-        .ok_or("graine_seeds.json is not an object")?;
-    let channel_entry = map
-        .entry(channel_id.to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    let sessions = channel_entry
-        .as_object_mut()
-        .ok_or("channel entry is not an object")?;
-    sessions.insert(
-        session_id.to_string(),
-        serde_json::json!({ "seed": seed_b64, "createdAt": created_at }),
-    );
-
-    let dropped = prune_graine_sessions(sessions);
-
-    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
+    let dropped = with_graine_mirror(data_dir, |map| {
+        let channel_entry = map
+            .entry(channel_id.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        let sessions = channel_entry
+            .as_object_mut()
+            .ok_or("channel entry is not an object")?;
+        sessions.insert(
+            session_id.to_string(),
+            serde_json::json!({ "seed": seed_b64, "createdAt": created_at }),
+        );
+        Ok((prune_graine_sessions(sessions), true))
+    })?;
     log::debug!("[GRAINE_MIRROR] stored seed, dropped {dropped} older session(s)");
     Ok(dropped)
 }
@@ -417,23 +514,13 @@ pub(crate) fn forget_graine_channel(
     channel_id: String,
 ) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = data_dir.join("graine_seeds.json");
-
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
-    };
-
-    let map = root
-        .as_object_mut()
-        .ok_or("graine_seeds.json is not an object")?;
-    if map.remove(&channel_id).is_none() {
-        return Ok(());
+    let forgot = with_graine_mirror(&data_dir, |map| {
+        let forgot = map.remove(&channel_id).is_some();
+        Ok((forgot, forgot))
+    })?;
+    if forgot {
+        log::debug!("[GRAINE_MIRROR] forgot every seed of one channel");
     }
-
-    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
-    log::debug!("[GRAINE_MIRROR] forgot every seed of one channel");
     Ok(())
 }
 
@@ -458,26 +545,15 @@ pub(crate) fn forget_graine_sessions(
         return Ok(0);
     }
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = data_dir.join("graine_seeds.json");
-
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
-    };
-
-    let map = root
-        .as_object_mut()
-        .ok_or("graine_seeds.json is not an object")?;
-
-    let (removed, emptied) = remove_graine_sessions(map, &session_ids);
-    if removed == 0 && emptied == 0 {
-        return Ok(0);
+    let (removed, emptied) = with_graine_mirror(&data_dir, |map| {
+        let (removed, emptied) = remove_graine_sessions(map, &session_ids);
+        Ok(((removed, emptied), removed > 0 || emptied > 0))
+    })?;
+    if removed > 0 || emptied > 0 {
+        log::debug!(
+            "[GRAINE_MIRROR] forgot {removed} expired session(s), {emptied} channel(s) dropped"
+        );
     }
-    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
-    log::debug!(
-        "[GRAINE_MIRROR] forgot {removed} expired session(s), {emptied} channel(s) dropped"
-    );
     Ok(removed)
 }
 
@@ -791,8 +867,39 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
-        prune_graine_sessions, remove_graine_sessions, GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
+        merge_graine_seed, prune_graine_sessions, remove_graine_sessions,
+        GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
     };
+
+    /// Channel-encryption section 19: the MLS lane and the salon lane absorb seeds at the same
+    /// moment. Every writer read the whole map and wrote it back, so the later of two overlapping
+    /// writers erased the earlier one's session. Sixteen at once, each its own session: all stay.
+    #[test]
+    fn concurrent_merges_keep_every_seed() {
+        let dir = std::env::temp_dir().join(format!("graine-mirror-race-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let writers: Vec<_> = (0..16)
+            .map(|i| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    merge_graine_seed(&dir, "chan", &format!("s-{i}"), "c2VlZA==", i).unwrap();
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+
+        let root: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("graine_seeds.json")).unwrap())
+                .unwrap();
+        assert_eq!(root["chan"].as_object().unwrap().len(), 16);
+        // Nothing half-written was left beside it.
+        assert!(!dir.join("graine_seeds.json.tmp").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn seed(created_at: i64) -> serde_json::Value {
         serde_json::json!({ "seed": "c2VlZA==", "createdAt": created_at })

@@ -165,6 +165,14 @@ export interface SendChannelMessageDto {
   mentionedUserIds?: string[];
   /** True for a message that must never notify - a reaction. The server pushes nothing for it. */
   silent?: boolean;
+  /**
+   * The MLS frame that distributed this session's seed, and the key group it was sealed on. Both
+   * or neither. The server passes them into the push and stores neither; a phone opens the seed from
+   * the same push as the message (channel-encryption section 19). Absent on a silent message, which
+   * raises no push.
+   */
+  seedFrame?: string;
+  seedGroupId?: string;
 }
 
 /** Per-channel push notification level a member can set for themselves. */

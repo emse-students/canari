@@ -246,6 +246,22 @@ export interface StoredGraineSession {
    * SENDER makes, and another device's epoch view is not ours to judge.
    */
   distributionEpoch?: number;
+  /**
+   * The MLS frame that distributed this session's seed, exactly as it was posted - carried by EVERY
+   * message sealed under the session, so a phone opens the seed from the same push as the message
+   * (channel-encryption section 19). An MLS private message on the distribution group: nothing on
+   * the way can open it, which is why it may travel through social-service at all.
+   *
+   * Present only on a session this device MINTED, like `sentCount`. A minted session without one
+   * predates the field and is rotated ({@link shouldRotateGraineSession}).
+   */
+  distributionFrame?: GraineDistributionFrame;
+}
+
+/** A seed frame as a salon message carries it: the key group it was sealed on, and its bytes. */
+export interface GraineDistributionFrame {
+  groupId: string;
+  protoB64: string;
 }
 
 /**

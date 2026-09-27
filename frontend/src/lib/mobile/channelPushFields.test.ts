@@ -111,12 +111,28 @@ describe('channel push payload contract (social-service writer vs the three nati
     // there are no two announcements of one salon message to reconcile. When that changes, this
     // entry's own assertion fails before the drift does.
     createdAt: { readers: ['kotlin'] },
+    // The seed frame (channel-encryption section 19) is opened by the two paths that run with NO
+    // live engine - the killed-app Kotlin service and the iOS extension. The app-alive
+    // `canari_push.mm` path opens no MLS frame at all: it would be a second MLS reader of
+    // `mls.bin` beside the engine that owns it, and that engine already holds the seed from the
+    // key group over its own socket. `the exemptions still name a true fact` asserts that it
+    // still decrypts no MLS frame; the day it does, it owes this frame too.
+    seedFrame: { readers: ['kotlin', 'swift'] },
+    seedGroupId: { readers: ['kotlin', 'swift'] },
   };
 
   const literal = functionBody(fanOutBody, /const data: Record<string, string> = \{/, /\n {4}\};/);
   // `[:,]` so a shorthand property (`workspaceName,`) counts as a sent key exactly like an explicit
   // one - the wire cannot tell the two apart, and neither may this test.
-  const sentKeys = extractKeys(literal, /^\s{6}(\w+)[:,]/gm);
+  // THE INLINE GROUP travels apart from the shared literal: chat-delivery inlines all of it or none
+  // of it, per device (`withInlineGroup`), so its keys are read off the `inline` literal instead.
+  const inlineLiteral = functionBody(
+    fanOutBody,
+    /const inline: Record<string, string> = \{/,
+    /\n {4}\};/
+  );
+  const inlineKeys = extractKeys(inlineLiteral, /(\w+): input\.\w+/g);
+  const sentKeys = [...extractKeys(literal, /^\s{6}(\w+)[:,]/gm), ...inlineKeys].sort();
 
   it('the fan-out sends exactly the keys a client reads, and no more', () => {
     // Spelled out rather than derived: a field added here without a reader is the defect this
@@ -128,11 +144,14 @@ describe('channel push payload contract (social-service writer vs the three nati
       'createdAt',
       'messageIndex',
       'nonce',
+      'seedFrame',
+      'seedGroupId',
       'senderId',
       'senderSessionId',
       'type',
       'workspaceName',
     ]);
+    expect(inlineKeys).toEqual(['ciphertext', 'seedFrame', 'seedGroupId']);
     // `mentioned` is not in the shared literal: it is computed per recipient and spread in at the
     // send, which is the whole point - it is the only field whose value differs between recipients.
     expect(fanOutBody).toMatch(/mentioned:\s*mentioned\.has\(/);
@@ -175,6 +194,10 @@ describe('channel push payload contract (social-service writer vs the three nati
       expect(rust).toContain('pub(crate) fn notifier_message_natif(');
       expect(rust).toContain('#[cfg(target_os = "android")]');
       expect(rust).toContain('"notifyMessageFromWebSocket"');
+    }
+    // The seed frame is owed only by paths that open MLS frames; the app-alive one opens none.
+    if (PLATFORM_SPECIFIC.seedFrame) {
+      expect(objcHandler).not.toMatch(/canari_native_decrypt_message/);
     }
   });
 

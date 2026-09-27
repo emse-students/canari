@@ -21,6 +21,8 @@ import {
 
 const NOW = 1_700_000_000_000;
 const SCOPE = { workspaceId: 'ws-1', channelId: 'chan-1', senderId: 'alice' };
+/** What `distribute` answers: the frame it posted, which the session keeps (section 19). */
+const FRAME = { groupId: 'dist-group', protoB64: 'ZnJhbWU=' };
 
 /** An in-memory `IStorage` holding only what the manager touches, newest-first like the real ones. */
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -51,6 +53,7 @@ function session(overrides: Partial<StoredGraineSession> = {}): StoredGraineSess
     createdAt: NOW,
     sentCount: 0,
     distributionEpoch: 4,
+    distributionFrame: FRAME,
     ...overrides,
   };
 }
@@ -60,7 +63,7 @@ function deps(storage: IStorage, overrides: Partial<GraineOutboundDeps> = {}): G
     storage,
     deviceKeyB64: 'device-key',
     distributionEpoch: 4,
-    distribute: vi.fn().mockResolvedValue(undefined),
+    distribute: vi.fn().mockResolvedValue(FRAME),
     now: () => NOW,
     ...overrides,
   };
@@ -90,6 +93,10 @@ describe('when a session may seal another message', () => {
     expect(shouldRotateGraineSession(session({ distributionEpoch: undefined }), at)).toBe(true);
   });
 
+  it('rotates a session minted before its frame was kept, since every message now carries one', () => {
+    expect(shouldRotateGraineSession(session({ distributionFrame: undefined }), at)).toBe(true);
+  });
+
   it('rotates on a stale roster ALONE, with both counters nowhere near their thresholds', () => {
     // The structural trigger has to stand on its own: a departure must rotate the session of a
     // sender who has sent one message today, or leaving a community changes nothing for them.
@@ -114,6 +121,7 @@ describe('reserving a slot', () => {
     const d = deps(storage, {
       distribute: vi.fn().mockImplementation(async () => {
         order.push('distribute');
+        return FRAME;
       }),
     });
     const spySave = vi.spyOn(storage, 'saveGraineSession').mockImplementation(async (s) => {
@@ -128,6 +136,8 @@ describe('reserving a slot', () => {
     expect(slot.index).toBe(0);
     expect(slot.session.sentCount).toBe(1);
     expect(slot.session.distributionEpoch).toBe(4);
+    // The frame the distribution answered is what every message under this session will carry.
+    expect(slot.session.distributionFrame).toEqual(FRAME);
     expect(d.distribute).toHaveBeenCalledWith(expect.objectContaining({ sentCount: 0 }));
     spySave.mockRestore();
   });

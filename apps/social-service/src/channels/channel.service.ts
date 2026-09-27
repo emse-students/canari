@@ -67,6 +67,19 @@ import {
 export const MAX_LIVE_SESSION_QUERY = 500;
 
 /**
+ * The largest seed frame a message may carry, in base64 characters.
+ *
+ * A seed frame is ~280 bytes of MLS private message (~380 in base64), estimated from RFC 9420
+ * framing (channel-encryption section 19). The cap is a bound on what one sender can make every
+ * recipient's push carry, not a measurement: several times the real size, and far under the 4 KB
+ * a push can hold at all.
+ */
+export const MAX_SEED_FRAME_CHARS = 2048;
+
+/** Standard base64, padded - what `toBase64` on the client writes and nothing else. */
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
  * THE one rule for who may READ a channel, with no database in it.
  *
  *  - a public channel is readable by every community member;
@@ -2951,6 +2964,8 @@ export class ChannelService {
       });
     }
 
+    await this.assertSeedFrame(channel, input);
+
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
     // the question and labels stay in the ciphertext. Auto-pinned so it stays
@@ -3021,6 +3036,59 @@ export class ChannelService {
   }
 
   /**
+   * Checks the seed frame a message carries (channel-encryption section 19), which the server
+   * passes to the recipients' pushes and NEVER stores.
+   *
+   * The frame is an MLS private message on a key group, opaque here; what the server CAN check is
+   * the one claim it knows the answer to: that `seedGroupId` is this salon's key group - the
+   * private salon's own, the community's otherwise, the same rule as the client's
+   * `scopeForChannel`. A mismatch is a sender whose idea of the salon is stale (a salon made
+   * private since), and its seed went to an audience that is no longer the salon's: refusing is
+   * what makes that visible instead of forwarding it.
+   *
+   * Absent on a silent message and on a sender older than section 19; both halves or neither.
+   */
+  private async assertSeedFrame(channel: Channel, input: SendChannelMessageDto): Promise<void> {
+    const { seedFrame, seedGroupId } = input;
+    if (seedFrame === undefined && seedGroupId === undefined) return;
+    if (
+      typeof seedFrame !== 'string' ||
+      typeof seedGroupId !== 'string' ||
+      seedFrame.length === 0 ||
+      seedFrame.length > MAX_SEED_FRAME_CHARS ||
+      !BASE64.test(seedFrame)
+    ) {
+      this.logger.warn(
+        `[CHANNEL_SEED] refused channel=${channel.id} sender=${input.senderId.slice(0, 8)} ` +
+          `frame=${typeof seedFrame === 'string' ? `${seedFrame.length}ch` : typeof seedFrame} ` +
+          `group=${typeof seedGroupId}`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_SEED_FRAME_INVALID',
+        message: `seedFrame and seedGroupId travel together; seedFrame is base64 of at most ${MAX_SEED_FRAME_CHARS} characters`,
+      });
+    }
+    const expected = channel.isPrivate
+      ? channel.distributionGroupId
+      : ((
+          await this.workspaceRepo.findOne({
+            where: { id: channel.workspaceId },
+            select: { id: true, distributionGroupId: true },
+          })
+        )?.distributionGroupId ?? null);
+    if (seedGroupId !== expected) {
+      this.logger.warn(
+        `[CHANNEL_SEED] refused channel=${channel.id} sender=${input.senderId.slice(0, 8)} ` +
+          `group=${seedGroupId} expected=${expected ?? 'none'} private=${channel.isPrivate}`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_SEED_FRAME_GROUP_MISMATCH',
+        message: 'seedGroupId is not the key group of this channel',
+      });
+    }
+  }
+
+  /**
    * Sends a push notification for a new channel message to every workspace member who should
    * receive one, according to their per-channel notification level:
    *  - `none`  -> never;
@@ -3049,10 +3117,16 @@ export class ChannelService {
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
     const mentioned = new Set((input.mentionedUserIds ?? []).map((id) => id.trim().toLowerCase()));
 
-    // FCM caps a data payload at ~4 KB; inline the ciphertext only when it comfortably fits,
-    // otherwise the notification degrades to the generic "new message in #channel" body until the
-    // app opens and fetches the channel over HTTP. nonce stays inline (small).
-    const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
+    // THE CIPHERTEXT AND ITS SEED FRAME RIDE TOGETHER OR NOT AT ALL, and chat-delivery decides
+    // which, per device, on the payload it actually sends (`withInlineGroup`). This used to be a
+    // fixed `ciphertext <= 3000` guessed about everything else in the payload. Not inlined, the
+    // notification degrades to the generic body until the app fetches the channel.
+    const inline: Record<string, string> = {
+      ciphertext: input.ciphertext,
+      ...(input.seedFrame && input.seedGroupId
+        ? { seedFrame: input.seedFrame, seedGroupId: input.seedGroupId }
+        : {}),
+    };
 
     // Same audience as the live event, from the same function - a push that reached somebody the
     // WebSocket frame did not would be the leak this scoping exists to close, arriving by another
@@ -3105,7 +3179,8 @@ export class ChannelService {
       return;
     }
     this.logger.log(
-      `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
+      `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length} ` +
+        `seedFrame=${input.seedFrame ? `${input.seedFrame.length}ch` : 'none'}`
     );
 
     // The community NAME, resolved here because nothing downstream can: `workspaceId` is a uuid and
@@ -3152,7 +3227,6 @@ export class ChannelService {
       // it any more, so it is gone rather than left looking like a contract.
       senderSessionId: input.senderSessionId,
       messageIndex: String(input.messageIndex),
-      ciphertext: inlineCiphertext,
       nonce: input.nonce,
       senderId: input.senderId,
     };
@@ -3160,10 +3234,15 @@ export class ChannelService {
     const title = this.buildChannelPushTitle(workspaceName, channel.name);
     await Promise.all(
       recipients.map((member) =>
-        this.sendInternalPush(member.userId, title, {
-          ...data,
-          mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? 'true' : 'false',
-        })
+        this.sendInternalPush(
+          member.userId,
+          title,
+          {
+            ...data,
+            mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? 'true' : 'false',
+          },
+          inline
+        )
       )
     );
   }
@@ -3210,11 +3289,14 @@ export class ChannelService {
   /**
    * Posts a single user's push to chat-delivery's internal endpoint (where Firebase Admin lives).
    * Best-effort: a failed push must never surface to the message sender.
+   *
+   * `inline` is a group chat-delivery inlines whole or not at all, per device.
    */
   private async sendInternalPush(
     userId: string,
     title: string,
-    data: Record<string, string>
+    data: Record<string, string>,
+    inline?: Record<string, string>
   ): Promise<void> {
     try {
       const res = await fetch(deliveryUrl('internal/push/notify'), {
@@ -3224,7 +3306,7 @@ export class ChannelService {
           'X-Internal-Secret': this.internalSecret,
         },
         // body left empty: the device composes the visible text after decrypting the ciphertext.
-        body: JSON.stringify({ userId, title, body: '', data }),
+        body: JSON.stringify({ userId, title, body: '', data, ...(inline ? { inline } : {}) }),
         signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       });
       if (!res.ok) {

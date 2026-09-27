@@ -180,6 +180,45 @@ export function nativeResidue() {
   }
 }
 
+/**
+ * How many Graine sessions the native seed mirror holds for one channel, or null when there is no
+ * mirror at all. COUNTS ONLY: the file holds plaintext seeds, and this output is read into a PUBLIC
+ * repository.
+ *
+ * @param {string} channelId the raw channel uuid, which is the mirror's key
+ * @returns {number | null | { error: string }}
+ */
+export function graineMirrorSessions(channelId) {
+  try {
+    const out = sh(`run-as ${PKG} cat /data/data/${PKG}/graine_seeds.json 2>/dev/null || true`);
+    if (!out.trim()) return null;
+    return Object.keys(JSON.parse(out)[channelId] ?? {}).length;
+  } catch (e) {
+    return { error: String(e.stderr || e.message).split(/\r?\n/)[0] };
+  }
+}
+
+/**
+ * Removes the native seed mirror - the state of a phone whose seed push never arrived, which is
+ * what a silent frame that did not wake the device (every iPhone) or that FCM dropped leaves.
+ *
+ * A DELIBERATE STATE, NOT DEBRIS: the app rebuilds the file from its durable store the next time
+ * it runs, so nothing is lost but the one path under test. Refused on a release build (`run-as`),
+ * which is reported rather than read as success.
+ *
+ * @returns {{ removed: boolean } | { error: string }}
+ */
+export function forgetGraineMirror() {
+  try {
+    const path = `/data/data/${PKG}/graine_seeds.json`;
+    sh(`run-as ${PKG} rm -f ${path}`);
+    const left = sh(`run-as ${PKG} ls ${path} 2>/dev/null || true`).trim();
+    return { removed: left === '' };
+  } catch (e) {
+    return { error: String(e.stderr || e.message).split(/\r?\n/)[0] };
+  }
+}
+
 export function nativeFootprint() {
   try {
     // `run-as` is the only way in without root, and it needs a debuggable build.

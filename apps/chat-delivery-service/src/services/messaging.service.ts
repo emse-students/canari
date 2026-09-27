@@ -34,7 +34,8 @@ import {
   buildPushDataFields,
   buildApnsRequest,
   LONGEST_FALLBACK_LOCALE,
-  buildInternalApnsRequest,
+  buildInternalAndroidHalf,
+  buildInternalApnsHalf,
   inlineProtoBudget,
   uninlinedProtoIsWorthReporting,
   measureDataFields,
@@ -3412,13 +3413,18 @@ export class MessagingService {
    * loop without the `apns` block below, which cost every iPhone every community notification -
    * see that method's docstring. Anything that needs to push to a user calls this.
    *
+   * `inline` is a group of fields that ride together or not at all - a salon message's ciphertext
+   * and the seed frame that opens it - decided per token by what that token's platform is sent
+   * (`withInlineGroup`). Empty for every push that has none.
+   *
    * Returns { sent, failed } - failure is non-fatal for the caller.
    */
   async sendPushToUser(
     userId: string,
     title: string,
     body: string,
-    data: Record<string, string>
+    data: Record<string, string>,
+    inline: Record<string, string> = {}
   ): Promise<{ sent: number; failed: number }> {
     if (getApps().length === 0) {
       // Not a quiet no-op: with Firebase uninitialised NOTHING notifies, on any platform, and the
@@ -3435,31 +3441,53 @@ export class MessagingService {
       return { sent: 0, failed: 0 };
     }
 
-    // iOS needs an explicit apns block: a data-only push never surfaces in the background
-    // and never triggers the Notification Service Extension. FCM applies this block only to
-    // iOS tokens (Android keeps consuming the data map below).
-    const apnsRequest = buildInternalApnsRequest(title, body, data);
-
     let sent = 0;
     let failed = 0;
     for (const pt of pushTokens) {
+      // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
+      // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
+      // same fields are spread into, so an inlined ciphertext travelled twice in one message and
+      // FCM sized the pair. iOS needs the APNs block (a data-only push never wakes the extension);
+      // Android reads the data map (onMessageReceived fires in the background) and nothing else.
       try {
-        // Data-only -> onMessageReceived() fires even in the background.
-        // Kotlin reads data["type"] to pick the channel and build the deepLink.
-        await getMessaging().send({
-          token: pt.token,
-          data: { ...data, title, body },
-          android: { priority: 'high' },
-          apns: {
-            payload: apnsRequest.payload,
-            headers: {
-              'apns-push-type': apnsRequest.pushType,
-              'apns-priority': String(apnsRequest.priority),
+        let half: { inlined: boolean; bytes: number };
+        if (pt.platform === 'ios') {
+          const ios = buildInternalApnsHalf(title, body, data, inline, pt.locale);
+          half = ios;
+          await getMessaging().send({
+            token: pt.token,
+            apns: {
+              payload: ios.payload.payload,
+              headers: {
+                'apns-push-type': ios.payload.pushType,
+                'apns-priority': String(ios.payload.priority),
+              },
             },
-          },
-        });
+          });
+        } else {
+          const android = buildInternalAndroidHalf(title, body, data, inline);
+          half = android;
+          await getMessaging().send({
+            token: pt.token,
+            data: android.payload,
+            android: { priority: 'high' },
+          });
+        }
         sent++;
-        this.logger.log(`[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId}`);
+        this.logger.log(
+          `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
+            `inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+        );
+        if (Object.keys(inline).length > 0 && !half.inlined) {
+          // Not a failure - the device fetches the message and draws the fallback - but a budget
+          // that is routinely too small is the fixed fields growing, and nothing else watches them.
+          this.logger.log(
+            `[PUSH_SIZE][${traceId}] inline group not inlined on ${pt.platform}: ${half.bytes}B without it, ` +
+              Object.entries(inline)
+                .map(([k, v]) => `${k}=${Buffer.byteLength(v, 'utf8')}B`)
+                .join(' ')
+          );
+        }
       } catch (e) {
         failed++;
         if (this.isTerminalPushTokenError(e)) {

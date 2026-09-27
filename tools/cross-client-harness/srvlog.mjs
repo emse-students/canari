@@ -678,6 +678,14 @@ const NOTABLE = [
   // device enrolling (NOTIF-19 mints one, W3) crosses it once per conversation. ` kicked` is NOT
   // matched - a device leaving a tree is not routine.
   /\[MessagingService\] \[INVITATION_STATUS\] group=[0-9a-f-]+ device=\S+$/,
+  // A DEVICE REMOVED, and the signal that tells it so reaching nobody. `newdevice.mjs` deletes the
+  // scratch browser's previous device before enrolling a fresh one (NOTIF-19/20/2 all do), so both
+  // lines come once per wipe. Reported, never benign: a device removal is something the reader of
+  // a window wants to see. The gateway line is matched on its CONTROL-frame spelling only (it said
+  // "stays in DB queue" for a frame with no queue row until 2026-09-27) - the MLS spelling of an
+  // offline recipient is a different fact and keeps its own treatment.
+  /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ groupsCleaned=\d+ /,
+  /\[PubSub\] \S+ not connected to this gateway - control frame not delivered \(it has no queue row/,
   // A signed-out browser booting asks for a refresh it cannot have: the client cannot see an
   // HttpOnly cookie, so asking is the only way to learn there is none. Every wipe produces it
   // (`newdevice.mjs`), and the refusal of a PRESENT but bad credential is another spelling.

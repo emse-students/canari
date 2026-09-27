@@ -1478,14 +1478,13 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   group ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
   The reading owed: a salon message in Gala with the Pixel shut, and `fetchCommitsFromBackend`
   answering 200 before the banner.
-- **P2, OPEN, DECIDED BY THE USER 2026-09-27 (*"La clé voyage avec le message"*) - the seed of a new
-  session lands ~1 s AFTER its message.** Rootz `#general`, 20:13:56 generic banner, 20:13:57 seed absorbed and the
-  line redrawn to its text. The server sent the seed frame FIRST (-1 s); FCM does not order two
-  pushes. Every membership change rotates every sender's session, so it is the first message of
-  each sender after any join. The user chose the deterministic direction over a silent generic
-  banner: the seed frame travels IN every message's own push, so the phone never holds one without
-  the other - designed in [channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27),
-  proved by `NOTIF-20` once built. `NOTIF-19` found the catch-up dropping seeds (§18, fixed).
+- **BUILT AND PROVED, SHIPS WITH THIS RELEASE - the seed of a new session landed ~1 s AFTER its
+  message** (user, 2026-09-27: *"La clé voyage avec le message"*). Every non-silent salon message
+  now carries its session's sealed seed frame, and the phone opens it when its mirror misses
+  ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
+  `NOTIF-20` `PASS` clean, both stages; its first run found the Android mirror writer refusing every
+  write (`File::lock` unsupported there), fixed in the same change. Owed after the release: an
+  iPhone reading, since the NSE half compiles only on a Mac.
 - **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
   `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
   commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
@@ -2072,6 +2071,21 @@ consuming a cached push does), but the cold case has its own route and nothing h
 **Also noted in the same window**: `[PUSH_SEND][welcome-send-4964245c] proto not inlined: 4608B over
 a 3716B budget`, so a first-contact Welcome exceeds the FCM data budget and travels without its
 payload inlined - unexamined, and the obvious next question for whoever takes this row further.
+
+**THE ROUTE, READ 2026-09-27, AND THE ONE-LINE FIX THAT IS WRONG.** The MLS send path queues for
+`status = 'active'` memberships only (`messaging.service.ts`, the `memberships` query), and a device
+added while dead is `pending` until its own join calls `membership-active` - on Android
+synchronously before the queue drain (`processReceivedWelcomeBackground`), on the web
+fire-and-forget BEFORE the ACK (`setupMessageHandler.ts`). So every frame sent between the add and
+that call reaches every member but the newcomer, and only a history answer from a member who is
+online brings it back - the DM half of the homogeneity the user asked for (a salon's newcomer is on
+the community key group already). The obvious predicate - "also queue for a `pending` device with a
+Welcome queued for this group" - **hands that device its own ADD COMMIT**: the nominal add is
+`addMember -> sendWelcome -> sendCommit` (`actions.ts`), so the commit is queued AFTER the Welcome,
+one epoch behind the state the Welcome gives. The discriminator a correct fix needs is the EPOCH the
+Welcome admits at (commits below it excluded, application frames and later commits included), which
+no column carries today - `sendWelcome` would have to record it, from the commit it pairs with.
+Decision owed before building: it changes who the delivery core routes to.
 
 **HALF ONE IS ALREADY OPEN AND IS NOT SPECIFIC TO FIRST CONTACT.** *"Je n'arrive pas dans la
 conversation"* is the P2 two entries down: the app has two notification builders, and the one the

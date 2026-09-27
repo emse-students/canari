@@ -833,6 +833,91 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  describe('the seed frame a message carries (channel-encryption section 19)', () => {
+    const FRAME = { seedFrame: 'ZnJhbWU=', seedGroupId: 'dist-ws1' };
+    const send = (extra: Record<string, unknown>, channel: Record<string, unknown> = {}) => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+        distributionGroupId: 'dist-salon',
+        ...channel,
+      });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', distributionGroupId: 'dist-ws1' });
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(async (row: any) => ({
+        ...row,
+        id: 'm1',
+        createdAt: new Date(),
+      }));
+      const done = repos.service.sendMessage('ch1', {
+        senderId: 'u1',
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 0,
+        ...extra,
+      } as never);
+      return { ...repos, done };
+    };
+    const code = async (p: Promise<unknown>) =>
+      (
+        (await p.then(
+          () => null,
+          (e: BadRequestException) => e.getResponse()
+        )) as { code?: string } | null
+      )?.code;
+
+    it('accepts the community key group for a public salon, and never stores the frame', async () => {
+      const { done, messageRepo, redis } = send(FRAME);
+      await done;
+      // The live event is published off the response path; let it run.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Nor in the live event: a device with the app open has the seed from the key group already.
+      expect(redis.publishChannelEvent).toHaveBeenCalled();
+      expect(JSON.stringify(redis.publishChannelEvent.mock.calls)).not.toContain(FRAME.seedFrame);
+
+      const row = messageRepo.create.mock.calls[0][0] as Record<string, unknown>;
+      expect(row.seedFrame).toBeUndefined();
+      expect(row.seedGroupId).toBeUndefined();
+      expect(JSON.stringify(row)).not.toContain(FRAME.seedFrame);
+    });
+
+    it('accepts the salon own key group for a private salon', async () => {
+      const { done } = send(
+        { ...FRAME, seedGroupId: 'dist-salon' },
+        { isPrivate: true, allowedUsers: ['u1'] }
+      );
+      await expect(done).resolves.toBeDefined();
+    });
+
+    it('accepts a message with no frame at all - a sender older than the rule', async () => {
+      await expect(send({}).done).resolves.toBeDefined();
+    });
+
+    it('refuses a group that is not the salon key group, with a typed code', async () => {
+      // A private salon whose sender still seals on the community group: its seed went to everyone.
+      const { done, messageRepo } = send(FRAME, { isPrivate: true, allowedUsers: ['u1'] });
+      expect(await code(done)).toBe('CHANNEL_SEED_FRAME_GROUP_MISMATCH');
+      expect(messageRepo.save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a frame without its group', { seedFrame: FRAME.seedFrame }],
+      ['a group without its frame', { seedGroupId: FRAME.seedGroupId }],
+      ['a frame that is not base64', { ...FRAME, seedFrame: 'not base64!' }],
+      ['a frame over the cap', { ...FRAME, seedFrame: 'A'.repeat(2052) }],
+    ])('refuses %s', async (_label, extra) => {
+      const { done, messageRepo } = send(extra);
+      expect(await code(done)).toBe('CHANNEL_SEED_FRAME_INVALID');
+      expect(messageRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   it('rejects sendMessage from a plain member when writePolicy is admins', async () => {
     const { service, channelRepo, memberRepo, roleRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
@@ -947,6 +1032,8 @@ describe('ChannelService security hardening', () => {
           senderSessionId: 'sess-1',
           messageIndex: 4,
           mentionedUserIds: ['u5'],
+          seedFrame: 'ZnJhbWU=',
+          seedGroupId: 'dist-ws1',
         }
       );
 
@@ -957,6 +1044,7 @@ describe('ChannelService security hardening', () => {
               userId: string;
               title: string;
               data: Record<string, string>;
+              inline: Record<string, string>;
             }
         )
         .sort((a, b) => a.userId.localeCompare(b.userId));
@@ -975,7 +1063,6 @@ describe('ChannelService security hardening', () => {
       expect(Object.keys(sent[0].data).sort()).toEqual([
         'channelId',
         'channelName',
-        'ciphertext',
         'createdAt',
         'mentioned',
         'messageIndex',
@@ -990,6 +1077,15 @@ describe('ChannelService security hardening', () => {
       // epoch the SERVER derived; no device can do anything with it now, so it is gone rather
       // than left on the wire looking like a contract.
       expect(sent[0].data.senderSessionId).toBe('sess-1');
+
+      // THE CIPHERTEXT AND ITS SEED FRAME ARE ONE GROUP, handed over apart from the fields every push
+      // carries: chat-delivery inlines the whole of it or none of it, per device, on the payload it
+      // really sends (channel-encryption section 19). A frame without its message opens nothing.
+      expect(sent[0].inline).toEqual({
+        ciphertext: 'c',
+        seedFrame: 'ZnJhbWU=',
+        seedGroupId: 'dist-ws1',
+      });
       expect(sent[0].data.messageIndex).toBe('4');
 
       // THE INSTANT IS THE STORED COLUMN, AS MILLISECONDS, AND IT IS WHY THE FIELD EXISTS. Android

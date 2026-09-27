@@ -2281,6 +2281,15 @@ export function logcatReport(lines, label = 'A1') {
     // THE PROMISED REDRAW KEPT: the seed a held banner waited on landed, and the banner is redrawn.
     ['fcm-channel-drain', /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/],
     ['fcm-graine-absorb', /^absorbGraineSeeds: stored \d+ seed\(s\) group=[0-9a-f]+$/],
+    // WHERE THE SEED CAME FROM (channel-encryption section 19): the mirror, or the frame the message
+    // carried. Both are the primary path now. What is NOT here, deliberately: `openSeedFrame: no
+    // frame on this push` (a sender older than section 19 - on this rig every client is current, so
+    // it is a regression), the ABSENT and UNKNOWN localities, a frame that yielded no key material,
+    // and a frame holding no seed for its own message. Each is a defect upstream on a current rig.
+    ['fcm-seed-source', /^handleChannelMessage: seed source=(mirror|frame) channel=\S+ session=\S+ index=\d+$/],
+    // The frame sealed one commit ahead of a key group this phone holds - the join that rotated the
+    // session happened while it was shut, which is NOTIF-20's own shape. The catch-up is the answer.
+    ['fcm-seed-frame-catchup', /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame

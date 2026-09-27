@@ -211,7 +211,9 @@ export async function sendEncryptedChannelMessage(
     ...(messageId ? { messageId } : {}),
     ...(poll ? { poll } : {}),
     ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
-    ...(options?.silent ? { silent: true } : {}),
+    ...(options?.silent
+      ? { silent: true }
+      : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
 }
 

@@ -59,6 +59,24 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
+
+**Site:** `CanariFirebaseMessagingService.handleChannelMessage`, the branch after `openSeedFrame`
+answers null: `PENDING_CHANNEL_FRAMES`, `PENDING_CHANNEL_LOCK`, the `genericStamp == 0` claim in
+`drainPendingChannelFrames` and `arrivedMeanwhile`. On the server, `assertSeedFrame` accepting a
+message with neither field.
+**Shim:** since [channel-encryption §19](protocols/channel-encryption.md) every message carries the
+MLS frame that distributed its session's seed, and the phone opens it when the mirror misses. A
+sender older than that attaches nothing, so its first message still races its seed push, and the
+generic banner held and redrawn (§14) is what covers it. Since §19 both pushes run on the one MLS
+lane, so the lock and the in-flight claim guard a window that can no longer open.
+**Removal condition:** `minClientVersion` at or above the first release that sends `seedFrame`. Then
+`seedFrame` / `seedGroupId` become REQUIRED on a non-silent message (a typed refusal, like
+`CHANNEL_SESSION_REQUIRED`), and the hold, the registry, its lock and the drain go with it - a
+mirror miss with no frame becomes a line that accuses, not a path.
+**Cost of keeping it:** eight map entries at most and a redraw nobody on a current build reaches.
+The hazard is the redraw itself: it is the defect §19 removes, alive for exactly this population.
+
 ### No date yet - the `read_receipt` system event, accepted from clients that predate the watermark
 
 **Site:** `systemMessageHandler.ts`, the `event === 'read_watermark' || event === 'read_receipt'`
