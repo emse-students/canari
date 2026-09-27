@@ -51,7 +51,75 @@ vi.mock('jspdf', () => ({
   },
 }));
 
-import { exportSearchablePdf } from './searchableRaster';
+import { exportSearchablePdf, groupCharsIntoLines, type MeasuredChar } from './searchableRaster';
+
+/** Builds the per-character boxes a browser would report for `text` laid out on the given lines. */
+function charsOn(lines: { text: string; top: number; startLeft?: number }[]): MeasuredChar[] {
+  const out: MeasuredChar[] = [];
+  for (const line of lines) {
+    let left = line.startLeft ?? 0;
+    for (const ch of line.text) {
+      out.push({ ch, rect: { top: line.top, left, right: left + 10, height: 20 } });
+      left += 10;
+    }
+  }
+  return out;
+}
+
+describe('groupCharsIntoLines - the browser decides where a line breaks', () => {
+  // The defect this pipeline exists to prevent: jsPDF re-wrapped in its own metrics and split
+  // "Lounes BRIAND--RAVIDAT" as "BRIAND--R / AVIDAT", mid-word, while the preview showed it whole.
+  it('keeps each line exactly as it was laid out, breaking no word', () => {
+    const lines = groupCharsIntoLines(
+      charsOn([
+        { text: 'Lounes', top: 0 },
+        { text: 'BRIAND--RAVIDAT', top: 20 },
+      ])
+    );
+
+    expect(lines.map((l) => l.text)).toEqual(['Lounes', 'BRIAND--RAVIDAT']);
+  });
+
+  it('starts a new line only on a real vertical step, not on a glyph jitter', () => {
+    const chars: MeasuredChar[] = [
+      { ch: 'a', rect: { top: 0, left: 0, right: 10, height: 20 } },
+      // Sub-pixel drift within one line: a taller glyph, same line.
+      { ch: 'b', rect: { top: 0.4, left: 10, right: 20, height: 20 } },
+      { ch: 'c', rect: { top: 20, left: 0, right: 10, height: 20 } },
+    ];
+
+    expect(groupCharsIntoLines(chars).map((l) => l.text)).toEqual(['ab', 'c']);
+  });
+
+  // A space AT a wrap collapses: the browser gives it no box at all. It must not open a line of
+  // its own, and it must not survive into the drawn text.
+  it('absorbs the collapsed space at a wrap instead of making it a line', () => {
+    const chars: MeasuredChar[] = [
+      ...charsOn([{ text: 'Jeanne', top: 0 }]),
+      { ch: ' ', rect: null },
+      ...charsOn([{ text: 'BOUSSONNIERE', top: 20 }]),
+    ];
+
+    expect(groupCharsIntoLines(chars).map((l) => l.text)).toEqual(['Jeanne', 'BOUSSONNIERE']);
+  });
+
+  // A centred line is anchored on its midpoint, so a trailing space that hangs past the edge would
+  // drag every centred line off-centre if it counted.
+  it('measures a line across its inked glyphs only, ignoring a trailing space', () => {
+    const chars: MeasuredChar[] = [
+      ...charsOn([{ text: 'ab', top: 0 }]),
+      { ch: ' ', rect: { top: 0, left: 20, right: 30, height: 20 } },
+    ];
+    const [line] = groupCharsIntoLines(chars);
+
+    expect(line.text).toBe('ab');
+    expect(line.right).toBe(20);
+  });
+
+  it('reports nothing for text the browser laid out nowhere', () => {
+    expect(groupCharsIntoLines([{ ch: 'a', rect: null }])).toEqual([]);
+  });
+});
 
 function textNode(text: string): HTMLElement {
   const span = document.createElement('span');
@@ -164,6 +232,134 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
 
     expect(rasterState.hideRule).toContain('color: rgba(0,0,0,0)');
     expect(rasterState.hideRule).not.toContain('text-shadow');
+    root.remove();
+  });
+
+  /**
+   * jsdom lays nothing out, so a wrapped run can only be exercised by handing the exporter the
+   * boxes a browser would have reported. `layout` is the lines, in order; every character gets a
+   * 10x20 box on its line. The node is made tall enough that the exporter treats it as wrapped.
+   */
+  function withBrowserLayout(layout: string[]): { node: HTMLElement; restore: () => void } {
+    const node = document.createElement('span');
+    node.dataset.pdfText = 'true';
+    node.textContent = layout.join(' ');
+    Object.defineProperty(node, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 100, height: 200, right: 100, bottom: 200 }),
+    });
+    // Character index -> its line and column, following the same joining as the node's text.
+    const place = new Map<number, { line: number; col: number }>();
+    let index = 0;
+    layout.forEach((line, lineIdx) => {
+      for (let col = 0; col < line.length; col++) place.set(index++, { line: lineIdx, col });
+      if (lineIdx < layout.length - 1) index++; // the space that collapses at the wrap
+    });
+
+    const realCreateRange = document.createRange.bind(document);
+    let offset = 0;
+    document.createRange = () =>
+      ({
+        setStart: (_n: Node, o: number) => {
+          offset = o;
+        },
+        setEnd: () => {},
+        getBoundingClientRect: () => {
+          const p = place.get(offset);
+          // The collapsed wrap space: the browser reports no box for it at all.
+          if (!p) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+          return {
+            top: p.line * 20,
+            left: p.col * 10,
+            right: p.col * 10 + 10,
+            bottom: p.line * 20 + 20,
+            width: 10,
+            height: 20,
+          };
+        },
+      }) as unknown as Range;
+
+    return { node, restore: () => (document.createRange = realCreateRange) };
+  }
+
+  // The defect the pipeline exists to prevent, end to end: jsPDF re-wrapped in its own metrics and
+  // printed "BRIAND--R / AVIDAT". Each line must be drawn exactly as the browser broke it.
+  it('draws each line the browser produced, and breaks no word itself', async () => {
+    const root = document.createElement('div');
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
+    });
+    const { node, restore } = withBrowserLayout(['Lounes BRIAND--', 'RAVIDAT']);
+    root.appendChild(node);
+    document.body.appendChild(root);
+
+    try {
+      await exportSearchablePdf(root, {
+        filename: 'test',
+        format: 'a4',
+        orientation: 'portrait',
+        naturalWidth: 1000,
+        naturalHeight: 1000,
+      });
+    } finally {
+      restore();
+    }
+
+    expect(textCalls).toContain('Lounes BRIAND--');
+    expect(textCalls).toContain('RAVIDAT');
+    // The whole string drawn as one run would mean jsPDF was left to break it again.
+    expect(textCalls).not.toContain('Lounes BRIAND--RAVIDAT');
+    root.remove();
+  });
+
+  // A measured line's text comes from the DOM text node, which holds the ORIGINAL case, while the
+  // glyphs on screen are the transformed ones - so an uppercased run must not be drawn lowercase.
+  it('draws an uppercased MEASURED line in upper case', async () => {
+    const root = document.createElement('div');
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
+    });
+    const { node, restore } = withBrowserLayout(['jeanne', 'boussonniere']);
+    node.style.textTransform = 'uppercase';
+    root.appendChild(node);
+    document.body.appendChild(root);
+
+    try {
+      await exportSearchablePdf(root, {
+        filename: 'test',
+        format: 'a4',
+        orientation: 'portrait',
+        naturalWidth: 1000,
+        naturalHeight: 1000,
+      });
+    } finally {
+      restore();
+    }
+
+    expect(textCalls).toContain('BOUSSONNIERE');
+    expect(textCalls).not.toContain('boussonniere');
+    root.remove();
+  });
+
+  it('draws an uppercased run in upper case', async () => {
+    const root = document.createElement('div');
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
+    });
+    const node = textNode('lundi');
+    node.style.textTransform = 'uppercase';
+    root.appendChild(node);
+    document.body.appendChild(root);
+
+    await exportSearchablePdf(root, {
+      filename: 'test',
+      format: 'a4',
+      orientation: 'portrait',
+      naturalWidth: 1000,
+      naturalHeight: 1000,
+    });
+
+    expect(textCalls).toContain('LUNDI');
+    expect(textCalls).not.toContain('lundi');
     root.remove();
   });
 
