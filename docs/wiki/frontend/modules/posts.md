@@ -388,6 +388,63 @@ the zoom, the pan and the dismiss drag; it owns their competitor too, for whatev
 inside it. `MediaLightbox.nativeDrag.svelte.test.ts` pins both halves and fails when the handler is
 removed.
 
+### The photo viewer takes MiGallery's frame, gestures and information panel (2026-09-27)
+
+Decided by the user on 2026-09-27: Canari's viewers take what MiGallery's viewer learnt copying
+Google Photos, **with an information panel of simple facts**. `MediaLightbox` (all five call sites)
+now works like this:
+
+- **The frame.** `FullScreenViewer` gained an `immersive` frame: black edge to edge at every width,
+  no card. The bars float over the picture on a flat `bg-black/45`, with no blur and no gradient. A
+  single tap hides them (`chromeHidden`), and Back sits on the LEFT. The PDF reader keeps the card,
+  because a column of pages needs its header in the flow, above the text.
+- **The title** is the date on one line and the time on the next ("Hier / 11:42"), from
+  `formatViewerDateTitle` in [`utils/mediaViewerInfo.ts`](../../../../frontend/src/lib/utils/mediaViewerInfo.ts).
+  That function is ported from MiGallery with its tests. A photo still in the composer has no date,
+  so it keeps its file name as the title.
+- **The gestures:**
+  - a horizontal swipe follows the finger and commits past 25 % of the width or on a flick;
+  - a downward drag shrinks the picture and fades the black ground, so the page shows through, and
+    closes past 20 % of the height;
+  - a swipe up opens the panel;
+  - a double tap toggles 2.5x.
+
+  Which gesture a touch is, and whether a release commits, is decided in
+  [`utils/viewerGestures.ts`](../../../../frontend/src/lib/utils/viewerGestures.ts). That module is
+  MiGallery's, where every threshold is explained. It replaced `lightboxSwipeDismiss.ts` (a bare
+  110 px threshold, with no flick and no shrink). **The zoom is still `pinchZoom.ts`**, for the
+  reason given in the WP-VIEWER-1 section above.
+- **A snap lands on the transform's own `transitionend`, never a timer.** A snap that would not move
+  anything, or a reader who asked for reduced motion, runs its continuation at once: a transition
+  that does not happen fires no end event.
+- **The information panel** is a bottom sheet on a phone and a 320 px right-hand column from `md`
+  up; the picture narrows beside it. It shows the date, the sender and the file (name, then size
+  and dimensions).
+  - The sender is a `UserName` for a message. For a post it is `postAuthorName`, now shared with
+    `PostHeader` so the two can never disagree.
+  - **The dimensions are MEASURED** on the element on screen (`load` / `loadedmetadata` in the
+    capture phase), whatever the sender declared.
+  - There is no camera and no place: the media is encrypted, and it is compressed before it is sent,
+    which drops its EXIF.
+  - Escape peels the panel, then the zoom, then the viewer. A swipe down closes the sheet before it
+    closes the viewer.
+- **`formatFileSize` now uses the locale's decimal separator.** The panel printed "2.3 Mo" beside
+  "1,2 MP" on the same line; every size in the app now reads "2,3 Mo" in French.
+
+Measured 2026-09-27 on a local preview, in Chrome with real `TouchEvent`s at 393 px (touch) and
+1440 px:
+
+- swipes to next and previous;
+- the spring-back of a short slow drag;
+- the refusal past the first item;
+- tap / tap and double-tap / double-tap;
+- swipe up opens the sheet;
+- down closes the sheet, then the viewer;
+- mid-drag: scale 0.91 and ground at 65 % at 150 px;
+- Escape order, and the arrow keys.
+
+**Owed on the Mi 9T**: the feel of the thresholds on a real finger.
+
 ### Rasterising is right; losing the TEXT was not (2026-08-11)
 
 Reported from the app: "avec la visionneuse pdf on ne peut pas selectionner le texte, ni rechercher,

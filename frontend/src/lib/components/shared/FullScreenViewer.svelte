@@ -15,10 +15,16 @@
    * content wrapper would mean a prop deciding which layout to be, i.e. this component knowing about
    * both - so `children` is rendered as the card's flex child and each viewer brings its own.
    *
+   * TWO FRAMES, ONE SHELL. The PDF reader keeps the card: a column of pages needs its header in the
+   * flow, above the text it would otherwise cover. The photo viewer is `immersive`, the frame
+   * MiGallery's viewer copied from Google Photos: black edge to edge at every width, no card, and
+   * the bars floating OVER the picture on a flat translucent black, hidden together by a tap
+   * (`chromeHidden`), with Back on the left where the platform puts it.
+   *
    * @see MediaLightbox.svelte, PdfViewerModal.svelte
    */
   import type { Snippet } from 'svelte';
-  import { X } from '@lucide/svelte';
+  import { ArrowLeft, X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { fade, fly } from 'svelte/transition';
@@ -53,6 +59,15 @@
     children?: Snippet;
     /** Rendered below the content, inside the bottom safe area. */
     footer?: Snippet;
+    /** Full-screen black at every width, bars floating over the content (the photo viewer). */
+    immersive?: boolean;
+    /** Immersive only: the bars are faded out and let every touch through to the content. */
+    chromeHidden?: boolean;
+    /**
+     * Immersive only: how opaque the black ground is, in `[0, 1]`. The swipe-down dismiss fades it
+     * as the picture follows the finger, so what is behind shows the gesture is a way out.
+     */
+    backdropOpacity?: number;
   }
 
   let {
@@ -65,6 +80,9 @@
     headerActions,
     children,
     footer,
+    immersive = false,
+    chromeHidden = false,
+    backdropOpacity = 1,
   }: Props = $props();
 
   const touchStyle = $derived(lockTouch ? 'touch-action: none;' : '');
@@ -97,8 +115,10 @@
   -->
   <div
     role="presentation"
-    class="bg-cn-scrim fixed inset-0 z-(--z-viewer) flex items-center justify-center sm:p-4"
-    style={touchStyle}
+    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center {immersive
+      ? ''
+      : 'bg-cn-scrim sm:p-4'}"
+    style="{touchStyle}{immersive ? `background-color: rgb(0 0 0 / ${backdropOpacity});` : ''}"
     onclick={onClose}
     transition:fade={{ duration: 160 }}
   >
@@ -108,34 +128,60 @@
       aria-label={ariaLabel}
       tabindex="-1"
       use:focusTrap
-      class="relative flex h-dvh w-full flex-col overflow-hidden
- text-white sm:h-[90dvh] {maxWidthClass}
- bg-black/20 sm:rounded-xl sm:border
- sm:border-white/8 sm:bg-white/4 sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
+      class="relative flex h-dvh w-full flex-col overflow-hidden text-white {immersive
+        ? ''
+        : `sm:h-[90dvh] ${maxWidthClass} bg-black/20 sm:rounded-xl sm:border sm:border-white/8 sm:bg-white/4 sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]`}"
       style={touchStyle}
       onclick={(e) => e.stopPropagation()}
       transition:fly={{ y: 18, duration: 240, easing: cubicOut }}
     >
+      <!--
+        Immersive: the bar floats over the picture on a FLAT translucent black - no blur, no
+        gradient (the flat rule MiGallery's viewer follows) - and fades with the tap that hides it.
+      -->
       <div
-        class="flex shrink-0 items-center justify-between gap-3 border-b border-white/8 bg-linear-to-b from-black/30 to-transparent px-3 pb-2 sm:px-4 sm:pb-3"
-        style="padding-top: max(0.75rem, env(safe-area-inset-top, 0.75rem));"
+        class="flex shrink-0 items-center justify-between gap-3 px-3 pb-2 {immersive
+          ? 'absolute inset-x-0 top-0 z-20 bg-black/45 transition-opacity duration-200'
+          : 'border-b border-white/8 bg-linear-to-b from-black/30 to-transparent sm:px-4 sm:pb-3'} {immersive &&
+        chromeHidden
+          ? 'pointer-events-none opacity-0'
+          : ''}"
+        style="padding-top: max({immersive
+          ? '0.5rem'
+          : '0.75rem'}, env(safe-area-inset-top, 0.75rem));"
       >
         <div class="flex min-w-0 flex-1 items-center gap-2">
+          {#if immersive}
+            <button
+              type="button"
+              class="ui-icon-button rounded-full transition-colors hover:bg-white/15"
+              onclick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              aria-label={m.common_back()}
+              title={m.common_back()}
+            >
+              <ArrowLeft size={24} strokeWidth={2.25} />
+            </button>
+          {/if}
           {@render headerLead?.()}
         </div>
         <div class="flex shrink-0 items-center gap-1.5">
           {@render headerActions?.()}
-          <button
-            type="button"
-            class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25"
-            onclick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            aria-label={m.common_close_label()}
-          >
-            <X size={22} strokeWidth={2.5} />
-          </button>
+          {#if !immersive}
+            <button
+              type="button"
+              class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25"
+              onclick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              aria-label={m.common_close_label()}
+            >
+              <X size={22} strokeWidth={2.5} />
+            </button>
+          {/if}
         </div>
       </div>
 
@@ -143,7 +189,9 @@
 
       {#if footer}
         <div
-          class="shrink-0"
+          class="shrink-0 {immersive
+            ? 'absolute inset-x-0 bottom-0 z-20 transition-opacity duration-200'
+            : ''} {immersive && chromeHidden ? 'pointer-events-none opacity-0' : ''}"
           style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem));"
         >
           {@render footer()}

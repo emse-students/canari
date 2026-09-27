@@ -273,6 +273,14 @@
     open={true}
     onClose={() => (lightboxIndex = null)}
     title={current.media.fileName ?? current.caption ?? ''}
+    info={{
+      senderId: current.senderId,
+      sentAt: current.timestamp,
+      fileName: current.media.fileName,
+      sizeBytes: current.media.size,
+      width: current.media.width,
+      height: current.media.height,
+    }}
     showPrev={lightboxIndex > 0}
     showNext={lightboxIndex < content.media.length - 1}
     onPrev={() => (lightboxIndex = (lightboxIndex ?? 1) - 1)}

@@ -10,9 +10,9 @@ describe('formatFileSize', () => {
     expect(formatFileSize(1023)).toBe('1023 o');
   });
 
-  it('steps by 1024 and keeps one decimal', () => {
-    expect(formatFileSize(152_371)).toBe('148.8 Ko');
-    expect(formatFileSize(1536 * 1024)).toBe('1.5 Mo');
+  it('steps by 1024 and keeps one decimal, with the French decimal comma', () => {
+    expect(formatFileSize(152_371)).toBe('148,8 Ko');
+    expect(formatFileSize(1536 * 1024)).toBe('1,5 Mo');
   });
 
   it('drops a decimal that is only a zero, which is noise', () => {

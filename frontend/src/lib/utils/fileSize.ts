@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
 
 const KILO = 1024;
 
@@ -32,8 +33,12 @@ function withUnit(unit: number, value: string): string {
  * the file managers of the platforms we ship to show.
  *
  * One decimal above the byte range, dropped when it is a zero, so a size keeps
- * the precision that carries information without ever reading as "512.0 Ko":
- * "148.8 Ko", "512 Ko", "1.5 Mo", "24 Mo".
+ * the precision that carries information without ever reading as "512,0 Ko":
+ * "148,8 Ko", "512 Ko", "1,5 Mo", "24 Mo".
+ *
+ * THE DECIMAL SEPARATOR IS THE LOCALE'S TOO. It was a `toFixed` point in every
+ * language, so the media viewer's panel printed "2.3 Mo" beside "1,2 MP" on the
+ * same line. No digit grouping: "4096 Go", not "4 096 Go".
  */
 export function formatFileSize(bytes: number): string {
   const safe = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
@@ -47,6 +52,9 @@ export function formatFileSize(bytes: number): string {
 
   // Whole bytes are never fractional; larger units keep one decimal unless it
   // is a zero, which adds noise and no information.
-  const rendered = unit === 0 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
+  const rendered = new Intl.NumberFormat(getLocale(), {
+    maximumFractionDigits: unit === 0 ? 0 : 1,
+    useGrouping: false,
+  }).format(unit === 0 ? Math.round(value) : Math.round(value * 10) / 10);
   return withUnit(unit, rendered);
 }
