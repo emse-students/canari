@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { Plus, Search } from '@lucide/svelte';
   import CanariBrand from './CanariBrand.svelte';
+  import EcosystemLauncher from './EcosystemLauncher.svelte';
   import PostNotificationBell from './PostNotificationBell.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -40,7 +41,8 @@
   the feed's own page heading, as a labelled button and a permanent 66 px field that cost two rows
   THERE. Here they cost no page height at all - which is the whole of what the feed reclaimed - and
   they are drawn on the `/posts` area only, because that is the only place any of them means
-  anything (see `onPosts`). What is left on every other tab is the brand and the avatar.
+  anything (see `onPosts`). What is left on every other tab is the brand, the app launcher
+  (`EcosystemLauncher`, the other student sites) and the avatar.
 
   THE BOX IS `.ui-icon-button`'S, NOT THIS FILE'S. The three controls used to type `h-11 w-11` each,
   which is the shared 44px touch box spelt out three times - and `iconButtonScale.test.ts` fails a
@@ -60,8 +62,12 @@
   class="border-cn-border z-20 flex h-14 shrink-0 items-center justify-between
  border-b bg-(--surface-elevated) px-3 md:hidden"
 >
-  <a href="/posts" aria-label={m.nav_home_label()} class="flex min-w-0 items-center">
-    <CanariBrand subtitle="" />
+  <a
+    href="/posts"
+    aria-label={m.nav_home_label()}
+    class="@container flex min-w-0 flex-1 items-center"
+  >
+    <CanariBrand subtitle="" fitContainer />
   </a>
 
   <div class="flex shrink-0 items-center gap-1">
@@ -85,6 +91,7 @@
         </a>
         <PostNotificationBell />
       {/if}
+      <EcosystemLauncher />
       {#if globalSession.userId}
         <button
           type="button"
