@@ -359,8 +359,9 @@ Deliberately left:
   (`custom_statut`, stage `Request School Status`, flow `miconnect-enrollment-cas`) can show
   "Élève" and still submit "Elève". Its placeholder expression is today
   `return ["Elève", "Personnel de l'école"]`, and the change is
-  `return [{"label": "Élève", "value": "Elève"}, "Personnel de l'école"]`. **It waits for the
-  user's go-ahead**, because it is a write to the production identity provider.
+  `return [{"label": "Élève", "value": "Elève"}, "Personnel de l'école"]`. **Written
+  2026-09-27 with the user's go-ahead**, guarded on the old expression, and `get_choices()` read
+  back returns the label/value pair. Nobody has watched an enrolment render it yet.
 - **"Go back"** on the access-denied stage is authentik's own UI string, untranslated in its French
   bundle (2026.8); nothing in this DB carries it.
 - **The static prompt `Alumni Force Link Continue` renders NOWHERE (read 2026-09-27).** Its only

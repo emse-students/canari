@@ -1406,18 +1406,20 @@ yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French +
 2. **Owed on hardware (Mi 9T, prod):** Canari's viewer feel and the launcher; MiGallery's grid
    pinch and a multi-file share from a selection (v2.7.0), v2.8.0 to v2.15.1 signed in; Le Cercle's
    two pages signed in. None of these was seen signed in on a production site.
-3. **Owed to the user, each a decision or a click:**
-   - MiGallery's stale CodeQL configurations (`cd.yml`, `ci-cd.yml`; `code-analysis.yml` names a
-     file that still exists) - Settings -> Code security -> Tool status -> CodeQL. The API delete
-     was refused as an external write.
-   - MiGallery's two remaining blurs (dialog backdrop, drop overlay): keep or drop.
-   - MiConnect's "Élève" label: the write is ready in [authentik](infrastructure/authentik.md).
-   - Le Cercle: menu categories (the data has none), "coktail passion" (production data), and
-     whether Accueil keeps its Carte/Perms shortcuts, which repeat the tab bar on a phone.
-   - Sky history purge: the rehearsal removed all six paths; the user lifts the `main` ruleset, the
-     rewrite is force-pushed on a fresh mirror, the ruleset comes back, and the user sends GitHub
-     Support the request for `refs/pull/*`.
-7. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
+3. **The user's decisions, taken 2026-09-27, and what each became:**
+   - MiGallery's dead CodeQL configurations (`cd.yml`, `ci-cd.yml`, `code-analysis.yml`) are
+     DELETED: 684 analyses across 200 (category, ref) chains, newest first, because only a
+     chain's newest analysis is deletable and the DELETE returns no next link. `ci.yml` and
+     `scheduled.yml` are the live ones.
+   - MiGallery's two remaining blurs (dialog backdrop, drop overlay) STAY.
+   - MiConnect's "Élève" label is WRITTEN ([authentik](infrastructure/authentik.md)).
+   - Le Cercle: the two misspelled menu rows are renamed in production ("Cocktail passion",
+     "Cocktail soft"; the purchase ledger keeps its history as written); the Accueil shortcuts go
+     and menu categories arrive, in the MR that follows.
+   - Sky's history is REWRITTEN: four SQLite files gone from every commit
+     ([Sky deployment](https://github.com/emse-students/Sky/blob/main/docs/wiki/deployment.md)).
+     **Owed: the user sends GitHub Support the `refs/pull/*` garbage-collection request.**
+4. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
    Every rig, the Immich tunnel and the other MiGallery worktrees are removed at the pause.
 
 **Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose

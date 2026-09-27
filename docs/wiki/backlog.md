@@ -195,10 +195,10 @@ The layout, the flat pass, the French titles and prompts, the redirect to Canari
 `continue` are SHIPPED ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)).
 Left, each with its reason on that page:
 
-- the accentless "Elève": its LABEL can become "Élève" while the value the policy and the apps
-  compare stays, through a `{label, value}` choice. The expression is written and waits for the
-  user's go-ahead on a production write;
 - authentik's own untranslated "Go back".
+
+"Élève" is CLOSED: its label reads with the accent since 2026-09-27 while the value the policy and
+the apps compare is unchanged.
 
 The static prompt "ni ça" is CLOSED: its stage is bound to no flow, so it renders nowhere. **One observation owed**: `miconnect-auth` opened while signed in, on the
 Mi 9T, should now go straight through.
