@@ -127,6 +127,19 @@ with no photo gets a 404 there, and its `<img>` is then **removed** from the DOM
 `<img>` is still an `<img>` to the rasteriser" below, which is what the word "img" printed on a
 poster was.
 
+## The poster is printed on A0, and every readability floor is an A0 number
+
+Decided by the user on 2026-09-27: A0 and only A0 - no format picker. The frame is an A-series
+ratio (`STAGE_WIDTH / SQRT2`), so the same 1600 x 1131 poster fills any A size; what the format
+decides is how big a poster pixel is on paper. `carte/export.ts` asks `exportSearchablePdf` for
+`format: 'a0'`, which gives **2.106 pt per poster px** (3370 pt / 1600 px). So a text meant to be
+read at ~9-10 pt on the printed sheet must be ~4.5 poster px AFTER every scale applied to it.
+
+The phasing below still says "A2" in places, and so do the comments in `layout.ts` and
+`PosterCanvas.svelte`: that was the target before the searchable-raster move and is not what the
+export does. The measured audit of the A0 output, and the open work it produced, are in
+[backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-four-decisions-taken-the-rest-still-to-ask).
+
 ## The directory is ordered by FAMILY NAME, and that needs two columns
 
 Reported 2026-09-01: the right-hand directory printed each roster ordered by GIVEN name - "Alice
@@ -264,7 +277,8 @@ editor.
       full height (4-row months get taller cells instead of a bottom white bar). Export is a STANDARD A4
       landscape page filled whole: `format:'a4'`, `addImage(...,0,0,pageW,pageH)`. Container == A4 ratio => no
       distortion, no white bar, bg to every edge; prints clean on A4.
-    - **Carte export - DONE (Step 3):** now a STANDARD A2 landscape page filled whole. The stage is a fixed
+    - **Carte export - DONE (Step 3), SUPERSEDED - the export is A0 today, see "The poster is
+      printed on A0" above:** now a STANDARD A2 landscape page filled whole. The stage is a fixed
       A2 frame (content is exactly A2 ratio), so `carte/export.ts` dropped the pagination loop for a single
       `pdf.addImage(...,0,0,pageW,pageH)` on `format:'a2'` landscape - no distortion, no white bar, prints
       borderless on real A2.
