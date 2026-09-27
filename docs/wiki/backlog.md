@@ -84,9 +84,118 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **rotate the Cloudflare run token on both boxes, after moving it out of the unit's command line** - any local user reads it today through `systemctl show -p ExecStart`, on `canari` and on `miconnect`, whatever the file mode. The unit shape that closes it is written down; what needs the user is that the rotation drops the public path to production for the minute between invalidating the old token and restarting the daemon | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala`, a repository that now answers `404`; the repository that looks like its successor does not contain that commit. Nothing runs from it and nothing points at it, so this is not a technical question but somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
+| **answer the seven carte questions** (directory roster, blob email, overlaps, raster sharpness, the shared PDF pipeline, empty associations, delivery) - the session paused on 2026-09-27 with four decisions taken and these seven not yet asked | 7 decisions | [The Carte de la Vie Asso chantier](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-four-decisions-taken-the-rest-still-to-ask) |
 | **one FIDO touch on `ssh -fN bastion`**, which opens the master connection the whole survey of the target host waits behind. `ControlPersist 48h` means it is owed ONCE per two days, not once per command - and it is the only thing standing between here and the four measurements section 9 of that page lists as open | 1 touch | [estate-migration](infrastructure/estate-migration.md#9-open-questions) |
 
+## The Carte de la Vie Asso chantier - audited 2026-09-27, four decisions taken, the rest still to ask
+
+Asked by the user on 2026-09-27: *"Fais moi une liste de ce que tu penses améliorable sur tout ce qui
+concerne la cartographie des associations [...] Exporte le PDF (avec les données prod), observe les
+tailles des éléments, des textes, potentiels chevauchement etc. Tout doit être lisible, beau et
+pratique."* Then: *"on part sur ce projet"*. Mechanism is on [carte-vie-asso](carte-vie-asso.md);
+this entry is the open work.
+
+**How it was measured, so it can be re-run.** The PDF was exported from the prod editor
+(`/admin/carte/a533b4f1-...`, 31 associations, `v0.18.27`) in a SEPARATE Chrome (own profile,
+`--remote-debugging-port`, driven over raw CDP from bun) because the chrome-devtools MCP browser was
+held by another session. The page is ONE A0 sheet, 1189 x 841 mm, a 4800 x 3393 raster under a vector
+text layer - 3370 pt / 1600 poster px = **2.106 pt per poster px**. Text sizes came from
+`pymupdf` `get_text("dict")`; overlaps and per-unit sizes from `GET /api/public/carte` (the published
+v2 document carries the same resolved geometry the poster draws). **Export with the tab in the
+FOREGROUND**: a hidden tab throttles `requestAnimationFrame`, the export took minutes instead of 10 s,
+and it captured the directory before its fit ran (C4).
+
+### Decided by the user, 2026-09-27
+
+| # | Decision |
+| --- | --- |
+| D1 | **The poster is printed on A0, and only A0.** Every readability floor below is an A0 number; no format picker. The wiki's "A2" everywhere was stale - the code has exported A0 since the searchable-raster move. |
+| D2 | **Publishing: a badge and an explicit update.** Autosave stays; when the live `publication` differs from the saved layout, the editor shows "Modifications non publiées" and a "Mettre à jour la version en ligne" button. Nothing reaches the portail without a gesture - an autosave that republished would put half-arranged layouts online. |
+| D3 | **Unpublishing is its own action.** The green button becomes a non-clickable status ("En ligne depuis le ..."), and "Retirer du portail" moves to a menu with a confirmation. |
+| D4 | **Member text leaves the unit's scale.** Names and roles get ONE readable size across the whole poster, independent of `bubble.scale`; the card widens instead. Small units will take more room - accepted. |
+
+### Findings, in the order to work them
+
+**A - publishing (D2, D3)**
+
+- **A1 - P2 - "Enregistrer" never reaches the portail.** `handleSave` writes `layout` only;
+  `publication` is a snapshot built in `handlePublish` (`routes/admin/carte/[id]/+page.svelte`). Once
+  live, the only refresh path today is unpublish -> publish. Needs a "live differs from saved"
+  predicate - compare a hash of what `buildPublishedCarte` would produce now against the stored
+  document, NOT `updatedAt` vs `publishedAt` (every autosave, including the one on open, moves
+  `updatedAt`).
+- **A2 - P2 - opening the editor saves.** Setting `hydrated = true` re-runs the autosave `$effect`,
+  so every open writes the layout 4 s later (the "Enregistré" on the user's screenshot). A new
+  association also gets `getRandomShape()`, so an open is not even idempotent. Fix at the effect:
+  arm on the first CHANGE after hydration, not on hydration.
+- **A3 - P2 - publishing during an autosave publishes unsaved state.** `handleSave` returns at once
+  when `saving` is true, then `handlePublish` builds from local state anyway - contradicting "a publish
+  saves first". Await the in-flight save, then save again.
+- **A4 - P3 - one click unpublishes** (D3).
+
+**B - member-card text (D1, D4)**
+
+- **B1 - P2 - member names are unreadable on small units.** Smallest vector text 4.4 pt = 1.6 mm on
+  A0; median member name ~5.5 pt. Cause: card text is multiplied by `bubble.scale` (0.46 for AME,
+  DopaMines, Mines'ergies, L'Associflard...). The A0 floor to hold is ~9-10 pt, i.e. **~4.5 poster px
+  AFTER scale**. D4 removes the multiplication for card text.
+- **B2 - P2 - two sizes in one crown.** `memberCardMetrics`' length ladder goes BELOW
+  `MIN_NAME_SIZE` ("never UP"), so "Thomas DELLESTABLE" is 4.6 px beside a neighbour's 6.4 px in the
+  same unit. With D4, one size per poster; long names widen the card or wrap on spaces.
+- **B3 - P3 - the contact email in the blob is 0.35 x the name** (down to ~3 pt) and only 5 of 31
+  associations have one - see Q2.
+- **B4 - P3 - measured overlaps between neighbours** (published geometry, estimated card heights):
+  MTM's Tristan FELIX card over BDA (1182 px2, the clearest), then Humani'Mines <-> BDS, AME -> BDE,
+  L'Associflard -> Gala, BDE -> BDI. D4 enlarges small units, so these get WORSE before they get
+  better - see Q3.
+
+**C - the PDF differs from the preview**
+
+- **C1 - P2 - the vector text layer re-wraps every line itself.** `pdf.splitTextToSize` in
+  `src/lib/pdf/searchableRaster.ts` decides the breaks instead of the browser's. Seen: "Lounès
+  BRIAND--R / AVIDAT" broken mid-word on the Pist'on Fire card (whole on his Gala card), and "Jeanne
+  BOUSSONNIÈRE" set on one line with an empty line before her role. Fix: take the browser's line boxes
+  (`Range.getClientRects` per text node) and draw each line where it was measured. **Shared by the
+  agenda and the trombinoscope exports** - the fix is in the pipeline, and all three re-verify.
+- **C2 - P3 - photos and logos print at ~102 dpi on A0** (`rasterScale` 3 -> 4800 px). ~150 dpi
+  needs `rasterScale` ~4.5; memory and time cost to measure first - see Q4.
+- **C3 - P3 - a hidden tab exports in minutes, with nothing on screen saying why.**
+- **C4 - P2 - the directory can overflow in the PDF.** Its font fit runs in a `requestAnimationFrame`
+  inside an `$effect` of `PosterCanvas.svelte`, and the export does not wait for it: the first export
+  printed the UNFITTED 13 px base (17.8 pt), and MINO, Mines Space and Mines, Études et Projets fell
+  below the panel and off the page. The live DOM later fitted to 8 px (908 of 937 px). The export must
+  run the fit itself, synchronously, before capturing.
+
+**D - content**
+
+- **D-1 - P3 - the directory is noisy.** "(Membre)" appears ~100 times in 8,200 characters; the roster
+  prints at 11 pt on A0 once fitted. See Q1.
+- **D-2 - data, not code - EMSE Finance has no members on Canari**: an empty blob and an empty directory
+  line. For its bureau to fill in, or the editor to flag.
+
+### Still to ask the user (the session paused on 2026-09-27 before these)
+
+- **Q1** - directory: drop "(Membre)" and keep only real roles? List bureaus only? Keep everyone?
+- **Q2** - the email in the blob: remove it, keep it where set, or show every association's?
+- **Q3** - overlaps: a warning in the editor only, or automatic nudging?
+- **Q4** - a sharper raster (C2) at the cost of a slower, heavier export: worth it?
+- **Q5** - C1 changes the shared PDF pipeline (agenda, trombinoscope too): one PR, or the pipeline first?
+- **Q6** - associations with no members (D-2): hide them from the poster, or show them as they are?
+- **Q7** - delivery: one PR per group (A, B, C, D) or one for the whole chantier, and a pre-release to dev before prod?
+
 ## Open defects, in severity order
+
+### P2 - a tab open across a deploy can no longer load any lazy module, and says only "Erreur" (measured on production 2026-09-27)
+
+Met while auditing the carte: a tab loaded on `0.18.26` at ~15:22, the production deploy of
+`v0.18.27` landed at ~15:25 (a burst of 502s on `/api/auth/refresh` and `/api/channels/...` while the
+containers restarted), and the carte's PDF export then failed with the generic "Erreur" -
+`Failed to fetch dynamically imported module: .../chunks/C5NZgUUs.js`, a chunk the new build no
+longer serves (404, as is the chunk that references it). **Every `import()` in the app is exposed**,
+not only this export. Nothing in `frontend/` listens for `vite:preloadError` or checks
+`/_app/version.json` (SvelteKit's `version.pollInterval` is unset). The fix is to know the build
+changed, from the version file, and to offer a reload at a safe point - never to retry a chunk that is
+gone.
 
 ### P1 - a member who comes back to a community never gets its past, because every seed request is addressed to someone who is OFFLINE (measured on production 2026-09-24, `v0.18.22`)
 
