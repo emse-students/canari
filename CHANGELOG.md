@@ -14,6 +14,24 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.27] - 2026-09-27
+
+### Added - an app launcher to MiGallery, Le Cercle, Sky and Portail-etu
+
+A grid button beside the avatar opens the four student sites by their logos, each in a new tab
+([design-reference](docs/wiki/frontend/design-reference.md#30-the-app-launcher---one-control-for-the-other-student-sites)).
+
+### Changed - the photo viewer: full-screen frame, swipes and an information panel
+
+Black edge to edge, the date as its title, swipes between photos and down to close, and a panel
+naming the sender, the date, the file, its size and its dimensions
+([posts](docs/wiki/frontend/modules/posts.md#the-photo-viewer-takes-migallerys-frame-gestures-and-information-panel-2026-09-27)).
+
+### Changed - Sky runs on the School host
+
+`sky.mitv.fr` is served from the School host since 2026-09-27, through a relay on `mitv`; 28 s of
+downtime, data carried with matching checksums ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moved-2026-09-27)).
+
 ## [0.18.26] - 2026-09-26
 
 ### Changed - a blocked account's posts and comments leave the feed, in both directions
