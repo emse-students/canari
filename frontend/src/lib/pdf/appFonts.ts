@@ -72,20 +72,27 @@ export async function registerAppFonts(pdf: jsPDF): Promise<void> {
  * 700 gets the browser's SYNTHETIC bold in the raster, while this layer draws the only outline that
  * exists - so the vector text lands thinner than the picture underneath it, which is the one defect
  * a searchable raster cannot hide. The calendar sheet therefore sets 400 on both faces.
+ *
+ * THE STACK IS READ IN ORDER, ONE FAMILY AT A TIME, the way the browser resolves it. Searching the
+ * whole string for a name let a FALLBACK win: `'Leckerli One','Fredoka Variable',cursive` matched
+ * Fredoka first, so the calendar's title and weekday row were drawn in Fredoka over a preview in
+ * Leckerli One and Chewy (2026-09-27).
  */
 export function pickAppFont(
   fontFamily: string,
   weight: number
 ): { name: string; style: 'normal' | 'bold' } | null {
-  const fam = fontFamily.toLowerCase();
-  if (fam.includes('fredoka')) {
-    return { name: 'Fredoka', style: weight >= 600 ? 'bold' : 'normal' };
-  }
-  if (fam.includes('leckerli')) return { name: 'LeckerliOne', style: 'normal' };
-  if (fam.includes('chewy')) return { name: 'Chewy', style: 'normal' };
-  if (fam.includes('nunito')) {
-    if (weight >= 800) return { name: 'NunitoExtra', style: 'normal' };
-    return { name: 'Nunito', style: weight >= 600 ? 'bold' : 'normal' };
+  for (const raw of fontFamily.split(',')) {
+    const fam = raw.trim().toLowerCase();
+    if (fam.includes('leckerli')) return { name: 'LeckerliOne', style: 'normal' };
+    if (fam.includes('chewy')) return { name: 'Chewy', style: 'normal' };
+    if (fam.includes('fredoka')) {
+      return { name: 'Fredoka', style: weight >= 600 ? 'bold' : 'normal' };
+    }
+    if (fam.includes('nunito')) {
+      if (weight >= 800) return { name: 'NunitoExtra', style: 'normal' };
+      return { name: 'Nunito', style: weight >= 600 ? 'bold' : 'normal' };
+    }
   }
   return null;
 }
