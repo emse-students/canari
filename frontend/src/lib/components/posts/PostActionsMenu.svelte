@@ -1,16 +1,8 @@
 <script lang="ts">
-  import {
-    Pin,
-    PinOff,
-    Pencil,
-    Trash2,
-    Flag,
-    Link,
-    Check,
-    Ellipsis,
-    VenetianMask,
-  } from '@lucide/svelte';
+  import { Pin, PinOff, Pencil, Trash2, Flag, Link, Ellipsis, VenetianMask } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -93,7 +85,6 @@
   }: Props = $props();
 
   let open = $state(false);
-  let copiedLink = $state(false);
   let buttonEl: HTMLButtonElement | null = $state(null);
   let menuEl: HTMLDivElement | null = $state(null);
 
@@ -120,10 +111,20 @@
     action();
   }
 
+  /**
+   * Copies the post's public link and confirms it with a toast.
+   *
+   * A TOAST, NOT AN IN-MENU CHECKMARK - `pick()` sets `open = false` in the same tick as this row
+   * flipped to its checkmark, so the confirmation only ever painted for the 150 ms slide-out
+   * transition before the whole menu unmounted, not the 2 s the old timeout intended. A toast
+   * lives outside the menu's own open state, so it survives the close. `Log.d` on the rejection
+   * path answers what a swallowed promise would not: `writeText` refuses on an unfocused document
+   * and in any non-secure context, same as `copyId`.
+   */
   function sharePost() {
-    void copyPublicShareLink(`/posts/${postId}`);
-    copiedLink = true;
-    setTimeout(() => (copiedLink = false), 2000);
+    copyPublicShareLink(`/posts/${postId}`)
+      .then(() => showToast(m.post_link_copied_label(), 'info'))
+      .catch((e: unknown) => Log.d('PostActionsMenu', `share link copy failed: ${String(e)}`));
   }
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
@@ -172,13 +173,8 @@
           onclick={() => pick(sharePost)}
           class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
         >
-          {#if copiedLink}
-            <Check size={16} strokeWidth={2.5} />
-            {m.post_link_copied_label()}
-          {:else}
-            <Link size={16} strokeWidth={2.5} />
-            {m.post_share_label()}
-          {/if}
+          <Link size={16} strokeWidth={2.5} />
+          {m.post_share_label()}
         </button>
 
         {#if canPin}
