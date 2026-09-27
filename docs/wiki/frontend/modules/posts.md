@@ -804,3 +804,25 @@ measured `--text-muted` token in the same pass, since a dimmed main colour was t
 **The rule this leaves**: `truncate` is a promise that the container is authoritative and the text is
 expendable. That is true of a filename in a chip or a voter name in a fixed-width tooltip; it is
 never true of content the user wrote for other users to READ AND CHOOSE BETWEEN.
+
+## "Share" confirmed inside a menu that had already closed (2026-09-27)
+
+`PostActionsMenu`'s "Partager" row copied the post's public link, then flipped itself to a
+checkmark and "Lien copié" for 2 seconds - a pattern copied from the forms list's inline share
+button. But every row in this menu is wired through `pick()`, which sets `open = false` in the
+same synchronous handler that runs the row's own action. The checkmark change and the menu's close
+land in the SAME reactive flush, so the row only ever painted its confirmed state for the 150ms
+`transition:slide` outro before the whole menu unmounted - not the 2 seconds the timeout intended.
+User-reported: the row visibly flashed "Lien copié" (confirmed on `A1`, Chrome, web) but vanished
+too fast to register as a confirmation - reported as "ça sert à rien" ("it's useless").
+
+The fix moves the confirmation OUT of the menu: `sharePost` now shows a `showToast(...,'info')`
+after the copy resolves, the same mechanism `chat_message_forwarded` and `common_download_saved`
+already use, so it survives the menu closing. The in-menu `copiedLink` state and its `Check` icon
+are dead code once the menu that hosted them closes before the timeout can matter, and are removed.
+
+**The rule this leaves**: a confirmation that depends on the thing which triggered it staying
+mounted is not a confirmation once that thing tears itself down as a matter of course - closing on
+every pick, here. Feedback for a one-shot action needs a home independent of the control that fired
+it. `copyPublicShareLink`'s rejection path was also a swallowed `void` with no log; it now logs
+through `Log.d`, same as `copyId`'s own clipboard refusal.
