@@ -1054,6 +1054,14 @@ Merci d'avance,
 DNS record and would put the whole list at risk, and `dev`, which goes internal and needs no public
 name at all.
 
+**THE DNS HALF IS DONE, 2026-09-27** (DSI, in the ticket): `canari IN A 193.49.175.122`, and
+`cercle`, `miconnect`, `sky`, `mino` all `IN CNAME canari`. **`archives` was REFUSED** as too generic
+(a School service will likely want it); the user proposed **`archives-mino`** for Omeka, answer
+pending. Measured the same day: the four names resolve to the host and **fail TLS with a
+name-mismatch** - `/etc/certs/` holds only canari, gala, handimines, mep and portail-etu. **The
+certificates are what is owed now**, one per name as above, and nothing moves to a new name before
+its certificate is in `/etc/certs/<name>/`.
+
 ### The deep links are the one thing a redirect cannot fix
 
 `applinks:canari-emse.fr` in the iOS entitlements and `android:host="canari-emse.fr"` in the
