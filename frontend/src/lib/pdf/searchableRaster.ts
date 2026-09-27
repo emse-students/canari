@@ -34,6 +34,19 @@ interface TextSpec {
   y: number;
   w: number;
   h: number;
+  /** Absolute y of the FIRST line's alphabetic baseline, measured in the DOM (natural px). */
+  baselineY: number;
+  /**
+   * Rotation applied by CSS transforms between the root and the run, in degrees, clockwise as CSS
+   * counts it. Non-zero only for a stamped word (the calendar's "Vacances").
+   */
+  angleDeg: number;
+  /** Centre of the run's (possibly rotated) box, natural px. */
+  cx: number;
+  cy: number;
+  /** The run's UNROTATED width, and its baseline measured from its centre along its own y axis. */
+  localW: number;
+  localBaseline: number;
   fontPx: number;
   align: 'left' | 'center' | 'right';
   /** The run's font-family stack + numeric weight, used to pick the matching embedded app font. */
@@ -56,12 +69,16 @@ function parseRgb(css: string): { r: number; g: number; b: number } {
 }
 
 /**
- * Walks up the DOM from `el` to `root` (exclusive) and accumulates the visual scale
- * applied by CSS `transform`. This maps a layout size (like font-size) into the
- * natural coordinate space of the root element.
+ * Walks up the DOM from `el` to `root` (exclusive) and accumulates the visual scale and rotation
+ * applied by CSS `transform`. The scale maps a layout size (like font-size) into the natural
+ * coordinate space of the root element; the rotation is the angle a stamped word is drawn at.
  */
-function getAccumulatedScale(el: HTMLElement, root: HTMLElement): number {
+function getAccumulatedTransform(
+  el: HTMLElement,
+  root: HTMLElement
+): { scale: number; angleDeg: number } {
   let scale = 1;
+  let angleDeg = 0;
   let current: HTMLElement | null = el;
   while (current && current !== root) {
     const transform = getComputedStyle(current).transform;
@@ -69,14 +86,34 @@ function getAccumulatedScale(el: HTMLElement, root: HTMLElement): number {
       const match = transform.match(/^matrix(?:3d)?\((.+)\)$/);
       if (match) {
         const values = match[1].split(',').map(parseFloat);
-        // scaleX is the length of the first column vector (m11, m12)
+        // scaleX is the length of the first column vector (m11, m12), and its direction the angle.
         const scaleX = Math.sqrt(values[0] * values[0] + values[1] * values[1]);
         if (scaleX > 0) scale *= scaleX;
+        angleDeg += (Math.atan2(values[1], values[0]) * 180) / Math.PI;
       }
     }
     current = current.parentElement;
   }
-  return scale;
+  return { scale, angleDeg };
+}
+
+/**
+ * Where the browser put the first line's alphabetic baseline, in client px.
+ *
+ * MEASURED, NEVER ESTIMATED. The overlay used to place it at `fontPx * 0.35` under the centre of
+ * the line box, which is roughly right for Nunito and wrong for a display face whose ascender is
+ * nothing like it - and once the raster keeps the text's hard-offset shadow, the glyph drawn over
+ * it must land exactly where the browser drew it, or the shadow reads as a misprint. An empty
+ * zero-size inline-block sits ON the baseline, so its box is that point, rotation included.
+ */
+function measureBaseline(el: HTMLElement): { x: number; y: number } {
+  const probe = document.createElement('span');
+  probe.style.cssText =
+    'display:inline-block;width:0;height:0;margin:0;padding:0;border:0;vertical-align:baseline;';
+  el.prepend(probe);
+  const r = probe.getBoundingClientRect();
+  probe.remove();
+  return { x: r.left, y: r.top };
 }
 
 /** Reads every `[data-pdf-text]` run under `root`, converted into the root's natural coordinate space. */
@@ -103,7 +140,7 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       : cs.fontWeight === 'bold'
         ? 700
         : 400;
-    const localScale = getAccumulatedScale(el, root);
+    const { scale: localScale, angleDeg } = getAccumulatedTransform(el, root);
     const fontPx = parseFloat(cs.fontSize) * localScale;
     let lineHeightPx = fontPx * 1.15;
     if (cs.lineHeight !== 'normal') {
@@ -116,12 +153,27 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       if (!isNaN(ls)) letterSpacingPx = ls * localScale;
     }
 
+    // The baseline, re-expressed in the run's own frame: offset from the box centre, rotated back
+    // by the run's angle. For an unrotated run only `baselineY` is read, and it is the measured y.
+    const base = measureBaseline(el);
+    const cx = ((r.left + r.right) / 2 - rootRect.left) * k;
+    const cy = ((r.top + r.bottom) / 2 - rootRect.top) * k;
+    const dx = (base.x - rootRect.left) * k - cx;
+    const dy = (base.y - rootRect.top) * k - cy;
+    const theta = (angleDeg * Math.PI) / 180;
+
     specs.push({
       el,
       x: (r.left - rootRect.left) * k,
       y: (r.top - rootRect.top) * k,
       w: r.width * k,
       h: r.height * k,
+      baselineY: (base.y - rootRect.top) * k,
+      angleDeg,
+      cx,
+      cy,
+      localW: el.offsetWidth * localScale,
+      localBaseline: -dx * Math.sin(theta) + dy * Math.cos(theta),
       fontPx,
       align,
       family: cs.fontFamily,
@@ -190,11 +242,15 @@ export async function exportSearchablePdf(
   // 2. Hide the text for the background raster by injecting a global stylesheet.
   // We use a stylesheet rather than inline styles because Svelte's reactivity might
   // re-apply declarative inline `style:color` bindings during the async rasterization yield.
+  //
+  // THE GLYPHS GO, THE SHADOW STAYS. A text-shadow is painted from the glyph outline whatever the
+  // fill, so a transparent run leaves its shadow in the raster and the vector glyph lands on top of
+  // it - the pair the preview shows. Stripping it too erased the calendar sheet's block shadow, the
+  // accent-red duplicate that IS its title (2026-09-27).
   const styleEl = document.createElement('style');
   styleEl.textContent = `
     .pdf-exporting-raster [data-pdf-text]:not([data-pdf-text-raster-only]) {
       color: rgba(0,0,0,0) !important;
-      text-shadow: none !important;
       -webkit-text-fill-color: rgba(0,0,0,0) !important;
     }
   `;
@@ -297,6 +353,29 @@ function drawTextSpecs(
     else pdf.setFont('helvetica', s.weight >= 600 ? 'bold' : 'normal');
     pdf.setFontSize(s.fontPx * mmPerPx * PT_PER_MM);
     pdf.setTextColor(s.color.r, s.color.g, s.color.b);
+    const charSpace = s.letterSpacingPx * mmPerPx;
+
+    // A ROTATED RUN IS A STAMP: one line, drawn at its own angle from where its baseline starts.
+    // jsPDF's `align` shifts along the page's x axis rather than the text's, so the start point is
+    // computed here, in the run's frame, and rotated onto the page. CSS turns clockwise for a
+    // positive angle and jsPDF counter-clockwise, hence the sign.
+    if (Math.abs(s.angleDeg) > 0.5) {
+      const theta = (s.angleDeg * Math.PI) / 180;
+      const textW = pdf.getTextWidth(s.text) + charSpace * Math.max(0, s.text.length - 1);
+      const halfW = (s.localW * mmPerPx) / 2;
+      const lx = s.align === 'center' ? -textW / 2 : s.align === 'right' ? halfW - textW : -halfW;
+      const ly = s.localBaseline * mmPerPx;
+      const cx = s.cx * mmPerPx;
+      const cy = (s.cy + yOffset) * mmPerPx;
+      pdf.text(
+        s.text,
+        cx + lx * Math.cos(theta) - ly * Math.sin(theta),
+        cy + lx * Math.sin(theta) + ly * Math.cos(theta),
+        { angle: -s.angleDeg, charSpace }
+      );
+      continue;
+    }
+
     const boxW = s.w * mmPerPx;
     // If the text is single-line (height <= 1.2x line-height), pass a massive width to prevent jsPDF
     // from prematurely wrapping it due to sub-pixel font metric differences.
@@ -317,19 +396,15 @@ function drawTextSpecs(
     const lines = pdf.splitTextToSize(s.text, safeBoxW);
     const anchorX = s.align === 'center' ? s.x + s.w / 2 : s.align === 'right' ? s.x + s.w : s.x;
 
-    // In HTML, text is vertically centered in its line-height box.
-    // jsPDF's 'top' and 'middle' baselines rely on internal font ascender/descender metrics
-    // which are often buggy for custom fonts like Fredoka, causing text to be drawn too high
-    // and cropped by the PDF viewer. We bypass this by manually computing the alphabetic
-    // baseline. For most web fonts, the alphabetic baseline is located at roughly 35%
-    // of the font-size below the vertical center of the line-height box.
-    const anchorY = s.y + yOffset + s.lineHeightPx / 2 + s.fontPx * 0.35;
+    // The first line's baseline where the browser measured it (see `measureBaseline`); jsPDF's
+    // own 'top'/'middle' baselines trust font metrics that are wrong for several of these faces.
+    const anchorY = s.baselineY + yOffset;
 
     pdf.text(lines, anchorX * mmPerPx, anchorY * mmPerPx, {
       align: s.align,
       // baseline: 'alphabetic' is the default in jsPDF
       lineHeightFactor: s.lineHeightPx / s.fontPx,
-      charSpace: s.letterSpacingPx * mmPerPx,
+      charSpace,
     });
   }
 }

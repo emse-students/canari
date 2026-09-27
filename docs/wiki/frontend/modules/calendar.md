@@ -465,6 +465,25 @@ as a static TTF for jsPDF (`@expo-google-fonts/*`, in `$lib/pdf/appFonts.ts`). `
 names every face it draws with in its `fonts:` wait list; a face missing there is rasterised in
 whatever the browser had ready.
 
+### THE PDF AND ITS PREVIEW DIVERGED THREE WAYS (2026-09-27)
+
+Reported on prod for October 2026 and reproduced offline by rendering the preview and the exported
+PDF of the same month side by side, then diffing them. All three causes were in the shared
+searchable-raster layer, not in the sheet:
+
+| symptom in the PDF | cause | fix |
+| --- | --- | --- |
+| title and weekdays in Fredoka | `pickAppFont` searched the whole stack for a name, so the fallback `'Fredoka Variable'` beat `'Leckerli One'` | the stack is read family by family, in order |
+| no accent block shadow | the raster pass set `text-shadow: none` along with the transparent fill | only the fill goes; a shadow paints from the outline whatever the fill |
+| "Vacances" level, not at -20deg | the vector overlay knew nothing of `transform: rotate` | the accumulated angle is read off the matrix and passed to jsPDF, start point computed in the run's own frame |
+
+Once the shadow stays in the raster, the vector glyph must land on the pixel the browser used, so
+the baseline is now MEASURED (a zero-size inline-block probe) instead of estimated at
+`0.35 * fontPx`. With a photograph, logos and a split watermark the residual difference is
+antialiasing at glyph edges (mean 1.7/255). One known remainder: a clamped event title may break
+one word later in the raster (snapdom's foreignObject) than in the preview; `reconcile: true`
+was tried and changes nothing.
+
 ### TWENTY CONTROLS BECAME SEVEN, AND NINE OF THEM HAD NOTHING LEFT TO COLOUR
 
 *"Ce truc la est quand meme une vraie usine a gaz."* The panel is now one image picker, four sliders
