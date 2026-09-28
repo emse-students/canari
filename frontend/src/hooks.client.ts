@@ -10,9 +10,8 @@
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { installBootBenchDevTools, markBoot } from '$lib/mls-client/bootBenchmark';
 import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
-import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
+import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
-import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
 
@@ -103,13 +102,19 @@ if (isTauriRuntime()) {
 
             // Public web link (App Link / universal link): https://canari-emse.fr/posts/…
             if (u.protocol === 'https:' || u.protocol === 'http:') {
-              if (isPublicAppUrl(u.href)) {
-                const inApp = inAppPathFromPublicUrl(u.href);
-                if (inApp) {
-                  void navigateInAppFromPublicUrl(u.href);
-                  continue;
-                }
+              if (openClaimedAppLink(u.href)) continue;
+            }
+
+            // A page leaving an in-app browser (Messenger, Instagram) on iOS:
+            // fr.emse.canari://open?url=<public Canari URL> (`$lib/mobile/openInApp`). Opened only
+            // if it is a CLAIMED Canari page, exactly as the Universal Link would have been - anyone
+            // can write this URL, so it must not reach anything a Universal Link cannot.
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'open') {
+              const target = u.searchParams.get('url') ?? '';
+              if (!openClaimedAppLink(target)) {
+                console.warn('[hooks] open link names no claimed Canari page, ignoring:', target);
               }
+              continue;
             }
 
             // Chat conversation deep link: fr.emse.canari://chat/{groupId}
