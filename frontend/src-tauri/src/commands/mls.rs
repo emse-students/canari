@@ -3,7 +3,8 @@
 use crate::concurrency::{write_mls_state_blob, ForegroundCritical};
 use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
-    decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
+    decrypt_messages_batch, AppState, BatchDecryptItem, DecryptedFrame, KeyPackageBatchResult,
+    PendingDb,
 };
 use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
 use std::sync::Mutex;
@@ -618,31 +619,6 @@ pub(crate) fn skip_send_generations(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub(crate) fn recevoir_message(
-    group_id: String,
-    message_bytes: Vec<u8>,
-    state: tauri::State<AppState>,
-) -> Result<Option<String>, String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-
-    let res = manager
-        .process_incoming_message(&group_id, &message_bytes)
-        .map_err(|e| {
-            log::error!("recevoir_message failed: group={} err={}", group_id, e);
-            e.to_string()
-        })?;
-
-    match res {
-        Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
-        None => Ok(None),
-    }
-}
-
 /// Every leaf identity (`userId:deviceId`) currently in the group's ratchet tree.
 ///
 /// The tree is the only authority on who can READ a group. The delivery service's membership rows
@@ -808,7 +784,7 @@ pub(crate) async fn recevoir_message_bytes(
     message_bytes: Vec<u8>,
     state: tauri::State<'_, AppState>,
     pending_db: tauri::State<'_, PendingDb>,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<DecryptedFrame>, String> {
     // Chantier 1 : detection proactive de l'epoch gap AVANT tout dechiffrement.
     // The epoch is cleartext in the MLS header -> no ratchet key consumed.
     // The MutexGuard is released in the inner block BEFORE any .await.
@@ -874,11 +850,11 @@ pub(crate) async fn recevoir_message_bytes(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-        manager.process_incoming_message(&group_id, &message_bytes)
+        manager.process_incoming_message_with_sender(&group_id, &message_bytes)
     };
 
     match result {
-        Ok(val) => Ok(val),
+        Ok(val) => Ok(val.map(DecryptedFrame::from)),
         Err(e) => {
             let err_str = e.to_string();
             // Classification centralisee cote mls-core (source unique du string-matching). [[S5]]

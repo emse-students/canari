@@ -36,6 +36,7 @@ import type {
   BaseRefreshOutcome,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
+import { setSenderMismatchReporter, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { DeviceKeyPackageAnswer } from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -391,6 +392,12 @@ export abstract class BaseMlsService implements IMlsService {
       getToken,
       ...(fetchImpl ? { fetchImpl } : {}),
     });
+    // Where a disagreement between a frame's envelope and its verified sender is READ: the console
+    // of a client is collected nowhere, so the measurement is only a measurement once the server
+    // logs it (`[SENDER_MISMATCH]`, channel-encryption section 21).
+    setSenderMismatchReporter((report) =>
+      this.delivery.deliveryPost('sender-mismatch', { ...report })
+    );
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -1599,12 +1606,13 @@ export abstract class BaseMlsService implements IMlsService {
           );
 
           const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined || msg.queuedMessageId
+            msg.queuedCreatedAt !== undefined || msg.queuedMessageId || msg.senderDeviceId
               ? {
                   ...(msg.queuedCreatedAt !== undefined
                     ? { queuedCreatedAt: msg.queuedCreatedAt }
                     : {}),
                   ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
+                  ...(msg.senderDeviceId ? { senderDeviceId: msg.senderDeviceId } : {}),
                 }
               : undefined;
 
@@ -1879,6 +1887,7 @@ export abstract class BaseMlsService implements IMlsService {
             this.enqueueMessage(
               {
                 senderId: (msg.senderId as string) || 'unknown',
+                senderDeviceId: (msg.senderDeviceId as string) || undefined,
                 ciphertext,
                 groupId: (msg.groupId as string) || undefined,
                 isWelcome: msg.isWelcome === true,
@@ -3020,7 +3029,10 @@ export abstract class BaseMlsService implements IMlsService {
 
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.processIncomingMessage(groupId, ciphertext);
+      plaintext = await this.processIncomingMessage(groupId, ciphertext, {
+        userId: sender,
+        path: 'distribution',
+      });
       // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
       // This group's frames are not what a conversation replay walks, so the mark is cheap
       // insurance rather than a known fix - and the direction it can be wrong in is the safe one: a
@@ -3651,7 +3663,8 @@ export abstract class BaseMlsService implements IMlsService {
   }
   abstract processIncomingMessage(
     groupId: string,
-    messageBytes: Uint8Array
+    messageBytes: Uint8Array,
+    envelope?: EnvelopeSender
   ): Promise<Uint8Array | null>;
   abstract exportSecret(
     groupId: string,

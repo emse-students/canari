@@ -44,13 +44,59 @@ fn process_incoming_messages_matches_sequential_decrypt() {
 
     assert_eq!(batch.len(), 5);
     for (i, outcome) in batch.iter().enumerate() {
-        let plain = outcome
+        let app = outcome
             .as_ref()
             .expect("batch outcome ok")
             .as_ref()
             .expect("app msg");
-        assert_eq!(plain, format!("batch-msg-{i}").as_bytes());
+        assert_eq!(app.plaintext, format!("batch-msg-{i}").as_bytes());
+        // The batch carries the sender MLS verified, like the single decrypt: the history
+        // catch-up is a path a sender check must not be blind on.
+        assert_eq!(app.sender_identity.as_deref(), Some("batch-bob:dev-b"));
     }
+}
+
+/// Channel-encryption section 21, WP-G2-1: the sender a client may believe is the one OpenMLS
+/// verified the frame against, and it was dropped on the line that returned the plaintext. It is
+/// the credential identity exactly as `state.rs` minted it - `userId:deviceId` - and it names the
+/// SENDER's device, never the reader's.
+#[test]
+fn an_application_message_carries_its_verified_sender() {
+    let mut alice = make_manager("sender-alice", "dev-a");
+    let mut bob = make_manager("sender-bob", "dev-b");
+    let group_id = "sender-dm";
+
+    alice.create_group(group_id.to_string()).expect("create");
+    let kp = bob.generate_key_package().expect("kp");
+    let (_c, welcome, _added, _skipped) = alice.add_members_bulk(group_id, &[&kp]).expect("add");
+    alice.merge_pending_commit_for(group_id).expect("merge add");
+    let rt = alice.export_ratchet_tree_for(group_id).expect("tree");
+    bob.process_welcome(welcome.as_deref().expect("w"), Some(&rt))
+        .expect("welcome");
+
+    let from_bob = bob.send_message(group_id, b"hello").expect("bob send");
+    let app = alice
+        .process_incoming_message_with_sender(group_id, &from_bob)
+        .expect("decrypt")
+        .expect("app msg");
+    assert_eq!(app.plaintext, b"hello");
+    assert_eq!(app.sender_identity.as_deref(), Some("sender-bob:dev-b"));
+
+    let from_alice = alice.send_message(group_id, b"hi").expect("alice send");
+    let app = bob
+        .process_incoming_message_with_sender(group_id, &from_alice)
+        .expect("decrypt")
+        .expect("app msg");
+    assert_eq!(app.sender_identity.as_deref(), Some("sender-alice:dev-a"));
+
+    // The projection the cross-version gate reads still answers the plaintext alone.
+    let again = bob.send_message(group_id, b"again").expect("bob send");
+    assert_eq!(
+        alice
+            .process_incoming_message(group_id, &again)
+            .expect("decrypt"),
+        Some(b"again".to_vec())
+    );
 }
 
 #[test]

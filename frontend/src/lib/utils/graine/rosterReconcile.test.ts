@@ -1,9 +1,6 @@
 import type { ChannelService } from '$lib/services/ChannelService';
-import {
-  diffRosterAgainstTree,
-  reconcileDistributionGroupRoster,
-  userIdOfLeaf,
-} from './rosterReconcile';
+import { diffRosterAgainstTree, reconcileDistributionGroupRoster } from './rosterReconcile';
+import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 

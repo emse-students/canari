@@ -864,6 +864,7 @@ that one IS the caller's fault and keeps its 400.
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
 | GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head` |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |

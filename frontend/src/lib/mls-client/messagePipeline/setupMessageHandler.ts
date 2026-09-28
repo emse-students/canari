@@ -564,7 +564,10 @@ async function handleWelcome({
       if (buf?.msgs.length) {
         for (const msg of buf.msgs) {
           try {
-            const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
+            const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
+              userId: msg.sender,
+              path: 'welcome-replay',
+            });
             // THE BUFFER SPENDS A GENERATION LIKE EVERY OTHER PATH, and recorded nothing until
             // 2026-09-07. These are frames that arrived BEFORE the Welcome and were held; the shared
             // archive holds the same rows, so a replay walked them later, MLS refused the spent
@@ -934,7 +937,11 @@ async function handleKnownGroup({
   };
 
   try {
-    const decrypted = await mlsService.processIncomingMessage(groupId, content);
+    const decrypted = await mlsService.processIncomingMessage(groupId, content, {
+      userId: sender,
+      deviceId: deliveryMeta?.senderDeviceId,
+      path: 'live',
+    });
 
     // Persist: immediate for commits (epoch advanced), deferred for application messages.
     if (isCommit) {

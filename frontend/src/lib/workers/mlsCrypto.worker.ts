@@ -55,7 +55,7 @@ function handleDecryptPage(msg: MlsCryptoDecryptPageRequest): void {
       results.push({ ok: false, error: r.error });
     } else if (r.plaintext && r.plaintext.length > 0) {
       const buf = asTransferBuffer(r.plaintext);
-      results.push({ ok: true, data: buf });
+      results.push({ ok: true, data: buf, sender: r.sender ?? null });
       transfers.push(buf);
     } else {
       results.push({ ok: true, data: null });

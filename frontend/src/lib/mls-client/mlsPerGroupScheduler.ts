@@ -6,6 +6,8 @@ export const MLS_QUEUE_ORPHAN_KEY = '__no_group__';
 /** Message waiting in a per-conversation MLS processing queue. */
 export interface MlsQueuedMessage {
   senderId: string;
+  /** The sender device the envelope names - self-asserted by the sending client, see `verifiedSender`. */
+  senderDeviceId?: string;
   ciphertext: Uint8Array;
   groupId?: string;
   isWelcome: boolean;

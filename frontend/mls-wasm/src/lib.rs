@@ -136,6 +136,21 @@ pub fn decrypt_mls_state_blob_with_key(
 
 // ----------------------------------------------------
 
+/// `{ data: Uint8Array, sender: string | null }` for one decrypted application message - the ONE
+/// shape both the single decrypt and the batch hand to JavaScript, so the two cannot disagree on
+/// what a sender is called.
+fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
+    let obj = js_sys::Object::new();
+    let data = js_sys::Uint8Array::from(app.plaintext.as_slice());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("data"), &data);
+    let sender = app
+        .sender_identity
+        .as_deref()
+        .map_or(JsValue::NULL, JsValue::from_str);
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sender"), &sender);
+    obj.into()
+}
+
 // Wrapper structure exposed to JavaScript.
 #[wasm_bindgen]
 pub struct WasmMlsClient {
@@ -543,43 +558,29 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Decrypts one MLS frame. Returns `null` for a commit or proposal, otherwise
+    /// `{ data: Uint8Array, sender: string | null }`: the proto-encoded AppMessage and the sender
+    /// OpenMLS verified it against (`userId:deviceId`) - the one sender a client may believe
+    /// (channel-encryption section 21).
     #[wasm_bindgen]
-    pub fn process_incoming_message(
+    pub fn process_incoming_message_with_sender(
         &mut self,
         group_id: String,
         message_bytes: Vec<u8>,
-    ) -> Result<Option<String>, JsValue> {
+    ) -> Result<JsValue, JsValue> {
         log::debug!(
-            "process_incoming_message for group: {} ({} bytes)",
+            "process_incoming_message_with_sender for group: {} ({} bytes)",
             group_id,
             message_bytes.len()
         );
-        let res = self
+        let app = self
             .manager
-            .process_incoming_message(&group_id, &message_bytes)
+            .process_incoming_message_with_sender(&group_id, &message_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        match res {
-            Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
-            None => Ok(None),
-        }
-    }
-
-    /// Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
-    #[wasm_bindgen]
-    pub fn process_incoming_message_bytes(
-        &mut self,
-        group_id: String,
-        message_bytes: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, JsValue> {
-        log::debug!(
-            "process_incoming_message_bytes for group: {} ({} bytes)",
-            group_id,
-            message_bytes.len()
-        );
-        self.manager
-            .process_incoming_message(&group_id, &message_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        Ok(match app {
+            Some(app) => application_to_js(&app),
+            None => JsValue::NULL,
+        })
     }
 
     /// Decrypts a batch of MLS ciphertexts for one group in ratchet order, in a single
@@ -588,7 +589,8 @@ impl WasmMlsClient {
     ///
     /// `messages` is a JS Array of `Uint8Array`. Returns a JS Array of plain objects, one
     /// per input, preserving order:
-    /// - `{ ok: true, data: Uint8Array }` decrypted application plaintext,
+    /// - `{ ok: true, data: Uint8Array, sender: string | null }` decrypted application plaintext
+    ///   and its verified sender,
     /// - `{ ok: true, data: null }` control message with no plaintext,
     /// - `{ ok: false, error: string }` recoverable per-message decrypt error.
     #[wasm_bindgen]
@@ -618,16 +620,17 @@ impl WasmMlsClient {
         let results = js_sys::Array::new();
 
         for outcome in outcomes {
-            let obj = js_sys::Object::new();
-            match outcome {
-                Ok(Some(plaintext)) => {
+            let obj = match outcome {
+                Ok(Some(app)) => {
+                    let obj = js_sys::Object::from(application_to_js(&app));
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
-                    let data = js_sys::Uint8Array::from(plaintext.as_slice());
-                    let _ = js_sys::Reflect::set(&obj, &data_key, &data);
+                    obj
                 }
                 Ok(None) => {
+                    let obj = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
                     let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
+                    obj
                 }
                 // Every error is REPORTED, `SecretReuse` included. It used to answer
                 // "nothing to show" here, on the argument that a consumed generation during a
@@ -638,11 +641,13 @@ impl WasmMlsClient {
                 // Mirrors `map_decrypt_outcome` on native - the two paths must not diverge on the
                 // same frame (WP-PENDING-2).
                 Err(e) => {
+                    let obj = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::FALSE);
                     let _ =
                         js_sys::Reflect::set(&obj, &error_key, &JsValue::from_str(&e.to_string()));
+                    obj
                 }
-            }
+            };
             results.push(&obj);
         }
         results

@@ -9,7 +9,11 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
 } from '$lib/mls-client';
-import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
+import {
+  mapNativeBatchDecryptResults,
+  type BatchDecryptRow,
+} from '$lib/mls-client/mlsBatchDecrypt';
+import { checkVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -373,6 +377,7 @@ export class TauriMlsService extends BaseMlsService {
         this.enqueueMessage(
           {
             senderId: (parsed.senderId as string) || 'unknown',
+            senderDeviceId: (parsed.senderDeviceId as string) || undefined,
             ciphertext,
             groupId: (parsed.groupId as string) || undefined,
             isWelcome: !!parsed.isWelcome,
@@ -1047,13 +1052,16 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
   async processIncomingMessage(
     groupId: string,
-    messageBytes: Uint8Array
+    messageBytes: Uint8Array,
+    envelope?: EnvelopeSender
   ): Promise<Uint8Array | null> {
-    const res = await invoke<number[] | null>('recevoir_message_bytes', {
-      groupId,
-      messageBytes: Array.from(messageBytes),
-    });
-    return res ? Uint8Array.from(res) : null;
+    const res = await invoke<{ data: number[]; sender: string | null } | null>(
+      'recevoir_message_bytes',
+      { groupId, messageBytes: Array.from(messageBytes) }
+    );
+    if (!res) return null;
+    checkVerifiedSender(groupId, envelope, res.sender);
+    return Uint8Array.from(res.data);
   }
 
   /** Single IPC crossing for an ordered page of ciphertexts (history catch-up on native MLS). */
@@ -1062,13 +1070,10 @@ export class TauriMlsService extends BaseMlsService {
     messages: Uint8Array[]
   ): Promise<MlsBatchProcessResult[]> {
     if (messages.length === 0) return [];
-    const raw = await invoke<Array<{ ok: boolean; data?: number[] | null; error?: string }>>(
-      'recevoir_messages_batch',
-      {
-        groupId,
-        messages: messages.map((m) => Array.from(m)),
-      }
-    );
+    const raw = await invoke<BatchDecryptRow[]>('recevoir_messages_batch', {
+      groupId,
+      messages: messages.map((m) => Array.from(m)),
+    });
     return mapNativeBatchDecryptResults(raw);
   }
 

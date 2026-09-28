@@ -60,7 +60,11 @@ export type MlsCryptoWorkerRequest =
 
 /** Per-message outcome inside a decrypted page. */
 export type MlsCryptoPageResult =
-  | { ok: true; data: ArrayBuffer | null }
+  | {
+      ok: true;
+      data: ArrayBuffer | null;
+      /** The verified sender, beside `data` only. */ sender?: string | null;
+    }
   | { ok: false; error: string };
 
 export type MlsCryptoWorkerOk =

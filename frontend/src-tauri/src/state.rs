@@ -58,29 +58,53 @@ impl From<mls_core::DatedKeyPackage> for DatedKeyPackagePayload {
     }
 }
 
+/// One decrypted application message as the foreground decrypt hands it to TypeScript:
+/// `{ data: number[], sender: string | null }`. `sender` is the identity OpenMLS verified the frame
+/// against (`userId:deviceId`), the one sender a client may believe (channel-encryption section 21).
+#[derive(serde::Serialize, Clone)]
+pub(crate) struct DecryptedFrame {
+    pub data: Vec<u8>,
+    pub sender: Option<String>,
+}
+
+impl From<mls_core::IncomingApplication> for DecryptedFrame {
+    fn from(app: mls_core::IncomingApplication) -> Self {
+        Self {
+            data: app.plaintext,
+            sender: app.sender_identity,
+        }
+    }
+}
+
 /// Per-message outcome for batch MLS decrypt (history catch-up).
 #[derive(serde::Serialize, Clone)]
 pub(crate) struct BatchDecryptItem {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Vec<u8>>,
+    /// The sender OpenMLS verified the frame against (`userId:deviceId`), beside `data` and
+    /// only with it - the one sender a client may believe (channel-encryption section 21).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 /// Maps a single decrypt outcome to a `BatchDecryptItem`.
 pub(crate) fn map_decrypt_outcome(
-    result: Result<Option<Vec<u8>>, mls_core::MlsError>,
+    result: Result<Option<mls_core::IncomingApplication>, mls_core::MlsError>,
 ) -> BatchDecryptItem {
     match result {
-        Ok(Some(data)) => BatchDecryptItem {
+        Ok(Some(app)) => BatchDecryptItem {
             ok: true,
-            data: Some(data),
+            data: Some(app.plaintext),
+            sender: app.sender_identity,
             error: None,
         },
         Ok(None) => BatchDecryptItem {
             ok: true,
             data: None,
+            sender: None,
             error: None,
         },
         // Every error is REPORTED, `SecretReuse` included. It used to be mapped to
@@ -95,6 +119,7 @@ pub(crate) fn map_decrypt_outcome(
         Err(e) => BatchDecryptItem {
             ok: false,
             data: None,
+            sender: None,
             error: Some(e.to_string()),
         },
     }

@@ -155,6 +155,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome to device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | DELETE | `/api/mls/welcome-request/group/:groupId` | Clear pending welcome_request queue |
 | POST | `/api/mls/history/batch` | Get message history batch, at most 50 groups ([why the cap is a contract](../services/chat-delivery.md#messaging)) |
 | GET | `/api/mls/history/:groupId` | Incremental Redis Stream history |

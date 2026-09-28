@@ -112,9 +112,13 @@ const HISTORY_RANGE_MAX = 200;
 /**
  * Validates the `from` of a probe and returns it, or `null` after logging why it was refused.
  *
- * MLS authenticates the sending USER; the device half is self-asserted. Cross-checking the user
- * means the only thing a member can misreport is which of its OWN devices it is - which costs a
- * mis-addressed bundle its owner can already read, never another member's history.
+ * `senderNorm` is the user the delivery server's ENVELOPE names - NOT, as this comment claimed until
+ * 2026-09-28, the one MLS authenticated: the verified credential was dropped where the plaintext was
+ * returned. The two are compared since WP-G2-1 (`verifiedSender`, measured, not refused), and this
+ * check becomes one against the verified sender with the refusal half (channel-encryption section
+ * 21). The device half of `from` is self-asserted either way. Cross-checking the user means the only
+ * thing a member can misreport is which of its OWN devices it is - which costs a mis-addressed bundle
+ * its owner can already read, never another member's history.
  *
  * One function because every leg of the exchange establishes identity the same way, and a check
  * copied five times is a check that will exist in four places after the next edit.
