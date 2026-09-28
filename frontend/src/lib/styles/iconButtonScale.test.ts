@@ -195,13 +195,18 @@ interface Site {
 const ICON_BUTTONS: Site[] = ALL_FILES.flatMap((full) => {
   const source = readFileSync(full, 'utf8');
   const file = relative(src, full).replace(/\\/g, '/');
-  return buttonsIn(source)
-    .filter((b) => isIconOnly(b.body))
-    .map((b) => {
-      const cm = /\bclass="([^"]*)"/.exec(b.attrs);
-      const classes = cm ? cm[1] : '';
-      return { file, line: b.line, classes, tokens: classes.split(/\s+/).filter(Boolean) };
-    });
+  return (
+    buttonsIn(source)
+      // A SWITCH IS NOT AN ICON BUTTON. Its box is the track the thumb slides in, sized with every
+      // other switch; a spinner shown in it while the toggle saves made one read as icon-only.
+      .filter((b) => !/\brole="switch"/.test(b.attrs))
+      .filter((b) => isIconOnly(b.body))
+      .map((b) => {
+        const cm = /\bclass="([^"]*)"/.exec(b.attrs);
+        const classes = cm ? cm[1] : '';
+        return { file, line: b.line, classes, tokens: classes.split(/\s+/).filter(Boolean) };
+      })
+  );
 });
 
 const onTheClass = (s: Site): boolean => s.tokens.includes('ui-icon-button');

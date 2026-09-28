@@ -1,5 +1,5 @@
 /**
- * THE PRIVATE-SALON ALLOWLIST IS WRITTEN WHEN IT CHANGES, AND IT BELONGS TO ONE CHANNEL.
+ * EVERY CONTROL ON THE ACCESS TAB IS WRITTEN WHEN IT CHANGES, AND IT BELONGS TO ONE CHANNEL.
  *
  * Two defects met on production 2026-09-27. "Ajouter" appended to a local list that only
  * "Enregistrer" sent, while the trash beside each row removed on the server at once - a member was
@@ -7,6 +7,10 @@
  * edge log). And the reset meant to run when the panel closed was guarded by `!open`, which resolved
  * to `window.open` and never ran: the panel is not remounted when the channel changes, so the access
  * tab kept the previous salon's allowlist, ready to be saved onto the next one.
+ *
+ * "Enregistrer" is gone (2026-09-28): the visibility toggle and the write-policy pick now save
+ * themselves too, the same way the allowlist already did - the toggle behind a confirmation, since
+ * flipping it changes who can read the channel; the write policy without one, like `setNotifLevel`.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
@@ -23,6 +27,8 @@ vi.mock('$lib/services/ChannelService', () => ({ channelService: service }));
 const admitSalonGrantee = vi.hoisted(() => vi.fn().mockResolvedValue({ kind: 'not-held' }));
 vi.mock('$lib/utils/graine/admitNewcomer', () => ({ admitSalonGrantee }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
+const showConfirmMock = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() =>
     Promise.resolve(
@@ -63,6 +69,7 @@ beforeEach(() => {
     { id: '2', userId: 'peer', role: 'member', joinedAt: '' },
   ]);
   service.getNotificationLevel.mockResolvedValue('all');
+  showConfirmMock.mockReset().mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -123,7 +130,7 @@ describe('ChannelSettingsPanel - access tab', () => {
     buttonByText(m.common_add_button()).click();
     await settle();
 
-    // As the server holds it (private), with no write policy: that one stays with "Enregistrer".
+    // No write policy sent: that control saves itself, independently, see below.
     expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner', 'peer']);
     // The field is cleared, not left showing a pick that was already taken.
     expect(input.value).toBe('');
@@ -142,13 +149,40 @@ describe('ChannelSettingsPanel - access tab', () => {
     expect(service.getChannelAccess).toHaveBeenLastCalledWith('salon-b');
   });
 
-  it('offers no allowlist on a salon the server does not yet hold private', async () => {
+  it('confirms before flipping visibility, then writes it at once and reveals the allowlist', async () => {
+    await mountOnAccessTab('public-salon');
+    expect(document.getElementById('channel-access-autocomplete')).toBeNull();
+
+    (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
+    await settle();
+
+    expect(showConfirmMock).toHaveBeenCalledWith(m.chat_channel_make_private_confirm(), {
+      danger: false,
+    });
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', true, []);
+    expect(document.getElementById('channel-access-autocomplete')).not.toBeNull();
+  });
+
+  it('flips nothing when the visibility confirmation is cancelled', async () => {
+    showConfirmMock.mockResolvedValue(false);
     await mountOnAccessTab('public-salon');
 
     (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
     await settle();
 
-    expect(document.body.textContent).toContain(m.chat_channel_private_save_first_hint());
+    expect(service.updateChannelAccess).not.toHaveBeenCalled();
     expect(document.getElementById('channel-access-autocomplete')).toBeNull();
+  });
+
+  it('writes the write policy the moment it changes, with no confirmation asked', async () => {
+    await mountOnAccessTab('salon-a');
+
+    const select = document.querySelector('select') as HTMLSelectElement;
+    select.value = 'admins';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(showConfirmMock).not.toHaveBeenCalled();
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner'], 'admins');
   });
 });
