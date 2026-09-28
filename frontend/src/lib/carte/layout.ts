@@ -214,18 +214,35 @@ export interface MemberCardMetrics {
  * instead). Cards are centered on their slot, so the extra width grows symmetrically.
  *
  * Shared with the publisher, which resolves these numbers into the published map - see `publish.ts`.
+ *
+ * @param imposedNameSize - The size every card in the unit shares, from {@link fitUnitNameSize}.
+ *   The per-name ladder above is then NOT consulted: it is what put "Thomas DELLESTABLE" at 4.6 px
+ *   beside a neighbour at 6.4 px in one crown (user, D13). The card still widens for a word that
+ *   cannot wrap into it, and still shrinks below the imposed size only when even the widened card
+ *   cannot hold that word.
  */
-export function memberCardMetrics(name: string, slot: MemberSlot): MemberCardMetrics {
+export function memberCardMetrics(
+  name: string,
+  slot: MemberSlot,
+  imposedNameSize?: number
+): MemberCardMetrics {
   const isPresident = slot === 'president';
   const baseW = isPresident ? PRES_CARD_WIDTH : BUREAU_CARD_WIDTH;
-  const textBox = (baseW - CARD_PAD_X) * FIT_MARGIN;
-
-  let nameSize = (isPresident ? PRES_NAME_BASE : BUREAU_NAME_BASE) - nameLengthPenalty(name.length);
   const widest = widestWordEm(name);
-  // Shrink to the size that fits the widest unbreakable word, but never below the floor - and never
-  // UP, since the length ladder above may already have gone lower than the floor for a long name.
-  const fitted = textBox / widest;
-  if (fitted < nameSize) nameSize = Math.max(fitted, Math.min(nameSize, MIN_NAME_SIZE));
+
+  let nameSize: number;
+  if (imposedNameSize === undefined) {
+    const textBox = (baseW - CARD_PAD_X) * FIT_MARGIN;
+    nameSize = (isPresident ? PRES_NAME_BASE : BUREAU_NAME_BASE) - nameLengthPenalty(name.length);
+    // Shrink to the size that fits the widest unbreakable word, but never below the floor - and
+    // never UP, since the ladder above may already have gone lower than the floor for a long name.
+    const fitted = textBox / widest;
+    if (fitted < nameSize) nameSize = Math.max(fitted, Math.min(nameSize, MIN_NAME_SIZE));
+  } else {
+    // The widened card is the budget: below it the word genuinely cannot be drawn on one line.
+    const widestBox = (baseW * MAX_CARD_GROWTH - CARD_PAD_X) * FIT_MARGIN;
+    nameSize = Math.min(imposedNameSize, widestBox / widest);
+  }
 
   const needed = (widest * nameSize) / FIT_MARGIN + CARD_PAD_X;
   return {
@@ -304,6 +321,122 @@ export function memberCardHeight(
   );
 }
 
+/** The members a unit draws, in their slots - what {@link resolveUnitMembers} returns. */
+export interface ShownMembers {
+  president: PosterMemberRef | null;
+  bureau: PosterMemberRef[];
+}
+
+/** One member card placed in unit-local coordinates (poster px at the unit's own scale 1). */
+export interface PlacedCard {
+  member: PosterMemberRef;
+  slot: MemberSlot;
+  card: MemberCardMetrics;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Places every card a unit draws, at one shared name size.
+ *
+ * The single source of where a card sits: the renderer, the publisher, the overlap warning and the
+ * size search below all read it, so none of them can place a card the others do not know about.
+ */
+export function placeUnitCards(shown: ShownMembers, nameSize?: number): PlacedCard[] {
+  const placed: PlacedCard[] = [];
+  shown.bureau.forEach((member, i) => {
+    const card = memberCardMetrics(member.name, 'bureau', nameSize);
+    const offset = bureauCrownOffset(i);
+    placed.push({
+      member,
+      slot: 'bureau',
+      card,
+      x: UNIT_CX + offset.x - card.w / 2,
+      y: BUREAU_CROWN_CY + offset.y - card.base / 2,
+      w: card.w,
+      h: memberCardHeight(member, card),
+    });
+  });
+  if (shown.president) {
+    const card = memberCardMetrics(shown.president.name, 'president', nameSize);
+    placed.push({
+      member: shown.president,
+      slot: 'president',
+      card,
+      x: UNIT_CX - card.w / 2,
+      y: PRES_TOP,
+      w: card.w,
+      h: memberCardHeight(shown.president, card),
+    });
+  }
+  return placed;
+}
+
+/** Whether any two of a unit's cards are drawn over each other. */
+function cardsCollide(shown: ShownMembers, nameSize: number): boolean {
+  const placed = placeUnitCards(shown, nameSize);
+  for (let i = 0; i < placed.length; i++) {
+    for (let j = i + 1; j < placed.length; j++) {
+      const a = placed[i];
+      const b = placed[j];
+      if (
+        Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0 &&
+        Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Smallest name size the search may settle on (unit px), when even that collides. */
+const MIN_UNIT_NAME_SIZE = 4;
+/** The search grid: finer than this is invisible at any print size. */
+const NAME_SIZE_STEP = 0.1;
+
+/**
+ * The ONE name size every card in a unit shares, grown as far as the crown allows.
+ *
+ * Two decisions, taken with the user on 2026-09-27, meet here.
+ *
+ * **D12 - the crown does not grow.** Taking the card text fully out of the unit's scale would make
+ * the cards collide INSIDE the unit long before they became readable: at the scale the seed grid
+ * uses (0.46) the crown's levels are ~94 px apart for a card already ~82 px tall. Growing the crown
+ * radii with the text was refused - a unit keeps the footprint its author gave it - so the text
+ * grows only as far as the cards still clear each other, and the smallest units reach ~7-8 pt on A0
+ * rather than the 9.5 pt floor. That shortfall is accepted and is why this returns a size rather
+ * than promising one.
+ *
+ * **D13 - one size per UNIT.** Not one per poster, which would be the size the SMALLEST bubble can
+ * take and would drag every card down; and not one per card, which is what printed "Thomas
+ * DELLESTABLE" at 4.6 px beside a neighbour at 6.4 px in the same crown.
+ *
+ * Monotonic by construction - a larger size only ever grows a card - so the answer is found by
+ * halving the interval rather than walking it, which matters: this runs for every unit on every
+ * pointer frame of a drag.
+ *
+ * @param shown - The members the unit draws.
+ * @param unitScale - The unit's scale; the readable target is expressed on the SHEET and divided by
+ *   it, since everything in a unit is drawn through that scale.
+ * @returns The shared name size, in unit px.
+ */
+export function fitUnitNameSize(shown: ShownMembers, unitScale: number): number {
+  const target = Math.max(PRES_NAME_BASE, MIN_POSTER_TEXT_PX / Math.max(unitScale, 0.01));
+  if (!cardsCollide(shown, target)) return round2(target);
+
+  let lo = MIN_UNIT_NAME_SIZE;
+  let hi = target;
+  while (hi - lo > NAME_SIZE_STEP) {
+    const mid = (lo + hi) / 2;
+    if (cardsCollide(shown, mid)) hi = mid;
+    else lo = mid;
+  }
+  return round2(lo);
+}
+
 /** A box on the stage, in poster px. */
 export interface UnitBox {
   x: number;
@@ -324,7 +457,8 @@ export interface UnitBox {
  * no frame shape reaches past the blob's rim.
  */
 export function unitInkBox(bubble: PositionedBubble, members: PosterMemberRef[]): UnitBox {
-  const { president, bureau } = resolveUnitMembers(bubble, members);
+  const shown = resolveUnitMembers(bubble, members);
+  const nameSize = fitUnitNameSize(shown, bubble.scale);
   let left = UNIT_CX - BLOB_SIZE / 2;
   let right = UNIT_CX + BLOB_SIZE / 2;
   let top = BLOB_CY - BLOB_SIZE / 2;
@@ -336,19 +470,8 @@ export function unitInkBox(bubble: PositionedBubble, members: PosterMemberRef[])
     bottom = Math.max(bottom, y + h);
   };
 
-  bureau.forEach((member, i) => {
-    const card = memberCardMetrics(member.name, 'bureau');
-    const offset = bureauCrownOffset(i);
-    cover(
-      UNIT_CX + offset.x - card.w / 2,
-      BUREAU_CROWN_CY + offset.y - card.base / 2,
-      card.w,
-      memberCardHeight(member, card)
-    );
-  });
-  if (president) {
-    const card = memberCardMetrics(president.name, 'president');
-    cover(UNIT_CX - card.w / 2, PRES_TOP, card.w, memberCardHeight(president, card));
+  for (const placed of placeUnitCards(shown, nameSize)) {
+    cover(placed.x, placed.y, placed.w, placed.h);
   }
 
   return {

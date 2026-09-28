@@ -120,6 +120,21 @@ and it captured the directory before its fit ran (C4).
 | D10 | **An association with no member stays on the poster, and the editor says so** ("aucun membre renseigné") so its bureau fills it in. |
 | D11 | **One PR per group** (A publishing, B card text, C PDF, D content), then a pre-release on `dev.canari-emse.fr`: the agent exports an A0 PDF there and measures it, **then the user looks at it before the stable.** |
 
+### Decided by the user, 2026-09-27, second round - the two questions the build could not answer
+
+The first eleven left two things that were written down rather than guessed at, because both are
+choices about how the poster should LOOK or what a column should MEAN. Eight answers settled them.
+
+| # | Decision |
+| --- | --- |
+| D12 | **The card text grows only as far as the crown clears** - "plancher partiel". Taking it fully out of the unit's scale would make the cards collide INSIDE the unit (at 0.46 the crown's levels are ~94 px apart for a card already ~82 px tall), and growing the crown with them was REFUSED: the units keep their footprint. The smallest units therefore reach ~7-8 pt rather than 9.5, and that is accepted. |
+| D13 | **ONE size per UNIT, not one per poster and not one per card.** D4's "one readable size across the whole poster" is superseded: a single poster-wide size would be the size the SMALLEST bubble can take, so one tiny unit would drag every card down. Inside a unit every name is the same size, which is also what closes B2 (4.6 px beside 6.4 px in one crown). |
+| D14 | **The published fingerprint covers the LAYOUT AND THE CONTENT.** The published document embeds the rosters, so a member joining an association really does make the live map stale - the badge lights up for that too, and the user accepted that it will light up often without them having touched anything. |
+| D15 | **"Membre" is dropped in the DIRECTORY and KEPT on a bureau card.** On a card it distinguishes the member with no function from the officers around them; in the directory, where the list itself says it, it was ~100 wasted characters per association. |
+| D16 | **The generic roles are exactly four**: Membre, Member, Adherent, Adherente (case and accents ignored). Nothing else is treated as empty. |
+| D17 | **An overlap is never raised at publish time.** The editor's panel is the whole of it: a deliberate overlap exists (a decorative blob behind another), so publishing neither warns nor refuses. |
+| D18 | **The dev pre-release is canari-64's to cut** - this chantier waits for it rather than publishing a version of its own. |
+
 ### Findings, in the order to work them
 
 **A - publishing (D2, D3)** - A2, A3 and A4 merged 2026-09-27 (#1144): opening a project no longer
@@ -167,20 +182,24 @@ why a column, not a comparison of timestamps, is what it needs.
 1. **C1 alone** - the shared PDF pipeline takes the browser's line boxes; agenda, trombinoscope and
    carte exports re-verified.
 2. ~~**A** - publishing: A2, A3, the separate unpublish (D3)~~ - merged 2026-09-27 (#1144). **D2, the
-   "live is older than saved" badge, is NOT done and is not a matter of writing it**: `updatedAt`
-   cannot answer the question, because `publish()` writes the row and TypeORM's `@UpdateDateColumn`
-   moves with `publishedAt` in the same statement. Separating them would mean trusting a clock by a
-   millisecond, so it needs a durable record of WHICH layout was published - a schema decision.
-3. **B** - ~~the email raised (D6), the overlap warning (D7)~~ - #1145. **D4 is open**: taking the
-   card text out of the unit's scale grows the crown of cards while the blob it surrounds does not,
-   and at the scale most units carry (0.46) the crown's levels are ~94 px apart for a card already
-   ~82 px tall, so cards collide INSIDE the unit before they become readable. Either the crown
-   radii grow with the text - the unit takes more room, and #1145's warning is what then reports the
-   cost - or the floor is held only as far as the crown clears. **The user's call.**
+   "live is older than saved" badge, IS STILL TO BUILD and now has its answer** (D14): a column
+   holding a fingerprint of the document that was PUBLISHED, covering layout AND content. Not
+   `updatedAt` - `publish()` writes the row, so TypeORM's `@UpdateDateColumn` moves with
+   `publishedAt` in the same statement, and separating them would mean trusting a clock by a
+   millisecond. The editor rebuilds the document it would publish and compares fingerprints, so
+   **ONE implementation decides both sides** and the client is what computes it.
+3. ~~**B** - the email raised (D6), the overlap warning (D7)~~ - #1145; ~~**D4/B1/B2**~~ - group E
+   below. The median printed name went from 6.97 to 9.47 pt, 9 cards of 107 LOST size (worst 2.11
+   pt, a president now sharing his crown's size) and three crowded units stay under 7 pt - the D12
+   shortfall, measured rather than assumed
+   ([carte-vie-asso](carte-vie-asso.md#one-name-size-per-unit-grown-until-the-crown-stops-it)).
 4. ~~**C** - C4 (fit before capture), C2 at 150 dpi (D8), C3~~ - #1146. **D8 still owes the cost
    measured** on the dev pre-release: time, memory, PDF size.
 5. ~~**D** - the directory without "(Membre)" (D5), the no-member notice (D10)~~ - #1146.
-6. Pre-release on dev, an A0 export measured there, the user's look, then the stable (D11).
+6. ~~**E** - the card text, one size per unit, grown until the crown clears (D12, D13)~~ - #1147.
+7. **F** - the published fingerprint and the "update the live version" button (D2, D14).
+8. Pre-release on dev - **canari-64's to cut** (D18) - an A0 export measured there, the user's look,
+   then the stable (D11). D8's cost is measured in the same run.
 
 ## Open defects, in severity order
 

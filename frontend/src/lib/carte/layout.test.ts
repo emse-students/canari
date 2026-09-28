@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   assoEmailFontSize,
   findUnitOverlaps,
+  fitUnitNameSize,
+  placeUnitCards,
+  type ShownMembers,
   memberCardHeight,
   memberCardMetrics,
   MIN_POSTER_TEXT_PX,
@@ -82,6 +85,59 @@ describe('memberCardHeight - an estimate of the card the DOM draws', () => {
   });
 });
 
+describe('fitUnitNameSize - one size per unit, grown until the crown stops it', () => {
+  const crowd = (n: number): ShownMembers => ({
+    president: member({ userId: 'p', name: 'Alice MARTIN', role: 'Presidente' }),
+    bureau: Array.from({ length: n }, (_, i) =>
+      member({ userId: `b${i}`, name: 'Tristan FELIX', role: 'Secretaire' })
+    ),
+  });
+
+  it('grows the text as the unit shrinks, since the floor is a size on the SHEET', () => {
+    const small = fitUnitNameSize(crowd(2), 0.3);
+    const large = fitUnitNameSize(crowd(2), 1);
+    expect(small).toBeGreaterThan(large);
+  });
+
+  // D12: the crown does NOT grow with the text, so a full crown stops the growth earlier than a
+  // sparse one - which is exactly the shortfall the user accepted.
+  it('stops earlier on a crowded crown than on an empty one', () => {
+    expect(fitUnitNameSize(crowd(6), 0.3)).toBeLessThanOrEqual(fitUnitNameSize(crowd(1), 0.3));
+  });
+
+  it('never returns a size at which the unit draws two cards over each other', () => {
+    for (const scale of [1, 0.6, 0.46, 0.2]) {
+      const shown = crowd(6);
+      const placed = placeUnitCards(shown, fitUnitNameSize(shown, scale));
+      for (let i = 0; i < placed.length; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const a = placed[i];
+          const b = placed[j];
+          const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+          const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+          expect(w <= 0 || h <= 0).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('gives every card of a unit the same name size', () => {
+    const shown: ShownMembers = {
+      president: member({ userId: 'p', name: 'Alice MARTIN', role: 'Presidente' }),
+      bureau: [
+        member({ userId: 'b1', name: 'Zoe ZZ', role: 'Tresoriere' }),
+        member({ userId: 'b2', name: 'Thomas DELLESTABLE', role: 'Secretaire' }),
+      ],
+    };
+    const sizes = placeUnitCards(shown, fitUnitNameSize(shown, 0.46)).map((p) => p.card.nameSize);
+    expect(new Set(sizes).size).toBe(1);
+  });
+
+  it('answers the same thing twice for the same unit', () => {
+    expect(fitUnitNameSize(crowd(4), 0.46)).toBe(fitUnitNameSize(crowd(4), 0.46));
+  });
+});
+
 describe('unitInkBox - what a unit covers, not the cell it was seeded in', () => {
   const roster = [
     member({ userId: 'p', name: 'Alice MARTIN', role: 'Presidente' }),
@@ -101,13 +157,15 @@ describe('unitInkBox - what a unit covers, not the cell it was seeded in', () =>
     expect(box.h).toBeLessThan(430);
   });
 
-  it('scales with the unit and translates with it', () => {
+  // It does NOT simply scale, and that is the point of D12: a smaller unit grows its card text
+  // toward the readable floor, so its box covers more than half of a full-size one's.
+  it('translates with the unit, and covers more than half when the unit is halved', () => {
     const full = unitInkBox(bubble(), roster);
     const half = unitInkBox(bubble({ scale: 0.5, x: 100, y: 40 }), roster);
-    expect(half.w).toBeCloseTo(full.w / 2, 1);
-    expect(half.h).toBeCloseTo(full.h / 2, 1);
     expect(half.x).toBeCloseTo(100 + full.x / 2, 1);
     expect(half.y).toBeCloseTo(40 + full.y / 2, 1);
+    expect(half.h).toBeGreaterThanOrEqual(full.h / 2);
+    expect(half.h).toBeLessThan(full.h);
   });
 
   it('ignores members the author did not put in a slot', () => {
