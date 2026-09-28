@@ -8,9 +8,10 @@ import {
 } from '$lib/mls-client/distributionScope';
 import { type ChannelMemberDto, ChannelService } from '$lib/services/ChannelService';
 import { whenAnyComesOnline } from '$lib/stores/presenceStore';
-import { requireGraineRuntime, scopeForChannel } from './runtime';
+import { isGraineReady, requireGraineRuntime, scopeForChannel } from './runtime';
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
+import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -129,6 +130,28 @@ const parked = new Map<string, { sessions: Map<string, string[]>; cancel: () => 
 /** Communities whose history request waits for a member to come online, with that waiter's cancel. */
 const historyParked = new Map<string, () => void>();
 
+/**
+ * The key group each asked session went out on, and the epoch it was sealed at.
+ *
+ * A REQUEST SEALED AT AN EPOCH THE GROUP LEAVES IS A REQUEST NOBODY CAN READ, and `asked` would
+ * still say it is outstanding. On production 2026-09-28 a device at epoch 5 of a key group the
+ * server had at 13 asked for its seeds, and every member - all at 13 - dropped the frame. When the
+ * group catches up, what went out at an older epoch is asked again: see
+ * {@link releaseRequestsHeldForKeyGroup}.
+ */
+const askedOn = new Map<string, { groupId: string; epoch: number }>();
+
+/**
+ * Requests not sent because their key group was behind its epoch, by group, then channel.
+ *
+ * Held rather than dropped: the wants are real, only the epoch is wrong. Released by the event that
+ * ends the gap ({@link releaseRequestsHeldForKeyGroup}), never by a clock.
+ */
+const heldForKeyGroup = new Map<string, Map<string, Map<string, MissingSeed>>>();
+
+/** Communities whose history request waits for their key group to catch up, by group. */
+const historyHeldForKeyGroup = new Map<string, Set<string>>();
+
 /** True while a flush is in flight, so the accumulator keeps filling instead of racing it. */
 let flushing = false;
 
@@ -179,8 +202,18 @@ async function flushRepairs(): Promise<void> {
         );
         continue;
       }
+      // NOT WHILE THE GROUP'S EPOCH IS STILL BEING ESTABLISHED, and not at all while it is behind:
+      // a request is sealed at this device's epoch, and one sealed at an epoch every member has left
+      // is read by nobody. Awaited BEFORE the accumulator is read, for the coalescing reason above.
+      await requireGraineRuntime(
+        'cannot ask for a missing seed'
+      ).mlsService.whenDistributionEpochSettled(targets.groupId);
       const sessions = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
       outstanding.delete(channelId);
+      if (isInEpochGap(targets.groupId)) {
+        holdForKeyGroup(targets.groupId, channelId, sessions);
+        continue;
+      }
       try {
         await requestSeedsForChannel(channelId, sessions, targets);
       } catch (e) {
@@ -402,7 +435,11 @@ async function requestSeedsForChannel(
     // shared log would be circular - and that log is capped per group, so writing requests into it
     // would evict the seeds it exists to carry.
     await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
-    sessionIds.forEach((id) => asked.add(id));
+    const sealedAt = mlsService.getEpoch(groupId);
+    sessionIds.forEach((id) => {
+      asked.add(id);
+      askedOn.set(id, { groupId, epoch: sealedAt });
+    });
     console.info(
       `[GRAINE] asked ${answerer} for ${sessionIds.length} seed(s) in community ${workspaceId.slice(0, 8)}`
     );
@@ -593,7 +630,16 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
  * Best-effort by construction: it is called from the join path and must never fail it. Every branch
  * says what it did, because the alternative symptom is a joiner staring at an empty salon.
  */
-export async function requestCommunityHistory(workspaceId: string): Promise<void> {
+export async function requestCommunityHistory(
+  workspaceId: string,
+  /**
+   * Ask even though this device holds seeds for the community. Only after a key group was RE-JOINED:
+   * the frames of the epochs it skipped were acknowledged unreadable, so what it holds is no longer
+   * evidence that it holds the past.
+   */
+  { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
+): Promise<void> {
+  if (evenIfSeedsHeld) historyAsked.delete(workspaceId);
   if (historyAsked.has(workspaceId)) return;
   const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
     'cannot ask for community history'
@@ -607,11 +653,23 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   // here at every start, of one member, for seeds this device mostly holds, would buy nothing that
   // path does not already deliver session by session.
   const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
-  if (held.length > 0) return;
+  if (held.length > 0 && !evenIfSeedsHeld) return;
 
   const scope = workspaceScope(workspaceId);
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId) throw new GraineDistributionUnavailableError(scope);
+
+  // The same rule as a seed request, for the same reason: see {@link askedOn}.
+  await mlsService.whenDistributionEpochSettled(groupId);
+  if (isInEpochGap(groupId)) {
+    const waiting = historyHeldForKeyGroup.get(groupId) ?? new Set<string>();
+    waiting.add(workspaceId);
+    historyHeldForKeyGroup.set(groupId, waiting);
+    console.info(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} waits for its key group ${groupId.slice(0, 8)}... to catch up - a request sealed now would be read by nobody`
+    );
+    return;
+  }
 
   // Before the roster read below, which is a network call: a pass that finds the same epoch is a
   // pass asking the same question of the same people, and it already has the answer. `null` is not
@@ -711,6 +769,7 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
  */
 export function forgetAskedSession(sessionId: string): void {
   asked.delete(sessionId);
+  askedOn.delete(sessionId);
   wants.delete(sessionId);
   declined.delete(sessionId);
 }
@@ -748,6 +807,7 @@ export function noteSeedUnavailable(sessionId: string, answerer: string): void {
   // Re-armed BEFORE re-noting: `noteMissingSeed` declines anything already in `asked`, which is
   // exactly where this session still is.
   asked.delete(sessionId);
+  askedOn.delete(sessionId);
   noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt);
 }
 
@@ -773,9 +833,87 @@ export function forgetWorkspaceRepairState(
   for (const sessionId of sessionIds) forgetAskedSession(sessionId);
 }
 
+/** Puts `sessions` aside until `groupId` catches up, and says so once per batch. */
+function holdForKeyGroup(
+  groupId: string,
+  channelId: string,
+  sessions: Map<string, MissingSeed>
+): void {
+  if (sessions.size === 0) return;
+  const byChannel = heldForKeyGroup.get(groupId) ?? new Map<string, Map<string, MissingSeed>>();
+  const merged = byChannel.get(channelId) ?? new Map<string, MissingSeed>();
+  for (const [sessionId, seed] of sessions) merged.set(sessionId, seed);
+  byChannel.set(channelId, merged);
+  heldForKeyGroup.set(groupId, byChannel);
+  console.info(
+    `[GRAINE] ${sessions.size} seed request(s) for channel ${channelId.slice(0, 8)} held - key group ${groupId.slice(0, 8)}... is behind its epoch, and a request sealed now would be read by nobody`
+  );
+}
+
+/**
+ * Sends what waited for `groupId` to catch up, and asks AGAIN for what went out at an epoch it has
+ * since left. Called when the key group's gap closes, or it was re-joined.
+ *
+ * @param groupId The key group that caught up.
+ * @param rejoinedWorkspace The community whose key group was RE-JOINED, when it was: its history is
+ *   asked for even though seeds are held (see {@link requestCommunityHistory}).
+ */
+export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspace?: string): void {
+  if (!isGraineReady()) return;
+  const { mlsService } = requireGraineRuntime('cannot release held seed requests');
+  const now = mlsService.getEpoch(groupId);
+  let reasked = 0;
+  let released = 0;
+
+  for (const [channelId, sessions] of heldForKeyGroup.get(groupId) ?? []) {
+    const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
+    for (const [sessionId, seed] of sessions) perChannel.set(sessionId, seed);
+    outstanding.set(channelId, perChannel);
+    released += sessions.size;
+  }
+  heldForKeyGroup.delete(groupId);
+
+  for (const [sessionId, at] of askedOn) {
+    if (at.groupId !== groupId || at.epoch >= now) continue;
+    asked.delete(sessionId);
+    askedOn.delete(sessionId);
+    const want = wants.get(sessionId);
+    if (!want) continue;
+    const perChannel = outstanding.get(want.channelId) ?? new Map<string, MissingSeed>();
+    perChannel.set(sessionId, { senderId: want.senderId, sentAt: want.sentAt });
+    outstanding.set(want.channelId, perChannel);
+    reasked++;
+  }
+
+  const communities = historyHeldForKeyGroup.get(groupId) ?? new Set<string>();
+  historyHeldForKeyGroup.delete(groupId);
+  if (rejoinedWorkspace) communities.add(rejoinedWorkspace);
+  for (const workspaceId of communities) {
+    requestCommunityHistory(workspaceId, {
+      evenIfSeedsHeld: workspaceId === rejoinedWorkspace,
+    }).catch((e) =>
+      console.warn(
+        `[GRAINE] could not ask for the history of community ${workspaceId.slice(0, 8)}: ` +
+          String(e)
+      )
+    );
+  }
+
+  if (released + reasked + communities.size > 0) {
+    console.info(
+      `[GRAINE] key group ${groupId.slice(0, 8)}... caught up (epoch ${now}) - ${released} held request(s) released, ` +
+        `${reasked} re-asked (sealed at an epoch it has left), ${communities.size} history request(s)`
+    );
+  }
+  if (outstanding.size > 0 && !flushing) void flushRepairs();
+}
+
 /** Test seam: drops every in-memory trace of what has been asked. */
 export function resetGraineRepairState(): void {
   asked.clear();
+  askedOn.clear();
+  heldForKeyGroup.clear();
+  historyHeldForKeyGroup.clear();
   wants.clear();
   declined.clear();
   outstanding.clear();

@@ -1,4 +1,4 @@
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { DistributionGapListener, IMlsService } from '$lib/mls-client/IMlsService';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import {
   channelScope,
@@ -8,7 +8,7 @@ import {
 } from '$lib/mls-client/distributionScope';
 import { ChannelApiError, type ChannelService } from '$lib/services/ChannelService';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
-import { requestCommunityHistory } from './repair';
+import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repair';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -174,7 +174,7 @@ async function joinDistributionGroup(
         `[GRAINE] could not re-read the distribution group of ${scopeLabel(scope)} (${String(e)}) - keeping the one this device holds`
       );
       await reconcileRoster(channelService, scope, log);
-      await askForHistory(scope, log);
+      askForHistory(scope, log);
       return true;
     }
     log(`[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${String(e)}`);
@@ -242,12 +242,18 @@ async function joinDistributionGroup(
   }
 
   if (holdsTheGroup && !serverForgotThisDevice) {
+    // HELD IS NOT CURRENT, and the server has just said which epoch is. `ref.activeEpoch` was read on
+    // every load and compared with nothing, so a device frozen behind its own key group reloaded
+    // into the same freeze for a day (production 2026-09-28). The comparison needs the drain - the
+    // missing commits may be in this device's own queue - so it is SCHEDULED, never awaited here,
+    // and the community loop is not held behind a mailbox.
+    void mlsService.verifyDistributionEpoch(ref.groupId, ref.activeEpoch);
     // Already in the group - but not necessarily holding anything. A device that joined while its
     // answerer was offline would never ask again if the ask lived only on the joining branch, and
     // the request is exactly what decides whether it is needed.
     await republishStaleBase(mlsService, ref, scope, log);
     await reconcileRoster(channelService, scope, log);
-    await askForHistory(scope, log);
+    askForHistory(scope, log);
     return true;
   }
 
@@ -316,7 +322,7 @@ async function joinDistributionGroup(
   }
 
   await reconcileRoster(channelService, scope, log);
-  await askForHistory(scope, log);
+  askForHistory(scope, log);
   return true;
 }
 
@@ -439,6 +445,86 @@ export async function enterPrivateSalonGroup(
   return false;
 }
 
+/**
+ * Re-joins a key group that is BEHIND its server and cannot be caught up by replay - rung 2.
+ *
+ * THROUGH THE LOADER, AND THAT IS THE WHOLE POINT. The sync watchdog used to drop the tree and
+ * external-join on its own, a second implementation of what the loader's stale branch does - and
+ * two doors are how the GRP-4 duplicate leaf happened. Forget, then `ensureDistributionGroupFor`:
+ * its per-scope in-flight share means a load already joining this scope is awaited, not raced.
+ *
+ * After it, what went out at the old epoch is asked again, and the community's history is asked
+ * even though seeds are held - the skipped epochs' frames were acknowledged unreadable.
+ *
+ * @returns whether the device holds the group afterwards, or null when no scope names the group
+ *   (a salon's group whose community has not loaded), which the caller must handle itself.
+ */
+export async function rejoinBehindDistributionGroup(
+  mlsService: IMlsService,
+  channelService: ChannelService,
+  groupId: string,
+  why: string,
+  log: (message: string) => void
+): Promise<boolean | null> {
+  const scope = mlsService
+    .distributionScopes()
+    .find((s) => mlsService.distributionGroupFor(s) === groupId);
+  if (!scope) return null;
+  // A join already running for this scope finishes first: forgetting under it would have it
+  // report a group this device no longer holds.
+  await inFlight.get(scopeLabel(scope))?.catch(() => false);
+  log(
+    `[GRAINE] ${scopeLabel(scope)}: key group ${groupId.slice(0, 8)}... is behind its server and ${why} - re-joining at the current epoch`
+  );
+  await mlsService.forgetDistributionGroupById(groupId);
+  const joined = await ensureDistributionGroupFor(mlsService, channelService, scope, log);
+  if (joined) {
+    releaseRequestsHeldForKeyGroup(
+      groupId,
+      scope.kind === 'workspace' ? scope.workspaceId : undefined
+    );
+  }
+  return joined;
+}
+
+/**
+ * Who acts on a key group's catch-up verdict ({@link IMlsService.onDistributionGapVerdict}).
+ *
+ * Caught up: the requests held while it was behind go out, and those sealed at an epoch it left
+ * go out again. Exhausted: rung 2 is owed NOW - the log said no replay can ever finish, so waiting
+ * for the watchdog's clock would be a timer standing in for a fact. Failed: the watchdog owns it.
+ */
+export function distributionGapListener(
+  mlsService: IMlsService,
+  channelService: ChannelService,
+  log: (message: string) => void
+): DistributionGapListener {
+  return (groupId, verdict) => {
+    if (verdict === 'caught-up') {
+      releaseRequestsHeldForKeyGroup(groupId);
+      return;
+    }
+    if (verdict !== 'replay-exhausted') return;
+    rejoinBehindDistributionGroup(
+      mlsService,
+      channelService,
+      groupId,
+      'the commit log cannot supply the missing commits',
+      log
+    )
+      .then((joined) => {
+        if (joined === null) {
+          log(
+            `[GRAINE] key group ${groupId.slice(0, 8)}... needs a re-join and no loaded scope names it - left to the sync watchdog`
+          );
+        }
+      })
+      .catch((e: unknown) =>
+        log(`[GRAINE] re-join of key group ${groupId.slice(0, 8)}... failed: ${String(e)}`)
+      );
+  };
+}
+
 /** {@link ensureDistributionGroupFor} for a whole community. */
 export function ensureCommunityDistributionGroup(
   mlsService: IMlsService,
@@ -535,14 +621,11 @@ async function reconcileRoster(
  * It must never fail the join: a community whose group is held but whose past is missing still
  * works for every message from now on, and the failure is reported rather than propagated.
  */
-async function askForHistory(
-  scope: DistributionScope,
-  log: (message: string) => void
-): Promise<void> {
+function askForHistory(scope: DistributionScope, log: (message: string) => void): void {
   if (scope.kind !== 'workspace') return;
-  try {
-    await requestCommunityHistory(scope.workspaceId);
-  } catch (e) {
-    log(`[GRAINE] could not ask for the history of ${scopeLabel(scope)}: ${String(e)}`);
-  }
+  // NOT AWAITED: the request waits for the key group's epoch to be established, which waits for
+  // the drain - and the community loop that reaches here must not be held behind a mailbox.
+  requestCommunityHistory(scope.workspaceId).catch((e: unknown) =>
+    log(`[GRAINE] could not ask for the history of ${scopeLabel(scope)}: ${String(e)}`)
+  );
 }

@@ -15,6 +15,8 @@ import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { getIsTabLeader } from '$lib/utils/chat/connection';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps } from './sessionAuth';
+import { rejoinBehindDistributionGroup } from '$lib/utils/graine/distributionGroup';
+import { ChannelService } from '$lib/services/ChannelService';
 
 /**
  * Timer-based safety net for a stuck epoch gap. The pipeline's own escalation is REACTIVE
@@ -57,8 +59,9 @@ const RECOVERY_SWEEP_MS = 5 * 60_000;
  * **THE TWO KINDS DO NOT SHARE A LADDER, AND HANDING ONE THE OTHER'S IS WORSE THAN DOING NOTHING.**
  * A conversation is re-entered by being re-added - `recoverForkedGroup` drops the forked tree and
  * `requestReAdd` asks a member for a Welcome, or serves itself an external commit. A key
- * distribution group is entered by external commit ONLY, and it has no `dm_groups` row: handed to
- * `requestReAdd`, its `getGroupMeta` returns null, `getGroupServerStatus` answers CONFIRMED ABSENT,
+ * distribution group is entered by external commit ONLY, and it has no conversation: handed to
+ * `requestReAdd` - it IS a `dm_groups` row, but one no conversation is built from - the re-add
+ * path's `getGroupMeta` returns null, `getGroupServerStatus` answers CONFIRMED ABSENT,
  * and the group is purged as a phantom - a community losing every seed it holds, on the strength of
  * a question that was never about it. So the discriminator is carried here, from where it is
  * already known, rather than learnt by failing downstream.
@@ -90,6 +93,18 @@ function escalateStuckGap(
     `[SYNC_WATCHDOG] distribution group ${short}... epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + external re-join`
   );
   void (async () => {
+    // THROUGH THE LOADER WHEN A SCOPE NAMES THE GROUP - one re-join implementation, so this and the
+    // replay's own "exhausted" verdict cannot race two external commits for one leaf (GRP-4). Only a
+    // group no loaded scope names (a salon of a community not loaded yet) is re-joined below, since
+    // the loader cannot address it.
+    const viaLoader = await rejoinBehindDistributionGroup(
+      mlsService,
+      new ChannelService(),
+      groupId,
+      `its gap stood >${STUCK_EPOCH_GAP_MS / 1000}s`,
+      log
+    );
+    if (viaLoader !== null) return;
     // THE DROP IS WHAT MAKES THE RE-JOIN REACHABLE, and it is the same reason the Graine loader
     // forgets before rejoining a stale group: `ensureDistributionGroup` returns early for a group
     // this device already holds, which is precisely the state being repaired here.

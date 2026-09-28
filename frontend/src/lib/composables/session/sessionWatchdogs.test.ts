@@ -23,6 +23,10 @@ const isDistributionGroup = vi.fn((_id: string) => false);
 const externalJoin = vi.fn(async (_id: string) => ({ joined: true }) as Record<string, unknown>);
 const persistCheckpoint = vi.fn(async () => {});
 const dropGroupState = vi.fn(async () => {});
+/** The loader's rung 2. `null` = no loaded scope names the group, which is every case below but one. */
+const rejoinBehindDistributionGroup = vi.fn(
+  async (..._a: unknown[]): Promise<boolean | null> => null
+);
 
 vi.mock('$lib/utils/chat/connection', () => ({ getIsTabLeader: () => getIsTabLeader() }));
 vi.mock('$lib/utils/chat/recovery', () => ({
@@ -44,6 +48,10 @@ vi.mock('$lib/utils/chat/epochGapRegistry', () => ({
       .sort((a, b) => a[1] - b[1])
       .map(([id]) => id),
 }));
+vi.mock('$lib/utils/graine/distributionGroup', () => ({
+  rejoinBehindDistributionGroup: (...a: unknown[]) => rejoinBehindDistributionGroup(...a),
+}));
+vi.mock('$lib/services/ChannelService', () => ({ ChannelService: class {} }));
 vi.mock('$lib/utils/chat/dropGroupState', () => ({
   dropGroupState: (...a: unknown[]) => dropGroupState(...(a as [])),
 }));
@@ -143,6 +151,24 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     expect(gaps.has('g1')).toBe(false);
     // Nothing is armed any more and no sweep is owed, so the two later ticks cost nothing.
     expect(getLocalGroups).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-joins a key group a scope names THROUGH THE LOADER, never with a second external commit', async () => {
+    // Two doors to one leaf is the GRP-4 duplicate: the replay's own "exhausted" verdict re-joins
+    // through the loader, so the watchdog must use the same door or the two race.
+    rejoinBehindDistributionGroup.mockResolvedValueOnce(true);
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+    await vi.waitFor(() => expect(rejoinBehindDistributionGroup).toHaveBeenCalledTimes(1));
+
+    expect(rejoinBehindDistributionGroup.mock.calls[0][2]).toBe('dg1');
+    expect(dropGroupState).not.toHaveBeenCalled();
+    expect(externalJoin).not.toHaveBeenCalled();
   });
 
   it('reaches a stuck group that is in NO conversation - the defect this net had', async () => {

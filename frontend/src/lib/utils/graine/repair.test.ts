@@ -2,12 +2,18 @@ import type { StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { decodeAppMessage } from '$lib/proto/codec';
 import {
+  clearEpochGap,
+  markEpochGap,
+  resetEpochGapRegistry,
+} from '$lib/utils/chat/epochGapRegistry';
+import {
   noteMissingSeed,
   noteSeedUnavailable,
   requestCommunityHistory,
   resetGraineRepairState,
   resolveAnswerer,
   forgetAskedSession,
+  releaseRequestsHeldForKeyGroup,
 } from './repair';
 import {
   registerChannelWorkspace,
@@ -114,6 +120,9 @@ beforeEach(() => {
     mlsService: {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
+      // The drain has settled and the group is current: a request waits on this, and none here is
+      // about a group catching up.
+      whenDistributionEpochSettled: async () => {},
       getDeviceId: () => 'device-1',
       // The history ask reads the distribution epoch, because "nobody to ask" is an answer about a
       // roster and the epoch is that roster's version. `distributionEpoch` is what a test moves to
@@ -668,5 +677,90 @@ describe('noteSeedUnavailable', () => {
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Nothing is asked at an epoch the key group is about to leave (production, 2026-09-28: a device at
+ * epoch 5 of a key group every member had at 13 sealed its requests there, and nobody could read
+ * them).
+ */
+describe('a key group behind its epoch', () => {
+  afterEach(() => resetEpochGapRegistry());
+
+  it('holds a seed request while the gap is armed, and sends it when the group catches up', async () => {
+    markEpochGap('dist-group');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    clearEpochGap('dist-group');
+    releaseRequestsHeldForKeyGroup('dist-group');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.sessionIds).toEqual([
+      'sess-1',
+    ]);
+    info.mockRestore();
+  });
+
+  it('asks AGAIN for what went out at an epoch the group has since left', async () => {
+    distributionEpoch = 5;
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // The group caught up past the epoch the request was sealed at.
+    distributionEpoch = 13;
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    releaseRequestsHeldForKeyGroup('dist-group');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    info.mockRestore();
+  });
+
+  it('does not re-ask what was sealed at the epoch the group is at', async () => {
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    releaseRequestsHeldForKeyGroup('dist-group');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds the history request too, and asks once the group has caught up', async () => {
+    markEpochGap('dist-group');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    clearEpochGap('dist-group');
+    releaseRequestsHeldForKeyGroup('dist-group');
+    await settle();
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.kind).toBe(
+      canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+    );
+    info.mockRestore();
+  });
+
+  it('after a RE-JOIN asks the history even though seeds are held - the skipped epochs are gone', async () => {
+    heldSessions = [{ sessionId: 'held' } as StoredGraineSession];
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    releaseRequestsHeldForKeyGroup('dist-group', 'ws-1');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
   });
 });

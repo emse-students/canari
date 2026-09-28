@@ -88,6 +88,9 @@ beforeEach(() => {
     mlsService: {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
+      // The drain has settled and the group is current: a request waits on this, and none here is
+      // about a group catching up.
+      whenDistributionEpochSettled: async () => {},
       // The history ask versions "nobody to ask" on the distribution epoch, so the mock has to be
       // able to answer one. Fixed here: this file measures the purge, not the roster.
       getLocalGroups: () => ['dist-group'],
@@ -161,6 +164,7 @@ describe('forgetCommunityGraine', () => {
       mlsService: {
         sendMessage,
         distributionGroupFor: () => 'dist-group',
+        whenDistributionEpochSettled: async () => {},
         getLocalGroups: () => ['dist-group'],
         isDistributionBaseSettled: () => true,
         getEpoch: () => 3,

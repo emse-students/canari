@@ -212,8 +212,8 @@ lossless heal.
 
 | PR | What | State |
 | --- | --- | --- |
-| 1 (B + C) | The registry is device state (IndexedDB v9 / SQLite 11), restored before the drain and allowlisted by the MLS state; registering a key group collects `absent-conversation` and the new `unscoped-distribution-group` | this PR |
-| 2 (A + D + E) | A HELD key group is compared with `activeEpoch` once the first pull settles (`classifyBase`), a gap is armed on `epoch-gap`/`wrong-epoch` and cleared only at the target epoch, the watchdog rejoins through `ensureDistributionGroupFor`; nothing is sealed or asked in a gap (`distributionEpochFor` null) and a rejoin re-asks history once | open |
+| 1 (B + C) | The registry is device state (IndexedDB v9 / SQLite 11), restored before the drain and allowlisted by the MLS state; registering a key group collects `absent-conversation` and the new `unscoped-distribution-group` | merged (#1170) |
+| 2 (A + D + E) | A HELD key group is compared with `activeEpoch` once the first pull settles and caught up by replay; an `epoch-gap` frame steps ONE commit and is re-tried (the PC's queue lacked only 4->5); the gap closes at the server epoch; nothing is sealed or asked in a gap and what went out stale is re-asked; rung 2 through the loader, the watchdog included ([§22.1](protocols/channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind)) | this PR |
 | 3 (G + H + I) | P3 noise: `forgetGroupsAbsentFromServer` twice per boot, `ownDevicesOnTheGroup` re-fetching, one unreadable-row line per row, one decline line per own device; and the three `GET .. /avatar 404` lines the frontend suite prints (seen 2026-09-28) | open |
 
 **Owed after `v0.18.29`**: `queued_message` for the PC's device at 0, chat-delivery `[ACK] ... deleted=51`,

@@ -2780,10 +2780,40 @@ no rejoin, no history request. The claim is checked on the device that reported 
 `past-epoch-application` after the release (`max_past_epochs` is 2, so a commit applied out of
 order would show there).
 
-**What this does NOT close, and is the next pull request**: a HELD key group behind the server is
-never compared with `activeEpoch`, `routeDistributionFrame` does not arm the epoch gap on
-`epoch-gap`/`wrong-epoch`, and seeds and history requests still go out at the stale epoch. See the
-[backlog](../backlog.md).
+### 22.1 A key group behind its server catches itself up, and nothing is sealed while it is behind
+
+**The same device, an hour later (console of 19:25, 2026-09-28)**: epoch **4**, and every one of the
+1984 frames refused was `epoch-gap` at epochs 6 to 15 - the commit 4->5 was not in the queue at all,
+so the classification alone could not have healed it. Four things were missing, each now a mechanism:
+
+- **Held is not current.** `joinDistributionGroup` read `ref.activeEpoch` on every load and compared
+  it with nothing. The held branch now schedules `verifyDistributionEpoch(groupId, activeEpoch)`, never
+  awaited: it waits for `whenInitialDrainSettled()` (a one-shot resolved by the first pull that EMPTIED
+  the mailbox, never by a failed one) and the group's own queue, because before the drain "behind" may
+  mean "its commits are still queued" - and replaying from the log first would jump past the epochs
+  the queued seeds were sealed at. Still behind after it is a proof: rung 1 replays the missing commits.
+- **A frame from a future epoch is caught up to, one commit at a time.** `routeDistributionFrame` used
+  to refuse `epoch-gap` bare - no gap armed, nothing to catch the group up. It now replays ONE commit
+  (`attemptCommitReplay(..., untilEpoch = local + 1)`) and re-tries the frame, repeating while each
+  step applies a commit. One step is exactly the hole when the rest is queued, and it keeps the queued
+  seeds readable (`max_past_epochs` is 2). `wrong-epoch` is NOT armed: `mls-core` fast-fails every
+  `msg_epoch > group_epoch` as `epoch gap` before openmls sees the frame, so it cannot be one.
+- **Nothing is sealed at a stale epoch.** The gap is armed for the whole catch-up and lifted only at the
+  SERVER's epoch (`distributionGapTarget`) - the commit branch used to lift it on the first commit with
+  seven still to come. `distributionEpochFor` answers null while it is armed, so no seed is minted; seed
+  requests and the history request wait for `whenDistributionEpochSettled` and are HELD while the gap
+  stands (`repair.ts`). When the gap closes, the held ones go out and every request sealed at an epoch
+  the group has since left is asked again (`askedOn`).
+- **Rung 2 has one door.** A replay the log cannot finish (below its floor, or holed) is a proof, so the
+  verdict listener re-joins at once through `rejoinBehindDistributionGroup`: forget, then
+  `ensureDistributionGroupFor` - the loader's own join, in-flight share included - and the community's
+  history is asked even though seeds are held. The sync watchdog's stuck-gap net takes the same door
+  whenever a scope names the group, instead of its own drop + external commit (two doors to one leaf is
+  the GRP-4 duplicate).
+
+What the verdicts are and who acts on them: `DistributionGapVerdict` (`IMlsService.ts`),
+`distributionGapListener` (`utils/graine/distributionGroup.ts`), wired in `sessionAuth` with the frame
+handler, before any drain.
 
 **Also measured that day, and not a defect of this device**: Rootz 2026-2027 -> `#general`, the
 rows of 2026-09-02 (two sessions, one the user's own) are unreadable on EVERY current device - all

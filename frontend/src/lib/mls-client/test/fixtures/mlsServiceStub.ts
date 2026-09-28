@@ -73,6 +73,12 @@ export function createMlsServiceStub(
     onDistributionFrame: vi.fn(),
     setDistributionGroupStore: vi.fn(),
     hydrateDistributionGroups: vi.fn().mockResolvedValue(undefined),
+    // Default: the drain has settled and every key group is CURRENT - the state a test that is not
+    // about catching up must not have to arrange.
+    whenInitialDrainSettled: vi.fn().mockResolvedValue(undefined),
+    verifyDistributionEpoch: vi.fn().mockResolvedValue('current'),
+    whenDistributionEpochSettled: vi.fn().mockResolvedValue(undefined),
+    onDistributionGapVerdict: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),

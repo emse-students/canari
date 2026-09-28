@@ -187,3 +187,35 @@ describe('attemptCommitReplay', () => {
     expect(mls.processIncomingMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('attemptCommitReplay, bounded', () => {
+  beforeEach(() => noteFrameConsumed.mockReset());
+
+  /**
+   * Production 2026-09-28: a key group at epoch 4 whose queue held the commits and seeds of epochs 5
+   * to 15 - only 4->5 was missing. Replaying to the server's epoch would have put every seed more
+   * than two epochs back out of reach; one step is exactly the hole.
+   */
+  it('stops at untilEpoch and calls that healed, naming the server epoch it did not chase', async () => {
+    let epoch = 4;
+    const lines: string[] = [];
+    const mls = makeMls({
+      getEpoch: vi.fn(() => epoch),
+      fetchCommitsSince: vi.fn().mockResolvedValue({
+        commits: [4, 5, 6].map((baseEpoch) => ({ baseEpoch, proto: 'AQ==' })),
+        activeEpoch: 7,
+        belowFloor: false,
+      }),
+      processIncomingMessage: vi.fn(async () => {
+        epoch++;
+        return null;
+      }),
+    });
+
+    const result = await attemptCommitReplay(mls, 'g', 'u', (l) => lines.push(l), 5);
+
+    expect(epoch).toBe(5);
+    expect(result).toMatchObject({ healed: true, applied: 1, activeEpoch: 7 });
+    expect(lines.join('\n')).toContain('server at 7');
+  });
+});

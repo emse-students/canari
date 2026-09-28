@@ -53,6 +53,7 @@ import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
+import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
@@ -1004,6 +1005,11 @@ export async function loginImpl(
     // refuses to acknowledge one with no handler wired, so this is the difference between a seed
     // stored and a seed redelivered for ever.
     mlsService.onDistributionFrame(handleDistributionFrame);
+    // Who acts on a key group found behind its epoch: rung 2 through the loader, and the requests
+    // held while it was behind. Wired with the frame handler, before the drain can produce one.
+    mlsService.onDistributionGapVerdict(
+      distributionGapListener(mlsService, distributionChannels, cb.log)
+    );
 
     const callSystemCtx = {
       userId: ctx.getUserId(),

@@ -224,6 +224,28 @@ describe('waitForMessageQueueIdle', () => {
     }
   });
 
+  /**
+   * The fact a key group's epoch check stands on: before the first pull that listed the whole
+   * mailbox, "behind" may only mean "its commits are still queued".
+   */
+  it('settles the initial drain on the first pull that EMPTIED the mailbox, never on a failed one', async () => {
+    let settled = false;
+    void svc.whenInitialDrainSettled().then(() => {
+      settled = true;
+    });
+
+    pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await svc.fetchPendingMessages();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    error.mockRestore();
+
+    await svc.fetchPendingMessages();
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
   it('is not held open by a pull that failed - a transport error is not a full mailbox', async () => {
     pullPendingMessagesJson.mockRejectedValue(new Error('offline'));
 
