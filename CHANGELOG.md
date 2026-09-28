@@ -14,6 +14,99 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.29] - 2026-09-28
+
+### Changed - Le Cercle is `cercle.emse.fr`
+
+The ecosystem menu links to it and link previews recognise both School names, old ones kept for
+links already posted ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moved-2026-09-27)).
+
+### Changed - the channel access panel has no "Enregistrer" left to forget
+
+Flipping a channel private/public (behind a confirmation, since it changes who can read it) and
+picking who can write now save themselves the instant they change, the same way the member
+allowlist already did - nothing on the tab is deferred to a button anymore.
+([social-service](docs/wiki/services/social-service.md#roles-membership-and-channel-access))
+
+### Fixed - a channel notification titled itself with its own raw conversation id
+
+`notificationGroupName` preferred `contactName`, which every channel row builder deliberately keeps
+as the raw `channel_<uuid>` id (the key seed routing reads), over `name`, which carries the real one
+([nativeNotification.ts](frontend/src/lib/utils/nativeNotification.ts)).
+
+### Fixed - the Discussions badge held a stale unread count
+
+Two causes, both reported by the user: reading a conversation in one browser tab never told a
+sibling tab, so its badge stayed lit until that tab read the conversation itself; and a system
+notice merged from the FCM cache (e.g. the `memberAdded` notice an invite writes) counted as
+unread even when the current user's own action produced it, since its sender is always `system`
+rather than the actor. Tabs now broadcast a read, watermarked so a genuinely new message is never
+swallowed by it, and the FCM merge now excludes system notices the same way the live path already
+does ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a follower tab pulled and decrypted the leader's queue on every mailbox barrier
+
+37 pulls of the same rows in ten seconds, measured on production; a follower now pulls nothing ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-follower-pulled-the-leaders-queue-on-every-barrier-2026-09-28)).
+
+### Fixed - a key group behind its server stayed frozen, and its seeds and requests went out at an epoch nobody could read
+
+A held key group is now compared with the server's epoch after the drain and caught up by replay, one commit at a time for a frame from a future epoch; nothing is sealed while it is behind ([channel-encryption](docs/wiki/protocols/channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind)).
+
+### Fixed - a community's salon stayed blank on a device whose key group was classified after the boot drain
+
+The key-group registry is now stored on the device and restored before the first drain, and registering a key group re-fetches the frames refused for it; measured on production with 51 frames refused on every load ([channel-encryption](docs/wiki/protocols/channel-encryption.md#22-a-key-groups-backlog-was-refused-on-every-load---the-classification-is-device-state---fixed-2026-09-28)).
+
+### Fixed - a salon's unreadable history printed one warning per row, and a member's second device declining walked the roster again
+
+A history page now reports its unreadable rows once per cause, and a seed request takes one answer per member ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Security - a salon seed already held can no longer be replaced by whoever answers a repair
+
+A repair answer naming a held session with other bytes, or for another salon, is refused and logged, both in the app and in the notification mirror, and a repair no longer re-attributes a session to the member who answered it. First package of Graine v2 ([channel-encryption](docs/wiki/protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)).
+
+### Security - Graine v2's primitives exist: a bound header, a per-session signature, an endorsement that commits to the seed
+
+Pure additions, wired to nothing yet: the Ed25519 half lives in `mls-core` (WASM and Tauri), and the encodings in `graineV2.ts` and its native mirror. Shared vectors and a frozen fixture hold the two sides together ([channel-encryption §21.2](docs/wiki/protocols/channel-encryption.md#212-the-v2-primitives-wp-g2-2---written-tested-wired-to-nothing)).
+
+### Security - the MLS sender a message was verified against now reaches the app, and a disagreement with its envelope is reported
+
+Every decrypted DM and key-group frame now carries the credential OpenMLS verified; where it contradicts the sender the server wrote on the envelope, the client logs `[MLS] SENDER MISMATCH` and reports it to `POST /api/mls/sender-mismatch` - measured before it refuses, as decided for Graine v2 ([channel-encryption](docs/wiki/protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)).
+
+### Fixed - the sidebar nav label lagged the background on hover
+
+The label span's own 300ms/delayed transition (for its expand/collapse slide-in) was bundling the
+inherited hover color change too, so the background switched color noticeably before the text did.
+Color now transitions on its own 200ms/no-delay timing, matching the row
+([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Changed - no path of one workstation is written in the repository any more
+
+Fourteen drive-letter, home-directory and worktree paths are replaced by repo-relative forms or
+placeholders ([durable-rules](docs/wiki/durable-rules.md#no-path-of-one-workstation-enters-the-repository---a-path-is-relative-to-it-or-it-is-local-configuration)).
+
+### Fixed - a post's notification showed its Markdown (`**`, `##`) and mentions as raw ids
+
+Notification previews are plain text now, and a push names the members a post mentions ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - "Voir plus" cut a post's Markdown, leaving raw `**` until the post was expanded
+
+A long post is rendered whole and clamped to eight lines instead ([posts](docs/wiki/frontend/modules/posts.md#voir-plus-clamps-the-rendered-post-and-never-cuts-its-markdown-2026-09-28)).
+
+### Changed - Message reactions are smaller, and many kinds fold into a "+N"
+
+Reported by the user against Messenger: the reaction row took too much of a thread. The chips are
+pills at the timestamp size, and past five kinds the four most chosen show with a `+N` that unfolds
+the rest ([design-reference](docs/wiki/frontend/design-reference.md#the-row-got-smaller-and-folds-2026-09-28)).
+
+### Changed - Sky is `sky.emse.fr`
+
+The ecosystem menu and the backend's `SKY_API_URL` name Sky's new host; the old name redirects its
+pages since 2026-09-28 ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moved-2026-09-27)).
+
+### Fixed - "Prendre la main" gave the leadership back to the old tab a second later
+
+The promoted tab's reload released the lock it had just taken; the reloaded page now reclaims it ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-take-over-that-reloads-keeps-the-lock-it-took-2026-09-28)).
+
 ## [0.18.28] - 2026-09-28
 
 ### Fixed - a device added while its phone was dead is a recipient from the add commit's epoch, not from a five-minute replay
