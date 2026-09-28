@@ -39,6 +39,7 @@ export class PosterService {
         name: true,
         layout: true,
         publishedAt: true,
+        publicationFingerprint: true,
         createdBy: true,
         createdAt: true,
         updatedAt: true,
@@ -84,6 +85,30 @@ export class PosterService {
   }
 
   /**
+   * Reads the publish body, which carries the document and - since 2026-09-28 - its fingerprint.
+   *
+   * Two shapes are accepted because an admin may be running an older build: the app EMBEDS its
+   * frontend, so a client that predates the fingerprint still posts the bare document, and refusing
+   * it would break publishing for them. That client simply publishes with no fingerprint recorded,
+   * and the editor then treats the live map's freshness as unknown rather than guessing.
+   * See docs/wiki/legacy-compatibility.md for when this shim goes.
+   */
+  private readPublishBody(body: unknown): { carte: unknown; fingerprint: string | null } {
+    if (body !== null && typeof body === 'object' && 'carte' in body) {
+      const wrapped = body as { carte: unknown; fingerprint?: unknown };
+      const fp = wrapped.fingerprint;
+      // 64 lowercase hex characters, or nothing: the column is a hint, and a malformed one is
+      // dropped rather than stored, so a later comparison can never be decided by junk.
+      const valid = typeof fp === 'string' && /^[0-9a-f]{64}$/.test(fp);
+      if (fp !== undefined && !valid)
+        this.logger.warn('publish body carries a malformed fingerprint');
+      return { carte: wrapped.carte, fingerprint: valid ? fp : null };
+    }
+    this.logger.debug('publish body has no fingerprint: a client older than 2026-09-28');
+    return { carte: body, fingerprint: null };
+  }
+
+  /**
    * Publishes a poster to the public showcase, replacing whatever was live.
    *
    * The payload is validated field by field first ({@link sanitizePublishedCarte}) - it is about to
@@ -92,12 +117,14 @@ export class PosterService {
    * from migration 035 forbids two live rows: doing it in two statements would fail against itself.
    *
    * @param id - Project to publish.
-   * @param payload - Normalized geometry document produced by the carte editor.
+   * @param body - `{ carte, fingerprint }`, or the bare document from a client older than the
+   *   fingerprint (see {@link readPublishBody}).
    * @throws BadRequestException when the payload carries no placeable association.
    */
-  async publish(id: string, payload: unknown): Promise<PosterProject> {
+  async publish(id: string, body: unknown): Promise<PosterProject> {
     this.logger.debug(`publish poster project ${id}`);
-    const publication = sanitizePublishedCarte(payload);
+    const { carte, fingerprint } = this.readPublishBody(body);
+    const publication = sanitizePublishedCarte(carte);
     if (!publication) {
       this.logger.warn(`publish rejected for ${id}: payload has no usable bubble`);
       throw new BadRequestException('Publication payload is empty or malformed');
@@ -106,10 +133,15 @@ export class PosterService {
     return this.posterRepo.manager.transaction(async (manager) => {
       const repo = manager.getRepository(PosterProject);
       // Clear the previous live map FIRST; the unique index allows only one non-null publication.
-      await repo.update({ publication: Not(IsNull()) }, { publication: null, publishedAt: null });
+      // Its fingerprint goes with it: a row that is not live describes no published document.
+      await repo.update(
+        { publication: Not(IsNull()) },
+        { publication: null, publishedAt: null, publicationFingerprint: null }
+      );
       await repo.update(id, {
         publication: publication as unknown as Record<string, unknown>,
         publishedAt: new Date(),
+        publicationFingerprint: fingerprint,
       });
       const saved = await repo.findOne({ where: { id } });
       if (!saved) throw new NotFoundException('Poster project not found');
@@ -123,6 +155,7 @@ export class PosterService {
     const project = await this.get(id);
     project.publication = null;
     project.publishedAt = null;
+    project.publicationFingerprint = null;
     return this.posterRepo.save(project);
   }
 
