@@ -37,10 +37,12 @@ const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
 
 /**
  * True when `value` looks like a raw technical ID that must never be shown in the UI -
- * either a UUID or an MLS group ID (64-char lowercase hex hash).
+ * a UUID, an MLS group ID (64-char lowercase hex hash), or a `channel_<uuid>` conversation ID
+ * that has not been replaced yet by the community's synced channel name.
  */
 export function isRawId(value: string): boolean {
-  return isUuidLike(value) || HEX_ID_RE.test(value.trim());
+  const trimmed = value.trim();
+  return isUuidLike(trimmed) || HEX_ID_RE.test(trimmed) || isChannelConversationId(trimmed);
 }
 
 /** True when `value` is the persisted direct-conversation key (`userId::peerId`). */

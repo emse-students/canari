@@ -99,8 +99,16 @@ describe('notificationGroupName', () => {
     expect(notificationGroupName('group', 'Les gourmands', 'grp-1')).toBe('Les gourmands');
   });
 
-  it('titles a channel like a group', () => {
-    expect(notificationGroupName('channel', 'general', 'channel_1')).toBe('general');
+  it('titles a channel with the channel name, not the raw conversation id', () => {
+    // Every channel row builder in `useChannelWorkspaces.svelte.ts` keeps `contactName` as the
+    // raw `channel_<uuid>` id (the key seed routing reads) and puts the real name in `name` - the
+    // reverse of a plain group. A notification titled with `contactName` here read as
+    // "channel_<uuid>" on screen instead of the channel's name.
+    expect(notificationGroupName('channel', 'channel_1', 'general')).toBe('general');
+  });
+
+  it('falls back to the raw id when a channel has no name yet', () => {
+    expect(notificationGroupName('channel', 'channel_1', '')).toBe('channel_1');
   });
 
   it('falls back to the stored name when there is no auxiliary label', () => {

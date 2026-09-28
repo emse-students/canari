@@ -83,6 +83,19 @@ describe('resolveConversationListPresentation', () => {
     expect(pres.displayNameResolved).toBe(true);
   });
 
+  it('does not surface a channel_<uuid> conversation id as a display name', () => {
+    // A community's channel name syncs after the row is created; until it does, `name` still
+    // holds the raw `channel_<uuid>` conversation id. That id must read as unresolved, exactly
+    // like a bare group UUID does, rather than being shown verbatim (as it was in a push
+    // notification title built from this same presentation).
+    const channelId = `channel_${GROUP}`;
+    const pres = resolveConversationListPresentation(
+      { id: channelId, name: channelId, contactName: channelId, conversationType: 'channel' },
+      ME
+    );
+    expect(pres.displayName).not.toBe(channelId);
+  });
+
   it('does not throw when direct metadata is incomplete during reload', () => {
     const pres = resolveConversationListPresentation(
       {
