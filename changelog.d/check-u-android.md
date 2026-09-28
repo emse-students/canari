@@ -1,5 +1,6 @@
-### Documentation - the biometric cadence passes check U on Android, and step 5 names an older defect
+### Fixed - after a failed biometric unlock, "use biometrics" on the PIN modal works again
 
-Every cadence decision held on the Mi 9T; the PIN modal's biometric button fails after a failed
-launch unlock, a P2 that predates the cadence
-([device-verification](docs/wiki/device-verification.md#u-the-biometric-cadence-every-12-h-skips-the-sheet-every-time-keeps-it---owed-on-both-platforms)).
+A failed unlock no longer forgets who is signed in unless the session is dead, and an empty keystore
+is a typed `mls-core` error rather than a sentence two call sites matched; the biometric cadence
+passed check U on Android on the way
+([backlog](docs/wiki/backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).

@@ -26,8 +26,8 @@ export const load = async (event: LoadEvent) => {
 
   let userId = currentUserId();
   if (!userId) {
-    // userId may be transiently null if clearUserLocally() was called (e.g. after
-    // an MLS login failure) while the HTTP session (refresh cookie) is still valid.
+    // userId may be null while the HTTP session (refresh cookie) is still valid - a first
+    // launch after OIDC, or a store cleared by the system.
     // Attempt a silent refresh - _doRefresh restores userId from the JWT sub claim.
     try {
       await refresh();

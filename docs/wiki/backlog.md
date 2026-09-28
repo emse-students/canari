@@ -211,8 +211,15 @@ biometrics** then enters `biometricLoginImpl`, finds `currentUserId()` null and 
 `[BIOMETRIC] Failed - no local user found.` before any keystore read, showing `No user registered
 for biometric authentication.` - English, not Paraglide. The PIN still unlocks, so it is P2.
 Measured with no enrolled finger; a real cancel is inferred to take the same catch, not observed.
-**Open question for the fix:** which failure codes may forget the user. `keystore_empty` says
-nothing about WHO is signed in, so it should not.
+
+**FIXED, NOT SHIPPED (PR `docs/check-u-android`, 2026-09-28).** The catch forgets the identity on
+`SessionExpiredError` only - the one failure that is about WHO is signed in; a revoked device is
+already forgotten by `wipeRevokedDevice` (pinned in `offlineUnlock.test.ts`). The same PR types the
+empty-keystore answer: `mls-core` throws `KEYSTORE_KEY_UNAVAILABLE` instead of the sentence
+`"No keystore key ..."` that `TauriMlsService` and `sessionAuth` each matched with a regex, and the
+state classifier recognises it instead of printing `Unrecognised state-load failure` on every
+refused fingerprint. The English error became `auth_biometric_no_user`. Owed: the release, and check
+U step 5 with a real finger.
 
 ### P2 - a tab open across a deploy can no longer load any lazy module, and says only "Erreur" (measured on production 2026-09-27)
 

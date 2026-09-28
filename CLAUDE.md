@@ -254,10 +254,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 14. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
-   [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.** The
-   biometric cadence (#1161) PASSES check U on the Mi 9T bar step 5, which a PRE-EXISTING P2 fails:
-   a failed launch unlock forgets the user, so the PIN modal's biometric button does nothing
-   ([backlog](docs/wiki/backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).
+   [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 15. **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).

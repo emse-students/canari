@@ -92,8 +92,8 @@ describe('a server answer is never read as a missing network', () => {
 
 describe('the offline session never re-enters the destructive catch', () => {
   it('guards the post-init getToken instead of calling it unconditionally', () => {
-    // This call sits inside the try whose catch runs resetMls() + clearUserLocally() +
-    // clearDeviceKey(). Letting it throw offline would destroy the session that just unlocked.
+    // This call sits inside the try whose catch runs resetMls() + clearDeviceKey(). Letting it
+    // throw offline would destroy the session that just unlocked.
     expect(loginImplBody).toMatch(
       /ctx\.setAuthToken\(offlineSession \? '' : await getToken\(\)\);/
     );
@@ -133,6 +133,37 @@ describe('the offline session never re-enters the destructive catch', () => {
     const logout = sessionAuth.slice(sessionAuth.indexOf('export function logoutImpl'));
     expect(logout).toContain("tearDownLiveSession(ctx, cb, 'logout');");
     expect(tearDownBody).toContain('unregisterOfflinePromotion();');
+  });
+});
+
+/**
+ * A failed unlock forgets WHO is signed in only when the failure is about that.
+ *
+ * The login catch used to run `clearUserLocally()` on every failure, so a cancelled fingerprint
+ * (`keystore_empty`) left the PIN modal's "use biometrics" reading a null id and stopping before
+ * any keystore read - measured on the Mi 9T, 2026-09-28 (check U step 5).
+ */
+describe('a failed unlock keeps the identity unless the session is dead', () => {
+  const failureCatch = (() => {
+    const at = loginImplBody.indexOf(
+      'const shown = localizedMessage(_e, m.auth_pin_login_failed());'
+    );
+    expect(at).toBeGreaterThan(-1);
+    const end = loginImplBody.indexOf('} finally {', at);
+    expect(end).toBeGreaterThan(at);
+    return loginImplBody.slice(at, end);
+  })();
+
+  it('forgets the identity inside the session-expired branch and nowhere else in the catch', () => {
+    const expired = failureCatch.indexOf('if (_e instanceof SessionExpiredError) {');
+    const branchEnd = failureCatch.indexOf('} else if (cb.onLoginFailed)', expired);
+    expect(expired).toBeGreaterThan(-1);
+    expect(branchEnd).toBeGreaterThan(expired);
+    const clearCall = 'clearUserLocally();';
+    const first = failureCatch.indexOf(clearCall);
+    expect(first).toBeGreaterThan(expired);
+    expect(first).toBeLessThan(branchEnd);
+    expect(failureCatch.indexOf(clearCall, first + 1)).toBe(-1);
   });
 });
 

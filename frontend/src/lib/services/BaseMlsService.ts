@@ -6,7 +6,7 @@ import type {
   BulkIngestPhase,
   BulkIngestObserver,
 } from '$lib/mls-client';
-import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
+import { MlsDeliveryApi, isKeystoreKeyUnavailable, resolveMlsPublicUrls } from '$lib/mls-client';
 import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
@@ -468,14 +468,20 @@ export abstract class BaseMlsService implements IMlsService {
    * failure came from somewhere this classifier has never been taught about. The caller treats it
    * as conservatively as `undecryptable` - nothing is destroyed - but it is LOGGED as unrecognised
    * rather than silently wearing a diagnosis, which is the whole of what went wrong here.
+   *
+   * `keystore_unavailable` is not a verdict on the state at all - biometric mode found no key to
+   * open it with (a cancelled or refused sheet, a wiped entry). It is recognised here only so it
+   * is not accused as unrecognised on every refused fingerprint; the caller destroys nothing for it
+   * and hands the user to the PIN modal ({@link isKeystoreKeyUnavailable}).
    */
   protected classifyStateLoadFailure(
     error: unknown
-  ): 'mismatch' | 'undecryptable' | 'rotated' | 'unknown' {
+  ): 'mismatch' | 'undecryptable' | 'rotated' | 'keystore_unavailable' | 'unknown' {
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
     if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
+    if (isKeystoreKeyUnavailable(error)) return 'keystore_unavailable';
     // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.
     // Reaching this arm means the state load failed for a reason `mls-core` does not type, and
     // the whole defect this classifier was rewritten for is an unrecognised failure passing

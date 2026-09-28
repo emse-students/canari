@@ -1037,15 +1037,16 @@ Settings radio was not driven. Measured:
 | every time, proof 6 min old | `Prompt due (cadence=every_launch, ...)`, `getKeyBytes` | due, prompted |
 | proof 13 h old | `Prompt due (... lastPrompted=780 min ago)` | due |
 | proof 60 min in the FUTURE (clock set back) | `Prompt due (... lastPrompted=-60 min ago)` | due |
-| step 5: the modal's button, fresh proof | `unattended=false`, then `[BIOMETRIC] Failed - no local user found.` | **FAILS**: never reaches the keystore |
+| step 5: the modal's button, fresh proof | `unattended=false`, then `[BIOMETRIC] Failed - no local user found.` | **FAILED**: never reached the keystore |
+| step 5 again, on the fix (same day, uncommitted diff `112e8236036d` on `3d25f2d76`) | `unattended=false`, `getKeyBytes`, `keystore_empty` read off the typed code, 0 `Unrecognised state-load failure` | prompted - the sheet would appear |
+| proof 1 min old, on the fix | same skipped path, `MLS ready` | no regression |
 
-**Step 5 fails because a failed launch unlock forgets who the user is.** The catch of `loginImpl`
-calls `clearUserLocally()` on every failure, `keystore_empty` included, so the button that follows
-finds `currentUserId()` null and stops before any read - with an English, non-Paraglide error. The
-button did choose the prompted path, which is the half this check owns; the other half is
-[backlog](backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28).
-Still owed: a real finger (the proof written by a success, and step 5 once the button works), the
-Settings radio (step 4), and all of iOS.
+**Step 5 failed because a failed launch unlock forgot who the user is.** The catch of `loginImpl`
+called `clearUserLocally()` on every failure, `keystore_empty` included, so the button that follows
+found `currentUserId()` null and stopped before any read - with an English, non-Paraglide error.
+Fixed the same day ([backlog](backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).
+Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
+iOS.
 
 ## Traps that outlived the work that found them
 
