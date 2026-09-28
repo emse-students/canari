@@ -1,4 +1,9 @@
-import { ensureCommunityDistributionGroup, enterPrivateSalonGroup } from './distributionGroup';
+import {
+  distributionGapListener,
+  ensureCommunityDistributionGroup,
+  enterPrivateSalonGroup,
+  rejoinBehindDistributionGroup,
+} from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
@@ -36,6 +41,9 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     registerDistributionGroup: vi.fn(),
+    // Scheduled on every held load; its outcome is `BaseMlsService`'s subject, not this file's.
+    verifyDistributionEpoch: vi.fn().mockResolvedValue('current'),
+    distributionScopes: vi.fn().mockReturnValue([]),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
     // No membership row by default: nothing is owed, so a seated device serves itself (section 20).
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
@@ -956,5 +964,92 @@ describe('a seat for a device that holds nothing - the admitter Welcome may be t
 
     expect(await run(mls, makeChannels())).toBe(true);
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * HELD IS NOT CURRENT (production, 2026-09-28): `activeEpoch` was read on every load and compared
+ * with nothing, so a device frozen behind its key group reloaded into the same freeze for a day.
+ */
+describe('a held key group and the epoch the server names', () => {
+  it('schedules the comparison on the branch that joins nothing, with the epoch the server named', async () => {
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 9,
+        activeEpoch: 9,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+    expect(await run(mls, channels)).toBe(true);
+    expect(mls.verifyDistributionEpoch).toHaveBeenCalledWith('g-1', 9);
+  });
+
+  /** A device holding `g-1` until it forgets it, so the loader's re-join is actually reached. */
+  function holdingUntilForgotten() {
+    let held = true;
+    const mls = makeHeldMls({
+      getLocalGroups: vi.fn(() => (held ? ['g-1'] : [])),
+      distributionScopes: vi.fn().mockReturnValue([workspaceScope('ws-1')]),
+      forgetDistributionGroupById: vi.fn(async () => {
+        held = false;
+        return true;
+      }),
+    });
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 12,
+        activeEpoch: 12,
+        // No seat named: the external commit is this device's own door, so nothing waits on a Welcome.
+        memberDevices: [],
+      }),
+    });
+    return { mls, channels };
+  }
+
+  it('re-joins through the loader: forget, then the one join implementation', async () => {
+    const { mls, channels } = holdingUntilForgotten();
+
+    expect(
+      await rejoinBehindDistributionGroup(mls as never, channels as never, 'g-1', 'test', () => {})
+    ).toBe(true);
+
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(mls.forgetDistributionGroupById.mock.invocationCallOrder[0]).toBeLessThan(
+      mls.ensureDistributionGroup.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('answers null, touching nothing, for a group no loaded scope names', async () => {
+    const mls = makeHeldMls({ distributionScopes: vi.fn().mockReturnValue([]) });
+
+    expect(
+      await rejoinBehindDistributionGroup(
+        mls as never,
+        makeChannels() as never,
+        'g-1',
+        'test',
+        () => {}
+      )
+    ).toBeNull();
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+  });
+
+  it('re-joins at once on an EXHAUSTED verdict, and not on the others', async () => {
+    const { mls, channels } = holdingUntilForgotten();
+    const listener = distributionGapListener(mls as never, channels as never, () => {});
+
+    listener('g-1', 'caught-up');
+    listener('g-1', 'replay-failed');
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+
+    listener('g-1', 'replay-exhausted');
+    await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
   });
 });

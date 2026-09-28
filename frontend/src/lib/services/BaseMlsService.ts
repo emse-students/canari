@@ -52,7 +52,7 @@ import {
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
-import { markEpochGap, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { markEpochGap, clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
 import {
   parseServerTimestampMs,
@@ -81,6 +81,8 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  DistributionGapListener,
+  DistributionGapVerdict,
   DistributionGroupStore,
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
@@ -329,6 +331,33 @@ export abstract class BaseMlsService implements IMlsService {
    * a group first joined in this session is the ordinary case and says so quietly.
    */
   private readonly heldAtHydration = new Set<string>();
+
+  /** Resolves {@link initialDrain}; null once it has. */
+  private resolveInitialDrain: (() => void) | null = null;
+
+  /** See {@link whenInitialDrainSettled}. Created with the service, so one per session. */
+  private readonly initialDrain = new Promise<void>((resolve) => {
+    this.resolveInitialDrain = resolve;
+  });
+
+  /** The {@link verifyDistributionEpoch} checks still answering, by group. Deleted as each settles. */
+  private readonly distributionEpochChecks = new Map<
+    string,
+    Promise<'current' | DistributionGapVerdict>
+  >();
+
+  /**
+   * Per key group in a gap, the epoch that CLOSES it.
+   *
+   * A commit that applies used to clear the gap on its own, which is right for one missing commit
+   * and wrong for eight: the first of them lifted the mark with seven still to come, and a seed
+   * sealed then went out at an epoch every current member had left. Absent means "no target
+   * known", and then the old rule stands.
+   */
+  private readonly distributionGapTarget = new Map<string, number>();
+
+  /** Set once at wiring time; see {@link onDistributionGapVerdict}. */
+  private distributionGapListener: DistributionGapListener | null = null;
 
   // ── Init dedup ────────────────────────────────────────────────────────────
   protected initPromise: Promise<void> | null = null;
@@ -1833,6 +1862,8 @@ export abstract class BaseMlsService implements IMlsService {
     await this.announceAck([]).catch(() => {});
 
     let fetched = 0;
+    /** Whether THIS pull listed the whole mailbox - the only kind that may settle the initial drain. */
+    let emptied = false;
 
     /**
      * ANNOUNCED WHILE IT RUNS, so the barrier can state a fact about the whole mailbox rather than
@@ -1854,6 +1885,7 @@ export abstract class BaseMlsService implements IMlsService {
         // Every page fetched and enqueued: the server holds nothing more for this device, which is
         // the fact the barrier is allowed to stand on.
         this.mailboxEmptiedByAPull = true;
+        emptied = true;
         if (fetched === 0) {
           console.log(
             `[PENDING] No pending MLS messages for ${sanitizeForLog(this.userId)}:${sanitizeForLog(
@@ -1891,6 +1923,10 @@ export abstract class BaseMlsService implements IMlsService {
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
     reportUnackedFrames((msg) => console.warn(msg));
+    if (emptied && this.resolveInitialDrain) {
+      this.resolveInitialDrain();
+      this.resolveInitialDrain = null;
+    }
   }
 
   /**
@@ -3054,6 +3090,168 @@ export abstract class BaseMlsService implements IMlsService {
     );
   }
 
+  /** @inheritdoc */
+  whenInitialDrainSettled(): Promise<void> {
+    return this.initialDrain;
+  }
+
+  /** @inheritdoc */
+  verifyDistributionEpoch(
+    groupId: string,
+    activeEpoch: number
+  ): Promise<'current' | DistributionGapVerdict> {
+    const short = groupId.slice(0, 8);
+    const check = (async (): Promise<'current' | DistributionGapVerdict> => {
+      // AFTER THE DRAIN, BECAUSE BEFORE IT "BEHIND" IS NOT A FACT. The server's epoch was read while
+      // this device's own queue may still hold every commit it is missing - production 2026-09-28
+      // held eight - and those apply in order with their seeds between them. Replaying from the log
+      // first would jump past the epochs those seeds were sealed at, and `max_past_epochs` is 2.
+      await this.initialDrain;
+      await this.waitForGroupQueueIdle('key-group epoch check', groupId).catch(() => {});
+      const local = this.getEpoch(groupId);
+      if (local >= activeEpoch) return 'current';
+      // A PROOF, AND SAID AS ONE: the drain has settled and the group is still short of an epoch the
+      // server named before it began, so its commits were never queued to this device. A commit
+      // still on the wire can make this line wrong by one epoch; the replay below is then a no-op
+      // that costs one read, never a state.
+      console.warn(
+        `[GRAINE] key group ${short}... is at epoch ${local} after the drain and the server at ${activeEpoch} - ` +
+          'its missing commits were never queued to this device; replaying them from the commit log'
+      );
+      return this.catchUpDistributionGroup(groupId, activeEpoch);
+    })().catch((e: unknown): DistributionGapVerdict => {
+      console.error(`[GRAINE] epoch check of key group ${short}... failed:`, String(e));
+      return 'replay-failed';
+    });
+    this.distributionEpochChecks.set(groupId, check);
+    void check.then(() => {
+      if (this.distributionEpochChecks.get(groupId) === check) {
+        this.distributionEpochChecks.delete(groupId);
+      }
+    });
+    return check;
+  }
+
+  /** @inheritdoc */
+  async whenDistributionEpochSettled(groupId: string): Promise<void> {
+    await this.initialDrain;
+    await this.distributionEpochChecks.get(groupId);
+  }
+
+  /** @inheritdoc */
+  onDistributionGapVerdict(listener: DistributionGapListener | null): void {
+    this.distributionGapListener = listener;
+  }
+
+  /**
+   * Rung 1 for a key group known to be BEHIND `target`: replay the missing commits from the log.
+   *
+   * THE GAP IS ARMED FOR THE WHOLE CATCH-UP, and that is the half of this that protects the other
+   * members: `distributionEpochFor` answers null while it is, so no seed and no request is sealed at
+   * an epoch the group is about to leave. Production 2026-09-28: this device's requests went out at
+   * epoch 5 to members all at 13, and not one of them could read them. The verdict reaches the
+   * wired listener, which owns rung 2.
+   */
+  private async catchUpDistributionGroup(
+    groupId: string,
+    target: number
+  ): Promise<DistributionGapVerdict> {
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    markEpochGap(groupId);
+    this.distributionGapTarget.set(
+      groupId,
+      Math.max(target, this.distributionGapTarget.get(groupId) ?? target)
+    );
+    let verdict: DistributionGapVerdict = 'replay-failed';
+    try {
+      const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+      if (replay.activeEpoch !== undefined) {
+        this.distributionGapTarget.set(
+          groupId,
+          Math.max(replay.activeEpoch, this.distributionGapTarget.get(groupId) ?? 0)
+        );
+      }
+      if (this.getEpoch(groupId) >= (this.distributionGapTarget.get(groupId) ?? target)) {
+        scheduleOutboundMlsPersist();
+        verdict = 'caught-up';
+      } else if (replay.belowFloor || replay.gapAt !== undefined) {
+        verdict = 'replay-exhausted';
+      }
+    } catch (e) {
+      console.warn(`[GAP] replay error for key group ${short}...:`, String(e));
+    }
+    if (verdict === 'caught-up') {
+      this.closeDistributionGap(groupId);
+    } else {
+      log(
+        verdict === 'replay-exhausted'
+          ? `[GAP] key group ${short}... cannot be caught up by replay - a re-join is OWED now`
+          : `[GAP] key group ${short}... still behind after rung 1 - left to the sync watchdog`
+      );
+    }
+    this.tellDistributionGapVerdict(groupId, verdict);
+    return verdict;
+  }
+
+  /**
+   * Replays the ONE commit a key group is missing next, and says whether it moved.
+   *
+   * The gap stays armed until the group reaches the SERVER's epoch, whichever path gets it there -
+   * this step, or the queued commits it unblocked (`routeDistributionFrame`'s commit branch).
+   */
+  private async stepDistributionGroup(groupId: string): Promise<boolean> {
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    const from = this.getEpoch(groupId);
+    markEpochGap(groupId);
+    try {
+      const replay = await attemptCommitReplay(this, groupId, this.userId, log, from + 1);
+      if (replay.activeEpoch !== undefined) {
+        this.distributionGapTarget.set(
+          groupId,
+          Math.max(replay.activeEpoch, this.distributionGapTarget.get(groupId) ?? 0)
+        );
+      }
+      if (replay.applied > 0) scheduleOutboundMlsPersist();
+      const closesAt = this.distributionGapTarget.get(groupId);
+      if (closesAt !== undefined && this.getEpoch(groupId) >= closesAt) {
+        this.closeDistributionGap(groupId);
+        this.tellDistributionGapVerdict(groupId, 'caught-up');
+      } else if (replay.belowFloor || replay.gapAt !== undefined) {
+        log(`[GAP] key group ${short}... cannot be caught up by replay - a re-join is OWED now`);
+        this.tellDistributionGapVerdict(groupId, 'replay-exhausted');
+      }
+      return this.getEpoch(groupId) > from;
+    } catch (e) {
+      console.warn(`[GAP] replay error for key group ${short}...:`, String(e));
+      return false;
+    }
+  }
+
+  /** Lifts a key group's gap and its target together - never one without the other. */
+  private closeDistributionGap(groupId: string): void {
+    clearEpochGap(groupId);
+    this.distributionGapTarget.delete(groupId);
+  }
+
+  /** Hands `verdict` to the wired listener. A listener that throws is logged, never propagated. */
+  private tellDistributionGapVerdict(groupId: string, verdict: DistributionGapVerdict): void {
+    const short = groupId.slice(0, 8);
+    const listener = this.distributionGapListener;
+    if (!listener) {
+      console.error(
+        `[GRAINE] no gap listener wired - key group ${short}... is ${verdict} and nothing acts on it`
+      );
+      return;
+    }
+    try {
+      listener(groupId, verdict);
+    } catch (e) {
+      console.error(`[GRAINE] gap listener threw for key group ${short}...:`, String(e));
+    }
+  }
+
   /** Writes `groupId`'s registration to the durable store, when one is wired. Best-effort, logged. */
   private persistDistributionGroup(scope: DistributionScope, groupId: string): void {
     const store = this.distributionGroupStore;
@@ -3222,60 +3420,33 @@ export abstract class BaseMlsService implements IMlsService {
 
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.processIncomingMessage(groupId, ciphertext, {
-        userId: sender,
-        path: 'distribution',
-      });
-      // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
-      // This group's frames are not what a conversation replay walks, so the mark is cheap
-      // insurance rather than a known fix - and the direction it can be wrong in is the safe one: a
-      // recorded consumption can only ever prevent a false claim of loss about bytes this device
-      // really did read. Not recording is what cost TAB-3b its accusations. See
-      // {@link noteFrameConsumed}.
-      noteFrameConsumed(this.userId, groupId, ciphertext);
+      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
     } catch (e) {
-      // WHY THIS ASKS WHICH FAILURE IT WAS. Refusing to acknowledge is right for a frame that may
-      // still become readable - the join has not landed, a commit is missing - and it is an
-      // INFINITE REDELIVERY LOOP for one that never will. This branch used to refuse them all, so
-      // a device's own seeds (`CannotDecryptOwnMessage`) and every seed overtaken by a commit came
-      // back on every single connection, for ever: 6 frames re-read ten times per boot, measured on
-      // prod 2026-08-19 while WP-GRAINE-1 was moving the epoch under them.
+      // A FRAME FROM AN EPOCH THIS DEVICE HAS NOT REACHED IS THE ONE REFUSAL A REPLAY REPAIRS, and it
+      // used to be refused bare: not acknowledged, no gap armed, so nothing caught the group up and
+      // every later frame failed the same way - 1984 of them in ten seconds on production
+      // 2026-09-28, a group at epoch 4 refusing frames of epochs 6 to 15.
       //
-      // The permanence is decided at the throw, by `classifyIncomingDecryptError`, and never by
-      // re-reading a sentence here.
-      const kind = classifyIncomingDecryptError(e);
-      const permanent =
-        kind === 'own-message' ||
-        kind === 'secret-reuse' ||
-        kind === 'past-epoch-application' ||
-        kind === 'generation-gap' ||
-        // Refused at exactly the epoch it names, which no later arrival changes. THIS IS THE ARM
-        // THE LIST ABOVE WAS MISSING: those four name a ratchet position, and everything else fell
-        // through to `unknown` and was refused an ACK on the argument that it might still become
-        // readable - true of a frame from an epoch we have not reached, false of one already
-        // compared against ours. On prod 2026-08-26 that was a single `InvalidSignature` at
-        // epoch 0 on two distribution groups, handed back on every connection for ever and
-        // dirtying eleven cells of the COMM rung by itself.
-        kind === 'same-epoch-refusal' ||
-        // Removed from the distribution group. Permanent in the strongest sense of the four above:
-        // those are frames we may no longer READ, this is a group we are no longer IN, and no peer
-        // answering a history request can change that.
-        kind === 'evicted';
-      if (permanent) {
-        // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
-        // is a peer answering `requestCommunityHistory`, never the server handing the same
-        // undecryptable bytes back. Leaving it queued would cost the line above on every boot and
-        // hide the next real refusal underneath it.
-        console.warn(
-          `[GRAINE] frame on ${groupId.slice(0, 8)}... is unreadable for good (${kind}) - acknowledged; its seed comes back through a history request, not a redelivery`
-        );
-        return true;
+      // ONE COMMIT AT A TIME, re-trying the frame after each: the commits between are usually in
+      // this very queue, with seeds sealed at their epochs between them, and only a step as small as
+      // the hole lets the queue apply them in order. Bounded by the log - every step applies a
+      // commit, or ends the loop.
+      if (classifyIncomingDecryptError(e) !== 'epoch-gap') {
+        return this.dispositionOfUnreadableFrame(groupId, e);
       }
-      console.warn(
-        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}... - not acknowledged (${kind}):`,
-        String(e).slice(0, 120)
-      );
-      return false;
+      plaintext = null;
+      let opened = false;
+      while (!opened) {
+        if (!(await this.stepDistributionGroup(groupId))) return false;
+        try {
+          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
+          opened = true;
+        } catch (again) {
+          if (classifyIncomingDecryptError(again) !== 'epoch-gap') {
+            return this.dispositionOfUnreadableFrame(groupId, again);
+          }
+        }
+      }
     }
 
     // A commit: MLS state advanced and there is nothing to hand over. Acknowledged, because
@@ -3288,8 +3459,16 @@ export abstract class BaseMlsService implements IMlsService {
     // holding `anyEpochGapArmed` true, which is what keeps the sync watchdog on its fine tick.
     // Only a commit may do this: an application message that decrypts proves nothing about the
     // epoch, which is why the conversation side clears on `isCommit` and not on a successful read.
+    //
+    // BUT ONLY AT THE EPOCH THAT CLOSES IT. Eight commits behind, the first used to lift the mark
+    // with seven still to come - see {@link distributionGapTarget}.
     if (!plaintext) {
-      clearEpochGap(groupId);
+      const closesAt = this.distributionGapTarget.get(groupId);
+      if (closesAt === undefined || this.getEpoch(groupId) >= closesAt) {
+        const wasArmed = isInEpochGap(groupId);
+        this.closeDistributionGap(groupId);
+        if (wasArmed) this.tellDistributionGapVerdict(groupId, 'caught-up');
+      }
       return true;
     }
 
@@ -3317,6 +3496,75 @@ export abstract class BaseMlsService implements IMlsService {
       return false;
     }
     return true;
+  }
+
+  /** Decrypts one key-group frame and records the generation it spent. Throws what MLS threw. */
+  private async openDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array
+  ): Promise<Uint8Array | null> {
+    const plaintext = await this.processIncomingMessage(groupId, ciphertext, {
+      userId: sender,
+      path: 'distribution',
+    });
+    // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
+    // This group's frames are not what a conversation replay walks, so the mark is cheap insurance
+    // rather than a known fix - and the direction it can be wrong in is the safe one: a recorded
+    // consumption can only ever prevent a false claim of loss about bytes this device really did
+    // read. Not recording is what cost TAB-3b its accusations. See {@link noteFrameConsumed}.
+    noteFrameConsumed(this.userId, groupId, ciphertext);
+    return plaintext;
+  }
+
+  /**
+   * Whether a key-group frame this device could not open may be acknowledged.
+   *
+   * @returns true for a frame no redelivery can ever make readable, false for one a later epoch may.
+   */
+  private dispositionOfUnreadableFrame(groupId: string, e: unknown): boolean {
+    // WHY THIS ASKS WHICH FAILURE IT WAS. Refusing to acknowledge is right for a frame that may
+    // still become readable - the join has not landed, a commit is missing - and it is an
+    // INFINITE REDELIVERY LOOP for one that never will. This branch used to refuse them all, so
+    // a device's own seeds (`CannotDecryptOwnMessage`) and every seed overtaken by a commit came
+    // back on every single connection, for ever: 6 frames re-read ten times per boot, measured on
+    // prod 2026-08-19 while WP-GRAINE-1 was moving the epoch under them.
+    //
+    // The permanence is decided at the throw, by `classifyIncomingDecryptError`, and never by
+    // re-reading a sentence here.
+    const kind = classifyIncomingDecryptError(e);
+    const permanent =
+      kind === 'own-message' ||
+      kind === 'secret-reuse' ||
+      kind === 'past-epoch-application' ||
+      kind === 'generation-gap' ||
+      // Refused at exactly the epoch it names, which no later arrival changes. THIS IS THE ARM
+      // THE LIST ABOVE WAS MISSING: those four name a ratchet position, and everything else fell
+      // through to `unknown` and was refused an ACK on the argument that it might still become
+      // readable - true of a frame from an epoch we have not reached, false of one already
+      // compared against ours. On prod 2026-08-26 that was a single `InvalidSignature` at
+      // epoch 0 on two distribution groups, handed back on every connection for ever and
+      // dirtying eleven cells of the COMM rung by itself.
+      kind === 'same-epoch-refusal' ||
+      // Removed from the distribution group. Permanent in the strongest sense of the four above:
+      // those are frames we may no longer READ, this is a group we are no longer IN, and no peer
+      // answering a history request can change that.
+      kind === 'evicted';
+    if (permanent) {
+      // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
+      // is a peer answering `requestCommunityHistory`, never the server handing the same
+      // undecryptable bytes back. Leaving it queued would cost the line above on every boot and
+      // hide the next real refusal underneath it.
+      console.warn(
+        `[GRAINE] frame on ${groupId.slice(0, 8)}... is unreadable for good (${kind}) - acknowledged; its seed comes back through a history request, not a redelivery`
+      );
+      return true;
+    }
+    console.warn(
+      `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}... - not acknowledged (${kind}):`,
+      String(e).slice(0, 120)
+    );
+    return false;
   }
 
   /**

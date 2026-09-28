@@ -16,6 +16,11 @@ export interface CommitReplayResult {
   gapAt?: number;
   /** Number of commits actually applied. */
   applied: number;
+  /**
+   * The server's epoch the replay aimed at, when the log answered. A caller that must know when a gap
+   * is CLOSED - not merely narrowed by one commit - compares the local epoch against this.
+   */
+  activeEpoch?: number;
 }
 
 /**
@@ -39,7 +44,17 @@ export async function attemptCommitReplay(
   mlsService: IMlsService,
   groupId: string,
   userId: string,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  /**
+   * Stop once the group reaches this epoch, instead of the server's.
+   *
+   * FOR A CALLER WHOSE QUEUE STILL HOLDS FRAMES SEALED AT THE EPOCHS IN BETWEEN. Replaying straight to
+   * the server's epoch jumps past them, and `max_past_epochs` is 2: every seed sealed more than two
+   * epochs back becomes unreadable for good. Measured on production 2026-09-28: a key group at epoch 4
+   * with its queue holding the commits and seeds of epochs 5 to 15 - only the commit 4->5 was missing.
+   * Replaying that ONE commit lets the queue do the rest, in order, and loses nothing.
+   */
+  untilEpoch?: number
 ): Promise<CommitReplayResult> {
   const startEpoch = mlsService.getEpoch(groupId);
   const { commits, activeEpoch, belowFloor, gapAt } = await mlsService.fetchCommitsSince(
@@ -49,7 +64,7 @@ export async function attemptCommitReplay(
 
   if (belowFloor) {
     log(`[GAP] ${groupId.slice(0, 8)}… below commit-log floor - rung-2 re-Welcome needed`);
-    return { healed: false, belowFloor: true, applied: 0 };
+    return { healed: false, belowFloor: true, applied: 0, activeEpoch };
   }
 
   // A HOLE IN THE LOG IS A TERMINATING ANSWER, NOT A SHORTER REPLAY. The server names the first
@@ -64,11 +79,13 @@ export async function attemptCommitReplay(
     log(
       `[GAP] ${groupId.slice(0, 8)}… commit log is holed at epoch ${gapAt} - rung-2 re-Welcome needed`
     );
-    return { healed: false, belowFloor: false, gapAt, applied: 0 };
+    return { healed: false, belowFloor: false, gapAt, applied: 0, activeEpoch };
   }
 
   let applied = 0;
+  const target = untilEpoch === undefined ? activeEpoch : Math.min(untilEpoch, activeEpoch);
   for (const c of commits) {
+    if (mlsService.getEpoch(groupId) >= target) break;
     // Skip commits already applied (baseEpoch behind our current epoch).
     if (c.baseEpoch < mlsService.getEpoch(groupId)) continue;
     try {
@@ -89,12 +106,12 @@ export async function attemptCommitReplay(
   // repaired anything - reporting `healed` there is a verdict about EPOCHS answering a question
   // about something else, and it cost WP-PENDING-2 a silently dropped message: 0 commits applied,
   // epoch 1 -> 1, `healed=true`, and the frame ACKed off the server.
-  const reachedTarget = mlsService.getEpoch(groupId) >= activeEpoch;
-  const healed = reachedTarget && (applied > 0 || startEpoch < activeEpoch);
+  const reachedTarget = mlsService.getEpoch(groupId) >= target;
+  const healed = reachedTarget && (applied > 0 || startEpoch < target);
   log(
-    `[GAP] ${groupId.slice(0, 8)}… replayed ${applied} commit(s), epoch ${startEpoch}->${mlsService.getEpoch(groupId)} (target ${activeEpoch}), healed=${healed}${
+    `[GAP] ${groupId.slice(0, 8)}… replayed ${applied} commit(s), epoch ${startEpoch}->${mlsService.getEpoch(groupId)} (target ${target}${target < activeEpoch ? `, server at ${activeEpoch}` : ''}), healed=${healed}${
       reachedTarget && !healed ? ' (nothing to replay - the gap is not an epoch gap)' : ''
     }`
   );
-  return { healed, belowFloor: false, applied };
+  return { healed, belowFloor: false, applied, activeEpoch };
 }

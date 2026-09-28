@@ -72,6 +72,15 @@ const proto = BaseMlsService.prototype as unknown as {
   ): boolean;
   collectFramesLeftForKeyGroup(groupId: string): void;
   persistDistributionGroup(scope: DistributionScope, groupId: string): void;
+  openDistributionFrame(
+    groupId: string,
+    sender: string,
+    bytes: Uint8Array
+  ): Promise<Uint8Array | null>;
+  dispositionOfUnreadableFrame(groupId: string, e: unknown): boolean;
+  stepDistributionGroup(groupId: string): Promise<boolean>;
+  closeDistributionGap(groupId: string): void;
+  tellDistributionGapVerdict(groupId: string, verdict: string): void;
 };
 
 /** An in-memory `DistributionGroupStore`, so a test reads back what a registration wrote. */
@@ -132,6 +141,18 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     refetchFramesLeftBehind: proto.refetchFramesLeftBehind,
     collectFramesLeftForKeyGroup: proto.collectFramesLeftForKeyGroup,
     persistDistributionGroup: proto.persistDistributionGroup,
+    // The route's own halves and the catch-up it runs on an epoch gap - REAL, since which frame is
+    // acknowledged and when a gap closes is exactly what these cases pin.
+    distributionGapTarget: new Map<string, number>(),
+    distributionGapListener: vi.fn(),
+    openDistributionFrame: proto.openDistributionFrame,
+    dispositionOfUnreadableFrame: proto.dispositionOfUnreadableFrame,
+    stepDistributionGroup: proto.stepDistributionGroup,
+    closeDistributionGap: proto.closeDistributionGap,
+    tellDistributionGapVerdict: proto.tellDistributionGapVerdict,
+    fetchCommitsSince: vi
+      .fn()
+      .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
@@ -735,5 +756,211 @@ describe('registering a key group collects what the drain refused for it', () =>
 
     expect(takeGroupsAwaiting('unscoped-distribution-group')).toEqual(['g-1']);
     warn.mockRestore();
+  });
+});
+
+/**
+ * A HELD key group is compared with the server's epoch once the drain settles (production,
+ * 2026-09-28: a device frozen at epoch 4 of a key group the server had at 15, reloading into the same
+ * freeze for a day because `activeEpoch` was read on every load and compared with nothing).
+ */
+describe('a held key group behind its server', () => {
+  const proto2 = BaseMlsService.prototype as unknown as {
+    verifyDistributionEpoch(groupId: string, activeEpoch: number): Promise<string>;
+    whenDistributionEpochSettled(groupId: string): Promise<void>;
+    catchUpDistributionGroup(groupId: string, target: number): Promise<string>;
+  };
+
+  /** A tree at `epoch`, a commit log that can move it, and a drain the test settles by hand. */
+  function behind(epoch: number, log: { baseEpoch: number }[], serverEpoch: number) {
+    const tree = { epoch };
+    let settle!: () => void;
+    const listener = vi.fn();
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn(() => tree.epoch),
+      // Applying a commit moves the tree one epoch, which is all a replay needs to be true about.
+      processIncomingMessage: vi.fn(async () => {
+        tree.epoch += 1;
+        return null;
+      }),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: log.map((c) => ({ ...c, proto: 'AA==' })),
+        activeEpoch: serverEpoch,
+        belowFloor: false,
+      })),
+      initialDrain: new Promise<void>((r) => {
+        settle = r;
+      }),
+      waitForGroupQueueIdle: vi.fn().mockResolvedValue(undefined),
+      distributionEpochChecks: new Map(),
+      distributionGapListener: listener,
+      catchUpDistributionGroup: (proto2 as { catchUpDistributionGroup: unknown })
+        .catchUpDistributionGroup,
+    });
+    return { ctx, tree, settle, listener };
+  }
+
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('decides nothing before the drain has settled - the commits may still be in the queue', async () => {
+    const { ctx } = behind(4, [{ baseEpoch: 4 }], 5);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(isInEpochGap('g-1')).toBe(false);
+    void verdict;
+  });
+
+  it('answers current, and touches nothing, when the drain caught the group up', async () => {
+    const { ctx, tree, settle } = behind(4, [], 5);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    tree.epoch = 5; // the queued commits applied during the drain
+    settle();
+
+    expect(await verdict).toBe('current');
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+  });
+
+  it('replays what was never queued, holding the gap for the whole catch-up, then says so', async () => {
+    const { ctx, tree, settle, listener } = behind(4, [{ baseEpoch: 4 }, { baseEpoch: 5 }], 6);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let armedDuringReplay = false;
+    ctx.processIncomingMessage.mockImplementation(async () => {
+      armedDuringReplay ||= isInEpochGap('g-1');
+      tree.epoch += 1;
+      return null;
+    });
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 6);
+    settle();
+
+    expect(await verdict).toBe('caught-up');
+    expect(tree.epoch).toBe(6);
+    // Nothing may be sealed at epoch 4 or 5 while this runs - that is what the mark is for.
+    expect(armedDuringReplay).toBe(true);
+    expect(isInEpochGap('g-1')).toBe(false);
+    expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('says EXHAUSTED when the log cannot supply the commits, and leaves the gap armed', async () => {
+    const { ctx, settle, listener } = behind(4, [], 9);
+    ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 9, belowFloor: true });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 9);
+    settle();
+
+    expect(await verdict).toBe('replay-exhausted');
+    expect(isInEpochGap('g-1')).toBe(true);
+    // Rung 2 is owed NOW; the listener is what re-joins, through the loader.
+    expect(listener).toHaveBeenCalledWith('g-1', 'replay-exhausted');
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('holds a request about the group until its check has answered', async () => {
+    const { ctx, tree, settle } = behind(4, [], 5);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    let through = false;
+    const waiting = proto2.whenDistributionEpochSettled.call(ctx, 'g-1').then(() => {
+      through = true;
+    });
+    await Promise.resolve();
+    expect(through).toBe(false);
+
+    tree.epoch = 5;
+    settle();
+    await verdict;
+    await waiting;
+    expect(through).toBe(true);
+  });
+});
+
+describe('a frame from an epoch this device has not reached', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  /**
+   * Production 2026-09-28: a key group at epoch 4, its queue holding the commits and seeds of
+   * epochs 5 to 15 - only the commit 4->5 was missing. 1984 frames were refused as `epoch-gap`, none
+   * acknowledged, and nothing caught the group up.
+   */
+  function gapped() {
+    const tree = { epoch: 4 };
+    const listener = vi.fn();
+    const seed = new Uint8Array([7]);
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn(() => tree.epoch),
+      // A seed sealed at epoch 5 opens once the tree is there; a replayed commit moves the tree.
+      processIncomingMessage: vi.fn(async (_g: string, bytes: Uint8Array) => {
+        if (bytes[0] === 0xcc) {
+          tree.epoch += 1;
+          return null;
+        }
+        if (tree.epoch < 5) {
+          throw new Error(`Process error: epoch gap [msg_epoch=5, group_epoch=${tree.epoch}]`);
+        }
+        return seed;
+      }),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: [4, 5, 6].map((baseEpoch) => ({ baseEpoch, proto: 'zA==' })), // 0xcc
+        activeEpoch: 7,
+        belowFloor: false,
+      })),
+      distributionGapListener: listener,
+    });
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    return { ctx, tree, listener, seed };
+  }
+
+  it('replays ONE commit, opens the frame, and leaves the queue to apply the rest in order', async () => {
+    const { ctx, tree, seed } = gapped();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+
+    // Replaying to the server's 7 would have put every seed of epochs 5 and 6 out of reach
+    // (`max_past_epochs` is 2); one step is exactly the hole.
+    expect(tree.epoch).toBe(5);
+    expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ plaintext: seed })
+    );
+    // Still behind the server: nothing may be sealed yet.
+    expect(isInEpochGap('g-1')).toBe(true);
+    log.mockRestore();
+  });
+
+  it('keeps the gap through the queued commits and lifts it at the server epoch, saying so', async () => {
+    const { ctx, tree, listener } = gapped();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await route(ctx, 'g-1', 'peer', new Uint8Array([1]));
+
+    // The queued commits 5->6 and 6->7 arrive in order.
+    await route(ctx, 'g-1', 'peer', new Uint8Array([0xcc]));
+    expect(tree.epoch).toBe(6);
+    expect(isInEpochGap('g-1')).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    await route(ctx, 'g-1', 'peer', new Uint8Array([0xcc]));
+    expect(tree.epoch).toBe(7);
+    expect(isInEpochGap('g-1')).toBe(false);
+    // What releases the requests held while it was behind.
+    expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
+    log.mockRestore();
+  });
+
+  it('does not acknowledge the frame when the log cannot move the group, and says it is exhausted', async () => {
+    const { ctx, listener } = gapped();
+    ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 7, belowFloor: true });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+
+    expect(listener).toHaveBeenCalledWith('g-1', 'replay-exhausted');
+    log.mockRestore();
   });
 });

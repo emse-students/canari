@@ -118,6 +118,20 @@ export type DistributionGroupStore = Pick<
   'saveDistributionGroup' | 'getDistributionGroups' | 'deleteDistributionGroup'
 >;
 
+/**
+ * What a key group's catch-up concluded, once it was found BEHIND the server's epoch.
+ *
+ * - `caught-up`: the missing commits were replayed from the commit log - nothing was lost.
+ * - `replay-exhausted`: the log CANNOT supply them (below its floor, or holed) - a PROOF that only a
+ *   re-join brings this device back, so it is owed at once rather than after a clock.
+ * - `replay-failed`: the attempt failed for a reason that says nothing about the next one; the group
+ *   stays in the epoch-gap registry and the sync watchdog owns it.
+ */
+export type DistributionGapVerdict = 'caught-up' | 'replay-exhausted' | 'replay-failed';
+
+/** Told every {@link DistributionGapVerdict}, for the key group it concerns. */
+export type DistributionGapListener = (groupId: string, verdict: DistributionGapVerdict) => void;
+
 /** Per-message outcome from a {@link MlsDecryptSession} page decrypt. */
 export type MlsBatchProcessResult =
   | {
@@ -735,6 +749,38 @@ export interface IMlsService {
    * never registered, so a stale row can only cost a start-up read and never mis-route a frame.
    */
   hydrateDistributionGroups(): Promise<void>;
+  /**
+   * Resolves once the FIRST pull of this session has emptied the mailbox and the scheduler has
+   * applied it - never on a pull that failed half-way, whose rows are still on the server.
+   *
+   * One-shot, and never resolved by a clock: an offline start-up simply keeps it pending until the
+   * reconnect's pull lands. It is the fact a verdict about a group's epoch needs - before it, "behind"
+   * may only mean "its commits are still queued".
+   */
+  whenInitialDrainSettled(): Promise<void>;
+  /**
+   * Compares a HELD key group's local epoch with the server's `activeEpoch` once the initial drain
+   * has settled, and replays the commits it is missing when it is behind.
+   *
+   * Scheduled, never awaited by the loader: the answer needs the drain, and the community loop must
+   * not wait on it. A behind group is marked in the epoch-gap registry for the whole of the catch-up,
+   * which is what keeps a seed or a request from being sealed at the stale epoch
+   * (`distributionEpochFor`). The outcome reaches {@link onDistributionGapVerdict}.
+   *
+   * @returns `current` when the group was not behind, else the verdict.
+   */
+  verifyDistributionEpoch(
+    groupId: string,
+    activeEpoch: number
+  ): Promise<'current' | DistributionGapVerdict>;
+  /**
+   * Resolves once nothing about `groupId`'s epoch is still being established: the initial drain has
+   * settled and any {@link verifyDistributionEpoch} in flight for it has answered. What a request
+   * about to be sealed on that group waits for, so it is never sealed at an epoch the group leaves.
+   */
+  whenDistributionEpochSettled(groupId: string): Promise<void>;
+  /** Wires who is told each {@link DistributionGapVerdict}. Set once, at startup; `null` at logout. */
+  onDistributionGapVerdict(listener: DistributionGapListener | null): void;
   /**
    * Joins the scope's key-distribution group whatever state it is in - held already, published and
    * joinable, or not yet initialised (this device then creates it).

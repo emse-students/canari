@@ -5,6 +5,7 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { encodeAppMessage, mkGraine } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 
 /**
  * Putting a Graine seed into the hands of a community, over its MLS distribution group.
@@ -37,6 +38,11 @@ export class GraineDistributionUnavailableError extends Error {
  * first-publish race - taking with it any outbound session minted against it, and leaving whatever
  * that session sealed unreadable for ever. So the third state is asked for explicitly, and a
  * caller that cannot send yet is told the same thing it is told when the group is absent: wait.
+ *
+ * AND "HELD" IS NOT "CURRENT". A group in the epoch-gap registry is BEHIND the server, and a seed
+ * sealed at its epoch is read by no member: on production 2026-09-28 a device at epoch 5 of a key
+ * group every other member had at 13 sealed its requests there. Null until the catch-up closes the
+ * gap, like a group not yet joined.
  */
 export function distributionEpochFor(
   mlsService: IMlsService,
@@ -45,6 +51,7 @@ export function distributionEpochFor(
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId || !holdsGroupState(mlsService, groupId)) return null;
   if (!mlsService.isDistributionBaseSettled(groupId)) return null;
+  if (isInEpochGap(groupId)) return null;
   return mlsService.getEpoch(groupId);
 }
 

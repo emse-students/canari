@@ -1,6 +1,7 @@
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { distributionEpochFor } from './seedDistribution';
+import { markEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 
 /**
  * Which epoch a scope's seeds may be minted against - and, above all, when the answer is NONE.
@@ -59,5 +60,17 @@ describe('the epoch a scope may mint against', () => {
         WS
       )
     ).toBeNull();
+  });
+});
+
+describe('a key group behind its server', () => {
+  afterEach(() => resetEpochGapRegistry());
+
+  it('answers null while the group is in an epoch gap - held is not current', () => {
+    // Production 2026-09-28: a device at epoch 5 of a key group every member had at 13 sealed
+    // there, and not one member could read it.
+    markEpochGap(GROUP);
+
+    expect(distributionEpochFor(stub(), WS)).toBeNull();
   });
 });

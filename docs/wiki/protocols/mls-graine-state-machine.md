@@ -712,6 +712,14 @@ never take. Two edges now exist: `hydrateDistributionGroups` (BaseMlsService, ca
 `unscoped-distribution-group` for that group through `collectFramesLeftForKeyGroup`. The reason is on
 [channel-encryption section 22](channel-encryption.md#22-a-key-groups-backlog-was-refused-on-every-load---the-classification-is-device-state---fixed-2026-09-28).
 
+**A HELD KEY GROUP BEHIND ITS SERVER HAS AN EXIT SINCE 2026-09-28.** Three edges, one gap: the held
+branch of `joinDistributionGroup` schedules `verifyDistributionEpoch` (after `whenInitialDrainSettled`);
+`routeDistributionFrame` answers `epoch-gap` with `stepDistributionGroup` (one commit, re-try the frame);
+both arm the gap and hold it to `distributionGapTarget`, and the commit branch lifts it only there. The
+verdict (`caught-up` / `replay-exhausted` / `replay-failed`) reaches `distributionGapListener`: release
+the held requests, or rung 2 through `rejoinBehindDistributionGroup` - the watchdog's door too when a
+scope names the group ([channel-encryption 22.1](channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind)).
+
 **AND THAT SECOND PAIR OF CODES IS TWO CORRECT DISPOSITIONS, NOT A DEAD END** - the audit's
 `G-E1`/`G-E2`/`DE11`, *"no distribution group for a scope; 403 on one: log and `return false`, no
 retry"*, swept 2026-09-14.
