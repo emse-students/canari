@@ -2634,6 +2634,11 @@ for one (§7). That is BasicCredential's limit and v2 does not pretend otherwise
 
 **The order, reader before writer** - the CORRUPT pattern: a release that READS v2 everywhere, web,
 Android and iOS, then, once both stores serve it and `minClientVersion` is that reader, the release
-that WRITES it (one rotation per salon and sender). v1 stays readable while a v1 row exists
-([legacy-compatibility](../legacy-compatibility.md)). The work packages, WP-G2-0 to WP-G2-6, are in
+that WRITES it (one rotation per salon and sender). **v1's end, decided by the user 2026-09-28**:
+once the writer is the floor, a v1 seed that ARRIVES is refused, since a modified client could
+otherwise keep minting v1 sessions to forge an author; the v1 seeds already held keep opening their
+rows until those age out of the 365-day window, and the v1 reader goes with the last of them
+([legacy-compatibility](../legacy-compatibility.md)). **The verified MLS sender is MEASURED before it
+refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
+legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
 the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
