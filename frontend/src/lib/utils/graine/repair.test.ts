@@ -653,6 +653,24 @@ describe('noteSeedUnavailable', () => {
     warn.mockRestore();
   });
 
+  it('takes ONE answer per member - a second device of the same member declining changes nothing', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+
+    noteSeedUnavailable('sess-1', 'bob');
+    await settle();
+    noteSeedUnavailable('sess-1', 'BOB');
+    await settle();
+
+    // bob's laptop and phone both said no: one line, one move down the roster to carol.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(info.mock.calls.flat().filter((l) => String(l).includes('does not hold'))).toHaveLength(
+      1
+    );
+    info.mockRestore();
+  });
+
   it('asks nobody on behalf of a session that is no longer wanted', async () => {
     // The seed landed by the durable log between the ask and this answer. Re-electing here would
     // spend a round trip on a session this device already holds.

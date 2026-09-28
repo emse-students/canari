@@ -144,3 +144,38 @@ describe('sendChannelReaction (WP-40)', () => {
     expect(fromBase64(body.ciphertext).length).toBeGreaterThan(0);
   });
 });
+
+describe('UnreadableRowTally', () => {
+  it('says a page of unreadable rows once per class, not once per row', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tally = new UnreadableRowTally(CHANNEL);
+
+    for (let i = 0; i < 50; i++) {
+      reportUnreadableChannelMessage(
+        CHANNEL,
+        `row-${i}`,
+        'bob',
+        undefined,
+        new Error('bad frame'),
+        tally
+      );
+    }
+    expect(warn).not.toHaveBeenCalled();
+
+    tally.report();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('50 message(s)');
+    expect(warn.mock.calls[0][0]).toContain('row-0, row-1, row-2, ...');
+  });
+
+  it('says nothing for a page that read whole', async () => {
+    const { UnreadableRowTally } = await import('$lib/utils/chat/channelCrypto');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    new UnreadableRowTally(CHANNEL).report();
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
