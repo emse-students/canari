@@ -4,7 +4,7 @@
  * startConnectionWatchdog, stopConnectionWatchdog, runGroupDiscovery.
  */
 import { goto } from '$app/navigation';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { discoverMissingGroups } from '$lib/utils/chat/actions';
 import {
   openGatewayConnection,

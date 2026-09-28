@@ -5,7 +5,7 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { canari } from '../proto/canari.js';
 import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { consumePendingCallAccept } from '$lib/stores/pendingCallAccept';
