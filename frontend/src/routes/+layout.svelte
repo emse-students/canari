@@ -29,6 +29,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
+  import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -421,6 +422,8 @@
          transient. -->
     <TabFollowerBanner />
     <OfflineBanner />
+    <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
+    <OpenInAppBanner />
   </div>
 
   <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain

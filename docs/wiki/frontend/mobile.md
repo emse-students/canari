@@ -349,6 +349,42 @@ https://digitalassetlinks.googleapis.com/v1/statements:list
 Both association files are prerendered by SvelteKit (`routes/.well-known/`) and served by nginx from
 `build/.well-known/`, so they follow the ordinary deploy — see [`seo.md`](seo.md) for that pipeline.
 
+### Leaving an in-app browser for the app
+
+**A Canari link sent in Messenger, Facebook or Instagram opens as a web page even with the app
+installed** (user, 2026-09-28), and nothing above is at fault: the claim is served and verified on
+both names. Those apps never hand a tapped link to the system - they load it in their own WebView -
+so neither an App Link nor a Universal Link is ever consulted. No server setting reaches that.
+
+What the page can do is offer a tap that leaves. `OpenInAppBanner` (root layout, banner column)
+shows only when `detectInAppBrowser` recognises the user agent (`FBAN/`, `FBAV/`, `FB_IAB`,
+`Instagram`) AND the page is one the app claims: a host of `MOBILE_APP_LINK_HOSTS` - not every
+Canari name, since an intent naming the package matches only the filter and `dev.canari-emse.fr` is in
+none - and a path of `MOBILE_UNIVERSAL_LINK_PATHS` (`isClaimedAppLinkPath`). `openInAppOffer` (`lib/mobile/openInApp.ts`) builds the way out:
+
+| System | Tap | Without the app |
+|---|---|---|
+| Android | `intent://<host><path>?<query>#Intent;scheme=https;package=fr.emse.canari;S.browser_fallback_url=<Play>;end` - resolved against the EXISTING https App Link filter, so nothing native changes | the Play listing, by the intent's own fallback |
+| iOS | `fr.emse.canari://open?url=<page>` - the scheme is registered with no host filter (the plugin writes `CFBundleURLSchemes` only), so nothing native changes either | nothing happens; the banner carries the App Store link |
+
+**Behind the login.** An in-app browser holds no Canari session, so EVERY visitor from Messenger
+lands on `/login?returnTo=<path>`, which is not claimed. The offer is built for `returnTo`, resolved
+against the site's origin and held to the same two tests, so a `returnTo` naming another host
+offers nothing.
+
+**`fr.emse.canari://open` opens only what an App Link could.** Anyone can write that URL, so
+`openClaimedAppLink` (`utils/appLinkNavigation.ts`, used by `hooks.client.ts` for both doors)
+applies the claim test the system applies before delivering a link; `/auth/callback` in particular
+is refused, for the reason the paragraph on bare hosts above gives.
+
+**A tap, never a redirect**: a visitor without the app would be thrown out of the page they came
+to read. The page's `#fragment` does not travel on Android - an intent URL uses the fragment for its
+own parameters. **Not yet verified inside Messenger itself** - both halves are measured only in a
+browser carrying Messenger's user agent (the production build, served locally under the legacy
+name, 2026-09-28: the banner above the login page, `Ouvrir` carrying the intent to the post behind
+`returnTo`, nothing in a plain Chrome); the iOS half also needs a store release, because the
+`open` host is handled by the app's own code.
+
 ### How a deep link actually reaches the app — two paths, only one of them gated
 
 Every deep link (`fr.emse.canari://chat/<groupId>`, the OIDC callback, a Stripe return, an App Link)

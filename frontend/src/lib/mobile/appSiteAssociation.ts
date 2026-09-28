@@ -73,6 +73,19 @@ export function androidAppLinkPaths(): { path: string[]; pathPrefix: string[] } 
   return { path, pathPrefix };
 }
 
+/**
+ * Whether the app claims `pathname` on its link hosts - the same test Android's intent-filter and
+ * iOS's association file apply, read from {@link MOBILE_UNIVERSAL_LINK_PATHS}.
+ *
+ * Needed wherever a page offers to open ITSELF in the app: an Android intent naming the app's
+ * package matches only its claimed filter, so offering an unclaimed path would send the user to
+ * the store fallback although the app is installed.
+ */
+export function isClaimedAppLinkPath(pathname: string): boolean {
+  const { path, pathPrefix } = androidAppLinkPaths();
+  return path.includes(pathname) || pathPrefix.some((prefix) => pathname.startsWith(prefix));
+}
+
 /** Parses `VITE_ANDROID_APP_LINK_SHA256` (comma- or whitespace-separated SHA-256 fingerprints). */
 export function parseAndroidSha256Fingerprints(raw: string | undefined): string[] {
   if (!raw?.trim()) return [];
