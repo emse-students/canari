@@ -17,6 +17,11 @@ export type IncomingDeliveryMeta = {
   queuedCreatedAt?: number;
   /** Server queue row id - stable dedup key when the MLS payload has no `messageId`. */
   queuedMessageId?: string;
+  /**
+   * The sender device the envelope names. Self-asserted by the sending client in its request body,
+   * so it is compared with the verified credential, never believed (`verifiedSender`).
+   */
+  senderDeviceId?: string;
 };
 
 /**

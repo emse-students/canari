@@ -37,7 +37,8 @@ const okResponder = (msg: any) => {
       return {
         type: 'decryptPage:ok',
         results: [
-          { ok: true, data: new Uint8Array([7]).buffer },
+          { ok: true, data: new Uint8Array([7]).buffer, sender: 'bob:dev-b' },
+          { ok: true, data: new Uint8Array([8]).buffer, sender: null },
           { ok: true, data: null },
           { ok: false, error: 'GAP_QUEUED' },
         ],
@@ -61,7 +62,8 @@ describe('createMlsCryptoWorkerSession', () => {
 
     const results = await session.decryptPage([new Uint8Array([1]), new Uint8Array([2])]);
     expect(results).toEqual([
-      { ok: true, plaintext: new Uint8Array([7]) },
+      { ok: true, plaintext: new Uint8Array([7]), sender: 'bob:dev-b' },
+      { ok: true, plaintext: new Uint8Array([8]), sender: null },
       { ok: true, plaintext: null },
       { ok: false, error: 'GAP_QUEUED' },
     ]);

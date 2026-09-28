@@ -138,7 +138,13 @@ export async function createMlsCryptoWorkerSession(
       return reply.results.map((r) => {
         if (!r.ok) return { ok: false, error: r.error };
         if (r.data === null) return { ok: true, plaintext: null };
-        return { ok: true, plaintext: new Uint8Array(r.data) };
+        // Passed through as it came: `null` is a credential the engine could not read, and an absent
+        // field is a reply that carried no sender at all - two facts `checkVerifiedSender` separates.
+        return {
+          ok: true,
+          plaintext: new Uint8Array(r.data),
+          ...(r.sender !== undefined ? { sender: r.sender } : {}),
+        };
       });
     },
     async finalize(): Promise<Uint8Array> {

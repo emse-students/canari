@@ -9,16 +9,20 @@ import {
   UseGuards,
   Headers,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService, SendMessageBody, AckMessagesBody } from '../services/messaging.service';
-import { sanitizeEpoch } from '../utils/sanitize';
+import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
 export class MessagingController {
+  private readonly logger = new Logger(MessagingController.name);
+
   constructor(private readonly messagingService: MessagingService) {}
 
   @UseGuards(HeaderAuthGuard)
@@ -129,6 +133,45 @@ export class MessagingController {
     body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
   ) {
     return this.messagingService.notifyWelcomeRequest(authUserId, body);
+  }
+
+  /**
+   * A client stating that a frame's delivery ENVELOPE named another sender than the one OpenMLS
+   * verified it against (channel-encryption section 21, WP-G2-1).
+   *
+   * THE MEASUREMENT BEFORE A REFUSAL. The client refuses nothing yet - the user's decision of
+   * 2026-09-28 is to read production first, since a legitimate disagreement nobody foresaw would lose
+   * messages if refused blind - and a client's console is collected nowhere, so this line is the
+   * whole of the measurement. It stores nothing, for the reason `mls/push/unavailable` gives: the
+   * question is "does this happen, on which path, for whom", which a WARN line and a date answer.
+   *
+   * Every field is printed through `sanitizeLogValue`, so a client cannot write a newline into the
+   * log and forge a line of its own; a value outside the allowlist prints as `invalid`, which is
+   * itself worth reading. The reporter is the authenticated user, never a field of the body.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/sender-mismatch')
+  reportSenderMismatch(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      groupId?: unknown;
+      path?: unknown;
+      kind?: unknown;
+      envelopeUserId?: unknown;
+      envelopeDeviceId?: unknown;
+      verifiedIdentity?: unknown;
+    }
+  ): { recorded: true } {
+    this.logger.warn(
+      `[SENDER_MISMATCH] reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
+        `group=${sanitizeLogValue(body.groupId)} path=${sanitizeLogValue(body.path)} ` +
+        `kind=${sanitizeLogValue(body.kind)} ` +
+        `envelope=${sanitizeLogValue(body.envelopeUserId)}:${sanitizeLogValue(body.envelopeDeviceId, 'none')} ` +
+        `verified=${sanitizeLogValue(body.verifiedIdentity, 'unreadable')}`
+    );
+    return { recorded: true };
   }
 
   @UseGuards(HeaderAuthGuard)

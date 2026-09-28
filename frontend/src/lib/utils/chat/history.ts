@@ -22,6 +22,7 @@ import {
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
+import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
@@ -869,6 +870,17 @@ export async function replayConversationHistory(params: {
           // no live frame can ever look itself up by, since the two namespaces never intersect.
           const decryptedBytes = batchResult.plaintext;
           if (!decryptedBytes) continue;
+          // The archive row names its sender like the live envelope does, and is checked the same
+          // way against the one MLS verified - measured, not refused (channel-encryption §21).
+          checkVerifiedSender(
+            id,
+            {
+              userId: msg.sender_id,
+              deviceId: msg.sender_device_id || undefined,
+              path: 'history',
+            },
+            batchResult.sender
+          );
 
           const parsed = decodeAppMessage(decryptedBytes);
 

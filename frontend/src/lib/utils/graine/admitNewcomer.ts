@@ -7,7 +7,7 @@ import {
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
-import { userIdOfLeaf } from './rosterReconcile';
+import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**

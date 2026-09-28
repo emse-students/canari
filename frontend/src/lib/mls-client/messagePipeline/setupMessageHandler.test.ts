@@ -836,7 +836,11 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     ) => Promise<boolean>;
     const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
     expect(ok).toBe(true);
-    expect(mls.processIncomingMessage).toHaveBeenCalledWith(groupId, expect.any(Uint8Array));
+    expect(mls.processIncomingMessage).toHaveBeenCalledWith(groupId, expect.any(Uint8Array), {
+      userId: 'peer',
+      deviceId: undefined,
+      path: 'live',
+    });
     expect(deps.addMessageToChat).toHaveBeenCalledWith(
       'peer',
       'rendered',

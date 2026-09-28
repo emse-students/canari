@@ -4,16 +4,26 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use crate::state::MlsManager;
 use crate::{AddMemberResult, AddMembersBulkResult, MlsError};
 
-/// The credential identity carried by one leaf, as the UTF-8 string it was built from.
+/// The identity a credential carries, as the UTF-8 string it was built from.
 ///
 /// Identities are minted in exactly one place (`state.rs`, `userId:deviceId`), so this is the
-/// inverse of that and the only place the bytes are turned back into a string.
+/// inverse of that and the only place the bytes are turned back into a string - for a leaf of the
+/// tree and for the verified sender of a frame alike. The error names what was wrong; the caller
+/// names whose credential it was.
+pub(crate) fn credential_identity(credential: &Credential) -> Result<String, &'static str> {
+    let basic =
+        BasicCredential::try_from(credential.clone()).map_err(|_| "not a basic credential")?;
+    String::from_utf8(basic.identity().to_vec()).map_err(|_| "identity is not UTF-8")
+}
+
+/// The credential identity carried by one leaf.
 fn leaf_identity(member: &Member) -> Result<String, MlsError> {
-    let credential = BasicCredential::try_from(member.credential.clone()).map_err(|_| {
-        MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
-    })?;
-    String::from_utf8(credential.identity().to_vec())
-        .map_err(|_| MlsError::OpenMls(format!("Non-UTF8 credential for member {}", member.index)))
+    credential_identity(&member.credential).map_err(|why| {
+        MlsError::OpenMls(format!(
+            "Invalid credential for member {}: {why}",
+            member.index
+        ))
+    })
 }
 
 /// Leaf indices whose identity satisfies `matches`.

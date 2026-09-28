@@ -3,8 +3,21 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::members::credential_identity;
 use crate::state::{MlsManager, StateSnapshotCache};
 use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
+
+/// An application message this device decrypted, and who sent it.
+///
+/// `sender_identity` is the credential OpenMLS verified the frame's signature against -
+/// `userId:deviceId`, minted in `state.rs` - and the only sender a client may believe. The delivery
+/// server's envelope names a sender too, and that one is a claim (channel-encryption section 21).
+/// `None` only when the credential is not a readable basic credential, which is logged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncomingApplication {
+    pub plaintext: Vec<u8>,
+    pub sender_identity: Option<String>,
+}
 
 impl MlsManager {
     // --- D. MESSAGERIE ---
@@ -100,11 +113,27 @@ impl MlsManager {
 
     /// Process an incoming MLS message (Handshake or Application)
     /// Returns decoded data if it was an application message
+    ///
+    /// **The plaintext ALONE, and kept for exactly one reader**: `mls-cross-version` compiles the
+    /// same `main.rs` against an OLD `mls-core` tag, so this signature is the one both sides share.
+    /// Every app path reads [`Self::process_incoming_message_with_sender`], which carries the
+    /// verified sender this projection drops.
     pub fn process_incoming_message(
         &mut self,
         group_id: &str,
         message_bytes: &[u8],
     ) -> Result<Option<Vec<u8>>, MlsError> {
+        self.process_incoming_message_with_sender(group_id, message_bytes)
+            .map(|app| app.map(|app| app.plaintext))
+    }
+
+    /// Process an incoming MLS message, returning an application message's plaintext WITH the
+    /// sender MLS verified it against (`userId:deviceId`).
+    pub fn process_incoming_message_with_sender(
+        &mut self,
+        group_id: &str,
+        message_bytes: &[u8],
+    ) -> Result<Option<IncomingApplication>, MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
@@ -124,7 +153,7 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         messages: &[&[u8]],
-    ) -> Vec<Result<Option<Vec<u8>>, MlsError>> {
+    ) -> Vec<Result<Option<IncomingApplication>, MlsError>> {
         let Some(group) = self.groups.get_mut(group_id) else {
             return messages
                 .iter()
@@ -148,7 +177,7 @@ impl MlsManager {
         group_id: &str,
         message_bytes: &[u8],
         state_snapshot: &RefCell<StateSnapshotCache>,
-    ) -> Result<Option<Vec<u8>>, MlsError> {
+    ) -> Result<Option<IncomingApplication>, MlsError> {
         if message_bytes.len() > MAX_MLS_MESSAGE_BYTES {
             return Err(MlsError::InvalidData);
         }
@@ -330,10 +359,29 @@ impl MlsManager {
             }
         };
 
+        // WHO SENT IT, AS MLS PROVED IT - read here because `into_content` consumes the message.
+        // OpenMLS has verified the frame's signature against this credential; until 2026-09-28 it
+        // was dropped on this line, so every consumer named the sender the DELIVERY SERVER's
+        // envelope claimed (channel-encryption section 21, WP-G2-1).
+        let sender_identity = match credential_identity(processed_message.credential()) {
+            Ok(identity) => Some(identity),
+            Err(why) => {
+                log::warn!(
+                    "Verified sender of a frame on group {} is unreadable ({why}) - the frame is \
+                     processed, and its sender cannot be checked",
+                    group_id
+                );
+                None
+            }
+        };
+
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 state_snapshot.borrow_mut().invalidate();
-                Ok(Some(app_msg.into_bytes()))
+                Ok(Some(IncomingApplication {
+                    plaintext: app_msg.into_bytes(),
+                    sender_identity,
+                }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 group

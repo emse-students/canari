@@ -3,6 +3,7 @@ import { scopeLabel, type DistributionScope } from '$lib/mls-client/distribution
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -30,17 +31,6 @@ export interface RosterDiff {
   strayUserIds: string[];
   /** Leaves that stay - reported so a pass that removed nothing still says what it looked at. */
   keptLeafCount: number;
-}
-
-/**
- * The user id half of a leaf identity (`userId:deviceId`).
- *
- * Split on the FIRST colon: a device id may contain one (`web-<user>-<rand>-<rand>` does not, but
- * nothing in the credential format forbids it), and a user id never does.
- */
-export function userIdOfLeaf(identity: string): string {
-  const colon = identity.indexOf(':');
-  return (colon === -1 ? identity : identity.slice(0, colon)).toLowerCase();
 }
 
 /**

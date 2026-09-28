@@ -4,6 +4,7 @@ import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
+import type { EnvelopeSender } from './verifiedSender';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -107,7 +108,15 @@ export type DistributionFrameHandler = (frame: DistributionFrame) => Promise<voi
 
 /** Per-message outcome from a {@link MlsDecryptSession} page decrypt. */
 export type MlsBatchProcessResult =
-  | { ok: true; plaintext: Uint8Array | null }
+  | {
+      ok: true;
+      plaintext: Uint8Array | null;
+      /**
+       * The sender OpenMLS verified (`userId:deviceId`): `null` when unreadable, absent when the
+       * path carries none (a stub) or the frame had no plaintext.
+       */
+      sender?: string | null;
+    }
   | { ok: false; error: string };
 
 /** Options for {@link IMlsService.init}. */
@@ -500,8 +509,18 @@ export interface IMlsService {
     messageId?: string,
     delivery?: FrameDelivery
   ): Promise<Uint8Array>;
-  /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
-  processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
+  /**
+   * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
+   *
+   * `envelope` is the sender the delivery server named for this frame. When given, it is checked
+   * against the sender OpenMLS verified (`checkVerifiedSender`) - measured and reported, never
+   * refused, until production has been read (channel-encryption section 21, WP-G2-1).
+   */
+  processIncomingMessage(
+    groupId: string,
+    messageBytes: Uint8Array,
+    envelope?: EnvelopeSender
+  ): Promise<Uint8Array | null>;
   /**
    * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.
    * Per-message failures are returned in the result vector instead of aborting the batch.

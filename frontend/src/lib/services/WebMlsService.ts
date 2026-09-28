@@ -2,6 +2,7 @@ import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
+import { checkVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
@@ -641,6 +642,7 @@ export class WebMlsService extends BaseMlsService {
         this.enqueueMessage(
           {
             senderId: (msg.senderId as string) || 'unknown',
+            senderDeviceId: (msg.senderDeviceId as string) || undefined,
             ciphertext,
             groupId: (msg.groupId as string) || undefined,
             isWelcome: msg.isWelcome === true,
@@ -1151,13 +1153,19 @@ export class WebMlsService extends BaseMlsService {
     return this.client.send_message_bytes(groupId, messageBytes) as Uint8Array;
   }
 
-  /** WASM client wrapper - decrypts a raw MLS ciphertext via `this.client.process_incoming_message_bytes`; returns null for commit or proposal frames. */
+  /** WASM client wrapper - decrypts a raw MLS ciphertext via `this.client.process_incoming_message_with_sender`; returns null for commit or proposal frames. */
   async processIncomingMessage(
     groupId: string,
-    messageBytes: Uint8Array
+    messageBytes: Uint8Array,
+    envelope?: EnvelopeSender
   ): Promise<Uint8Array | null> {
-    const result = this.client.process_incoming_message_bytes(groupId, messageBytes);
-    return result ?? null;
+    const result = this.client.process_incoming_message_with_sender(groupId, messageBytes) as {
+      data: Uint8Array;
+      sender: string | null;
+    } | null;
+    if (!result) return null;
+    checkVerifiedSender(groupId, envelope, result.sender);
+    return result.data;
   }
 
   /** Single WASM crossing for an ordered page of ciphertexts (history catch-up / fallback path). */
