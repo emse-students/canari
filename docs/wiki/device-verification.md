@@ -1023,6 +1023,30 @@ as written: enabling records no proof, so its first relaunch prompts under eithe
 5. From the PIN modal (cancel the sheet once), tap **use biometrics** while inside the window: the
    sheet MUST appear - that button never reads unattended.
 
+**Android, Mi 9T, `c8e572070` against the local estate (2026-09-28): the cadence decisions all hold,
+step 5 does not - and the defect behind it predates the cadence.** The phone has no enrolled finger,
+so a PROMPTED read ends in `Authentication error: 11` and the PIN modal; the proof was seeded through
+CDP (`canari_biometric_last_prompted_unlock_at`) rather than written by a real success, and the
+Settings radio was not driven. Measured:
+
+| Case | Log | Verdict |
+| --- | --- | --- |
+| no proof, every 12 h | `Prompt due (cadence=every_12h, lastPrompted=never)`, `getKeyBytes` | due, prompted |
+| proof 1 min old | `Prompt skipped`, `unattended read (no biometric sheet)`, `getKeyBytesUnattended`, `MLS ready` | no sheet, list decrypted, 0 `Failed to decrypt SQLite` |
+| message sent in that session, cold relaunch | same skipped path | the message is still there - the key wrote AND read the store |
+| every time, proof 6 min old | `Prompt due (cadence=every_launch, ...)`, `getKeyBytes` | due, prompted |
+| proof 13 h old | `Prompt due (... lastPrompted=780 min ago)` | due |
+| proof 60 min in the FUTURE (clock set back) | `Prompt due (... lastPrompted=-60 min ago)` | due |
+| step 5: the modal's button, fresh proof | `unattended=false`, then `[BIOMETRIC] Failed - no local user found.` | **FAILS**: never reaches the keystore |
+
+**Step 5 fails because a failed launch unlock forgets who the user is.** The catch of `loginImpl`
+calls `clearUserLocally()` on every failure, `keystore_empty` included, so the button that follows
+finds `currentUserId()` null and stops before any read - with an English, non-Paraglide error. The
+button did choose the prompted path, which is the half this check owns; the other half is
+[backlog](backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28).
+Still owed: a real finger (the proof written by a success, and step 5 once the button works), the
+Settings radio (step 4), and all of iOS.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
