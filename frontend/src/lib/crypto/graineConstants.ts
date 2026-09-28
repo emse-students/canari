@@ -80,3 +80,16 @@ export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
 export type GraineHistoryVisibility = 'shared' | 'joined';
 
 export const GRAINE_DEFAULT_HISTORY_VISIBILITY: GraineHistoryVisibility = 'shared';
+
+/**
+ * Graine v2's two domain labels (channel-encryption §21). Each begins the structure it names, as a
+ * length-prefixed field, so a message signature can never verify as an endorsement or the reverse -
+ * and, through that leading length, no Graine structure can ever be an MLS `SignContent` (see
+ * `mls-core/src/graine_signature.rs`). Mirrored by `mobile/graine.rs`, held by the shared vectors.
+ */
+export const GRAINE_V2_HEADER_LABEL = 'canari-graine-v2';
+export const GRAINE_V2_ENDORSEMENT_LABEL = 'canari-graine-v2-endorse';
+
+/** Ed25519 sizes: a session or device public key, and a signature. */
+export const GRAINE_PUBLIC_KEY_BYTES = 32;
+export const GRAINE_SIGNATURE_BYTES = 64;

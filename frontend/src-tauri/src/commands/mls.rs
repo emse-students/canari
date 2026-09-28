@@ -1093,3 +1093,65 @@ pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// A new v2 session's Ed25519 pair (channel-encryption §21), from `mls_core::graine_signature`.
+///
+/// Stateless: the secret is returned to the caller, which seals it into the session's encrypted
+/// blob - no Rust state holds it, so nothing here outlives the call.
+#[derive(serde::Serialize)]
+pub(crate) struct GraineSessionKeyPairDto {
+    secret: Vec<u8>,
+    public: Vec<u8>,
+}
+
+#[tauri::command]
+pub(crate) fn graine_session_keypair() -> Result<GraineSessionKeyPairDto, String> {
+    log::debug!("[GRAINE_SIG] graine_session_keypair");
+    let pair =
+        mls_core::graine_signature::new_session_keypair().map_err(|e| e.code().to_string())?;
+    Ok(GraineSessionKeyPairDto {
+        secret: pair.secret.to_vec(),
+        public: pair.public,
+    })
+}
+
+/// Signs a v2 message's `H || nonce || ciphertext` with its session secret. The error is the
+/// engine's CODE (`GraineSignatureError::code`), which the frontend classifies on.
+#[tauri::command]
+pub(crate) fn graine_sign_with_session_key(
+    secret: Vec<u8>,
+    message: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    mls_core::graine_signature::sign_with_session_key(&secret, &message)
+        .map_err(|e| e.code().to_string())
+}
+
+/// Verifies a session's or a device's signature; answers `valid` or the refusal's code, never an
+/// error, since a signature that does not verify is an answer and not a failure of the call.
+#[tauri::command]
+pub(crate) fn graine_verify_signature(
+    public_key: Vec<u8>,
+    message: Vec<u8>,
+    signature: Vec<u8>,
+) -> String {
+    match mls_core::graine_signature::verify_graine_signature(&public_key, &message, &signature) {
+        Ok(()) => "valid".to_string(),
+        Err(e) => e.code().to_string(),
+    }
+}
+
+/// Signs a v2 session ENDORSEMENT with this device's MLS credential key.
+#[tauri::command]
+pub(crate) fn graine_sign_with_device_credential(
+    message: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .sign_with_device_credential(&message)
+        .map_err(|e| e.to_string())
+}

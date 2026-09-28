@@ -151,6 +151,37 @@ fn application_to_js(app: &mls_core::IncomingApplication) -> JsValue {
     obj.into()
 }
 
+/// A new v2 session's Ed25519 pair, `{secret, public}` (channel-encryption §21). Stateless: the
+/// caller seals the secret into the session's encrypted blob, and nothing in WASM keeps it.
+#[wasm_bindgen]
+pub fn graine_session_keypair() -> Result<JsValue, JsValue> {
+    let pair = mls_core::graine_signature::new_session_keypair()
+        .map_err(|e| JsValue::from_str(e.code()))?;
+    let obj = js_sys::Object::new();
+    let secret = js_sys::Uint8Array::from(pair.secret.as_slice());
+    let public = js_sys::Uint8Array::from(pair.public.as_slice());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("secret"), &secret);
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("public"), &public);
+    Ok(obj.into())
+}
+
+/// Signs a v2 message's `H || nonce || ciphertext`. Rejects with the engine's CODE, never a sentence.
+#[wasm_bindgen]
+pub fn graine_sign_with_session_key(secret: &[u8], message: &[u8]) -> Result<Vec<u8>, JsValue> {
+    mls_core::graine_signature::sign_with_session_key(secret, message)
+        .map_err(|e| JsValue::from_str(e.code()))
+}
+
+/// Verifies a session's or a device's signature: `valid`, or the refusal's code. Never throws for
+/// a signature that does not verify - that is an answer, not a failure of the call.
+#[wasm_bindgen]
+pub fn graine_verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> String {
+    match mls_core::graine_signature::verify_graine_signature(public_key, message, signature) {
+        Ok(()) => "valid".to_string(),
+        Err(e) => e.code().to_string(),
+    }
+}
+
 // Wrapper structure exposed to JavaScript.
 #[wasm_bindgen]
 pub struct WasmMlsClient {
@@ -243,6 +274,14 @@ impl WasmMlsClient {
             return "unavailable (caller's clock is not a time)".to_string();
         }
         self.manager.key_package_census_summary_at(now_secs as u64)
+    }
+
+    /// Signs a v2 session ENDORSEMENT with this device's MLS credential key (channel-encryption §21).
+    #[wasm_bindgen]
+    pub fn sign_with_device_credential(&self, message: &[u8]) -> Result<Vec<u8>, JsValue> {
+        self.manager
+            .sign_with_device_credential(message)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     // Create a group
