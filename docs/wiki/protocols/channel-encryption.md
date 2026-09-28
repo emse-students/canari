@@ -103,8 +103,16 @@ design does not have:
   Nothing must happen at the moment somebody leaves, and nothing is owed by a member who never
   speaks again.
 
-A message key is `HKDF(seed, "canari-graine-v1", index)`, ratcheted per message so a key recovered
-from one message does not open the next inside the same session.
+A message key is `HKDF-SHA256(ikm = seed, salt = sessionId, info = "canari-graine-v1" || be32(index))`.
+**It is DERIVED from the seed, not ratcheted** - the difference from megolm is deliberate and argued
+in `deriveMessageKey` (`frontend/src/lib/crypto/graine.ts`): history is read by REST in whatever
+order the reader scrolls, so an arbitrary index must be cheap, which is the one thing a forward
+ratchet is worst at. What that buys and what it does not:
+
+- a key recovered from ONE message opens exactly that message - each index is an independent HKDF
+  output;
+- whoever holds the SEED opens every index of the session, below a handover floor included. This
+  page said "ratcheted per message" until 2026-09-28, which the code has never done.
 
 ### 4.2 Rotation does not delete anything
 
@@ -1052,6 +1060,27 @@ not nothing, and no client currently WATCHES that log for an unexpected admissio
 seed can withhold it, so the rule is applied by the answering member. A modified client answers
 anyway. This is inherent - the server holds no key and could not enforce it if it wanted to - and it
 is written here so nobody later reads the setting as something it is not.
+
+**`firstIndex` is the same kind of guarantee.** A handover floor says which messages of a session a
+member is ENTITLED to, and `GraineBelowFirstIndexError` is the client declining to open below it.
+Nothing cryptographic stops it: every index is derived from the seed (§4.1), so a member handed the
+seed at floor 40 can derive index 3 with a modified client. The native push path does not even
+decline - its mirror does not carry the floor.
+
+**What v1 does NOT authenticate - found by the audit of 2026-09-27, closed by v2 (§21).** "The server
+cannot read" was true and "the author shown wrote it" was not:
+
+| What | Who can do it in v1 | Why |
+| --- | --- | --- |
+| Re-attribute a message to another author | the server | The author shown is the row's `senderId`, a clear column; `openChannelMessage` finds the session by id and never compares its sender with the row's |
+| Move a message to another salon of the community | the server | AES-GCM is used with no additional data, so a ciphertext is bound to nothing but its key |
+| Replay a message as a new one | the server | Same; and nothing refuses two rows naming one `(senderSessionId, messageIndex)` |
+| Forge a message in another member's name | any member of the community | A seed is symmetric and every member holds it; nothing is signed |
+| Record a session under the wrong minter | the server, or whoever answers a repair | The MLS layer verifies a frame's sender and then DISCARDS it (`mls-core/src/messaging.rs`), so `frame.sender` is the delivery envelope's claim; a repair bundle is stored under its ANSWERER, and `GraineMsg` carries no minter |
+| Replace a held seed | any member answering a repair | Closed 2026-09-28: `storeIncomingSeed` and the native `merge_graine_seed` refuse a held session re-sent with other bytes or for another salon, out loud (`[GRAINE] REFUSED seed replacement`) |
+
+The last row is the only one v1 could close without a format change. The others need what a v1 seed
+does not carry: a minter, a key that signs, and bytes the ciphertext is bound to.
 
 ## 8. Retention: one window, and the seeds derived from it - SHIPPED 2026-08-19
 
@@ -2569,3 +2598,42 @@ sealed at an epoch the newcomer cannot open.
 on the add, then `[SEND][send-...] PENDING_ADMITTED group=... frameEpoch=E devices=<device>@E` on the
 first message, and no `ACTIVATION_REDELIVER` line at all. `NOTIF-17b` is the regression witness.
 A client predating `admits` records nothing; its newcomers are routed once they activate.
+
+## 21. Graine v2: an author that is proven, a ciphertext bound to its place - DECIDED BY THE USER 2026-09-28
+
+**Why.** §7's table: v1 hides the content from the server and authenticates nothing about who wrote
+it or where. The user chose the whole of it on 2026-09-28 - bound context, a checked author and a
+signature per session - and the DMs in the same stroke, since the MLS sender is discarded for them
+too.
+
+**A v2 SESSION carries**, besides its seed:
+
+- `version = 2`, carried by MLS with the seed. The version belongs to the SESSION, never to the
+  row, so the server cannot downgrade a message: a row under a v2 session with no signature is
+  refused;
+- an Ed25519 pair minted with it. The secret key stays on the minting device (sealed, in the
+  backup); the public key `signingPk` travels with the seed;
+- an ENDORSEMENT: the minter's device signs, with its MLS credential key,
+  `encode("canari-graine-v2-endorse", channelId, sessionId, minterUserId, minterDeviceId, signingPk, createdAt)`.
+  A relayed seed (repair, history bundle) carries it untouched, so whoever answers cannot substitute
+  a key. It is checked against the minter device's key in the distribution group's tree, or - once
+  that device has left it - against the key the server publishes from its KeyPackages. That is the
+  trust MLS BasicCredential already gives the server, no more (decided by the user).
+
+**A v2 MESSAGE carries** `H = encode("canari-graine-v2", channelId, sessionId, minterUserId, be32(index))`,
+length-prefixed fields, never a joined string. `H` is the AES-GCM additional data, and
+`signature = Ed25519(sessionSk, H || nonce || ciphertext)` is a new column. `workspaceId` is not in
+`H`: the push does not carry it and a `channelId` is already a global UUID.
+
+**Opening one** refuses, each with its own typed error and a line that accuses: a row whose
+`senderId` is not the session's minter, a row in another salon than the session's, a bad signature,
+and a second row naming one `(senderSessionId, messageIndex)` - a replay, shown once.
+
+**What v2 does NOT close**: the server can still admit a device it controls, or publish a false key
+for one (§7). That is BasicCredential's limit and v2 does not pretend otherwise.
+
+**The order, reader before writer** - the CORRUPT pattern: a release that READS v2 everywhere, web,
+Android and iOS, then, once both stores serve it and `minClientVersion` is that reader, the release
+that WRITES it (one rotation per salon and sender). v1 stays readable while a v1 row exists
+([legacy-compatibility](../legacy-compatibility.md)). The work packages, WP-G2-0 to WP-G2-6, are in
+the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).

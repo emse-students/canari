@@ -148,6 +148,99 @@ describe('a seed arriving on the distribution group', () => {
     expect(saved[0].firstIndex).toBe(0);
   });
 
+  it('keeps the session under whoever it was recorded under when an ANSWERER lowers the floor', async () => {
+    const { storage, saved } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 'sess-1',
+        senderId: 'bob',
+        seedB64: toBase64(SEED),
+        firstIndex: 40,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+
+    // A repair bundle is sent by whoever answered, not by the session's sender.
+    await handleDistributionFrame({ ...frame({ firstIndex: 0 }), sender: 'Carol' });
+
+    expect(saved[0]).toMatchObject({ senderId: 'bob', firstIndex: 0, createdAt: 1 });
+  });
+
+  it('refuses a held session re-sent with OTHER BYTES, and says so', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { storage, saved, rows } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 'sess-1',
+        senderId: 'bob',
+        seedB64: toBase64(SEED),
+        firstIndex: 40,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+
+    // A lower floor is what a genuine repair carries, so it must not be the way past the check.
+    await handleDistributionFrame({
+      ...frame({ firstIndex: 0, seed: new Uint8Array(32).fill(9) }),
+      sender: 'Mallory',
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(rows.get('sess-1')?.seedB64).toBe(toBase64(SEED));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED seed replacement'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('different seed'));
+    error.mockRestore();
+  });
+
+  it('refuses a held session re-sent for ANOTHER SALON', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { storage, saved } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 'sess-1',
+        senderId: 'bob',
+        seedB64: toBase64(SEED),
+        firstIndex: 40,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+
+    await handleDistributionFrame(frame({ firstIndex: 0, channelId: 'chan-2' }));
+
+    expect(saved).toHaveLength(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('different salon'));
+    error.mockRestore();
+  });
+
+  it('refuses a replacement of its OWN session too, rather than reading it as a durable replay', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { storage, saved } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-1',
+        sessionId: 'sess-1',
+        senderId: 'alice',
+        seedB64: toBase64(SEED),
+        firstIndex: 0,
+        createdAt: 1,
+        sentCount: 3,
+      },
+    ]);
+    wire(storage);
+
+    await handleDistributionFrame(frame({ seed: new Uint8Array(32).fill(9) }));
+
+    expect(saved).toHaveLength(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED seed replacement'));
+    error.mockRestore();
+  });
+
   it('ignores a replay that would raise the floor', async () => {
     const { storage, saved } = fakeStorage([
       {

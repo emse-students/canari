@@ -456,6 +456,26 @@ pub(crate) fn merge_graine_seed(
     created_at: i64,
 ) -> Result<usize, String> {
     let dropped = with_graine_mirror(data_dir, |map| {
+        // A SESSION ID NAMES ONE SEED IN ONE SALON, FOR EVER - the rule `storeIncomingSeed` holds for
+        // the durable store, held here for the file the push path decrypts from. Searched across
+        // EVERY channel, since the map is keyed by salon and a replacement may name another one.
+        for (held_channel, sessions) in map.iter() {
+            let Some(held) = sessions.get(session_id) else {
+                continue;
+            };
+            let held_seed = held["seed"].as_str().unwrap_or_default();
+            if held_channel != channel_id || !same_seed(held_seed, seed_b64) {
+                log::error!(
+                    "[GRAINE_MIRROR] REFUSED seed replacement: session {session_id} is held for channel {held_channel}, a frame re-sent it for channel {channel_id} (same seed: {})",
+                    same_seed(held_seed, seed_b64)
+                );
+                return Err(format!(
+                    "session {session_id} is already held with another seed or salon"
+                ));
+            }
+            // The same seed again: nothing to write, and the bound has nothing new to trim.
+            return Ok((0, false));
+        }
         let channel_entry = map
             .entry(channel_id.to_string())
             .or_insert_with(|| serde_json::json!({}));
@@ -470,6 +490,18 @@ pub(crate) fn merge_graine_seed(
     })?;
     log::debug!("[GRAINE_MIRROR] stored seed, dropped {dropped} older session(s)");
     Ok(dropped)
+}
+
+/// Whether two base64 spellings carry the same seed. Compared as BYTES, because the foreground
+/// (`toBase64`) and the push path (the proto extraction) each encode their own, and a padding or
+/// alphabet difference between two writers must not read as a replacement.
+fn same_seed(a: &str, b: &str) -> bool {
+    use base64::Engine;
+    let engine = base64::engine::general_purpose::STANDARD;
+    match (engine.decode(a), engine.decode(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
 }
 
 /// Keeps the newest [`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`] sessions, returning how many were
@@ -920,6 +952,56 @@ mod graine_mirror_tests {
 
     fn seed(created_at: i64) -> serde_json::Value {
         serde_json::json!({ "seed": "c2VlZA==", "createdAt": created_at })
+    }
+
+    fn mirror_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("graine-mirror-{tag}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mirror(dir: &std::path::Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.join("graine_seeds.json")).unwrap())
+            .unwrap()
+    }
+
+    /// Channel-encryption section 21: a frame naming a held session with other bytes is somebody
+    /// replacing a seed they did not mint, and every later banner of that session would open under
+    /// their key. The held seed stays.
+    #[test]
+    fn a_held_session_is_never_replaced_by_other_bytes() {
+        let dir = mirror_dir("replace");
+        merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
+
+        assert!(merge_graine_seed(&dir, "chan", "s-1", "b3RoZXI=", 2).is_err());
+
+        assert_eq!(mirror(&dir)["chan"]["s-1"]["seed"], "c2VlZA==");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_held_session_is_never_moved_to_another_salon() {
+        let dir = mirror_dir("move");
+        merge_graine_seed(&dir, "chan-a", "s-1", "c2VlZA==", 1).unwrap();
+
+        assert!(merge_graine_seed(&dir, "chan-b", "s-1", "c2VlZA==", 1).is_err());
+
+        assert!(mirror(&dir).get("chan-b").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The seed push and the frame on the message carry the SAME seed, often in the same second:
+    /// the second copy is a no-op, never a refusal.
+    #[test]
+    fn the_same_seed_again_is_accepted_and_changes_nothing() {
+        let dir = mirror_dir("same");
+        merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
+
+        assert_eq!(merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 9), Ok(0));
+
+        assert_eq!(mirror(&dir)["chan"]["s-1"]["createdAt"], 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

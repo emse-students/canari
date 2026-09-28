@@ -195,7 +195,12 @@ export interface SendChannelMessageDto {
    */
   senderSessionId: string;
   messageIndex: number;
-  /** Client-generated UUID used as PK so the WS echo can be deduplicated. */
+  /**
+   * A client-generated UUID, and IGNORED: `sendMessage` always mints the row id itself, so a client
+   * can never choose a primary key. The client's own id travels inside the ciphertext
+   * (`AppMessage.message_id`), which is the only place it is read. Kept on the DTO because every
+   * shipped client still sends it.
+   */
   messageId?: string;
   /** When present, this message is a poll: it is auto-pinned and accepts votes. */
   poll?: ChannelPollInputDto;
