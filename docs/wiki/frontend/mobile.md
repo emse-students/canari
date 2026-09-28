@@ -1141,7 +1141,7 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
 4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
-5. `ABSENT` — retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS` = 3 × 1.8 s on Android, mirrored by `welcomeRaceRetries × welcomeRaceRetryDelayMs` in the NSE). If the group becomes `LOCAL` during that race, try commit catch-up as a last resort before falling back.
+5. `ABSENT` — **nothing is waited for**, and the push falls through to the fallback below. On Android a frame whose Welcome is QUEUED on the push lane never reaches this step: it is queued again behind that Welcome (`WELCOMES_ON_LANE`, [channel-encryption §20](../protocols/channel-encryption.md#how-it-is-built)). What this step was until 2026-09-28 - three decrypts 1.8 s apart on both platforms, betting that another engine joined the group meanwhile - was a clock nobody had seen win, and on Android it sat in front of the very Welcome it waited for (NOTIF-21). Deleted on both at the user's word (*"Supprime ce délai"*).
 6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
@@ -1157,11 +1157,11 @@ runs.
 **IT USED TO DRIVE A COPY, AND A COPY CANNOT FAIL.** The suite held a private `runLadder` that
 restated the branching, because the real methods are private and JNI-bound; its green tick said only
 that the mirror still agreed with itself, which is the one thing a regression test is not for.
-Changing `WELCOME_RACE_RETRIES` from 3 to 4 in the service source now fails two cases - measured
-2026-09-22, and that is the assertion this shape exists to make.
+Changing the race's retry count in the service source failed two cases - measured 2026-09-22, and
+that is the assertion this shape exists to make (the race itself is gone since 2026-09-28).
 
 The ladder is generic over the outcome type and knows one thing about it, `isRefused`; the JNI
-decrypt, the commit catch-up, the locality query, the wait between two retries and the logger all
+decrypt, the commit catch-up, the locality query and the logger all
 arrive as lambdas. So the file needs no Android at all - **and an Android import added to that
 package breaks `:compileKotlin` in the JVM project, by design**: the refusal is immediate and names
 the file, where a silent exclusion would leave the ladder untested again under a green tick.

@@ -54,12 +54,6 @@ class NotificationService: UNNotificationServiceExtension {
   /// Maximum number of entries kept in `fcm_message_cache.ndjson`.
   private static let maxFcmCacheEntries = 50
 
-  /// Welcome-race retry constants. Mirror of Android `WELCOME_RACE_RETRIES` /
-  /// `WELCOME_RACE_RETRY_DELAY_MS`: when a message push arrives before the concurrent
-  /// Welcome push has finished joining the group, retry briefly before falling back.
-  private static let welcomeRaceRetries = 3
-  private static let welcomeRaceRetryDelayMs = 1_800
-
   /// The initials disc drawn when no avatar can be fetched - see `initialsImageUrl`. Twins of
   /// `kCanariInitialsSize` / `kCanariInitialsLetterRatio` in `canari_push.mm`, duplicated because
   /// the appex is a separate bundle.
@@ -412,8 +406,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// 1. direct decrypt;
   /// 2. if the locality could not be established, stop - see `GroupLocality.unknown`;
   /// 3. if the group is already local, in-memory commit catch-up;
-  /// 4. if the group is genuinely absent, retry the Welcome race up to 3 times, then a final
-  ///    catch-up if the group appeared in the meantime.
+  /// 4. if the group is genuinely absent, stop - nothing this extension can wait for joins it.
   private func runDecryptLadder(ctx: PushContext, groupId: String, protoB64: String) -> DecryptResult? {
     guard let state = loadMlsState() else {
       NSLog("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8))")
@@ -427,8 +420,8 @@ class NotificationService: UNNotificationServiceExtension {
     NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) locality=\(locality)")
 
     if locality == .unknown {
-      // Nothing was established, so nothing is retried: the catch-up answers an epoch gap and the
-      // race answers a pending join, and neither has been diagnosed here.
+      // Nothing was established, so nothing is retried: the catch-up answers an epoch gap, and
+      // none has been diagnosed here.
       NSLog("[CanariNSE] locality unknown group=\(groupId.prefix(8)) -> generic fallback")
       return nil
     }
@@ -438,29 +431,11 @@ class NotificationService: UNNotificationServiceExtension {
       return decrypted
     }
 
-    // Welcome/message race: the concurrent Welcome push may be joining the group when
-    // this message arrives. Retry briefly so the first message of a new conversation
-    // produces a real notification instead of a generic fallback.
-    var raceAttempt = 0
-    while decrypted == nil && raceAttempt < Self.welcomeRaceRetries {
-      raceAttempt += 1
-      let delay = Double(Self.welcomeRaceRetryDelayMs) / 1000.0
-      NSLog("[CanariNSE] welcome-race retry \(raceAttempt)/\(Self.welcomeRaceRetries) sleep=\(delay)s group=\(groupId.prefix(8))")
-      Thread.sleep(forTimeInterval: delay)
-      decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
-      if decrypted == nil {
-        NSLog("[CanariNSE] welcome-race retry \(raceAttempt)/\(Self.welcomeRaceRetries) still failed group=\(groupId.prefix(8))")
-      }
-    }
-
-    // The group may have appeared during the race (Welcome processed by the app or
-    // another extension invocation). Last-resort catch-up before falling back.
-    if decrypted == nil && groupLocality(groupId: groupId, ctx: ctx) == .local {
-      NSLog("[CanariNSE] group appeared during welcome-race, attempting catch-up group=\(groupId.prefix(8))")
-      decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
-    }
-
-    return decrypted
+    // ABSENT: THE GROUP IS NOT JOINED HERE, AND THIS EXTENSION NEVER JOINS ONE - a Welcome is the
+    // app's to process. The ladder used to sleep 3 x 1.8 s betting that the app joined meanwhile, a
+    // race nobody observed; removed with its Android twin (user, 2026-09-28: "Supprime ce delai").
+    NSLog("[CanariNSE] group not joined here group=\(groupId.prefix(8)) -> generic fallback")
+    return nil
   }
 
   /// Ringing banner for a legacy (non-silent) MLS call invite: ringtone-class sound +

@@ -2528,7 +2528,9 @@ admitting epoch can reach the phone BEFORE the Welcome (the Welcome is sent afte
 fan-out). On Android both run on the one `MLS_PUSH_LANE` thread, and the recovery ladder's
 Welcome-race retry slept 3 x 1.8 s in front of a join queued behind it: measured, the Welcome joined
 24 s after it arrived. `WELCOMES_ON_LANE` counts the Welcomes received per group and released when
-their task ends; a refused frame whose group has one is queued again behind it, once, with no clock.
+their task ends; a refused frame whose group has one is queued again behind it, once, with no clock. The
+sleep itself is DELETED on both platforms (user, same day): an absent group with no Welcome queued
+waits for nothing ([mobile](../frontend/mobile.md#background-mls-decrypt-ladder)).
 
 **Not covered**: making a PUBLIC salon private grants its whole list at once through "Enregistrer";
 that group is brand new (unpublished) when the grant lands, so no admitter holds it yet and every
