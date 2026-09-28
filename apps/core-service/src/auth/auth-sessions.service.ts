@@ -150,6 +150,12 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
 
     const row = await this.sessions.findOne({ where: { id: sessionId } });
     if (!row || row.expiresAt.getTime() <= now.getTime()) {
+      // The caller signs the device out on this answer, so it names which of the two it was. A
+      // missing row is a revocation - or a database replaced under the session, as dev's refresh
+      // from production does - and it was the one refusal here that left no line (2026-09-28).
+      this.logger.warn(
+        `Refresh refused sid=${sessionId} - ${row ? 'session expired' : 'no such session'}`
+      );
       return { status: 'unknown' };
     }
 

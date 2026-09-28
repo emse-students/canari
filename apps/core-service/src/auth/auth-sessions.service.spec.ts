@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 
+import { Logger } from '@nestjs/common';
+
 import { AuthSessionsService, ROTATION_GRACE_SECONDS } from './auth-sessions.service';
 import { AuthSession } from './entities/auth-session.entity';
 
@@ -294,6 +296,22 @@ describe('AuthSessionsService', () => {
       const { service } = makeService();
       const result = await service.rotate('00000000-0000-4000-8000-000000000000', 'whatever');
       expect(result.status).toBe('unknown');
+    });
+
+    // The caller signs the device out on `unknown`, so the refusal must leave a line naming which
+    // of the two it was - it was the only silent one (2026-09-28, a dev database replaced under it).
+    it('says whether a refused session was missing or expired', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { service, repo } = makeService();
+      await service.rotate('00000000-0000-4000-8000-000000000000', 'whatever');
+      const opened = await service.create('user-1');
+      repo.rows[0].expiresAt = new Date(Date.now() - 1000);
+      await service.rotate(opened.sessionId, opened.tokenId);
+
+      const lines = warn.mock.calls.map(([line]) => String(line));
+      expect(lines.some((l) => l.includes('no such session'))).toBe(true);
+      expect(lines.some((l) => l.includes('session expired'))).toBe(true);
+      warn.mockRestore();
     });
 
     it('records the client facts of the latest refresh', async () => {
