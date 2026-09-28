@@ -37,7 +37,7 @@ import { buildOutboxProto, deliveryForOutboxEntry } from '$lib/utils/chat/outbox
 import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 
 /** One line of `outbox_pending.ndjson`, consumed natively. `proto` is base64(plaintext AppMessage). */
 export interface OutboxMirrorEntry {

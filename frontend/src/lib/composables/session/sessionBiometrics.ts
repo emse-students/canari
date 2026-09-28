@@ -8,7 +8,7 @@ import {
   saveDeviceKey,
   setDeviceKeyPersistence,
 } from '$lib/utils/deviceKeyVault';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
 import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';

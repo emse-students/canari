@@ -8,7 +8,7 @@
  * PIN and the MLS invite only arrives once the WS connects. This module holds that intent
  * until `CallService.handleCallSignal` sees the matching invite and auto-accepts.
  */
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 
 export interface PendingCallAccept {
   groupId: string;

@@ -30,7 +30,7 @@
  * feature must always be "the media expires as it would have before", never "the media expires
  * sooner".
  */
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from './sessionLog';
 
 /** Where the per-day dedup marker lives. Not sensitive: opaque ids and a date. */
 const STORAGE_KEY = 'canari-media-touched';

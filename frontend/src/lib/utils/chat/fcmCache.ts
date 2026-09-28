@@ -21,7 +21,7 @@
 
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ConversationIdentity } from '$lib/utils/chat/conversations';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 

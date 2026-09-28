@@ -92,7 +92,7 @@ import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';

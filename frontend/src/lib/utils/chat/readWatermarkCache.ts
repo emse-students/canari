@@ -14,7 +14,7 @@
  */
 
 import type { Conversation } from '$lib/types';
-import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { countUnreadForUser, mergeReadWatermark, watermarkFor } from './readState';
 

@@ -10,7 +10,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 // `vi.hoisted` because the module under test imports appendLog at its top level, so the mock
 // factory runs before any plain `const` in this file would exist.
 const { appendLogMock } = vi.hoisted(() => ({ appendLogMock: vi.fn() }));
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+vi.mock('$lib/utils/sessionLog', () => ({
   appendLog: appendLogMock,
 }));
 vi.mock('$lib/stores/auth', () => ({
