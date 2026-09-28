@@ -2340,7 +2340,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that
         // package is compiled by the standalone JVM test project too, so `PushDecryptLadderTest`
         // runs THIS branching rather than a copy of it. Everything the ladder cannot have
-        // without Android - the JNI decrypt, the state lock, the clock, the logger - is handed
+        // without Android - the JNI decrypt, the state lock, the logger - is handed
         // in from here.
         if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
             outcome = PushRecoveryLadder.run(
@@ -2348,18 +2348,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 groupTag = groupId.take(8),
                 isRefused = { it is PushDecrypt.Refused },
                 locality = { groupLocality(groupId) },
-                retryDecrypt = { tryDecrypt(queuedMessageId, groupId, inlineProto) },
                 catchUp = {
                     tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
-                },
-                pause = {
-                    try {
-                        Thread.sleep(PushRecoveryLadder.WELCOME_RACE_RETRY_DELAY_MS)
-                        true
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        false
-                    }
                 },
                 log = { Log.d(TAG, it) },
             )
