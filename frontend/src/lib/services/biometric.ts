@@ -9,6 +9,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
 import { keystoreCommand } from './keystoreCommands';
+import { forgetPromptedBiometricUnlock } from './biometricCadence';
 
 /**
  * Flag persisted in localStorage (and mirrored to Tauri native store) that
@@ -195,6 +196,7 @@ export class BiometricService {
       });
     }
     localStorage.removeItem(CONFIG_FLAG_KEY);
+    forgetPromptedBiometricUnlock();
     if (isTauri()) {
       // REMOVED, not set to `false`. Every reader treats an absent key and a `false` one alike, but
       // the device wipe runs this step LAST - after `clear_app_data` - so writing here re-creates

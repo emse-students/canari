@@ -6,6 +6,7 @@
     CircleCheck,
     FingerprintPattern,
     LogIn,
+    Clock,
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
@@ -15,6 +16,11 @@
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
   import { type PinOperationProgress } from '$lib/utils/chat/pinChange';
   import { BiometricService } from '$lib/services/biometric';
+  import {
+    type BiometricCadence,
+    getBiometricCadence,
+    setBiometricCadence,
+  } from '$lib/services/biometricCadence';
   import {
     isDeviceKeyPersistenceEnabled,
     setDeviceKeyPersistence,
@@ -33,13 +39,33 @@
   const showStaySignedIn = !isTauriRuntime();
   let staySignedIn = $state(false);
 
+  // How often the biometric sheet comes back; shown only while biometric unlock is on.
+  let biometricCadence = $state<BiometricCadence>('every_12h');
+  let cadenceBusy = $state(false);
+
   onMount(async () => {
     staySignedIn = isDeviceKeyPersistenceEnabled();
     biometricAvailable = await BiometricService.isAvailable().catch(() => false);
     if (biometricAvailable) {
       biometricEnabled = await BiometricService.isConfigured().catch(() => false);
+      biometricCadence = await getBiometricCadence();
     }
   });
+
+  /** Persists the cadence; the radio only moves once both stores took it. */
+  async function chooseCadence(next: BiometricCadence) {
+    if (cadenceBusy || next === biometricCadence) return;
+    cadenceBusy = true;
+    try {
+      await setBiometricCadence(next);
+      biometricCadence = next;
+    } catch (e) {
+      appendLog(`[BIOMETRIC] Cadence change failed: ${String(e)}`);
+      showToast(m.profile_biometric_cadence_failed(), 'error');
+    } finally {
+      cadenceBusy = false;
+    }
+  }
 
   /**
    * Toggles hardware biometric unlock. Enabling hands the keystore key over to the biometric
@@ -57,6 +83,7 @@
         await session.enrollBiometric();
         biometricEnabled = await BiometricService.isConfigured().catch(() => false);
         if (!biometricEnabled) showToast(m.auth_biometric_no_fingerprint_android(), 'info');
+        else biometricCadence = await getBiometricCadence();
       }
     } catch (e) {
       appendLog(`[BIOMETRIC] Toggle failed: ${String(e)}`);
@@ -222,6 +249,48 @@
  {biometricEnabled ? 'translate-x-6' : 'translate-x-0'}"
             ></span>
           </button>
+        </div>
+      {/if}
+
+      {#if biometricAvailable && biometricEnabled}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="bg-cn-surface flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
+        >
+          <div class="flex min-w-0 items-center gap-3.5">
+            <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+              <Clock size={20} strokeWidth={2.5} />
+            </div>
+            <div class="min-w-0">
+              <p class="text-text-main text-sm font-bold">
+                {m.profile_biometric_cadence_heading()}
+              </p>
+              <p class="text-text-muted mt-0.5 text-xs font-medium">
+                {m.profile_biometric_cadence_desc()}
+              </p>
+            </div>
+          </div>
+          <div
+            role="radiogroup"
+            aria-label={m.profile_biometric_cadence_heading()}
+            class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
+          >
+            {#each [{ value: 'every_12h', label: m.profile_biometric_cadence_12h() }, { value: 'every_launch', label: m.profile_biometric_cadence_every_launch() }] as const as opt (opt.value)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={biometricCadence === opt.value}
+                disabled={cadenceBusy}
+                onclick={() => chooseCadence(opt.value)}
+                class="focus-visible:ring-cn-yellow rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 disabled:opacity-50
+ {biometricCadence === opt.value
+                  ? 'bg-cn-yellow text-cn-ink shadow'
+                  : 'text-text-muted hover:text-text-main'}"
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
         </div>
       {/if}
 

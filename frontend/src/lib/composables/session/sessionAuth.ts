@@ -400,8 +400,15 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
  * (single biometric prompt via `retrieve_device_key`).
  *
  * On failure redirects to /login (or calls cb.onLoginFailed if provided).
+ *
+ * `opts.unattendedKeyRead` only matters in biometric mode: the keystore is read with no sheet,
+ * because the biometric cadence said the last proof is recent enough ({@link biometricLoginImpl}).
  */
-export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
+export async function loginImpl(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  opts?: { unattendedKeyRead?: boolean }
+): Promise<void> {
   // EVERY OFFSET IN THIS REPORT IS MEASURED FROM NAVIGATION START, not from here, so the document,
   // the module graph and hydration are all visible as the gap before `login-start` without anything
   // needing to instrument them. That gap is the other half of the cold start, and a bench anchored
@@ -747,6 +754,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           // Only the PIN paths can carry it, and only a snapshot older than the v0.11.0 envelope
           // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
           legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
+          unattendedKeyRead: isBiometric && opts?.unattendedKeyRead === true,
         })
       ),
       timeBootSpan('storage-open', getStorage(ctx.getUserId())),
@@ -1653,13 +1661,20 @@ export async function nativeStorageLoginImpl(
  * still appears (user-presence check) but loginImpl will surface a clean
  * "keystore empty" error — the caller should then fall back to the PIN modal
  * without showing an error to the user.
+ *
+ * `opts.unattended` reads the key with NO sheet. The CALLER decides it, because only the caller
+ * knows whether a person asked for the sheet: the cold-launch flow asks the biometric cadence, a tap
+ * on "use biometrics" never does. A successful PROMPTED unlock is recorded here - and only that one,
+ * or an unattended unlock would renew the window it depends on without any proof.
  */
 export async function biometricLoginImpl(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  opts: { unattended?: boolean } = {}
 ): Promise<void> {
   ctx.setLoginError('');
-  cb.log('[BIOMETRIC] Biometric login attempt (keystore key path)...');
+  const unattended = opts.unattended === true;
+  cb.log(`[BIOMETRIC] Biometric login attempt (keystore key path, unattended=${unattended})...`);
   try {
     const savedUser = currentUserId();
     if (!savedUser) {
@@ -1681,7 +1696,11 @@ export async function biometricLoginImpl(
     // P2-B: never swallow the authentication error. If the user cancels the BiometricPrompt
     // the error must reach startLoginFlow, which then shows the PinModal (P2-A). Rust
     // distinguishes "empty keystore" from "authentication cancelled" via distinct messages.
-    await loginImpl(ctx, cb);
+    await loginImpl(ctx, cb, { unattendedKeyRead: unattended });
+    if (!unattended && ctx.isLoggedIn()) {
+      const { recordPromptedBiometricUnlock } = await import('$lib/services/biometricCadence');
+      recordPromptedBiometricUnlock();
+    }
   } catch (e) {
     ctx.setLoginError(m.auth_biometric_failed_fallback());
     cb.log(`[BIOMETRIC] Exception: ${String(e)}`);

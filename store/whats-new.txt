@@ -6,3 +6,5 @@ la premiere banniere. Un membre ajoute a un salon prive y reste, et les panneaux
 affichent de nouveau tous leurs boutons.
 
 Carte de la vie asso : noms lisibles, export net qui tient sur la page.
+
+Empreinte / Face ID : demandes toutes les 12 h, ou a chaque fois au choix dans les reglages.

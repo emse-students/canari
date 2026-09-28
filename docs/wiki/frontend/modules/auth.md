@@ -321,6 +321,47 @@ WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
 keystore at the next app start and strips the field. The background readers have **no** JSON
 fallback, so one push before that first launch shows generic text.
 
+### How often the sheet comes back - the biometric cadence (2026-09-28)
+
+Settings > Security shows, under the biometric toggle, a per-device choice: **every 12 h**
+(default) or **every time**. Every time is the pre-2026-09-28 behaviour, unchanged. Every 12 h
+skips the sheet while the last *prompted* unlock is under 12 h old
+(`services/biometricCadence.ts`), and the key is then read **unattended**: `initialiser_mls` gets
+`unattendedKeyRead`, and `PluginDeviceKeyStore` calls `getKeyBytesUnattended` instead of
+`getKeyBytes`. That native method is Rust-only - not a `#[command]`, not in `build.rs`'s ACL, so no
+JS can reach it (`biometricCadence.test.ts` pins that, and pins the prompted iOS read to the
+`.userPresence` item).
+
+**What it costs, per platform - decided by the user knowingly, not discovered:**
+
+| Platform | Unattended read | Security delta |
+|---|---|---|
+| Android | the same alias, decrypted with no `BiometricPrompt` | **None.** The key was never auth-bound (see the table above); the prompt was always a UX gate |
+| iOS | the background item `mls_bg_key_<alias>` | **Real.** The primary item is `.userPresence`, enforced by the Secure Enclave. Inside the window, code already running with the app's rights on a compromised device (jailbreak, an exploit of Canari) reads the key with no fresh proof. A stolen locked phone or a network attacker gains nothing |
+
+**Why not a hardware-enforced window.** Apple caps reuse of a biometric proof at five minutes
+(`LATouchIDAuthenticationMaximumAllowableReuseDuration`); no API gives 12 h. Android's
+`setUserAuthenticationValidityDurationSeconds` would, but only after splitting its single key in
+two, and it would leave the two platforms asymmetric - the user preferred one mechanism.
+
+**The clock, and why it may exist here despite "never from a clock".** It answers a UX question
+(raise the sheet or not), never a cryptographic one, and it obeys the liveness-clock rule: it is
+written ONLY by a successful *prompted* unlock (`biometricLoginImpl`), never by an unattended one,
+or the window would renew itself without a proof. A clock set backwards counts as due. It lives in
+`localStorage` only (the native flag store holds booleans): losing it costs one extra prompt, never
+a skipped one. The cadence is stored as its NON-default (`biometricPromptEveryLaunch`, dual-written
+like every biometric flag), so an empty store IS the default and existing installs need no
+migration. Forgetting biometrics (`BiometricService.forget`) drops the proof and keeps the
+preference.
+
+**Who decides "unattended".** The caller of `biometricLogin`, because only it knows whether a
+person asked for the sheet: the cold-launch flow (`startLoginFlow`) asks the cadence and then also
+hides the in-app `BiometricBottomSheet`; the PIN modal's "use biometrics" button always prompts. An
+unattended read that finds nothing (a device enrolled before WP-SEC-1 has no background item) is
+the existing `keystore_empty` failure and lands on the PIN modal, whose button prompts.
+
+**Owed on hardware** - nothing here has run on a phone yet: [device-verification](../../device-verification.md).
+
 ### The key is raw bytes at rest and base64 on the wire
 
 The device key is stored as **raw 32 bytes** in both platform keystores, and crosses the Rust FFI

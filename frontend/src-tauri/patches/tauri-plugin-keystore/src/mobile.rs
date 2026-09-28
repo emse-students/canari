@@ -44,6 +44,20 @@ impl<R: Runtime> Keystore<R> {
             .map_err(Into::into)
     }
 
+    /// Retrieve a raw 32-byte key by alias WITHOUT a biometric sheet. Returns `None` if not found.
+    ///
+    /// Rust-only on purpose: it is not a `#[command]` and not in the ACL, so no JS can reach it.
+    /// Android reads the same key `get_key_bytes` does; iOS reads the background item
+    /// (`mls_bg_key_`), because its primary item is bound to `.userPresence` by the Secure Enclave.
+    pub fn get_key_bytes_unattended(
+        &self,
+        payload: GetKeyBytesUnattendedRequest,
+    ) -> crate::Result<GetKeyBytesResponse> {
+        self.0
+            .run_mobile_plugin("getKeyBytesUnattended", payload)
+            .map_err(Into::into)
+    }
+
     /// Delete a raw key by alias from the platform keystore.
     pub fn delete_key_bytes(&self, payload: DeleteKeyBytesRequest) -> crate::Result<()> {
         self.0

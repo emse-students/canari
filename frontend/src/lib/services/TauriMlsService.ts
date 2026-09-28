@@ -511,7 +511,7 @@ export class TauriMlsService extends BaseMlsService {
     // where this block was measured at 1621.9 ms with nothing inside it named.
     beginBootSpan('mls-load-state');
     try {
-      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk);
+      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk, opts?.unattendedKeyRead);
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
@@ -764,9 +764,10 @@ export class TauriMlsService extends BaseMlsService {
   protected async loadStateWithKey(
     deviceKeyB64: string,
     state?: Uint8Array,
-    stateOnDisk?: boolean
+    stateOnDisk?: boolean,
+    unattendedKeyRead?: boolean
   ): Promise<void> {
-    await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk);
+    await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk, unattendedKeyRead);
   }
 
   /**
@@ -780,12 +781,15 @@ export class TauriMlsService extends BaseMlsService {
    * `biometricPrompt` is sent unconditionally, even though only biometric mode (empty
    * `deviceKeyB64`) raises a sheet: this is the one command that can carry it, because the native
    * keystore plugin cannot resolve a locale of its own.
+   *
+   * `unattendedKeyRead` is the biometric cadence's "skip the sheet" - see {@link MlsInitOptions}.
    */
   private async invokeInit(
     deviceKeyB64: string,
     state?: Uint8Array,
     legacyPin?: string,
-    stateOnDisk?: boolean
+    stateOnDisk?: boolean,
+    unattendedKeyRead?: boolean
   ): Promise<void> {
     this._deviceKeyB64 = deviceKeyB64;
     // `Array.from` ON A MULTI-MEGABYTE BLOB IS THE THING TO AVOID HERE, and `stateOnDisk` is how
@@ -802,6 +806,7 @@ export class TauriMlsService extends BaseMlsService {
         legacyPin: legacyPin ?? null,
         biometricPrompt: keystoreUnlockPrompt(),
         stateOnDisk: stateOnDisk === true,
+        unattendedKeyRead: unattendedKeyRead === true,
       },
     });
   }

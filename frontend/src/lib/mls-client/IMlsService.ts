@@ -143,6 +143,12 @@ export interface MlsInitOptions {
    * been read natively three lines earlier and were going straight back.
    */
   stateOnDisk?: boolean;
+  /**
+   * Biometric mode only, **Tauri only**: read the keystore key WITHOUT a biometric sheet, because
+   * the user's unlock cadence is "every 12h" and a prompted unlock happened inside that window.
+   * The decision belongs to `biometricCadence.ts`; this flag only carries it to the native side.
+   */
+  unattendedKeyRead?: boolean;
 }
 
 /**

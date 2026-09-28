@@ -41,6 +41,14 @@ pub struct GetKeyBytesRequest {
     pub prompt: BiometricPromptText,
 }
 
+/// Request to retrieve a raw key WITHOUT a biometric sheet - so, unlike [`GetKeyBytesRequest`], no
+/// prompt text. Answered by the same [`GetKeyBytesResponse`].
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetKeyBytesUnattendedRequest {
+    pub alias: String,
+}
+
 /// Response from retrieving a raw key. `key_bytes` is base64-encoded,
 /// or `None` if no key was found for the alias.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

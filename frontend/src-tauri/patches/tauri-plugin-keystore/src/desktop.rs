@@ -36,6 +36,18 @@ impl<R: Runtime> Keystore<R> {
         }
     }
 
+    /// Same read as [`Self::get_key_bytes`]: the OS keyring raises no biometric sheet, so there is no
+    /// prompt to skip. Present so the bridge compiles to one shape on every target.
+    pub fn get_key_bytes_unattended(
+        &self,
+        payload: GetKeyBytesUnattendedRequest,
+    ) -> crate::Result<GetKeyBytesResponse> {
+        self.get_key_bytes(GetKeyBytesRequest {
+            alias: payload.alias,
+            prompt: BiometricPromptText::default(),
+        })
+    }
+
     /// Delete a raw key from the OS keyring. Does not error if the entry doesn't exist.
     pub fn delete_key_bytes(&self, payload: DeleteKeyBytesRequest) -> crate::Result<()> {
         let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;

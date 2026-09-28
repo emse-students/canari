@@ -52,6 +52,12 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         // `reason` is iOS-only (LAContext.localizedReason); Android has no field for it.
     }
 
+    /// No prompt is raised, so unlike GetKeyBytesRequest there is no text to carry.
+    @InvokeArg
+    class GetKeyBytesUnattendedRequest {
+        lateinit var alias: String
+    }
+
     @InvokeArg
     class DeleteKeyBytesRequest {
         lateinit var alias: String
@@ -152,6 +158,36 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
 
         // No CryptoObject — biometric is a pure UX gate, not a crypto requirement.
         biometricPrompt.authenticate(promptInfo)
+    }
+
+    /// Retrieves a raw 32-byte key by alias WITHOUT raising a BiometricPrompt.
+    ///
+    /// Reached only from Rust (`initialiser_mls` with `unattendedKeyRead`), never from JS - it is
+    /// not in the plugin's command ACL. It serves the "every 12h" unlock cadence: the user proved
+    /// their presence with a prompted `getKeyBytes` less than 12h ago. The key itself is the same
+    /// one `getKeyBytes` reads and it was never auth-bound (`setUserAuthenticationRequired(false)`,
+    /// which background FCM decryption depends on), so this read opens nothing that was closed:
+    /// it skips the UX gate, and the frontend decides when that is allowed.
+    @Command
+    fun getKeyBytesUnattended(invoke: Invoke) {
+        val args = invoke.parseArgs(GetKeyBytesUnattendedRequest::class.java)
+        val cipherData = readCipherDataForAlias(args.alias)
+        val ret = JSObject()
+        if (cipherData == null) {
+            ret.put("keyBytes", null)
+            invoke.resolve(ret)
+            return
+        }
+        val (iv, ciphertext) = cipherData
+        try {
+            val cipher = getDecryptionCipherForAlias(args.alias, iv)
+            // NO_WRAP for the same reason as getKeyBytes: the value crosses into Rust's STANDARD
+            // base64 decoder, which rejects DEFAULT's trailing newline.
+            ret.put("keyBytes", Base64.encodeToString(cipher.doFinal(ciphertext), Base64.NO_WRAP))
+            invoke.resolve(ret)
+        } catch (e: Exception) {
+            invoke.reject("Decryption failed: ${e.message}")
+        }
     }
 
     /// Deletes a raw key by alias from both the Android Keystore and
