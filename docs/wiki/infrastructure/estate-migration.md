@@ -978,6 +978,19 @@ The two files that ARE the record, neither in a repository:
   `Cf-Connecting-IP`: on a docker bridge, `$remote_addr` would have been the bridge address and every
   visitor would have shared it on the host.
 
+**SKY TOOK `sky.emse.fr`, 2026-09-28.** In order: Authentik's Sky provider gained
+`https://sky.emse.fr/auth/callback` BESIDE the old one; Sky #140 moved `ORIGIN`'s default
+(`docker-compose.prod.yml`, no variable sets it) and shipped as `v1.1.3`; then, the same minute,
+`sky.conf` (the OLD name, reached through the `mitv` relay) became a `301` + `no-store` for pages
+while `/api/` stays proxied - Canari's backend read Sky through `SKY_API_URL=https://sky.mitv.fr`,
+rendered from `infrastructure/.env.example`, which a server-side fetch should not have to follow a
+redirect for. **The redirect had to follow the deploy at once**: Sky builds its OIDC callback from
+`ORIGIN`, so a login begun on the old name would have returned to the new one without its state
+cookie. Measured: old-name pages `301` with path and query, `/api/health` `200`, the new name `200`,
+and Authentik's authorize answering its flow (not a redirect-URI error) for the new callback. The
+pre-edit vhost is `sky.conf.bak-2026-09-28-before-redirect`. **The `/api/` exception goes once
+Canari has shipped the new `SKY_API_URL`**; the relay and the old name stay until nothing names it.
+
 **Two traps, both found before they cost anything.** `sky.db` is not the whole state:
 `sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
 regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132

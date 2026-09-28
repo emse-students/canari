@@ -38,7 +38,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSite[] = [
   },
   {
     id: 'sky',
-    href: 'https://sky.mitv.fr',
+    href: 'https://sky.emse.fr',
     logo: '/ecosystem/sky.webp',
     label: () => m.ecosystem_site_sky(),
   },
