@@ -2801,7 +2801,6 @@
   "chat_permission_manage_workspace_label": "Manage community",
   "chat_permission_manage_workspace_tooltip": "Grants every permission. An administrator ALWAYS has all permissions.",
   "chat_permission_grid_empty": "No configurable permission.",
-  "chat_permission_grid_column_header": "Permission",
   "chat_permission_grid_admin_locked": "Administrators have every permission (not editable).",
   "chat_permission_grid_cell_hint": "{label} - {state} (click to change)",
   "chat_permission_state_yes": "Yes",

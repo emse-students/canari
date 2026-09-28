@@ -1487,6 +1487,10 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
   shrinks under its label, the admins hint moved to the allowlist, the add row wraps, and a parent
   clearing `UserAutocomplete`'s `value` now clears the field (the prop was read by nobody). An add
   followed by a reload was checked on the same estate: the member stayed.
+  **The roles tab was still the report's words on 2026-09-28** - a matrix whose role columns sat
+  behind an unannounced sideways scroll (only `@Administrateur` visible at 390, `@Modérateur` cut in
+  half at 1280), passed by a gate that summed `min-width` floors. `PermissionGrid` is one card per
+  role now, descriptions printed, the admin a single line; rendered at 390 and 1280, light and dark.
 - **FIXED, owed ONE reading on the Pixel 6a after the release - the notification that STAYS
   generic.** The Pixel's logcat named it: Gala's key group at epoch 4 on the phone, the seed frame
   refused as ahead, and the catch-up `POST mls/push/commits` answered 403 - 173 times in eight hours

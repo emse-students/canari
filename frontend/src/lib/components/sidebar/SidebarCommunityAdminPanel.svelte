@@ -610,8 +610,8 @@
   one copy, at the foot, where it is reachable from every tab.
 
   The roles tab stops buying extra window as well. It asked for `max-w-6xl` because
-  `PermissionGrid` reserved 496px before measuring a label; those floors are now what its content
-  needs, which is what makes a one-column panel possible at all.
+  `PermissionGrid` was a matrix as wide as its roles; it is one card per role since 2026-09-28, so
+  its width is one row's, which is what makes a one-column panel possible at all.
 -->
 <SidePanel {open} {onClose} title={m.chat_community_settings_title()}>
   <div class="flex h-full min-h-0 flex-col">
@@ -653,7 +653,7 @@
       </button>
     </div>
 
-    <!-- Tab content. `p-4` is the budget `permissionGridWidth.test.ts` measures the matrix against. -->
+    <!-- Tab content. -->
     <div class="bg-cn-bg min-h-0 flex-1 overflow-y-auto px-(--side-panel-inset) py-4">
       {#if activeTab === 'overview'}
         <div class="max-w-2xl space-y-6">
@@ -771,15 +771,14 @@
               {rolesError}
             </div>
           {:else if workspaceRoles.length > 0}
-            <div class="border-cn-border bg-cn-surface rounded-xl border p-4 shadow-sm">
-              <PermissionGrid
-                roles={workspaceRoles}
-                permissions={roleGridPermissions}
-                overrides={roleOverrides}
-                onToggle={handleRolePermissionToggle}
-                disableDeny={true}
-              />
-            </div>
+            <!-- The grid draws one card per role itself; a card around it would nest two. -->
+            <PermissionGrid
+              roles={workspaceRoles}
+              permissions={roleGridPermissions}
+              overrides={roleOverrides}
+              onToggle={handleRolePermissionToggle}
+              disableDeny={true}
+            />
           {/if}
         </div>
       {/if}
