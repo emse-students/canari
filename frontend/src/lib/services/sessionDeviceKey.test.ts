@@ -95,7 +95,8 @@ describe('the biometric entry point clears the login guard', () => {
     // startLoginFlow raises isLoginInProgress for the +layout.ts guard, and loginImpl bails when
     // it is set - it cannot tell that flag from a real concurrent login. Leaving it set swallowed
     // the automatic biometric attempt of every cold launch.
-    const call = backgroundService.indexOf('globalSession.biometricLogin({');
+    // The FIRST call in the file is the cold-launch one; the PIN modal's button comes later.
+    const call = backgroundService.indexOf('globalSession.biometricLogin(');
     expect(call).toBeGreaterThan(-1);
     const preceding = backgroundService.slice(0, call);
     const lastRelease = preceding.lastIndexOf('globalSession.isLoginInProgress = false;');

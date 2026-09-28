@@ -1004,6 +1004,25 @@ the iPad's only difference - its user agent - is no longer read by anything
 ([mobile](frontend/mobile.md#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish)).
 It settles NOTHING about iPad layout, which nothing here has ever measured.
 
+## U. The biometric cadence: every 12 h skips the sheet, every time keeps it - owed on BOTH platforms
+
+**Proves** the cadence ([auth](frontend/modules/auth.md#how-often-the-sheet-comes-back---the-biometric-cadence-2026-09-28)).
+**Precondition:** a build carrying `getKeyBytesUnattended`, biometrics enabled. Check G still holds
+as written: enabling records no proof, so its first relaunch prompts under either cadence.
+
+1. Default cadence (Settings > Security shows **Every 12 h** selected). Cold launch: the sheet
+   appears, unlock. Expect `[BIOMETRIC] Prompt due (cadence=every_12h, lastPrompted=never)`.
+2. Kill and relaunch within 12 h: **no sheet at all** - neither the OS prompt nor the in-app
+   `BiometricBottomSheet` - and the conversation list appears. Expect `Prompt skipped` and, native
+   side, `retrieve_device_key: unattended read (no biometric sheet)`. Check G's step 4 (messages
+   persist) must hold on this session too: the key reached the frontend the same way.
+3. Switch to **Every time**, kill, relaunch: the sheet is back on EVERY launch. On iOS this is the
+   property the user most wanted kept - the read is `getKeyBytes`, the `.userPresence` item.
+4. Back to **Every 12 h**, turn biometrics off then on: the cadence radio keeps **Every 12 h**, and
+   the next launch prompts (forgetting dropped the proof).
+5. From the PIN modal (cancel the sheet once), tap **use biometrics** while inside the window: the
+   sheet MUST appear - that button never reads unattended.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

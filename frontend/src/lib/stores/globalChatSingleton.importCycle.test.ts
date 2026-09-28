@@ -76,7 +76,8 @@ function closersFrom(start: string): string[] {
     const file = queue.shift()!;
     for (const dep of valueImports(file)) {
       if (dep === singleton) {
-        closers.push(relative(SRC, file));
+        // POSIX separators, or `ALLOWED` never matches on Windows, where `relative` uses `\`.
+        closers.push(relative(SRC, file).replaceAll('\\', '/'));
         continue;
       }
       if (!seen.has(dep)) {

@@ -867,9 +867,26 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
-        merge_graine_seed, prune_graine_sessions, remove_graine_sessions,
+        merge_graine_seed, prune_graine_sessions, remove_graine_sessions, store_graine_seeds_json,
         GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
     };
+
+    /// The one native writer both platforms call: a payload that is not an array is -1 - a
+    /// different fact from "zero seeds usable" - and an incomplete entry costs only itself.
+    #[test]
+    fn the_shared_seed_writer_counts_what_it_stored_and_refuses_a_non_array() {
+        let dir = std::env::temp_dir().join(format!("graine-seeds-json-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        assert_eq!(store_graine_seeds_json(&dir, "{}"), -1);
+        let bundle = serde_json::json!([
+            { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1 },
+            { "channelId": "chan", "sessionId": "", "seedB64": "c2VlZA==", "createdAt": 2 },
+        ]);
+        assert_eq!(store_graine_seeds_json(&dir, &bundle.to_string()), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// Channel-encryption section 19: the MLS lane and the salon lane absorb seeds at the same
     /// moment. Every writer read the whole map and wrote it back, so the later of two overlapping

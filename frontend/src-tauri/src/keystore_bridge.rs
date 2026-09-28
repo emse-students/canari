@@ -20,6 +20,8 @@ pub struct PluginDeviceKeyStore<R: Runtime> {
     /// Text for the biometric sheet that reading the key raises. Only `retrieve_device_key`
     /// prompts, so the two store-only call sites leave this empty and the native fallback applies.
     prompt: BiometricPromptText,
+    /// When set, `retrieve_device_key` reads with NO biometric sheet (the "every 12h" cadence).
+    unattended: bool,
 }
 
 impl<R: Runtime> PluginDeviceKeyStore<R> {
@@ -27,7 +29,18 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
         Self {
             app,
             prompt: BiometricPromptText::default(),
+            unattended: false,
         }
+    }
+
+    /// Makes [`DeviceKeyStore::retrieve_device_key`] skip the biometric sheet.
+    ///
+    /// The frontend decides this, from the unlock cadence the user picked and the time of the last
+    /// PROMPTED unlock - this process has neither. On iOS it also changes WHICH item is read: the
+    /// `.userPresence` one cannot be read without a sheet, so the background copy is used instead.
+    pub fn unattended(mut self, unattended: bool) -> Self {
+        self.unattended = unattended;
+        self
     }
 
     /// Attaches the localized text used by [`DeviceKeyStore::retrieve_device_key`].
@@ -53,12 +66,25 @@ impl<R: Runtime> DeviceKeyStore for PluginDeviceKeyStore<R> {
     }
 
     fn retrieve_device_key(&self, alias: &str) -> Option<[u8; 32]> {
-        let resp = self
-            .app
-            .keystore()
-            .get_key_bytes(tauri_plugin_keystore::GetKeyBytesRequest {
+        let keystore = self.app.keystore();
+        let read = if self.unattended {
+            log::debug!("[KEYSTORE] retrieve_device_key: unattended read (no biometric sheet)");
+            keystore.get_key_bytes_unattended(tauri_plugin_keystore::GetKeyBytesUnattendedRequest {
+                alias: alias.to_string(),
+            })
+        } else {
+            keystore.get_key_bytes(tauri_plugin_keystore::GetKeyBytesRequest {
                 alias: alias.to_string(),
                 prompt: self.prompt.clone(),
+            })
+        };
+        let resp = read
+            // Info, not warn: a user cancelling the sheet lands here too, and that is not a defect.
+            .map_err(|e| {
+                log::info!(
+                    "[KEYSTORE] retrieve_device_key refused (unattended={}): {e}",
+                    self.unattended
+                )
             })
             .ok()?;
 

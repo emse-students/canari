@@ -412,8 +412,10 @@ export function useChatSession() {
       biometricConfigured?: boolean
     ) => nativeStorageLoginImpl(ctx, cb, biometricConfigured),
     /** Retrieves the PIN from the biometric keystore and delegates to login(). */
-    biometricLogin: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      biometricLoginImpl(ctx, cb),
+    biometricLogin: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      opts?: { unattended?: boolean }
+    ) => biometricLoginImpl(ctx, cb, opts),
     /** Saves the PIN to the hardware keystore and clears it from memory. */
     enrollBiometric: () => enrollBiometricImpl(),
     /** Removes the biometric keystore secret and restores the PIN to the session vault. */

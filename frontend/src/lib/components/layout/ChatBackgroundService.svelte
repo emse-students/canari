@@ -15,6 +15,7 @@
   import { page } from '$app/stores';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
+  import { isBiometricPromptDue } from '$lib/services/biometricCadence';
   import {
     loadDeviceKey,
     isDeviceKeyPersistenceEnabled,
@@ -1190,10 +1191,14 @@
 
             if (keyPresent) {
               biometricAttempted = true;
-              // Subsequent login with biometrics ENROLLED → straight to BiometricBottomSheet
               biometricConfigured = true;
               biometricCancelled = false;
-              showBiometricSheet = true;
+              // The cadence decides whether this launch raises the sheet at all. When it does not,
+              // the key is read unattended and no sheet is shown - the in-app one included, which
+              // would otherwise say "touch the sensor" for a read that asks nothing. A failure lands
+              // on the PIN modal, whose "use biometrics" button always prompts.
+              const promptDue = await isBiometricPromptDue();
+              showBiometricSheet = promptDue;
 
               // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
               // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
@@ -1215,10 +1220,13 @@
                 // OS prompt ever did, and the flow fell through to the PIN modal - where the same
                 // tap on "use biometrics" worked, because line ~918 had cleared the flag by then.
                 globalSession.isLoginInProgress = false;
-                await globalSession.biometricLogin({
-                  ...sessionCb(),
-                  onLoginFailed: onSavedPinFailed,
-                });
+                await globalSession.biometricLogin(
+                  {
+                    ...sessionCb(),
+                    onLoginFailed: onSavedPinFailed,
+                  },
+                  { unattended: !promptDue }
+                );
                 dismissAuthPrompts();
               }
             }

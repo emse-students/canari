@@ -31,6 +31,10 @@ pub(crate) struct InitMlsOptions {
     /// state" and "the state is on disk, not in this argument" are two different facts and a
     /// missing array cannot carry both, so the caller states which one it means.
     pub state_on_disk: Option<bool>,
+    /// Biometric mode only: read the keystore key WITHOUT a biometric sheet. Set by the frontend
+    /// when the user's unlock cadence is "every 12h" and a prompted unlock happened inside that
+    /// window - see `biometricCadence.ts`, which owns that decision. Absent means prompt, as before.
+    pub unattended_key_read: Option<bool>,
 }
 
 /// Initialises the MLS manager for this session and caches its at-rest key.
@@ -56,7 +60,8 @@ pub(crate) async fn initialiser_mls(
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app.clone())
-        .with_prompt(opts.biometric_prompt.unwrap_or_default());
+        .with_prompt(opts.biometric_prompt.unwrap_or_default())
+        .unattended(opts.unattended_key_read == Some(true));
 
     // Empty device_key_b64 → biometric mode: the keystore holds the device key directly.
     // resolve_at_rest_key then takes Path A (retrieve_device_key), which triggers a single

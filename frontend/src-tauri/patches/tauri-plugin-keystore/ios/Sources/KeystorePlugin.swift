@@ -37,6 +37,11 @@ class KeystorePlugin: Plugin {
     let reason: String?
   }
 
+  /// Request to read a raw key with no sheet - so, unlike `GetKeyBytesRequest`, no text to carry.
+  class GetKeyBytesUnattendedRequest: Decodable {
+    let alias: String
+  }
+
   /// Request to delete a raw key by alias.
   class DeleteKeyBytesRequest: Decodable {
     let alias: String
@@ -166,6 +171,39 @@ class KeystorePlugin: Plugin {
       return
     }
 
+    invoke.resolve(["keyBytes": data.base64EncodedString()])
+  }
+
+  /// Retrieves a raw key by alias WITHOUT a Face ID / Touch ID sheet, from the background item
+  /// (`mls_bg_key_`) the notification extension already reads.
+  ///
+  /// Reached only from Rust (`initialiser_mls` with `unattendedKeyRead`), never from JS - it is not
+  /// in the plugin's command ACL. It serves the "every 12h" unlock cadence, and it is the one place
+  /// that cadence costs something on iOS: the primary item is bound to `.userPresence` by the
+  /// Secure Enclave, and Apple caps any reuse of that proof at 5 minutes, so a 12h window can only
+  /// be honoured by reading the copy that carries no access control. The user chose that trade-off
+  /// knowingly; picking "every time" in Settings keeps every read on `getKeyBytes` above.
+  /// Returns `{"keyBytes": null}` when the item is absent (a device enrolled before WP-SEC-1).
+  @objc public func getKeyBytesUnattended(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(GetKeyBytesUnattendedRequest.self)
+
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+      kSecAttrAccessGroup as String: "group.fr.emse.canari",
+      kSecReturnData as String: true,
+    ]
+
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let data = item as? Data else {
+      if status != errSecItemNotFound {
+        NSLog("[KeystorePlugin] getKeyBytesUnattended: bg item read failed (status=\(status))")
+      }
+      invoke.resolve(["keyBytes": NSNull()])
+      return
+    }
     invoke.resolve(["keyBytes": data.base64EncodedString()])
   }
 
