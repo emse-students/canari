@@ -262,6 +262,8 @@
     }
   ],
   "chat_show_composer_actions_title": "Show actions",
+  "chat_attach_menu_media": "Photos and videos",
+  "chat_attach_menu_files": "All files",
   "chat_attach_file_title": "Send image, video or file",
   "chat_attach_file_label": "Attach file",
   "chat_create_poll_title": "Create poll",

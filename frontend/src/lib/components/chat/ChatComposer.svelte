@@ -10,6 +10,8 @@
     LoaderCircle,
     ChartColumn,
     SmilePlus,
+    Images,
+    FolderOpen,
   } from '@lucide/svelte';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
@@ -22,6 +24,9 @@
   import GifPickerModal from './GifPickerModal.svelte';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { portal } from '$lib/actions/portal';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import { Log } from '$lib/utils/Log';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -122,6 +127,44 @@
   let mentionComposer = $state<MentionComposerInput | null>(null);
   let composerFooter = $state<HTMLElement | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
+  /**
+   * The PHOTOS door, beside the all-files one (user, 2026-09-28: *"afficher une photo a
+   * selectionner (comme sur messenger), et donner l'option de regarder dans tous les fichiers"*).
+   *
+   * Two inputs because a picker is chosen by what the input ACCEPTS: asking for images, videos,
+   * audio, PDFs and archives at once is a document request, and Android answers it with the file
+   * browser. `image/*,video/*` alone is a media request - the system's photo grid where the phone
+   * has one, the photo library on iOS - and needs no gallery permission, which Google Play only
+   * grants to apps whose core purpose is photos. Opened from {@link attachMenuOpen} on a phone; a
+   * desktop keeps the one file dialog it always had.
+   */
+  let mediaInput: HTMLInputElement | undefined = $state();
+  /** The attach menu (phone only): photos, or every file. */
+  let attachMenuOpen = $state(false);
+  let attachButtonEl: HTMLButtonElement | undefined = $state();
+  let attachMenuEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    if (!attachMenuOpen || !attachMenuEl || !attachButtonEl) return;
+    const anchor = attachButtonEl;
+    return bindFixedPopover(attachMenuEl, { anchor: () => anchor, offset: 4 });
+  });
+
+  /** The paperclip: a choice on a phone, the file dialog on a desktop. */
+  function onAttachClick() {
+    if (!isMobileViewport) {
+      fileInput?.click();
+      return;
+    }
+    attachMenuOpen = !attachMenuOpen;
+  }
+
+  /** Opens one of the two pickers from the menu. Synchronous: a picker opens only inside the tap. */
+  function openPicker(input: HTMLInputElement | undefined, kind: 'media' | 'files') {
+    attachMenuOpen = false;
+    Log.d('ChatComposer', `attach menu: ${kind}`);
+    input?.click();
+  }
   let isDragOver = $state(false);
   let showGifPicker = $state(false);
   /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
@@ -795,12 +838,18 @@
 
       <!-- Attachment button. -->
       {#if !controlsCollapsed && !isVoiceActive}
-        <div class="shrink-0">
+        <div
+          class="shrink-0"
+          use:clickOutside={{ enabled: attachMenuOpen, callback: () => (attachMenuOpen = false) }}
+        >
           <button
-            onclick={() => fileInput?.click()}
+            bind:this={attachButtonEl}
+            onclick={onAttachClick}
             disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
+            aria-haspopup={isMobileViewport ? 'menu' : undefined}
+            aria-expanded={isMobileViewport ? attachMenuOpen : undefined}
             class="ui-icon-button chat-composer-icon-button"
           >
             {#if isUploading}
@@ -809,6 +858,38 @@
               <Paperclip size={20} strokeWidth={2} />
             {/if}
           </button>
+          {#if attachMenuOpen}
+            <div
+              bind:this={attachMenuEl}
+              use:portal
+              role="menu"
+              tabindex="-1"
+              class="bg-surface-elevated border-cn-border fixed z-(--z-popover) flex w-max flex-col gap-0.5 rounded-xl border p-1.5 shadow-lg"
+              transition:fade={{ duration: 120 }}
+              onkeydown={(e) => {
+                if (e.key === 'Escape') attachMenuOpen = false;
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => openPicker(mediaInput, 'media')}
+                class="text-text-main flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10"
+              >
+                <Images size={18} strokeWidth={2} aria-hidden="true" />
+                {m.chat_attach_menu_media()}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => openPicker(fileInput, 'files')}
+                class="text-text-main flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10"
+              >
+                <FolderOpen size={18} strokeWidth={2} aria-hidden="true" />
+                {m.chat_attach_menu_files()}
+              </button>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -858,6 +939,14 @@
         type="file"
         multiple
         accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip"
+        class="hidden"
+        onchange={handleFileChange}
+      />
+      <input
+        bind:this={mediaInput}
+        type="file"
+        multiple
+        accept="image/*,video/*"
         class="hidden"
         onchange={handleFileChange}
       />
