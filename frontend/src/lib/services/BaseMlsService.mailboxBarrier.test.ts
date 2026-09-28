@@ -14,6 +14,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 
+/** This tab's side of the election, as each case sets it. `undecided` is the default of a test. */
+const tab = vi.hoisted(() => ({ leadership: 'undecided' as 'undecided' | 'leader' | 'follower' }));
+vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
+  getTabLeadership: () => tab.leadership,
+}));
+
 /**
  * A concrete instance of the abstract base.
  *
@@ -182,6 +189,39 @@ describe('waitForMessageQueueIdle', () => {
     await svc.waitForMessageQueueIdle('a test', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * Production 2026-09-28: a follower's socket is never open, so every barrier read "dropped, pull
+   * again" - 37 pulls of the same 64 rows in ten seconds, each decrypted in a tab that does not own
+   * the ratchet.
+   */
+  it('never pulls on a FOLLOWER tab, whose socket is closed by design', async () => {
+    tab.leadership = 'follower';
+    withSocket(false);
+    try {
+      await svc.waitForMessageQueueIdle('a test', null);
+      await svc.waitForMessageQueueIdle('a test', null);
+
+      expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+      expect(waitUntilIdle).toHaveBeenCalled();
+    } finally {
+      tab.leadership = 'undecided';
+    }
+  });
+
+  it('refuses a direct pull on a follower, loudly, since only a forgotten gate reaches it', async () => {
+    tab.leadership = 'follower';
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await svc.fetchPendingMessages();
+
+      expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('follower tab'));
+    } finally {
+      tab.leadership = 'undecided';
+      error.mockRestore();
+    }
   });
 
   it('is not held open by a pull that failed - a transport error is not a full mailbox', async () => {

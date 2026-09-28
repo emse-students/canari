@@ -973,6 +973,20 @@ reload queues like any other. A leader whose lock is stolen sees its request rej
 queue, the demotion handler reloads it) - two tabs advancing one ratchet is what this module exists to
 prevent. Guarded by the `a promotion reload reclaims the lock` cases in `tabLeader.test.ts`.
 
+### A follower pulled the leader's queue on every barrier (2026-09-28)
+
+**Found in the same console.** `settleBarrier` pulls whenever no pull has emptied the mailbox *while
+the socket was open* - right for a leader whose socket dropped, and true of a FOLLOWER at every call,
+since a follower never opens one. Every `waitForMessageQueueIdle` therefore started a full pull: one
+follower pulled the same 64 rows **37 times in ten seconds**, one per conversation its history
+catch-up settled, and ran each through `processIncomingMessage` - decrypting, in a second tab, against
+the ratchet the leader owns (WP-MULTITAB-1).
+
+A follower's barrier now waits for its own scheduler and pulls nothing, and `fetchPendingMessages`
+refuses on a follower at `error` level: every path that pulls is gated on leadership, so reaching it
+is a caller that forgot. `undecided` is not `follower` - the boot pull runs after the election, and a
+native client is always the leader. Guarded by `BaseMlsService.mailboxBarrier.test.ts`.
+
 ## Bugs fixed by the 2026-06 rewrite
 
 | Bug ID | Description | Fix |
