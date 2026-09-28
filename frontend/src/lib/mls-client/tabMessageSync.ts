@@ -37,12 +37,27 @@ export type TabMessageEvent =
       conversationId: string;
       message: ChatMessage;
       lastMessageAt: number;
+    }
+  /**
+   * This tab just marked a conversation read, announced to every other tab of this account.
+   *
+   * **NOT LEADER-GATED, for the same reason `own_message_composed` is not**: reading happens in
+   * whichever tab is showing the conversation, leader or follower, and the fact belongs to that
+   * tab alone. `readAt` is the conversation's `lastMessageAt` at the moment it was cleared - a
+   * receiver only zeroes its own `unreadCount` when its own `lastMessageAt` is no newer, so a
+   * message that arrived in the gap between the read and the broadcast is never swallowed as read.
+   */
+  | {
+      type: 'conversation_read';
+      conversationId: string;
+      readAt: number;
     };
 
 const MESSAGE_EVENT_TYPES = new Set<string>([
   'message_added',
   'messages_batch',
   'own_message_composed',
+  'conversation_read',
 ]);
 
 /**
@@ -93,6 +108,21 @@ export function publishTabMessageUpdate(event: TabMessageEvent): void {
 export function publishComposedMessage(event: TabMessageEvent & { type: 'own_message_composed' }) {
   if (getIsTabLeader()) return;
   ensureChannel()?.postMessage(event);
+}
+
+/**
+ * Announces that THIS tab marked a conversation read, to every other tab of this account.
+ *
+ * Not leader-gated - see `conversation_read` above for why. `readAt` is the conversation's
+ * `lastMessageAt` at the moment it was cleared, so a receiver can tell a read that is still
+ * current from one a newer message has already overtaken.
+ */
+export function publishConversationRead(conversationId: string, readAt: number): void {
+  ensureChannel()?.postMessage({
+    type: 'conversation_read',
+    conversationId,
+    readAt,
+  } satisfies TabMessageEvent);
 }
 
 /** Subscribes follower tabs to leader-originated message updates. */

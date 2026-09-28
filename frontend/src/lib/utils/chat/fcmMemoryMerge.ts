@@ -99,8 +99,9 @@ export function mergeFcmMessagesIntoConversations(
     const chatMsg = mapStoredMessagesToChatMessages([{ ...msg, isFcmPreview: true }], userId)[0];
     chatMsg.isFcmPreview = true;
     const messages = [...convo.messages, chatMsg].sort(compareMessageOrder);
-    const isOwn = chatMsg.isOwn;
-    const shouldMarkUnread = !isOwn;
+    // Mirrors isUnreadForUser's exclusion: a system notice is never unread, including one this
+    // user's own action produced (e.g. an invite), and it never carries the inviter's own id.
+    const shouldMarkUnread = !chatMsg.isOwn && !chatMsg.isSystem;
     conversations.set(convoId, {
       ...convo,
       messages,

@@ -177,10 +177,15 @@
           {/if}
         </span>
 
-        <!-- Label with slide-in animation and a short delay to avoid clipping during collapse. -->
+        <!-- Label with slide-in animation and a short delay to avoid clipping during collapse.
+             Color is pinned to its own 200ms/no-delay transition, matching the row's hover
+             background (line 154) - `transition-all` bundled it with the 300ms+delay slide
+             instead, so the text visibly lagged the background on hover (reported 2026-09-28). -->
         <span
-          class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
- {isExpanded ? 'translate-x-0 opacity-100 delay-75' : '-translate-x-4 opacity-0 delay-0'}"
+          class="min-w-0 flex-1 overflow-hidden
+ {isExpanded
+            ? 'translate-x-0 opacity-100 [transition:color_200ms_ease-out,opacity_300ms_ease-out_75ms,transform_300ms_ease-out_75ms]'
+            : '-translate-x-4 opacity-0 [transition:color_200ms_ease-out,opacity_300ms_ease-out,transform_300ms_ease-out]'}"
         >
           <span class="block truncate text-sm leading-tight font-bold whitespace-nowrap">
             {place.label()}
@@ -232,8 +237,10 @@
         </span>
 
         <span
-          class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
- {isExpanded ? 'translate-x-0 opacity-100 delay-75' : '-translate-x-4 opacity-0 delay-0'}"
+          class="min-w-0 flex-1 overflow-hidden
+ {isExpanded
+            ? 'translate-x-0 opacity-100 [transition:color_200ms_ease-out,opacity_300ms_ease-out_75ms,transform_300ms_ease-out_75ms]'
+            : '-translate-x-4 opacity-0 [transition:color_200ms_ease-out,opacity_300ms_ease-out,transform_300ms_ease-out]'}"
         >
           <span class="block truncate text-sm leading-tight font-bold whitespace-nowrap">
             {m.settings_page_title()}
