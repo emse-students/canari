@@ -101,6 +101,12 @@ export async function postNativeMessageNotification(
  * `push-payload.ts`. A CHANNEL is titled like a group here, where the push titles it in the banner
  * instead: its payload names no human sender, and this path does. The two converge on one
  * notification whichever arrives second, so the difference is a wording, not a duplicate.
+ *
+ * `contactName` and `name` do NOT carry the same thing for every type: for a plain group they
+ * agree, but every channel row builder (`useChannelWorkspaces.svelte.ts`) deliberately keeps
+ * `contactName` as the raw `channel_<uuid>` id - the key seed routing reads - and puts the
+ * community's actual channel name in `name`. Preferring `contactName` there titled every channel
+ * notification with its own conversation id.
  */
 export function notificationGroupName(
   conversationType: 'direct' | 'group' | 'channel' | undefined,
@@ -108,5 +114,6 @@ export function notificationGroupName(
   name: string
 ): string {
   if (conversationType === 'direct') return '';
+  if (conversationType === 'channel') return name || contactName;
   return contactName || name;
 }
