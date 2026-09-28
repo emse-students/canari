@@ -14,6 +14,192 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.28] - 2026-09-28
+
+### Fixed - a device added while its phone was dead is a recipient from the add commit's epoch, not from a five-minute replay
+
+The add commit names the devices it adds and the server queues each every frame sealed from that epoch on, so a
+shut phone is pushed the messages it can open; the time-windowed replay at activation (DF2) is deleted
+([channel-encryption](docs/wiki/protocols/channel-encryption.md#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)).
+
+### Fixed - a community newcomer's shut phone is admitted even when their other devices join first, and reads the invitation
+
+The admitter rebuilds its Add after losing the epoch to the newcomer's own clients, a frame waiting
+on its Welcome is queued behind it on the phone, and an invitation push names the community instead
+of "Nouveau message" ([channel-encryption](docs/wiki/protocols/channel-encryption.md#how-it-is-built)).
+
+### Added - on a phone, the attach button offers "Photos et vidéos" or "Tous les fichiers"
+
+The photos entry asks for images and videos only, which opens the phone's photo picker rather than the file browser ([chat](docs/wiki/frontend/modules/chat.md#key-components)).
+
+### Added - biometric unlock asks every 12 h by default, or every time
+
+Settings > Security chooses, per device, how often the fingerprint/Face ID sheet comes back; "every
+time" keeps today's read, and on iOS the 12 h window is a deliberate trade-off
+([auth](docs/wiki/frontend/modules/auth.md#how-often-the-sheet-comes-back---the-biometric-cadence-2026-09-28)).
+
+### Fixed - The calendar PDF draws what its preview shows
+
+The title and weekday row came out in Fredoka instead of Leckerli One and Chewy, without their
+accent shadow, and the "Vacances" stamp lay flat: the font picker matched a fallback, the raster
+pass stripped every shadow, and the vector layer ignored rotation ([calendar](docs/wiki/frontend/modules/calendar.md#the-pdf-and-its-preview-diverged-three-ways-2026-09-27)).
+
+### Changed - member names on the poster are one readable size per association
+
+Card text no longer shrinks with the bubble it sits in: each unit gives every one of its cards the
+same name size, grown until the cards would touch. Measured on the published map, the median printed
+name goes from 6.97 pt to 9.47 pt on A0
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#one-name-size-per-unit-grown-until-the-crown-stops-it)).
+
+### Changed - the poster's directory drops "(Membre)", and the editor names the associations with no roster
+
+"(Membre)" was printed ~100 times in 8,200 characters of a directory whose font is fitted to its
+column; only a role that says something is printed now. An association with nobody registered keeps
+its place on the poster and is named in the editor instead
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-directorys-line-is-written-once-and-prints-no-role-that-says-nothing)).
+
+### Fixed - the carte editor no longer saves on open, and a publish waits for the save it promised
+
+Opening a poster wrote it back 4 s later, which could persist a random silhouette for a new
+association; a publish could overtake a save in flight and put online a state no reopen could
+reproduce; and the green "En ligne" control looked like a status while one click took the map off
+the portail. It is now a status with a separate confirmed action
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#opening-a-project-is-not-editing-it-and-being-live-is-not-a-button)).
+
+### Fixed - the exported poster fits its directory and prints at 154 dpi
+
+The directory's font fit ran in an animation frame, which a hidden tab throttles: an export could
+capture the unfitted list and print three associations off the page. The exporter runs the fit
+itself now, and the background raster goes from 102 to 154 dpi on A0
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#a-capture-cannot-wait-for-an-animation-frame)).
+
+### Added - the carte editor says when the map on the portail is older than what is saved
+
+Publishing now records a fingerprint of the document that went live, so the editor can offer
+"Mettre a jour la version en ligne" instead of leaving the author to remember. It covers the rosters
+too, so a member joining an association counts
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
+
+### Added - the carte editor names the units drawn over each other, and the contact address is readable on A0
+
+Six pairs of associations were crossing on the published map with nothing ever saying so; the editor
+now lists them worst first and outlines the boxes it measured, without moving anything. The contact
+address inside a blob printed at ~3 pt on A0 and is raised to the poster's floor
+([carte-vie-asso](docs/wiki/carte-vie-asso.md#an-overlap-is-reported-against-the-ink-and-never-repaired)).
+
+### Fixed - the carte warns only of associations that really overlap, and full screen covers the page
+
+Overlaps are tested on the drawn blobs and cards rather than their bounding boxes (17 false pairs
+became one real one), and the full-screen editor no longer lets the page show under it ([carte](docs/wiki/carte-vie-asso.md#an-overlap-is-reported-against-the-ink-and-never-repaired)).
+
+### Fixed - A member added to a private channel survives a reload, and both settings panels show their controls
+
+"Ajouter" only staged a list that "Enregistrer" sent, so an added member vanished on reload; it now
+saves at once, like the trash, and making a salon private grants whoever did it. The access tab no
+longer keeps the previous salon's list when the channel changes, and the member search, the delete
+buttons and the tab strip are visible at phone width ([social-service](docs/wiki/services/social-service.md#roles-membership-and-channel-access)).
+
+### Fixed - after a failed biometric unlock, "use biometrics" on the PIN modal works again
+
+A failed unlock no longer forgets who is signed in unless the session is dead, and an empty keystore
+is a typed `mls-core` error rather than a sentence two call sites matched; the biometric cadence
+passed check U on Android on the way
+([backlog](docs/wiki/backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).
+
+### Fixed - adding someone to a community, or granting a private salon, now Welcomes their devices into its key group
+
+The admitter's client adds every device the newcomer published a KeyPackage for and Welcomes each,
+so a shut phone reads the next salon message instead of waiting for the app to be opened
+([channel-encryption](docs/wiki/protocols/channel-encryption.md#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)).
+
+### Fixed - refreshing dev from production no longer rolls dev's schema back to production's
+
+The copy now ends by applying the migrations of the commit dev runs, with the deploy's own loop
+([dev-environment](docs/wiki/infrastructure/dev-environment.md#the-copy-ends-on-devs-schema-not-productions---it-runs-the-deploys-own-migration-loop-2026-09-28)).
+
+### Fixed - The gateway no longer claims a control frame "stays in DB queue"
+
+A control frame for an absent device has no queue row, and the gateway now says it was not delivered
+instead of promising a reconnect would fetch it
+([cross-client-testing](docs/wiki/cross-client-testing.md), NOTIF-20).
+
+### Fixed - A seed that needed a catch-up is kept, so a shut phone behind its community reads salon notifications
+
+The background catch-up decrypted a salon seed sealed one commit ahead of the phone and then dropped
+it for carrying no text; both push decrypt paths now share one classifier and one reader
+([channel-encryption §18](docs/wiki/protocols/channel-encryption.md#18-the-catch-up-opened-the-seed-and-then-threw-it-away---fixed-2026-09-27)).
+
+### Fixed - A shut phone behind by one commit catches up again, so salon notifications show their text
+
+The background catch-up checked membership in a table that never lists a community's key group, and
+answered 403 for all eight of them on production; any newcomer left every shut phone unable to read
+a salon seed until the app was reopened ([channel-encryption](docs/wiki/protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
+
+### Fixed - The hourly holder report now sees community key groups
+
+A key group lists its members only in its device rows, so the report counted none and never named
+one losing its last holder ([backlog](docs/wiki/backlog.md)).
+
+### Security - Nobody can add themselves to a community's key group any more
+
+A route meant for creating a conversation let anyone who knew a key group's id register themselves
+into it, because such a group never has a member row for the gate to read; it now refuses every key
+group ([channel-encryption](docs/wiki/protocols/channel-encryption.md#17-anybody-holding-a-key-groups-id-could-add-themselves-to-it---fixed-2026-09-27)).
+
+### Added - a Canari link opened in Messenger, Facebook or Instagram offers to open the app
+
+Those apps keep links in their own browser, so the page now shows an "Ouvrir" banner that hands it to the app ([mobile](docs/wiki/frontend/mobile.md#leaving-an-in-app-browser-for-the-app)).
+
+### Fixed - a PDF export breaks its lines where the browser did, not where jsPDF would
+
+The vector text layer re-wrapped every run in jsPDF's own metrics, which printed "Lounes
+BRIAND--R / AVIDAT" mid-word and set a name on one line where the preview used two. Each wrapped
+run is now measured line by line in the DOM and drawn at its own baseline, on all three exports
+(carte, agenda, trombinoscope) ([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-pdf-breaks-its-lines-where-the-browser-did)).
+
+### Fixed - sharing a post's link now confirms with a toast, not a checkmark the menu hides
+
+The "Lien copié" confirmation flashed inside the actions menu for the ~150ms it took the menu to
+close and vanish, not the 2 seconds it intended; a toast survives the menu closing
+([posts](docs/wiki/frontend/modules/posts.md#share-confirmed-inside-a-menu-that-had-already-closed-2026-09-27)).
+
+### Changed - a push for a group the phone is not in no longer sleeps 5 s hoping it joins
+
+The Welcome-race retry is deleted on Android and in the iOS extension; a frame whose Welcome is
+queued is already put behind it ([mobile](docs/wiki/frontend/mobile.md#background-mls-decrypt-ladder)).
+
+### Fixed - a PushSecret rejection on a background push endpoint left no server-side trace
+
+`verifyPushSecretAuth` threw `ForbiddenException` with no log line, so a 403 on
+`/api/mls/push/*` was diagnosable only from the nginx access log, never from our own service.
+Found while root-causing a CrowdSec ban that closed `sky.mitv.fr` for an unrelated EMSE visitor
+([infrastructure](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
+
+### Fixed - every refused session refresh says why in the server log
+
+Three of the refusals that sign a device out left no line at all ([sessions](docs/wiki/sessions.md#rotation-replay-and-the-race)).
+
+### Fixed - every role of a community is visible in its permissions tab, on a phone as on a desktop
+
+The permissions are one card per role with each permission described, instead of a table whose
+other roles hid behind a sideways scroll ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
+
+### Fixed - A salon notification is readable on the first banner: the seed travels with the message
+
+Every salon message now carries the frame that holds its session's seed, so a shut phone - and an
+iPhone, which no silent push wakes - opens it from the message itself instead of showing
+"Nouveau message" and redrawing it later
+([channel-encryption §19](docs/wiki/protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
+
+### Fixed - the dev server failed at random with `MediaService` read before initialization
+
+Eight modules imported `appendLog` from the chat singleton, which builds the session while it loads; it lives in a module of its own now, and a test forbids the cycle ([durable-rules](docs/wiki/durable-rules.md)).
+
+### Fixed - The web build no longer dies compressing the emoji pictures
+
+The web build wrote a `.gz` and a `.br` beside each of its ~4400 emoji pictures, all at once, and
+failed with `EMFILE`; nginx never served one of them. `precompress` is off (`frontend/svelte.config.js`).
+
 ## [0.18.27] - 2026-09-27
 
 ### Added - an app launcher to MiGallery, Le Cercle, Sky and Portail-etu
