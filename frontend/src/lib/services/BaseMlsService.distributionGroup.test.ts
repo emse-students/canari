@@ -15,6 +15,13 @@ import {
   isInEpochGap,
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
+import type { StoredDistributionGroup } from '$lib/db/types';
+import {
+  noteUnackedFrame,
+  resetUnackedFrames,
+  takeGroupsAwaiting,
+  type UnackedReason,
+} from '$lib/mls-client/messagePipeline/unackedFrames';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -55,7 +62,32 @@ const proto = BaseMlsService.prototype as unknown as {
     }
   ): Promise<ExternalJoinOutcome>;
   routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
+  noteDistributionGroup(groupId: string): void;
+  forgetDistributionGroupById(groupId: string): Promise<boolean>;
+  hydrateDistributionGroups(): Promise<void>;
+  refetchFramesLeftBehind(
+    reasons: UnackedReason | readonly UnackedReason[],
+    trigger: string,
+    groupId?: string
+  ): boolean;
+  collectFramesLeftForKeyGroup(groupId: string): void;
+  persistDistributionGroup(scope: DistributionScope, groupId: string): void;
 };
+
+/** An in-memory `DistributionGroupStore`, so a test reads back what a registration wrote. */
+function makeStore(initial: StoredDistributionGroup[] = []) {
+  const rows = new Map(initial.map((r) => [r.groupId, r]));
+  return {
+    rows,
+    saveDistributionGroup: vi.fn(async (entry: StoredDistributionGroup) => {
+      rows.set(entry.groupId, entry);
+    }),
+    getDistributionGroups: vi.fn(async () => [...rows.values()]),
+    deleteDistributionGroup: vi.fn(async (groupId: string) => {
+      rows.delete(groupId);
+    }),
+  };
+}
 
 const WS = workspaceScope('ws-1');
 const SALON = channelScope('ws-1', 'chan-1');
@@ -91,6 +123,15 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     forgetGroup: vi.fn(),
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     processIncomingMessage: vi.fn().mockResolvedValue(new Uint8Array([9, 9])),
+    // The durable half of the registry, and the net that collects what the drain refused - REAL,
+    // because registering a group is what drives both.
+    distributionGroupStore: null as ReturnType<typeof makeStore> | null,
+    heldAtHydration: new Set<string>(),
+    isWsOpen: vi.fn().mockReturnValue(true),
+    fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+    refetchFramesLeftBehind: proto.refetchFramesLeftBehind,
+    collectFramesLeftForKeyGroup: proto.collectFramesLeftForKeyGroup,
+    persistDistributionGroup: proto.persistDistributionGroup,
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
@@ -439,6 +480,260 @@ describe('routing a frame that arrived on the group', () => {
 
     expect(await route(ctx, 'g-unknown', 'peer', new Uint8Array([1]))).toBe(false);
     expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+/**
+ * The classification is DEVICE STATE, known before the first drain (production, 2026-09-28).
+ *
+ * The registry used to live in memory only, filled by the community loop - which `setIsLoggedIn`
+ * starts without awaiting, while the gateway drains the whole queue a few hundred milliseconds
+ * later. A key group registered after the drain had every frame refused as `absent-conversation`,
+ * a reason only a conversation appearing discharges - which a key group never has. Measured: 51
+ * frames refused on every load of one device, eight epochs of commits among them.
+ */
+describe('the durable registry', () => {
+  beforeEach(() => resetUnackedFrames());
+
+  function wired(initial: StoredDistributionGroup[] = [], overrides: Record<string, unknown> = {}) {
+    const store = makeStore(initial);
+    const ctx = makeCtx(overrides);
+    ctx.distributionGroupStore = store;
+    return { ctx, store };
+  }
+
+  it('writes a registration the first time, and not again for the same scope', async () => {
+    const { ctx, store } = wired();
+
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-1');
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-1');
+    await Promise.resolve();
+
+    // The community loop re-registers every group on every load; a write each time is a write for
+    // nothing.
+    expect(store.saveDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(store.rows.get('g-1')).toEqual({
+      groupId: 'g-1',
+      workspaceId: 'ws-1',
+      channelId: 'chan-1',
+    });
+  });
+
+  it('writes again when the scope CHANGED, since the row would otherwise route to the old one', async () => {
+    const { ctx, store } = wired();
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-1');
+    await Promise.resolve();
+
+    expect(store.saveDistributionGroup).toHaveBeenCalledTimes(2);
+    expect(store.rows.get('g-1')?.channelId).toBe('chan-1');
+  });
+
+  it('does not store a group the server merely NOTED, whose roster it cannot name', () => {
+    const { ctx, store } = wired();
+
+    proto.noteDistributionGroup.call(ctx, 'g-1');
+
+    expect(store.saveDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('deletes the row when the group is forgotten', async () => {
+    const { ctx, store } = wired([], {
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+
+    expect(await proto.forgetDistributionGroupById.call(ctx, 'g-1')).toBe(true);
+
+    expect(store.deleteDistributionGroup).toHaveBeenCalledWith('g-1');
+    expect(store.rows.has('g-1')).toBe(false);
+    log.mockRestore();
+  });
+
+  it('keeps the session registration when the store refuses the write, and says so', async () => {
+    const { ctx, store } = wired();
+    store.saveDistributionGroup.mockRejectedValueOnce(new Error('quota'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(proto.isDistributionGroup.call(ctx, 'g-1')).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('registered but not stored'),
+      'Error: quota'
+    );
+    warn.mockRestore();
+  });
+
+  it('restores every row whose tree is held, before anything registers it', async () => {
+    const { ctx, store } = wired(
+      [
+        { groupId: 'g-community', workspaceId: 'ws-1', channelId: null },
+        { groupId: 'g-salon', workspaceId: 'ws-1', channelId: 'chan-1' },
+      ],
+      { getLocalGroups: vi.fn().mockReturnValue(['g-community', 'g-salon']) }
+    );
+
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(proto.isDistributionGroup.call(ctx, 'g-community')).toBe(true);
+    expect(proto.distributionGroupFor.call(ctx, WS)).toBe('g-community');
+    expect(proto.distributionGroupFor.call(ctx, SALON)).toBe('g-salon');
+    // Restoring is not news: nothing is written back.
+    expect(store.saveDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('deletes a row whose tree is gone rather than believing it - the allowlist is the MLS state', async () => {
+    const { ctx, store } = wired(
+      [
+        { groupId: 'g-held', workspaceId: 'ws-1', channelId: null },
+        { groupId: 'g-gone', workspaceId: 'ws-2', channelId: null },
+      ],
+      { getLocalGroups: vi.fn().mockReturnValue(['g-held']) }
+    );
+
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(proto.isDistributionGroup.call(ctx, 'g-gone')).toBe(false);
+    expect(store.deleteDistributionGroup).toHaveBeenCalledWith('g-gone');
+    expect([...store.rows.keys()]).toEqual(['g-held']);
+  });
+
+  it('says so at error level when no store is wired or the store cannot be read', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await proto.hydrateDistributionGroups.call(makeCtx());
+    const { ctx, store } = wired();
+    store.getDistributionGroups.mockRejectedValueOnce(new Error('closed'));
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it('routes a drained frame to the seed handler once hydrated, with no community loaded', async () => {
+    // The production order: the drain runs before the community loop reaches this group. With the
+    // row restored first, the frame takes the key-group branch instead of the conversation one.
+    const { ctx } = wired([{ groupId: 'g-1', workspaceId: 'ws-1', channelId: null }], {
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+    });
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+    expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: WS, groupId: 'g-1' })
+    );
+  });
+
+  it('answers a seed REQUEST arriving inside the boot drain, from the restored scope', async () => {
+    const plaintext = new TextEncoder().encode('{"kind":"seed-request"}');
+    const { ctx } = wired([{ groupId: 'g-salon', workspaceId: 'ws-1', channelId: 'chan-1' }], {
+      getLocalGroups: vi.fn().mockReturnValue(['g-salon']),
+      processIncomingMessage: vi.fn().mockResolvedValue(plaintext),
+    });
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(await route(ctx, 'g-salon', 'peer', new Uint8Array([1]))).toBe(true);
+    expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: SALON, workspaceId: 'ws-1', plaintext })
+    );
+  });
+});
+
+describe('registering a key group collects what the drain refused for it', () => {
+  beforeEach(() => resetUnackedFrames());
+
+  it('re-fetches the frames refused as absent-conversation, in ONE pull', () => {
+    const ctx = makeCtx();
+    noteUnackedFrame('g-1', 'absent-conversation');
+    noteUnackedFrame('g-1', 'absent-conversation');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+
+    expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
+    expect(takeGroupsAwaiting('absent-conversation')).toEqual([]);
+    log.mockRestore();
+  });
+
+  it('collects a frame kept for its roster once the scope is named, in the same pull', () => {
+    const ctx = makeCtx();
+    noteUnackedFrame('g-1', 'absent-conversation');
+    noteUnackedFrame('g-1', 'unscoped-distribution-group');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-1');
+
+    expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('absent-conversation + unscoped-distribution-group')
+    );
+    log.mockRestore();
+  });
+
+  it('leaves a roster-less frame waiting when the server only NOTED the group', () => {
+    const ctx = makeCtx();
+    noteUnackedFrame('g-1', 'unscoped-distribution-group');
+
+    proto.noteDistributionGroup.call(ctx, 'g-1');
+
+    // Its roster is still unknown, so re-fetching it would only refuse it again.
+    expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
+    expect(takeGroupsAwaiting('unscoped-distribution-group')).toEqual(['g-1']);
+  });
+
+  it('touches no other group, and pulls nothing when nothing waits', () => {
+    const ctx = makeCtx();
+    noteUnackedFrame('g-other', 'absent-conversation');
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+
+    expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
+    expect(takeGroupsAwaiting('absent-conversation')).toEqual(['g-other']);
+  });
+
+  it('ACCUSES the durable half when a group held at start-up still needed the net', async () => {
+    const ctx = makeCtx({ getLocalGroups: vi.fn().mockReturnValue(['g-1']) });
+    ctx.distributionGroupStore = makeStore();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // Held, but the store has no row for it: the durable half missed it.
+    await proto.hydrateDistributionGroups.call(ctx);
+    noteUnackedFrame('g-1', 'absent-conversation');
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('was held at start-up'));
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('accuses nothing for a group first joined in this session', () => {
+    const ctx = makeCtx();
+    noteUnackedFrame('g-new', 'absent-conversation');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-new');
+
+    expect(warn).not.toHaveBeenCalled();
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('notes a frame for a group whose roster is not named, so the registration can collect it', async () => {
+    const ctx = makeCtx();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    proto.noteDistributionGroup.call(ctx, 'g-1');
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+
+    expect(takeGroupsAwaiting('unscoped-distribution-group')).toEqual(['g-1']);
     warn.mockRestore();
   });
 });

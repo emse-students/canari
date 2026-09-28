@@ -201,6 +201,25 @@ fingerprint of the document that went live, because no timestamp can answer that
 
 ## Open defects, in severity order
 
+### P1 - a key group classified after the boot drain had its backlog refused on every load, and one behind the server never heals (measured on production 2026-09-28, `v0.18.28`)
+
+**What is wrong**: the user's PC showed Mineurchestre -> `#general` blank for a day; 51 frames on the
+community's key group (8 commits, 43 seeds) were drained and refused as `absent-conversation` on
+every load. The mechanism is [channel-encryption §22](protocols/channel-encryption.md#22-a-key-groups-backlog-was-refused-on-every-load---the-classification-is-device-state---fixed-2026-09-28).
+Three pull requests, in order; the releases `v0.18.29-alpha.1` then `v0.18.29` are this session's
+once all three are merged. **The PC must not be reset meanwhile**: its queue is what proves the
+lossless heal.
+
+| PR | What | State |
+| --- | --- | --- |
+| 1 (B + C) | The registry is device state (IndexedDB v9 / SQLite 11), restored before the drain and allowlisted by the MLS state; registering a key group collects `absent-conversation` and the new `unscoped-distribution-group` | this PR |
+| 2 (A + D + E) | A HELD key group is compared with `activeEpoch` once the first pull settles (`classifyBase`), a gap is armed on `epoch-gap`/`wrong-epoch` and cleared only at the target epoch, the watchdog rejoins through `ensureDistributionGroupFor`; nothing is sealed or asked in a gap (`distributionEpochFor` null) and a rejoin re-asks history once | open |
+| 3 (G + H + I) | P3 noise: `forgetGroupsAbsentFromServer` twice per boot, `ownDevicesOnTheGroup` re-fetching, one unreadable-row line per row, one decline line per own device; and the three `GET .. /avatar 404` lines the frontend suite prints (seen 2026-09-28) | open |
+
+**Owed after `v0.18.29`**: `queued_message` for the PC's device at 0, chat-delivery `[ACK] ... deleted=51`,
+zero `past-epoch-application` on the PC, the salon rendered; a dev campaign row (4 communities,
+tab shut, a commit and a post on the 4th).
+
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
 
 Found by check U step 5 ([device-verification](device-verification.md#u-the-biometric-cadence-every-12-h-skips-the-sheet-every-time-keeps-it---owed-on-both-platforms)),

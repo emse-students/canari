@@ -702,6 +702,16 @@ which the service already knows, and gives that group the ladder the Graine load
 a stale tree: drop the state, external-join at the current epoch, checkpoint. `stale_base` is named
 in the log because it is the one outcome no device of ours can repair.
 
+**THE DISCRIMINATOR IS DURABLE SINCE 2026-09-28, BECAUSE THE PIPELINE READ IT BEFORE IT EXISTED.**
+`isDistributionGroup` was answered by an in-memory registry that the community loop filled AFTER the
+boot drain had run, so every frame of a late community's key group took `handleKnownGroup` and was
+parked as `absent-conversation` - a state whose only exit (a conversation appearing) a key group can
+never take. Two edges now exist: `hydrateDistributionGroups` (BaseMlsService, called from
+`sessionAuth` before `setIsLoggedIn`) restores the stored rows allowlisted by `holdsGroupState`, and
+`registerDistributionGroup` / `noteDistributionGroup` exit `absent-conversation` and
+`unscoped-distribution-group` for that group through `collectFramesLeftForKeyGroup`. The reason is on
+[channel-encryption section 22](channel-encryption.md#22-a-key-groups-backlog-was-refused-on-every-load---the-classification-is-device-state---fixed-2026-09-28).
+
 **AND THAT SECOND PAIR OF CODES IS TWO CORRECT DISPOSITIONS, NOT A DEAD END** - the audit's
 `G-E1`/`G-E2`/`DE11`, *"no distribution group for a scope; 403 on one: log and `return false`, no
 retry"*, swept 2026-09-14.

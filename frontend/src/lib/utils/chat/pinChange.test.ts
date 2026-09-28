@@ -88,6 +88,9 @@ function makeEncryptedStorage(): IStorage & {
     savePendingGroupExit: vi.fn().mockResolvedValue(undefined),
     getPendingGroupExits: vi.fn().mockResolvedValue([]),
     deletePendingGroupExit: vi.fn().mockResolvedValue(undefined),
+    saveDistributionGroup: vi.fn().mockResolvedValue(undefined),
+    getDistributionGroups: vi.fn().mockResolvedValue([]),
+    deleteDistributionGroup: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
   };
 }

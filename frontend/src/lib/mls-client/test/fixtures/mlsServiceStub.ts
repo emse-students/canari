@@ -71,6 +71,8 @@ export function createMlsServiceStub(
     routeDistributionFrame: vi.fn().mockResolvedValue(true),
     setDistributionGroupInfoTransport: vi.fn(),
     onDistributionFrame: vi.fn(),
+    setDistributionGroupStore: vi.fn(),
+    hydrateDistributionGroups: vi.fn().mockResolvedValue(undefined),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),

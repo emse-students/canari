@@ -107,6 +107,10 @@ function makeCtx(moveEpochDuringExport: boolean) {
     publishCurrentBase: proto.publishCurrentBase,
     groupInfoChannel: proto.groupInfoChannel,
     registerDistributionGroup: proto.registerDistributionGroup,
+    // What a registration also does - store the row, collect the frames refused before it - is
+    // `BaseMlsService.distributionGroup.test.ts`'s subject, not this file's.
+    persistDistributionGroup: vi.fn(),
+    collectFramesLeftForKeyGroup: vi.fn(),
     // The create path's lost-race branch joins the winner's base instead; not this file's subject.
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
   };

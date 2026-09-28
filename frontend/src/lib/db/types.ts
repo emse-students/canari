@@ -201,6 +201,35 @@ export interface PendingGroupExit {
 }
 
 /**
+ * One Graine key-distribution group this device holds, and whose roster it is.
+ *
+ * WHY THIS IS STORED AT ALL. "This MLS group carries seeds, not messages" decides how every frame
+ * on it is routed, and the drain at start-up routes the backlog BEFORE the community loop has asked
+ * social-service a single question. Kept in memory only, the fact arrived hundreds of milliseconds
+ * after the frames that needed it: every one of them took the conversation path, found no
+ * conversation - a key group never has one - and was refused, on every load, for ever. Measured on
+ * production 2026-09-28: 51 frames on one group, a device frozen 8 epochs behind, a salon blank on
+ * the PC and full on the phone. See `docs/wiki/protocols/channel-encryption.md` section 22.
+ *
+ * SAME STORE AS THE SEEDS, ON PURPOSE. The classification is worth exactly as long as the MLS state
+ * and the seeds it routes to: a copy that could outlive them, or be evicted without them, would be
+ * a second lifetime for one fact. Every column is clear, like conversation metadata - it names a
+ * group and a community the local store already names, and it is read before any seed is opened.
+ *
+ * ONE ROW PER GROUP, keyed on `groupId`. `channelId` is null for a community's group and names the
+ * PRIVATE salon otherwise (`DistributionScope`). A group whose scope is not known yet is not stored:
+ * a row that cannot route a frame is not worth a start-up read.
+ */
+export interface StoredDistributionGroup {
+  /** MLS groupId of the key-distribution group. Primary key. */
+  groupId: string;
+  /** The community the group's seeds belong to. */
+  workspaceId: string;
+  /** The private salon whose roster the group is, or null for the community's own group. */
+  channelId: string | null;
+}
+
+/**
  * One Graine session as this device holds it.
  *
  * A session belongs to one SENDER in one CHANNEL. `sessionId` is unique across every sender and is
@@ -460,6 +489,15 @@ export interface IStorage {
    * is not an error: the caller is asking for an end state, and no row IS that end state.
    */
   deletePendingGroupExit(groupId: string): Promise<void>;
+
+  // Graine key-distribution groups (every column clear - see StoredDistributionGroup)
+
+  /** Record that `entry.groupId` is the key-distribution group of `entry`'s scope. Re-recording overwrites. */
+  saveDistributionGroup(entry: StoredDistributionGroup): Promise<void>;
+  /** Every key-distribution group recorded, in no particular order - read once, before the first drain. */
+  getDistributionGroups(): Promise<StoredDistributionGroup[]>;
+  /** Forget `groupId`'s row. A groupId that names nothing is not an error: no row IS the end state. */
+  deleteDistributionGroup(groupId: string): Promise<void>;
 
   // Graine sessions (seed encrypted with the device key; everything else clear so a session can be
   // listed, ordered and pruned without it)

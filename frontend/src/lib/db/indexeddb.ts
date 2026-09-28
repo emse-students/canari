@@ -13,6 +13,7 @@ import type {
   IStorage,
   OutboxEntry,
   PendingGroupExit,
+  StoredDistributionGroup,
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
@@ -143,7 +144,8 @@ export class IndexedDbStorage implements IStorage {
       //            messages/outbox rows — they will be re-fetched from the server.
       // Version 7: adds the `graine` store (community-channel session seeds).
       // Version 8: adds the `pendingGroupExits` store (a delete/leave the server has not answered).
-      const request = indexedDB.open(this.dbName, 8);
+      // Version 9: adds the `distributionGroups` store (which held groups carry Graine seeds).
+      const request = indexedDB.open(this.dbName, 9);
 
       request.onerror = () =>
         reject(new StorageOpenError(this.dbName, false, { cause: request.error }));
@@ -250,6 +252,16 @@ export class IndexedDbStorage implements IStorage {
           // rows here would be guessing at intentions no column ever recorded.
           if (!db.objectStoreNames.contains('pendingGroupExits')) {
             db.createObjectStore('pendingGroupExits', { keyPath: 'groupId' });
+          }
+        }
+
+        if (oldVersion < 9) {
+          // Key-distribution groups this device holds. Additive and EMPTY on every existing
+          // database, which is safe rather than lossy: the community loop registers each group again
+          // on the first load, which is what writes its row, and the frames refused before it are
+          // re-fetched by that same registration (see `registerDistributionGroup`).
+          if (!db.objectStoreNames.contains('distributionGroups')) {
+            db.createObjectStore('distributionGroups', { keyPath: 'groupId' });
           }
         }
 
@@ -873,6 +885,41 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  // -- Key-distribution groups -------------------------------------------
+
+  /** Record that `entry.groupId` is the key-distribution group of `entry`'s scope. */
+  async saveDistributionGroup(entry: StoredDistributionGroup): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('distributionGroups', 'readwrite');
+      tx.objectStore('distributionGroups').put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /** Every key-distribution group recorded. */
+  async getDistributionGroups(): Promise<StoredDistributionGroup[]> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('distributionGroups', 'readonly');
+      const req = tx.objectStore('distributionGroups').getAll();
+      req.onsuccess = () => resolve(req.result as StoredDistributionGroup[]);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Forget `groupId`'s row. A groupId that names nothing is not an error. */
+  async deleteDistributionGroup(groupId: string): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('distributionGroups', 'readwrite');
+      tx.objectStore('distributionGroups').delete(groupId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // -- Graine sessions -----------------------------------------------------
 
   /**
@@ -1028,7 +1075,14 @@ export class IndexedDbStorage implements IStorage {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(
-        ['conversations', 'messages', 'outbox', 'graine', 'pendingGroupExits'],
+        [
+          'conversations',
+          'messages',
+          'outbox',
+          'graine',
+          'pendingGroupExits',
+          'distributionGroups',
+        ],
         'readwrite'
       );
       tx.objectStore('conversations').clear();
@@ -1039,6 +1093,8 @@ export class IndexedDbStorage implements IStorage {
       // loss: the exits name groups this device is wiping its membership of anyway, and a drain
       // firing afterwards would be acting on a decision taken by an account that is no longer here.
       tx.objectStore('pendingGroupExits').clear();
+      // The seeds go with the reset, so the classification that routes to them goes too.
+      tx.objectStore('distributionGroups').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

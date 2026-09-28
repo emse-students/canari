@@ -2729,3 +2729,65 @@ varint. No Graine bytes can be an MLS `SignContent`, so an endorsement can never
 
 **Nothing calls any of it yet**: the store and the wire carry the fields in G2-3, and the reader
 uses them in G2-4.
+
+## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
+
+**Measured on the user's PC, production `v0.18.28`, 2026-09-28.** Mineurchestre -> `#general` was
+blank on the web client and full on the phone. The device was frozen at epoch 5 of the
+community's key group `2de1b91f`, which the server had at 13. `queued_message` held **51** rows on
+that one group - eight commits (5 -> 12) and 43 seed frames, the oldest a day old - and every load
+drained all 51 and acknowledged none:
+
+```
+Message for absent conversation 2de1b91f - retry after restore      (x51)
+[PENDING] 51 frame(s) left unacknowledged ... absent-conversation: 51
+[SYNC] WASM kept 2de1b91f... - key-distribution group               (+2.6 s)
+```
+
+**A boot race, and a reason nothing discharged.** The key-group registry
+(`knownDistributionGroups`, `distributionScopeByGroup`) lived in memory only, filled by the
+community loop that `setIsLoggedIn` starts WITHOUT awaiting. The gateway drains the whole queue a
+few hundred milliseconds later; Mineurchestre is this user's fourth community and was registered
+after the drain. So `isDistributionGroup()` was false when its frames arrived, the pipeline skipped
+the key-group branch (`setupMessageHandler.ts`) and `handleKnownGroup` refused each one as
+`absent-conversation` - a reason discharged only by a conversation appearing, which a key group never
+has. The registration that came 2.6 s later discharged nothing, and a live socket means no later
+pull: the salon stayed blank until a reload lost the same race again.
+
+**The fix is two halves, one mechanism and one net.**
+
+- **The classification is durable device state** - `IStorage.saveDistributionGroup` /
+  `getDistributionGroups` / `deleteDistributionGroup` (IndexedDB store `distributionGroups`, v9;
+  SQLite table `distribution_groups`, schema 11), plaintext like conversation metadata, modelled on
+  the pending exits. `registerDistributionGroup` writes a row when the scope is NEW or CHANGED;
+  `forgetDistributionGroupById` deletes it (not `dropGroupState`: the gap escalation drops a tree and
+  rejoins while keeping its registration). `hydrateDistributionGroups` runs in `sessionAuth` right
+  after the local database opens - before `setIsLoggedIn`, the handler and the drain - and restores
+  every row **allowlisted by the local MLS state** (`holdsGroupState`); a row outliving its tree is
+  deleted, never believed.
+- **Registering a key group collects what was refused for it.** `registerDistributionGroup` and
+  `noteDistributionGroup` call `refetchFramesLeftBehind` for THAT group, for `absent-conversation`
+  and - once the scope is named - `unscoped-distribution-group`, in ONE pull. That second reason is
+  new: `routeDistributionFrame`'s scope-less branch (a group the server named before its community
+  loaded) used to refuse bare, with nothing left to re-fetch it. **A fallback is a signal**: the net
+  firing for a group HELD AT START-UP means the durable half missed it, and says so at `warn`
+  (`[GRAINE] key group ... was held at start-up and the stored registry did not name it`); for a
+  group joined in this session it is the ordinary order of events.
+
+**Why it heals losslessly.** The seed handler is wired (`onDistributionFrame`) before the drain, so
+once the classification is known the eight queued commits apply in order and the 43 seeds decrypt -
+no rejoin, no history request. The claim is checked on the device that reported it: zero
+`past-epoch-application` after the release (`max_past_epochs` is 2, so a commit applied out of
+order would show there).
+
+**What this does NOT close, and is the next pull request**: a HELD key group behind the server is
+never compared with `activeEpoch`, `routeDistributionFrame` does not arm the epoch gap on
+`epoch-gap`/`wrong-epoch`, and seeds and history requests still go out at the stale epoch. See the
+[backlog](../backlog.md).
+
+**Also measured that day, and not a defect of this device**: Rootz 2026-2027 -> `#general`, the
+rows of 2026-09-02 (two sessions, one the user's own) are unreadable on EVERY current device - all
+joined the key group 2026-09-12..28, the phone included. The repair walk behaved: own devices
+declined, the seven other members were really offline, the waiter re-asks on presence. It is a
+measured limit of section 4.5: "the sender always holds its seed" is false once the author's device
+is gone.
