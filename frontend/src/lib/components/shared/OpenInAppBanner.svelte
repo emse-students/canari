@@ -51,7 +51,7 @@
         </a>
         <button
           type="button"
-          class="rounded-full p-1 opacity-80 hover:opacity-100"
+          class="ui-icon-button rounded-full opacity-80 hover:opacity-100"
           aria-label={m.open_in_app_banner_dismiss()}
           onclick={() => (dismissed = true)}
         >
