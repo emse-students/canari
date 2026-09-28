@@ -55,6 +55,14 @@ const CASES = [
   // ── the seed the message carries (channel-encryption section 19) ─────────────────────────────
   [line('I', 'CanariFCM', 'handleChannelMessage: seed source=frame channel=c0ffee00 session=sess-1 index=0'), 'explained'],
   [line('I', 'CanariFCM', 'handleChannelMessage: seed source=mirror channel=c0ffee00 session=sess-1 index=3'), 'explained'],
+  // Explained AND surfaced: a Welcome and a refusal are what a reader wants beside the verdict.
+  [line('D', 'CanariFCM', 'isWelcome=true -> groupId=0adecec2-718a qId=0424f3ba-e4de - background join'), 'notable'],
+  [line('D', 'CanariFCM', 'processReceivedWelcomeBackground: ✓ group joined group=0adecec2-718a'), 'notable'],
+  [line('D', 'CanariFCM', 'markMembershipActive: HTTP 201 group=0adecec2-718a'), 'explained'],
+  [line('D', 'CanariFCM', 'tryDecrypt refused group=0adecec2: its Welcome is queued behind this frame -> re-queued after it'), 'notable'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: the Welcome into key group 0adecec2 is queued behind this push -> re-queued after it channel=c0ffee00 index=0'), 'notable'],
+  // A seat the server refused to promote is not the join working.
+  [line('D', 'CanariFCM', 'markMembershipActive: HTTP 403 group=0adecec2-718a'), 'unexplained'],
   [line('W', 'CanariFCM', 'openSeedFrame: seed frame refused group=2513c207 locality=LOCAL -> commit catch-up'), 'notable'], // explained, and reported: it carries `refused`
   // NOTIF-20's first RED, as the line that now says it: the writer's lock failed on Android and
   // every seed was dropped, reported only as `stored 0` at debug level.

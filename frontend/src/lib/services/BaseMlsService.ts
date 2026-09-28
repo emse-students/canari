@@ -78,6 +78,7 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { commitAdmits } from '$lib/mls-client/commitAdmits';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2756,7 +2757,11 @@ export abstract class BaseMlsService implements IMlsService {
           await this.clearPendingCommit(groupId).catch(() => {});
           // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
           await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
-          throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
+          throw new CommitRefusedError(
+            validation.reason || 'epoch_mismatch',
+            baseEpoch,
+            validation.currentEpoch
+          );
         }
         await this.mergePendingCommit(groupId);
         const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;

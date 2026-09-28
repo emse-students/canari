@@ -34,6 +34,7 @@ import {
 import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
@@ -362,7 +363,12 @@ export async function processPendingInvitations(params: {
                 `[PENDING] Kick error for ${inv.deviceId} in ${groupId}: ${String(kickErr).slice(0, 100)}`
               );
             }
-          } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
+          } else if (
+            // The server's refusal is TYPED (`CommitRefusedError`); `WrongEpoch` is openmls's own
+            // error, raised inside the WASM engine with no type crossing that boundary.
+            (e instanceof CommitRefusedError && e.reason === 'epoch_mismatch') ||
+            errStr.includes('WrongEpoch')
+          ) {
             // Transient concurrent race (gap 1): another device committed simultaneously.
             // Check if the invitation is already fulfilled; otherwise let the next cycle retry
             // (the missing commit arrives via the queue and we catch up on our own).

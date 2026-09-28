@@ -15,6 +15,7 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
 }));
 
 import { processPendingInvitations } from './actions';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
@@ -348,7 +349,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
         { deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) },
         { deviceId: 'peer-dev-2', keyPackage: new Uint8Array([1]) },
       ]),
-      addMember: vi.fn().mockRejectedValue(new Error('Staged commit rejected: epoch_mismatch')),
+      addMember: vi.fn().mockRejectedValue(new CommitRefusedError('epoch_mismatch', 3, 4)),
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();

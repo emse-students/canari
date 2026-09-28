@@ -2512,6 +2512,24 @@ base can be minted - so a newcomer that reads that base also reads a seat, with 
 the admitter holds the lock through its Welcomes, and waits. The same record makes the newcomer a
 recipient of every frame sealed from that epoch on (below).
 
+**When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
+The first run measured the losing side: the newcomer's two live web clients joined by their own
+external commits in the second the Add was built, the Add was refused, and the admitter gave up - so
+the dead phone, the one device that cannot act for itself, was never added. The refusal is now typed
+(`CommitRefusedError` in `frontend/src/lib/mls-client/CommitRefusedError.ts`, carrying the reason and
+both epochs), and the admitter loops only when the refusal is one AND its local epoch moved past the
+one the Add was built on - the catch-up applied the winning commit, so re-reading the tree is
+reading a newer group, and a device that already joined is dropped by `devicesToAdmit`. An epoch
+that did not move is a `console.warn` naming the devices NOT admitted. `actions.ts` reads the same
+type rather than the message.
+
+**The phone's push lane, which put a Welcome behind its own group's frames.** Frames sealed at the
+admitting epoch can reach the phone BEFORE the Welcome (the Welcome is sent after the commit's
+fan-out). On Android both run on the one `MLS_PUSH_LANE` thread, and the recovery ladder's
+Welcome-race retry slept 3 x 1.8 s in front of a join queued behind it: measured, the Welcome joined
+24 s after it arrived. `WELCOMES_ON_LANE` counts the Welcomes received per group and released when
+their task ends; a refused frame whose group has one is queued again behind it, once, with no clock.
+
 **Not covered**: making a PUBLIC salon private grants its whole list at once through "Enregistrer";
 that group is brand new (unpublished) when the grant lands, so no admitter holds it yet and every
 grantee enters it by their own load, as before.

@@ -790,7 +790,7 @@ export async function clearOverlays(cx) {
       // Tag then click the tagged element, so the click addresses exactly what the predicate chose -
       // the same rule `openConversation` learnt the hard way. The tag is always removed: a stray one
       // would be picked up by the next call, which is how a harness fix becomes a harness fault.
-      await evaluate(
+      const tagged = await evaluate(
         cx,
         `(function () {
           var area = window.innerWidth * window.innerHeight;
@@ -802,8 +802,22 @@ export async function clearOverlays(cx) {
           return b ? 'tagged' : 'gone';
         })()`,
       );
+      // GONE BETWEEN THE READ AND THE TAG IS PROGRESS, NOT A TARGET. The probe counts a backdrop
+      // still fading out (its opacity is animating), so the one a confirmation just dismissed can be
+      // read here and be gone a frame later - and a click aimed at no element threw `no stable
+      // element`, failing NOTIF-21's teardown on a community it had just deleted (2026-09-28). The
+      // count check below reads what is really left.
+      //
+      // AND GONE BETWEEN THE TAG AND THE CLICK IS THE SAME PROGRESS (the rerun that day, a frame
+      // later): the tagged element unmounted under the click. Read as a DOM FACT - is the tagged
+      // element still there - never from the click's message; one still standing re-throws.
       try {
-        await realClick(cx, `[${TAG}]`);
+        if (tagged === 'tagged') {
+          await realClick(cx, `[${TAG}]`).catch(async (e) => {
+            const still = await evaluate(cx, `document.querySelector('[${TAG}]') ? 'present' : 'gone'`);
+            if (still !== 'gone') throw e;
+          });
+        }
       } finally {
         await evaluate(
           cx,

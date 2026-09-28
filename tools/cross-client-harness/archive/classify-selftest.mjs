@@ -906,6 +906,12 @@ const CASES = [
   // after 2026-08-25 only a client on an old bundle can print it, and on this campaign that is the
   // single most important thing a log can tell us.
   ['info', '[GRAINE] answered alice with 1 seed(s)', 'unexplained'],
+  // The section 20 admitter's success path is routine; its retry after a lost epoch is NOT.
+  ['info', '[GRAINE] ADMIT invited f7a9bb80 to 198d5d07 (private salon: false)', 'benign'],
+  ['info', '[GRAINE] ADMIT f7a9bb80 into community 198d5d07: start', 'benign'],
+  ['info', '[GRAINE] ADMIT f7a9bb80 into salon 079878d3 of 198d5d07: start', 'benign'],
+  ['info', '[GRAINE] ADMIT Welcome -> f7a9bb80:tauri-f7a9bb80…-mueu83ad-njjp for community 198d5d07', 'benign'],
+  ['warn', '[GRAINE] ADMIT f7a9bb80 into community 198d5d07: the Add was not accepted and could not be rebuilt (x; epoch 0 -> 0) - 1 device(s) of theirs NOT admitted', 'notable'],
   // A PRIVATE SALON THE WALK DECLINED TO ENTER - `notable`, not `benign`: correct on a community
   // holding salons this viewer may not read, and THE finding in any row about being let into one.
   [
