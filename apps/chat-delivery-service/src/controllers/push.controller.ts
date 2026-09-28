@@ -74,12 +74,22 @@ export class PushController {
     const secret = authHeader?.startsWith('PushSecret ')
       ? authHeader.slice('PushSecret '.length).trim()
       : null;
-    if (!secret) throw new ForbiddenException('PushSecret header required');
+    if (!secret) {
+      this.logger.warn(
+        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=header_missing`
+      );
+      throw new ForbiddenException('PushSecret header required');
+    }
     const pt = await this.pushTokenRepo.findOne({
       where: { userId, deviceId },
     });
     const stored = pt?.pushSecret;
-    if (!stored) throw new ForbiddenException('Invalid push secret');
+    if (!stored) {
+      this.logger.warn(
+        `[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=no_stored_secret`
+      );
+      throw new ForbiddenException('Invalid push secret');
+    }
 
     // Try SHA-256 hash first (new format)
     const hashed = crypto.createHash('sha256').update(secret).digest('hex');
@@ -108,6 +118,7 @@ export class PushController {
       /* fall through */
     }
 
+    this.logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=mismatch`);
     throw new ForbiddenException('Invalid push secret');
   }
 
