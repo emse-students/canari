@@ -25,9 +25,9 @@
   }
 
   interface Props {
-    /** Available roles (columns), sorted by priority descending (admin first). */
+    /** Available roles, one section each, sorted by priority descending (admin first). */
     roles: PermissionGridRole[];
-    /** Permission definitions (rows). */
+    /** Permission definitions, one row per role section. */
     permissions: PermissionGridPermission[];
     /** Currently loaded overrides (role × permission → allow|deny). */
     overrides: PermissionGridOverride[];
@@ -92,82 +92,69 @@
   <p class="text-text-muted text-sm italic">{m.chat_permission_grid_empty()}</p>
 {:else}
   <!--
-    THE FLOORS ARE WHAT THE CONTENT NEEDS, NOT WHAT A WIDE WINDOW COULD AFFORD.
+    ONE SECTION PER ROLE, PERMISSIONS DOWN THE PAGE - NEVER A MATRIX ACROSS IT (2026-09-28).
 
-    A table column grows to its content on its own, so a `min-width` here can only ever ADD width -
-    it protects nothing. The two floors were 13rem for the label column and 6rem per role, which
-    with three roles reserved 496px before a single label was measured. That is what made the only
-    screen rendering this grid ask for `max-w-6xl`, and a panel cannot ask for that.
+    This was a table: a label column, then one column per role. It fitted on paper - its floors
+    summed to 336px against a 384px budget - and not on screen, because a floor only ever ADDS
+    width and the real width was the role pills: "@ADMINISTRATEUR" in spaced capitals is ~150px on
+    its own. At 390 only the admin column was visible and the other roles sat behind a horizontal
+    scroll nothing announced; on the desktop panel "@MODERATEUR" was cut in half. That is the user's
+    report of 2026-09-27 word for word: "plein d'elements sont invisibles".
 
-    They are now 9rem and 4rem: wider than the longest label and wider than the 32px cell button
-    plus its role pill, and nothing more. Three roles fit a 28rem panel with room to spare; a
-    community that defines enough custom roles to overflow it still gets the scrollbar below, which
-    is then reporting a real shortage of room rather than an unspent reservation.
+    Transposed, the width a role needs is the width of one row, whatever the number of roles, so
+    nothing here scrolls sideways at any size. And the tooltip, which no touch screen can show, is
+    printed under each label. The admin role, locked, is one line rather than six disabled ticks.
   -->
-  <div class="overflow-x-auto">
-    <table class="w-full border-collapse text-xs" cellspacing="0">
-      <thead>
-        <tr>
-          <th
-            class="text-text-muted bg-cn-surface text-2xs sticky left-0 min-w-36 border-b border-black/5 px-3 py-2.5 text-left font-bold tracking-wider uppercase dark:border-white/10"
+  <div class="space-y-4">
+    {#each sortedRoles as role (role.id)}
+      {@const isAdmin = lockAdmin && role.priority >= maxPriority}
+      <section class="border-cn-border bg-cn-surface rounded-xl border shadow-sm">
+        <header
+          class="flex flex-wrap items-center gap-2 border-b border-black/5 px-4 py-3 dark:border-white/10"
+        >
+          <span
+            class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold {isAdmin
+              ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+              : role.priority >= 50
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
           >
-            {m.chat_permission_grid_column_header()}
-          </th>
-          {#each sortedRoles as role (role.id)}
-            <th
-              class="text-text-muted text-2xs min-w-16 border-b border-black/5 px-3 py-2.5 text-center font-bold tracking-wider uppercase dark:border-white/10"
-            >
-              <span
-                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 {role.priority >=
-                  maxPriority && lockAdmin
-                  ? 'bg-red-500/10 text-red-600 dark:text-red-400'
-                  : role.priority >= 50
-                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                    : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
-              >
-                @{role.name}
-              </span>
-            </th>
-          {/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each permissions as perm (perm.key)}
-          <tr class="group transition-colors hover:bg-black/2 dark:hover:bg-white/2">
-            <td
-              class="bg-cn-surface sticky left-0 border-b border-black/5 px-3 py-2.5 dark:border-white/10"
-              title={perm.tooltip}
-            >
-              <div class="flex flex-col">
-                <span class="text-text-main text-2xs leading-tight font-semibold">{perm.label}</span
-                >
-              </div>
-            </td>
-            {#each sortedRoles as role (role.id)}
+            @{role.name}
+          </span>
+        </header>
+        {#if isAdmin}
+          <p class="text-text-muted flex items-center gap-2 px-4 py-3 text-sm">
+            <Check size={16} strokeWidth={3} class="shrink-0 text-emerald-500" />
+            {m.chat_permission_grid_admin_locked()}
+          </p>
+        {:else}
+          <ul>
+            {#each permissions as perm (perm.key)}
               {@const state = getCellState(role.id, perm.key)}
-              {@const isAdmin = lockAdmin && role.priority >= maxPriority}
-              <td class="border-b border-black/5 px-2 py-2.5 text-center dark:border-white/10">
+              {@const hint = m.chat_permission_grid_cell_hint({
+                label: perm.label,
+                state: stateLabel(state),
+              })}
+              <li
+                class="flex items-center gap-3 border-b border-black/5 px-4 py-2.5 last:border-b-0 dark:border-white/10"
+              >
+                <div class="min-w-0 flex-1">
+                  <p class="text-text-main text-sm font-semibold">{perm.label}</p>
+                  <p class="text-text-muted text-xs">{perm.tooltip}</p>
+                </div>
                 <button
                   type="button"
                   onclick={() => cycleCell(role.id, perm.key)}
-                  disabled={isAdmin}
-                  title={isAdmin
-                    ? m.chat_permission_grid_admin_locked()
-                    : m.chat_permission_grid_cell_hint({
-                        label: perm.label,
-                        state: stateLabel(state),
-                      })}
-                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {isAdmin
-                    ? 'cursor-not-allowed opacity-40'
-                    : 'cursor-pointer hover:scale-110 active:scale-95'} {state === 'allow'
+                  title={hint}
+                  aria-label={hint}
+                  class="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-all outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {state ===
+                  'allow'
                     ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                     : state === 'deny'
                       ? 'bg-red-500/15 text-red-600 dark:text-red-400'
                       : 'text-text-muted/50 bg-transparent hover:bg-black/5 dark:hover:bg-white/5'}"
                 >
-                  {#if isAdmin}
-                    <Check size={16} strokeWidth={3} class="text-emerald-500/70" />
-                  {:else if state === 'allow'}
+                  {#if state === 'allow'}
                     <Check size={16} strokeWidth={3} />
                   {:else if state === 'deny'}
                     <X size={16} strokeWidth={3} />
@@ -175,12 +162,12 @@
                     <Minus size={16} strokeWidth={2.5} />
                   {/if}
                 </button>
-              </td>
+              </li>
             {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+          </ul>
+        {/if}
+      </section>
+    {/each}
   </div>
 
   <!-- What a cell's three states mean. -->
