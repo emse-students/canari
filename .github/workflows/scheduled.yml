@@ -335,10 +335,17 @@ jobs:
             echo "::error::$path is not a checkout - the dev estate has never been deployed, so there is nothing to refresh. Publish a pre-release first."
             exit 1
           fi
-          git -C "$path" fetch origin main
-          git -C "$path" reset --hard origin/main
+          # AT `dev-deployed`, NOT `origin/main`: the copy ends by applying the migrations of this
+          # tree, and they must be those of the commit dev's IMAGES were built from - main is ahead of
+          # it by whatever merged since the last pre-release. It also stops a refresh from moving the
+          # compose file under a running estate.
+          if ! git -C "$path" fetch --force origin "refs/tags/dev-deployed:refs/tags/dev-deployed"; then
+            echo "::error::origin has no dev-deployed tag, so nothing says which commit dev's images come from. On a virgin estate (first deploy refused for want of a schema), tag the commit that deploy used: git tag dev-deployed <sha> && git push origin dev-deployed - then refresh."
+            exit 1
+          fi
+          git -C "$path" reset --hard dev-deployed
           echo "path=$path" >> "$GITHUB_OUTPUT"
-          echo "refreshing from $(git -C "$path" rev-parse --short HEAD)"
+          echo "refreshing from $(git -C "$path" rev-parse --short HEAD) (dev-deployed)"
 
       - name: Copy production into dev
         working-directory: ${{ steps.checkout.outputs.path }}

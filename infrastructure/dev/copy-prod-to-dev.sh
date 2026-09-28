@@ -207,6 +207,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/copy-strips.sh"
 apply_copy_strips dev_sql "$DATABASE" "[copy-prod-to-dev]"
 
+# ── 4b. Forward to the schema dev's images expect ────────────────────────────
+# The restore brought PRODUCTION's schema and ledger, and dev runs a pre-release - newer by
+# definition - so without this step every refresh rolled dev back under images that need the new
+# columns (2026-09-28: `admittedAtEpoch does not exist` on every membership query, from 10:46). The
+# workflow checks this tree out at `dev-deployed`, the commit dev's images were built from, so the
+# migrations applied here are exactly the ones its deploy applied. The loop is the deploy's own
+# (`infrastructure/lib/migrations.sh`); `psql` is routed through the same label check as every write.
+# shellcheck disable=SC2317,SC2329 # called by the sourced loop, which shellcheck does not follow into
+psql() {
+  local actual
+  actual=$(project_of "$DEV_PG")
+  [ "$actual" = "$DEV_PROJECT" ] || fail "target $DEV_PG reports project '${actual}', not '${DEV_PROJECT}' - refusing to migrate"
+  docker exec -i "$DEV_PG" psql -v ON_ERROR_STOP=1 -U "$DEV_USER" -d "$DATABASE" "$@"
+}
+# shellcheck disable=SC2034 # read by require_orm_schema, which picks the remedy per estate
+ENVIRONMENT=dev
+if [ "$DRY_RUN" -eq 1 ]; then
+  log "[dry-run] skipping the migrations"
+else
+  # shellcheck source-path=SCRIPTDIR source=../lib/migrations.sh
+  . "$SCRIPT_DIR/../lib/migrations.sh"
+  log "applying the migrations of $(git -C "$SCRIPT_DIR" rev-parse --short HEAD) over production's ledger…"
+  # CALLED BARE, NEVER `apply_migrations || fail`: under `||` bash suspends errexit inside the whole
+  # function, so a failing file would be recorded in the ledger and the loop would carry on. Bare,
+  # the first failure exits here and the EXIT trap restarts the services, as on a deploy.
+  cd "$SCRIPT_DIR/../.."
+  apply_migrations
+fi
+
 # ── 5. Verify, do not assert ─────────────────────────────────────────────────
 if [ "$DRY_RUN" -eq 1 ]; then
   log "[dry-run] nothing was changed"

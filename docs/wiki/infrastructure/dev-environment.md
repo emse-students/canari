@@ -183,6 +183,32 @@ That the platform cannot declare payments disabled is in [backlog](../backlog.md
 column list in (b) from the entity declarations and fails if a payment column is added without being
 stripped, so a schema change cannot disarm the step silently.
 
+### The copy ENDS ON DEV'S SCHEMA, not production's - it runs the deploy's own migration loop (2026-09-28)
+
+**The restore carries production's schema AND its `schema_migrations` ledger, and dev runs a
+pre-release - newer than production by definition.** So until 2026-09-28 every refresh rolled dev's
+schema back under images that expect the new one. Measured that day: the weekly refresh ran at
+10:42 against `0.18.28-alpha.1`, and from 10:46 `chat-delivery-service` failed every membership
+query on `column DeviceGroupMembership.admittedAtEpoch does not exist`; `poster_projects` lost
+`publicationFingerprint` the same way. The pre-release under test was broken by the job that exists
+to make it a faithful rehearsal, and the refresh's own `/api/version` gate passed - the version
+endpoint touches neither column.
+
+Two changes close it, and both are needed:
+
+- **The loop is a library**, [`infrastructure/lib/migrations.sh`](../../../infrastructure/lib/migrations.sh),
+  sourced by `deploy-environment.sh` AND by the copy (its step 4b, after the strips). Each caller
+  defines its own `psql`: the copy's goes through the same `canari-dev` label check as every write.
+  It is called BARE, never under `||`: bash suspends errexit inside a function called that way, so a
+  failing file would be recorded and the loop would carry on.
+- **The refresh checks out `dev-deployed`, not `origin/main`.** The migrations applied must be
+  those of the commit dev's IMAGES were built from; `main` is ahead of it by whatever merged since
+  the last pre-release. It also stops a refresh from rewriting the compose file under a running
+  estate.
+
+`deploy-migrations.test.sh` asserts both callers source the loop, call it bare, and that the copy
+migrates AFTER it restores.
+
 ### THE CONSEQUENCE NOBODY HAD WRITTEN DOWN: A MEDIA PATH CANNOT BE REHEARSED HERE (2026-09-22)
 
 The copy strips every media REFERENCE as well, and the script verifies it - `COPY_STRIPS_MEDIA_RESIDUE_SQL`
@@ -464,6 +490,9 @@ builds a table no delta creates.
    every delta is already recorded and the next deploy applies only what is genuinely new. It then
    brings the containers back and proves `/api/version` itself.
 4. **Deploy again.** The migration step now finds a schema and applies whatever prod has not seen.
+   Since 2026-09-28 the refresh reads its tree at `dev-deployed`, which a deploy refused at step 2
+   never moved: tag the commit that deploy used first (`git tag dev-deployed <sha> && git push
+   origin dev-deployed`) - the refresh says so if you do not.
 
 Measured on the first real bootstrap, 2026-09-02: 355 users copied, dump 20 MB, restore 2 s, push
 tokens truncated and Stripe identifiers cleared, `copy verified`, and dev answered

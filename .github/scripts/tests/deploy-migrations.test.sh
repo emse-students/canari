@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Does `deploy-environment.sh` apply EVERY migration, and does it refuse a database the migrations
-# cannot possibly build?
+# Does the migration loop (`infrastructure/lib/migrations.sh`) apply EVERY migration, does it refuse
+# a database the migrations cannot possibly build - and do BOTH things that change a schema run it?
 #
 # WHY THIS TEST EXISTS. On dev's first bootstrap (2026-09-02) the deploy reported
 # `migrations: 1 applied, 0 already recorded` with 80 files on disk, and two services crash-looped
@@ -24,8 +24,10 @@
 # `psql` stub that drains stdin exactly as `docker compose exec -T` does.
 set -uo pipefail
 
-SCRIPT="$(cd "$(dirname "$0")/../../.." && pwd)/infrastructure/deploy/deploy-environment.sh"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
+SCRIPT="$REPO/infrastructure/lib/migrations.sh"
+DEPLOY="$REPO/infrastructure/deploy/deploy-environment.sh"
+COPY="$REPO/infrastructure/dev/copy-prod-to-dev.sh"
 PASS=0
 FAIL=0
 ok() {
@@ -63,7 +65,7 @@ printf '\nevery migration file is applied, not just the first\n'
 # declarations that agreed with each other in `deploy-env.test.sh`.
 fn="$(sed -n '/^apply_migrations() {/,/^}/p' "$SCRIPT")"
 if [ -z "$fn" ]; then
-  fail "apply_migrations() is not a function in deploy-environment.sh - it cannot be exercised at all"
+  fail "apply_migrations() is not a function in infrastructure/lib/migrations.sh - it cannot be exercised at all"
   printf '\n%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"
   exit 1
 fi
@@ -126,7 +128,7 @@ printf '\nthe schema precondition is STATED, not discovered by failing on an arb
 if [ -n "$guard" ]; then
   ok "require_orm_schema() is extractable from the real script"
 else
-  fail "require_orm_schema() is not a function in deploy-environment.sh - nothing states the migrations' precondition"
+  fail "require_orm_schema() is not a function in infrastructure/lib/migrations.sh - nothing states the migrations' precondition"
 fi
 
 if [ -n "$SENTINEL" ]; then
@@ -210,6 +212,36 @@ if printf '%s' "$prod_out" | grep -q 'Refresh dev.canari-emse.fr'; then
   fail "the production refusal points at the DEV refresh workflow - it would copy production onto itself in the reader's mind"
 else
   ok "and it does not point production at a dev-only remedy"
+fi
+
+printf '\nboth callers run the loop, and the copy runs it AFTER the restore\n'
+
+# THE SECOND CALLER IS WHY THE LOOP IS A LIBRARY. The dev refresh replaces dev's database with
+# production's, schema and ledger included; without the loop it rolled a pre-release's schema back
+# under its images (2026-09-28, `admittedAtEpoch does not exist`). Order is asserted by line: a loop
+# run before the restore would be erased by it.
+for caller in "$DEPLOY" "$COPY"; do
+  name="${caller#"$REPO"/}"
+  if grep -qE '^[[:space:]]*\. .*lib/migrations\.sh"' "$caller"; then
+    ok "$name sources the shared loop"
+  else
+    fail "$name does not source infrastructure/lib/migrations.sh"
+  fi
+  # Bare, never under `||` or `&&`: bash suspends errexit inside a function called that way, so a
+  # failing file would be recorded in the ledger and the loop would carry on.
+  if grep -qE '^[[:space:]]*apply_migrations[[:space:]]*$' "$caller"; then
+    ok "$name calls apply_migrations bare, so errexit holds inside it"
+  else
+    fail "$name does not call apply_migrations on a line of its own"
+  fi
+done
+# shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
+restore_line="$(grep -nF 'psql -q -U "$DEV_USER" -d "$DATABASE"' "$COPY" | head -1 | cut -d: -f1)"
+migrate_line="$(grep -nE '^[[:space:]]*apply_migrations[[:space:]]*$' "$COPY" | head -1 | cut -d: -f1)"
+if [ -n "$restore_line" ] && [ -n "$migrate_line" ] && [ "$migrate_line" -gt "$restore_line" ]; then
+  ok "the copy migrates after it restores (line $migrate_line > $restore_line)"
+else
+  fail "the copy does not migrate after the restore (restore ${restore_line:-?}, migrate ${migrate_line:-?})"
 fi
 
 printf '\n'
