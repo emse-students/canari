@@ -1942,6 +1942,17 @@ and stacks the chip below, so the only ownership signal is distance. Adopting th
 product decision with a measured margin of 6 px against 12, and it belongs to the user rather than
 to a sweep.
 
+### The row got smaller, and folds (2026-09-28)
+
+Asked by the user with a Messenger capture: *"on pourrait mettre les reactions en plus petit, ca
+prend beaucoup de place"*. The chip went from `rounded-xl px-2.5 py-1`, emoji at `--text-base`, to a
+`rounded-full px-1.5 py-0.5` pill at `--text-2xs` with the emoji at `--text-sm`. The ties measured
+above are untouched: the row keeps `mt-1 pt-0.5 pb-2` and its `isOwn` alignment. Past
+`VISIBLE_KINDS + 1` (5) distinct kinds the row draws the four most chosen (ties in arrival order)
+and a `+N` chip whose tap unfolds every one - a DECLARED fold, which is what separates it from the
+silent `max-h` clip removed on 2026-09-14. A `+1` is never drawn: it would cost the width it hides.
+**Not yet measured on a device.**
+
 ## 26. The only way past the PIN gate could be off screen, and no overflow check could see it
 
 Reported by the user on 2026-09-14, in the words that name the whole finding: *"l'ecran du pin de

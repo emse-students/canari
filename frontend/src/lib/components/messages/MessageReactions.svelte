@@ -43,6 +43,24 @@
     openEmoji = null;
     anchorEl = null;
   }
+
+  /**
+   * A MESSAGE WITH MANY KINDS OF REACTION SHOWS ITS MOST CHOSEN ONES AND A COUNT OF THE REST.
+   *
+   * Asked by the user on 2026-09-28, pointing at Messenger: the row took too much of the thread.
+   * The cap is a DECLARED one - a `+N` chip names exactly how many kinds are folded and a tap
+   * unfolds them all - which is what the silent `max-h` clip described below never did.
+   * `+1` would cost the width of the chip it hides, so a row of VISIBLE_KINDS + 1 is drawn whole.
+   */
+  const VISIBLE_KINDS = 4;
+  let expanded = $state(false);
+
+  /** Emoji ranked by how many people chose them; `sort` is stable, so ties keep arrival order. */
+  const ranked = $derived(
+    Object.entries(groupedReactions).sort(([, a], [, b]) => b.length - a.length)
+  );
+  const folds = $derived(!expanded && ranked.length > VISIBLE_KINDS + 1);
+  const shown = $derived(folds ? ranked.slice(0, VISIBLE_KINDS) : ranked);
 </script>
 
 {#if Object.keys(groupedReactions).length > 0}
@@ -55,24 +73,24 @@
     betraying the fold, no "+16", no scroll. A deliberate cap shows a count; this one showed nothing,
     which is how it survived unnoticed.
     The number was never a decision either: it was `4.75rem` with no comment, and became `5.5rem`
-    inside a commit about the media lightbox. So it is removed rather than tuned - a wrapping row is
-    honest at every count, needs no state, and invents no threshold. A message with forty distinct
-    reactions is tall, and being tall is the truth about it.
+    inside a commit about the media lightbox. So it is removed rather than tuned. What keeps the row
+    short now is `VISIBLE_KINDS` and its `+N` chip, a fold that SAYS what it folds; once unfolded the
+    row wraps, and a message with forty distinct reactions is tall.
   -->
   <div
-    class="mt-1 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 px-1 pt-0.5 pb-2 {isOwn
+    class="mt-1 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1 px-1 pt-0.5 pb-2 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
     aria-label={m.msg_reactions_label()}
   >
-    {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
+    {#each shown as [emoji, users] (emoji)}
       <!-- Check whether the current user has reacted with this emoji. -->
       {@const hasReacted = currentUserId ? users.includes(currentUserId) : false}
 
       <button
         type="button"
-        class="flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-sm shadow-sm transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
+        class="text-2xs flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 shadow-sm transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
           ? 'border-amber-500/30 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-muted hover:text-text-main bg-cn-surface border-black/5 hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/50'}"
         onclick={(e) => {
@@ -86,12 +104,25 @@
           ? m.msg_reaction_aria_label_one({ emoji })
           : m.msg_reaction_aria_label({ emoji, count: users.length })}
       >
-        <span class="text-base leading-none drop-shadow-sm"><EmojiText text={emoji} /></span>
+        <span class="text-sm leading-none"><EmojiText text={emoji} /></span>
         {#if users.length > 1}
-          <span class="text-2xs font-bold">{users.length}</span>
+          <span class="font-bold">{users.length}</span>
         {/if}
       </button>
     {/each}
+    {#if folds}
+      <button
+        type="button"
+        class="text-2xs text-text-muted hover:text-text-main bg-cn-surface flex shrink-0 items-center rounded-full border border-black/5 px-1.5 py-0.5 font-bold shadow-sm transition-all duration-200 outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 dark:border-white/10 dark:hover:bg-black/50"
+        onclick={(e) => {
+          e.stopPropagation(); // Same reason as a reaction chip: this is not a tap on the message.
+          expanded = true;
+        }}
+        aria-label={m.msg_reactions_show_more({ count: ranked.length - VISIBLE_KINDS })}
+      >
+        +{ranked.length - VISIBLE_KINDS}
+      </button>
+    {/if}
   </div>
 {/if}
 
