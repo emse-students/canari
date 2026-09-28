@@ -1001,8 +1001,10 @@ alone FAILS**: it runs the image the same pipeline's `build:image` made, and the
 old tags, so `le-cercle:<old sha>` was gone ("pull access denied for le-cercle") - a variable change
 is shipped by a NEW `main` pipeline, never a retried job. The same log warns that the
 `le-cercle_cercle-data` volume "was not created by Docker Compose" - it was created by hand at the
-move, and the compose file does not declare it `external`. **Owed**: that webhook row moved to the
-new name (the association's product settings), then the `/api/` exception goes.
+move, and the compose file does not declare it `external`. **The webhook row moved 2026-09-29**
+(`https://cercle.emse.fr/api/canari/topup`, verified `401` unsigned from outside and from
+`canari-prod-social-service-1`). The `/api/` exception still stays: the old name's access log still
+carries browser `GET`s on `/api/` (open tabs, cached pages) - it goes once that traffic has faded.
 
 **Two traps, both found before they cost anything.** `sky.db` is not the whole state:
 `sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
@@ -1112,6 +1114,22 @@ to `portail-etu`/`mep` (on `.67`) answers `301`; to `canari.emse.fr` and every C
 border, not the box. Only `https://` reaches the new names. A browser that tries `https` first hides
 it; a typed `http://` link does not. **Owed in the DSI request**: open 80 on `.122`, or point
 `canari` at `.67`.
+
+**THE WIKI'S OLD NAME HAS ITS REDIRECT WAITING, 2026-09-29.** `wiki.canari-emse.fr` and
+`archives.canari-emse.fr` are NOT on the `mitv` connector: they are rules of the **`canari`
+tunnel** (the old VM's connector), pointing at `http://10.0.0.4:3002` and `:8081` - so winding
+down the old VM cuts both unless their rules move first. `wiki-legacy.conf` on the host
+(`server_name wiki.canari-emse.fr`, the `canari.emse.fr` certificate, a `301` + `no-store` to
+`mino.emse.fr` for everything - the wiki has no machine client) is enabled and tested from `mitv`
+(path and query kept). The switch is two gestures, in this order and back to back:
+
+1. Wiki.js's own `host` setting (`settings` row `host` in `mino-db-wiki-1`) becomes
+   `https://mino.emse.fr`, then `mino-wikijs-1` restarts - it builds the OIDC callback from it;
+2. the `canari` tunnel's rule for `wiki.canari-emse.fr` points at `https://193.49.175.67` with
+   `originServerName: canari.emse.fr` and `httpHostHeader: wiki.canari-emse.fr` (the account token
+   can PUT it - [cloudflare-edge](cloudflare-edge.md#working-against-the-api)).
+
+Authentik's `MinoWiki` provider already accepts the `mino.emse.fr` callback.
 
 ### The deep links are the one thing a redirect cannot fix
 

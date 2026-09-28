@@ -458,3 +458,18 @@ in the operator's local agent memory. Read them from that file inside each comma
 passing them as arguments, and note that an account-scoped token (`cfat_` prefix) returns
 `Invalid API Token` from `/user/tokens/verify` while working perfectly everywhere else - that
 endpoint is for user tokens only, so it is not a valid check of the credential.
+
+**Two agent tokens, and what each can actually reach** (measured 2026-09-29):
+
+- the **user token** (`/user/tokens/verify`) - DNS, zone settings, Access. It sees **no tunnel** and
+  **no ruleset**, which is where the "the project's token cannot see tunnels" measurements in
+  [estate-migration](estate-migration.md) come from;
+- the **account token** (`cfat_`, `/accounts/{acct}/tokens/verify`) - it lists and edits the
+  account's tunnels (`canari`, `mitv`, `portail-etu`, `rootz-emse`) and their remote ingress
+  config, and lists rulesets; it is REFUSED (`403`) on a zone's dynamic-redirect phase.
+
+**Both were rolled on 2026-09-29** after their values were printed into a session transcript:
+`PUT .../tokens/{id}/value` with the token itself, the new value written straight into the memory
+file and never echoed, then the new one verified `active` and the old one `401`. Neither is a
+GitHub secret, so no pipeline needed touching - CI carries its own, narrower tokens
+(`CLOUDFLARE_CACHE_PURGE_TOKEN`, the Calls/TURN pair).
