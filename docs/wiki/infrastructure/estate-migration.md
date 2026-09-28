@@ -991,6 +991,19 @@ and Authentik's authorize answering its flow (not a redirect-URI error) for the 
 pre-edit vhost is `sky.conf.bak-2026-09-28-before-redirect`. **The `/api/` exception goes once
 Canari has shipped the new `SKY_API_URL`**; the relay and the old name stay until nothing names it.
 
+**LE CERCLE TOOK `cercle.emse.fr`, 2026-09-28, on the same shape.** Authentik's `Cercle` provider
+gained `https://cercle.emse.fr/auth/callback` beside the old one; the GitLab variable `ORIGIN`
+became `https://cercle.emse.fr`; `cercle.conf` (the old name) became a `301` + `no-store` for pages
+with `/api/` still proxied - **Canari's top-up webhook** (`association_products."webhookUrl"`, one
+row) targets `https://cercle.canari-emse.fr/api/canari/topup`, and a `POST` answered `301` is replayed
+as a `GET`. Pre-edit copy `cercle.conf.bak-2026-09-28-before-redirect`. **Retrying the `deploy` job
+alone FAILS**: it runs the image the same pipeline's `build:image` made, and the after-script prunes
+old tags, so `le-cercle:<old sha>` was gone ("pull access denied for le-cercle") - a variable change
+is shipped by a NEW `main` pipeline, never a retried job. The same log warns that the
+`le-cercle_cercle-data` volume "was not created by Docker Compose" - it was created by hand at the
+move, and the compose file does not declare it `external`. **Owed**: that webhook row moved to the
+new name (the association's product settings), then the `/api/` exception goes.
+
 **Two traps, both found before they cost anything.** `sky.db` is not the whole state:
 `sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
 regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132

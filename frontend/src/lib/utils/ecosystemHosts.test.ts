@@ -6,6 +6,8 @@ describe('ecosystemSiteFor', () => {
     expect(ecosystemSiteFor('gallery.mitv.fr')?.label).toBe('MiGallery');
     expect(ecosystemSiteFor('sky.mitv.fr')?.label).toBe('Sky');
     expect(ecosystemSiteFor('cercle.canari-emse.fr')?.label).toBe('Le Cercle');
+    expect(ecosystemSiteFor('cercle.emse.fr')?.label).toBe('Le Cercle');
+    expect(ecosystemSiteFor('sky.emse.fr')?.label).toBe('Sky');
     expect(ecosystemSiteFor('portail-etu.emse.fr')?.label).toBe('Portail Etu');
   });
 

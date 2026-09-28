@@ -68,6 +68,10 @@ const ECOSYSTEM_SITES: Readonly<Record<string, EcosystemSite>> = {
       },
     },
   },
+  'sky.emse.fr': { label: 'Sky' },
+  'cercle.emse.fr': { label: 'Le Cercle' },
+  // The names both sites had until 2026-09-28. They redirect now, but links already posted in a
+  // conversation still carry them, and a preview card must not turn anonymous for being old.
   'sky.mitv.fr': { label: 'Sky' },
   'cercle.canari-emse.fr': { label: 'Le Cercle' },
   'portail-etu.emse.fr': { label: 'Portail Etu' },
