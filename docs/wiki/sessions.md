@@ -48,6 +48,12 @@ to life by the request that was already in flight.
 signing then fails, the browser still holds the `jti` just recorded as previous, so the next request
 is reissued instead of being read as a replay.
 
+**Every refusal of a refresh LOGS WHICH ONE IT WAS, at `warn`, because every one ends in a
+sign-out** - the token does not verify (with the error's class), the wrong token type, no session in
+the token, a replay, and the session row missing or expired. Until 2026-09-28 three of them were
+silent, and a dev sign-out right after dev's database was replaced from production's could only be
+explained by correlating the 401's body length with the refresh job's clock.
+
 ## The rotation has to reach DISK, and on Android nothing guarantees that
 
 Rotation makes the credential's durability part of the protocol: from the instant the server answers,

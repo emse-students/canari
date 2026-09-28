@@ -504,11 +504,17 @@ export class AuthController {
       payload = jwt.verify(refresh_token, this.jwtSecret, {
         algorithms: ['HS256'],
       }) as RefreshClaims;
-    } catch {
+    } catch (err) {
+      // Every refusal below ends in a sign-out, so each one says which it was: a silent 401 here
+      // was indistinguishable, in the log, from the session row being gone (2026-09-28).
+      this.logger.warn(
+        `Refresh refused: the token does not verify (${err instanceof Error ? err.name : typeof err})`
+      );
       this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     if (payload.type !== 'refresh') {
+      this.logger.warn(`Refresh refused: token type is '${String(payload.type)}', not 'refresh'`);
       this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid token type');
     }
