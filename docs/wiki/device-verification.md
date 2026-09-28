@@ -901,7 +901,7 @@ the foreground once - `didBecomeActive` is the trigger, so a launch is enough. T
 machine:
 
 ```
-ssh canari 'docker exec infrastructure-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
+ssh portail-etu-direct 'docker exec canari-prod-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
 ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
 ```
 

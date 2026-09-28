@@ -849,8 +849,9 @@ which writes it at the pending->active transition, and that its own reconciliati
 as routable one line after recording that it had not joined - and the gateway both broadcasts from
 that set and ELECTS an answerer for `welcome_request` out of it, so a device holding no group state
 could be picked to serve one. Nothing replaces it: a device the Welcome has not reached cannot
-decrypt a broadcast, and `activateDeviceMembership` adds it and replays what it missed (DF2) the
-moment it can. `sendWelcome` had no test; it has one now.
+decrypt a broadcast; what it can open is queued for it from the epoch its admitting commit
+recorded ([channel-encryption section 20](channel-encryption.md)), and `activateDeviceMembership`
+adds it to the set once it has joined. `sendWelcome` had no test; it has one now.
 
 **P1-3. MEASURED AND REPORTED 2026-09-12. `NO_REPAIRER` has no exit, and nothing counted how many
 conversations were in it.** `reportStaleExternalJoinBases` (shipped in #526) finds stale BASES. It

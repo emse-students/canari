@@ -44,6 +44,9 @@ import {
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import type { GroupMeta } from '../IMlsService';
+import { channelScope, workspaceScope } from '../distributionScope';
+import { workspaceForChannel } from '$lib/utils/graine/runtime';
 export type { MessageHandlerDeps } from './deps';
 
 /** Short-lived message buffered while waiting for a Welcome. */
@@ -237,6 +240,111 @@ interface WelcomeArgs {
 }
 
 /**
+ * Installs a Welcome into a Graine key-distribution group - the admitter's door of
+ * channel-encryption section 20 - WITHOUT the conversation machinery of {@link handleWelcome}.
+ *
+ * Three steps and nothing else: register the group as a seed carrier BEFORE installing it (so the
+ * first seed frame behind the Welcome routes to the Graine handler rather than to the conversation
+ * pipeline), install it under the MLS lock, then promote this device's membership row to `active`
+ * so the seed fan-out reaches it. A redelivered Welcome for a group already held and live is
+ * acknowledged and only re-promotes the row - the background Android join does not go through here.
+ *
+ * NO RECOVERY ON FAILURE, deliberately: an admitter's Welcome that cannot be installed is ACKed like
+ * any other, which takes it off the queue, so this device's seat stops reading as "a Welcome is
+ * owed" and its own next load joins by external commit - the door it had before section 20. Opening
+ * that door from here would be a second path for one failure.
+ *
+ * Always ACKed, like every Welcome: its KeyPackage is consumed and it cannot be reprocessed.
+ */
+async function handleDistributionWelcome({
+  content,
+  groupId,
+  ratchetTreeBytes,
+  groupMeta,
+  deps,
+  statePersister,
+}: {
+  content: Uint8Array;
+  groupId: string;
+  ratchetTreeBytes: Uint8Array | undefined;
+  groupMeta: GroupMeta;
+  deps: MessageHandlerDeps;
+  statePersister: ReturnType<typeof createMlsStatePersister>;
+}): Promise<boolean> {
+  const { mlsService, userId, log } = deps;
+  const short = groupId.slice(0, 8);
+  log(`[WELCOME] ${short}... is a KEY-DISTRIBUTION group - installing it as a seed carrier`);
+
+  // The scope when it can be named, the kind alone when it cannot: a private salon's row carries
+  // its channel, and the community behind it is known only if this session loaded that channel.
+  const workspaceId =
+    groupMeta.distributionWorkspaceId ??
+    (groupMeta.distributionChannelId ? workspaceForChannel(groupMeta.distributionChannelId) : null);
+  if (groupMeta.distributionWorkspaceId) {
+    mlsService.registerDistributionGroup(
+      workspaceScope(groupMeta.distributionWorkspaceId),
+      groupId
+    );
+  } else if (groupMeta.distributionChannelId && workspaceId) {
+    mlsService.registerDistributionGroup(
+      channelScope(workspaceId, groupMeta.distributionChannelId),
+      groupId
+    );
+  } else {
+    mlsService.noteDistributionGroup(groupId);
+  }
+
+  const promote = () =>
+    mlsService
+      .updateInvitationStatus(mlsService.getDeviceId(), userId, groupId, 'active')
+      .catch((e: unknown) =>
+        log(`[WELCOME] key group ${short}... membership not promoted: ${String(e).slice(0, 120)}`)
+      );
+
+  const held = holdsGroupState(mlsService, groupId);
+  const live =
+    held &&
+    (await readLocalMembership({
+      mlsService,
+      groupId,
+      context: 'before treating a key-group Welcome as a redelivery',
+      log,
+    })) !== false;
+  if (live) {
+    void promote();
+    log(`[WELCOME] key group ${short}... already held - redelivered Welcome ignored (idempotent)`);
+    return true;
+  }
+
+  const installed = await mlsService.runUnderMlsLock(async () => {
+    try {
+      if (held) {
+        await dropGroupState(mlsService, groupId, {
+          reason: 'key-group Welcome re-admitting an evicted leaf',
+          checkpoint: 'deferred',
+          log,
+        });
+      }
+      await mlsService.processWelcome(content, ratchetTreeBytes);
+      statePersister.persistNow();
+      return true;
+    } catch (e) {
+      log(
+        `[WELCOME] key group ${short}... could NOT be installed (${String(e).slice(0, 150)}) - ACKed; this device's own load joins it by external commit`
+      );
+      return false;
+    }
+  });
+  if (!installed) return true;
+
+  void promote();
+  log(
+    `[WELCOME] key group ${short}... installed at epoch ${mlsService.getEpoch(groupId)} - seeds on it now open here`
+  );
+  return true;
+}
+
+/**
  * Processes a Welcome message - for a known or unknown group.
  *
  * Always ACKed: a failing Welcome cannot be reprocessed
@@ -271,6 +379,22 @@ async function handleWelcome({
     log(`[WELCOME] ${terminalId.slice(0, 8)}… deleted server-side - Welcome ignored`);
     cancelReAdd(terminalId);
     return true;
+  }
+
+  // A KEY-DISTRIBUTION GROUP'S WELCOME IS NOT A CONVERSATION, and until 2026-09-27 nobody sent
+  // one: those groups were entered by external commit alone. Channel-encryption section 20 makes
+  // the client that adds a community newcomer (or grants a private salon) Welcome their devices,
+  // and every step below this line would build a sidebar row for it - a "Groupe" conversation
+  // carrying seeds. The `dm_groups` row says which kind it is, and it is already in hand.
+  if (groupMeta?.distributionWorkspaceId || groupMeta?.distributionChannelId) {
+    return handleDistributionWelcome({
+      content,
+      groupId: terminalId,
+      ratchetTreeBytes,
+      groupMeta,
+      deps,
+      statePersister,
+    });
   }
 
   // Welcome redelivered for a group we already hold locally (typically a server requeue

@@ -1665,9 +1665,8 @@ service - `ChannelService` -> the social-service route -> `publishDistributionGr
 internal route - so that **publishing the base is what puts the publisher on the roster**. That is
 the only moment the server learns which device created the group; before it, the group has a
 creator nobody can name. The call is unconditional and idempotent (a device that external-joined
-already has its row, and the write underneath is an upsert), and passes `redeliverMissed: false` for
-the same reason the external-join path does: the device holds the group at the CURRENT epoch, so a
-replay of what came before is a stream of frames it cannot decrypt.
+already has its row, and the write underneath is an upsert). Nothing is replayed to it: the device
+holds the group at the CURRENT epoch, so what came before is a stream of frames it cannot decrypt.
 
 `deviceId` is **required**, not optional, at both routes. A publish that does not name its device is
 a group whose creator is on no roster - this defect, silently - and storing it would leave the group
@@ -2466,3 +2465,87 @@ logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.
 
 What stays for an older sender - the hold and redraw of §14 - is in
 [legacy-compatibility](../legacy-compatibility.md), with its removal condition.
+
+## 20. Whoever admits a newcomer Welcomes them - DECIDED BY THE USER 2026-09-27
+
+**§4.4 made the newcomer add THEMSELVES, and that answered only half of the ways in.** A share link
+has nobody else in the room, so the joiner's own external commit is the only possible door - and it
+stays. But `inviteToChannel` is an ADMIN adding someone from the panel, the admin's client online and
+holding the key group, and nothing admitted the newcomer: their seat waited for their own app to
+load the community. Two Gala members added at 14:35 on 2026-09-27 had still not joined six hours
+later, their phones taking every salon push offline and reading none
+([backlog](../backlog.md)).
+
+The user, asked whether the phone should join by itself from the push or be Welcomed: *"L'ajouteur
+envoie un welcome"* - the DM's own shape. A DM newcomer is Welcomed by whoever added them and their
+phone processes it in the background with the app shut; a community newcomer now is too.
+
+- **Who**: the client that performed the add, which is online by construction and holds the key
+  group (an admin of the community is always a member of it).
+- **What**: an MLS add of every device the newcomer has published a KeyPackage for, and a Welcome
+  to each - the same `addMember -> sendWelcome -> sendCommit` the DM uses.
+- **Why the first message after it is readable**: the add is a commit, a commit rotates every
+  sender's session, and §19 puts the new session's seed on the message itself.
+- **Not a second path**: the self-join stays the door for the cases where the newcomer is the one
+  acting (share link, public salon join). Each way in has exactly one admitter.
+
+### How it is built
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| The admit | `admitNewcomerToDistributionGroup` in `frontend/src/lib/utils/graine/admitNewcomer.ts` | Holder only; `fetchUserDevices` -> add-lock -> tree read -> ONE `addMembersBulk` of the devices with no leaf -> checkpoint -> one `sendWelcome` per device. Never throws; returns a typed `NewcomerAdmission` |
+| The decision | `devicesToAdmit` (pure) | A device whose `userId:deviceId` leaf stands is not re-added: every device already in the tree means NO commit |
+| Community invitation | `inviteMemberToChannel` (`useChannelWorkspaces`) -> `admitInvitedMember` | Only when the server answers `alreadyMember !== true`; the community's group, then the private salon's when the invitation was to one (the server grants both in that one call) |
+| Private-salon grant | `addAllowedUser` (`ChannelSettingsPanel`) -> `admitSalonGrantee` | The salon's own group. The same gap existed there: a grantee entered it only by their own external commit. An admin granting a salon they are not in holds no group and admits nobody, which is logged |
+| Welcome authorization | `sendWelcome` in `apps/chat-delivery-service/src/services/messaging.service.ts`, through `memberOfGroupKind` | It asked `dm_group_members`, which names nobody for a key group (section 16), so every such Welcome would have been a 403. Now an ACTIVE device row - the one helper the replay (`getCommitsSince`) also uses |
+| The newcomer, foreground | `handleDistributionWelcome` in `setupMessageHandler.ts` | `getGroupMeta` names the kind (it now carries `distributionWorkspaceId` / `distributionChannelId`); registers the seed carrier BEFORE installing, installs, promotes the row. No conversation row. A failed install is ACKed and nothing else: the queued Welcome is gone, so the device's own load joins |
+| The newcomer, app killed | `processReceivedWelcomeBackground` (Android, unchanged) | Installs the Welcome and calls `membership-active` |
+| One door at a time | `ensureDistributionGroupFor` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`) | A device holding nothing whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
+
+**Why two admitters, or an admitter and the newcomer's own join, cannot both land.** Two admitters
+are serialised by the add-lock, taken before the tree is read. The external commit takes no lock and
+needs none: both commits are built on epoch N and `validateCommit` advances the epoch for exactly one
+of them, refusing the other `epoch_mismatch` and rolling it back unmerged. **And no window is
+left between the add and the seat**: the commit names the devices it adds (`admits`) and the server
+writes their `pending` seats in the same transaction as the epoch advance, before the successor
+base can be minted - so a newcomer that reads that base also reads a seat, with `addInFlight` while
+the admitter holds the lock through its Welcomes, and waits. The same record makes the newcomer a
+recipient of every frame sealed from that epoch on (below).
+
+**Not covered**: making a PUBLIC salon private grants its whole list at once through "Enregistrer";
+that group is brand new (unpublished) when the grant lands, so no admitter holds it yet and every
+grantee enters it by their own load, as before.
+
+**What a rig row asserts.** Admitter: `[GRAINE] ADMIT <newcomer> into <scope>: start`,
+`ADMIT Welcome -> <newcomer>:<device>`, `admitted N/N device(s), group now at epoch E`; server
+`[WELCOME][...] DONE group=<key group>` and NO `AUTHZ FAIL ... keyDistribution=true`. Newcomer phone
+with the app killed: `processReceivedWelcomeBackground: ... group joined group=<key group>`, the
+server's `MEMBERSHIP_ACTIVE_PUSH` activation, then the first salon message opened with
+`seed source=frame` (section 19). Newcomer in the foreground: `[WELCOME] ... is a KEY-DISTRIBUTION
+group`, `key group ... installed at epoch E`, and no new sidebar conversation.
+
+### A newcomer is a recipient from its admitting epoch - DF2 deleted (user, 2026-09-28)
+
+A device added while its phone was dead is `pending` until its own join reports it, and the send path
+queued for `active` rows only. What covered the gap was DF2: at activation, a replay of what a
+five-minute window over the Redis history stream still held, capped at fifty. The user chose to
+replace that clock with a queue, and the design rests on one fact: **the epoch a newcomer can open is
+known exactly at the ADD COMMIT, and nowhere later.**
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| The declaration | `commitAdmits` (`frontend/src/lib/mls-client/commitAdmits.ts`), sent by `runCommitTransaction` as `admits` | The devices the staged Add put in the tree: the fan-out exclusions every add caller already passes, minus the committer and minus any device the staging skipped for an invalid KeyPackage |
+| The record | `validateCommit` -> `resolveAdmittedDevices` (`messaging.service.ts`) | Each declared device with a KeyPackage row is written `pending` with `admittedAtEpoch = baseEpoch + 1` IN THE ADVANCE'S TRANSACTION, before the commit's fan-out; an `active` row is never touched. The background re-add (`send-welcome-and-commit`) declares its one target the same way |
+| The routing | `sendMessage` | A `pending` row whose `admittedAtEpoch` is at or below the frame's epoch is a recipient, queued and pushed like any member. The epoch is read from the frame's CLEAR MLS header (`mlsFrameEpoch`): a member lagging a commit behind seals at the older epoch, which the newcomer can never open. Never announced on the routing set - that stays `activateDeviceMembership`'s |
+| The end | `activateDeviceMembership` / `deactivateDeviceMembership` | Both clear the column: an active device is routed by its status, a demoted one needs a new Welcome |
+
+**Why not at the Welcome.** `sendWelcome` runs after the commit is accepted and fanned out, so a
+member could seal at the new epoch in between (the newcomer skipped), and a second commit landing
+first would have made the group's counter name an epoch past the Welcome's (the newcomer then never
+queued the commit it must apply). No clock and no replay: whatever was sent before the record was
+sealed at an epoch the newcomer cannot open.
+
+**What a rig row asserts.** Server: `[COMMIT][commit-...] ADMITS group=... atEpoch=E devices=...`
+on the add, then `[SEND][send-...] PENDING_ADMITTED group=... frameEpoch=E devices=<device>@E` on the
+first message, and no `ACTIVATION_REDELIVER` line at all. `NOTIF-17b` is the regression witness.
+A client predating `admits` records nothing; its newcomers are routed once they activate.

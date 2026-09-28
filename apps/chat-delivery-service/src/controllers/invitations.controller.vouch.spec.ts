@@ -14,24 +14,16 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { MessagingService } from '../services/messaging.service';
 
 /**
- * TWO CALLERS SAY `active` THROUGH THIS DOOR AND THEY ARE NOT MAKING THE SAME CLAIM.
+ * TWO CALLERS SAY `active` THROUGH THIS DOOR: a device reporting on ITSELF, and a group member
+ * VOUCHING for another user's device because it read the shared MLS tree and the leaf is there.
+ * Both retire the invitation through the ONE writer, and a non-member may do neither.
  *
- * A device reporting on ITSELF has processed its Welcome: it is saying it can decrypt from this
- * moment on, and that moment is what `redeliverMissed` (DF2) needs - the pending window it names
- * is a window the device can now open, so replaying it turns into the notifications it missed.
- *
- * A group member VOUCHING for another user's device says something strictly weaker: it read the
- * shared MLS tree and the leaf is there. That retires the invitation, which is the whole question
- * the column answers - nobody owes this device an Add. It fixes NO moment. These rows are old by
- * the time anyone looks: production held 104 pending rows on 2026-09-15, 98 of them older than a
- * day and 19 of them thirteen days old. Replaying thirteen days at a device that may not have
- * opened the group yet is up to 50 undecryptable frames and as many generic pushes, which is the
- * hazard `redeliverMissed: false` exists for.
- *
- * So the flag is the discriminator, and it is carried from where the answer is already KNOWN -
- * the authorization branch a few lines above already had to decide self-report from vouch.
+ * They used to differ on one flag: only a self-report replayed the pending window (DF2), because
+ * only it fixes a moment the device could decrypt from. DF2 is deleted (user, 2026-09-28) - an
+ * admitted device is queued at send time from its admitting commit's epoch - so the two now make
+ * the same call, and this file asserts that neither passes anything but its tag.
  */
-describe('InvitationsController - a vouch is not a self-report', () => {
+describe('InvitationsController - who may report a device active', () => {
   let controller: InvitationsController;
   let messaging: { activateDeviceMembership: jest.Mock; deactivateDeviceMembership: jest.Mock };
   let log: jest.SpyInstance;
@@ -58,10 +50,7 @@ describe('InvitationsController - a vouch is not a self-report', () => {
 
   /** The options object handed to the ONE writer - the assertion subject of every case here. */
   const promotion = () =>
-    messaging.activateDeviceMembership.mock.calls[0][3] as {
-      redeliverMissed?: boolean;
-      tag: string;
-    };
+    messaging.activateDeviceMembership.mock.calls[0][3] as Record<string, unknown>;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -96,24 +85,24 @@ describe('InvitationsController - a vouch is not a self-report', () => {
 
   afterEach(() => log.mockRestore());
 
-  it('replays the pending window for a device reporting on ITSELF', async () => {
+  it('promotes a device reporting on ITSELF through the one writer', async () => {
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
       TARGET,
       'false'
     );
 
-    expect(promotion().redeliverMissed).toBe(true);
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
   });
 
-  it('does NOT replay when another member vouches for the device', async () => {
+  it('promotes the same way when another member vouches for the device', async () => {
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
       MEMBER,
       'false'
     );
 
-    expect(promotion().redeliverMissed).toBe(false);
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
     // The vouch still retires the invitation - that is the point of allowing it at all.
     expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(
       TARGET,
@@ -138,13 +127,13 @@ describe('InvitationsController - a vouch is not a self-report', () => {
   });
 
   // An admin is not the device either, whatever else it is allowed to do.
-  it('does NOT replay for a global admin acting on someone else s device', async () => {
+  it('promotes the same way for a global admin acting on someone else s device', async () => {
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
       'user-admin',
       'true'
     );
 
-    expect(promotion().redeliverMissed).toBe(false);
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
   });
 });

@@ -377,9 +377,8 @@ export class InternalController {
     // work at all. Found on production 2026-08-20 by watching a real second member join one.
     //
     // Unconditional and idempotent: a device that external-joined already has its row, and the
-    // upsert underneath makes a repeat free. `redeliverMissed: false` for the same reason the
-    // external-join path passes it - the device holds the group at the CURRENT epoch, so there is
-    // nothing earlier it could decrypt and a replay would be undecryptable frames and blank pushes.
+    // upsert underneath makes a repeat free.
+    //
     // THE REFUSAL IS CARRIED, NOT THROWN AND NOT DROPPED. The GroupInfo is already stored above, so
     // a 400 here would report a failure that did not happen and invite a retry of work that
     // succeeded. But dropping it is what this door did, and the refusal matters more here than at
@@ -391,7 +390,7 @@ export class InternalController {
       publisherUserId,
       publisherDeviceId,
       group.id,
-      { redeliverMissed: false, tag: 'DISTRIBUTION_PUBLISHER' }
+      { tag: 'DISTRIBUTION_PUBLISHER' }
     );
 
     this.logger.log(

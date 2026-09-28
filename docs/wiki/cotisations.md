@@ -410,7 +410,7 @@ once, which is the same fact from the other side.
 ### Loading a DEPLOYED estate - `--emit-sql`, because there is no connection to open
 
 Dropping the `--dry-run` connects with `DB_*`, which works locally and nowhere else: neither
-`canari-dev-postgres-1` nor `infrastructure-postgres-1` publishes a port, and the way into either is
+`canari-dev-postgres-1` nor `canari-prod-postgres-1` publishes a port, and the way into either is
 `docker exec ... psql` from the box ([databases](infrastructure/databases.md)). The alternative -
 lifting a production password onto a workstation to open a tunnel - buys nothing and puts a
 credential somewhere it has no reason to be.

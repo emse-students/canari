@@ -676,13 +676,19 @@ export class MlsDeliveryApi {
    * path does, and a staged add/remove does not (its commit is unapplied at this point). Where it
    * is absent the base is still minted by the follow-up `refreshGroupInfo`, whose loss is what
    * COMM-22 measured; see `docs/wiki/backlog.md`.
+   *
+   * `admits` names the devices this commit ADDS to the tree. The server records each `pending` at
+   * the epoch the commit creates, in the same transaction as the advance, which makes it a recipient
+   * of every frame sealed from then on while its Welcome waits for it (channel-encryption section
+   * 20). Only a staged Add has any.
    */
   async submitCommit(
     groupId: string,
     baseEpoch: number,
     protoBase64: string,
     excludeDeviceIds?: string[],
-    groupInfoBase64?: string
+    groupInfoBase64?: string,
+    admits?: Array<{ userId: string; deviceId: string }>
   ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
     const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
@@ -695,6 +701,7 @@ export class MlsDeliveryApi {
         senderId: this.userId,
         ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
         ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
+        ...(admits?.length ? { admits } : {}),
       }),
     });
     if (!res.ok) {
@@ -1345,6 +1352,13 @@ export class MlsDeliveryApi {
             ? (g as { isGroup: boolean }).isGroup
             : undefined,
         deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+        // THE WELCOME HANDLER READS THESE since channel-encryption section 20 made an admitter
+        // Welcome a newcomer into a key group: without them it cannot tell a seed carrier from a
+        // conversation and builds a sidebar row for it. Same mapping as `getGroupServerStatus`.
+        distributionWorkspaceId:
+          (g as { distributionWorkspaceId?: string | null }).distributionWorkspaceId ?? null,
+        distributionChannelId:
+          (g as { distributionChannelId?: string | null }).distributionChannelId ?? null,
         activeEpoch:
           typeof (g as { activeEpoch?: number }).activeEpoch === 'number'
             ? (g as { activeEpoch: number }).activeEpoch

@@ -8,7 +8,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, LessThan, EntityManager } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan, LessThanOrEqual, EntityManager } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
@@ -25,6 +25,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
+import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
@@ -127,6 +128,21 @@ export interface ValidateCommitBody {
    * the published external-join base can never trail the group. See {@link validateCommit}.
    */
   groupInfo?: string;
+  /**
+   * The devices this commit ADDS to the tree, as the committing device staged them - never the
+   * ones its staging skipped for an invalid KeyPackage, which no Welcome will ever reach.
+   *
+   * Each is recorded `pending` with `admittedAtEpoch = baseEpoch + 1` in the SAME transaction as
+   * the epoch advance (see `DeviceGroupMembership.admittedAtEpoch`). That is what makes the rule
+   * exact: no member can seal a frame at the new epoch before it has this commit, and the commit is
+   * fanned out only after the row is written - so there is no instant at which a frame the newcomer
+   * can open is sent without it being a recipient. Recording it later, when the Welcome is queued,
+   * left that instant open and could name the wrong epoch if a second commit landed in between.
+   *
+   * Absent from a client predating the field: its newcomers are routed once they activate, as
+   * before, with nothing replayed.
+   */
+  admits?: { userId: string; deviceId: string }[];
 }
 
 export interface ValidateCommitResult {
@@ -318,13 +334,6 @@ export interface AckMessagesBody {
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
-
-  /**
-   * Maximum window, looking back from the activation moment, for re-delivering to a device
-   * becoming `active` the messages it missed while `pending` (DF2). Bounds the re-notification so
-   * a device left `pending` for a long time does not trigger an avalanche of notifications.
-   */
-  private static readonly ACTIVATION_REDELIVER_WINDOW_MS = 5 * 60 * 1000;
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -932,6 +941,36 @@ export class MessagingService {
             status: 'active' as const,
           },
         });
+        // A PENDING DEVICE A COMMIT ADMITS IS A RECIPIENT OF WHAT IT CAN OPEN (user, 2026-09-28).
+        // A device added while its phone was dead is `pending` until its own join reports it, and
+        // this path used to skip it for every frame sent in between - a replay at activation (DF2)
+        // then re-sent what a five-minute window over the history stream still held, and nothing
+        // else. It is queued here instead, at send time, like any member and so pushed like one -
+        // but only frames sealed at or after the epoch its admitting commit recorded
+        // (`ValidateCommitBody.admits`). A member lagging a commit behind can still seal at the
+        // older epoch, which the newcomer can never open, and the frame's clear header is what says
+        // which (`mlsFrameEpoch`). A Welcome is excluded: it carries no clear epoch and has its own
+        // addressee.
+        const frameEpoch = body.isWelcome ? null : mlsFrameEpoch(proto);
+        const admitted =
+          frameEpoch === null
+            ? []
+            : (
+                await this.deviceGroupRepo.find({
+                  where: {
+                    groupId,
+                    status: 'pending' as const,
+                    admittedAtEpoch: LessThanOrEqual(frameEpoch),
+                  },
+                })
+              ).filter((m) => m.admittedAtEpoch !== null);
+        if (admitted.length > 0) {
+          this.logger.log(
+            `[SEND][${traceId}] PENDING_ADMITTED group=${groupId} frameEpoch=${frameEpoch} ` +
+              `devices=${admitted.map((m) => `${m.deviceId}@${m.admittedAtEpoch}`).join(',')}`
+          );
+        }
+        const recipients = [...memberships, ...admitted];
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
         const isSender = (m: { userId: string; deviceId: string }) =>
           m.userId === body.senderId && m.deviceId === body.senderDeviceId;
@@ -940,25 +979,25 @@ export class MessagingService {
         // storage that nothing will ever collect or read (WP-GHOST-1). Deliberately narrow: an
         // `active` membership whose device merely went quiet still has its KeyPackage for the
         // whole 90-day window, so a legitimately offline device is never dropped.
-        const liveDeviceIds = memberships.length
+        const liveDeviceIds = recipients.length
           ? new Set(
               (
                 await this.keyPackageRepo.find({
                   where: {
-                    deviceId: In([...new Set(memberships.map((m) => m.deviceId))]),
+                    deviceId: In([...new Set(recipients.map((m) => m.deviceId))]),
                   },
                   select: { userId: true, deviceId: true },
                 })
               ).map((kp) => `${kp.userId}:${kp.deviceId}`)
             )
           : new Set<string>();
-        const targets = memberships.filter(
+        const targets = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
-        const ghosts = memberships.filter(
+        const ghosts = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
@@ -1215,14 +1254,7 @@ export class MessagingService {
             'content',
             body.proto,
             'timestamp',
-            new Date().toISOString(),
-            // The stream used to hold visible messages only, so every consumer could assume a frame
-            // read from it was showable. It now also holds mutations, and the server cannot tell
-            // them apart afterwards - the payload is ciphertext. So visibility is recorded here, at
-            // the one point where it is known. See `redeliverMissedDuringActivationWindow`, which
-            // notifies from this stream and would otherwise ring for every reaction.
-            'silent',
-            body.silent ? '1' : '0'
+            new Date().toISOString()
           )
           // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
           // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back
@@ -1411,6 +1443,7 @@ export class MessagingService {
       // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
       // `republishStaleBase` on a holder remains their repair.
       const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
+      const admitted = await this.resolveAdmittedDevices(groupId, deviceId, body.admits, traceId);
       // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
       //
       // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
@@ -1446,8 +1479,33 @@ export class MessagingService {
           })
           .orIgnore()
           .execute();
+        // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
+        // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
+        // row; the update is guarded on `pending` so an `active` device - already routed by its
+        // status - is never touched.
+        for (const a of admitted) {
+          await m
+            .getRepository(DeviceGroupMembership)
+            .createQueryBuilder()
+            .insert()
+            .values({ userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const })
+            .orIgnore()
+            .execute();
+          await m
+            .getRepository(DeviceGroupMembership)
+            .update(
+              { deviceId: a.deviceId, groupId, status: 'pending' as const },
+              { admittedAtEpoch: baseEpoch + 1 }
+            );
+        }
       });
       group.activeEpoch = baseEpoch + 1;
+      if (admitted.length > 0) {
+        this.logger.log(
+          `[COMMIT][${traceId}] ADMITS group=${groupId} atEpoch=${group.activeEpoch} ` +
+            `devices=${admitted.map((a) => `${a.userId}:${a.deviceId}`).join(',')}`
+        );
+      }
       if (newBase) {
         this.logger.log(
           `[COMMIT][${traceId}] base published with the commit group=${groupId} epoch=${group.activeEpoch}`
@@ -1467,9 +1525,7 @@ export class MessagingService {
           where: { deviceId, groupId },
         });
         if (membership?.status !== 'active') {
-          await this.activateDeviceMembership(body.senderId, deviceId, groupId, {
-            redeliverMissed: false,
-          }).catch((e) =>
+          await this.activateDeviceMembership(body.senderId, deviceId, groupId).catch((e) =>
             this.logger.warn(
               `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
             )
@@ -1516,6 +1572,35 @@ export class MessagingService {
   }
 
   /**
+   * Whether `userId` belongs to `groupId`, asked of the table that records membership for the
+   * group's KIND.
+   *
+   * A key-distribution group (a community's, or a private salon's: `distributionWorkspaceId` or
+   * `distributionChannelId` set) is recorded per DEVICE in `dm_device_group_memberships` and never
+   * in `dm_group_members` - by construction, see section 16 of the channel-encryption protocol - so
+   * it answers from an ACTIVE device row. Every other group answers from `dm_group_members`.
+   *
+   * ONE IMPLEMENTATION FOR EVERY GATE THAT ASKS IT, because the replay and the Welcome asked the
+   * user table on their own and each was found refusing a key group separately. `isKeyDistribution`
+   * travels back so the caller's refusal line can say which table refused.
+   *
+   * @param group the `dm_groups` row when the caller already read it, `null` when it is absent.
+   */
+  private async memberOfGroupKind(
+    group: Pick<Group, 'distributionWorkspaceId' | 'distributionChannelId'> | null,
+    groupId: string,
+    userId: string
+  ): Promise<{ isMember: boolean; isKeyDistribution: boolean }> {
+    const isKeyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    const isMember = isKeyDistribution
+      ? !!(await this.deviceGroupRepo.findOne({
+          where: { groupId, userId, status: 'active' },
+        }))
+      : !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
+    return { isMember, isKeyDistribution };
+  }
+
+  /**
    * Returns the ordered, CONTIGUOUS, replayable commits for `groupId` starting at `sinceEpoch`
    * (rung-1). Membership-gated by the caller.
    *
@@ -1544,12 +1629,11 @@ export class MessagingService {
     // rather than community membership: whoever holds an active leaf already reads these commits, and
     // a member cut from the community loses that row with their leaf.
     const group = await this.groupRepo.findOne({ where: { id: groupId } });
-    const isKeyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
-    const isMember = isKeyDistribution
-      ? !!(await this.deviceGroupRepo.findOne({
-          where: { groupId, userId: requesterUserId, status: 'active' },
-        }))
-      : !!(await this.groupMemberRepo.findOne({ where: { groupId, userId: requesterUserId } }));
+    const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
+      group,
+      groupId,
+      requesterUserId
+    );
     if (!isMember) {
       this.logger.warn(
         `[COMMITS_SINCE] refused group=${groupId} user=${requesterUserId.slice(0, 8)} keyDistribution=${isKeyDistribution}`
@@ -1817,6 +1901,55 @@ export class MessagingService {
   }
 
   /**
+   * The subset of a commit's declared `admits` this server will record, each dropped entry logged.
+   *
+   * The bar is the one `sendWelcome` holds a Welcome's target to - a device with a KeyPackage row,
+   * which is what exists server-side - plus two refusals: the committing device itself (it is
+   * already in the tree it is changing) and the client's unresolved-identity placeholders. The
+   * committer's authority to name them is the commit the epoch gate just accepted.
+   */
+  private async resolveAdmittedDevices(
+    groupId: string,
+    committerDeviceId: string,
+    declared: ValidateCommitBody['admits'],
+    traceId: string
+  ): Promise<{ userId: string; deviceId: string }[]> {
+    if (!Array.isArray(declared) || declared.length === 0) return [];
+    const candidates: { userId: string; deviceId: string }[] = [];
+    for (const d of declared) {
+      const userId = sanitizeQueryValue(d?.userId ?? '', 'admits.userId');
+      const deviceId = sanitizeQueryValue(d?.deviceId ?? '', 'admits.deviceId');
+      if (
+        deviceId === committerDeviceId ||
+        isUnresolvedIdentity(userId) ||
+        isUnresolvedIdentity(deviceId)
+      ) {
+        this.logger.warn(
+          `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${userId}:${deviceId} reason=${deviceId === committerDeviceId ? 'committer' : 'unresolved_identity'}`
+        );
+        continue;
+      }
+      candidates.push({ userId, deviceId });
+    }
+    if (candidates.length === 0) return [];
+    const known = new Set(
+      (
+        await this.keyPackageRepo.find({
+          where: candidates.map((c) => ({ userId: c.userId, deviceId: c.deviceId })),
+          select: { userId: true, deviceId: true },
+        })
+      ).map((kp) => `${kp.userId}:${kp.deviceId}`)
+    );
+    return candidates.filter((c) => {
+      if (known.has(`${c.userId}:${c.deviceId}`)) return true;
+      this.logger.warn(
+        `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${c.userId}:${c.deviceId} reason=no_key_package`
+      );
+      return false;
+    });
+  }
+
+  /**
    * Delivers an MLS Welcome message and optional ratchet tree to a target device.
    * Verifies the sender is a member of the group, queues the welcome, performs
    * real-time delivery if the target is online, and updates DeviceGroupMembership status.
@@ -1833,14 +1966,24 @@ export class MessagingService {
 
     // Verify that the authenticated sender is a member of the group.
     // authUserIdRaw comes from the x-user-id header injected by the proxy after JWT validation.
+    //
+    // THE SAME TABLE-PER-KIND QUESTION AS THE REPLAY (`getCommitsSince`). Until 2026-09-27 nobody
+    // Welcomed anyone into a key-distribution group - they were entered by external commit alone -
+    // so this gate only ever read `dm_group_members`, which names nobody for such a group. Section
+    // 20 of the channel-encryption protocol makes the client that adds a community newcomer
+    // Welcome their devices; asked of the user table, every one of those Welcomes would be refused.
+    // A sender holding an ACTIVE leaf row may Welcome: it already reads every seed on the group.
     const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
     if (authUserId) {
-      const membership = await this.groupMemberRepo.findOne({
-        where: { groupId: safeGroupId, userId: authUserId },
-      });
-      if (!membership) {
+      const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
+      const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
+        group,
+        safeGroupId,
+        authUserId
+      );
+      if (!isMember) {
         this.logger.warn(
-          `[WELCOME][${traceId}] AUTHZ FAIL sender=${authUserId} not member of group=${safeGroupId}`
+          `[WELCOME][${traceId}] AUTHZ FAIL sender=${authUserId} not member of group=${safeGroupId} keyDistribution=${isKeyDistribution}`
         );
         throw new ForbiddenException(`User ${authUserId} is not a member of group ${safeGroupId}`);
       }
@@ -1948,8 +2091,9 @@ export class MessagingService {
     // `history_request` from it, so a device that holds no group state could be picked to serve
     // one.
     //
-    // Nothing replaces it. A device the Welcome has not reached cannot decrypt a broadcast anyway,
-    // and the moment it can, `activateDeviceMembership` adds it and replays what it missed (DF2).
+    // Nothing replaces it. A device the Welcome has not reached cannot decrypt a broadcast anyway;
+    // what it can open is QUEUED for it from the epoch its admitting commit recorded
+    // (`ValidateCommitBody.admits`), and `activateDeviceMembership` adds it here once it has joined.
 
     this.logger.log(
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
@@ -1964,11 +2108,11 @@ export class MessagingService {
    * That sentence is in this table's entity docblock and it was NOT true until 2026-09-13. Three
    * paths performed the `pending -> active` transition and they agreed on nothing:
    *
-   * | Path | Addressability gate | Redis routing set | `kickedAt` | Missed-message replay |
-   * | --- | --- | --- | --- | --- |
-   * | this method | warn and return | written | cleared | yes |
-   * | `updateInvitationStatus` | THROW | **never written** | cleared | **no** |
-   * | `createGroup` | **none at all** | written | left unset | n/a |
+   * | Path | Addressability gate | Redis routing set | `kickedAt` |
+   * | --- | --- | --- | --- |
+   * | this method | warn and return | written | cleared |
+   * | `updateInvitationStatus` | THROW | **never written** | cleared |
+   * | `createGroup` | **none at all** | written | left unset |
    *
    * The middle row is the one that bit. A device that processed its Welcome in the FOREGROUND got
    * a truthful `active` row and was never added to `group:members:{groupId}`, so the gateway could
@@ -1987,12 +2131,11 @@ export class MessagingService {
    * caller turns it into a 400, a best-effort seam logs it and carries on. The log line is written
    * HERE, under the caller's own `tag`, so no caller can swallow it.
    *
-   * `redeliverMissed` (default true) replays the messages sent during the pending window so the
-   * device gets the notifications it missed. Callers where the device joined at the CURRENT epoch
-   * with no prior membership (external-commit join, or a group created this instant) must pass
-   * false: forward secrecy means it cannot decrypt anything sent before its join, so a replay would
-   * be up to 50 undecryptable frames and as many generic pushes. Pre-join content reaches it
-   * through the history bundle.
+   * NOTHING IS REPLAYED HERE ANY MORE (user, 2026-09-28). A replay at this transition (DF2) re-sent
+   * what a five-minute window over the history stream still held, capped at 50 - a clock deciding
+   * what a device was owed. A device a commit admits is a recipient from that commit's epoch on
+   * instead, at SEND time (`ValidateCommitBody.admits`), so by the time it activates everything it
+   * can open is already in its queue.
    *
    * Idempotent: upsert on the unique constraint (deviceId, groupId).
    */
@@ -2000,10 +2143,7 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    {
-      redeliverMissed = true,
-      tag = 'MEMBERSHIP_ACTIVE',
-    }: { redeliverMissed?: boolean; tag?: string } = {}
+    { tag = 'MEMBERSHIP_ACTIVE' }: { tag?: string } = {}
   ): Promise<ActivationOutcome> {
     // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
     // LOOK. `deviceAddressability` asks whether this pair is reachable; a placeholder that
@@ -2037,42 +2177,22 @@ export class MessagingService {
       return { ok: false, reason: addressable.reason };
     }
 
-    // Read prior state BEFORE the upsert: missed-message redelivery (DF2) must only
-    // happen on a genuine pending->active transition. activateDeviceMembership is also
-    // called idempotently on every Welcome re-processing; re-delivering when the device
-    // was already `active` would double notifications.
-    const existing = await this.deviceGroupRepo.findOne({
-      where: { deviceId, groupId },
-    });
-    const wasAlreadyActive = existing?.status === 'active';
-
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
+    // `admittedAtEpoch: null`: its status routes it from here on, so its admission has done its job.
     await this.deviceGroupRepo.upsert(
-      { userId, deviceId, groupId, status: 'active' as const, kickedAt: null },
+      {
+        userId,
+        deviceId,
+        groupId,
+        status: 'active' as const,
+        kickedAt: null,
+        admittedAtEpoch: null,
+      },
       { conflictPaths: ['deviceId', 'groupId'] }
     );
     // Immediate routing: add to Redis set without waiting for a cache rebuild.
     await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
     this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
-
-    if (!wasAlreadyActive && redeliverMissed) {
-      // While the device was `pending`, recipient resolution (`status='active'` filter)
-      // excluded it: no push notification was dispatched for messages sent during that
-      // window. Now that it is active (meaning it processed its Welcome -> it can decrypt),
-      // we re-deliver those messages to trigger the missing notification (DF2).
-      // Best-effort, never blocking for activation.
-      const pendingSinceMs = existing?.createdAt?.getTime();
-      void this.redeliverMissedDuringActivationWindow(
-        userId,
-        deviceId,
-        groupId,
-        pendingSinceMs
-      ).catch((e) =>
-        this.logger.warn(
-          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} FAILED: ${e instanceof Error ? e.message : String(e)}`
-        )
-      );
-    }
 
     return { ok: true };
   }
@@ -2164,6 +2284,9 @@ export class MessagingService {
         groupId,
         status: 'pending' as const,
         pendingSince: new Date(),
+        // A demoted device needs a NEW Welcome before it can read anything, so no earlier
+        // admission may keep it a recipient (see `DeviceGroupMembership.admittedAtEpoch`).
+        admittedAtEpoch: null,
         ...(removedFromTreeAt ? { kickedAt: removedFromTreeAt } : {}),
       },
       { conflictPaths: ['deviceId', 'groupId'] }
@@ -2177,97 +2300,6 @@ export class MessagingService {
       `[${tag}] group=${groupId} device=${userId}:${deviceId}` +
         `${removedFromTreeAt ? ' kicked' : ''}`
     );
-  }
-
-  /**
-   * Re-delivers to a device that just became `active` the visible application messages sent
-   * during its activation window (when it was `pending`, thus excluded from recipients and
-   * never notified). Source: the `history:{groupId}` stream, filtered on the `silent` field each
-   * entry now carries: since 2026-08-12 the stream also holds mutations (reactions, edits,
-   * deletions, read receipts), and re-notifying one would ring the user for a reaction. Welcome
-   * and Commit are still absent from the stream entirely. Bounded by
-   * {@link ACTIVATION_REDELIVER_WINDOW_MS} and
-   * a message cap to never spam a device that stayed `pending` for a long time. The device's
-   * own messages are skipped. Display idempotency: the client deduplicates by messageId
-   * (a message already received via history catch-up is not re-displayed).
-   */
-  private async redeliverMissedDuringActivationWindow(
-    userId: string,
-    deviceId: string,
-    groupId: string,
-    pendingSinceMs?: number
-  ): Promise<void> {
-    const traceId = this.makeTraceId('reactivate');
-    const MAX_COUNT = 50;
-    // Window cap: a device that stays `pending` for a long time (zombie that eventually
-    // activates) must not trigger an avalanche of notifications for old messages. Beyond
-    // the window, it catches up via history (without notification, which is correct).
-    const windowStartMs = Math.max(
-      pendingSinceMs ?? 0,
-      Date.now() - MessagingService.ACTIVATION_REDELIVER_WINDOW_MS
-    );
-
-    const historyKey = `history:${groupId}`;
-    // Stream IDs are timestamped (`<ms>-<seq>`): bound the XRANGE from windowStartMs.
-    const entries = await this.redis.xrange(
-      historyKey,
-      `${windowStartMs}`,
-      '+',
-      'COUNT',
-      MAX_COUNT
-    );
-    if (!entries || entries.length === 0) return;
-
-    let redelivered = 0;
-    /** Every entry of this page that is owed to the device, built before anything is written. */
-    const toRedeliver: QueuedMessage[] = [];
-    for (const [, fields] of entries) {
-      // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>, 'silent', '0'|'1']
-      const map = new Map<string, string>();
-      for (let i = 0; i + 1 < fields.length; i += 2) map.set(fields[i], fields[i + 1]);
-      const senderId = map.get('sender_id') ?? '';
-      const proto = map.get('content') ?? '';
-      if (!proto || senderId === userId) continue; // no payload, or our own message
-      // Entries written before the field existed are visible messages by construction, since the
-      // stream held nothing else then - so an absent `silent` reads as '0'.
-      if ((map.get('silent') ?? '0') === '1') continue; // a mutation: it must never re-notify
-
-      toRedeliver.push(
-        this.queuedMessageRepo.create({
-          recipientId: userId,
-          deviceId,
-          senderId,
-          groupId,
-          isWelcome: false,
-          isCommit: false,
-          proto,
-          createdAt: new Date(),
-        })
-      );
-    }
-
-    // THE WHOLE PAGE IN ONE UNIT OF WORK, for the reason {@link enqueueForLiveGroup} gives - a group
-    // deleted while a device activates into it takes these rows with it, or they are never written.
-    // Saving row by row inside the loop also took one transaction per entry and interleaved a push
-    // with each; the pushes are I/O and have no business inside a transaction, so they follow.
-    if (toRedeliver.length > 0) {
-      const saved = await this.enqueueForLiveGroup(
-        toRedeliver,
-        groupId,
-        'ACTIVATION_REDELIVER',
-        traceId
-      );
-      for (const queued of saved) {
-        await this.sendFcmForQueued(queued, traceId, groupId, queued.senderId ?? '', false);
-        redelivered++;
-      }
-    }
-
-    if (redelivered > 0) {
-      this.logger.log(
-        `[ACTIVATION_REDELIVER][${traceId}] group=${groupId} device=${userId}:${deviceId} redelivered=${redelivered}`
-      );
-    }
   }
 
   /**

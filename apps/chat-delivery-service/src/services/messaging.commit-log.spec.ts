@@ -49,10 +49,22 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         // epoch advance and the commit that lets everyone else replay it land together or neither
         // lands. Routing it here is what lets a test see the two writes in one callback.
         if (entity === MlsCommitLog) return { createQueryBuilder: () => commitInsertBuilder };
+        // The newcomers a commit admits are written in the same callback as the advance.
+        if (entity === DeviceGroupMembership) return txMembershipRepo;
         return txGroupInfoRepo;
       },
     })
   );
+  const membershipInsertBuilder = {
+    insert: jest.fn().mockReturnThis(),
+    values: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({}),
+  };
+  const txMembershipRepo = {
+    createQueryBuilder: jest.fn(() => membershipInsertBuilder),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+  };
   const groupRepo = { findOne: jest.fn(), save: jest.fn(), manager: { transaction } };
   const groupMemberRepo = { findOne: jest.fn() };
   const commitInsertBuilder = {
@@ -102,7 +114,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     get: jest.fn((k: string) => Promise.resolve(redisStore.get(k) ?? null)),
     del: jest.fn(),
     sadd: jest.fn(() => Promise.resolve(1)),
-    // Activation redelivery reads the history stream; empty keeps it a no-op here.
     xrange: jest.fn(() => Promise.resolve([])),
   };
 
@@ -309,12 +320,13 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           groupId: 'group-1',
           status: 'active',
           kickedAt: null,
+          admittedAtEpoch: null,
         },
         { conflictPaths: ['deviceId', 'groupId'] }
       );
       expect(redis.sadd).toHaveBeenCalledWith('group:members:group-1', 'user-2:device-new');
-      // No activation redelivery: the joiner landed at the current epoch and cannot decrypt
-      // anything sent before its commit - those messages come back via the history bundle.
+      // Nothing replayed: the joiner landed at the current epoch and cannot decrypt anything sent
+      // before its commit - those messages come back via the history bundle.
       expect(redis.xrange).not.toHaveBeenCalled();
     });
 
@@ -567,6 +579,67 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
       expect(res.gapAt).toBeUndefined();
       expect(res.belowFloor).toBe(false);
+    });
+  });
+
+  /**
+   * A COMMIT RECORDS THE NEWCOMERS IT ADMITS, WITH THE ADVANCE (user, 2026-09-28).
+   *
+   * The epoch a pending device may be queued from is exact only here: no member can seal at
+   * `baseEpoch + 1` before it has this commit, and the fan-out follows the transaction. Recorded
+   * at the Welcome instead, a frame sent in between skipped the newcomer, and a second commit
+   * landing first named the wrong epoch.
+   */
+  describe('the newcomers a commit admits', () => {
+    const accept = (admits?: { userId: string; deviceId: string }[]) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      return service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+        admits,
+      });
+    };
+
+    it('writes each admitted device pending at the epoch the commit creates, inside the advance', async () => {
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      const res = await accept([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      expect(res.accepted).toBe(true);
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(membershipInsertBuilder.values).toHaveBeenCalledWith({
+        userId: 'user-2',
+        deviceId: 'phone-2',
+        groupId: 'group-1',
+        status: 'pending',
+      });
+      // Guarded on `pending`: an active device is routed by its status and never touched.
+      expect(txMembershipRepo.update).toHaveBeenCalledWith(
+        { deviceId: 'phone-2', groupId: 'group-1', status: 'pending' },
+        { admittedAtEpoch: 6 }
+      );
+    });
+
+    it('refuses the committer itself and a device with no KeyPackage, recording neither', async () => {
+      keyPackageRepo.find.mockResolvedValue([]);
+
+      await accept([
+        { userId: 'user-1', deviceId: 'device-1' },
+        { userId: 'user-9', deviceId: 'ghost-9' },
+      ]);
+
+      expect(txMembershipRepo.update).not.toHaveBeenCalled();
+      expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+    });
+
+    it('records nothing for a client predating the field', async () => {
+      await accept(undefined);
+
+      expect(keyPackageRepo.find).not.toHaveBeenCalled();
+      expect(txMembershipRepo.update).not.toHaveBeenCalled();
     });
   });
 });

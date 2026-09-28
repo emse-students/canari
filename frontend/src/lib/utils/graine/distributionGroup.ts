@@ -12,6 +12,7 @@ import { requestCommunityHistory } from './repair';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { readWelcomeOwedFromRow, type WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -265,6 +266,26 @@ async function joinDistributionGroup(
     staleForgotten = await mlsService.forgetDistributionGroupById(ref.groupId);
   }
 
+  // A SEAT FOR A DEVICE THAT HOLDS NOTHING MAY BE A WELCOME ON ITS WAY, AND THEN THE WELCOME IS THE
+  // DOOR. Since 2026-09-27 the client that ADDS somebody to a community or a private salon Welcomes
+  // their devices (channel-encryption section 20), and `sendWelcome` writes this device's `pending`
+  // row as it queues the Welcome. Joining by external commit on top of it would write this
+  // device's leaf a second time - the GRP-4 duplicate-leaf race conversations closed on
+  // 2026-08-26 - so the same reading decides here: owed means wait, anything else means the
+  // external commit is this device's own door. Asked only when the server names a seat, so the
+  // ordinary first join (a share link, a public salon) costs nothing extra.
+  if (!holdsTheGroup && Array.isArray(roster) && roster.includes(mlsService.getDeviceId())) {
+    const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
+    if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
+      log(
+        reading === 'owed'
+          ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (queued, or an add in flight) - not joining by external commit, the admitter's Welcome is the door`
+          : `[GRAINE] ${scopeLabel(scope)}: this device has a seat but whether a Welcome is owed could not be read - joining nothing this pass, so two doors are never opened at once`
+      );
+      return false;
+    }
+  }
+
   const outcome = await mlsService.ensureDistributionGroup(scope, ref);
 
   // THE TREE MOVED, SO THE DISK MOVES WITH IT - on the failing outcome as much as the happy one.
@@ -324,6 +345,34 @@ async function republishStaleBase(
   await republishBaseIfStale(mlsService, ref, (message) =>
     log(`[GRAINE] ${scopeLabel(scope)}: ${message}`)
   );
+}
+
+/**
+ * Reads whether an admitter owes this device a Welcome into `groupId`.
+ *
+ * `null` when the question could not be put - no session wired, or the read threw - and the caller
+ * then opens NEITHER door this pass: guessing is exactly the move that writes a leaf twice.
+ */
+async function readWelcomeOwedForThisDevice(
+  mlsService: IMlsService,
+  groupId: string,
+  scope: DistributionScope,
+  log: (message: string) => void
+): Promise<WelcomeOwedReading | null> {
+  if (!isGraineReady()) {
+    log(`[GRAINE] ${scopeLabel(scope)}: no Graine runtime - cannot ask whether a Welcome is owed`);
+    return null;
+  }
+  const { userId } = requireGraineRuntime('read whether a Welcome is owed');
+  try {
+    const rows = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
+    return readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+  } catch (e) {
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: could not read this device's membership rows: ${String(e)}`
+    );
+    return null;
+  }
 }
 
 /**

@@ -21,9 +21,9 @@ import { RETENTION_WINDOW_MS } from '../retention.constants';
  * and because every control frame is silent by construction, no reaction, edit, deletion or read
  * receipt ever had a shared copy - a device that was absent could never obtain one.
  *
- * The split has a second half that is easy to lose: the stream now carries silent frames, so
- * anything that NOTIFIES from the stream must honour the per-entry flag, or a reactivated device
- * rings its user once per reaction. Both halves are asserted here.
+ * The split had a second half while something NOTIFIED from the stream: a per-entry `silent` flag,
+ * so a reactivated device did not ring once per reaction. That consumer (DF2) was deleted on
+ * 2026-09-28 and the flag with it - nothing notifies from the stream any more.
  */
 describe('MessagingService - visibility vs durability', () => {
   let service: MessagingService;
@@ -140,45 +140,6 @@ describe('MessagingService - visibility vs durability', () => {
     return at === -1 ? undefined : args[at + 1];
   };
 
-  /** `redeliverMissedDuringActivationWindow` is private; called directly so the assertion is not racy. */
-  const redeliver = (userId: string, deviceId: string, groupId: string): Promise<void> =>
-    (
-      service as unknown as {
-        redeliverMissedDuringActivationWindow: (
-          u: string,
-          d: string,
-          g: string,
-          since?: number
-        ) => Promise<void>;
-      }
-    ).redeliverMissedDuringActivationWindow(userId, deviceId, groupId);
-
-  /**
-   * The `proto` of every row the redelivery actually queued, in order.
-   *
-   * WHAT THESE TESTS CLAIM IS WHICH FRAMES WENT OUT, and asserting `save` call counts only stood in
-   * for that while the page was written one row at a time. It is now written in one transaction
-   * (see `enqueueForLiveGroup`), so the count says nothing and the rows say everything.
-   */
-  const queuedProtos = (): string[] =>
-    queuedMessageRepo.save.mock.calls.flatMap(([arg]) =>
-      (Array.isArray(arg) ? arg : [arg]).map((r: Record<string, unknown>) => String(r.proto))
-    );
-
-  /** One `history:<group>` entry, as ioredis returns it: `[id, [field, value, ...]]`. */
-  const entry = (senderId: string, proto: string, silent?: '0' | '1'): [string, string[]] => [
-    '1-0',
-    [
-      'sender_id',
-      senderId,
-      'content',
-      proto,
-      'timestamp',
-      new Date().toISOString(),
-      ...(silent === undefined ? [] : ['silent', silent]),
-    ],
-  ];
-
   beforeEach(async () => {
     jest.clearAllMocks();
     // `clearAllMocks` keeps implementations, so a set restored by one test would leak into the
@@ -264,17 +225,10 @@ describe('MessagingService - visibility vs durability', () => {
       expect(fieldOf('sender_device_id')).toBe('d-sender');
     });
 
-    it('marks that mutation as showing nothing, so no consumer may notify for it', async () => {
-      await service.sendMessage(send({ silent: true, durable: true }));
-
-      expect(fieldOf('silent')).toBe('1');
-    });
-
-    it('keeps a visible message and marks it showable', async () => {
+    it('keeps a visible message', async () => {
       await service.sendMessage(send({ silent: false, durable: true }));
 
       expect(redis.xadd).toHaveBeenCalledTimes(1);
-      expect(fieldOf('silent')).toBe('0');
     });
 
     it('drops a transport frame, which carries no conversation state', async () => {
@@ -369,7 +323,6 @@ describe('MessagingService - visibility vs durability', () => {
         await service.sendMessage(send({ silent: false }));
 
         expect(redis.xadd).toHaveBeenCalledTimes(1);
-        expect(fieldOf('silent')).toBe('0');
       });
 
       it('reads an omitted durable as the old meaning of silent (silent -> dropped)', async () => {
@@ -530,6 +483,79 @@ describe('MessagingService - visibility vs durability', () => {
       expect(queued.map((q) => q.deviceId)).toEqual(['dA', 'dB']);
     });
 
+    describe('a pending device its commit admitted (user, 2026-09-28)', () => {
+      /** An MLS 1.0 PrivateMessage header sealed at `epoch`: `version || wire_format || group_id<V> || epoch`. */
+      const sealedAt = (epoch: number): string => {
+        const id = Buffer.from('g1', 'ascii');
+        const e = Buffer.alloc(8);
+        e.writeBigUInt64BE(BigInt(epoch));
+        return Buffer.concat([
+          Buffer.from([0x00, 0x01, 0x00, 0x02, id.length]),
+          id,
+          e,
+          Buffer.from([0xca, 0xfe]),
+        ]).toString('base64');
+      };
+
+      /** Two active devices, plus one pending device admitted at epoch 7 and one never admitted. */
+      const withAdmitted = () => {
+        const active = [
+          { userId: 'u1', deviceId: 'd1' },
+          { userId: 'u2', deviceId: 'dA' },
+        ];
+        const pending = [
+          { userId: 'u3', deviceId: 'dNew', admittedAtEpoch: 7 },
+          { userId: 'u4', deviceId: 'dOld', admittedAtEpoch: null },
+        ];
+        // The fake evaluates the one operator the send path uses, so the RULE is what is tested.
+        deviceGroupRepo.find.mockImplementation(
+          async ({ where }: { where: { status: string; admittedAtEpoch?: { value: number } } }) =>
+            where.status === 'active'
+              ? active
+              : pending.filter(
+                  (p) =>
+                    p.admittedAtEpoch !== null &&
+                    p.admittedAtEpoch <= (where.admittedAtEpoch?.value ?? -1)
+                )
+        );
+        keyPackageRepo.find.mockResolvedValue([...active, ...pending]);
+      };
+
+      const queuedDevices = (): string[] =>
+        (queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[]).map(
+          (q) => q.deviceId
+        );
+
+      afterEach(() => deviceGroupRepo.find.mockReset().mockResolvedValue([]));
+
+      it('queues it every frame sealed at the epoch it was admitted at', async () => {
+        withAdmitted();
+        silencePush();
+
+        await service.sendMessage(send({ proto: sealedAt(7), durable: true }));
+
+        expect(queuedDevices()).toEqual(['dA', 'dNew']);
+      });
+
+      it('skips it for a frame sealed before that epoch, which it can never open', async () => {
+        withAdmitted();
+        silencePush();
+
+        await service.sendMessage(send({ proto: sealedAt(6), durable: true }));
+
+        expect(queuedDevices()).toEqual(['dA']);
+      });
+
+      it('never announces it on the routing set - only its activation does', async () => {
+        withAdmitted();
+        silencePush();
+
+        await service.sendMessage(send({ proto: sealedAt(7), durable: true }));
+
+        expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'u1:d1', 'u2:dA');
+      });
+    });
+
     it('reconciles the gateway routing set with every live member, the sender included', async () => {
       // Reconciling with the DELIVERY set instead left the sender out for ever, and a member
       // missing from this set is one `forward_to_one_peer` can never elect to answer a
@@ -568,56 +594,6 @@ describe('MessagingService - visibility vs durability', () => {
       await service.sendMessage(send({ durable: true }));
 
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
-    });
-  });
-
-  describe('redelivery to a device that just became active', () => {
-    it('notifies for a visible message it missed', async () => {
-      redis.xrange.mockResolvedValue([entry('u2', 'visible')]);
-
-      await redeliver('u1', 'd1', 'g1');
-
-      expect(queuedProtos()).toEqual(['visible']);
-    });
-
-    it('stays silent for a mutation, instead of ringing once per reaction', async () => {
-      // The regression the split would otherwise have introduced: before it, the stream held
-      // visible messages only and this path could assume everything in it was showable.
-      redis.xrange.mockResolvedValue([entry('u2', 'a-reaction', '1')]);
-
-      await redeliver('u1', 'd1', 'g1');
-
-      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('notifies only for the visible frames of a mixed window', async () => {
-      redis.xrange.mockResolvedValue([
-        entry('u2', 'msg-a', '0'),
-        entry('u2', 'reaction', '1'),
-        entry('u2', 'msg-b', '0'),
-        entry('u2', 'receipt', '1'),
-      ]);
-
-      await redeliver('u1', 'd1', 'g1');
-
-      expect(queuedProtos()).toEqual(['msg-a', 'msg-b']);
-    });
-
-    it('treats an entry written before the field existed as visible', async () => {
-      // The stream held nothing but visible messages then, so an absent flag has one reading.
-      redis.xrange.mockResolvedValue([entry('u2', 'older-message')]);
-
-      await redeliver('u1', 'd1', 'g1');
-
-      expect(queuedProtos()).toEqual(['older-message']);
-    });
-
-    it('never redelivers the device its own messages', async () => {
-      redis.xrange.mockResolvedValue([entry('u1', 'mine', '0')]);
-
-      await redeliver('u1', 'd1', 'g1');
-
-      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
     });
   });
 

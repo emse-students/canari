@@ -24,7 +24,11 @@ import { SINGLE_HOLDER_REPORT_TOP_N } from './retention.constants';
  *
  * The predicate itself lives in SQL and is not exercised here - it was measured directly against
  * production instead (2026-09-12, 58 live groups), which is the only place it could have been
- * falsified. That measurement is what produced `MIN_MEMBERS_FOR_HOLDER_REPORT`.
+ * falsified. That measurement is what produced `MIN_MEMBERS_FOR_HOLDER_REPORT`. The one part of it
+ * pinned here is the key-group membership rule, because losing it is silent: a key group names
+ * nobody in `dm_group_members`, and a query counting only that table reports none of them - which
+ * is how the report missed every key group until 2026-09-27 (run against the local estate that day:
+ * both key groups went from 0 members to 2).
  */
 describe('AppController - reportSingleHolderGroups', () => {
   let controller: AppController;
@@ -33,12 +37,19 @@ describe('AppController - reportSingleHolderGroups', () => {
   let error: jest.SpyInstance;
   let log: jest.SpyInstance;
 
-  const row = (groupId: string, holders: number, activeEpoch = 3, pending = 0) => ({
+  const row = (
+    groupId: string,
+    holders: number,
+    activeEpoch = 3,
+    pending = 0,
+    keyGroup = false
+  ) => ({
     groupId,
     holders: String(holders),
     members: '2',
     pending: String(pending),
     activeEpoch,
+    keyGroup,
   });
 
   const emptyRepo = () => ({
@@ -141,5 +152,24 @@ describe('AppController - reportSingleHolderGroups', () => {
     expect(line).toContain(`${SINGLE_HOLDER_REPORT_TOP_N + 5} conversation(s)`);
     expect(line).toContain(`${SINGLE_HOLDER_REPORT_TOP_N} of ${SINGLE_HOLDER_REPORT_TOP_N + 5}`);
     expect(line).not.toContain(`g-${SINGLE_HOLDER_REPORT_TOP_N}(`);
+  });
+
+  it('counts a key group by its device rows, because dm_group_members names nobody in one', async () => {
+    await run();
+
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toMatch(
+      /WHEN g\."distributionWorkspaceId" IS NOT NULL\s+OR g\."distributionChannelId" IS NOT NULL\s+THEN COUNT\(DISTINCT m\."userId"\)/
+    );
+  });
+
+  it('names a key group as one, since it has no Welcome fallback', async () => {
+    query.mockResolvedValue([row('k-one', 1, 7, 0, true)]);
+
+    await run();
+
+    expect(String(warn.mock.calls[0][0])).toContain(
+      'k-one(key group, epoch 7, 2 member(s), 0 pending)'
+    );
   });
 });

@@ -319,7 +319,7 @@ telechargement, donc un suffixe dedans produit un 404.
 Sur la machine, c'est le nom du projet compose qui dit dans quelle estate on est, et rien d'autre :
 
 ```bash
-docker ps --filter label=com.docker.compose.project=infrastructure   # production
+docker ps --filter label=com.docker.compose.project=canari-prod      # production
 docker ps --filter label=com.docker.compose.project=canari-dev       # dev
 ```
 

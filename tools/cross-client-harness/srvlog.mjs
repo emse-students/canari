@@ -335,9 +335,12 @@ const BENIGN = [
   // the check that asked for it asserts the OUTCOME directly - a group that was not created fails on
   // its own post-condition, not on a missing log line. The failing spellings are elsewhere: a refused
   // membership mutation throws and lands in `errors`, and `SEND ... No message queued` is a warn.
-  /\[GroupsController\] \[CREATE_GROUP\]\[create-grp-[0-9a-f]+\] (name=|creator membership set to active|DONE )/,
+  // `nameBytes=` since the creation line stopped printing the name itself - the same event.
+  /\[GroupsController\] \[CREATE_GROUP\]\[create-grp-[0-9a-f]+\] (name=|nameBytes=|creator membership set to active|DONE )/,
   /\[MembersController\] \[ADD_MEMBER\]\[add-member-[0-9a-f]+\] (START|DONE) group=/,
-  /\[MessagingService\] \[WELCOME\]\[welcome-send-[0-9a-f]+\] (START|QUEUED|DONE) /,
+  // A Welcome is delivered through the one delivery a message uses, so it narrates the same two
+  // steps the SEND rule above admits: the recipient it resolved (`online=`) and the publication.
+  /\[MessagingService\] \[WELCOME\]\[welcome-send-[0-9a-f]+\] (START|QUEUED|DONE|PUBLISHED|recipient=)/,
   /\[InvitationsController\] \[INVITATION_STATUS\] device=\S+ user=\S+ group=\S+ newStatus=(active|pending)/,
   // THE INVITE-LINK HALF OF THE SAME LIFECYCLE, unclassified until now because no phase had ever
   // built a group by LINK: GRP is the first, and these were six of its seventeen unexplained lines
@@ -395,7 +398,11 @@ const BENIGN = [
   // `\[MEMBERSHIP_ACTIVE\] group=` IS THE PIN, and the `$` with it. Twenty lines up the same tag
   // writes `[MEMBERSHIP_ACTIVE] REFUSED group=... reason=...` - identical prefix, opposite outcome -
   // so a rule anchored on the tag alone would have buried the refusal in here. It is in NOTABLE.
-  /\[MessagingService\] \[MEMBERSHIP_ACTIVE\] group=\S+ device=\S+$/,
+  //
+  // The line is written under the CALLER's tag (`activateDeviceMembership`'s `tag`), so each door
+  // that promotes is named here: the default, the background Welcome, group creation, the
+  // invitation status endpoint and the distribution publisher. The demotion tags are not.
+  /\[MessagingService\] \[(MEMBERSHIP_ACTIVE|MEMBERSHIP_ACTIVE_PUSH|CREATE_GROUP|INVITATION_STATUS|DISTRIBUTION_PUBLISHER)\] group=\S+ device=\S+$/,
   // THE PER-REQUEST CHATTER OF THE WELCOME PROTOCOL, whose OUTCOMES are all in NOTABLE below. A
   // device that has just been added asks the group for the Welcome that lets it decrypt anything;
   // the service prints the ask, then walks the member list one line at a time. `HISTORY_REQ`, its
@@ -812,11 +819,12 @@ const NOTABLE = [
   // already been widened for this exact reason and this rule was missed in that edit.
   /\[PUSH_DEFERRED\]\[send-/,
   /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+(?:-def)?\] FCM sent /,
-  // THE CATCH-UP A REACTIVATION OWES, and it is notable for the reason `FCM sent` is: nothing here
-  // failed, but a device was `pending` while messages arrived and is being re-notified for them, so
-  // a reader wants the count. `redelivered=N` is logged only when N > 0 (`:1595`), so the line's
-  // existence already means work was done. Its failure twin is a `warn` and is not matched here.
-  /\[ACTIVATION_REDELIVER\]\[reactivate-[0-9a-f]+\] group=\S+ device=\S+ redelivered=\d+$/,
+  // A COMMIT ADMITTING NEWCOMERS, and the sends that queue them before they have joined (user,
+  // 2026-09-28). Notable for the reason `FCM sent` is: nothing failed, but a reader following a
+  // device added while dead wants to see it become a recipient, at which epoch, and of which frame.
+  // Their refusal twin, `ADMIT_REFUSED`, is a `warn` and is deliberately not matched here.
+  /\[COMMIT\]\[commit-[0-9a-f]+\] ADMITS group=\S+ atEpoch=\d+ devices=\S+$/,
+  /\[SEND\]\[send-[0-9a-f]+\] PENDING_ADMITTED group=\S+ frameEpoch=\d+ devices=\S+$/,
   // AN INTERNET SCANNER LOOKING FOR SECRETS ON A PUBLIC HOST - reported, and never a gate.
   //
   // NOTABLE rather than BENIGN, unlike the crawler 404s above, because the answer to "was this site

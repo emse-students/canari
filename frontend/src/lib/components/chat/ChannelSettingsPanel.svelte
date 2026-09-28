@@ -23,6 +23,8 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
+  import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ChannelSidebarItem {
     id: string;
@@ -221,6 +223,10 @@
       await channelService.updateChannelAccess(selectedChannelId, storedIsPrivate, next);
       accessAllowedUserIds = next;
       addingUserId = '';
+      // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grantee's
+      // phone may be shut, and only a device holding the salon's key group can add them to it.
+      // Not awaited and never throws - the grant has already succeeded, every outcome is logged.
+      if (storedIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
     } catch (e) {
       Log.d('channelSettings.addAllowedUser failed', e);
       membersError = m.chat_channel_add_access_error();

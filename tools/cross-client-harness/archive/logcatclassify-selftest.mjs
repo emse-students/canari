@@ -35,6 +35,7 @@ const CASES = [
   [line('D', 'CanariFCM', 'onMessageReceived: type=message action=null groupId=0000'), 'explained'],
   [line('D', 'CanariFCM', 'App in foreground -> MLS handled by the foreground (WS), skip'), 'explained'],
   [line('D', 'CanariFCM', 'decryptProto: success type=text -> "MARKER"'), 'explained'],
+  [line('D', 'CanariFCM', 'decryptProtoWithCommits: success type=text -> "MARKER"'), 'explained'],
   // ── the channel-push path, named 2026-09-21 after NOTIF-18 landed PASS-DIRTY on it ──────────
   // The route line's real separator is a U+2192 arrow; it is spelt here so the fixture is the line
   // the phone actually emits, while the RULE matches it as `\S+` and this file's own source stays

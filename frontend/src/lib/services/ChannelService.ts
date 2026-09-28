@@ -640,10 +640,17 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Adds a user to the channel's community (and to a private salon's roster, for a new member).
+   *
+   * `alreadyMember` is the server saying the user was ALREADY in the community, so nothing was
+   * granted - the fact the caller needs to decide whether it owes the newcomer an admission into the
+   * key groups (channel-encryption section 20).
+   */
   async inviteToChannel(
     channelId: string,
     dto: ChannelInviteDto
-  ): Promise<{ success: boolean; userId: string }> {
+  ): Promise<{ success: boolean; userId: string; alreadyMember?: boolean }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/invite`, {
       method: 'POST',

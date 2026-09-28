@@ -782,27 +782,43 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // different tables, which no `find` can express. `dm_group_members` is the authoritative
     // answer to who is a member (the device table is a routing cache and says so); the device
     // table is the only evidence of who still holds a tree.
+    //
+    // **A KEY GROUP IS THE EXCEPTION, AND FOR TWO WEEKS IT WAS INVISIBLE HERE.** A community's or a
+    // private salon's key-distribution group never populates `dm_group_members` - its membership IS
+    // its device rows (channel-encryption section 16) - so `members` read 0 and the threshold
+    // dropped every one of them. That is the kind with no Welcome fallback, where a last holder
+    // leaving matters most. So for a key group the members are the distinct users on its device
+    // rows, and the line names it as one.
     const rows: {
       groupId: string;
       holders: string;
       members: string;
       pending: string;
       activeEpoch: number;
+      keyGroup: boolean;
     }[] = await this.groupRepo.query(
-      `SELECT g.id                                    AS "groupId",
-              COUNT(DISTINCT m."userId")
-                FILTER (WHERE m.status = 'active')    AS holders,
-              (SELECT COUNT(*) FROM dm_group_members gm
-                WHERE gm."groupId" = g.id)            AS members,
-              COUNT(*) FILTER (WHERE m.status = 'pending') AS pending,
-              g."activeEpoch"                         AS "activeEpoch"
-         FROM dm_groups g
-         LEFT JOIN dm_device_group_memberships m ON m."groupId" = g.id
-        WHERE g."deletedAt" IS NULL
-        GROUP BY g.id
-       HAVING (SELECT COUNT(*) FROM dm_group_members gm WHERE gm."groupId" = g.id) >= $1
-          AND COUNT(DISTINCT m."userId") FILTER (WHERE m.status = 'active') < 2
-        ORDER BY holders ASC, g."activeEpoch" DESC`,
+      `WITH counted AS (
+         SELECT g.id                                    AS "groupId",
+                g."activeEpoch"                         AS "activeEpoch",
+                (g."distributionWorkspaceId" IS NOT NULL
+                  OR g."distributionChannelId" IS NOT NULL) AS "keyGroup",
+                COUNT(DISTINCT m."userId")
+                  FILTER (WHERE m.status = 'active')    AS holders,
+                COUNT(*) FILTER (WHERE m.status = 'pending') AS pending,
+                CASE WHEN g."distributionWorkspaceId" IS NOT NULL
+                       OR g."distributionChannelId" IS NOT NULL
+                     THEN COUNT(DISTINCT m."userId")
+                     ELSE (SELECT COUNT(*) FROM dm_group_members gm
+                            WHERE gm."groupId" = g.id)
+                END                                     AS members
+           FROM dm_groups g
+           LEFT JOIN dm_device_group_memberships m ON m."groupId" = g.id
+          WHERE g."deletedAt" IS NULL
+          GROUP BY g.id
+       )
+       SELECT * FROM counted
+        WHERE members >= $1 AND holders < 2
+        ORDER BY holders ASC, "activeEpoch" DESC`,
       [MIN_MEMBERS_FOR_HOLDER_REPORT]
     );
 
@@ -820,7 +836,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         .slice(0, SINGLE_HOLDER_REPORT_TOP_N)
         .map(
           (r) =>
-            `${r.groupId}(epoch ${r.activeEpoch}, ${r.members} member(s), ${r.pending} pending)`
+            `${r.groupId}(${r.keyGroup ? 'key group, ' : ''}epoch ${r.activeEpoch}, ${r.members} member(s), ${r.pending} pending)`
         )
         .join(' ');
 
