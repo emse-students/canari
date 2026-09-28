@@ -76,6 +76,7 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type {
   DistributionFrameHandler,
@@ -1258,6 +1259,12 @@ export abstract class BaseMlsService implements IMlsService {
    * able to drift apart, since one of them is what the other claims to have measured.
    */
   private settleBarrier(): Promise<void> {
+    // A FOLLOWER TAB HAS NO MAILBOX OF ITS OWN TO PULL. Its socket is never open, so the clause below
+    // read "the socket has dropped, pull again" on EVERY barrier: measured on production 2026-09-28,
+    // one follower pulled the same 64 rows 37 times in ten seconds - one pull per conversation the
+    // history catch-up settled - and DECRYPTED them, in a second tab, against the ratchet the leader
+    // owns (WP-MULTITAB-1). The leader drains the queue; a follower only waits for its own scheduler.
+    if (getTabLeadership() === 'follower') return this.settleMailbox();
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
@@ -1805,6 +1812,14 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async fetchPendingMessages(): Promise<void> {
     if (this.userId === UNRESOLVED_USER_ID) return;
+    if (getTabLeadership() === 'follower') {
+      // AT A LEVEL THAT ACCUSES: every path that pulls is gated on leadership, so reaching this is a
+      // caller that forgot - and letting it through decrypts in a tab that does not own the ratchet.
+      console.error(
+        '[PENDING] pull refused on a follower tab - only the leader drains the queue (a caller is not gated on leadership)'
+      );
+      return;
+    }
 
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.

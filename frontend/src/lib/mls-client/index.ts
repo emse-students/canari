@@ -51,6 +51,7 @@ export {
   setTabLeaderDemotedHandler,
   releaseLeadership,
   requestLeadershipTakeover,
+  markPromotionReload,
 } from './tabLeader';
 export {
   setupMessageHandler,

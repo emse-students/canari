@@ -949,6 +949,44 @@ Guarded by `mls-client/tabLeader.test.ts`, whose stub for these cases **models t
 than the two answers - the defect is invisible to a stub that cannot be held twice, which is why
 fourteen existing cases were green over it.
 
+### A take-over that reloads keeps the lock it took (2026-09-28)
+
+**"Prendre la main" never stuck.** A promoted tab reloads to pick up the MLS state the old leader left
+(WP-MULTITAB-1), and a Web Lock belongs to a DOCUMENT: the reload released the lock it had just been
+granted. The tab it took over from had requeued at once (`releaseLeadership`, above), so it was granted
+the lock back before the reloaded page could ask. Measured on production, one click:
+
+```
+19:25:33.243  Promoted to leader (Web Locks)
+19:25:33.243  Leader promoted - reloading to pick up the MLS state left by the old leader.
+19:25:33.991  Another tab is active - read-only mode (Web Locks).   <- the old leader has it again
+19:25:34.249  Promoted to leader / reloading                        <- and the two trade it once more
+19:25:35.297  Another tab is active - read-only mode (Web Locks).
+```
+
+**The reload is the same tab continuing, not a new candidate**, so it is marked as one: the promotion
+handler calls `markPromotionReload()` (a one-shot key in the TAB's `sessionStorage`, which survives a
+reload and no other tab reads), and the election of the page it starts requests the lock with
+`steal: true` instead of `ifAvailable`. The mark is consumed by that election, so the tab's next
+reload queues like any other. A leader whose lock is stolen sees its request reject with
+`AbortError` and hands over exactly as a take-over does (`onLeaderLockRejected`: follower, back in the
+queue, the demotion handler reloads it) - two tabs advancing one ratchet is what this module exists to
+prevent. Guarded by the `a promotion reload reclaims the lock` cases in `tabLeader.test.ts`.
+
+### A follower pulled the leader's queue on every barrier (2026-09-28)
+
+**Found in the same console.** `settleBarrier` pulls whenever no pull has emptied the mailbox *while
+the socket was open* - right for a leader whose socket dropped, and true of a FOLLOWER at every call,
+since a follower never opens one. Every `waitForMessageQueueIdle` therefore started a full pull: one
+follower pulled the same 64 rows **37 times in ten seconds**, one per conversation its history
+catch-up settled, and ran each through `processIncomingMessage` - decrypting, in a second tab, against
+the ratchet the leader owns (WP-MULTITAB-1).
+
+A follower's barrier now waits for its own scheduler and pulls nothing, and `fetchPendingMessages`
+refuses on a follower at `error` level: every path that pulls is gated on leadership, so reaching it
+is a caller that forgot. `undecided` is not `follower` - the boot pull runs after the election, and a
+native client is always the leader. Guarded by `BaseMlsService.mailboxBarrier.test.ts`.
+
 ## Bugs fixed by the 2026-06 rewrite
 
 | Bug ID | Description | Fix |

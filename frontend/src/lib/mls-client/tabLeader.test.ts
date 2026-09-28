@@ -6,6 +6,8 @@ import {
   getTabLeaderElectionIdForTests,
   getTabLeadership,
   setTabLeaderPromotedHandler,
+  setTabLeaderDemotedHandler,
+  markPromotionReload,
   whenTabLeadershipDecided,
 } from './tabLeader';
 
@@ -438,6 +440,121 @@ describe('tabLeader - the election runs once per document', () => {
       expect([a, b]).toEqual([true, true]);
       expect(locks.pending()).toBe(0);
     } finally {
+      locks.restore();
+    }
+  });
+});
+
+/**
+ * A take-over that reloads must keep the lock it took (production, 2026-09-28).
+ *
+ * "Prendre la main" promoted the tab, the promotion reloaded it, the reload released the lock, and
+ * the tab it had taken over from - requeued at once - was granted it back before the reloaded page
+ * could ask. One click, two promotions, and the clicking tab was read-only again.
+ */
+describe('tabLeader - a promotion reload reclaims the lock it was granted', () => {
+  const logs: string[] = [];
+  const log = (m: string) => logs.push(m);
+
+  beforeEach(() => {
+    logs.length = 0;
+    resetTabLeaderStateForTests();
+  });
+
+  afterEach(() => {
+    resetTabLeaderStateForTests();
+    vi.restoreAllMocks();
+  });
+
+  /** Records every request's options; a steal is granted, an `ifAvailable` probe finds it held. */
+  function stubHeldLock() {
+    const orig = navigator.locks;
+    const requests: Array<{ ifAvailable?: boolean; steal?: boolean }> = [];
+    let reject: (e: unknown) => void = () => {};
+    const request = (
+      _name: string,
+      opts: { ifAvailable?: boolean; steal?: boolean },
+      cb: (lock: { mode: string } | null) => unknown
+    ) => {
+      requests.push(opts);
+      if (opts.steal) {
+        return new Promise<unknown>((_resolve, rej) => {
+          reject = rej;
+          void cb({ mode: 'exclusive' });
+        });
+      }
+      if (opts.ifAvailable) return Promise.resolve(cb(null));
+      return new Promise<void>(() => {});
+    };
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    return {
+      requests,
+      /** What the browser does to a holder whose lock another document stole. */
+      stealFromHolder: () => reject(Object.assign(new Error('stolen'), { name: 'AbortError' })),
+      restore: () => Object.defineProperty(navigator, 'locks', { configurable: true, value: orig }),
+    };
+  }
+
+  it('a page started by a promotion reload steals the lock instead of queueing', async () => {
+    const locks = stubHeldLock();
+    try {
+      markPromotionReload();
+
+      expect(await initTabLeadershipAsync(log)).toBe(true);
+
+      expect(locks.requests[0]).toMatchObject({ steal: true });
+      expect(getTabLeadership()).toBe('leader');
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('reclaims ONCE - the next election of the tab queues like any other', async () => {
+    const locks = stubHeldLock();
+    try {
+      markPromotionReload();
+      await initTabLeadershipAsync(log);
+      resetTabLeaderStateForTests();
+
+      expect(await initTabLeadershipAsync(log)).toBe(false);
+
+      expect(locks.requests.at(-2)).toMatchObject({ ifAvailable: true });
+      expect(getTabLeadership()).toBe('follower');
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('a page loaded for any other reason still queues behind the holder', async () => {
+    const locks = stubHeldLock();
+    try {
+      expect(await initTabLeadershipAsync(log)).toBe(false);
+      expect(locks.requests.some((o) => o.steal)).toBe(false);
+    } finally {
+      locks.restore();
+    }
+  });
+
+  it('a leader whose lock is stolen hands over as a take-over does, and queues again', async () => {
+    const locks = stubHeldLock();
+    let demoted = 0;
+    setTabLeaderDemotedHandler(() => {
+      demoted += 1;
+    });
+    try {
+      markPromotionReload();
+      await initTabLeadershipAsync(log);
+      const before = locks.requests.length;
+
+      locks.stealFromHolder();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      // Two tabs advancing one MLS ratchet is what the whole module exists to prevent.
+      expect(getTabLeadership()).toBe('follower');
+      expect(demoted).toBe(1);
+      expect(locks.requests.length).toBe(before + 1);
+    } finally {
+      setTabLeaderDemotedHandler(null);
       locks.restore();
     }
   });

@@ -241,6 +241,73 @@ function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
 // ── Web Locks implementation ───────────────────────────────────────────────
 
 /**
+ * Set in THIS tab's sessionStorage just before a promoted tab reloads, consumed by the election of
+ * the document that reload starts.
+ *
+ * **A PROMOTION THAT RELOADS GAVE THE LOCK AWAY, AND "PRENDRE LA MAIN" NEVER STUCK.** A promoted
+ * tab reloads to pick up the MLS state the old leader left (see the promotion handler in
+ * `useChatSession.svelte.ts`), and Web Locks are per-document: the reload releases the lock it was
+ * just granted. The tab it took over from had requeued at once (`releaseLeadership`), so it was
+ * granted the lock back before the reloaded page could ask. Measured on production 2026-09-28, one
+ * click on the button:
+ *
+ *   19:25:33.243  Promoted to leader (Web Locks)          <- the take-over works
+ *   19:25:33.243  Leader promoted - reloading ...          <- ...and gives the lock away
+ *   19:25:33.991  Another tab is active - read-only mode   <- the old leader has it again
+ *   19:25:34.249  Promoted to leader / reloading ...       <- and the two trade it once more
+ *   19:25:35.297  Another tab is active - read-only mode
+ *
+ * The reload is the same tab continuing, not a new candidate, so its election STEALS the lock
+ * rather than queueing for it. Nothing else gets this: a first load, or a reload for any other
+ * reason, queues as before.
+ */
+const PROMOTION_RELOAD_KEY = 'canari_tab_promotion_reload';
+
+/**
+ * Records that this tab is about to reload BECAUSE it was promoted - call it right before the
+ * reload. The document the reload starts reclaims the leader lock instead of queueing behind the
+ * tab that was granted it in between.
+ */
+export function markPromotionReload(): void {
+  try {
+    sessionStorage.setItem(PROMOTION_RELOAD_KEY, '1');
+  } catch (e) {
+    // Said, because the only other symptom is the take-over that does not stick.
+    console.warn(
+      '[TAB] could not record the promotion reload - the lock may go back to the old leader:',
+      String(e)
+    );
+  }
+}
+
+/** Reads and clears the mark: one reload reclaims once, never for the rest of the tab's life. */
+function consumePromotionReload(): boolean {
+  try {
+    const marked = sessionStorage.getItem(PROMOTION_RELOAD_KEY) !== null;
+    sessionStorage.removeItem(PROMOTION_RELOAD_KEY);
+    return marked;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Handles the rejection of a leader-lock request. A lock STOLEN from under a serving leader demotes
+ * it exactly as a take-over does, since the MLS ratchet must never advance in two tabs; any other
+ * rejection is a document going away and needs nothing.
+ */
+function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
+  if (leadership !== 'leader' || (e as { name?: unknown } | null)?.name !== 'AbortError') return;
+  log('[TAB] Leader lock reclaimed by a tab reloading after its promotion - handing over.');
+  decide('follower');
+  releaseLeaderLock = null;
+  const requeue = requeueForPromotion;
+  requeueForPromotion = null;
+  requeue?.();
+  leaderDemotedHandler?.();
+}
+
+/**
  * Queues a blocking request for the leader lock, to be granted when the holder releases it.
  *
  * TWO PLACES NEED THIS AND ONLY ONE HAD IT. A tab that lost the election queues here and is
@@ -265,9 +332,7 @@ function queueForPromotion(log: (msg: string) => void): void {
 
       await holdLeaderLockUntilUnload();
     })
-    .catch(() => {
-      /* Tab is closing - ignore. */
-    });
+    .catch((e: unknown) => onLeaderLockRejected(e, log));
 }
 
 /**
@@ -289,20 +354,27 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
     });
   }
 
+  const reclaim = consumePromotionReload();
+  if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');
   const acquired = await new Promise<boolean>((resolveLeadership) => {
     void navigator.locks
-      .request('canari-tab-leader', { mode: 'exclusive', ifAvailable: true }, async (lock) => {
-        if (lock === null) {
-          resolveLeadership(false);
-          return;
+      .request(
+        'canari-tab-leader',
+        reclaim ? { mode: 'exclusive', steal: true } : { mode: 'exclusive', ifAvailable: true },
+        async (lock) => {
+          if (lock === null) {
+            resolveLeadership(false);
+            return;
+          }
+          decide('leader');
+          log('[TAB] Leadership acquired (Web Locks).');
+          requeueForPromotion = () => queueForPromotion(log);
+          resolveLeadership(true);
+          await holdLeaderLockUntilUnload();
         }
-        decide('leader');
-        log('[TAB] Leadership acquired (Web Locks).');
-        requeueForPromotion = () => queueForPromotion(log);
-        resolveLeadership(true);
-        await holdLeaderLockUntilUnload();
-      })
-      .catch(() => {
+      )
+      .catch((e: unknown) => {
+        onLeaderLockRejected(e, log);
         resolveLeadership(false);
       });
   });
@@ -527,6 +599,11 @@ export function resetTabLeaderStateForTests(): void {
   election = null;
   releaseLeaderLock = null;
   requeueForPromotion = null;
+  try {
+    sessionStorage.removeItem(PROMOTION_RELOAD_KEY);
+  } catch {
+    /* ignore */
+  }
   try {
     localStorage.removeItem(LEADER_KEY);
     localStorage.removeItem(HEARTBEAT_KEY);

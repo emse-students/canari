@@ -13,6 +13,7 @@ import type { IStorage } from '$lib/db';
 import { SvelteMap } from 'svelte/reactivity';
 import {
   setTabLeaderPromotedHandler,
+  markPromotionReload,
   setTabLeaderDemotedHandler,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
@@ -249,6 +250,9 @@ export function useChatSession() {
     isTabLeaderState = true;
     cb.log('[TAB] Leader promoted - reloading to pick up the MLS state left by the old leader.');
     if (typeof window !== 'undefined') {
+      // The reload releases the lock this tab was just granted; the mark is what lets the page it
+      // starts take it back rather than queue behind the tab it took over from.
+      markPromotionReload();
       setTimeout(() => window.location.reload(), 50);
       return;
     }
