@@ -535,6 +535,7 @@
   "msg_max_reactions_label": "Maximum of {max} different reactions on this message.",
   "msg_recent_reactions_label": "Recent",
   "msg_reactions_label": "Message reactions",
+  "msg_reactions_show_more": "Show {count} more reactions",
   "msg_reaction_aria_label": "{emoji} ({count} people)",
   "msg_reaction_aria_label_one": "{emoji} (1 person)",
   "msg_audio_format_unsupported_label": "Format not supported",

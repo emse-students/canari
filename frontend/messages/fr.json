@@ -560,6 +560,7 @@
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",
   "msg_recent_reactions_label": "Récents",
   "msg_reactions_label": "Réactions au message",
+  "msg_reactions_show_more": "Afficher {count} autres réactions",
   "msg_reaction_aria_label": "{emoji} ({count} personnes)",
   "msg_reaction_aria_label_one": "{emoji} (1 personne)",
   "msg_audio_format_unsupported_label": "Format non supporté",
