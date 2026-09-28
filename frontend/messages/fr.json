@@ -287,6 +287,8 @@
     }
   ],
   "chat_show_composer_actions_title": "Afficher les actions",
+  "chat_attach_menu_media": "Photos et vidéos",
+  "chat_attach_menu_files": "Tous les fichiers",
   "chat_attach_file_title": "Envoyer une image, vidéo ou fichier",
   "chat_attach_file_label": "Joindre un fichier",
   "chat_create_poll_title": "Créer un sondage",
