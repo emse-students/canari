@@ -2835,6 +2835,7 @@
   "auth_device_revoked_reset": "This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.",
   "auth_local_state_unopenable": "The messages saved on this device could not be opened. If you changed your PIN on another device, enter the old PIN below. Otherwise the local data is damaged: no old PIN will help, and a reset is what gets you back into your conversations.",
   "auth_keystore_empty_enter_pin": "Please enter your PIN to unlock messaging.",
+  "auth_biometric_no_user": "No account is signed in on this device. Sign in again.",
   "auth_no_user_signed_in": "No user is currently signed in.",
   "auth_pin_change_current_incorrect": "The current PIN is incorrect.",
   "auth_pin_change_server_error": "Cannot change the PIN (server error).",

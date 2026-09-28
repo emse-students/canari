@@ -127,6 +127,18 @@ pub enum MlsError {
     /// classifier on the other side can learn it in the same release rather than one behind.
     #[error("STATE_KEY_MISMATCH: {0}")]
     StateSealedUnderAnotherKey(String),
+    /// Biometric mode, and the platform keystore handed back no key: nothing enrolled yet, the
+    /// entry was wiped, or the user cancelled (or could not pass) the biometric sheet.
+    ///
+    /// **IT SAYS NOTHING ABOUT THE SAVED STATE**, which is why it must never share a recovery with
+    /// the three variants above: no blob was opened, so nothing may be rotated or paused for an old
+    /// PIN - the caller hands the user to the PIN modal and destroys nothing. It was
+    /// `OpenMls("No keystore key and no device_key_b64 provided")`, recognised in TypeScript by a
+    /// regex over that sentence at two call sites, and every refused fingerprint also printed the
+    /// state classifier's "Unrecognised state-load failure" warning for a failure it had no business
+    /// classifying (Mi 9T, 2026-09-28).
+    #[error("KEYSTORE_KEY_UNAVAILABLE: {0}")]
+    KeystoreKeyUnavailable(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on

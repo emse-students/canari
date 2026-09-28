@@ -382,7 +382,7 @@ Android has **two readers over the same alias and the same SharedPreferences**: 
 The `NO_WRAP` fix landed on the first and was asserted only there, so the newline survived in the
 second until v0.11.6. Its failure mode is the cruel one: the BiometricPrompt appears, the fingerprint
 is *accepted*, the key decrypts - and then Rust rejects the string, `retrieve_device_key` returns
-`None`, and `resolve_at_rest_key` reports "No keystore key" so the user is sent to the PIN modal.
+`None`, and `resolve_at_rest_key` answers `KEYSTORE_KEY_UNAVAILABLE` (the prose "No keystore key" until 2026-09-28) so the user is sent to the PIN modal.
 Nothing in the log says the key was found, because from Rust's point of view it never was. Both
 readers are covered now; the test captures the flag rather than matching the literal, so adding a
 `DEFAULT` encode beside a `NO_WRAP` one still fails.

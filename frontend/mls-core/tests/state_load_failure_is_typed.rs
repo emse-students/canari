@@ -96,6 +96,31 @@ fn a_blob_too_short_to_hold_a_nonce_is_state_undecryptable_and_not_invalid_data(
 }
 
 #[test]
+fn a_keystore_that_hands_back_no_key_is_its_own_variant_and_never_a_state_verdict() {
+    // Biometric mode with nothing to read - a cancelled sheet, a finger the sensor refused, a wiped
+    // entry. No blob was opened, so the answer must not be one of the three the state classifier
+    // routes to a rotation or an old-PIN recovery, and the caller reads the CODE, not the sentence.
+    let sealed = encrypt_blob(&key(1), b"cbor-mls-snapshot").expect("seal");
+    let err = MlsManager::resolve_at_rest_key(
+        USER,
+        DEVICE,
+        Some(&sealed),
+        None,
+        &mls_core::keystore::NoopDeviceKeyStore,
+    )
+    .expect_err("no key in hand and none in the keystore must fail");
+
+    assert!(
+        matches!(err, MlsError::KeystoreKeyUnavailable(_)),
+        "expected KeystoreKeyUnavailable, got {err:?}"
+    );
+    assert!(
+        err.to_string().starts_with("KEYSTORE_KEY_UNAVAILABLE: "),
+        "the code must lead the message: {err}"
+    );
+}
+
+#[test]
 fn no_state_at_all_is_not_a_failure() {
     // The control. A first launch has no blob, and reading "undecryptable" there would send a new
     // user into a recovery flow for a state that was never written.

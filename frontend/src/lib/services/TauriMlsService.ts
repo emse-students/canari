@@ -524,11 +524,10 @@ export class TauriMlsService extends BaseMlsService {
       // If state == null and error → real crash (no state to blame) → rethrow.
       let cause = this.classifyStateLoadFailure(e);
 
-      // "No keystore key and no device key provided" is a recoverable error (the
-      // user just needs to enter their PIN).  Do NOT destroy the device
-      // identity — let the error propagate so the caller can fall back to
-      // the PIN modal.
-      const isKeystoreEmpty = /no keystore key/i.test(String(e));
+      // No key in the keystore (a cancelled or refused sheet, a wiped entry) says nothing about
+      // the saved state and is recoverable - the user just needs to enter their PIN. Do NOT
+      // destroy the device identity: let the error propagate to the PIN modal.
+      const isKeystoreEmpty = cause === 'keystore_unavailable';
 
       // A snapshot written before v0.11.0 sits in the Argon2id envelope and cannot decrypt with
       // the device key, which is indistinguishable here from a key rotated on another device.

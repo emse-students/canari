@@ -159,6 +159,18 @@ export interface MlsInitOptions {
 export const MLS_LOCAL_STATE_UNDECRYPTABLE = 'MLS_LOCAL_STATE_UNDECRYPTABLE';
 
 /**
+ * True when an MLS init failed because biometric mode found no key in the platform keystore - a
+ * cancelled or refused sheet, or an entry that was never written or was wiped.
+ *
+ * Reads `mls-core`'s `KEYSTORE_KEY_UNAVAILABLE` code, the one contract that crosses the Tauri
+ * boundary, so the service and the login flow cannot disagree about it. Both used to match the
+ * sentence `"No keystore key ..."` with a regex of their own.
+ */
+export function isKeystoreKeyUnavailable(error: unknown): boolean {
+  return String(error).includes('KEYSTORE_KEY_UNAVAILABLE');
+}
+
+/**
  * Describes a bulk-ingest window: a span during which many MLS messages are processed at once
  * (a queue drain after reconnect, or a history restore). The same immutable object is replayed
  * at open and close, which guarantees the two ends agree on what to do.

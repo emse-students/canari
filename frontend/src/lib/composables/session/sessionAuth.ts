@@ -22,7 +22,7 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
-import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
+import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -787,7 +787,7 @@ export async function loginImpl(
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.
-      if (isBiometric && /no keystore key/i.test(reasonStr)) {
+      if (isBiometric && isKeystoreKeyUnavailable(reason)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
       throw mlsInitSettled.reason;
@@ -840,7 +840,7 @@ export async function loginImpl(
       .catch(() => {});
 
     // Offline: there is no token to set, and asking again would throw INSIDE this try - whose
-    // catch calls resetMls() + clearUserLocally() + clearDeviceKey(). A network blip would then
+    // catch calls resetMls() + clearDeviceKey(). A network blip would then
     // destroy the very session that just unlocked. The empty token is what every network-touching
     // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
     beginBootSpan('auth-token-final');
@@ -1571,12 +1571,19 @@ export async function loginImpl(
       console.error(`[INIT] Login failed (${code}):`, _e);
     }
     ctx.resetMls();
-    clearUserLocally();
     clearDeviceKey();
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
     // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
     // callback is wired, redirect directly so the user is never stranded in the modal.
+    //
+    // THE REMEMBERED IDENTITY IS FORGOTTEN ON THIS BRANCH ONLY, because it is the only failure
+    // that says anything about WHO is signed in. A wrong PIN, an empty keystore, an unopenable
+    // state or a server nobody reached all leave the same person at the same gate - and forgetting
+    // them there is what broke the PIN modal's "use biometrics": it reads the remembered id, found
+    // none, and stopped before any keystore read (check U step 5, Mi 9T 2026-09-28). A revoked
+    // device needs nothing here either: `wipeRevokedDevice` has already forgotten it.
     if (_e instanceof SessionExpiredError) {
+      clearUserLocally();
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto('/login', { replaceState: true });
     } else if (cb.onLoginFailed) {
@@ -1678,7 +1685,7 @@ export async function biometricLoginImpl(
   try {
     const savedUser = currentUserId();
     if (!savedUser) {
-      ctx.setLoginError('No user registered for biometric authentication.');
+      ctx.setLoginError(m.auth_biometric_no_user());
       cb.log('[BIOMETRIC] Failed - no local user found.');
       return;
     }

@@ -21,7 +21,7 @@ import { BaseMlsService } from './BaseMlsService';
  * over (CORRUPT-1). A test that pins a default nobody chose pins whatever the default happens to
  * catch.
  */
-type Verdict = 'mismatch' | 'undecryptable' | 'rotated' | 'unknown';
+type Verdict = 'mismatch' | 'undecryptable' | 'rotated' | 'keystore_unavailable' | 'unknown';
 
 const classify = (error: unknown): Verdict =>
   (
@@ -89,6 +89,22 @@ describe('BaseMlsService.classifyStateLoadFailure', () => {
         new Error('Credential identity mismatch: expected u:d-new but state contains u:d-old')
       )
     ).toBe('unknown');
+  });
+
+  // A refused fingerprint used to print "Unrecognised state-load failure" on every launch that
+  // ended on the PIN modal (Mi 9T, 2026-09-28): the keystore answer is typed now, and it is not a
+  // verdict on the state.
+  it('reads an empty keystore as its own code, silently, and never as a state verdict', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    expect(
+      classify(
+        new Error('KEYSTORE_KEY_UNAVAILABLE: no keystore key and no device_key_b64 provided')
+      )
+    ).toBe('keystore_unavailable');
+    expect(warn).not.toHaveBeenCalled();
+    // The old sentence is no longer a contract - if it classifies again, the variant was reverted.
+    expect(classify(new Error('No keystore key and no device_key_b64 provided'))).toBe('unknown');
   });
 
   it('answers unknown for an unrecognised failure instead of borrowing a diagnosis', () => {

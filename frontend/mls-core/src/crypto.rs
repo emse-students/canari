@@ -107,8 +107,8 @@ impl MlsManager {
         }
 
         // No device_key_b64 and no keystore key — nothing we can do.
-        Err(MlsError::OpenMls(
-            "No keystore key and no device_key_b64 provided".into(),
+        Err(MlsError::KeystoreKeyUnavailable(
+            "no keystore key and no device_key_b64 provided".into(),
         ))
     }
 
