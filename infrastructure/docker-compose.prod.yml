@@ -105,7 +105,7 @@ services:
   adminer:
     # Same rule, and this was the worst of the three: `:latest`, on a database admin UI, in
     # PRODUCTION. The image carries no version label, so the digest is the only name it has.
-    image: adminer@sha256:51262b555d9e8ac3e1fa197eec41a3f47d05aea5520ac2ccc78a03ffc7d39b3a
+    image: adminer@sha256:b87a22863ed8c18437c7241a5d39ae2e05669d4d2eb9d78591d5087a09258bc8
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
