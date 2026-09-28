@@ -32,7 +32,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSite[] = [
   },
   {
     id: 'le-cercle',
-    href: 'https://cercle.canari-emse.fr',
+    href: 'https://cercle.emse.fr',
     logo: '/ecosystem/le-cercle.webp',
     label: () => m.ecosystem_site_le_cercle(),
   },
