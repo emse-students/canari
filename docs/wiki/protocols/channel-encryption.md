@@ -2642,3 +2642,34 @@ rows until those age out of the 365-day window, and the v1 reader goes with the 
 refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
 legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
 the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
+
+### 21.1 The verified sender, as measured (WP-G2-1)
+
+**Where it comes from.** OpenMLS verifies an application message's signature against the sender's
+leaf before it decrypts, and `ProcessedMessage::credential()` is that leaf's credential - read in
+`mls-core/src/messaging.rs` BEFORE `into_content()` consumes the message, and returned beside the
+plaintext as `IncomingApplication.sender_identity` (`userId:deviceId`, the BasicCredential identity
+`state.rs` mints). WASM returns `{data, sender}`, both from the single decrypt and from the history
+batch; Tauri's `recevoir_message_bytes` and batch rows carry the same field. A credential the engine
+cannot read is `sender: null`, never an absent field: `null` is "unverifiable", an absent field is
+a path that was never given a sender and compares nothing.
+
+**What it is compared with.** `mls-client/verifiedSender.ts` `checkVerifiedSender` is the ONE
+comparison, on four paths - `live` (the WebSocket and pull queue), `distribution` (a key-group
+frame), `welcome-replay` and `history`. The envelope's user is compared with the credential's user,
+and its `senderDeviceId`, where the envelope carries one, with the credential's device. Three kinds:
+`user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
+body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
+about which device sent it - both worth knowing, and the measurement does not need to tell them
+apart before the refusal exists.
+
+**What a mismatch does, for now.** `[MLS] SENDER MISMATCH (...) - measured, not refused` at ERROR,
+and ONE report per `(group, path, kind, envelope, verified)` per session to
+`POST /api/mls/sender-mismatch`, which logs `[SENDER_MISMATCH]` on chat-delivery with the reporter
+and stores nothing. **Reading production is that grep**; the refusal (WP-G2-1b) is written only
+once it has come back empty, or every line it holds has been explained.
+
+**What it does not cover yet.** The native push decrypts - `mobile/background.rs`, the Android
+service and the iOS NSE - still name the envelope's sender on a notification. They move with the
+refusal in G2-1b, since the foreground paths already see the whole population the measurement is
+for.
