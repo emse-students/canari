@@ -150,7 +150,7 @@ describe('buildPublishedCarte', () => {
     expect(out.units[0].cards.map((c) => c.userId)).toEqual(['u3', 'u2']);
   });
 
-  it('shrinks a name to fit its card, then widens the card when shrinking is not enough', () => {
+  it('gives every name in a unit one size, and widens the card a long word needs', () => {
     // One member each, so `cards[0]` is the president card under test.
     const card = (name: string) =>
       build({ content: { a1: content({ members: [member('u-pres', name, 'President')] }) } })
@@ -159,11 +159,13 @@ describe('buildPublishedCarte', () => {
     const long = card('Elliot WAGHEMACKER');
     const unbreakable = card('Jean SCHWARTZENBERGERMANN');
 
-    // A name that still wraps into the base card only costs font size...
-    expect(long.w).toBe(short.w);
-    expect(long.nameSize).toBeLessThan(short.nameSize);
-    // ...while a word too wide even at the floor size widens the card instead of breaking mid-word.
-    expect(unbreakable.w).toBeGreaterThan(short.w);
+    // A long name no longer costs font size: the size is the unit's, and the card widens for it.
+    // The per-name ladder is what printed two sizes side by side in one crown (user, D13).
+    expect(long.nameSize).toBe(short.nameSize);
+    expect(long.w).toBeGreaterThan(short.w);
+    // A word too wide even for the WIDENED card is the one case a name still shrinks.
+    expect(unbreakable.w).toBeGreaterThan(long.w);
+    expect(unbreakable.nameSize).toBeLessThan(short.nameSize);
     // The photo never follows the card's width: one member's face must not dwarf its neighbours'.
     expect(unbreakable.photo).toBe(short.photo);
     // Whatever its width, a card stays centered on its slot.

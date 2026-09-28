@@ -32,13 +32,11 @@
     LOGO_INITIALS_SIZE,
     NAME_TOP,
     NAME_INSET,
-    PRES_TOP,
     CARD_PAD_X,
-    BUREAU_CROWN_CY,
-    bureauCrownOffset,
     assoNameFontSize,
     assoEmailFontSize,
-    memberCardMetrics,
+    placeUnitCards,
+    fitUnitNameSize,
     resolveUnitMembers,
     unitInkBox,
     type MemberCardMetrics,
@@ -575,8 +573,6 @@
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
         {@const shown = resolveUnitMembers(bubble, data.members)}
-        {@const displayPresident = shown.president}
-        {@const bureau = shown.bureau}
         {@const ls = logoShape(bubble.logoShape)}
         {@const lw = LOGO_BASE * ls.w}
         {@const lh = LOGO_BASE * ls.h}
@@ -660,30 +656,15 @@
             {/if}
           </div>
 
-          <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
-          {#each bureau as member, i (member.userId)}
-            {@const card = memberCardMetrics(member.name, 'bureau')}
-            {@const offset = bureauCrownOffset(i)}
-            <!-- Centered on its crown slot horizontally, anchored on the BASE width vertically, so
-                 a widened card grows sideways without leaving the ellipse. -->
-            {@const px = UNIT_CX + offset.x - card.w / 2}
-            {@const py = BUREAU_CROWN_CY + offset.y - card.base / 2}
-            <div style:position="absolute" style:left="{px}px" style:top="{py}px">
-              {@render memberCard(member, card, color)}
+          <!-- Every member card the unit draws: the bureau fanned over the blob's top arc, then the
+               president at its bottom. Drawn AFTER the blob so they sit IN FRONT, placed by the one
+               function the publisher and the overlap warning also read, and all at ONE name size
+               (D13) grown as far as the crown allows (D12). -->
+          {#each placeUnitCards(shown, fitUnitNameSize(shown, bubble.scale)) as placed (placed.member.userId)}
+            <div style:position="absolute" style:left="{placed.x}px" style:top="{placed.y}px">
+              {@render memberCard(placed.member, placed.card, color)}
             </div>
           {/each}
-
-          <!-- President always a card (photo + full name + role), at the blob bottom, in front. -->
-          {#if displayPresident}
-            {@const presCard = memberCardMetrics(displayPresident.name, 'president')}
-            <div
-              style:position="absolute"
-              style:left="{UNIT_CX - presCard.w / 2}px"
-              style:top="{PRES_TOP}px"
-            >
-              {@render memberCard(displayPresident, presCard, color)}
-            </div>
-          {/if}
 
           <!-- Association name INSIDE the blob (below the logo), white; wraps + shrinks to fit. -->
           <div

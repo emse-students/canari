@@ -41,9 +41,6 @@ import {
   LOGO_INITIALS_SIZE,
   NAME_TOP,
   NAME_INSET,
-  PRES_TOP,
-  BUREAU_CROWN_CY,
-  BUREAU_CARD_WIDTH,
   TEXT_BASE_WIDTH,
   TEXT_BASE_SIZE,
   TITLE_SIZE,
@@ -56,12 +53,12 @@ import {
   DIRECTORY_COLUMN_GAP,
   directoryRect,
   titleRect,
-  bureauCrownOffset,
   assoNameFontSize,
   assoEmailFontSize,
-  memberCardMetrics,
+  placeUnitCards,
+  fitUnitNameSize,
+  type PlacedCard,
   resolveUnitMembers,
-  type MemberSlot,
   type PositionedBubble,
   type Decoration,
 } from './layout';
@@ -233,27 +230,23 @@ function px(value: number): number {
 }
 
 /**
- * Resolves one member into the card the poster draws: `memberCardMetrics` sizes it (a name holding
- * an unbreakable word widens the card), and the slot decides where that box is anchored.
+ * Resolves one placed card into the published one.
+ *
+ * The placement itself comes from `placeUnitCards`, the same function the editor renders from - so
+ * the showcase cannot drift from the poster by re-deriving a proportion of its own.
  */
-function toCard(
-  member: { userId: string; name: string; role: string },
-  slot: MemberSlot,
-  anchor: { cx: number; y: number }
-): PublishedCarteCard {
-  const card = memberCardMetrics(member.name, slot);
+function toCard(placed: PlacedCard): PublishedCarteCard {
   return {
-    userId: member.userId,
-    name: member.name,
-    role: member.role,
-    initials: getInitials(member.name),
-    // Centered on its anchor, so widening grows the card sideways instead of shifting it.
-    x: px(anchor.cx - card.w / 2),
-    y: px(anchor.y),
-    w: card.w,
-    photo: card.photo,
-    nameSize: card.nameSize,
-    roleSize: card.roleSize,
+    userId: placed.member.userId,
+    name: placed.member.name,
+    role: placed.member.role,
+    initials: getInitials(placed.member.name),
+    x: px(placed.x),
+    y: px(placed.y),
+    w: placed.card.w,
+    photo: placed.card.photo,
+    nameSize: placed.card.nameSize,
+    roleSize: placed.card.roleSize,
   };
 }
 
@@ -269,18 +262,9 @@ function toUnit(bubble: PositionedBubble, data: PosterBubble): PublishedCarteUni
   const nameW = BLOB_SIZE - NAME_INSET;
 
   // Bureau first, then the president: the poster draws them in that order so the president's card
-  // sits in front of the crown, and the showcase renders the array as it comes.
-  const cards = shown.bureau.map((member, i) => {
-    const offset = bureauCrownOffset(i);
-    return toCard(member, 'bureau', {
-      cx: UNIT_CX + offset.x,
-      // Anchored on the base width, like the editor: a widened card must not leave the ellipse.
-      y: BUREAU_CROWN_CY + offset.y - BUREAU_CARD_WIDTH / 2,
-    });
-  });
-  if (shown.president) {
-    cards.push(toCard(shown.president, 'president', { cx: UNIT_CX, y: PRES_TOP }));
-  }
+  // sits in front of the crown, and the showcase renders the array as it comes. One name size for
+  // the whole unit (D13), grown as far as the crown allows (D12).
+  const cards = placeUnitCards(shown, fitUnitNameSize(shown, bubble.scale)).map(toCard);
 
   return {
     assoId: bubble.assoId,

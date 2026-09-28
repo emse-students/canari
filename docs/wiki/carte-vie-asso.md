@@ -465,6 +465,36 @@ produce an oversized polaroid.
 compacted, everything after it renumbers, and the output looks like a correct render of *different
 data* instead of showing the gap - which is the version nobody notices.
 
+### One name size per UNIT, grown until the crown stops it
+
+Two decisions meet in `fitUnitNameSize()`, and both were the user's (2026-09-27, D12 and D13).
+
+**The crown does not grow.** Taking the card text fully out of the unit's scale - the obvious reading
+of "make the names readable" - makes the cards collide INSIDE the unit long before they become
+readable: at the 0.46 the seed grid uses, the crown's levels are ~94 px apart for a card already
+~82 px tall. Growing the crown radii with the text was REFUSED, because a unit keeps the footprint
+its author gave it. So the text grows only as far as the cards still clear each other, and the
+smallest units land short of the 9.5 pt floor. **That shortfall is the accepted cost, which is why
+the function returns a size instead of promising one.**
+
+**One size per unit.** Not one per poster - that would be the size the SMALLEST bubble can take, and
+one tiny unit would drag every card on the sheet down. Not one per card either: the per-name ladder
+is what printed "Thomas DELLESTABLE" at 4.6 px beside a neighbour at 6.4 px in the same crown.
+
+The search is a bisection, not a walk, because it runs for every unit on every pointer frame of a
+drag; it is valid because the predicate is monotonic - a larger size only ever grows a card.
+
+**Measured on the 107 cards of the published map (2026-09-28)**, old rule against new:
+
+| | min | median | max | under 9 pt |
+| --- | --- | --- | --- | --- |
+| published | 4.42 pt | 6.97 pt | 13.71 pt | 91 of 107 |
+| new fit | 5.73 pt | 9.47 pt | 12.81 pt | 46 of 107 |
+
+95 cards grew, 3 held, **9 shrank - worst loss 2.11 pt**: a president whose crown is full now shares
+its size with the crowd around it, and the crowd is what the collision stops. Three units stay under
+7 pt, all of them a full crown at a small scale, which is exactly the D12 shortfall named above.
+
 ### A floor is a size on PAPER, and a unit's scale is between the two
 
 The poster is printed on A0 and only on A0 (user, 2026-09-27), so `PT_PER_POSTER_PX` = 3370 / 1600 =
