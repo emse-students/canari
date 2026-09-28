@@ -1,10 +1,10 @@
-version: 0.18.28
+version: 0.18.29
 
-Communautes : une personne invitee rejoint le groupe tout de suite, meme telephone eteint, et sa
-premiere notification de salon s'affiche en clair. Les notifications des salons se dechiffrent des
-la premiere banniere. Un membre ajoute a un salon prive y reste, et les panneaux de reglages
-affichent de nouveau tous leurs boutons.
+Communautes : un ordinateur qui avait pris du retard sur une communaute se rattrape tout seul, et
+les messages de ses salons s'affichent de nouveau, historique compris.
 
-Carte de la vie asso : noms lisibles, export net qui tient sur la page.
+"Prendre la main" dans un deuxieme onglet garde la main apres le rechargement.
 
-Empreinte / Face ID : demandes toutes les 12 h, ou a chaque fois au choix dans les reglages.
+Reactions plus petites, regroupees au-dela de cinq. Le badge Discussions s'efface quand une
+conversation est lue dans un autre onglet, et "Voir plus" replie un post sans casser sa mise en
+forme. Une notification de salon porte le nom du salon.
