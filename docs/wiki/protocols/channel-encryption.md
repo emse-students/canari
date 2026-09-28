@@ -198,7 +198,10 @@ So the loss is reported where a loss belongs: `reportUnreadableChannelMessage` n
 salon and WHICH of the three causes it was, classified from the error TYPE - a missing seed
 (repairable, and the only one that asks a peer), a message sent before this device was given the
 seed (the protocol working; asking would loop for ever on the same answer), or a real fault. The
-row appears the moment its seed lands. **Do not add a placeholder to one of the two systems
+row appears the moment its seed lands. **A page says it once**: history and search hand every row
+of a page an `UnreadableRowTally`, which prints one warn per class - count, distinct causes, three
+row ids - where a salon older than this device's seeds used to print 200 identical lines per load
+(2026-09-28). A live frame is one row and still says so itself. **Do not add a placeholder to one of the two systems
 without adding it to both**, and that is a product decision, not a protocol one.
 
 A request names WHO must answer, so that N members do not all answer at once and no election is
@@ -777,7 +780,9 @@ answerer turned out **not** to hold, and the requester strikes them off and elec
 told you*, applied on the wire: *"I hold none of these"*, *"I never saw your request"* and *"I am
 offline"* are three different facts an empty wire cannot separate, and only the first one means ask
 somebody else. **The walk terminates on a proof, not on a count or a clock**: each decline removes one
-member from a finite roster, so it ends either on the seed arriving or on `resolveAnswerer` answering
+member from a finite roster - **one decline per MEMBER, however many devices they have**: a request
+is addressed to a user and each of their devices may say no, so a second "no" from a member already
+struck off is ignored rather than logged and walked again (2026-09-28) - so it ends either on the seed arriving or on `resolveAnswerer` answering
 `exhausted`, which is logged as *no reachable holder* rather than left as a permanently blank salon. A
 history refusal stays silent on purpose - it is the one case the requester can already derive, since
 the visibility rule is broadcast by the server.

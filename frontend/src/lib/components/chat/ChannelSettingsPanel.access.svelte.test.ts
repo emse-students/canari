@@ -29,6 +29,13 @@ vi.mock('$lib/utils/graine/admitNewcomer', () => ({ admitSalonGrantee }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 const showConfirmMock = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
+// Each member row mounts an `Avatar`, which resolves its image on mount - and happy-dom really
+// fetches it, printing one `GET .../avatar 404` per member into every test run. Stubbed as in
+// `NotificationRow.svelte.test.ts`.
+vi.mock('$lib/utils/userAvatarCache', () => ({
+  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplayUrl: () => {},
+}));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() =>
     Promise.resolve(

@@ -73,23 +73,31 @@ export interface DecodedChannelReaction {
  *   closes its past it is what says whether this device may ask for the seed at all, and both sides
  *   of that comparison have to come from the server clock. Undefined for an undated row, which then
  *   asks and lets the answerer decide.
+ * @param tally A page being read: the row is counted into it instead of logged, and the page says
+ *   it once. Absent for a live frame, which is one row and says so itself.
  */
 export function reportUnreadableChannelMessage(
   channelId: string,
   rowId: string,
   senderId: string,
   sentAt: number | undefined,
-  err: unknown
+  err: unknown,
+  tally?: UnreadableRowTally
 ): void {
   const channel = rawChannelId(channelId);
-  console.warn(
-    `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is unreadable and is not rendered - ` +
-      (err instanceof GraineSessionUnavailableError
-        ? `no seed for session ${err.sessionId} (repairable)`
-        : err instanceof GraineBelowFirstIndexError
-          ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
-          : String(err))
-  );
+  const cause =
+    err instanceof GraineSessionUnavailableError
+      ? `no seed for session ${err.sessionId} (repairable)`
+      : err instanceof GraineBelowFirstIndexError
+        ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
+        : String(err);
+  if (tally) {
+    tally.note(rowId, unreadableCauseClass(err), cause);
+  } else {
+    console.warn(
+      `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is unreadable and is not rendered - ${cause}`
+    );
+  }
   // A missing seed is the ONE unreadability a peer can fix, so it is the one that asks. The
   // request is deduplicated per session, so a page of fifty rows naming three sessions asks
   // three times and not fifty - and a live frame asking costs nothing when history already did.
@@ -98,15 +106,61 @@ export function reportUnreadableChannelMessage(
   }
 }
 
+/** The class a row's unreadability is counted under - the three responses it needs, never its prose. */
+function unreadableCauseClass(err: unknown): string {
+  if (err instanceof GraineSessionUnavailableError) return 'missing seed';
+  if (err instanceof GraineBelowFirstIndexError) return 'below the handover floor';
+  return err instanceof Error ? err.name : 'unknown';
+}
+
+/**
+ * One page of a salon's history, said as ONE line per unreadable class instead of one per row.
+ *
+ * A page is 200 rows, and a salon whose past predates this device's seeds used to print 200 warns
+ * that differed only by the row id - on every load. The line a reader needs is how many, of which
+ * class, from how many sessions, and a few row ids to look up: exactly what this keeps. The seed
+ * request is unaffected - it is still noted per row and deduplicated per session downstream.
+ */
+export class UnreadableRowTally {
+  private readonly byClass = new Map<string, { rows: string[]; causes: Set<string> }>();
+
+  constructor(private readonly channelId: string) {}
+
+  /** Counts one row under its class; `cause` is the per-row sentence, kept as a distinct sample. */
+  note(rowId: string, causeClass: string, cause: string): void {
+    const entry = this.byClass.get(causeClass) ?? { rows: [], causes: new Set<string>() };
+    entry.rows.push(rowId);
+    entry.causes.add(cause);
+    this.byClass.set(causeClass, entry);
+  }
+
+  /** Logs the page's unreadable rows, one warn per class, and nothing for a page that read whole. */
+  report(): void {
+    const channel = rawChannelId(this.channelId).slice(0, 8);
+    for (const [causeClass, { rows, causes }] of this.byClass) {
+      const samples = [...causes].slice(0, 3).join('; ');
+      console.warn(
+        `[CHANNEL] ${rows.length} message(s) of ${channel} are unreadable and not rendered - ` +
+          `${causeClass}, ${causes.size} distinct cause(s): ${samples} ` +
+          `(rows ${rows.slice(0, 3).join(', ')}${rows.length > 3 ? ', ...' : ''})`
+      );
+    }
+  }
+}
+
 /**
  * Decrypts and decodes a single channel message row, or returns null when the payload is unreadable
  * or carries no displayable content. Shared by channel history loading and full-text search so both
  * decode rows identically.
+ *
+ * @param tally The page this row belongs to, which says its unreadable rows once - see
+ *   {@link UnreadableRowTally}.
  */
 export async function decodeChannelMessageRow(
   channelId: string,
   row: ChannelMessageRow,
-  userIdLower: string
+  userIdLower: string,
+  tally?: UnreadableRowTally
 ): Promise<DecodedChannelRow | null> {
   const channel = rawChannelId(channelId);
   const serverMs = parseServerTimestampMs(row.createdAt);
@@ -146,7 +200,8 @@ export async function decodeChannelMessageRow(
       String(row.id),
       String(row.senderId || ''),
       serverMs,
-      err
+      err,
+      tally
     );
     return null;
   }

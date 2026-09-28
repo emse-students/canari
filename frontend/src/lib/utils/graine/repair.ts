@@ -798,6 +798,10 @@ export function noteSeedUnavailable(sessionId: string, answerer: string): void {
   }
 
   const tried = declined.get(sessionId) ?? new Set<string>();
+  // ONE ANSWER PER MEMBER, HOWEVER MANY DEVICES THEY HAVE. A request goes to a USER and every device
+  // of theirs may decline it; the first "no" already moved the ask to the next member, so a second
+  // one from the same member would print the same line and send a duplicate request down the roster.
+  if (tried.has(answerer.toLowerCase())) return;
   tried.add(answerer.toLowerCase());
   declined.set(sessionId, tried);
 

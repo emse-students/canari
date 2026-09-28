@@ -435,7 +435,8 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
+    const { decodeChannelMessageRow, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -465,9 +466,11 @@ export function useConversations() {
       const loaded: ChatMessage[] = [];
       const meLower = ctx.userId.toLowerCase();
 
+      const tally = new UnreadableRowTally(rawId);
+
       if (Array.isArray(rows)) {
         for (const msg of rows) {
-          const decoded = await decodeChannelMessageRow(rawId, msg, meLower);
+          const decoded = await decodeChannelMessageRow(rawId, msg, meLower, tally);
           if (!decoded) continue;
           // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
           // Merged by the same last-write-wins rule everywhere, so the order the page is read in
@@ -492,6 +495,7 @@ export function useConversations() {
         }
       }
 
+      tally.report();
       loaded.sort(compareMessageOrder);
 
       const current = conversations.get(channelConversationId);
@@ -530,7 +534,8 @@ export function useConversations() {
     if (q.length < 2) return [];
 
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
+    const { decodeChannelMessageRow, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
     const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
@@ -542,8 +547,9 @@ export function useConversations() {
 
     const decodedAll: ChatMessage[] = [];
     const matches: { id: string; ts: number }[] = [];
+    const tally = new UnreadableRowTally(rawId);
     for (const row of rows) {
-      const decoded = await decodeChannelMessageRow(rawId, row, meLower);
+      const decoded = await decodeChannelMessageRow(rawId, row, meLower, tally);
       if (!decoded) continue;
       if (decoded.kind === 'reaction') {
         // Searching the whole history is also the widest sweep of reaction frames there is, so it
