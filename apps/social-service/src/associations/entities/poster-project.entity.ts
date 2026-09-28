@@ -48,6 +48,22 @@ export class PosterProject {
   @Column({ type: 'timestamptz', nullable: true })
   publishedAt: Date | null;
 
+  /**
+   * Fingerprint of the document that actually went live, so the editor can say the live map is
+   * older than what has been saved. Null when this poster is not live.
+   *
+   * No other column can answer that question: `publish()` writes the row, so `updatedAt` moves
+   * together with {@link publishedAt} in the same statement, and separating them would decide
+   * staleness by a millisecond of clock. It covers the layout AND the content (user, D14) because
+   * the published document embeds the rosters - a member joining really does make the live map old.
+   *
+   * Computed by the CLIENT over the document it builds and sends, since that document is built
+   * client-side: one implementation therefore decides both sides of the comparison. It is a
+   * staleness hint and nothing downstream trusts it for anything else.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  publicationFingerprint: string | null;
+
   /** OIDC subject of the creator. */
   @Column({ type: 'varchar', length: 255 })
   @Index()

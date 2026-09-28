@@ -369,6 +369,32 @@ because the publisher needs the same numbers the renderer uses.
 it: `sanitizePublishedCarte` returns null without `units`, and the showcase omits the map and logs
 why. The poster itself lives in `layout`, untouched - one republish is the whole migration.
 
+### The editor can say the LIVE map is older than what is saved
+
+**No existing column answers it.** `publish()` writes the row, so TypeORM's `@UpdateDateColumn`
+moves `updatedAt` together with `publishedAt` in the same statement; separating the two would decide
+staleness by a millisecond of clock, which this repository refuses. What is needed is durable state
+describing the document that actually went live - migration 064's `publicationFingerprint`.
+
+**It covers the layout AND the content** (user, D14). The published document embeds the rosters, so
+a member joining an association genuinely does make the live map stale. The badge therefore lights
+up for things the author never touched, and that was accepted rather than discovered.
+
+**The client computes it, because the client builds the document.** `fingerprintPublishedCarte()` is
+the one implementation, so both sides of the comparison come from the same code; the server stores
+what it is given and decides nothing with it. It is a staleness hint, never an access control - a
+malformed value is dropped rather than stored, so a later comparison can never be decided by junk.
+
+**Null means UNKNOWN, never unchanged.** A poster published by a client older than the fingerprint
+has none, and the editor shows nothing rather than claiming the live map is current
+([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-carte-publish-body-that-is-the-bare-document-with-no-fingerprint)).
+
+**It is recomputed when the SAVED state settles**, on load and after each save - never on a pointer
+frame. The document carries the background image, which can be several megabytes.
+
+**Nothing republishes on its own.** The badge offers a button; an autosave that reached the portail
+would put half-arranged layouts online.
+
 ### Opening a project is not editing it, and being live is not a button
 
 Three things the editor got wrong about its own saving, all reported by the user on 2026-09-27

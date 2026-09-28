@@ -140,8 +140,9 @@ choices about how the poster should LOOK or what a column should MEAN. Eight ans
 **A - publishing (D2, D3)** - A2, A3 and A4 merged 2026-09-27 (#1144): opening a project no longer
 writes it back (the autosave is armed by the state DIFFERING from the server's, which an open cannot
 do), a publish waits for the save in flight and abandons if it failed, and being live is a status
-with a separate confirmed "Retirer du portail". **A1/D2 is what is left** - see the order below for
-why a column, not a comparison of timestamps, is what it needs.
+with a separate confirmed "Retirer du portail". **A1/D2 closed in #1149**: migration 064 records a
+fingerprint of the document that went live, because no timestamp can answer that question
+([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
 
 **B - member-card text (D1, D4)**
 
@@ -181,13 +182,7 @@ why a column, not a comparison of timestamps, is what it needs.
 
 1. **C1 alone** - the shared PDF pipeline takes the browser's line boxes; agenda, trombinoscope and
    carte exports re-verified.
-2. ~~**A** - publishing: A2, A3, the separate unpublish (D3)~~ - merged 2026-09-27 (#1144). **D2, the
-   "live is older than saved" badge, IS STILL TO BUILD and now has its answer** (D14): a column
-   holding a fingerprint of the document that was PUBLISHED, covering layout AND content. Not
-   `updatedAt` - `publish()` writes the row, so TypeORM's `@UpdateDateColumn` moves with
-   `publishedAt` in the same statement, and separating them would mean trusting a clock by a
-   millisecond. The editor rebuilds the document it would publish and compares fingerprints, so
-   **ONE implementation decides both sides** and the client is what computes it.
+2. ~~**A** - publishing: A2, A3, the separate unpublish (D3), and D2's badge~~ - #1144 and #1149.
 3. ~~**B** - the email raised (D6), the overlap warning (D7)~~ - #1145; ~~**D4/B1/B2**~~ - group E
    below. The median printed name went from 6.97 to 9.47 pt, 9 cards of 107 LOST size (worst 2.11
    pt, a president now sharing his crown's size) and three crowded units stay under 7 pt - the D12
@@ -196,8 +191,10 @@ why a column, not a comparison of timestamps, is what it needs.
 4. ~~**C** - C4 (fit before capture), C2 at 150 dpi (D8), C3~~ - #1146. **D8 still owes the cost
    measured** on the dev pre-release: time, memory, PDF size.
 5. ~~**D** - the directory without "(Membre)" (D5), the no-member notice (D10)~~ - #1146.
-6. ~~**E** - the card text, one size per unit, grown until the crown clears (D12, D13)~~ - #1147.
-7. **F** - the published fingerprint and the "update the live version" button (D2, D14).
+6. ~~**E** - the card text, one size per unit, grown until the crown clears (D12, D13)~~ - #1148.
+7. ~~**F** - the published fingerprint and the "update the live version" button (D2, D14)~~ - #1149,
+   migration 064. **It is the FIRST carte change that needs a database migration**, so the dev
+   deploy is what proves it, not a green CI.
 8. Pre-release on dev - **canari-64's to cut** (D18) - an A0 export measured there, the user's look,
    then the stable (D11). D8's cost is measured in the same run.
 
