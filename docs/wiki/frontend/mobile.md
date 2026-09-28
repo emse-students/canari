@@ -994,6 +994,18 @@ and `body`, which are still sent in their old wording until 2027-02-19 - droppin
 degrade an old client, it BLANKS it
 ([legacy-compatibility](../legacy-compatibility.md)).
 
+**The typed fragment is PLAIN TEXT, measured as a reader sees it (2026-09-28).** A post's
+notification quoted its Markdown as written - `## Soirée **ce soir**` on the lock screen and in the
+app's list - and a mention travelled as `@[` + 64 hex characters, which the app resolves when it
+draws its list but a phone's push handler, having no name directory, showed as it arrived. So
+`previewOf` runs `markdownToPreviewText` first - each construct removed by its SHAPE (a heading
+marker at a line start, emphasis around a word), never by deleting `#*_-` wholesale, which would
+turn `Saint-Étienne` into `Saint Étienne` - and budgets a mention as a name (`MENTION_WIDTH`, 12)
+rather than its 67-character token, never splitting one. The stored row keeps its tokens for the
+app; the PUSH gets names from `PostNotificationsService.renderMentionsForPush`, and a member the
+server cannot name is dropped from the line rather than shown as an id. Rows written before the fix
+keep their Markdown: nothing rewrites them.
+
 **Nothing in either build connects those two sides**, which is the hazard while the shim lives: a
 key with no resource silently falls back to the server's wording and looks deliberate.
 `nativeStrings.test.ts` reads the union type out of the service's source and holds it against all

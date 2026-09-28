@@ -27,6 +27,7 @@ import {
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
+import { previewOf } from '../push/push-content';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -438,7 +439,7 @@ export class PostsService {
               type: 'mention',
               postId: entity.id,
               actorId,
-              text: markdown.slice(0, 60),
+              text: previewOf(markdown),
               actorName,
             });
           }

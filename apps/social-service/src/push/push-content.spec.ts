@@ -14,6 +14,7 @@ import {
   associationPostContent,
   followedPostContent,
   previewOf,
+  markdownToPreviewText,
   publicMediaIconId,
   pushContentData,
   type PushContent,
@@ -109,6 +110,18 @@ describe('previewOf', () => {
 
   it('trims first, so surrounding blank lines do not spend the budget', () => {
     expect(previewOf('  hello\n\n')).toBe('hello');
+  });
+
+  it('counts a mention as a name, not as its 67-character token', () => {
+    const token = `@[${'a'.repeat(64)}]`;
+    // 6 + 12 + 30 = 48 visible characters: it fits whole, token included.
+    expect(previewOf(`Merci ${token} ${'x'.repeat(29)}`)).toBe(`Merci ${token} ${'x'.repeat(29)}`);
+  });
+
+  it('never cuts through a mention - half of one is neither a name nor text', () => {
+    const token = `@[${'a'.repeat(64)}]`;
+    const cut = previewOf(`${'x'.repeat(50)} ${token} fin`);
+    expect(cut).toBe(`${'x'.repeat(50)}…`);
   });
 
   it('gives an empty string for an empty post, rather than inventing a sentence', () => {
@@ -335,5 +348,44 @@ describe('the legacy sentence and the Android resource say the same thing', () =
       title: androidSlot(fr.get(`notif_${key}_title`) ?? ''),
       body: androidSlot(fr.get(`notif_${key}_body`) ?? ''),
     });
+  });
+});
+
+describe('markdownToPreviewText', () => {
+  /**
+   * A notification quoted a post's Markdown as written - `## Soirée **ce soir**` on a lock screen
+   * and in the app's list (user, 2026-09-28). Each construct is removed by its SHAPE, never by
+   * deleting the characters, which is what the cases at the end hold.
+   */
+  it.each([
+    ['## Soirée **ce soir**', 'Soirée ce soir'],
+    ['# Titre\n\nPremier paragraphe', 'Titre Premier paragraphe'],
+    ['*italique* et _aussi_ et ~~barré~~', 'italique et aussi et barré'],
+    ['__gras__ puis `code`', 'gras puis code'],
+    ['> une citation', 'une citation'],
+    ['- un\n- deux\n1. trois\n- [x] fait', 'un deux trois fait'],
+    ['Voir [le site](https://canari.emse.fr/posts/1) ici', 'Voir le site ici'],
+    ['![une affiche](https://x/y.png) Venez', 'une affiche Venez'],
+    ['<https://canari.emse.fr>', 'https://canari.emse.fr'],
+    ['---\nfin', 'fin'],
+    ['```\nconst a = 1;\n```', 'const a = 1;'],
+    ['| Jour | Heure |\n| --- | --- |\n| Lundi | 20h |', 'Jour - Heure Lundi - 20h'],
+    ['\\*pas en italique\\*', '*pas en italique*'],
+  ])('%j reads %j', (markdown, plain) => {
+    expect(markdownToPreviewText(markdown)).toBe(plain);
+  });
+
+  it.each([
+    ['Saint-Étienne, 20h-22h', 'Saint-Étienne, 20h-22h'],
+    ['snake_case et 2*3*4', 'snake_case et 2*3*4'],
+    ['A | B, rien de tabulaire', 'A | B, rien de tabulaire'],
+    ['#hashtag sans espace', '#hashtag sans espace'],
+  ])('leaves ordinary text alone: %j', (text, plain) => {
+    expect(markdownToPreviewText(text)).toBe(plain);
+  });
+
+  it('keeps mention tokens, which the app resolves itself', () => {
+    const token = `@[${'b'.repeat(64)}]`;
+    expect(markdownToPreviewText(`**Bravo** ${token} !`)).toBe(`Bravo ${token} !`);
   });
 });
