@@ -10,9 +10,11 @@ import {
   MIN_POSTER_TEXT_PX,
   PT_PER_POSTER_PX,
   unitInkBox,
+  unitInkShapes,
+  type InkShape,
   type PositionedBubble,
-  type UnitBox,
 } from './layout';
+import { borderRadiusCorners, type CornerRadii } from './shapes';
 import type { PosterMemberRef } from './generator';
 
 function member(over: Partial<PosterMemberRef> = {}): PosterMemberRef {
@@ -176,13 +178,24 @@ describe('unitInkBox - what a unit covers, not the cell it was seeded in', () =>
 });
 
 describe('findUnitOverlaps - reported, worst first, and never repaired', () => {
-  const box = (x: number, y: number, w = 100, h = 100): UnitBox => ({ x, y, w, h });
+  const square: CornerRadii = [
+    { rx: 0, ry: 0 },
+    { rx: 0, ry: 0 },
+    { rx: 0, ry: 0 },
+    { rx: 0, ry: 0 },
+  ];
+  const box = (x: number, y: number, w = 100, h = 100): InkShape[] => [
+    { x, y, w, h, corners: square },
+  ];
+  const disc = (x: number, y: number, d = 100): InkShape[] => [
+    { x, y, w: d, h: d, corners: borderRadiusCorners('50%', d, d) },
+  ];
 
   it('finds nothing between units set side by side', () => {
     expect(
       findUnitOverlaps([
-        { assoId: 'a', box: box(0, 0) },
-        { assoId: 'b', box: box(200, 0) },
+        { assoId: 'a', shapes: box(0, 0) },
+        { assoId: 'b', shapes: box(200, 0) },
       ])
     ).toEqual([]);
   });
@@ -190,8 +203,8 @@ describe('findUnitOverlaps - reported, worst first, and never repaired', () => {
   it('does not call touching edges a crossing', () => {
     expect(
       findUnitOverlaps([
-        { assoId: 'a', box: box(0, 0) },
-        { assoId: 'b', box: box(100, 0) },
+        { assoId: 'a', shapes: box(0, 0) },
+        { assoId: 'b', shapes: box(100, 0) },
       ])
     ).toEqual([]);
   });
@@ -199,17 +212,45 @@ describe('findUnitOverlaps - reported, worst first, and never repaired', () => {
   it('measures the crossing and names both units', () => {
     expect(
       findUnitOverlaps([
-        { assoId: 'a', box: box(0, 0) },
-        { assoId: 'b', box: box(90, 80) },
+        { assoId: 'a', shapes: box(0, 0) },
+        { assoId: 'b', shapes: box(90, 80) },
       ])
     ).toEqual([{ a: 'a', b: 'b', area: 200 }]);
   });
 
+  // THE CASE THE USER SAW (2026-09-28): two round blobs set corner to corner. Their boxes cross by
+  // 20 x 20, their ink not at all - the gap between two circles at 45 degrees is widest exactly there.
+  it('does not report two round blobs whose boxes cross only at the corners', () => {
+    expect(
+      findUnitOverlaps([
+        { assoId: 'a', shapes: disc(0, 0) },
+        { assoId: 'b', shapes: disc(80, 80) },
+      ])
+    ).toEqual([]);
+  });
+
+  it('still reports two round blobs that really cross', () => {
+    const found = findUnitOverlaps([
+      { assoId: 'a', shapes: disc(0, 0) },
+      { assoId: 'b', shapes: disc(60, 0) },
+    ]);
+    expect(found).toHaveLength(1);
+    expect(found[0].area).toBeGreaterThan(0);
+  });
+
+  it('counts a crossing with ANY shape of a unit, not just its first', () => {
+    const found = findUnitOverlaps([
+      { assoId: 'a', shapes: [...box(0, 0, 10, 10), ...box(300, 0)] },
+      { assoId: 'b', shapes: box(350, 50) },
+    ]);
+    expect(found).toEqual([{ a: 'a', b: 'b', area: 2500 }]);
+  });
+
   it('puts the worst crossing first', () => {
     const found = findUnitOverlaps([
-      { assoId: 'a', box: box(0, 0) },
-      { assoId: 'b', box: box(90, 80) },
-      { assoId: 'c', box: box(10, 10) },
+      { assoId: 'a', shapes: box(0, 0) },
+      { assoId: 'b', shapes: box(90, 80) },
+      { assoId: 'c', shapes: box(10, 10) },
     ]);
     const areas = found.map((o) => o.area);
     expect(areas).toEqual(areas.toSorted((x, y) => y - x));
@@ -218,9 +259,57 @@ describe('findUnitOverlaps - reported, worst first, and never repaired', () => {
 
   it('reports a pair once, not twice', () => {
     const found = findUnitOverlaps([
-      { assoId: 'a', box: box(0, 0) },
-      { assoId: 'b', box: box(10, 10) },
+      { assoId: 'a', shapes: box(0, 0) },
+      { assoId: 'b', shapes: box(10, 10) },
     ]);
     expect(found).toHaveLength(1);
+  });
+});
+
+describe('unitInkShapes - the blob and every card, where the canvas draws them', () => {
+  const roster = [
+    member({ userId: 'p', name: 'Alice MARTIN', role: 'Presidente' }),
+    member({ userId: 'b1', name: 'Tristan FELIX', role: 'Secretaire' }),
+  ];
+
+  it('is the blob plus one shape per card drawn', () => {
+    expect(unitInkShapes(bubble(), roster)).toHaveLength(3);
+  });
+
+  it('bounds to exactly the box the editor outlines', () => {
+    const shapes = unitInkShapes(bubble({ x: 40, y: 20, scale: 0.7 }), roster);
+    const box = unitInkBox(bubble({ x: 40, y: 20, scale: 0.7 }), roster);
+    expect(Math.min(...shapes.map((sh) => sh.x))).toBeCloseTo(box.x, 1);
+    expect(Math.max(...shapes.map((sh) => sh.x + sh.w))).toBeCloseTo(box.x + box.w, 1);
+  });
+});
+
+describe('borderRadiusCorners - the silhouette CSS draws', () => {
+  it('reads one value as four equal corners', () => {
+    expect(borderRadiusCorners('50%', 200, 100)).toEqual([
+      { rx: 100, ry: 50 },
+      { rx: 100, ry: 50 },
+      { rx: 100, ry: 50 },
+      { rx: 100, ry: 50 },
+    ]);
+  });
+
+  it('reads the horizontal / vertical halves in corner order', () => {
+    const [tl, tr, br, bl] = borderRadiusCorners('40% 60% 70% 30% / 40% 40% 60% 60%', 100, 100);
+    expect([tl, tr, br, bl]).toEqual([
+      { rx: 40, ry: 40 },
+      { rx: 60, ry: 40 },
+      { rx: 70, ry: 60 },
+      { rx: 30, ry: 60 },
+    ]);
+  });
+
+  it('shrinks every corner alike when one side is over-full, as the spec does', () => {
+    const corners = borderRadiusCorners('80%', 100, 100);
+    expect(corners[0]).toEqual({ rx: 50, ry: 50 });
+  });
+
+  it('refuses a unit it cannot resolve rather than guessing an outline', () => {
+    expect(() => borderRadiusCorners('12px', 100, 100)).toThrow();
   });
 });

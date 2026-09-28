@@ -39,6 +39,7 @@
     fitUnitNameSize,
     resolveUnitMembers,
     unitInkBox,
+    MEMBER_CARD_RADIUS,
     type MemberCardMetrics,
     type PositionedBubble,
     type Decoration,
@@ -449,7 +450,7 @@
   <div
     style:width="{card.w}px"
     style:background={theme.polaroidBg}
-    style:border-radius="9px"
+    style:border-radius="{MEMBER_CARD_RADIUS}px"
     style:padding="6px {CARD_PAD_X / 2}px 7px"
     style:box-sizing="border-box"
     style:box-shadow="0 4px 11px rgba(0,0,0,0.22)"

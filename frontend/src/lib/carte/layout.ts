@@ -5,6 +5,10 @@ import {
   getRandomShape,
   DEFAULT_LOGO_SHAPE,
   isLogoShapeKey,
+  shapeRadius,
+  borderRadiusCorners,
+  type CornerRadii,
+  type CornerRadius,
 } from './shapes';
 
 /**
@@ -445,73 +449,158 @@ export interface UnitBox {
   h: number;
 }
 
+/** Corner radius of a member card, in unit px - the one `PosterCanvas` draws the card with. */
+export const MEMBER_CARD_RADIUS = 9;
+
 /**
- * The box a unit actually covers on the stage - its INK, not its slot.
+ * One piece of a unit's ink on the stage (poster px): a box with four elliptical corners, which is
+ * what every drawn part of a unit is - the blob is a `border-radius` silhouette, a member card a
+ * rounded rectangle.
+ */
+export interface InkShape {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  corners: CornerRadii;
+}
+
+/**
+ * What a unit actually draws on the stage - its INK, not its slot, and not the box around it.
  *
  * {@link CARD_WIDTH} x {@link CARD_HEIGHT} is the seed grid's cell and is mostly empty, so two
  * units whose cells cross very often do not touch on the page. What a reader sees crossing is the
- * blob, the crown of member cards around its top and the president's card under it, which is what
- * this measures - the difference is the reason the warning is worth reading at all.
+ * blob, the crown of member cards around its top and the president's card under it. And not their
+ * bounding box either: between the blob's curved rim and the cards fanned around it that box is
+ * mostly empty too, and on 2026-09-28 it reported 17 crossings on a map where the user could see
+ * none. So the shapes themselves are returned, and {@link findUnitOverlaps} tests them.
  *
  * The hero logo is ignored: it is centered on the blob and {@link LOGO_BASE} is small enough that
- * no frame shape reaches past the blob's rim.
+ * no frame shape reaches past the blob's rim. So is the name band, which sits inside the blob.
  */
-export function unitInkBox(bubble: PositionedBubble, members: PosterMemberRef[]): UnitBox {
+export function unitInkShapes(bubble: PositionedBubble, members: PosterMemberRef[]): InkShape[] {
   const shown = resolveUnitMembers(bubble, members);
   const nameSize = fitUnitNameSize(shown, bubble.scale);
-  let left = UNIT_CX - BLOB_SIZE / 2;
-  let right = UNIT_CX + BLOB_SIZE / 2;
-  let top = BLOB_CY - BLOB_SIZE / 2;
-  let bottom = BLOB_CY + BLOB_SIZE / 2;
-  const cover = (x: number, y: number, w: number, h: number): void => {
-    left = Math.min(left, x);
-    right = Math.max(right, x + w);
-    top = Math.min(top, y);
-    bottom = Math.max(bottom, y + h);
-  };
+  const s = bubble.scale;
+  const place = (x: number, y: number, w: number, h: number, corners: CornerRadii): InkShape => ({
+    x: bubble.x + x * s,
+    y: bubble.y + y * s,
+    w: w * s,
+    h: h * s,
+    corners: corners.map((c) => ({ rx: c.rx * s, ry: c.ry * s })) as CornerRadii,
+  });
 
-  for (const placed of placeUnitCards(shown, nameSize)) {
-    cover(placed.x, placed.y, placed.w, placed.h);
-  }
-
-  return {
-    x: round2(bubble.x + left * bubble.scale),
-    y: round2(bubble.y + top * bubble.scale),
-    w: round2((right - left) * bubble.scale),
-    h: round2((bottom - top) * bubble.scale),
-  };
+  const blob = place(
+    UNIT_CX - BLOB_SIZE / 2,
+    BLOB_CY - BLOB_SIZE / 2,
+    BLOB_SIZE,
+    BLOB_SIZE,
+    borderRadiusCorners(shapeRadius(bubble.shape), BLOB_SIZE, BLOB_SIZE)
+  );
+  const card = { rx: MEMBER_CARD_RADIUS, ry: MEMBER_CARD_RADIUS };
+  const cards = placeUnitCards(shown, nameSize).map((placed) =>
+    place(placed.x, placed.y, placed.w, placed.h, [card, card, card, card])
+  );
+  return [blob, ...cards];
 }
+
+/** The smallest box holding every shape - what the editor outlines when it flags a unit. */
+function boundsOf(shapes: InkShape[]): UnitBox {
+  const left = Math.min(...shapes.map((sh) => sh.x));
+  const top = Math.min(...shapes.map((sh) => sh.y));
+  const right = Math.max(...shapes.map((sh) => sh.x + sh.w));
+  const bottom = Math.max(...shapes.map((sh) => sh.y + sh.h));
+  return { x: round2(left), y: round2(top), w: round2(right - left), h: round2(bottom - top) };
+}
+
+/**
+ * The box around a unit's ink ({@link unitInkShapes}) - for DRAWING a flag around it, never for
+ * deciding whether two units cross.
+ */
+export function unitInkBox(bubble: PositionedBubble, members: PosterMemberRef[]): UnitBox {
+  return boundsOf(unitInkShapes(bubble, members));
+}
+
+/** Whether a stage point is inside a shape, corners included - the CSS `border-radius` rule. */
+function inkContains(shape: InkShape, px: number, py: number): boolean {
+  const { x, y, w, h, corners } = shape;
+  if (px < x || px > x + w || py < y || py > y + h) return false;
+  const [tl, tr, br, bl] = corners;
+  // Each corner owns an rx x ry rectangle; a point in it must also be inside that corner's ellipse.
+  const outside = (cx: number, cy: number, c: CornerRadius): boolean => {
+    if (c.rx <= 0 || c.ry <= 0) return false;
+    const dx = (px - cx) / c.rx;
+    const dy = (py - cy) / c.ry;
+    return dx * dx + dy * dy > 1;
+  };
+  if (px < x + tl.rx && py < y + tl.ry) return !outside(x + tl.rx, y + tl.ry, tl);
+  if (px > x + w - tr.rx && py < y + tr.ry) return !outside(x + w - tr.rx, y + tr.ry, tr);
+  if (px > x + w - br.rx && py > y + h - br.ry) return !outside(x + w - br.rx, y + h - br.ry, br);
+  if (px < x + bl.rx && py > y + h - bl.ry) return !outside(x + bl.rx, y + h - bl.ry, bl);
+  return true;
+}
+
+/**
+ * Spacing of the sampling grid the crossing area is counted on, in poster px. 1 poster px is
+ * 2.1 pt on the A0 sheet, so a crossing smaller than a 2 x 2 cell is under 5 pt square - not
+ * something a reader sees, and not something worth a line in the warning.
+ */
+const OVERLAP_SAMPLE_STEP = 2;
 
 /** Two units drawn over each other, and by how much. */
 export interface UnitOverlap {
   /** The two associations, in the order the caller gave them. */
   a: string;
   b: string;
-  /** Area of the intersection, in poster px squared. */
+  /** Area of the intersection, in poster px squared (sampled on {@link OVERLAP_SAMPLE_STEP}). */
   area: number;
 }
 
 /**
- * Every pair of units whose ink boxes cross, worst first.
+ * Every pair of units whose INK crosses, worst first.
  *
  * Decided with the user on 2026-09-27 (D7): an overlap is WARNED and never repaired. Nudging a unit
  * would undo a placement made by hand, and the author is the only one who knows which of the two
  * should move - so this reports, and the editor draws the boxes it names.
  *
- * @param units - Each association's box, as {@link unitInkBox} returns it.
+ * The area is counted, not derived: points of a grid over the two units' common bounds that fall
+ * inside a shape of EACH unit. The shapes are curved and several per unit, so no closed form is
+ * worth its bugs, and the grid is deterministic - the same layout always answers the same list.
+ *
+ * @param units - Each association's shapes, as {@link unitInkShapes} returns them.
  * @returns One entry per crossing pair, largest intersection first. Touching edges are not a
  *   crossing: a zero area would put the poster's neatest placements at the top of a warning list.
  */
-export function findUnitOverlaps(units: { assoId: string; box: UnitBox }[]): UnitOverlap[] {
+export function findUnitOverlaps(units: { assoId: string; shapes: InkShape[] }[]): UnitOverlap[] {
+  const bounds = units.map((u) => boundsOf(u.shapes));
   const found: UnitOverlap[] = [];
   for (let i = 0; i < units.length; i++) {
     for (let j = i + 1; j < units.length; j++) {
-      const a = units[i].box;
-      const b = units[j].box;
-      const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-      const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-      if (w <= 0 || h <= 0) continue;
-      found.push({ a: units[i].assoId, b: units[j].assoId, area: round2(w * h) });
+      const a = bounds[i];
+      const b = bounds[j];
+      const left = Math.max(a.x, b.x);
+      const top = Math.max(a.y, b.y);
+      const right = Math.min(a.x + a.w, b.x + b.w);
+      const bottom = Math.min(a.y + a.h, b.y + b.h);
+      if (right <= left || bottom <= top) continue;
+
+      let hits = 0;
+      for (let py = top + OVERLAP_SAMPLE_STEP / 2; py < bottom; py += OVERLAP_SAMPLE_STEP) {
+        for (let px = left + OVERLAP_SAMPLE_STEP / 2; px < right; px += OVERLAP_SAMPLE_STEP) {
+          if (
+            units[i].shapes.some((sh) => inkContains(sh, px, py)) &&
+            units[j].shapes.some((sh) => inkContains(sh, px, py))
+          ) {
+            hits++;
+          }
+        }
+      }
+      if (hits === 0) continue;
+      found.push({
+        a: units[i].assoId,
+        b: units[j].assoId,
+        area: round2(hits * OVERLAP_SAMPLE_STEP * OVERLAP_SAMPLE_STEP),
+      });
     }
   }
   return found.sort((x, y) => y.area - x.area);

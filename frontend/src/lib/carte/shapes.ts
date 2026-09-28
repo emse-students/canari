@@ -32,6 +32,57 @@ export function shapeRadius(key: string): string {
   return CARTE_SHAPES.find((s) => s.key === key)?.radius ?? CARTE_SHAPES[0].radius;
 }
 
+/** One elliptical corner of a `border-radius` outline, in px of the box it rounds. */
+export interface CornerRadius {
+  rx: number;
+  ry: number;
+}
+
+/** The four corners of a `border-radius` outline: top-left, top-right, bottom-right, bottom-left. */
+export type CornerRadii = [CornerRadius, CornerRadius, CornerRadius, CornerRadius];
+
+/**
+ * The corners a percentage `border-radius` shorthand draws on a `w` x `h` box, exactly as CSS
+ * resolves them - including the spec's uniform shrink when two radii on one side add up to more
+ * than that side (CSS Backgrounds 3, "corner overlap").
+ *
+ * The overlap warning needs the silhouette the reader sees rather than the square the blob is laid
+ * out in: the blob's corners are where two units most often come close, and a square there
+ * reported crossings no one could see (2026-09-28, the user: "visuellement les associations ne se
+ * superposent pas"). Only the `%` values the curated {@link CARTE_SHAPES} use are understood; any
+ * other unit is a programming error and throws, because a silently wrong outline is a silently
+ * wrong warning.
+ */
+export function borderRadiusCorners(radius: string, w: number, h: number): CornerRadii {
+  const [horizontal, vertical = horizontal] = radius.split('/').map((half) =>
+    half
+      .trim()
+      .split(/\s+/)
+      .map((token) => {
+        const match = /^(\d+(?:\.\d+)?)%$/.exec(token);
+        if (!match) throw new Error(`borderRadiusCorners: unsupported radius token "${token}"`);
+        return Number(match[1]) / 100;
+      })
+  );
+  // The CSS 1-to-4 value expansion: top-left, top-right, bottom-right, bottom-left.
+  const expand = (v: number[]): [number, number, number, number] => [
+    v[0],
+    v[1] ?? v[0],
+    v[2] ?? v[0],
+    v[3] ?? v[1] ?? v[0],
+  ];
+  const hx = expand(horizontal).map((f) => f * w);
+  const vy = expand(vertical).map((f) => f * h);
+  const shrink = Math.min(
+    1,
+    w / (hx[0] + hx[1] || 1),
+    w / (hx[3] + hx[2] || 1),
+    h / (vy[0] + vy[3] || 1),
+    h / (vy[1] + vy[2] || 1)
+  );
+  return [0, 1, 2, 3].map((i) => ({ rx: hx[i] * shrink, ry: vy[i] * shrink })) as CornerRadii;
+}
+
 /** Whether a persisted shape key is a known shape. */
 export function isShapeKey(key: string): boolean {
   return CARTE_SHAPES.some((s) => s.key === key);

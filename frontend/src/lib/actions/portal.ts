@@ -72,3 +72,40 @@ export function portal(node: HTMLElement, target: HTMLElement = document.body) {
     },
   };
 }
+
+/**
+ * {@link portal}, but only while `active` - and the node goes back to where it was written when it
+ * turns false.
+ *
+ * For a node that is ordinary page content most of the time and a window-covering layer on demand:
+ * the carte editor's full-screen mode is `fixed inset-0`, and inside `.page-scroll-wrap` (a
+ * containing block, see `app.css`) that covered the SCROLLED wrapper instead of the window - the
+ * page's own warnings showed under it (2026-09-28). A comment node holds the original slot, so the
+ * return lands exactly there, between the same siblings.
+ */
+export function portalWhile(node: HTMLElement, active: boolean) {
+  const slot = document.createComment('portal-slot');
+  node.before(slot);
+
+  const apply = (on: boolean): void => {
+    if (on && node.parentElement !== document.body) {
+      portalOrigins.set(node, slot.parentElement as HTMLElement);
+      document.body.appendChild(node);
+    } else if (!on && node.previousSibling !== slot) {
+      portalOrigins.delete(node);
+      slot.after(node);
+    }
+  };
+  apply(active);
+
+  return {
+    update(next: boolean) {
+      apply(next);
+    },
+    destroy() {
+      portalOrigins.delete(node);
+      node.remove();
+      slot.remove();
+    },
+  };
+}
