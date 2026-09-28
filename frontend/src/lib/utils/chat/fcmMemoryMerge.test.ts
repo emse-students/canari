@@ -139,6 +139,29 @@ describe('mergeFcmMessagesIntoConversations', () => {
     warn.mockRestore();
   });
 
+  /**
+   * A SYSTEM NOTICE THE CURRENT USER'S OWN ACTION PRODUCED MUST NOT RAISE THE BADGE.
+   *
+   * Reported 2026-09-28: inviting someone into a community lit up the Discussions badge for the
+   * inviter. A `memberAdded` notice is always written with `senderId: 'system'`, never the
+   * inviter's own id, so `isOwn` is false for it even when the inviter caused it - `isUnreadForUser`
+   * (`readState.ts`) already excludes `isSystem` for exactly this reason; this merge path, reached
+   * when the notice arrives via the FCM cache rather than the live socket, did not.
+   */
+  it('never counts a system notice as unread, even the inviter own action produced', () => {
+    const convs = new Map([['grp-aaaa-bbbb', existing()]]);
+
+    expect(
+      mergeFcmMessagesIntoConversations(
+        [message({ senderId: 'system', content: JSON.stringify({ type: 'memberAdded' }) })],
+        convs,
+        'me'
+      )
+    ).toBe(1);
+
+    expect(convs.get('grp-aaaa-bbbb')?.unreadCount ?? 0).toBe(0);
+  });
+
   it('does nothing, and says nothing, when there is nothing to merge', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     expect(mergeFcmMessagesIntoConversations([], new Map(), 'me', placeholders())).toBe(0);

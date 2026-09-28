@@ -25,6 +25,7 @@ import {
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
@@ -806,7 +807,10 @@ export function useConversations() {
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
-    if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
+    if (convo) {
+      conversations.set(name, { ...convo, unreadCount: 0 });
+      publishConversationRead(name, convo.lastMessageAt ?? 0);
+    }
     if (convo?.id) {
       void loadGroupMembers(convo.id, null);
     }
@@ -821,7 +825,10 @@ export function useConversations() {
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
-    if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
+    if (convo) {
+      conversations.set(name, { ...convo, unreadCount: 0 });
+      publishConversationRead(name, convo.lastMessageAt ?? 0);
+    }
     if (convo?.id) {
       void loadGroupMembers(convo.id, ctx);
       void verifyCurrentUserMembership(name, ctx);

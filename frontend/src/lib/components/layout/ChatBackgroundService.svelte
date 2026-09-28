@@ -1118,6 +1118,19 @@
       return;
     }
 
+    // A READ IS THE OTHER FACT A FOLLOWER MAY KNOW THAT A LEADER DOES NOT, and the leader must
+    // apply it too: reading happens in whichever tab is open on the conversation, either role.
+    // Applied only up to the watermark the reading tab saw, so a message that arrived in the gap
+    // between the read and this broadcast keeps its unread state instead of being swallowed.
+    if (event.type === 'conversation_read') {
+      const target = globalConvs.conversations.get(event.conversationId);
+      if (!target) return;
+      if ((target.lastMessageAt ?? 0) <= event.readAt) {
+        globalConvs.conversations.set(event.conversationId, { ...target, unreadCount: 0 });
+      }
+      return;
+    }
+
     if (globalSession.isTabLeader) return;
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;

@@ -372,6 +372,7 @@ needs `findMessage` to succeed, so it repairs only a row the receiver already sh
 | --- | --- | --- |
 | `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
 | `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
+| `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -385,6 +386,26 @@ delete.
 **TAB-4b does not assert this**, so the row passed throughout - it expects the sending tab and the
 peer. The guard is `tabMessageSync.test.ts`, where the two publishers are pinned as exact mirrors:
 asserting only the new half would pass just as well if the old one had quietly inverted.
+
+**READING WAS THE SAME GAP, THE OTHER DIRECTION (reported 2026-09-28, fixed the same day).** The
+paragraph above already says a follower "has nothing to say about" `unreadCount` - true for a
+message it composes, but a read is a fact of its own: the user marks a conversation read in
+whichever tab has it open, either role, and until this fix that only zeroed `unreadCount` in the
+tab's own memory. A second tab of the same account - or the same conversation read from a phone,
+via the badge shown there - kept counting the conversation unread until that tab happened to select
+it itself. `conversation_read` closes it: **ungated, like `publishOutboxEntryCancelled`**, since
+reading, like a cancellation, originates wherever the user acted. It carries `readAt`, the
+conversation's `lastMessageAt` at the moment it was cleared, and a receiver only zeroes its own
+`unreadCount` when its own `lastMessageAt` is no newer - a message arriving in the gap between the
+read and the broadcast keeps its unread state rather than being swallowed by a stale watermark.
+
+**A related, separate gap in the same report: a system notice merged from the FCM cache counted as
+unread even when the current user's own action produced it** (e.g. the `memberAdded` notice an
+invite writes). `mergeFcmMessagesIntoConversations` (`fcmMemoryMerge.ts`) gated unread on `isOwn`
+alone; a system notice's `senderId` is always `'system'`, never the actor's own id, so `isOwn` is
+false for it regardless of who caused it. The canonical gate, `isUnreadForUser` (`readState.ts`),
+already excludes `isSystem` for this reason - the live socket path already used it and was never
+affected. The FCM merge path now mirrors that exclusion.
 
 **The election is awaited once, however many flushes are waiting on it.** Leadership has three
 states, and `runFlush` awaits the decision when it reads `undecided` rather than treating it as

@@ -10,6 +10,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 
 import {
   publishComposedMessage,
+  publishConversationRead,
   publishTabMessageUpdate,
   subscribeTabMessageUpdates,
   type TabMessageEvent,
@@ -102,6 +103,24 @@ describe('tabMessageSync - who may speak, and about what', () => {
     publishTabMessageUpdate(relayed);
     publishComposedMessage(composed);
     expect(posted).toEqual([relayed]);
+  });
+
+  // The badge went stale when a conversation was read in another tab, because nothing on this
+  // channel ever said so (reported 2026-09-28). Reading happens in whichever tab is open, so - like
+  // a composed message - it must reach every OTHER tab regardless of leader/follower role.
+  it('announces a conversation read from either role', () => {
+    isLeader = true;
+    publishConversationRead('c1', 1_700_000_000_000);
+    expect(posted).toEqual([
+      { type: 'conversation_read', conversationId: 'c1', readAt: 1_700_000_000_000 },
+    ]);
+
+    posted.length = 0;
+    isLeader = false;
+    publishConversationRead('c1', 1_700_000_000_000);
+    expect(posted).toEqual([
+      { type: 'conversation_read', conversationId: 'c1', readAt: 1_700_000_000_000 },
+    ]);
   });
 
   it('delivers a composed message to a subscriber', () => {
