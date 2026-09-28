@@ -308,13 +308,11 @@ describe('InternalController - the community distribution group', () => {
         deviceId: PUBLISHER.deviceId,
       });
 
-      // `redeliverMissed: false` for the reason the external-join path passes it: the device holds
-      // the group at the CURRENT epoch, so a replay of what came before is undecryptable frames.
       expect(messagingService.activateDeviceMembership).toHaveBeenCalledWith(
         PUBLISHER.userId,
         PUBLISHER.deviceId,
         'g-1',
-        { redeliverMissed: false, tag: 'DISTRIBUTION_PUBLISHER' }
+        { tag: 'DISTRIBUTION_PUBLISHER' }
       );
     });
 

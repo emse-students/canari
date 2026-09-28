@@ -1504,16 +1504,24 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
 - **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
   `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
   commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
-  not to `17d0281e`. They receive every salon push and never a seed. Read their clients' side before
-  anything else.
+  not to `17d0281e`. They receive every salon push and never a seed. **READ 2026-09-27 21:00 on
+  production (now `canari-prod-postgres-1` on the Portail-etu host):** still no key-group row, on
+  current clients (`0.18.15` and `0.18.22` on their phones), and NOT ONE group-info fetch or external
+  commit from either since 14:35 - their phones took every salon push offline (`[SOCIAL_PUSH]`) and
+  no client of theirs has loaded the community. So nothing refused them: the join is owed by a load
+  that has not happened, which is the design (a member's own device commits its seat). **What is
+  wrong is what they SEE meanwhile**: a push for a salon whose key group the device does not hold can
+  never be read, frame or no frame. Settled the day either of them opens Gala; until then the
+  question is whether the phone should join from the push, as it does from a Welcome.
 - **FIXED - anybody holding a key group's id could add themselves to it** (P1, security, found by
   the gate audit that followed §16). `addGroupMember`'s creation bootstrap read a key group's empty
   `dm_group_members` as a new group; it now refuses the kind
   ([channel-encryption §17](protocols/channel-encryption.md#17-anybody-holding-a-key-groups-id-could-add-themselves-to-it---fixed-2026-09-27)).
   Production held no such row.
-- **P2, OPEN - no report watches a key group losing its last holder.** `reportSingleHolderGroups`
-  (`app.controller.ts`) counts `dm_group_members`, so it never sees a key group - the kind with no
-  Welcome fallback, where one holder left matters most. It should count active device rows.
+- **FIXED - no report watched a key group losing its last holder.** `reportSingleHolderGroups`
+  counted `dm_group_members`, which names nobody in a key group, so every one read 0 members and
+  fell under the threshold. A key group now counts the distinct users on its device rows and is
+  named `key group` in the line (run on the local estate: both key groups 0 -> 2 members).
 - **P3, OPEN, UNSETTLED BY THE AUDIT - a key group the client has only NOTED.** `reconcileAbsentLocalGroup`
   can mark a group as distribution with no scope, and `groupInfoChannel` then falls through to
   chat-delivery, which answers 403. Whether an epoch gap can reach such a group is what decides it;
@@ -2088,20 +2096,20 @@ consuming a cached push does), but the cold case has its own route and nothing h
 a 3716B budget`, so a first-contact Welcome exceeds the FCM data budget and travels without its
 payload inlined - unexamined, and the obvious next question for whoever takes this row further.
 
-**THE ROUTE, READ 2026-09-27, AND THE ONE-LINE FIX THAT IS WRONG.** The MLS send path queues for
-`status = 'active'` memberships only (`messaging.service.ts`, the `memberships` query), and a device
-added while dead is `pending` until its own join calls `membership-active` - on Android
-synchronously before the queue drain (`processReceivedWelcomeBackground`), on the web
-fire-and-forget BEFORE the ACK (`setupMessageHandler.ts`). So every frame sent between the add and
-that call reaches every member but the newcomer, and only a history answer from a member who is
-online brings it back - the DM half of the homogeneity the user asked for (a salon's newcomer is on
-the community key group already). The obvious predicate - "also queue for a `pending` device with a
-Welcome queued for this group" - **hands that device its own ADD COMMIT**: the nominal add is
-`addMember -> sendWelcome -> sendCommit` (`actions.ts`), so the commit is queued AFTER the Welcome,
-one epoch behind the state the Welcome gives. The discriminator a correct fix needs is the EPOCH the
-Welcome admits at (commits below it excluded, application frames and later commits included), which
-no column carries today - `sendWelcome` would have to record it, from the commit it pairs with.
-Decision owed before building: it changes who the delivery core routes to.
+**THE ROUTE, AND WHAT REPLACED DF2 (user, 2026-09-28).** The MLS send path queued for
+`status = 'active'` memberships only, and a device added while dead is `pending` until its own join
+calls `membership-active`. What covered the gap was DF2, a replay at activation of what a five-minute
+window over the Redis history stream still held (NOTIF-17b `PASS` 2026-09-28 05:59 went through it).
+The user chose to replace that clock by a queue from the admitted epoch. **The epoch is exact only at
+the ADD COMMIT**, not at the Welcome: the commit is sent first in both flows (`runCommitTransaction`
+excludes the invitee from its fan-out, so the newcomer is never handed its own add - the claim this
+paragraph made on 2026-09-27 was wrong), a member can seal at the new epoch the moment it has the
+commit, and a second commit landing before `sendWelcome` would have named the wrong epoch. So the
+commit names the devices it adds (`admits`), the server writes them `pending` at `baseEpoch + 1` in
+the advance's own transaction, and the send path queues a pending device every frame whose clear MLS
+header reads that epoch or later (`mlsFrameEpoch`). DF2 and the stream's `silent` field are deleted
+([channel-encryption section 20](protocols/channel-encryption.md#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)).
+A client predating `admits` records nothing, and its newcomers are routed once they activate.
 
 **HALF ONE IS ALREADY OPEN AND IS NOT SPECIFIC TO FIRST CONTACT.** *"Je n'arrive pas dans la
 conversation"* is the P2 two entries down: the app has two notification builders, and the one the

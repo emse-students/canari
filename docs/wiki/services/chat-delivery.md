@@ -297,11 +297,11 @@ two independently (`silent`, `durable`); the server classifies nothing, because 
 Reconciliation traffic stays out: it restates state held elsewhere, and a 200-message bundle chunk
 would evict the messages the log exists to carry.
 
-Because the stream now holds silent frames, each entry records its own `silent` field. Any consumer
-that reads the stream in order to **notify** must honour it -
-`redeliverMissedDuringActivationWindow` re-notifies a reactivated device from this stream, and
-without the filter it would ring the user for every reaction. An absent field reads as visible: it
-can only come from an entry written when the stream held nothing else.
+Nothing notifies from the stream. Until 2026-09-28 one consumer did - a replay at activation
+(DF2) re-sent a reactivated device what a five-minute window still held, filtered on a per-entry
+`silent` field so it did not ring for every reaction. It is deleted with that field: a device a
+commit admits is a recipient from that commit's epoch on, at SEND time
+([channel-encryption section 20](../protocols/channel-encryption.md)).
 
 Each entry also records the DEVICE that wrote it (`sender_device_id`, since 2026-08-15), and that
 field exists for one reason: the stream is shared, so it necessarily holds the reader's own frames,
@@ -730,19 +730,11 @@ caller was ever written for it. The authority argument holds precisely: the same
 the skip does not. It is best-effort and re-driven; a refusal leaves the row pending and the next
 sync says it again, which is what every sync did before.
 
-**But the two callers of `status: 'active'` are not making the same claim, and one line depends on
-the difference.** A device reporting on ITSELF has processed its Welcome: it is stating a moment
-from which it can decrypt, and `redeliverMissed` (DF2) replays the pending window so it gets the
-notifications missed while it was `pending` - a window it can now open. A member VOUCHING says only
-that the leaf is in the tree. That retires the invitation, which is the whole question the column
-answers, but it fixes no moment and proves no Welcome was processed. Replaying thirteen days at a
-device that may not have opened the group yet is up to 50 undecryptable frames and as many generic
-pushes - the exact hazard `redeliverMissed: false` was added for.
-
-So `updateInvitationStatus` passes `redeliverMissed: isSelfReport`, taking the discriminator from
-the authorization branch that already had to compute it rather than re-deriving it one layer down.
-`invitations.controller.vouch.spec.ts` pins all four answers, the global admin included: an admin is
-not the device either.
+The two callers of `status: 'active'` - a device reporting on ITSELF, a member VOUCHING that the
+leaf is in the tree - used to differ on one flag: only the self-report replayed the pending window
+(DF2), because only it fixes a moment the device could decrypt from. DF2 is deleted (2026-09-28),
+so both now make the same call through the one writer; `invitations.controller.vouch.spec.ts` pins
+that, and that a non-member may do neither.
 
 ### A revoked device id does not come back for ten years
 

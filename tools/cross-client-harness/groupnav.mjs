@@ -209,9 +209,13 @@ export async function closeOverlays(cx) {
     // nothing to do are the same outcome here, and the only symptom is the throw four passes later.
     // `selector-selftest.mjs` now refuses any UI string this repository clicks that the app does not
     // ship. SCOPED to the panel, because `common_close_label` is also the GIF picker's.
+    //
+    // AND IT BROKE A SECOND TIME THE SAME WAY: on 2026-09-17 the shell moved into the shared
+    // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
+    // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
     await realClick(
       cx,
-      state === 'group-panel' ? '.conversation-side-panel [aria-label="Fermer"]' : 'text=Fermer'
+      state === 'group-panel' ? '.side-panel [aria-label="Fermer"]' : 'text=Fermer'
     ).catch(() => {});
     await sleep(1200);
   }

@@ -355,9 +355,13 @@ export async function openCommunitySettings(cx) {
  *
  * So the precondition is established here rather than asserted, which is what makes the gesture
  * safe to call from anywhere - the same shape `openCommunityMembers` was given for the same reason.
+ *
+ * THE ROLES TAB IS CAPTIONED `chat_community_roles_tab_short` ("Rôles") SINCE #1140, which shortened
+ * it so the three tabs fit a phone; the long caption now titles the panel body only, so clicking it
+ * found nothing at any width (found by the panel tour, 2026-09-27).
  */
 export async function communityTab(cx, tab) {
-  const key = { overview: 'chat_community_overview_tab', roles: 'chat_community_roles_tab', members: 'common_members_label' }[tab];
+  const key = { overview: 'chat_community_overview_tab', roles: 'chat_community_roles_tab_short', members: 'common_members_label' }[tab];
   if (!key) throw new Error(`communityTab: unknown tab '${tab}' - overview, roles or members`);
   await openCommunitySettings(cx);
   await realClick(cx, control(key));

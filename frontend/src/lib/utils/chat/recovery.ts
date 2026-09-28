@@ -12,6 +12,7 @@ import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
+import { readWelcomeOwedFromRow } from './welcomeOwed';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -734,14 +735,12 @@ async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boo
       deps.userId,
       deps.mlsService.getDeviceId()
     );
-    const row = rows.find((r) => r.groupId === groupId);
-    if (row?.status !== 'pending') return false;
-
-    // A server that carries neither field cannot be asked the question, so the row's status is all
-    // there is - the behaviour every client had before this change.
-    if (row.welcomeQueued === undefined && row.addInFlight === undefined) return true;
-
-    const owed = row.welcomeQueued === true || row.addInFlight === true;
+    // THE READING IS SHARED with the Graine key-group join (`readWelcomeOwedFromRow`), which since
+    // 2026-09-27 has the same two doors - an admitter's Welcome, or the device's own external
+    // commit. A server that carries neither field reads `owed`: the row's status is all there is.
+    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
+    if (reading === 'not-pending') return false;
+    const owed = reading === 'owed';
     if (!owed) {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
       // flight is the population `reportStrandedDeviceMemberships` names hourly; reaching it here

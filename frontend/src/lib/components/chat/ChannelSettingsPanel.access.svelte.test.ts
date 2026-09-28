@@ -20,6 +20,9 @@ const service = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/services/ChannelService', () => ({ channelService: service }));
+const admitSalonGrantee = vi.hoisted(() => vi.fn().mockResolvedValue({ kind: 'not-held' }));
+vi.mock('$lib/utils/graine/admitNewcomer', () => ({ admitSalonGrantee }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() =>
     Promise.resolve(
@@ -124,6 +127,9 @@ describe('ChannelSettingsPanel - access tab', () => {
     expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner', 'peer']);
     // The field is cleared, not left showing a pick that was already taken.
     expect(input.value).toBe('');
+    // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grant is
+    // followed by the admission into the salon's own key group, after the server accepted it.
+    expect(admitSalonGrantee).toHaveBeenCalledWith('salon-a', 'peer', expect.any(Function));
   });
 
   it('reloads the access settings when the panel moves to another salon', async () => {

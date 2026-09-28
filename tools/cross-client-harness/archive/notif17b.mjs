@@ -46,7 +46,7 @@
 import { APP_TAB, client, ensureChat, evaluate, send } from '../chat.mjs';
 import { closeOverlays, createGroup, deleteGroup } from '../groupnav.mjs';
 import { addMember } from './addmember.mjs';
-import { gate, ignoringExpectedLog, logcatSince, report, watch } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, gate, ignoringExpectedLog, logcatSince, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
 import * as phone from '../phone.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
@@ -234,8 +234,16 @@ try {
 // P1 (`docs/wiki/backlog.md`) accusing itself on every device boot, and this row boots A1 up to
 // three times. It is not this row's finding and it is not noise to be demoted - it is tracked, and
 // forgiving it HERE by name keeps that P1's own rows meaning what they say.
+//
+// AND `GROUP_CREATION_NARRATION`, BECAUSE THIS ROW CREATES A GROUP. W2 mints one and adds A1, so it
+// always says the two lines that list names - the block-status answer and the devices in the
+// staged commit. The list is opt-in for exactly the rows that provoke it; this one never opted in,
+// and it graded `PASS-DIRTY` on those two lines alone on 2026-09-27 (and on 2026-09-08).
 const gated = gate(setupFailed ? 'SETUP-FAILED' : unmet.length > 0 ? 'FAIL' : 'PASS', {
-  W2: ignoringExpectedLog(await report(oW2), [/^\[MLS\] reconcilePublishedKeyPackages: REFUSED/]),
+  W2: ignoringExpectedLog(await report(oW2), [
+    /^\[MLS\] reconcilePublishedKeyPackages: REFUSED/,
+    ...GROUP_CREATION_NARRATION,
+  ]),
 });
 record('NOTIF-17b', gated.verdict, { ...gated.detail, ...out, unmet, setupFailed });
 

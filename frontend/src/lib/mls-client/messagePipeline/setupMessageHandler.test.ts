@@ -510,6 +510,80 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
+  describe('a Welcome into a KEY-DISTRIBUTION group (channel-encryption section 20)', () => {
+    const keyGroup = '33333333-3333-4333-8333-333333333333';
+
+    function keyGroupDeps(meta: Record<string, unknown>) {
+      const deps = baseDeps();
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ groupId: keyGroup, ...meta });
+      mls.noteDistributionGroup = vi.fn();
+      mls.processWelcome = vi.fn().mockResolvedValue(keyGroup);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (
+        a: string,
+        b: Uint8Array,
+        c?: string,
+        d?: boolean
+      ) => Promise<boolean>;
+      return { deps, mls, onMsg };
+    }
+
+    it('installs it as a seed carrier and builds NO conversation row for it', async () => {
+      const { deps, mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+
+      const ok = await onMsg('admin', new Uint8Array([1]), keyGroup, true);
+
+      expect(ok).toBe(true);
+      // Registered BEFORE the install, so the seed frame behind the Welcome routes to Graine.
+      expect(mls.registerDistributionGroup).toHaveBeenCalledWith(
+        { kind: 'workspace', workspaceId: 'ws-1' },
+        keyGroup
+      );
+      expect(mls.processWelcome).toHaveBeenCalled();
+      expect(mls.updateInvitationStatus).toHaveBeenCalledWith(
+        'dev-x',
+        'user-a',
+        keyGroup,
+        'active'
+      );
+      // The whole reason for the branch: a key group is not a conversation.
+      expect(deps.conversations.has(keyGroup)).toBe(false);
+      expect(deps.saveConversation).not.toHaveBeenCalled();
+    });
+
+    it('notes a private salon group whose community this session never loaded', async () => {
+      const { mls, onMsg } = keyGroupDeps({ distributionChannelId: 'salon-unknown' });
+
+      await onMsg('admin', new Uint8Array([1]), keyGroup, true);
+
+      expect(mls.noteDistributionGroup).toHaveBeenCalledWith(keyGroup);
+      expect(mls.registerDistributionGroup).not.toHaveBeenCalled();
+      expect(mls.processWelcome).toHaveBeenCalled();
+    });
+
+    it('treats a redelivery for a held, live key group as idempotent', async () => {
+      const { mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+      mls.getLocalGroups = vi.fn().mockReturnValue([keyGroup]);
+      mls.isGroupActive = vi.fn().mockResolvedValue(true);
+
+      expect(await onMsg('admin', new Uint8Array([1]), keyGroup, true)).toBe(true);
+      expect(mls.processWelcome).not.toHaveBeenCalled();
+      expect(mls.updateInvitationStatus).toHaveBeenCalled();
+    });
+
+    it('ACKs a Welcome that fails to install, asking for no recovery - the own load is the door', async () => {
+      const { deps, mls, onMsg } = keyGroupDeps({ distributionWorkspaceId: 'ws-1' });
+      mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
+
+      expect(await onMsg('admin', new Uint8Array([1]), keyGroup, true)).toBe(true);
+      expect(mls.updateInvitationStatus).not.toHaveBeenCalled();
+      expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
+      expect(deps.conversations.has(keyGroup)).toBe(false);
+    });
+  });
+
   it('Welcome for a HELD but EVICTED group → re-admission: forget the old state, process it', async () => {
     // HELD IS NOT THE SAME AS USABLE, and the guard above used to ask only the easier question. An
     // evicted group stays in the WASM store, so every Welcome re-admitting this device was dropped

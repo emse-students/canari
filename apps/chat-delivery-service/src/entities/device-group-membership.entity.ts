@@ -136,6 +136,26 @@ export class DeviceGroupMembership {
   @Column({ type: 'timestamptz', default: () => 'now()' })
   pendingSince: Date;
 
+  /**
+   * The MLS epoch a queued Welcome admits this device at, while it is still `pending`.
+   *
+   * **WHY A PENDING DEVICE IS A RECIPIENT AT ALL (user, 2026-09-28).** A device added while its
+   * phone was dead stays `pending` until its own join says otherwise, and every frame sent in
+   * between used to skip it - a time-windowed replay at activation (DF2) then re-sent what it could
+   * find. That replay is deleted: a device holding this column is queued every frame sealed at or
+   * after this epoch, at SEND time, like any member, and so is pushed like one. Frames sealed
+   * before it are the ones it can never open (a member lagging one commit behind), and the frame's
+   * own clear header says which is which (`mlsFrameEpoch`).
+   *
+   * **WRITTEN BY `sendWelcome` ONLY, and read as the server's `activeEpoch` at that moment.** Both
+   * add flows have the adder's commit ACCEPTED before its Welcome is sent (`runCommitTransaction`,
+   * `send-welcome-and-commit`), so the counter already names the epoch the Welcome creates. Cleared
+   * by every transition - `activateDeviceMembership` (the device is a member; `active` routes it)
+   * and `deactivateDeviceMembership` (a demoted device needs a NEW Welcome before it can read).
+   */
+  @Column({ type: 'integer', nullable: true, default: null })
+  admittedAtEpoch: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

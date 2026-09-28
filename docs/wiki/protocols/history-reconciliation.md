@@ -143,9 +143,9 @@ bundle chunk would evict the very messages it exists to carry.
 
 Two consequences, both handled where the assumption lived:
 
-- the stream now carries silent frames, so each entry records its own visibility. Anything reading
-  the stream to *notify* must honour it - `redeliverMissedDuringActivationWindow` re-notifies a
-  reactivated device from this stream and would otherwise ring the user for a reaction;
+- the stream now carries silent frames, so anything reading it to *notify* would have to tell them
+  apart. The one such reader (DF2, the replay at activation) was deleted on 2026-09-28, and the
+  per-entry `silent` field with it ([channel-encryption section 20](channel-encryption.md));
 - the client's replay handlers for mutations, dead until now because no mutation reached the
   stream, become the path every mutation takes on replay. See D7.
 

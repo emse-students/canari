@@ -77,6 +77,7 @@ import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { commitAdmits } from '$lib/mls-client/commitAdmits';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2724,6 +2725,18 @@ export abstract class BaseMlsService implements IMlsService {
         const staged = await stageFn();
         // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
         const baseEpoch = await this.freshEpoch(groupId);
+        // The devices this commit adds, recorded by the server WITH the advance so each is a
+        // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
+        const admits = commitAdmits(
+          opts.excludeDeviceIds,
+          staged.addedDeviceIds,
+          `${this.userId}:${this.deviceId}`
+        );
+        if (admits.length > 0) {
+          console.log(
+            `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
+          );
+        }
         // One atomic server round-trip: validate the epoch, and on accept the server records the
         // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
         // between this accept and the local merge below, our epoch lags the server by one - a gap the
@@ -2732,7 +2745,9 @@ export abstract class BaseMlsService implements IMlsService {
           groupId,
           baseEpoch,
           toBase64(staged.commit),
-          opts.excludeDeviceIds
+          opts.excludeDeviceIds,
+          undefined,
+          admits
         );
         if (!validation.accepted) {
           // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.

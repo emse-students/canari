@@ -667,6 +667,8 @@ export class PushController {
       deviceId,
       baseEpoch: body.baseEpoch,
       proto: body.commitPayload,
+      // The one device this re-add commit puts in the tree, recorded with the advance.
+      admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
     });
     if (!validation.accepted) {
       this.logger.warn(

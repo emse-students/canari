@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -95,6 +96,10 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
+  // Held as consts so the authorization cases below can say what each table answers.
+  const groupMemberRepo = emptyRepo();
+  const groupRepo = { ...emptyRepo(), manager: { transaction } };
+
   const body = {
     targetDeviceId: 'd2',
     targetUserId: 'u2',
@@ -108,16 +113,16 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     jest.clearAllMocks();
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
+    deviceGroupRepo.findOne.mockResolvedValue(null);
+    groupMemberRepo.findOne.mockResolvedValue(null);
+    groupRepo.findOne.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        {
-          provide: getRepositoryToken(Group),
-          useValue: { ...emptyRepo(), manager: { transaction } },
-        },
+        { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
@@ -195,5 +200,47 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     await expect(service.sendWelcome(undefined, body)).rejects.toThrow(/not found/);
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     expect(redis.sadd).not.toHaveBeenCalled();
+  });
+
+  /**
+   * WHOEVER ADMITS A COMMUNITY NEWCOMER WELCOMES THEM (channel-encryption section 20), and a
+   * key-distribution group names nobody in `dm_group_members` by construction. Asked of that table,
+   * the gate refused every such Welcome; it asks the device table for this kind, like the replay.
+   */
+  describe('who may send a Welcome', () => {
+    it('lets a key-distribution member with an ACTIVE device row Welcome a newcomer', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+
+      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'g1', userId: 'u1', status: 'active' },
+      });
+      // The user table cannot answer for this kind, so it is not asked at all.
+      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('refuses a sender with no active device in a private salon key group', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionChannelId: 'salon-1' });
+
+      await expect(service.sendWelcome('u1', body)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(queuedSave).not.toHaveBeenCalled();
+    });
+
+    it('still asks dm_group_members for an ordinary conversation', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+
+      await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
+      expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'g1', userId: 'u1' },
+      });
+    });
+
+    it('refuses a non-member of an ordinary conversation', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
+
+      await expect(service.sendWelcome('u1', body)).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });

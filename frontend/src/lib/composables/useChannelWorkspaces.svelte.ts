@@ -41,6 +41,7 @@ import {
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
+import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -971,10 +972,31 @@ export function useChannelWorkspaces() {
           : roleName === 'moderator'
             ? 'Modérateur'
             : 'Membre';
-      await service.inviteToChannel(channelId, {
+      const invited = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
         roleName: backendRoleName,
       });
+
+      // WHOEVER ADMITS A NEWCOMER WELCOMES THEM (channel-encryption section 20). This device is
+      // online and holds the key group, and the newcomer's phone may be shut: without this, it
+      // took every salon push and opened none until the app was next started. Only for a member
+      // the server has just CREATED - `alreadyMember` means nothing was granted, so nobody is owed
+      // an admission. Not awaited: it is a commit and a Welcome per device, the invitation has
+      // already succeeded, and the admission never throws - every outcome is logged.
+      const workspaceDbId = currentWorkspace?.workspaceDbId;
+      if (invited.alreadyMember !== true && workspaceDbId) {
+        void admitInvitedMember(
+          workspaceDbId,
+          channelId,
+          currentChannel?.isPrivate === true,
+          memberId,
+          ctx.log
+        );
+      } else if (invited.alreadyMember !== true) {
+        ctx.log(
+          `[GRAINE] ADMIT ${memberId.slice(0, 8)}: the community of channel ${channelId.slice(0, 8)} is not loaded here - nobody admitted, the newcomer's own load joins it`
+        );
+      }
 
       if (ctx.ensureMls && ctx.startDirectConversation) {
         const previousSelection = ctx.getSelectedConversationId?.() ?? null;

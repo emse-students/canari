@@ -104,9 +104,6 @@ export class GroupsController {
    * microseconds earlier by this same request and provably owns nothing - the one condition a
    * destructive action here needs. The failure is NEVER masked: the discard's own errors are logged
    * and the original refusal is what the caller receives.
-   *
-   * `redeliverMissed: false`: the group was created this instant, so there is no pending window and
-   * nothing was missed.
    */
   async createGroup(
     @Body()
@@ -164,7 +161,7 @@ export class GroupsController {
           safeCreatorId,
           safeCreatorDeviceId,
           groupId,
-          { redeliverMissed: false, tag: 'CREATE_GROUP' }
+          { tag: 'CREATE_GROUP' }
         );
       } catch (e) {
         await this.discardUnenrolledGroup(

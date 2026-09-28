@@ -124,6 +124,15 @@ describe('the ONE writer of an active membership', () => {
     );
   });
 
+  it('clears `admittedAtEpoch`: the status routes the device from here on', async () => {
+    await service.activateDeviceMembership('u1', 'd1', 'g1');
+
+    expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ admittedAtEpoch: null }),
+      expect.anything()
+    );
+  });
+
   it('refuses a REVOKED device and writes neither the row nor the set (WP-GHOST-1)', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue({ userId: 'u1', deviceId: 'd1' });
 
@@ -194,18 +203,10 @@ describe('the ONE writer of an active membership', () => {
     expect(keyPackageRepo.findOne).not.toHaveBeenCalled();
   });
 
-  it('replays nothing when told the device joined at the current epoch', async () => {
+  it('replays nothing, whatever the prior state - an admitted device was queued at send time', async () => {
+    // DF2 is deleted (user, 2026-09-28): what a pending device can open reaches it through the
+    // admission its commit recorded, never through a window read back here.
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending', createdAt: new Date() });
-
-    await service.activateDeviceMembership('u1', 'd1', 'g1', { redeliverMissed: false });
-
-    // Forward secrecy: it cannot decrypt anything sent before its join, so a replay would be up to
-    // fifty undecryptable frames and as many generic pushes.
-    expect(redis.xrange).not.toHaveBeenCalled();
-  });
-
-  it('does not replay to a device that was ALREADY active - re-processing must not double notify', async () => {
-    deviceGroupRepo.findOne.mockResolvedValue({ status: 'active', createdAt: new Date() });
 
     await service.activateDeviceMembership('u1', 'd1', 'g1');
 
@@ -351,7 +352,7 @@ describe('the CREATE_GROUP door', () => {
       'u1',
       'd1',
       expect.any(String),
-      expect.objectContaining({ redeliverMissed: false, tag: 'CREATE_GROUP' })
+      expect.objectContaining({ tag: 'CREATE_GROUP' })
     );
   });
 

@@ -37,6 +37,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     registerDistributionGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
+    // No membership row by default: nothing is owed, so a seated device serves itself (section 20).
+    getDeviceMemberships: vi.fn().mockResolvedValue([]),
     // The checkpoint's landing place: with no session persister registered, a structural checkpoint
     // falls back to the MLS service the caller was handed - so counting calls here counts the
     // writes to disk.
@@ -886,5 +888,73 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
     );
     const call = caller.slice(caller.indexOf('.registerJoinedChannel('));
     expect(call.slice(0, call.indexOf(')'))).toContain('appendLog');
+  });
+});
+
+/**
+ * TWO DOORS, NEVER BOTH (channel-encryption section 20). An admitter's Welcome is on its way when
+ * `sendWelcome` has written this device's `pending` seat and queued it; joining by external commit
+ * on top would write this device's leaf a second time - the GRP-4 duplicate-leaf race.
+ */
+describe('a seat for a device that holds nothing - the admitter Welcome may be the door', () => {
+  const seated = () =>
+    makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 8,
+        activeEpoch: 8,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+  beforeEach(() => {
+    setGraineRuntime({
+      storage: {} as never,
+      deviceKeyB64: 'k',
+      userId: 'me',
+      mlsService: {} as never,
+    });
+  });
+  afterEach(() => setGraineRuntime(null));
+
+  it('waits for a Welcome that is queued, and joins nothing', async () => {
+    const lines: string[] = [];
+    const mls = makeMls({
+      getDeviceMemberships: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-1', status: 'pending', welcomeQueued: true }]),
+    });
+
+    expect(await run(mls, seated(), (m) => lines.push(m))).toBe(false);
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes("the admitter's Welcome is the door"))).toBe(true);
+  });
+
+  it('serves itself when the seat is one nothing follows', async () => {
+    const mls = makeMls({
+      getDeviceMemberships: vi
+        .fn()
+        .mockResolvedValue([
+          { groupId: 'g-1', status: 'pending', welcomeQueued: false, addInFlight: false },
+        ]),
+    });
+
+    expect(await run(mls, seated())).toBe(true);
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens neither door when the seat could not be read', async () => {
+    const mls = makeMls({ getDeviceMemberships: vi.fn().mockRejectedValue(new Error('503')) });
+
+    expect(await run(mls, seated())).toBe(false);
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('does not ask at all on an ordinary first join, where the server names no seat', async () => {
+    const mls = makeMls({ getDeviceMemberships: vi.fn() });
+
+    expect(await run(mls, makeChannels())).toBe(true);
+    expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
   });
 });

@@ -91,6 +91,8 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
       deviceId: 'd1',
       baseEpoch: 7,
       proto: 'Q09NTUlU',
+      // The re-added device is recorded with the advance, before its Welcome or the broadcast.
+      admits: [{ userId: 'u2', deviceId: 'd2' }],
     });
     expect(sendWelcome).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(

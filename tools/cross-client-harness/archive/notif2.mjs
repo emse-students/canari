@@ -157,12 +157,20 @@ try {
   stage(`W2 opens the DM and speaks: ${marker}`);
   await withDeadline(openDM(w2, OWNER_NAME), 120_000, 'W2 openDM');
   const floor = phone.deviceNowMs();
+  const sentAt = Date.now();
   await withDeadline(send(w2, `${marker} sealed one commit ahead of a dead phone`), 120_000, 'send');
 
   // Waited on by the SENDER'S NAME, never by the marker - a generic banner carries no marker, and
   // waiting on it would turn a FAIL into a timeout.
   const inMs = await phone.awaitNotification(PEER_NAME, 120_000, floor).catch(() => null);
   lines = await logcatSince(killedAt).catch(() => []);
+  // EVERY GUARD BELOW READS FROM THE SEND ONWARD, and the first version of this row did not. The DM
+  // predates the run, so the window since the kill holds two things that are not about this message:
+  // W3's enrolment waking the dead phone for OTHER groups (each with its own catch-up, and
+  // `fetchCommitsFromBackend` names no group), and a read by W3 cancelling the PREVIOUS run's banner
+  // still in the shade - which graded a clean run `SETUP-FAILED` on 2026-09-27, 15 s before the send.
+  const afterSend = await logcatSince(sentAt).catch(() => []);
+  const dm8 = before.groupId.slice(0, 8);
 
   const hit = phone.notifications().find((n) => n.full.includes(PEER_NAME)) ?? null;
   out.notification = {
@@ -173,7 +181,10 @@ try {
   };
 
   // ── THE CATCH-UP, WHICH IS THE WHOLE QUESTION ───────────────────────────────────────────────
-  const fetchLines = lines.filter((l) => /fetchCommitsFromBackend:/.test(l));
+  // The catch-up that counts is the one that follows THIS DM's refusal.
+  const refusalAt = afterSend.findIndex((l) => l.includes(`tryDecrypt refused group=${dm8}`));
+  const fetchLines =
+    refusalAt < 0 ? [] : afterSend.slice(refusalAt).filter((l) => /fetchCommitsFromBackend:/.test(l));
   const refused = fetchLines.find((l) => /fetchCommitsFromBackend: HTTP \d+/.test(l)) ?? null;
   const served = fetchLines.find((l) => /fetchCommitsFromBackend: \d+ commit\(s\)/.test(l)) ?? null;
   out.catchUp = {
@@ -183,8 +194,8 @@ try {
   };
   out.push = {
     builtBy: lines.some((l) => /CanariFCM: showNotification/.test(l)) ? 'push' : 'websocket',
-    selfReadCancelled: new RegExp(`cancelConversationNotification: notif removed group=${before.groupId.slice(0, 8)}`).test(
-      lines.join('\n')
+    selfReadCancelled: afterSend.some((l) =>
+      l.includes(`cancelConversationNotification: notif removed group=${dm8}`)
     ),
   };
   stage(

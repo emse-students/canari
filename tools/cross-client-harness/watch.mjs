@@ -2249,7 +2249,10 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-token', /^FCM token synced/],
     ['fcm-received', /^onMessageReceived: type=/],
     ['fcm-foreground-skip', /^App in foreground -> MLS handled by the foreground/],
-    ['fcm-decrypt', /^(tryDecrypt|decryptProto): (MLS state loaded|success)/],
+    // `decryptProtoWithCommits` is the same success reached AFTER the catch-up applied the commits
+    // the phone missed - NOTIF-2 was the first row to print it (2026-09-27), as its two siblings
+    // below already spell both names.
+    ['fcm-decrypt', /^(tryDecrypt|decryptProto|decryptProtoWithCommits): (MLS state loaded|success)/],
     // ── the channel-push path, which had no rule at all until 2026-09-21 ────────────────────────
     // Seven lines of it were NOTIF-18's whole native dirt, and not one of them belongs to that row:
     // any push for a salon message raises them, so they are named here rather than forgiven per-row.

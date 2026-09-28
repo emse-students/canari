@@ -103,11 +103,17 @@ const BENIGN_CASES = [
   // THE GROUP LIFECYCLE, which every check that builds a group produces and nothing classified until
   // 2026-08-21 - twenty-four unexplained lines from one READ-10 run, all of them its own fixture.
   `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] name="READ10-mt3bjpjl" createdBy=aaaaaaaa isGroup=true creatorDevice=web-a-b groupId=g`,
+  `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] nameBytes=16 createdBy=aaaaaaaa isGroup=true creatorDevice=web-a-b groupId=g`,
   `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] creator membership set to active`,
   `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] DONE groupId=g`,
   `${NEST}[MembersController] [ADD_MEMBER][add-member-29ebc748] START group=g user=aaaaaaaa`,
   `${NEST}[MembersController] [ADD_MEMBER][add-member-29ebc748] DONE group=g user=aaaaaaaa devices=1`,
   `${NEST}[MessagingService] [WELCOME][welcome-send-ea3ef295] QUEUED id=q recipient=aaaaaaaa:web-a-b group=g`,
+  `${NEST}[MessagingService] [WELCOME][welcome-send-ea3ef295] recipient=aaaaaaaa:tauri-a-b online=false queuedId=q`,
+  `${NEST}[MessagingService] [WELCOME][welcome-send-ea3ef295] PUBLISHED recipient=aaaaaaaa:web-a-b queuedId=q`,
+  // The promotion line under each caller's tag - the creator of a group, a Welcome processed killed.
+  `${NEST}[MessagingService] [CREATE_GROUP] group=g device=aaaaaaaa:web-a-b`,
+  `${NEST}[MessagingService] [MEMBERSHIP_ACTIVE_PUSH] group=g device=aaaaaaaa:tauri-a-b`,
   `${NEST}[InvitationsController] [INVITATION_STATUS] device=web-a-b user=aaaaaaaa group=g newStatus=active`,
   // A SEND WITH NOBODY TO SEND TO. Benign in THIS spelling only; its sibling is in NOTABLE_CASES,
   // and the two were one indistinguishable sentence until the discriminator was added.
@@ -495,12 +501,12 @@ const fcmCallers = [
   ['a push from a message send', `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
   ['a push from its own deferred retry', `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a-def] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
   ['a push from a Welcome', `${NEST}[MessagingService] [PUSH_SEND][welcome-send-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
-  ['a push from a reactivation catch-up', `${NEST}[MessagingService] [PUSH_SEND][reactivate-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
-  // THE CATCH-UP'S OWN OUTCOME LINE, logged only when it moved something (`:1595`).
-  ['a reactivation that re-notified is reported with its count', `${NEST}[MessagingService] [ACTIVATION_REDELIVER][reactivate-33f8f65a] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b redelivered=1`, 'notable'],
-  // AND ITS FAILURE TWIN, which wears the SAME tag, carries NO trace id and is a `warn` - so it must
-  // not ride in on the rule above. A catch-up that threw is a device left un-notified.
-  ['a reactivation that threw is forgiven by nothing', `${NEST}[MessagingService] [ACTIVATION_REDELIVER] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b FAILED: boom`, 'unexplained'],
+  // A COMMIT ADMITTING A NEWCOMER, and a send queueing it before it has joined (user, 2026-09-28).
+  ['a commit admitting a device added while dead', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMITS group=00000000-0000-4000-8000-000000000001 atEpoch=6 devices=aaaaaaaa:tauri-a-b`, 'notable'],
+  ['a send queueing an admitted pending device', `${NEST}[MessagingService] [SEND][send-33f8f65a] PENDING_ADMITTED group=00000000-0000-4000-8000-000000000001 frameEpoch=6 devices=tauri-a-b@6`, 'notable'],
+  // AND THE REFUSAL TWIN, a `warn` - a device a commit named and the server would not record is a
+  // newcomer left out of every frame until it joins, and nothing forgives it.
+  ['an admission the server refused is forgiven by nothing', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMIT_REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b reason=no_key_package`, 'unexplained'],
   // A TOKEN BEING STORED IS NOT A NOTIFICATION BEING SENT. The handler 400s when the body carries
   // neither token, so this line always means a write happened and there is nothing to decide.
   ['a device rotating its push token is routine', `${NEST}[PushController] [PUSH_REFRESH] user=aaaaaaaa device=tauri-a-b fcm=true voip=false`, 'benign'],
