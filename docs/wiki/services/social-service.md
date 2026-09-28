@@ -175,6 +175,11 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   offers it only once the server holds the salon private, so a flip always arrives with an empty
   list. Before that, "Ajouter" only staged a local list that "Enregistrer" sent: production showed
   a member added, a reload, and no `PATCH /access` in five hours of edge log.
+- **"Enregistrer" is gone from the panel entirely (2026-09-28).** The visibility toggle and the
+  write-policy picker now write themselves the moment they change, the same way the allowlist
+  already did: the toggle behind a confirmation dialog (it changes who can read the channel), the
+  write policy without one, optimistic and reverting on failure like the per-channel notification
+  level. Nothing on the tab is deferred to a button anymore.
 - **Channel roster.** `GET /:channelId/members` answers the CHANNEL's members, not the workspace's:
   for a private channel that is the same set `canAccessChannel` admits, resolved from the roles the
   handler already loaded rather than one query per member, and the caller is refused outright if

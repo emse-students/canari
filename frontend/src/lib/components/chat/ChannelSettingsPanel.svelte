@@ -91,15 +91,20 @@
 
   // ── Access control state ─────────────────────────────────────────────────
   let accessLoading = $state(false);
+  /** Only for the INITIAL load - it gates the whole card, below. */
   let accessError = $state('');
-  let accessSaving = $state(false);
-  let accessSaved = $state(false);
-  let accessIsPrivate = $state(false);
   /**
-   * Whether the SERVER holds this salon as private - not the toggle. The allowlist is written the
-   * moment it changes, so it is only offered once there is a private salon to write it to.
+   * For a toggle or write-policy write that failed AFTER the card loaded - shown inline, like
+   * `membersError` beside it, never in place of the form: the data on screen is still good, only
+   * the last write was refused, and hiding the toggle behind the message would strand whoever
+   * needs to retry it with nothing left to click.
    */
-  let storedIsPrivate = $state(false);
+  let saveError = $state('');
+  /** True while the privacy toggle's confirmed choice is being written to the server. */
+  let privacySaving = $state(false);
+  /** True while a write-policy pick is being written to the server. */
+  let writePolicySaving = $state(false);
+  let accessIsPrivate = $state(false);
   let accessAllowedUserIds = $state<string[]>([]);
   /** The channel whose access settings are on screen; '' until one has loaded. */
   let accessLoadedFor = $state('');
@@ -137,7 +142,7 @@
     accessLoadedFor = channelId;
     accessLoading = true;
     accessError = '';
-    accessSaved = false;
+    saveError = '';
     addingUserId = '';
     memberRemoving = {};
     try {
@@ -147,7 +152,6 @@
         return;
       }
       accessIsPrivate = data.isPrivate;
-      storedIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
       writePolicy = data.writePolicy ?? 'everyone';
       // Always load the member list so the user autocomplete is scoped to workspace members.
@@ -175,28 +179,56 @@
     }
   }
 
-  async function saveChannelAccess() {
-    accessSaving = true;
-    accessSaved = false;
-    accessError = '';
+  /**
+   * Flips visibility ON THE SERVER, at once, behind a confirmation - the same shape as removing a
+   * member (below): both change who can read the channel, and both used to be deferred to
+   * "Enregistrer", which production went five hours without a single member ever pressing (see
+   * `addAllowedUser`'s history). The button is gone; every control here is now final on its own.
+   * `accessIsPrivate` is not flipped until the write succeeds, so it stays the server's truth at
+   * every moment nothing is in flight - there is no separate "pending" toggle state to track.
+   */
+  async function handleTogglePrivacy() {
+    if (privacySaving) return;
+    const next = !accessIsPrivate;
+    const confirmed = await showConfirm(
+      next ? m.chat_channel_make_private_confirm() : m.chat_channel_make_public_confirm(),
+      { danger: !next }
+    );
+    if (!confirmed) return;
+    privacySaving = true;
+    saveError = '';
+    try {
+      await channelService.updateChannelAccess(selectedChannelId, next, accessAllowedUserIds);
+      accessIsPrivate = next;
+      if (!next) accessAllowedUserIds = [];
+    } catch (e) {
+      Log.d('channelSettings.handleTogglePrivacy failed', e);
+      saveError = m.chat_channel_access_save_error();
+    } finally {
+      privacySaving = false;
+    }
+  }
+
+  /** Persists the chosen write policy optimistically, reverting on failure - same shape as `setNotifLevel`. */
+  async function setWritePolicy(next: ChannelWritePolicy) {
+    if (next === writePolicy || writePolicySaving) return;
+    const previous = writePolicy;
+    writePolicy = next;
+    writePolicySaving = true;
+    saveError = '';
     try {
       await channelService.updateChannelAccess(
         selectedChannelId,
         accessIsPrivate,
         accessAllowedUserIds,
-        writePolicy
+        next
       );
-      storedIsPrivate = accessIsPrivate;
-      if (!accessIsPrivate) accessAllowedUserIds = [];
-      accessSaved = true;
-      setTimeout(() => {
-        accessSaved = false;
-      }, 2500);
     } catch (e) {
-      Log.d('channelSettings.saveChannelAccess failed', e);
-      accessError = m.chat_channel_access_save_error();
+      Log.d('channelSettings.setWritePolicy failed', e);
+      writePolicy = previous;
+      saveError = m.chat_channel_access_save_error();
     } finally {
-      accessSaving = false;
+      writePolicySaving = false;
     }
   }
 
@@ -206,8 +238,8 @@
    * It used to append to a local list that only "Enregistrer" sent, while the trash beside each row
    * removed on the server immediately. Production received no save at all for a salon whose owner
    * had added a member and reloaded (2026-09-27): the two controls of one list disagreed about
-   * whether a click was final. Both are final now. The visibility and the write policy are left to
-   * "Enregistrer": `isPrivate` is sent as the server already holds it, and no write policy at all.
+   * whether a click was final. Every control on this tab is final now - visibility and write policy
+   * included - so this sends `isPrivate` as the server already holds it, and no write policy at all.
    */
   async function addAllowedUser() {
     const uid = addingUserId.trim().toLowerCase();
@@ -220,13 +252,13 @@
     accessError = '';
     const next = [...accessAllowedUserIds, uid];
     try {
-      await channelService.updateChannelAccess(selectedChannelId, storedIsPrivate, next);
+      await channelService.updateChannelAccess(selectedChannelId, accessIsPrivate, next);
       accessAllowedUserIds = next;
       addingUserId = '';
       // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grantee's
       // phone may be shut, and only a device holding the salon's key group can add them to it.
       // Not awaited and never throws - the grant has already succeeded, every outcome is logged.
-      if (storedIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
+      if (accessIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
     } catch (e) {
       Log.d('channelSettings.addAllowedUser failed', e);
       membersError = m.chat_channel_add_access_error();
@@ -569,6 +601,15 @@
           <div
             class="bg-cn-surface space-y-5 rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
           >
+            {#if saveError}
+              <div
+                class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-sm"
+                role="alert"
+              >
+                {saveError}
+              </div>
+            {/if}
+
             <!-- ═══ Visibility toggle ═══ -->
             <div class="flex items-center justify-between gap-4">
               <div class="flex items-center gap-3">
@@ -600,21 +641,25 @@
               </div>
               <button
                 type="button"
-                onclick={() => {
-                  accessIsPrivate = !accessIsPrivate;
-                }}
-                class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors {accessIsPrivate
+                onclick={() => void handleTogglePrivacy()}
+                disabled={privacySaving}
+                class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
                   ? 'bg-amber-500'
                   : 'bg-black/10 dark:bg-white/20'}"
                 role="switch"
                 aria-checked={accessIsPrivate}
+                aria-busy={privacySaving}
               >
                 <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
-                <span
-                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
-                    ? 'translate-x-6'
-                    : 'translate-x-1'}"
-                ></span>
+                {#if privacySaving}
+                  <Loader size={12} class="absolute inset-0 m-auto animate-spin text-white" />
+                {:else}
+                  <span
+                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
+                      ? 'translate-x-6'
+                      : 'translate-x-1'}"
+                  ></span>
+                {/if}
               </button>
             </div>
 
@@ -627,24 +672,25 @@
                 </p>
               </div>
               <!-- The native arrow stays: `appearance-none` drew this choice as a text field. -->
-              <select
-                class="bg-cn-surface text-text-main w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
-                bind:value={writePolicy}
-              >
-                <option value="everyone">{m.chat_channel_write_everyone()}</option>
-                <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
-                <option value="admins">{m.chat_channel_write_admins()}</option>
-              </select>
+              <div class="flex items-center gap-2">
+                <select
+                  class="bg-cn-surface text-text-main w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                  value={writePolicy}
+                  disabled={writePolicySaving}
+                  onchange={(e) => void setWritePolicy(e.currentTarget.value as ChannelWritePolicy)}
+                >
+                  <option value="everyone">{m.chat_channel_write_everyone()}</option>
+                  <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
+                  <option value="admins">{m.chat_channel_write_admins()}</option>
+                </select>
+                {#if writePolicySaving}
+                  <Loader size={16} class="text-text-muted animate-spin" />
+                {/if}
+              </div>
             </div>
 
             <!-- ═══ Member allowlist (only once the SERVER holds the salon private) ═══ -->
-            {#if accessIsPrivate && !storedIsPrivate}
-              <p
-                class="text-text-muted border-t border-black/5 pt-4 text-xs italic dark:border-white/10"
-              >
-                {m.chat_channel_private_save_first_hint()}
-              </p>
-            {:else if accessIsPrivate}
+            {#if accessIsPrivate}
               <div class="space-y-3 border-t border-black/5 pt-4 dark:border-white/10">
                 <p
                   class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
@@ -736,28 +782,6 @@
                 </div>
               </div>
             {/if}
-
-            <!-- Save -->
-            <div class="flex items-center gap-3 border-t border-black/5 pt-4 dark:border-white/10">
-              <button
-                type="button"
-                onclick={saveChannelAccess}
-                disabled={accessSaving}
-                class="text-cn-ink flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:opacity-50"
-              >
-                {#if accessSaving}
-                  <Loader size={14} class="animate-spin" /> {m.common_saving_label()}
-                {:else}
-                  <Check size={14} strokeWidth={3} /> {m.common_save_button()}
-                {/if}
-              </button>
-              {#if accessSaved}
-                <span class="text-green-ok flex items-center gap-1 text-xs font-medium">
-                  <Check size={12} strokeWidth={3} />
-                  {m.common_saved_label()}
-                </span>
-              {/if}
-            </div>
           </div>
         {/if}
       </div>
