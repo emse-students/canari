@@ -29,7 +29,7 @@ interface SkyEntourage {
 @UseGuards(NginxAuthGuard)
 export class SkyEntourageController {
   private readonly logger = new Logger(SkyEntourageController.name);
-  private readonly skyUrl = (process.env.SKY_API_URL || 'https://sky.mitv.fr').replace(/\/+$/, '');
+  private readonly skyUrl = (process.env.SKY_API_URL || 'https://sky.emse.fr').replace(/\/+$/, '');
   private readonly skyKey = process.env.SKY_API_KEY ?? '';
 
   @Get(':sub/parrainage')

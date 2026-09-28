@@ -305,7 +305,7 @@ services:
       # differently from production for a reason nobody can see is worth less than no estate.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
-      SKY_API_URL: ${SKY_API_URL:-https://sky.mitv.fr}
+      SKY_API_URL: ${SKY_API_URL:-https://sky.emse.fr}
       SKY_API_KEY: ${SKY_API_KEY:-}
       # Left EMPTY here on purpose, unlike the dev estate which sets `dev.<sha7>`: a build
       # identifier is what tells a client which estate answered, and a local run is not a deploy.
