@@ -401,3 +401,25 @@ export function buildPublishedCarte(params: {
       : null,
   };
 }
+
+/**
+ * Fingerprint of a published document: what the editor compares against to say the LIVE map is
+ * older than what has been saved.
+ *
+ * It covers the whole document, layout AND content (user, 2026-09-27, D14) - the published map
+ * embeds the rosters, so a member joining an association really does make the live one stale.
+ *
+ * `JSON.stringify` is the canonical form, and that is exact rather than lucky: the document is
+ * built field by field by {@link buildPublishedCarte} above, so two documents built from the same
+ * state serialise identically, key order included. Nothing here reorders or re-parses it.
+ *
+ * Deliberately NOT computed on every edit: the background image alone can be several megabytes, so
+ * the editor asks for this after a save rather than on a pointer frame.
+ *
+ * @returns 64 lowercase hex characters - the shape the server stores and validates.
+ */
+export async function fingerprintPublishedCarte(carte: PublishedCarte): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(carte));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}

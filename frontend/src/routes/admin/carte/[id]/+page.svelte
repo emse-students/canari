@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
@@ -33,7 +33,7 @@
   } from '$lib/carte/layout';
   import { CARTE_SHAPES, shapeRadius, LOGO_SHAPES, logoShape } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
-  import { buildPublishedCarte } from '$lib/carte/publish';
+  import { buildPublishedCarte, fingerprintPublishedCarte } from '$lib/carte/publish';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import { MonitorSmartphone } from '@lucide/svelte';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -64,6 +64,7 @@
     Globe,
     GlobeLock,
     TriangleAlert,
+    RefreshCw,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -295,6 +296,9 @@
       // A flag armed here instead would make opening a project write it back - every open rewrote
       // the layout 4 s later, and a new association was reseeded with a RANDOM shape on the way.
       savedFingerprint = fingerprint;
+      // What the LIVE map is, as the server recorded it at its publish. `undefined` from a server
+      // that predates the column reads the same as null: unknown.
+      liveFingerprint = project?.publicationFingerprint ?? null;
     } catch (e) {
       Log.d('admin.carte.id.loadData failed', e);
       error = m.common_load_error();
@@ -409,6 +413,64 @@
     return () => clearTimeout(autosaveTimer);
   });
 
+  /** Everything `buildPublishedCarte` needs, in ONE place: publishing and the staleness check must
+   * describe the same document, or the badge would answer about a map nobody would publish. */
+  const publishParams = () => ({
+    bubbles: positioned,
+    content,
+    model: model ?? { zones: [], totalAssos: 0 },
+    decorations,
+    background: { dataUrl: bgDataUrl, scrimOpacity },
+    style: theme,
+    title: project?.name ?? '',
+    directoryVisible,
+    directoryHeading: m.carte_directory_heading(),
+  });
+
+  /**
+   * The fingerprint of the map that is LIVE, and the one this editor would publish now.
+   *
+   * `liveFingerprint` is null when nothing is published, and also when the live map was published
+   * by a client older than the fingerprint - which is why "unknown" and "unchanged" are kept
+   * apart below rather than both reading as "nothing to do".
+   */
+  let liveFingerprint = $state<string | null>(null);
+  let savedFingerprintValue = $state<string | null>(null);
+  /** True only when BOTH are known AND they differ: an unknown answers nothing. */
+  const publicationStale = $derived(
+    liveFingerprint !== null &&
+      savedFingerprintValue !== null &&
+      liveFingerprint !== savedFingerprintValue
+  );
+
+  /**
+   * Recomputes the fingerprint of what would be published.
+   *
+   * Runs when the SAVED state changes, never on a pointer frame: the document carries the
+   * background image, which can be several megabytes.
+   */
+  async function refreshPublishFingerprint(): Promise<void> {
+    if (!project || !model) return;
+    try {
+      savedFingerprintValue = await fingerprintPublishedCarte(buildPublishedCarte(publishParams()));
+    } catch (e) {
+      // Never leaves a stale answer behind: an unknown reads as "cannot say", not "unchanged".
+      Log.d('admin.carte.id.refreshPublishFingerprint failed', e);
+      savedFingerprintValue = null;
+    }
+  }
+
+  // The saved state is what the fingerprint describes, so it is recomputed when THAT settles - on
+  // load and after each save - rather than on every edit.
+  //
+  // `untrack` is load-bearing, not decoration: `publishParams()` runs synchronously here and reads
+  // every bubble, decoration and the background, so without it this effect would re-run on every
+  // pointer frame of a drag and hash several megabytes each time.
+  $effect(() => {
+    void savedFingerprint;
+    untrack(() => void refreshPublishFingerprint());
+  });
+
   /**
    * Publishes this poster to the public showcase (portail-etu), replacing whatever was live - the
    * server allows exactly one published map at a time.
@@ -422,20 +484,10 @@
       // A publish saves FIRST, and abandons if that save failed: putting a map online that no
       // reopen could reproduce is worse than not publishing at all.
       if (!(await handleSave())) return;
-      project = await publishPosterProject(
-        project.id,
-        buildPublishedCarte({
-          bubbles: positioned,
-          content,
-          model: model ?? { zones: [], totalAssos: 0 },
-          decorations,
-          background: { dataUrl: bgDataUrl, scrimOpacity },
-          style: theme,
-          title: project.name,
-          directoryVisible,
-          directoryHeading: m.carte_directory_heading(),
-        })
-      );
+      const carte = buildPublishedCarte(publishParams());
+      const fingerprint = await fingerprintPublishedCarte(carte);
+      project = await publishPosterProject(project.id, carte, fingerprint);
+      liveFingerprint = fingerprint;
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
       error = m.common_save_error();
@@ -597,6 +649,20 @@
               <Globe size={16} />
               {m.carte_published_since({ date: publishedOn })}
             </span>
+            <!-- The live map is older than what is saved. Nothing republishes on its own: an
+                 autosave that reached the portail would put half-arranged layouts online (D2). -->
+            {#if publicationStale}
+              <button
+                type="button"
+                onclick={handlePublish}
+                disabled={publishing}
+                title={m.carte_publish_update_hint()}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+              >
+                <RefreshCw size={16} />
+                {publishing ? m.carte_publishing_label() : m.carte_publish_update_button()}
+              </button>
+            {/if}
             <button
               type="button"
               onclick={handleUnpublish}

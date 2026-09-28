@@ -2258,6 +2258,11 @@ export interface PosterProject {
   layout: Record<string, unknown>;
   /** ISO timestamp of the last publish to the public showcase; null when this poster is offline. */
   publishedAt: string | null;
+  /**
+   * Fingerprint of the document that is live, or null when this poster is offline OR was published
+   * by a client older than 2026-09-28. Null therefore means "unknown", never "unchanged".
+   */
+  publicationFingerprint?: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -2315,14 +2320,18 @@ export async function deletePosterProject(id: string): Promise<{ ok: boolean }> 
  * Publishes a poster to the public showcase (portail-etu), replacing whatever was live - at most
  * one map is published at a time. The payload is the normalized geometry document built by
  * {@link buildPublishedCarte}, not the editor layout. Admins / BDE super-admins only.
+ *
+ * @param fingerprint - Of that exact document, so the editor can later tell whether the live map is
+ *   older than what has been saved. The server stores it as given and decides nothing with it.
  */
 export async function publishPosterProject(
   id: string,
-  payload: PublishedCarte
+  payload: PublishedCarte,
+  fingerprint: string
 ): Promise<PosterProject> {
   return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}/publish`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ carte: payload, fingerprint }),
   });
 }
 

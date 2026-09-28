@@ -59,6 +59,23 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - a carte publish body that is the bare document, with no fingerprint
+
+**Site:** `PosterService.readPublishBody` in `apps/social-service/src/associations/poster.service.ts`,
+the branch taken when the body has no `carte` key.
+**Shim:** since 2026-09-28 the carte editor posts `{ carte, fingerprint }`, and the fingerprint is
+what lets it later say the LIVE map is older than what has been saved
+([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
+The app EMBEDS its frontend, so an admin running an older build still posts the bare document;
+refusing it would break publishing for them, for no gain. Such a publish records no fingerprint, and
+the editor then reads the live map's freshness as UNKNOWN - which it shows as nothing at all, never
+as "up to date".
+**Removal condition:** `minClientVersion` at or above the first release carrying the fingerprint,
+i.e. both stores serving it. Then the wrapper becomes required and a bare body is a 400, because at
+that point a body with no fingerprint is a bug rather than an old build.
+**Cost of keeping it:** one `in` check and a debug line. The hazard is silence: a publish from an
+old build leaves a live map nothing can date, and the badge simply never appears for it.
+
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 
 **Site:** `CanariFirebaseMessagingService.handleChannelMessage`, the branch after `openSeedFrame`

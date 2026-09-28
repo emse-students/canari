@@ -1412,6 +1412,8 @@
   "carte_published_since": "Live since {date}",
   "carte_unpublish_confirm": "Take this map off the student portal? The portal will show no map at all until you publish another one.",
   "carte_unsaved_label": "Unsaved changes",
+  "carte_publish_update_button": "Update the live version",
+  "carte_publish_update_hint": "The live map no longer matches what is saved: replace it with the current version.",
   "carte_overlaps_title": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
