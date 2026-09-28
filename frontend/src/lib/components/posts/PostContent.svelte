@@ -35,8 +35,35 @@
     ensureHljsTheme();
   });
 
-  const MAX_CHARS = 400;
+  /**
+   * A collapsed post shows 8 lines before "Voir plus" - the `line-clamp-8` in the markup,
+   * which Tailwind must find spelt out (a computed class name generates no CSS).
+   *
+   * THE POST IS CLAMPED AFTER IT IS RENDERED, NEVER CUT BEFORE. It used to be cut at 400 characters
+   * of SOURCE and then rendered, so a cut inside `**gras**` left an unmatched `**` on screen, and the
+   * emphasis appeared only once "Voir plus" revealed its closing pair (user, 2026-09-28) - the same
+   * for a link, a code block or a table. Clamping the rendered text by lines cannot break any
+   * syntax, and it is how the comments below have always done it (`PostComments`, `line-clamp-5`).
+   */
   let expanded = $state(false);
+  let markdownEl: HTMLDivElement | undefined = $state();
+  /** Whether the rendered post is taller than the clamp - measured, so a short post shows no button. */
+  let overflows = $state(false);
+  const clamped = $derived(!fullContent && !expanded);
+
+  $effect(() => {
+    // Measured only WHILE clamped: expanded, the box shows everything and would report no overflow,
+    // which would hide the "Voir moins" that has to fold it back.
+    if (!markdownEl || !clamped) return;
+    const el = markdownEl;
+    const measure = () => {
+      overflows = el.scrollHeight > el.clientHeight + 1;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   // Gallery lightbox (only for image/video media)
   let lightboxIndex = $state<number | null>(null);
@@ -74,11 +101,7 @@
     lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
 
-  const isTruncatable = $derived(!fullContent && (post.markdown?.length ?? 0) > MAX_CHARS);
-  const rawMarkdown = $derived(
-    isTruncatable && !expanded ? post.markdown!.slice(0, MAX_CHARS) + '…' : (post.markdown ?? '')
-  );
-  const displayedMarkdown = $derived(preprocessPostMarkdown(rawMarkdown));
+  const displayedMarkdown = $derived(preprocessPostMarkdown(post.markdown ?? ''));
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
 
   /**
@@ -96,7 +119,10 @@
   <div class="px-5 pb-3">
     <div class="text-text-main text-sm leading-relaxed wrap-break-word">
       <div
-        class="post-markdown max-w-none opacity-90 [&_br]:block [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h1]:text-xl [&_h1]:leading-tight [&_h1]:font-bold [&_h1]:tracking-tight [&_h1+_p]:mt-2 [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2+_p]:mt-2 [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-base [&_h3]:leading-snug [&_h3]:font-bold [&_h3+_p]:mt-1.5 [&_p+p]:mt-3 [&_p:first-child]:mt-0"
+        bind:this={markdownEl}
+        class="post-markdown max-w-none opacity-90 {clamped
+          ? 'line-clamp-8'
+          : ''} [&_br]:block [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h1]:text-xl [&_h1]:leading-tight [&_h1]:font-bold [&_h1]:tracking-tight [&_h1+_p]:mt-2 [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2+_p]:mt-2 [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-base [&_h3]:leading-snug [&_h3]:font-bold [&_h3+_p]:mt-1.5 [&_p+p]:mt-3 [&_p:first-child]:mt-0"
       >
         <SvelteMarkdown
           source={displayedMarkdown}
@@ -104,7 +130,7 @@
           options={{ gfm: true, breaks: true }}
         />
       </div>
-      {#if isTruncatable}
+      {#if !fullContent && (overflows || expanded)}
         <button
           type="button"
           onclick={() => (expanded = !expanded)}

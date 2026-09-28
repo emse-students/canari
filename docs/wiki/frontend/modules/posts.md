@@ -172,6 +172,22 @@ the caret inside the text it splits off, and `anchorEmptyLineBefore` refills the
 the shape `renderMentionEditor` already draws. Measured in both engines on the real component:
 Shift+Enter three times on an empty composer, then each ArrowLeft/ArrowRight moves one line.
 
+## "Voir plus" clamps the rendered post, and never cuts its Markdown (2026-09-28)
+
+`PostContent` used to cut a long post at 400 characters of SOURCE and render the cut. A cut inside
+`**gras**` left an unmatched `**` on screen, and the emphasis appeared only once "Voir plus" revealed
+its closing pair (user, 2026-09-28) - the same for a link, a code block or a table. The post is now
+rendered WHOLE and clamped by lines (`line-clamp-8`), the way `PostComments` always clamped a
+comment (`line-clamp-5`), so no syntax can be broken by the fold.
+
+**The button is a MEASUREMENT, not a length.** A `ResizeObserver` compares the box's `scrollHeight`
+with its `clientHeight` while clamped, so a long post that fits shows no button and a short one that
+wraps into nine lines does. It measures only while clamped: expanded, the box reports no overflow and
+would hide the "Voir moins" that folds it back. The cut is therefore at a line and not at a character
+count. Measured on Chromium and Firefox at 390px, across a heading, paragraphs and a list: eight
+lines ending in `…`, the bold rendered, no raw `**`. **WebKit is not measured** (no engine here);
+`-webkit-line-clamp` originates there. `PostContent.seeMore.svelte.test.ts` fails on the old cut.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes
