@@ -53,6 +53,19 @@ export async function storeIncomingSeed(
 
   const existing = await storage.getGraineSession(seed.sessionId, deviceKeyB64);
   if (existing) {
+    // A SESSION ID NAMES ONE SEED, IN ONE SALON, FOR EVER. A frame naming a held session with other
+    // bytes, or another salon, is not a repair - a repair re-sends the SAME seed at a lower floor.
+    // It is somebody replacing a seed they did not mint, and accepting it would make every later
+    // message of that session open under their key, attributed to its real sender. Checked BEFORE
+    // the two "already held" exits below, so a replacement is refused out loud, never absorbed as a
+    // harmless replay.
+    const conflict = seedConflict(existing, workspaceId, seed);
+    if (conflict) {
+      console.error(
+        `[GRAINE] REFUSED seed replacement: ${senderId} sent session ${seed.sessionId} with a different ${conflict} than the one held (from ${existing.senderId}) in community ${workspaceId.slice(0, 8)}`
+      );
+      return false;
+    }
     // OUR OWN SESSION, COMING BACK. The frame is durable, so this device meets its own seed again
     // on every fresh start. Writing it would drop `sentCount` - the count that decides the next
     // index and the 100-message rotation - and the session would look received rather than minted,
@@ -63,17 +76,23 @@ export async function storeIncomingSeed(
     if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId);
   }
 
-  const session: StoredGraineSession = {
-    workspaceId,
-    channelId: seed.channelId,
-    sessionId: seed.sessionId,
-    senderId: senderId.toLowerCase(),
-    seedB64: toBase64(seed.seed),
-    firstIndex: seed.firstIndex,
-    createdAt: seed.createdAt || Date.now(),
-    // Neither is ours to know. `sentCount` is what makes a session THIS device's outbound one, and
-    // `distributionEpoch` is the roster it was minted under - a judgement only its sender may make.
-  };
+  const session: StoredGraineSession = existing
+    ? // THE FLOOR IS THE ONLY THING A SECOND COPY MAY MOVE. Who the session is recorded under stays
+      // who it was first recorded under: a repair bundle is sent by whoever ANSWERED, and writing
+      // that answerer over the row would re-attribute a session to somebody who never minted it.
+      { ...existing, firstIndex: seed.firstIndex }
+    : {
+        workspaceId,
+        channelId: seed.channelId,
+        sessionId: seed.sessionId,
+        senderId: senderId.toLowerCase(),
+        seedB64: toBase64(seed.seed),
+        firstIndex: seed.firstIndex,
+        createdAt: seed.createdAt || Date.now(),
+        // Neither is ours to know. `sentCount` is what makes a session THIS device's outbound one,
+        // and `distributionEpoch` is the roster it was minted under - a judgement only its sender
+        // may make.
+      };
   await storage.saveGraineSession(session, deviceKeyB64);
   cacheGraineSession(session);
   // Mirrored so a push arriving with the app killed can still be opened. Not awaited for
@@ -81,6 +100,23 @@ export async function storeIncomingSeed(
   // mirror would degrade for no reason.
   await mirrorGraineSeed(session);
   return nowHeld(seed.sessionId);
+}
+
+/**
+ * What an incoming copy of a held session contradicts, or null when it is the same session.
+ *
+ * A session is one seed bound to one salon of one community, so any of the three differing means
+ * the frame is not a copy of it at all.
+ */
+function seedConflict(
+  held: StoredGraineSession,
+  workspaceId: string,
+  incoming: { channelId: string; seed: Uint8Array }
+): 'seed' | 'salon' | 'community' | null {
+  if (held.workspaceId !== workspaceId) return 'community';
+  if (held.channelId !== incoming.channelId) return 'salon';
+  if (held.seedB64 !== toBase64(incoming.seed)) return 'seed';
+  return null;
 }
 
 /**
