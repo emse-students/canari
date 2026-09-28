@@ -1300,7 +1300,7 @@ so a rule is written once:
 ### How it was measured
 
 A **Mi 9T** (Chrome Android, 393 CSS px, DPR 2.75) driven over adb, with real two-finger gestures
-through uiautomator2 (android-mcp's own venv, `C:/Users/jolan/AppData/Roaming/uv/tools/android-mcp`),
+through uiautomator2 (android-mcp's own venv, under `uv`'s per-user tools directory),
 and desktop Chrome at 1440x900. References: the Google Photos app on the same phone and
 `photos.google.com` - Google refuses a sign-in in a DevTools-launched browser, so the reference ran in
 a plain Chrome with `--remote-debugging-port` and its own profile, which it accepts. Effects were

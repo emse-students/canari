@@ -43,7 +43,7 @@ import { APP_TAB, client, evaluate } from '../chat.mjs';
  * exclusions is a guess at what the runtime put in front of the script, and one of them went stale
  * the day this repository moved off node: under bun, `argv[0]` is `...\bun.exe`, which the `node`
  * test does not match - so the RUNTIME'S OWN PATH was selected as the command and the tool answered
- * `unknown command: C:\Users\jolan\.bun\bin\bun.exe` and exited non-zero.
+ * `unknown command: <home>\.bun\bin\bun.exe` and exited non-zero.
  *
  * It cost DEL-8 outright: the row spawns `mlsdb.mjs digest` to fingerprint the MLS store before
  * rewinding it, so the check died in its first instruction and recorded `ERROR` - a destructive row

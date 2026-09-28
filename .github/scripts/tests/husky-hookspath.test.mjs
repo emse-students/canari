@@ -48,13 +48,14 @@ HOOKS_PATH === '.husky/_'
   ? ok('the declared value is relative and names the directory husky generates')
   : no(`HOOKS_PATH is ${HOOKS_PATH}, which is not the path husky generates`);
 
-// The four values actually observed in `.git/config` on this project, plus the POSIX and UNC
-// spellings the same mistake takes elsewhere.
+// The four SHAPES actually observed in `.git/config` on this project - a checkout, a sibling
+// worktree, a nested agent worktree, on two drive letters - plus the POSIX and UNC spellings the
+// same mistake takes elsewhere. Generic names: the shape is what the check reads, not the machine.
 const observed = [
-  `D:${BS}Documents${BS}Programmation${BS}EMSE${BS}Canari${BS}.husky/_`,
-  `F:${BS}Programmation${BS}wt-scroll${BS}.husky/_`,
-  `F:${BS}Programmation${BS}EMSE${BS}Canari${BS}.claude${BS}worktrees${BS}fix-photo-preview${BS}.husky/_`,
-  `F:${BS}Programmation${BS}wt-devtools${BS}.husky/_`,
+  `D:${BS}work${BS}Canari${BS}.husky/_`,
+  `F:${BS}work${BS}wt-feature${BS}.husky/_`,
+  `F:${BS}work${BS}Canari${BS}.claude${BS}worktrees${BS}some-branch${BS}.husky/_`,
+  `F:${BS}work${BS}wt-other${BS}.husky/_`,
   '/home/runner/work/canari/canari/.husky/_',
   `${BS}${BS}server${BS}share${BS}.husky/_`,
 ];

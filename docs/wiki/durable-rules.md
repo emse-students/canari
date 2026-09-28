@@ -1009,6 +1009,17 @@ is the same instruction the people rule gives and for a sharper reason: afterwar
 and mitigation is not a fix. When a redaction does become necessary, say plainly that the history
 keeps the original rather than reporting the file as clean.
 
+### NO PATH OF ONE WORKSTATION ENTERS THE REPOSITORY - A PATH IS RELATIVE TO IT, OR IT IS LOCAL CONFIGURATION
+
+A drive letter, a home directory, a user name or a worktree folder describes ONE machine: it is
+wrong on every other one, and in a public repository it maps somebody's disk (user, 2026-09-28:
+*"évite de laisser tes chemins dans le repo"*). Fourteen had accumulated in docs, comments and test
+fixtures, all removed that day. So a document names a location **relative to the repository**
+(`../canari-harness/`), a comment or a quoted error uses a placeholder (`<home>`, `/f/<path>/...`),
+a fixture uses a generic name of the same SHAPE, and a tool that needs a machine's own path reads it
+from **local, untracked configuration** (a gitignored file, or that machine's environment) - never
+from a tracked file, and never from a global setting shared with other projects.
+
 ### A RULE TWO ESTATES MUST AGREE ON IS SHARED AS DATA AND ASSERTED - DESCRIBING IT IN BOTH IS HOW THEY DIVERGE
 
 There is no TypeScript package shared between this repository's services and its frontend, and

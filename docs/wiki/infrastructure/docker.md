@@ -213,7 +213,7 @@ docker compose -p canari-local -f infrastructure/local/docker-compose.yml --env-
 
 **`-p canari-local` IS PART OF THE COMMAND.** Compose derives the project name from the compose
 file's DIRECTORY, so omitting it drives a project called `local` - and this workstation has one, left
-by an older checkout under `D:\Documents\...`, whose containers bind 3000, 3010, 3012, 3014 and
+by an older checkout in another directory, whose containers bind 3000, 3010, 3012, 3014 and
 9092. Without the flag a `run-services` did `down --remove-orphans` and `up --build` on THAT project
 and left the real estate untouched: two estates, conflicting ports, and a `docker compose ps` that
 does not describe the one the harness is talking to. Measured 2026-09-04, `docker compose ls` listing
