@@ -1072,6 +1072,14 @@ application setting moved and nothing redirects: the old names still serve every
 `curl -k`: `cercle` 200, `miconnect` 302 (Authentik's own flow redirect), `sky` 200, `mino` 200.
 The wiki being public on its old name, `mino` opens nothing new.
 
+**THE FOUR CERTIFICATES ARE IN, 2026-09-28.** The DSI's `certdeploy` dropped
+`/etc/certs/{cercle,miconnect,sky,mino}.emse.fr/` (GEANT TLS RSA 1, one per name, valid to
+2027-04-15; each private key checked against its certificate). The four vhosts now name their own
+(pre-swap copy `/root/nginx-sites-bak-2026-09-28-before-real-certs.tgz`). Verified from outside
+WITHOUT `-k`: `cercle` 200, `miconnect` 302 (its flow; `/-/health/live/` 200), `sky` 200, `mino`
+200. **Still nothing redirects and no application setting moved** - each name's switch is its own
+window, one application at a time.
+
 **PORT 80 IS CLOSED ON `193.49.175.122` AT THE SCHOOL'S BORDER, AND OPEN ON `.67`.** `http://`
 to `portail-etu`/`mep` (on `.67`) answers `301`; to `canari.emse.fr` and every CNAME of it (on
 `.122`) the connection fails, while the host's own nginx answers `301` locally - so it is the
