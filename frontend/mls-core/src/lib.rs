@@ -2,6 +2,7 @@ pub mod security;
 
 pub(crate) mod byte_compat;
 pub mod crypto;
+pub mod graine_signature;
 pub mod group;
 pub mod keystore;
 pub mod logging;

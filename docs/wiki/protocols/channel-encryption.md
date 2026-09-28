@@ -2614,7 +2614,7 @@ too.
 - an Ed25519 pair minted with it. The secret key stays on the minting device (sealed, in the
   backup); the public key `signingPk` travels with the seed;
 - an ENDORSEMENT: the minter's device signs, with its MLS credential key,
-  `encode("canari-graine-v2-endorse", channelId, sessionId, minterUserId, minterDeviceId, signingPk, createdAt)`.
+  `encode("canari-graine-v2-endorse", channelId, sessionId, minterUserId, minterDeviceId, signingPk, SHA-256(seed), createdAt)`. The seed commitment was added when the primitives were written (§21.2): without it the endorsement proves the key and not the seed.
   A relayed seed (repair, history bundle) carries it untouched, so whoever answers cannot substitute
   a key. It is checked against the minter device's key in the distribution group's tree, or - once
   that device has left it - against the key the server publishes from its KeyPackages. That is the
@@ -2673,3 +2673,59 @@ once it has come back empty, or every line it holds has been explained.
 service and the iOS NSE - still name the envelope's sender on a notification. They move with the
 refusal in G2-1b, since the foreground paths already see the whole population the measurement is
 for.
+
+### 21.2 The v2 primitives (WP-G2-2) - written, tested, wired to nothing
+
+**The bytes.** `lp(x)` is a 4-byte big-endian length followed by `x`; strings are UTF-8.
+
+| Structure | Bytes |
+| --- | --- |
+| `H`, the message header and AES-GCM additional data | `lp("canari-graine-v2") lp(channelId) lp(sessionId) lp(minterUserId) be32(index)` |
+| What the session key signs | `H nonce(12) ciphertext` - `H` delimits itself and the nonce is fixed-width |
+| `D`, the endorsement descriptor the device key signs | `lp("canari-graine-v2-endorse") lp(channelId) lp(sessionId) lp(minterUserId) lp(minterDeviceId) lp(signingPk) lp(SHA-256(seed)) be64(createdAt ms)` |
+
+**The seed commitment in `D` is a change to the design above, made when it was written.** G2-0
+refuses a seed that differs from one already held, so the FIRST relayed copy of a session wins. An
+endorsement that proved only the key would let the first member to relay a session to a newcomer
+hand over other bytes, and the right seed would be refused when it came. With `SHA-256(seed)`
+endorsed, the wrong seed is refused on arrival and the right one still lands. The hash reveals
+nothing, since the seed is 32 random bytes.
+
+**Why the device's MLS key may sign `D`.** OpenMLS signs `SignContent`, whose first byte is the
+varint size of a label that is always `"MLS 1.0 " + label`, so never empty. Every Graine structure
+begins with a 4-byte length whose first byte is `0x00`, which is a ZERO-length label read as an MLS
+varint. No Graine bytes can be an MLS `SignContent`, so an endorsement can never be replayed into MLS.
+
+**Where each half lives.**
+
+- **Ed25519**: `mls-core/src/graine_signature.rs` is the only implementation, on every platform. It
+  holds the session pair, session signing, one verifier for both keys (`verify_strict`), and
+  `MlsManager::sign_with_device_credential`. Its errors are typed, with a stable `code()`. It is not
+  WebCrypto, because Ed25519 reached the browsers late (Chrome 137, iOS 17) and the WebViews phones
+  ship are older than that.
+  - Exposed to WASM as `graine_session_keypair`, `graine_sign_with_session_key`,
+    `graine_verify_signature` and `WasmMlsClient.sign_with_device_credential`.
+  - Exposed to Tauri as the commands of the same names.
+  - A verification answers `valid` or a code, never an exception: a signature that does not verify is
+    an answer, not a failed call.
+- **The encodings, the AES-GCM with AAD, and the endorsement check**:
+  - `frontend/src/lib/crypto/graineV2.ts`, which is pure and takes the Ed25519 half as a
+    `GraineSignatureEngine`;
+  - its native mirror, `src-tauri/src/mobile/graine.rs`, whose `open_graine_message_v2` is what a push
+    will call.
+  - Both check the signature BEFORE deriving a key, so a relabelled row is a `GraineSignatureError`
+    (a FAULT), and a wrong seed past a valid signature is an AES failure (a different fault).
+
+**What holds the two sides together.**
+
+- **Shared vectors**, computed with WebCrypto alone and asserted in `graineV2.test.ts` (WebCrypto
+  engine) and `mobile/graine.rs` (aes-gcm, sha2, ed25519-dalek, independently). They cover the
+  header, `D`, the seed commitment, a sealed message that opens, its signature re-derived byte for
+  byte, and an endorsement that verifies.
+- **A frozen fixture**, `src-tauri/tests/fixtures/v0.18.28-graine-v2-push.bin`
+  (`nonce || signature || ciphertext`), beside the v1 generation. `cross_version_push.rs` asserts that
+  it opens, that today's seal and signature reproduce it exactly, and that a relabelled author does
+  not open it.
+
+**Nothing calls any of it yet**: the store and the wire carry the fields in G2-3, and the reader
+uses them in G2-4.

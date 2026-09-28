@@ -246,3 +246,166 @@ fn freeze_the_current_generation() {
         println!("froze {} ({} bytes)", path.display(), blob.len());
     }
 }
+
+// --- GRAINE V2 (channel-encryption §21): A SECOND GENERATION, BESIDE THE FIRST ------------------
+//
+// A v2 push adds two things the v1 fixtures cannot see: the header bound in as AES-GCM additional
+// data, and the session's Ed25519 signature over `H || nonce || ciphertext`. Both are deterministic
+// (AES-GCM under a fixed nonce, Ed25519 by construction), so the same two directions hold as above:
+// the frozen push must still OPEN, and today's seal and signature must reproduce it BYTE FOR BYTE.
+// Failing the open while the v1 fixtures pass accuses the header encoding, the AAD or the Ed25519
+// crate - and the second assertion says which of the two halves moved.
+//
+// Layout: `[nonce (12) || signature (64) || ciphertext||tag]`, one file, for the reason
+// `fixture_path` gives. The session secret is a readable constant like every other value here.
+
+/// The generation the v2 fixture was frozen at - its own, since v2 did not exist at v0.14.14.
+const V2_FIXTURE_VERSION: &str = "v0.18.28";
+const GRAINE_V2_FIXTURE: &str = "graine-v2-push.bin";
+const GRAINE_V2_CHANNEL: &str = "cross-version-fixture-channel";
+const GRAINE_V2_MINTER: &str = "cross-version-fixture-minter";
+const GRAINE_V2_SESSION_SECRET: [u8; 32] = [0x51; 32];
+
+fn v2_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(format!("{V2_FIXTURE_VERSION}-{GRAINE_V2_FIXTURE}"))
+}
+
+fn v2_header(minter: &str) -> super::graine::GraineHeaderV2<'_> {
+    super::graine::GraineHeaderV2 {
+        channel_id: GRAINE_V2_CHANNEL,
+        session_id: GRAINE_SESSION,
+        minter_user_id: minter,
+        index: GRAINE_INDEX,
+    }
+}
+
+/// `(nonce, signature, ciphertext)`, read from the committed file; missing is a failure, never a skip.
+fn frozen_v2() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let path = v2_fixture_path();
+    let blob = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing fixture {}: {e}. Restore it from git rather than regenerating.",
+            path.display()
+        )
+    });
+    assert!(
+        blob.len() > 12 + 64,
+        "{} is {} bytes",
+        path.display(),
+        blob.len()
+    );
+    let (nonce, rest) = blob.split_at(12);
+    let (signature, ciphertext) = rest.split_at(64);
+    (nonce.to_vec(), signature.to_vec(), ciphertext.to_vec())
+}
+
+/// The public half of [`GRAINE_V2_SESSION_SECRET`], computed with WebCrypto rather than with the
+/// crate under test - a stored value, so a changed key derivation in `ed25519-dalek` fails here.
+const GRAINE_V2_SESSION_PUBLIC_KEY: &str =
+    "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a";
+
+fn unhex(text: &str) -> Vec<u8> {
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
+        .collect()
+}
+
+/// Seals and signs the frozen plaintext the way today's v2 writer would, under the frozen nonce.
+fn todays_v2_seal() -> (Vec<u8>, Vec<u8>) {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+    let plaintext = build_text_app_message(MESSAGE_ID, SENT_AT, TEXT);
+    let header = super::graine::encode_header_v2(&v2_header(GRAINE_V2_MINTER)).expect("header");
+    let key = derive_message_key(&GRAINE_SEED, GRAINE_SESSION, GRAINE_INDEX).expect("derive");
+    let ciphertext = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key))
+        .encrypt(
+            Nonce::from_slice(&NONCE),
+            Payload {
+                msg: &plaintext,
+                aad: &header,
+            },
+        )
+        .expect("seal");
+    let mut signed = header;
+    signed.extend_from_slice(&NONCE);
+    signed.extend_from_slice(&ciphertext);
+    let signature =
+        mls_core::graine_signature::sign_with_session_key(&GRAINE_V2_SESSION_SECRET, &signed)
+            .expect("sign");
+    (signature, ciphertext)
+}
+
+#[test]
+fn a_graine_v2_push_frozen_at_its_first_release_still_opens() {
+    let (nonce, signature, ciphertext) = frozen_v2();
+    let plaintext = super::graine::open_graine_message_v2(
+        &GRAINE_SEED,
+        &v2_header(GRAINE_V2_MINTER),
+        &nonce,
+        &ciphertext,
+        &signature,
+        &unhex(GRAINE_V2_SESSION_PUBLIC_KEY),
+    )
+    .expect("a Graine v2 push sealed by a previous version no longer opens");
+    assert_is_the_frozen_message(&super::proto_fields::extract_full_message_info(&plaintext));
+}
+
+/// Both halves deterministic, so both directions are provable: see
+/// [`todays_seal_is_byte_identical_to_the_frozen_one`] for the argument.
+#[test]
+fn todays_v2_seal_and_signature_are_byte_identical_to_the_frozen_ones() {
+    let (frozen_nonce, frozen_signature, frozen_ciphertext) = frozen_v2();
+    let (signature, ciphertext) = todays_v2_seal();
+    assert_eq!(frozen_nonce, NONCE);
+    assert_eq!(
+        ciphertext, frozen_ciphertext,
+        "the v2 AEAD or its header moved: a device on the first v2 reader cannot open this seal"
+    );
+    assert_eq!(
+        signature, frozen_signature,
+        "the v2 signature moved: a device on the first v2 reader refuses what this build signs"
+    );
+}
+
+/// The falsification: the frozen push, relabelled with another author, must not open.
+#[test]
+fn the_frozen_v2_push_refuses_another_author() {
+    let (nonce, signature, ciphertext) = frozen_v2();
+    assert!(
+        super::graine::open_graine_message_v2(
+            &GRAINE_SEED,
+            &v2_header("someone-else"),
+            &nonce,
+            &ciphertext,
+            &signature,
+            &unhex(GRAINE_V2_SESSION_PUBLIC_KEY),
+        )
+        .is_err(),
+        "a relabelled author still opened the v2 push, so this fixture asserts nothing"
+    );
+}
+
+/// Writes the v2 fixture, refusing to overwrite it - see [`freeze_the_current_generation`].
+/// `cargo test -p canari --lib -- --ignored freeze_the_graine_v2_generation`.
+#[test]
+#[ignore = "generator: writes the committed fixture, run deliberately"]
+fn freeze_the_graine_v2_generation() {
+    let path = v2_fixture_path();
+    assert!(
+        !path.exists(),
+        "{} already exists. Bump V2_FIXTURE_VERSION to freeze a new generation.",
+        path.display()
+    );
+    let (signature, ciphertext) = todays_v2_seal();
+    let mut blob = Vec::with_capacity(12 + 64 + ciphertext.len());
+    blob.extend_from_slice(&NONCE);
+    blob.extend_from_slice(&signature);
+    blob.extend_from_slice(&ciphertext);
+    std::fs::write(&path, &blob).expect("write the fixture");
+    println!("froze {} ({} bytes)", path.display(), blob.len());
+}
