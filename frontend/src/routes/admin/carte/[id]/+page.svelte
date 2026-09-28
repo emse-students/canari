@@ -25,7 +25,7 @@
     createTextDecoration,
     sanitizeDecorations,
     findUnitOverlaps,
-    unitInkBox,
+    unitInkShapes,
     STAGE_HEIGHT,
     TEXT_BASE_WIDTH,
     type PositionedBubble,
@@ -67,6 +67,7 @@
     RefreshCw,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { portalWhile } from '$lib/actions/portal';
 
   let ready = $state(false);
   let loading = $state(true);
@@ -174,6 +175,11 @@
   // modal opened from here - which is also what the raw `z-50` did, so nothing a user can see
   // changes. What changes is that the number is no longer comparable with nothing: at 50 it sat
   // between two rungs, in the same gap that put the agenda admin's reject dialog under a toast.
+  //
+  // AND IT IS PORTALLED TO THE BODY WHILE ON (`portalWhile`), because the rung means nothing where it
+  // was written: `.page-scroll-wrap` is a containing block (`app.css`), so `fixed inset-0` covered
+  // the SCROLLED wrapper, shifted by its scrollTop - measured 2026-09-28 at 219 px, the overlap
+  // warning showing under the poster.
   let isFullPage = $state(false);
 
   /** Toggles the in-app full-page overlay so authoring can use the whole window. */
@@ -204,7 +210,7 @@
     findUnitOverlaps(
       positioned.map((bubble) => ({
         assoId: bubble.assoId,
-        box: unitInkBox(bubble, content[bubble.assoId]?.members ?? []),
+        shapes: unitInkShapes(bubble, content[bubble.assoId]?.members ?? []),
       }))
     )
   );
@@ -764,6 +770,7 @@
       {/if}
 
       <div
+        use:portalWhile={isFullPage}
         class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
           ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5'
           : ''}"

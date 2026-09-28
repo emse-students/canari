@@ -537,8 +537,18 @@ floor therefore takes the unit scale and divides by it, so the floor is held **o
 
 `CARD_WIDTH` x `CARD_HEIGHT` is the seed grid's *cell*, and it is mostly empty: two cells cross long
 before anything a reader sees does, so a warning drawn on cells is a warning nobody keeps reading.
-`unitInkBox()` measures what is drawn instead - the blob, the crown of member cards, the president's
-card - and `findUnitOverlaps()` reports the crossing pairs worst first.
+`unitInkShapes()` returns what is drawn instead - the blob, the crown of member cards, the
+president's card - and `findUnitOverlaps()` reports the crossing pairs worst first.
+
+**And it tests the SHAPES, not the box around them (2026-09-28).** The first version compared each
+unit's bounding box, which between a curved blob rim and a fan of cards is mostly empty too: on the
+dev copy it reported **17** crossings where the user saw none, and the same algorithm run on the
+rendered DOM found **one** pair whose ink touches (BDS / Respire, a few px). So each blob is its
+`border-radius` silhouette, resolved as CSS does by `borderRadiusCorners()` (four elliptical corners,
+the spec's shrink when a side is over-full), each card a rounded rectangle, and the area is COUNTED
+on a 2 poster px grid over the two units' common bounds - points inside a shape of EACH unit. The
+grid is deterministic, and a crossing under one cell (< 5 pt square on A0) is not one a reader sees.
+`unitInkBox()` stays, derived from the shapes, for the one thing a box is for: drawing the flag.
 
 **The card heights it needs cannot be asked of anything.** The DOM sizes a real card, and both
 callers (the warning and the published document) run where there is no layout, so
