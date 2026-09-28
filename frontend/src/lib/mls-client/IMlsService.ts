@@ -5,6 +5,7 @@ import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
+import type { IStorage } from '$lib/db/types';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -105,6 +106,17 @@ export interface DistributionFrame {
  * symptom the omission would otherwise have.
  */
 export type DistributionFrameHandler = (frame: DistributionFrame) => Promise<void>;
+
+/**
+ * Where the key-distribution registry survives a reload - the three `IStorage` calls it needs.
+ *
+ * Injected rather than imported for the reason {@link DistributionGroupInfoTransport} is: the MLS
+ * layer must not learn which store a platform uses, and the store must not learn what a group is.
+ */
+export type DistributionGroupStore = Pick<
+  IStorage,
+  'saveDistributionGroup' | 'getDistributionGroups' | 'deleteDistributionGroup'
+>;
 
 /** Per-message outcome from a {@link MlsDecryptSession} page decrypt. */
 export type MlsBatchProcessResult =
@@ -708,6 +720,21 @@ export interface IMlsService {
   setDistributionGroupInfoTransport(transport: DistributionGroupInfoTransport | null): void;
   /** Wires what decrypted key-distribution frames are handed to. Set once, at startup. */
   onDistributionFrame(handler: DistributionFrameHandler | null): void;
+  /**
+   * Wires the durable half of the key-distribution registry: every registration is written to it
+   * and every forget deletes from it. Set once per session, before {@link hydrateDistributionGroups};
+   * `null` at logout.
+   */
+  setDistributionGroupStore(store: DistributionGroupStore | null): void;
+  /**
+   * Restores the key-distribution registry from the wired store, BEFORE the first drain.
+   *
+   * THE DRAIN ROUTES THE BACKLOG, AND ROUTING NEEDS THIS FACT: without it every frame on a key group
+   * takes the conversation path, finds no conversation and is refused - on every load. Each row is
+   * ALLOWLISTED by the local MLS state: a row for a group this device no longer holds is deleted,
+   * never registered, so a stale row can only cost a start-up read and never mis-route a frame.
+   */
+  hydrateDistributionGroups(): Promise<void>;
   /**
    * Joins the scope's key-distribution group whatever state it is in - held already, published and
    * joinable, or not yet initialised (this device then creates it).

@@ -825,6 +825,15 @@ export async function loginImpl(
     );
     cb.log('Local database initialised.');
 
+    // WHICH HELD GROUPS CARRY GRAINE SEEDS, KNOWN BEFORE ANYTHING ROUTES A FRAME. The community loop
+    // that used to be the only source of this fact starts below, un-awaited, and the drain starts
+    // long before it finishes: a key group's backlog then took the conversation path and was refused,
+    // on every load, for ever (production 2026-09-28: 51 frames, a device 8 epochs behind). Both the
+    // local store and the MLS state are open at this point, which is all the restore needs, and it
+    // is one read. Wired first, so the loop's own registrations below are stored too.
+    mlsService.setDistributionGroupStore(storageSettled.value);
+    await mlsService.hydrateDistributionGroups();
+
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
       .then((privateBrowsing) => {

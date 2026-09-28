@@ -69,6 +69,16 @@ describe('the work list behind the retry', () => {
     expect(takeGroupsAwaiting('absent-conversation')).toEqual(['g2']);
   });
 
+  it('keeps a key group waiting for its roster apart from one waiting for a conversation', () => {
+    // A registration naming the scope discharges the first; nothing but a conversation appearing
+    // discharges the second, and a key group never gets one - merged, one would starve the other.
+    noteUnackedFrame('g1', 'unscoped-distribution-group');
+    noteUnackedFrame('g2', 'absent-conversation');
+
+    expect(takeGroupsAwaiting('unscoped-distribution-group')).toEqual(['g1']);
+    expect(takeGroupsAwaiting('absent-conversation')).toEqual(['g2']);
+  });
+
   it('counts a group once however many of its frames were left behind', () => {
     for (let i = 0; i < 40; i++) noteUnackedFrame('g1', 'unknown-group');
     expect(takeGroupsAwaiting('unknown-group')).toEqual(['g1']);

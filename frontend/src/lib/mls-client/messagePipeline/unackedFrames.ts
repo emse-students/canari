@@ -22,7 +22,13 @@ export type UnackedReason =
   /** The group is not in local WASM: buffered pending a Welcome, which recovery is asking for. */
   | 'unknown-group'
   /** The group is held but the conversation row is missing: waiting on the local store restore. */
-  | 'absent-conversation';
+  | 'absent-conversation'
+  /**
+   * A Graine key-distribution group the server has named as one, whose ROSTER this session cannot
+   * name yet (a salon's group before its community loaded): a seed cannot be filed without it.
+   * Discharged by the registration that names the scope - see `registerDistributionGroup`.
+   */
+  | 'unscoped-distribution-group';
 
 /** How many distinct groups a report names before it stops listing them. */
 const SAMPLE_LIMIT = 5;

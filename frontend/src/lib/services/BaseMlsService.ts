@@ -60,8 +60,16 @@ import {
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
-import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import {
+  channelScope,
+  sameScope,
+  scopeKey,
+  scopeLabel,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
+import {
+  noteUnackedFrame,
   reportUnackedFrames,
   takeGroupAwaiting,
   takeGroupsAwaiting,
@@ -72,6 +80,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  DistributionGroupStore,
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
@@ -305,6 +314,20 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** Set once at wiring time; see {@link onDistributionFrame}. */
   private distributionFrameHandler: DistributionFrameHandler | null = null;
+
+  /** Set once per session; see {@link setDistributionGroupStore}. */
+  private distributionGroupStore: DistributionGroupStore | null = null;
+
+  /**
+   * The groups this device held when {@link hydrateDistributionGroups} ran - the population the
+   * stored registry was supposed to name before the first drain.
+   *
+   * It exists for ONE judgement: whether a key group identified later was one this start-up should
+   * already have known. If it was, its refused frames are the boot race coming back, and the line
+   * that re-fetches them says so at a level that accuses (see {@link collectFramesLeftForKeyGroup});
+   * a group first joined in this session is the ordinary case and says so quietly.
+   */
+  private readonly heldAtHydration = new Set<string>();
 
   // ── Init dedup ────────────────────────────────────────────────────────────
   protected initPromise: Promise<void> | null = null;
@@ -1530,9 +1553,18 @@ export abstract class BaseMlsService implements IMlsService {
    * cycle to bound: no event, no ask.
    *
    * Silent and free when nothing is waiting, so callers may fire it on any occurrence of the event.
+   *
+   * @returns whether anything was waiting and has been taken - true also when the socket is closed
+   *   and the reconnect pull is left to cover it. A caller that must ACCUSE a wait it should never
+   *   have had (see `collectFramesLeftForKeyGroup`) reads this, not the log.
    */
   protected refetchFramesLeftBehind(
-    reason: UnackedReason,
+    /**
+     * The reason(s) the event discharges. SEVERAL IN ONE CALL, NOT ONE CALL EACH: every call that
+     * takes something starts a pull, and nothing coalesces two pulls - so an event discharging two
+     * reasons for one group would pay for the same mailbox twice.
+     */
+    reasons: UnackedReason | readonly UnackedReason[],
     trigger: string,
     /**
      * One group, when the event that discharges the wait is per-group rather than global.
@@ -1542,25 +1574,33 @@ export abstract class BaseMlsService implements IMlsService {
      * two would drift into disagreeing about whether a closed socket still owes a re-fetch.
      */
     groupId?: string
-  ): void {
-    const groups = groupId
-      ? takeGroupAwaiting(reason, groupId)
-        ? [groupId]
-        : []
-      : takeGroupsAwaiting(reason);
-    if (groups.length === 0) return;
+  ): boolean {
+    const taken = new Set<string>();
+    const tookFor: UnackedReason[] = [];
+    for (const reason of typeof reasons === 'string' ? [reasons] : reasons) {
+      const groups = groupId
+        ? takeGroupAwaiting(reason, groupId)
+          ? [groupId]
+          : []
+        : takeGroupsAwaiting(reason);
+      if (groups.length === 0) continue;
+      tookFor.push(reason);
+      for (const g of groups) taken.add(g);
+    }
+    if (taken.size === 0) return false;
     if (!this.isWsOpen()) {
       // Nothing to re-fetch over: the reconnect runs a pull of its own, and the handler will note
       // whatever still fails. Dropping the note here is safe for the same reason `take` is.
       console.log(`[QUEUE] ${trigger}: socket closed, the reconnect pull covers it`);
-      return;
+      return true;
     }
     console.log(
-      `[QUEUE] ${trigger}: re-fetching for ${groups.length} group(s) left behind as ${reason} [${groups
-        .map((g) => g.slice(0, 8))
-        .join(', ')}]`
+      `[QUEUE] ${trigger}: re-fetching for ${taken.size} group(s) left behind as ${tookFor.join(
+        ' + '
+      )} [${[...taken].map((g) => g.slice(0, 8)).join(', ')}]`
     );
     void this.fetchPendingMessages();
+    return true;
   }
 
   /** Drains per-group queues with round-robin scheduling and a global MLS mutex. */
@@ -2877,8 +2917,15 @@ export abstract class BaseMlsService implements IMlsService {
    * rather than a conversation - is taken from THIS fact rather than rediscovered.
    */
   registerDistributionGroup(scope: DistributionScope, groupId: string): void {
+    const previous = this.distributionScopeByGroup.get(groupId);
     this.distributionScopeByGroup.set(groupId, scope);
     this.knownDistributionGroups.add(groupId);
+    // Written only when it is NEWS: the community loop re-registers every group on every load, and
+    // a row restored by `hydrateDistributionGroups` already says exactly this.
+    if (previous === undefined || !sameScope(previous, scope)) {
+      this.persistDistributionGroup(scope, groupId);
+    }
+    this.collectFramesLeftForKeyGroup(groupId);
   }
 
   /**
@@ -2886,9 +2933,130 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * The server's answer for a salon's group whose community this session has not loaded. Naming the
    * scope has to wait for that load; being right about what the group is must not.
+   *
+   * Not persisted: a row that cannot name the roster cannot route a seed either, and the
+   * registration that names it writes the row.
    */
   noteDistributionGroup(groupId: string): void {
     this.knownDistributionGroups.add(groupId);
+    this.collectFramesLeftForKeyGroup(groupId);
+  }
+
+  /**
+   * Re-fetches whatever the handler refused for `groupId` before this session knew what it was.
+   *
+   * THE EVENT THAT MAKES THOSE FRAMES READABLE IS THIS ONE, and nothing listened to it. A frame on a
+   * key group that arrives before the group is identified takes the conversation path and is left
+   * as `absent-conversation` - whose only other discharge is a conversation appearing, which for a
+   * key group never happens. Measured on production 2026-09-28: 51 frames refused on every load of
+   * one device, 8 epochs of commits among them, and a salon blank on that device for a day.
+   *
+   * Once the scope is named, a frame left as `unscoped-distribution-group` is collectable too.
+   *
+   * A FALLBACK IS A SIGNAL. For a group this device HELD AT START-UP the stored registry should have
+   * named it before the drain (`hydrateDistributionGroups`), so reaching this with frames to collect
+   * means the durable half failed - said at a level that accuses. For a group first joined in this
+   * session it is the ordinary order of events.
+   */
+  private collectFramesLeftForKeyGroup(groupId: string): void {
+    const short = groupId.slice(0, 8);
+    const reasons: UnackedReason[] = this.distributionScopeByGroup.has(groupId)
+      ? ['absent-conversation', 'unscoped-distribution-group']
+      : ['absent-conversation'];
+    const collected = this.refetchFramesLeftBehind(
+      reasons,
+      `key group ${short}... identified`,
+      groupId
+    );
+    if (collected && this.heldAtHydration.has(groupId)) {
+      console.warn(
+        `[GRAINE] key group ${short}... was held at start-up and the stored registry did not name it ` +
+          '- its frames took the conversation path and were refused until now. Its row is written ' +
+          'by this registration; a second load that prints this line means the row did not land'
+      );
+    }
+  }
+
+  /** Wires the durable half of the key-distribution registry. See `IMlsService`. */
+  setDistributionGroupStore(store: DistributionGroupStore | null): void {
+    this.distributionGroupStore = store;
+    if (store === null) this.heldAtHydration.clear();
+  }
+
+  /** @inheritdoc */
+  async hydrateDistributionGroups(): Promise<void> {
+    const store = this.distributionGroupStore;
+    if (!store) {
+      // Every key group's backlog would then be refused until the community loop names it - the
+      // exact defect this method exists to close, so it is never a quiet no-op.
+      console.error(
+        '[GRAINE] key-group registry not restored - no store wired; every key-group backlog is refused until its community loads'
+      );
+      return;
+    }
+    this.heldAtHydration.clear();
+    for (const groupId of this.getLocalGroups()) this.heldAtHydration.add(groupId);
+
+    let rows: Awaited<ReturnType<DistributionGroupStore['getDistributionGroups']>>;
+    try {
+      rows = await store.getDistributionGroups();
+    } catch (e) {
+      console.error(
+        '[GRAINE] key-group registry unreadable - every key-group backlog is refused until its community loads:',
+        String(e)
+      );
+      return;
+    }
+
+    let restored = 0;
+    const stale: string[] = [];
+    for (const row of rows) {
+      // THE ALLOWLIST IS THE LOCAL MLS STATE. A row names a group; only a held tree makes routing
+      // a frame to it meaningful, so a row outliving its tree is deleted rather than believed.
+      if (!holdsGroupState(this, row.groupId)) {
+        stale.push(row.groupId);
+        continue;
+      }
+      const scope =
+        row.channelId === null
+          ? workspaceScope(row.workspaceId)
+          : channelScope(row.workspaceId, row.channelId);
+      this.distributionScopeByGroup.set(row.groupId, scope);
+      this.knownDistributionGroups.add(row.groupId);
+      restored++;
+    }
+    for (const groupId of stale) {
+      await store.deleteDistributionGroup(groupId).catch((e: unknown) => {
+        console.warn(
+          `[GRAINE] could not delete the stale key-group row ${groupId.slice(0, 8)}... - it is re-checked on the next start-up:`,
+          String(e)
+        );
+      });
+    }
+    console.log(
+      `[GRAINE] key-group registry restored before the drain - ${restored} group(s)` +
+        (stale.length > 0 ? `, ${stale.length} row(s) for groups no longer held deleted` : '')
+    );
+  }
+
+  /** Writes `groupId`'s registration to the durable store, when one is wired. Best-effort, logged. */
+  private persistDistributionGroup(scope: DistributionScope, groupId: string): void {
+    const store = this.distributionGroupStore;
+    if (!store) return;
+    void store
+      .saveDistributionGroup({
+        groupId,
+        workspaceId: scope.workspaceId,
+        channelId: scope.kind === 'channel' ? scope.channelId : null,
+      })
+      .catch((e: unknown) => {
+        // Not thrown: the registration in memory holds for this session. What is lost is the NEXT
+        // start-up's head start, and that is what the line says.
+        console.warn(
+          `[GRAINE] key group ${groupId.slice(0, 8)}... registered but not stored - the next start-up will refuse its backlog until its community loads:`,
+          String(e)
+        );
+      });
   }
 
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
@@ -2958,6 +3126,14 @@ export abstract class BaseMlsService implements IMlsService {
     // "distribution group" for state this device no longer holds, and the sweep would go on
     // sparing it for ever.
     this.knownDistributionGroups.delete(groupId);
+    // The stored row too, for the same reason one start-up later. Hydration would delete it anyway
+    // (the tree is gone), so a failure here costs a read, never a mis-routed frame.
+    await this.distributionGroupStore?.deleteDistributionGroup(groupId).catch((e: unknown) => {
+      console.warn(
+        `[GRAINE] key group ${groupId.slice(0, 8)}... forgotten but its row survived - the next start-up deletes it:`,
+        String(e)
+      );
+    });
     return true;
   }
 
@@ -3016,13 +3192,15 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
-      // Unreachable through the pipeline, which only calls this behind `isDistributionGroup`.
+      // REACHABLE, AND IT USED TO SAY IT WAS NOT. `isDistributionGroup` is also true for a group the
+      // server named as one before this session could name its roster (`noteDistributionGroup` - a
+      // salon's group whose community has not loaded). A seed cannot be filed without its
+      // community, so the frame waits - but NOTED, so the registration naming the scope collects it;
+      // refused bare, it was redelivered on every connection with nothing left to re-fetch it.
       console.warn(
-        `[GRAINE] frame for unregistered distribution group ${sanitizeForLog(groupId).slice(
-          0,
-          8
-        )}...`
+        `[GRAINE] frame for key group ${sanitizeForLog(groupId).slice(0, 8)}... whose roster is not named yet - kept for its registration`
       );
+      noteUnackedFrame(groupId, 'unscoped-distribution-group');
       return false;
     }
     const { workspaceId } = scope;

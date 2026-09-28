@@ -14,6 +14,7 @@ import type {
   IStorage,
   OutboxEntry,
   PendingGroupExit,
+  StoredDistributionGroup,
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
@@ -222,6 +223,17 @@ export class SqliteStorage implements IStorage {
             )
         `);
 
+    // Key-distribution groups this device holds, and whose roster each is. Every column clear: it
+    // is read before the first drain, which is the whole point, and it names nothing the local
+    // store does not already name. See `StoredDistributionGroup`.
+    await this.db.execute(`
+            CREATE TABLE IF NOT EXISTS distribution_groups (
+                group_id     TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                channel_id   TEXT
+            )
+        `);
+
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
@@ -342,6 +354,16 @@ export class SqliteStorage implements IStorage {
       //
       // Stamped at 10, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 10');
+    }
+
+    if (currentVersion < 11) {
+      // v10->v11: `distribution_groups`, created unconditionally above like `pending_group_exits`,
+      // so this branch only records it. EMPTY on every existing database, and safe: the community
+      // loop registers each group again on the first load, which writes its row, and the frames
+      // refused before that are re-fetched by the same registration.
+      //
+      // Stamped at 11, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 11');
     }
   }
 
@@ -804,6 +826,31 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM pending_group_exits WHERE group_id = $1', [groupId]);
   }
 
+  // -- Key-distribution groups -------------------------------------------
+
+  /** Record that `entry.groupId` is the key-distribution group of `entry`'s scope. */
+  async saveDistributionGroup(entry: StoredDistributionGroup): Promise<void> {
+    await this.db.execute(
+      'INSERT OR REPLACE INTO distribution_groups (group_id, workspace_id, channel_id) VALUES ($1, $2, $3)',
+      [entry.groupId, entry.workspaceId, entry.channelId]
+    );
+  }
+
+  /** Every key-distribution group recorded. */
+  async getDistributionGroups(): Promise<StoredDistributionGroup[]> {
+    const rows: any[] = await this.db.select('SELECT * FROM distribution_groups');
+    return rows.map((r) => ({
+      groupId: String(r.group_id),
+      workspaceId: String(r.workspace_id),
+      channelId: r.channel_id == null ? null : String(r.channel_id),
+    }));
+  }
+
+  /** Forget `groupId`'s row. A groupId that names nothing is not an error. */
+  async deleteDistributionGroup(groupId: string): Promise<void> {
+    await this.db.execute('DELETE FROM distribution_groups WHERE group_id = $1', [groupId]);
+  }
+
   // -- Graine sessions -----------------------------------------------------
 
   /** The clear columns of a `graine` row, named as callers know them. */
@@ -971,5 +1018,7 @@ export class SqliteStorage implements IStorage {
     // See the IndexedDB twin: an account reset takes the owed exits with it, because a drain firing
     // afterwards would act on a decision taken by an account that is no longer here.
     await this.db.execute('DELETE FROM pending_group_exits');
+    // The seeds go with the reset, so the classification that routes to them goes too.
+    await this.db.execute('DELETE FROM distribution_groups');
   }
 }
