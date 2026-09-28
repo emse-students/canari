@@ -13,7 +13,7 @@
         "@fontsource-variable/nunito": "^5.3.0",
         "@fontsource/chewy": "^5.3.0",
         "@fontsource/leckerli-one": "^5.3.0",
-        "@humanspeak/svelte-markdown": "^1.9.1",
+        "@humanspeak/svelte-markdown": "^1.9.3",
         "@lucide/svelte": "^1.47.0",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-biometric": "^2.3.3",
@@ -131,9 +131,9 @@
 
     "@fontsource/leckerli-one": ["@fontsource/leckerli-one@5.3.0", "", {}, "sha512-4ulbbgxxPq52+qMxeB9tEpPKp/YxBMhJdh98UEyO8kkdKaw4YTkZioAhCe7H1/RteTEbQbylLkSbrhc7kXxycw=="],
 
-    "@humanspeak/memory-cache": ["@humanspeak/memory-cache@1.1.2", "", {}, "sha512-6kmeqrCVThw4RYZsJ74l9cOdZQ84XHnGIzrv+Po49CZBNNVDEzi0CGsTx+KKmr/Hb6hY6yDGxeWTiz4VHkdsEg=="],
+    "@humanspeak/memory-cache": ["@humanspeak/memory-cache@1.2.0", "", {}, "sha512-im7GIIpgjdD6Fx68xCeiXw3XiDv30/WMRAaodMm+ep0ptYfEUd0cdNeTAylHGIRTJIeByKFHdTmPjAktyDM/JQ=="],
 
-    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@1.9.1", "", { "dependencies": { "@humanspeak/memory-cache": "^1.1.2", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.9" }, "peerDependencies": { "katex": ">=0.16.0", "mermaid": ">=10.0.0", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["katex", "mermaid", "shiki"] }, "sha512-2JjpATdZfhGQurV38LtkUkPkyQzM7eXku6LoDBeK6i69qqOe0OLmMwpqtMnhwG3ItdxXOt/3miPbSaNTFqMl5Q=="],
+    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@1.9.3", "", { "dependencies": { "@humanspeak/memory-cache": "^1.2.0", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.14" }, "peerDependencies": { "katex": ">=0.16.0", "mermaid": ">=10.0.0", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["katex", "mermaid", "shiki"] }, "sha512-tMHq46oxkeDQlrn5NXBPD+rN0Z7gsgS2i0NV1ji4lLYbP+GlqtNmBIIB2LywnfIP1UFYLVzcbQpl0Dgf2qUX1g=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 
@@ -829,7 +829,7 @@
 
     "markdown-it-anchor": ["markdown-it-anchor@8.6.7", "", { "peerDependencies": { "@types/markdown-it": "*", "markdown-it": "*" } }, "sha512-FlCHFwNnutLgVTflOYHPW2pPcl2AACqVzExlkGQNsi4CJgqOHN7YTgDd4LuhgN1BFO3TS0vLAruV1Td6dwWPJA=="],
 
-    "marked": ["marked@18.0.11", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-HnslJfsZkRPBDJRHvVtAaWlZHEpSu7u8LgQuJCELjRKuWR+hpq4A7sLq3p8HaI9ypVoXDXxV34CsQJEe1+J5Aw=="],
+    "marked": ["marked@18.0.14", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-mBHK6FBHuBAlhgRe88w9F0O1AbwwXJUcQibUbC/QcdTbVGAD7aWza+xt3N6oT/jCZx3/OMeS+8rnuiHZcQ9s7A=="],
 
     "mdurl": ["mdurl@2.1.0", "", {}, "sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg=="],
 
