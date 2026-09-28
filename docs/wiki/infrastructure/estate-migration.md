@@ -1412,5 +1412,5 @@ each, on `canari` and on `mitv`) sit outside the 14-day purge, which only matche
 were the safety net taken before the backup chain was repaired; delete them once one SCHEDULED run
 has produced an archive containing Authentik, not before, and deleting a backup is the user's
 gesture. `fix/batch-diagnostic-reads-the-app-not-the-document` is the one local branch still kept
-(`wt-devtools` worktree, an eight-line comment and one backlog row) - ship it or drop it
+(its own worktree, an eight-line comment and one backlog row) - ship it or drop it
 deliberately.

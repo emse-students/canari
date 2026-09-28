@@ -195,14 +195,14 @@ committed directly on `main` until WP-2 existed - the flow it creates cannot gov
       than accepted blind
 - [x] all four routes verified from the PowerShell tool: `canari`, `cercle`, `miconnect`
       (hostname `rootz-emse`), and `mitv` shares `canari`'s working `ProxyCommand`
-- [x] the out-of-repo state root is **`d:\Documents\Programmation\EMSE\canari-harness\`**, NOT the
+- [x] the out-of-repo state root is **`../canari-harness/`, the SIBLING of the repo**, NOT the
       `canari-secrets\` this checklist first named: that path is the SIBLING of the repo, which is
       exactly where `tools/play-vitals/lib.mjs` already looks, so **no `PLAY_SA_KEY` is needed** and
       the variable stays what it is meant to be - the override. `play-console-sa.json`,
       `google-services.json` and the harness test accounts live there; `google-services.json` is
       also placed at the gitignored `frontend/src-tauri/gen/android/app/` for a local Android build.
       **SPLIT ON 2026-09-03 by WP-5, and the split is the point**: the campaign RIG root moved one
-      level further out, to `D:\Documents\Programmation\canari-harness\`, so a campaign starting
+      level further out, to `../../canari-harness/` (relative to the repo), so a campaign starting
       from zero cannot half-inherit the LITHIUM one. `play-console-sa.json` and
       `google-services.json` did NOT move - they are store and build credentials rather than rig
       state, `lib.mjs` still resolves the first at the path above, and the sentence about
@@ -279,7 +279,7 @@ committed directly on `main` until WP-2 existed - the flow it creates cannot gov
       `~/.claude/projects/<project>/memory/`, and nowhere in `docs/`
 - [ ] the handoff zip destroyed - **NOT YET, AND NOT BLINDLY.** The bundle is the only copy in the
       world of `claude-account-manager`; it has been preserved to
-      `d:\Documents\Programmation\claude-account-manager\` (with LITHIUM's DPAPI vault beside it, for
+      `../../claude-account-manager/` relative to the repo (with LITHIUM's DPAPI vault beside it, for
       the record - it will not decrypt here). Destroy the zip only after WP-1 has taken what it needs
       from the box
 
@@ -590,7 +590,7 @@ mid-run ends the run. A debug build pointed at `dev.canari-emse.fr` has to be BU
 neither phone can reach the local stack without `adb reverse`, which is per-device and does not
 survive a replug.
 
-- [ ] a new rig root at `D:\Documents\Programmation\canari-harness\`, fresh Chrome profiles, fresh
+- [ ] a new rig root at `../../canari-harness/` (relative to the repo), fresh Chrome profiles, fresh
       test accounts, target LOCAL - **THE REPOSITORY HALF IS DONE 2026-09-03; THE REST IS BLOCKED ON
       THE USER AND IT IS THE RIGHT KIND OF BLOCKED.** `names.example.mjs` now points at
       `../../../../canari-harness`, one level further out - a root the old path cannot reach cannot

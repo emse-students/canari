@@ -14,7 +14,7 @@
 # SSH FROM BASH WORKS SINCE 2026-09-02, and it did not before. MSYS `ssh` execs the cloudflared
 # `ProxyCommand` through `/bin/bash`, which ate the backslashes in its Windows path; `~/.ssh/config`
 # now spells it with forward slashes, which both `bash` and `cmd` exec. If this script ever fails
-# with `exec: C:UsersjolanAppData...: not found`, that config has been rewritten with backslashes.
+# with `exec: C:Users<you>AppData...: not found`, that config has been rewritten with backslashes.
 #
 # Usage:
 #   infrastructure/local/pull-prod-dump.sh [output.sql.gz]

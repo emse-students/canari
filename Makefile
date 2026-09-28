@@ -508,7 +508,7 @@ local-frontend:
 
 # ── LA PILE LOCALE : UN SEUL NOM DE PROJET, ÉCRIT UNE FOIS ───────────────────────────────────
 # `docker compose` déduit le nom du projet du DOSSIER du fichier compose, soit `local` - et il
-# existe sur cette machine un projet `local` venant d'un ancien checkout (`D:\Documents\...`), avec
+# existe sur cette machine un projet `local` venant d'un ancien checkout, dans un autre dossier, avec
 # ses propres conteneurs qui lient 3000, 3010, 3012, 3014 et 9092. Sans `-p`, `make run-services`
 # faisait donc `down --remove-orphans` puis `up --build` sur CE projet-là, en laissant la vraie pile
 # intacte : deux estates, des ports en conflit, et un `docker compose ps` qui ne parle pas de celle

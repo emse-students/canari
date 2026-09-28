@@ -11037,7 +11037,7 @@ told their correct PIN was wrong, account-wide.
 
   **And one of the seven was broken on this machine and could only ever have worked on Linux.**
   `scripts/read-app-version.sh` interpolated an absolute `$ROOT` into `require()`, which under MSYS
-  is `/f/Programmation/...` - a shape no Windows runtime resolves. CI is Linux, which is exactly why
+  is `/f/<path>/...` - a shape no Windows runtime resolves. CI is Linux, which is exactly why
   it could stay broken: the release path reads this helper, and a workstation asking it the same
   question got `Cannot find module`. It resolves from the working directory now.
 
