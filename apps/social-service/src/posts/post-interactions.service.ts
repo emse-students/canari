@@ -173,6 +173,8 @@ export class PostInteractionsService {
     void (async () => {
       const text = data.text ?? (data.media ? '📷 Image' : '');
       const preview = previewOf(text);
+      // The stored row keeps its mention tokens for the app to resolve; a push cannot.
+      const pushPreview = await this.notifications.renderMentionsForPush(preview);
       const actorName = await this.notifications.resolveActorName(data.userId);
       const alreadyNotified = new Set<string>([data.userId]);
 
@@ -187,7 +189,7 @@ export class PostInteractionsService {
             text: preview,
             skipPush: true,
           });
-          await this.push.notifyContent(post.authorId, commentContent(actorName, preview), {
+          await this.push.notifyContent(post.authorId, commentContent(actorName, pushPreview), {
             type: 'social',
             postId,
           });
@@ -212,7 +214,7 @@ export class PostInteractionsService {
               text: preview,
               skipPush: true,
             });
-            await this.push.notifyContent(parent.userId, replyContent(actorName, preview), {
+            await this.push.notifyContent(parent.userId, replyContent(actorName, pushPreview), {
               type: 'social',
               postId,
             });
@@ -240,7 +242,7 @@ export class PostInteractionsService {
               text: preview,
               skipPush: true,
             });
-            await this.push.notifyContent(recipientId, mentionContent(actorName, preview), {
+            await this.push.notifyContent(recipientId, mentionContent(actorName, pushPreview), {
               type: 'social',
               postId,
             });

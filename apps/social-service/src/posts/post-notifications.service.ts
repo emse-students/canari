@@ -18,6 +18,7 @@ import {
   associationPostContent,
   followedPostContent,
   publicMediaIconId,
+  MENTION_TOKEN_RE,
   type PushContent,
   type PushIcon,
 } from '../push/push-content';
@@ -98,13 +99,10 @@ export class PostNotificationsService {
     }
   }
 
-  /** `@[userId]` - 64 lowercase hex chars (OIDC sub, no dashes). */
-  private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{64})\]/gi;
-
   /** Extracts `@[id]` mention targets from text. Returns deduplicated IDs (max 20). */
   resolveMentionedUserIds(text: string): string[] {
     const ids = new Set<string>();
-    for (const match of text.matchAll(PostNotificationsService.MENTION_UUID_RE)) {
+    for (const match of text.matchAll(MENTION_TOKEN_RE)) {
       ids.add(match[1].toLowerCase());
     }
     return [...ids].slice(0, 20);
@@ -137,6 +135,36 @@ export class PostNotificationsService {
   }
 
   /**
+   * A preview with its mention tokens replaced by names, for a PUSH.
+   *
+   * The app resolves `@[id]` itself when it draws the in-app list, so the stored text keeps them.
+   * A phone's push handler has no name directory and shows a social push's text as it arrives, so a
+   * mention reached the lock screen as `@[` and 64 hex characters (2026-09-28). The server knows
+   * every name, so it renders them here. A member it cannot name is dropped from the line rather
+   * than shown as their id.
+   */
+  async renderMentionsForPush(text: string): Promise<string> {
+    const ids = [...new Set([...text.matchAll(MENTION_TOKEN_RE)].map((m) => m[1].toLowerCase()))];
+    if (ids.length === 0) return text;
+    const names = new Map<string, string>();
+    for (const id of ids) {
+      const name = await this.resolveActorName(id);
+      if (name && name.toLowerCase() !== id) names.set(id, name);
+      else
+        this.logger.warn(
+          `[NOTIFY] no display name for mentioned ${id.slice(0, 8)} - dropped from the push`
+        );
+    }
+    return text
+      .replace(MENTION_TOKEN_RE, (_token, id: string) => {
+        const name = names.get(id.toLowerCase());
+        return name ? `@${name}` : '';
+      })
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  /**
    * Creates a notification unless actor and recipient are the same person.
    * Pass `actorName` to skip the DB lookup (e.g. system-generated notifications).
    * Pass `skipPush: true` when the caller already sends its own push (e.g. with a richer
@@ -161,10 +189,12 @@ export class PostNotificationsService {
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     // THE PICTURE IS THE ACTOR'S, because every type reaching this method is one person acting on
     // something of yours. The batch method below is the one that also has an association to show.
-    const content = this.pushContent(data.type, actorName, data.text, {
-      kind: 'user',
-      userId: data.actorId,
-    });
+    const content = this.pushContent(
+      data.type,
+      actorName,
+      await this.renderMentionsForPush(data.text),
+      { kind: 'user', userId: data.actorId }
+    );
     if (!content) {
       this.logger.warn(
         `[NOTIFY] no push content for type=${data.type} - the in-app notification was written, ` +
@@ -245,7 +275,12 @@ export class PostNotificationsService {
           `logoMediaId=${data.associationLogoMediaId ? 'present but refused' : 'absent'}`
       );
     }
-    const content = this.pushContent(data.type, actorName, data.text, icon);
+    const content = this.pushContent(
+      data.type,
+      actorName,
+      await this.renderMentionsForPush(data.text),
+      icon
+    );
     if (!content) {
       this.logger.warn(
         `[NOTIFY] no push content for type=${data.type} - ${recipients.length} in-app ` +

@@ -125,6 +125,9 @@ const PREVIEW_MAX = 60;
 /**
  * The opening of a piece of user text, ellipsed, for a push that shows what was written.
  *
+ * Measured in what a reader SEES: the Markdown is removed first ({@link markdownToPreviewText}),
+ * and a mention counts as a name ({@link MENTION_WIDTH}), never as its token.
+ *
  * THE ELLIPSIS COUNTS TOWARDS THE BOUND, which is a two-character change from the inline version
  * this replaces. That one reserved THREE characters for a ONE-character `…` - the arithmetic
  * of `...` applied to a single glyph - so it cut comment previews at 58 while its own constant
@@ -132,8 +135,96 @@ const PREVIEW_MAX = 60;
  * worth not copying forward.
  */
 export function previewOf(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > PREVIEW_MAX ? trimmed.slice(0, PREVIEW_MAX - 1) + '…' : trimmed;
+  const plain = markdownToPreviewText(text);
+  // Walk the text in the units a reader sees: a character, or a whole mention counted as a name.
+  const units: string[] = [];
+  let last = 0;
+  for (const m of plain.matchAll(MENTION_TOKEN_RE)) {
+    const start = m.index ?? 0;
+    units.push(...plain.slice(last, start));
+    units.push(m[0]);
+    last = start + m[0].length;
+  }
+  units.push(...plain.slice(last));
+  const width = (u: string) => (u.length > 1 ? MENTION_WIDTH : 1);
+  if (units.reduce((sum, u) => sum + width(u), 0) <= PREVIEW_MAX) return plain;
+  let kept = '';
+  let used = 0;
+  for (const u of units) {
+    if (used + width(u) > PREVIEW_MAX - 1) break;
+    kept += u;
+    used += width(u);
+  }
+  return kept.trimEnd() + '…';
+}
+
+/**
+ * What a mention costs in {@link PREVIEW_MAX}: roughly a name, which is what the reader sees.
+ *
+ * Its token is 67 characters - more than the whole preview - so counting it as written cut a post
+ * that opens on a mention down to its first word (2026-09-28). A mention is also never split: half
+ * of one is neither a name the app can resolve nor text a reader can use.
+ */
+const MENTION_WIDTH = 12;
+
+/**
+ * `@[userId]` - the inline mention token of posts and comments: 64 hex characters (the OIDC sub).
+ * Global, so every use goes through `matchAll`/`replace` and none keeps a stale `lastIndex`.
+ */
+export const MENTION_TOKEN_RE = /@\[([0-9a-f]{64})\]/gi;
+
+/**
+ * The Markdown of a post or comment as ONE LINE OF PLAIN TEXT, for a notification.
+ *
+ * A notification quoted the source as written, so the opening of a post read `## Soirée **ce
+ * soir**` on a lock screen and in the app's list alike (user, 2026-09-28). Each construct is
+ * removed BY ITS SHAPE - a heading marker at the start of a line, emphasis around a word - and
+ * never by deleting the characters wholesale, which is what would turn `Saint-Étienne` into
+ * `Saint Étienne` and `snake_case` into `snakecase`.
+ *
+ * Mention tokens are KEPT: the app resolves them to names itself, and the push path resolves them
+ * on the server (`PostNotificationsService.renderMentionsForPush`) because a phone's push handler
+ * has no name directory.
+ */
+export function markdownToPreviewText(markdown: string): string {
+  return (
+    markdown
+      // A backslash escape is the character it escapes, and that character must survive every
+      // rule below - so it is parked as its code point first and put back last.
+      .replace(/\\([\\`*_{}[\]()#+\-.!~|>])/g, (_e, c: string) => `\uE000${c.codePointAt(0)}\uE001`)
+      // Fenced code: the fences go, the code stays - it is still what was written.
+      .replace(/^\s*(```|~~~)[^\n]*$/gm, '')
+      // Line-leading markers: heading, blockquote, list item, task box.
+      .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+      .replace(/^\s{0,3}>\s?/gm, '')
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/gm, '')
+      // A horizontal rule, and a table's separator row, say nothing at all.
+      .replace(/^\s*(?:[-*_]\s*){3,}$/gm, '')
+      .replace(/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, '')
+      // Images keep their description, links their text; an autolink is just its address.
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/(^|[^@])\[([^\]]+)\]\([^)]*\)/g, '$1$2')
+      .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+      // Inline code, then emphasis - the delimiters around a word, not the characters anywhere.
+      .replace(/`([^`\n]+)`/g, '$1')
+      .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+      .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
+      .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?!\w)/g, '$1$2')
+      .replace(/(^|[^\w_])_(?=\S)([^_\n]*?\S)_(?!\w)/g, '$1$2')
+      // A table row - a line that STARTS with a pipe - reads as its cells. A pipe anywhere else
+      // is text someone typed.
+      .replace(/^\s*\|(.*)$/gm, (_row, cells: string) =>
+        cells
+          .split('|')
+          .map((c) => c.trim())
+          .filter(Boolean)
+          .join(' - ')
+      )
+      .replace(/\uE000(\d+)\uE001/g, (_e, n: string) => String.fromCodePoint(Number(n)))
+      // One line: a notification has no paragraphs.
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /** Someone mentioned the recipient. */
