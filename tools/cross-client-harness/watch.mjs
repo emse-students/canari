@@ -180,6 +180,13 @@ const BENIGN = [
   // being SENT - is two entries up, and the pair is what separates "the rule applied" from "history
   // never works here".
   /^\[GRAINE\] not sending history to \S+: community [0-9a-f]+ is set to 'joined'$/,
+  // THE ADMITTER OF channel-encryption SECTION 20 DOING ITS JOB (NOTIF-21, 2026-09-28): the invite
+  // naming what it admits into, the admission starting per key group, and one Welcome per device.
+  // Every OTHER `ADMIT` line - a refusal, a skip, a lost Welcome, the retry after a lost epoch -
+  // stays unclassified or notable on purpose: each is the admission going somewhere it should not.
+  /^\[GRAINE\] ADMIT invited [0-9a-f]{8} to [0-9a-f]{8} \(private salon: (true|false)\)$/,
+  /^\[GRAINE\] ADMIT [0-9a-f]{8} into (community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8}): start$/,
+  /^\[GRAINE\] ADMIT Welcome -> [0-9a-f]{8}:\S+ for (community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8})$/,
   // THE ADMIN SETTING THE RULE, from the community panel - the gesture COMM-12 performs before it
   // measures anything. It carries the value the server ACCEPTED rather than the one that was
   // clicked, which is why it is worth a line: the two differ whenever the save failed.
@@ -2293,6 +2300,16 @@ export function logcatReport(lines, label = 'A1') {
     // The frame sealed one commit ahead of a key group this phone holds - the join that rotated the
     // session happened while it was shut, which is NOTIF-20's own shape. The catch-up is the answer.
     ['fcm-seed-frame-catchup', /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/],
+    // THE BACKGROUND WELCOME (channel-encryption section 20, NOTIF-21 2026-09-28): a killed phone
+    // added to a group joins it from the push - the route, the join, and the seat promoted. Plus
+    // the two re-queues that put a frame behind its own group's Welcome on the one push lane
+    // (`WELCOMES_ON_LANE`): each is the frame WAITING for a join that is proven queued, not a
+    // failure, and the refusal line that would have preceded the old sleep does not appear.
+    ['fcm-welcome-route', /^isWelcome=true -> groupId=\S+ qId=\S+ - background join$/],
+    ['fcm-welcome-joined', /^processReceivedWelcomeBackground: \S+ group joined group=\S+$/],
+    ['fcm-membership-active', /^markMembershipActive: HTTP 20[01] group=\S+$/],
+    ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
+    ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame

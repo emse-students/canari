@@ -91,6 +91,11 @@ object PushRecoveryLadder {
             // the concurrent Welcome push may be joining the group when this message arrives. We
             // retry briefly so the 1st message of a new conversation produces a real notification
             // instead of a generic fallback, rather than showing then correcting the notification.
+            //
+            // NOT A WELCOME ON THE PUSH LANE ITSELF: that one is queued BEHIND this frame on one
+            // thread, so no pause here lets it run. The caller re-queues such a frame behind its
+            // Welcome before this ladder is reached (`WELCOMES_ON_LANE`, NOTIF-21 2026-09-28).
+            // What is left for this loop is a join by ANOTHER engine - the live WebView's.
             GroupLocality.ABSENT -> {
                 var raceAttempt = 0
                 while (isRefused(outcome) && raceAttempt < WELCOME_RACE_RETRIES) {

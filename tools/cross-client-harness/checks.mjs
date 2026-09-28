@@ -201,6 +201,10 @@ export const PHASES = {
       // 19's TWIN ON A DM (user, 2026-09-27: a DM and a salon behave the same): the same W3
       // advance, into the owner<->peer DM, and the bar is the same plaintext. Wipes W3; mints nothing.
       'notif2.mjs',
+      // THE ADMITTER WELCOMES (channel-encryption section 20): W2 makes a fresh community and invites
+      // the owner while the phone is dead; its key-group row must go active from the background
+      // Welcome and the first message must be in clear. Mints and deletes its own community.
+      'notif21.mjs',
     ],
     // W3 IS HERE BECAUSE `notif15.mjs` PARKS IT, AND FOR A DAY NOTHING SAID SO. That row kills the
     // phone and needs every OTHER owner device out of the conversation first - a read receipt from

@@ -6,6 +6,7 @@ import {
 } from './admitNewcomer';
 import { registerChannelWorkspace, setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * Whoever admits a newcomer Welcomes them (channel-encryption section 20).
@@ -180,8 +181,52 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(mls.releaseAddLock).not.toHaveBeenCalled();
   });
 
-  it('sends no Welcome and persists nothing when the Add is refused (the self-join won)', async () => {
-    mls.addMembersBulk.mockRejectedValue(new Error('Staged commit rejected: epoch_mismatch'));
+  it('re-builds a refused Add on the epoch that beat it, for the devices still without a leaf', async () => {
+    // NOTIF-21, 2026-09-28: the newcomer's live web client joined by its own external commit in the
+    // same second; the dead phone had no door but this Add.
+    let epoch = 5;
+    mls.getEpoch.mockImplementation(() => epoch);
+    mls.getGroupMemberIdentities
+      .mockResolvedValueOnce(['admin:web-1'])
+      .mockResolvedValueOnce(['admin:web-1', 'bob:web']);
+    mls.addMembersBulk
+      .mockImplementationOnce(async () => {
+        epoch = 6; // the refusal's catch-up applied the winning external commit
+        throw new CommitRefusedError('epoch_mismatch', 5, 6);
+      })
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone'],
+        skippedDeviceIds: [],
+      });
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toMatchObject({ kind: 'admitted', deviceIds: ['phone'] });
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
+    expect(
+      mls.addMembersBulk.mock.calls[1][1].map((d: { deviceId: string }) => d.deviceId)
+    ).toEqual(['phone']);
+    expect(mls.sendWelcome).toHaveBeenCalledTimes(1);
+    expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up, loudly, on a refusal its catch-up could not move past', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mls.addMembersBulk.mockRejectedValue(new CommitRefusedError('epoch_mismatch', 5, 7));
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toEqual({ kind: 'failed', stage: 'commit' });
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT admitted'));
+    warn.mockRestore();
+  });
+
+  it('sends no Welcome and persists nothing when the Add fails for any other cause', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mls.addMembersBulk.mockRejectedValue(new Error('network down'));
 
     const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
 
@@ -189,6 +234,7 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(mls.sendWelcome).not.toHaveBeenCalled();
     expect(persisted).toBe(0);
     expect(mls.releaseAddLock).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('reports devices that could not be READ apart from a newcomer that has none', async () => {

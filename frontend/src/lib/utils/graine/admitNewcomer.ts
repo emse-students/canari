@@ -8,6 +8,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
 import { userIdOfLeaf } from './rosterReconcile';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * Whoever admits a newcomer Welcomes them - channel-encryption section 20, decided by the user
@@ -169,43 +170,62 @@ export async function admitNewcomerToDistributionGroup(
   }
 
   try {
-    let leafIdentities: string[];
-    try {
-      // AFTER the lock, so a concurrent admitter's merged Add is in the tree this reads.
-      leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
-    } catch (e) {
-      log(
-        `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: FAILED - the tree could not be read (${String(e)}) - nobody admitted`
-      );
-      return { kind: 'failed', stage: 'tree' };
-    }
-
-    const missing = devicesToAdmit({ leafIdentities, newcomerUserId: newcomer, devices });
-    if (missing.length === 0) {
-      log(
-        `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: all ${devices.length} device(s) already hold a leaf - no commit`
-      );
-      return { kind: 'already-in-tree' };
-    }
-
+    // A REFUSED ADD IS RE-BUILT ON THE EPOCH THAT BEAT IT, and only then. The newcomer's LIVE devices
+    // may join by their own external commits in the same second - they are acting, so that door is
+    // theirs - and win the epoch gate. The Add is then refused and rolled back, but a DEAD device of
+    // theirs has no door but this one: giving up left it out for good (NOTIF-21, 2026-09-28). So the
+    // tree is read again, after the refusal's catch-up applied the winning commit, and only the
+    // devices still without a leaf are added. TERMINATION IS A PROOF, NOT A COUNT: a retry is taken
+    // only when the local epoch MOVED past the one the refused Add was built on, i.e. one foreign
+    // commit was consumed; a catch-up that could not move it ends the admission, loudly.
+    let missing: NewcomerDevice[];
     let result: Awaited<ReturnType<typeof mlsService.addMembersBulk>>;
-    try {
-      // ONE commit for every missing device, so an admission costs one epoch whatever the fleet.
-      // The newcomer's devices are excluded from the commit's fan-out: the Welcome is what they
-      // get, and a commit for an epoch they are not in yet is a frame they can never open.
-      result = await mlsService.addMembersBulk(
-        groupId,
-        missing.map((d) => ({ deviceId: d.deviceId, keyPackage: d.keyPackage })),
-        missing.map((d) => `${newcomer}:${d.deviceId}`)
-      );
-    } catch (e) {
-      // A refused commit (the newcomer's own external join won the epoch) is rolled back without a
-      // merge, and the newcomer is then in by their own door. Not classified from the text: every
-      // cause ends the same way here, with nobody admitted by THIS device.
-      log(
-        `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add was not accepted (${String(e)}) - nobody admitted by this device`
-      );
-      return { kind: 'failed', stage: 'commit' };
+    for (;;) {
+      let leafIdentities: string[];
+      try {
+        // AFTER the lock, so a concurrent admitter's merged Add is in the tree this reads.
+        leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
+      } catch (e) {
+        log(
+          `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: FAILED - the tree could not be read (${String(e)}) - nobody admitted`
+        );
+        return { kind: 'failed', stage: 'tree' };
+      }
+
+      missing = devicesToAdmit({ leafIdentities, newcomerUserId: newcomer, devices });
+      if (missing.length === 0) {
+        log(
+          `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: all ${devices.length} device(s) already hold a leaf - no commit`
+        );
+        return { kind: 'already-in-tree' };
+      }
+
+      const builtOn = mlsService.getEpoch(groupId);
+      try {
+        // ONE commit for every missing device, so an admission costs one epoch whatever the fleet.
+        // The newcomer's devices are excluded from the commit's fan-out: the Welcome is what they
+        // get, and a commit for an epoch they are not in yet is a frame they can never open.
+        result = await mlsService.addMembersBulk(
+          groupId,
+          missing.map((d) => ({ deviceId: d.deviceId, keyPackage: d.keyPackage })),
+          missing.map((d) => `${newcomer}:${d.deviceId}`)
+        );
+        break;
+      } catch (e) {
+        const caughtUpTo = mlsService.getEpoch(groupId);
+        if (e instanceof CommitRefusedError && caughtUpTo > builtOn) {
+          log(
+            `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} lost to a commit (${e.reason}); caught up to ${caughtUpTo} - re-reading the tree`
+          );
+          continue;
+        }
+        // Every other outcome ends here, with nobody admitted by THIS device - and a dead device of
+        // the newcomer's with no door at all, which is why this is a warning and not narration.
+        console.warn(
+          `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add was not accepted and could not be rebuilt (${String(e)}; epoch ${builtOn} -> ${caughtUpTo}) - ${missing.length} device(s) of theirs NOT admitted`
+        );
+        return { kind: 'failed', stage: 'commit' };
+      }
     }
 
     if (result.skippedDeviceIds.length > 0) {

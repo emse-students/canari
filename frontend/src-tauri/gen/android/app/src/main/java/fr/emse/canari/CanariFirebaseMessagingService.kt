@@ -80,6 +80,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private val MLS_PUSH_LANE: ExecutorService =
             Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
 
+        /**
+         * How many Welcomes for each group are queued on [MLS_PUSH_LANE] and not yet finished.
+         *
+         * THE PROOF THE WELCOME-RACE RETRY NEVER HAD. A frame for a group this device is being
+         * Welcomed into can reach the lane BEFORE its Welcome - the server fans the admitter's
+         * first frames out while the Welcome is still being sent - and the ladder then slept
+         * 3 x 1.8 s waiting for a join that could not happen: the Welcome was queued BEHIND it on
+         * this single thread. Measured on NOTIF-21, 2026-09-28: two key-group frames spent ten
+         * seconds each asleep in front of their own Welcome, which joined 24 s after it arrived.
+         *
+         * Counted when the push is RECEIVED (before it is queued) and released when its task
+         * ENDS, whatever the outcome - so a count above zero means "a Welcome for this group is
+         * behind you on the lane", and a frame re-queued then runs after it. One re-queue per
+         * Welcome at most: by the time the re-queued frame runs, the Welcome has released it.
+         */
+        private val WELCOMES_ON_LANE = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
         /** High-priority channel: DMs and group messages (sound + vibration). */
         const val CHANNEL_MESSAGES = "canari_messages"
 
@@ -2128,8 +2145,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "isWelcome: missing groupId -> abort")
                 return
             }
+            WELCOMES_ON_LANE.merge(groupId, 1, Int::plus)
             runSerializedWithWakeLock("welcome_join", 90_000L) {
-                processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
+                try {
+                    processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
+                } finally {
+                    WELCOMES_ON_LANE.computeIfPresent(groupId) { _, n -> (n - 1).takeIf { it > 0 } }
+                }
             }
             return
         }
@@ -2221,250 +2243,268 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Encrypted MLS message: decrypted on the serialized MLS lane (max 60s per push).
         // Non-blocking for FCM: onMessageReceived returns immediately.
         val silent = data["silent"] == "true"
-        runSerializedWithWakeLock("fcm_decrypt") {
-            val groupId         = data["groupId"] ?: ""
-            val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
-            // THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. Empty meant a DM, a group
-            // nobody named, and a group row the server could not read - three states as one, and
-            // production says the middle one is a third of all groups. Null here means the push did
-            // not say (an older server, or one that logged a failed read), and the consumer must
-            // then fall back to what it did before rather than invent an answer.
-            val isGroup: Boolean? = data["isGroup"]?.let { it == "true" }
-            // Whether this conversation is a Graine KEY-DISTRIBUTION group. Same three states as
-            // `isGroup`, same reason: an absent key says the server did not know, which is not the
-            // same sentence as "no". See `PushMessageInput.isKeyDistribution`.
-            val isKeyDistribution: Boolean? = data["isKeyDistribution"]?.let { it == "true" }
-            val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
-            val senderId        = data["senderId"] ?: ""
-            val queuedMessageId = data["queuedMessageId"]
-            val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
+        runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+    }
 
-            Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
+    /**
+     * One encrypted MLS push frame, on [MLS_PUSH_LANE]: decrypt, recover, then notify or absorb.
+     *
+     * A FUNCTION RATHER THAN THE LAMBDA IT WAS, so a frame can be queued again behind a Welcome
+     * for its group - see [WELCOMES_ON_LANE].
+     */
+    private fun handleMlsFrame(data: Map<String, String>, silent: Boolean) {
+        val groupId         = data["groupId"] ?: ""
+        val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
+        // THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. Empty meant a DM, a group
+        // nobody named, and a group row the server could not read - three states as one, and
+        // production says the middle one is a third of all groups. Null here means the push did
+        // not say (an older server, or one that logged a failed read), and the consumer must
+        // then fall back to what it did before rather than invent an answer.
+        val isGroup: Boolean? = data["isGroup"]?.let { it == "true" }
+        // Whether this conversation is a Graine KEY-DISTRIBUTION group. Same three states as
+        // `isGroup`, same reason: an absent key says the server did not know, which is not the
+        // same sentence as "no". See `PushMessageInput.isKeyDistribution`.
+        val isKeyDistribution: Boolean? = data["isKeyDistribution"]?.let { it == "true" }
+        val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
+        val senderId        = data["senderId"] ?: ""
+        val queuedMessageId = data["queuedMessageId"]
+        val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
-            // CROSS-DEVICE DISMISSAL, BEFORE ANY DECRYPTION.
-            //
-            // A silent push whose senderId is my own userId means I just read (or sent in) this
-            // conversation from ANOTHER device, so this device's notification for it must go. That
-            // decision needs `groupId`, `senderId` and `silent` - three CLEARTEXT data fields - and
-            // nothing from the plaintext. It used to sit after the decrypt ladder, behind
-            // `if (decrypted == null && silent) return`, so the dismissal was silently conditional
-            // on being able to decrypt the receipt: exactly the case where the app has been killed
-            // and is behind. Measured on device 2026-08-06 (NOTIF-4): the receipt arrived at
-            // 23:33:31 tagged `senderName=<owner> silent=true`, the decrypt gave up 16 s later
-            // with "Silent push decryption failed -> returning silently", and the notification
-            // stayed on screen. Doing it here also spares those 16 s.
-            //
-            // The decrypt still runs afterwards - it is what advances the MLS state - it just no
-            // longer gates the dismissal.
-            if (silent && groupId.isNotEmpty() && senderId.isNotEmpty()) {
-                val myUserId = MlsContextLoader.loadPushContext(this)?.userId
-                if (senderId.equals(myUserId, ignoreCase = true)) {
-                    Log.d(TAG, "FCM silent from self -> cancelling notification for group=${groupId.take(8)}")
-                    cancelConversationNotification(this, groupId)
-                }
-            }
+        Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
-            // ALMOST NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS ALMOST
-            // NEVER READ. The self-read dismissal above runs on the CLEARTEXT fields, and calls
-            // are off - see `CALLS_ENABLED` for the measurement and for what the revival flips.
-            //
-            // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
-            // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
-            // session it opens has no seed on this device and every one of its salon messages
-            // shows the generic body until the app is next opened. Reading them all instead would
-            // put an MLS load and the state lock behind every read receipt and every self-read
-            // dismissal, for frames with nothing in them - roughly 3-5 s each, serialised on the
-            // one push lane. So the discriminator travels from where it is KNOWN: a distribution
-            // group's log carries seeds and nothing else, and `dm_groups` says which groups those
-            // are. `isKeyDistribution` is that column, in cleartext.
-            //
-            // A `null` - an older server, or a group row it could not read - keeps the old
-            // behaviour. That is not a fallback path: it is the third state saying "not told",
-            // and the seed is still recovered when the app next runs.
-            if (silent && !CALLS_ENABLED && isKeyDistribution != true) {
-                if (silentSkipExplained.compareAndSet(false, true)) {
-                    Log.d(TAG, "FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)")
-                }
-                return@runSerializedWithWakeLock
-            }
-
-            var outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
-
-            // ONLY `Refused` CARRIES THE DIAGNOSIS THIS LADDER ANSWERS. It used to run on any empty
-            // result, and the comment on its LOCAL branch states the premise it was resting on -
-            // "the only plausible reason for a direct failure is an epoch gap". A frame that
-            // decrypted and had nothing to render has no epoch gap, and a frame the foreground took
-            // is not this thread's business at all. See `PushDecrypt` for what that cost.
-            //
-            // THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that
-            // package is compiled by the standalone JVM test project too, so `PushDecryptLadderTest`
-            // runs THIS branching rather than a copy of it. Everything the ladder cannot have
-            // without Android - the JNI decrypt, the state lock, the clock, the logger - is handed
-            // in from here.
-            if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-                outcome = PushRecoveryLadder.run(
-                    initial = outcome,
-                    groupTag = groupId.take(8),
-                    isRefused = { it is PushDecrypt.Refused },
-                    locality = { groupLocality(groupId) },
-                    retryDecrypt = { tryDecrypt(queuedMessageId, groupId, inlineProto) },
-                    catchUp = {
-                        tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
-                    },
-                    pause = {
-                        try {
-                            Thread.sleep(PushRecoveryLadder.WELCOME_RACE_RETRY_DELAY_MS)
-                            true
-                        } catch (e: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                            false
-                        }
-                    },
-                    log = { Log.d(TAG, it) },
-                )
-            }
-
-            // KEY MATERIAL IS ABSORBED HERE, NOT IN THE PARSER. `decryptProto` carries it out as a
-            // string so that reading a frame stays reading a frame; this is the handler, and the
-            // only place in this file that may write to the Tauri data directory.
-            (outcome as? PushDecrypt.KeyMaterial)?.let { keyMaterial ->
-                absorbGraineSeeds(keyMaterial.seedsJson, groupId)
-                return@runSerializedWithWakeLock
-            }
-
-            // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
-            val decrypted: DecryptedMessage? = (outcome as? PushDecrypt.Message)?.msg
-
-            // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
-            // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
-            // Control (answer/ICE/hangup/answered) -> never a message notification; hangup/answered
-            // additionally stops an active ring.
-            if (decrypted?.type == "call_invite") {
-                showIncomingCallNotification(
-                    this, groupId, decrypted.callId ?: "mls-$groupId",
-                    senderName, groupName, decrypted.hasVideo,
-                )
-                return@runSerializedWithWakeLock
-            }
-            if (decrypted?.type == "call_control") {
-                if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
-                Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
-                return@runSerializedWithWakeLock
-            }
-
-            if (decrypted == null && silent) {
-                // Silent push: no notification must be shown. Do not log the misleading worker/fallback
-                // messages that are only meaningful for visible pushes.
-                //
-                // AND IT SAYS WHICH OF THE THREE IT WAS. "decryption failed" was printed over a
-                // frame that had decrypted perfectly well, which is how the campaign carried this
-                // as unattributable dirt on five push rows for two days.
-                val why = when (outcome) {
-                    is PushDecrypt.NothingToRender -> "nothing to render in it"
-                    is PushDecrypt.Yielded -> "the foreground holds it"
-                    else -> "it could not be decrypted"
-                }
-                Log.d(TAG, "Silent push group=${groupId.take(8)} shows nothing - $why")
-                return@runSerializedWithWakeLock
-            }
-
-            // A YIELD IS NOT A FAILURE, AND EVERYTHING BELOW TREATS `decrypted == null` AS ONE.
-            //
-            // `tryDecrypt` returns null both when the crypto refused and when it stepped aside for a
-            // foreground engine that has this frame already. The fallback path below cannot tell
-            // them apart, so a yield produced `W/CanariFCM: Decryption failed -> MlsBackgroundWorker
-            // enqueued` and `Fallback notification: Nouveau message de ...` - measured on NOTIF-10,
-            // 2026-09-07 03:11.
-            //
-            // TWO THINGS ARE WRONG WITH THAT, AND THE SECOND IS THE SERIOUS ONE. The line accuses
-            // correct work. And the Worker it enqueues is a THIRD MLS engine reaching for the same
-            // `mls.bin` - re-creating, one step later, exactly the overlap the yield just avoided.
-            //
-            // The notification is not owed either: the premise of yielding is that the foreground
-            // holds the frame, and it notifies for what it received. That is measured on the same
-            // row - `notifiedInMs: 6568`, `undecryptedInShade: []`, so the shade got the real text
-            // and never the fallback. `showNotification` would have suppressed the fallback anyway;
-            // returning here is what stops the work and the accusation, not just the display.
-            // READ FROM THE OUTCOME, NOT RE-DERIVED. This asked `MainActivity.isInForeground` again,
-            // which answers a question about NOW over a decision the decrypt took up to ten seconds
-            // earlier - so an app that had gone back to the background in between would have been
-            // sent down the fallback path for a frame it had already handed over.
-            if (outcome is PushDecrypt.Yielded) {
-                Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
-                return@runSerializedWithWakeLock
-            }
-
-            // Read once and used twice below: to render the mention tokens the decrypted body
-            // carries, and to decide whether one of them names ME (which chooses the channel).
+        // CROSS-DEVICE DISMISSAL, BEFORE ANY DECRYPTION.
+        //
+        // A silent push whose senderId is my own userId means I just read (or sent in) this
+        // conversation from ANOTHER device, so this device's notification for it must go. That
+        // decision needs `groupId`, `senderId` and `silent` - three CLEARTEXT data fields - and
+        // nothing from the plaintext. It used to sit after the decrypt ladder, behind
+        // `if (decrypted == null && silent) return`, so the dismissal was silently conditional
+        // on being able to decrypt the receipt: exactly the case where the app has been killed
+        // and is behind. Measured on device 2026-08-06 (NOTIF-4): the receipt arrived at
+        // 23:33:31 tagged `senderName=<owner> silent=true`, the decrypt gave up 16 s later
+        // with "Silent push decryption failed -> returning silently", and the notification
+        // stayed on screen. Doing it here also spares those 16 s.
+        //
+        // The decrypt still runs afterwards - it is what advances the MLS state - it just no
+        // longer gates the dismissal.
+        if (silent && groupId.isNotEmpty() && senderId.isNotEmpty()) {
             val myUserId = MlsContextLoader.loadPushContext(this)?.userId
-            val body: String = decrypted?.text?.let {
-                renderMentions(it, myUserId, appLocaleContext(this))
+            if (senderId.equals(myUserId, ignoreCase = true)) {
+                Log.d(TAG, "FCM silent from self -> cancelling notification for group=${groupId.take(8)}")
+                cancelConversationNotification(this, groupId)
             }
-                ?: run {
-                    // Insufficient catch-up (no commit, below the floor, or group not joined yet):
-                    // enqueue the worker to retry on the next cycle.
-                    //
-                    // ONLY FOR A REFUSAL. A visible push whose plaintext held nothing renderable
-                    // still owes the user the generic notification below - there IS a message - but
-                    // a retry cannot help it: the frame decrypted, and the worker would decrypt the
-                    // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
-                    // as a third engine.
-                    if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-                        val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
-                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-                            .build()
-                        enqueueWorkerIfHealthy(workRequest)
-                        Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+        }
+
+        // ALMOST NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS ALMOST
+        // NEVER READ. The self-read dismissal above runs on the CLEARTEXT fields, and calls
+        // are off - see `CALLS_ENABLED` for the measurement and for what the revival flips.
+        //
+        // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
+        // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
+        // session it opens has no seed on this device and every one of its salon messages
+        // shows the generic body until the app is next opened. Reading them all instead would
+        // put an MLS load and the state lock behind every read receipt and every self-read
+        // dismissal, for frames with nothing in them - roughly 3-5 s each, serialised on the
+        // one push lane. So the discriminator travels from where it is KNOWN: a distribution
+        // group's log carries seeds and nothing else, and `dm_groups` says which groups those
+        // are. `isKeyDistribution` is that column, in cleartext.
+        //
+        // A `null` - an older server, or a group row it could not read - keeps the old
+        // behaviour. That is not a fallback path: it is the third state saying "not told",
+        // and the seed is still recovered when the app next runs.
+        if (silent && !CALLS_ENABLED && isKeyDistribution != true) {
+            if (silentSkipExplained.compareAndSet(false, true)) {
+                Log.d(TAG, "FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)")
+            }
+            return
+        }
+
+        var outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
+
+        // ITS WELCOME IS BEHIND IT ON THIS LANE, SO IT GOES BEHIND ITS WELCOME. Nothing about this
+        // frame is wrong: the group it belongs to is joined by a task already queued, and on one
+        // thread no amount of waiting HERE lets that task run. Queued again, it runs after the
+        // join - no retry, no clock, and no fallback banner for a message about to be readable.
+        if (outcome is PushDecrypt.Refused && (WELCOMES_ON_LANE[groupId] ?: 0) > 0) {
+            Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)}: its Welcome is queued behind this frame -> re-queued after it")
+            runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+            return
+        }
+
+        // ONLY `Refused` CARRIES THE DIAGNOSIS THIS LADDER ANSWERS. It used to run on any empty
+        // result, and the comment on its LOCAL branch states the premise it was resting on -
+        // "the only plausible reason for a direct failure is an epoch gap". A frame that
+        // decrypted and had nothing to render has no epoch gap, and a frame the foreground took
+        // is not this thread's business at all. See `PushDecrypt` for what that cost.
+        //
+        // THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that
+        // package is compiled by the standalone JVM test project too, so `PushDecryptLadderTest`
+        // runs THIS branching rather than a copy of it. Everything the ladder cannot have
+        // without Android - the JNI decrypt, the state lock, the clock, the logger - is handed
+        // in from here.
+        if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
+            outcome = PushRecoveryLadder.run(
+                initial = outcome,
+                groupTag = groupId.take(8),
+                isRefused = { it is PushDecrypt.Refused },
+                locality = { groupLocality(groupId) },
+                retryDecrypt = { tryDecrypt(queuedMessageId, groupId, inlineProto) },
+                catchUp = {
+                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                },
+                pause = {
+                    try {
+                        Thread.sleep(PushRecoveryLadder.WELCOME_RACE_RETRY_DELAY_MS)
+                        true
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        false
                     }
-                    buildFallbackText(appLocaleContext(this), senderName)
-                        .also { Log.w(TAG, "Fallback notification: $it") }
-                }
-
-            if (silent) {
-                // The self-read dismissal already happened above, on the cleartext fields, whether
-                // or not this frame decrypted. All that is left here is to state that a silent push
-                // shows nothing.
-                //
-                // IT SAID "MLS state updated", WHICH IS NOT TRUE AND NEVER WAS: `background.rs`
-                // states in its own header that the read-only push paths never persist `mls.bin`,
-                // and `decryptProto` discards commits. A log line asserting a write that does not
-                // happen is worse than no line - it is the one somebody reads while looking for why
-                // the state is behind. Reachable only when calls are on, since the skip above
-                // returns first.
-                Log.d(TAG, "FCM silent -> nothing to show for a silent frame, and no state was written")
-                return@runSerializedWithWakeLock
-            }
-
-            if (decrypted != null) {
-                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
-            }
-
-            val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
-            val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
-            // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
-            // attach it inline. null for text/video/audio -> plain text notification.
-            val media = decrypted?.let { fetchAndDecryptMedia(it) }
-            // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
-            // targets my own userId the notification is posted on the higher-tier mentions channel
-            // (bypass-DND request) instead of the regular messages channel.
-            val mentionsMe = myUserId != null &&
-                decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
-            val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
-            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-            showMessageNotification(
-                senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-                channel, sentAt = decrypted?.sentAt ?: 0L,
+                },
+                log = { Log.d(TAG, it) },
             )
+        }
 
-            // Woken by this incoming message: try to send our own pending outgoing messages
-            // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
-            // foreground guard (C1) is inactive in the background, writing mls.bin is allowed.
-            // No-op if the outbox is empty. Notify if any remain (safety net).
-            MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
-                val remaining = drainOutboxBackground(this, this, drainCtx)
-                maybeNotifyPendingSync(remaining)
+        // KEY MATERIAL IS ABSORBED HERE, NOT IN THE PARSER. `decryptProto` carries it out as a
+        // string so that reading a frame stays reading a frame; this is the handler, and the
+        // only place in this file that may write to the Tauri data directory.
+        (outcome as? PushDecrypt.KeyMaterial)?.let { keyMaterial ->
+            absorbGraineSeeds(keyMaterial.seedsJson, groupId)
+            return
+        }
+
+        // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
+        val decrypted: DecryptedMessage? = (outcome as? PushDecrypt.Message)?.msg
+
+        // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
+        // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
+        // Control (answer/ICE/hangup/answered) -> never a message notification; hangup/answered
+        // additionally stops an active ring.
+        if (decrypted?.type == "call_invite") {
+            showIncomingCallNotification(
+                this, groupId, decrypted.callId ?: "mls-$groupId",
+                senderName, groupName, decrypted.hasVideo,
+            )
+            return
+        }
+        if (decrypted?.type == "call_control") {
+            if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
+            Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
+            return
+        }
+
+        if (decrypted == null && silent) {
+            // Silent push: no notification must be shown. Do not log the misleading worker/fallback
+            // messages that are only meaningful for visible pushes.
+            //
+            // AND IT SAYS WHICH OF THE THREE IT WAS. "decryption failed" was printed over a
+            // frame that had decrypted perfectly well, which is how the campaign carried this
+            // as unattributable dirt on five push rows for two days.
+            val why = when (outcome) {
+                is PushDecrypt.NothingToRender -> "nothing to render in it"
+                is PushDecrypt.Yielded -> "the foreground holds it"
+                else -> "it could not be decrypted"
             }
+            Log.d(TAG, "Silent push group=${groupId.take(8)} shows nothing - $why")
+            return
+        }
+
+        // A YIELD IS NOT A FAILURE, AND EVERYTHING BELOW TREATS `decrypted == null` AS ONE.
+        //
+        // `tryDecrypt` returns null both when the crypto refused and when it stepped aside for a
+        // foreground engine that has this frame already. The fallback path below cannot tell
+        // them apart, so a yield produced `W/CanariFCM: Decryption failed -> MlsBackgroundWorker
+        // enqueued` and `Fallback notification: Nouveau message de ...` - measured on NOTIF-10,
+        // 2026-09-07 03:11.
+        //
+        // TWO THINGS ARE WRONG WITH THAT, AND THE SECOND IS THE SERIOUS ONE. The line accuses
+        // correct work. And the Worker it enqueues is a THIRD MLS engine reaching for the same
+        // `mls.bin` - re-creating, one step later, exactly the overlap the yield just avoided.
+        //
+        // The notification is not owed either: the premise of yielding is that the foreground
+        // holds the frame, and it notifies for what it received. That is measured on the same
+        // row - `notifiedInMs: 6568`, `undecryptedInShade: []`, so the shade got the real text
+        // and never the fallback. `showNotification` would have suppressed the fallback anyway;
+        // returning here is what stops the work and the accusation, not just the display.
+        // READ FROM THE OUTCOME, NOT RE-DERIVED. This asked `MainActivity.isInForeground` again,
+        // which answers a question about NOW over a decision the decrypt took up to ten seconds
+        // earlier - so an app that had gone back to the background in between would have been
+        // sent down the fallback path for a frame it had already handed over.
+        if (outcome is PushDecrypt.Yielded) {
+            Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
+            return
+        }
+
+        // Read once and used twice below: to render the mention tokens the decrypted body
+        // carries, and to decide whether one of them names ME (which chooses the channel).
+        val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        val body: String = decrypted?.text?.let {
+            renderMentions(it, myUserId, appLocaleContext(this))
+        }
+            ?: run {
+                // Insufficient catch-up (no commit, below the floor, or group not joined yet):
+                // enqueue the worker to retry on the next cycle.
+                //
+                // ONLY FOR A REFUSAL. A visible push whose plaintext held nothing renderable
+                // still owes the user the generic notification below - there IS a message - but
+                // a retry cannot help it: the frame decrypted, and the worker would decrypt the
+                // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
+                // as a third engine.
+                if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
+                    val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                        .build()
+                    enqueueWorkerIfHealthy(workRequest)
+                    Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+                }
+                buildFallbackText(appLocaleContext(this), senderName)
+                    .also { Log.w(TAG, "Fallback notification: $it") }
+            }
+
+        if (silent) {
+            // The self-read dismissal already happened above, on the cleartext fields, whether
+            // or not this frame decrypted. All that is left here is to state that a silent push
+            // shows nothing.
+            //
+            // IT SAID "MLS state updated", WHICH IS NOT TRUE AND NEVER WAS: `background.rs`
+            // states in its own header that the read-only push paths never persist `mls.bin`,
+            // and `decryptProto` discards commits. A log line asserting a write that does not
+            // happen is worse than no line - it is the one somebody reads while looking for why
+            // the state is behind. Reachable only when calls are on, since the skip above
+            // returns first.
+            Log.d(TAG, "FCM silent -> nothing to show for a silent frame, and no state was written")
+            return
+        }
+
+        if (decrypted != null) {
+            writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+        }
+
+        val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
+        // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
+        // attach it inline. null for text/video/audio -> plain text notification.
+        val media = decrypted?.let { fetchAndDecryptMedia(it) }
+        // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
+        // targets my own userId the notification is posted on the higher-tier mentions channel
+        // (bypass-DND request) instead of the regular messages channel.
+        val mentionsMe = myUserId != null &&
+            decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
+        val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
+        Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
+        showMessageNotification(
+            senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+            channel, sentAt = decrypted?.sentAt ?: 0L,
+        )
+
+        // Woken by this incoming message: try to send our own pending outgoing messages
+        // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
+        // foreground guard (C1) is inactive in the background, writing mls.bin is allowed.
+        // No-op if the outbox is empty. Notify if any remain (safety net).
+        MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
+            val remaining = drainOutboxBackground(this, this, drainCtx)
+            maybeNotifyPendingSync(remaining)
         }
     }
 
@@ -3937,6 +3977,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // before its seed - the first and second line of a salon nobody has spoken in - and each
         // owns a different generic line to replace, so keying on the session alone would lose one.
         val pendingKey = "$channelId:$sessionId:$messageIndex"
+
+        // THE KEY GROUP'S WELCOME IS BEHIND THIS PUSH ON THE LANE, SO THE PUSH GOES BEHIND IT. The
+        // same overlap as an MLS frame's (see [WELCOMES_ON_LANE]): a newcomer's first salon push
+        // can arrive before the Welcome into the group its seed frame is sealed on, and opening the
+        // frame now is a refusal followed by a generic banner and a redraw - measured on NOTIF-21,
+        // 2026-09-28. After the join the frame opens and the first banner carries the plaintext.
+        val seedGroupId = data["seedGroupId"]?.takeIf { it.isNotEmpty() }
+        if (openable && seedGroupId != null && (WELCOMES_ON_LANE[seedGroupId] ?: 0) > 0 &&
+            lookupGraineSeed(channelId, sessionId) == null
+        ) {
+            Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=$channelId index=$messageIndex")
+            runSerializedWithWakeLock("fcm_channel") { handleChannelMessage(data.toMap()) }
+            return
+        }
 
         // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption §19). A seed the
         // mirror already holds costs a file read; the frame costs an MLS load under the state lock,

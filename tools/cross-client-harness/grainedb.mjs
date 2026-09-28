@@ -193,11 +193,12 @@ export function communityDistribution(workspaceId) {
  * read "no roster" as "not routed" for ever. The community group is the one that fans a public
  * salon's frames out, so it is the roster a member of a public salon has to appear on.
  *
- * AN INVITATION DOES NOT MOVE IT. Membership is entitlement; the delivery row is minted when THE
- * MEMBER'S OWN DEVICE commits its add, which happens when that member LOADS the community. So a
- * fixture is not usable the moment the invite lands - measured 2026-09-04, when a freshly built
- * venue carried the owner's single device and nothing else, and a peer invited seconds earlier was
- * absent from the only roster its messages would travel on.
+ * AN INVITATION DID NOT MOVE IT until 2026-09-28. Membership is entitlement, and the delivery row
+ * was minted only when THE MEMBER'S OWN DEVICE committed its add, on loading the community -
+ * measured 2026-09-04, when a peer invited seconds earlier was absent from the only roster its
+ * messages would travel on. Since channel-encryption section 20 the admitter's client adds the
+ * newcomer's devices itself, so the row follows the invite within seconds - but through a client,
+ * which is exactly why this still polls rather than assuming.
  *
  * A DEADLINE IS A RESULT, NEVER A THROW, exactly as in `awaitUserRouting`: only the caller knows
  * whether a roster that never settled is the product's answer or its own missing gesture.
@@ -219,6 +220,26 @@ export async function awaitCommunityRouting(workspaceId, userId, wanted, timeout
     { timeoutMs, everyMs: 1000 }
   );
   return { ok: outcome.ok, elapsedMs: outcome.elapsedMs, dist };
+}
+
+/**
+ * Every commit recorded on a group, oldest first: who sent it and from which epoch.
+ *
+ * WHY A ROW ASKS WHO COMMITTED rather than only where the roster ended. A newcomer can reach a
+ * key group by two doors - the admitter's Welcome (channel-encryption section 20) or its own
+ * external commit - and both end on the same roster. The commit log is the one place that says
+ * which door opened: an external join is a commit SENT BY the newcomer's device.
+ *
+ * @param {string} groupId
+ * @returns {{ senderDeviceId: string, baseEpoch: number }[]}
+ */
+export function groupCommits(groupId) {
+  return rows(
+    psql(
+      `SELECT "senderDeviceId", "baseEpoch" FROM mls_commit_log ` +
+        `WHERE "groupId" = '${groupId}' ORDER BY "baseEpoch"`
+    )
+  ).map(([senderDeviceId, baseEpoch]) => ({ senderDeviceId, baseEpoch: Number(baseEpoch) }));
 }
 
 /** The user id behind a display name, or null. Used to name a device roster's rows. */

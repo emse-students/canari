@@ -209,6 +209,25 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         "memberRemoved" => Some("a retiré un membre du groupe".to_string()),
         "memberLeft" => Some("a quitté le groupe".to_string()),
         "groupDeleted" => Some("a supprimé la conversation".to_string()),
+        // AN INVITATION IS A MESSAGE, NOT MACHINERY, and it was listed below as machinery until
+        // 2026-09-28. The web draws it as a card with a Join button; the push that carries it is
+        // VISIBLE, so a phone that answered `None` here rang the invitee with the generic "Nouveau
+        // message de ..." (NOTIF-21, measured on the A1 that day). The inviter's own other devices
+        // never reach this: a frame from self is pushed `silent`, and a silent push returns before
+        // any preview is built. Worded as `mkChannelInviteEnvelope` words the card - the community
+        // first, the salon when the frame names no community.
+        "channel_invitation" => {
+            let community = ["workspaceName", "channelName"].iter().find_map(|k| {
+                data_json
+                    .get(*k)
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            });
+            Some(match community {
+                Some(name) => format!("vous a invité à rejoindre « {name} »"),
+                None => "vous a invité à rejoindre une communauté".to_string(),
+            })
+        }
         // Control / sync frames: no user-visible notification preview.
         //
         // EVERY name the app can put in a `SystemMsg` and mean "machinery", because the fallback
@@ -225,7 +244,6 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         | "remove_reaction"
         | "pin"
         | "unpin"
-        | "channel_invitation"
         | "history_bundle"
         | "history_coverage"
         | "history_digest"
@@ -655,6 +673,19 @@ mod tests {
     }
 
     #[test]
+    fn a_channel_invitation_names_the_community_it_invites_to() {
+        let text = format_system_event_text(
+            "channel_invitation",
+            r#"{"channelId":"c1","channelName":"general","workspaceName":"Gala"}"#,
+        )
+        .expect("an invitation is a visible message");
+        assert_eq!(text, "vous a invité à rejoindre « Gala »");
+        let bare = format_system_event_text("channel_invitation", r#"{"channelId":"c1"}"#)
+            .expect("an invitation naming nothing still says what it is");
+        assert_eq!(bare, "vous a invité à rejoindre une communauté");
+    }
+
+    #[test]
     fn silent_system_events_return_none() {
         assert!(format_system_event_text("read_receipt", "{}").is_none());
         assert!(format_system_event_text("delete_message", r#"{"messageId":"x"}"#).is_none());
@@ -700,7 +731,6 @@ mod tests {
             "remove_reaction",
             "pin",
             "unpin",
-            "channel_invitation",
             "history_bundle",
             "history_coverage",
             "history_digest",
