@@ -44,6 +44,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // Scheduled on every held load; its outcome is `BaseMlsService`'s subject, not this file's.
     verifyDistributionEpoch: vi.fn().mockResolvedValue('current'),
     distributionScopes: vi.fn().mockReturnValue([]),
+    // A held group is a live one unless a case says otherwise - see "held but evicted" below.
+    isGroupActive: vi.fn().mockResolvedValue(true),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
     // No membership row by default: nothing is owed, so a seated device serves itself (section 20).
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
@@ -1051,5 +1053,85 @@ describe('a held key group and the epoch the server names', () => {
 
     listener('g-1', 'replay-exhausted');
     await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
+  });
+});
+
+/**
+ * HELD IS NOT USABLE (production 2026-09-28): the user's PC joined Mineurchestre's key group twice
+ * with one key pair, OpenMLS's resync Remove took its first leaf, and the state left on disk was
+ * that first one. Every load read "held", took the branch that joins nothing, and the salon stayed
+ * blank for three days.
+ */
+describe('a held key group whose own leaf is gone', () => {
+  const seated = () =>
+    makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 16,
+        activeEpoch: 16,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+  beforeEach(() => {
+    setGraineRuntime({
+      storage: {} as never,
+      deviceKeyB64: 'k',
+      userId: 'me',
+      mlsService: {} as never,
+    });
+  });
+  afterEach(() => setGraineRuntime(null));
+
+  it('forgets the dead state and re-joins, instead of calling it held', async () => {
+    const lines: string[] = [];
+    const mls = makeHeldMls({ isGroupActive: vi.fn().mockResolvedValue(false) });
+
+    expect(await run(mls, seated(), (m) => lines.push(m))).toBe(true);
+
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(mls.verifyDistributionEpoch).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes('its own leaf was removed from it'))).toBe(true);
+  });
+
+  it('waits for a Welcome owed to it rather than opening a second door', async () => {
+    const mls = makeHeldMls({
+      isGroupActive: vi.fn().mockResolvedValue(false),
+      getDeviceMemberships: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-1', status: 'pending', welcomeQueued: true }]),
+    });
+
+    expect(await run(mls, seated())).toBe(false);
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ACTIVE held group on the branch that joins nothing', async () => {
+    const mls = makeHeldMls();
+
+    expect(await run(mls, seated())).toBe(true);
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('re-joins on an EVICTED verdict told live', async () => {
+    let held = true;
+    const mls = makeHeldMls({
+      getLocalGroups: vi.fn(() => (held ? ['g-1'] : [])),
+      distributionScopes: vi.fn().mockReturnValue([workspaceScope('ws-1')]),
+      forgetDistributionGroupById: vi.fn(async () => {
+        held = false;
+        return true;
+      }),
+    });
+    const listener = distributionGapListener(mls as never, seated() as never, () => {});
+
+    listener('g-1', 'evicted');
+
+    await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
   });
 });

@@ -64,7 +64,7 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 5. Automatic refresh: POST /api/auth/refresh via HttpOnly cookie
 ```
 
-Dev only: `POST /api/auth/dev-login` (disabled via `ENABLE_DEV_ROUTES=false` in prod).
+There is no dev-login route: every estate, local included, signs in through the same OIDC flow.
 
 ### Per-request auth (Nginx)
 

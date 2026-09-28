@@ -214,11 +214,13 @@ lossless heal.
 | --- | --- | --- |
 | 1 (B + C) | The registry is device state (IndexedDB v9 / SQLite 11), restored before the drain and allowlisted by the MLS state; registering a key group collects `absent-conversation` and the new `unscoped-distribution-group` | merged (#1170) |
 | 2 (A + D + E) | A HELD key group is compared with `activeEpoch` once the first pull settles and caught up by replay; an `epoch-gap` frame steps ONE commit and is re-tried (the PC's queue lacked only 4->5); the gap closes at the server epoch; nothing is sealed or asked in a gap and what went out stale is re-asked; rung 2 through the loader, the watchdog included ([§22.1](protocols/channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind)) | merged (#1175) |
-| 3 (G + H + I) | One unreadable-row warn per page and class (`UnreadableRowTally`), one decline per member, and the suite's three `GET .. /avatar 404` stubbed. **G needs no change, and that was measured, not assumed**: the connection sync's sweep must precede the history reconciliation it feeds, and discovery's is the only one on the offline-promotion and retry paths; `ownDevicesOnTheGroup` re-reads because the loader's `memberDevices` is a boot-time answer and a stale NO would strand a seed held by a device added since | this PR |
+| 3 (G + H + I) | One unreadable-row warn per page and class (`UnreadableRowTally`), one decline per member, and the suite's three `GET .. /avatar 404` stubbed. **G needs no change, and that was measured, not assumed**: the connection sync's sweep must precede the history reconciliation it feeds, and discovery's is the only one on the offline-promotion and retry paths; `ownDevicesOnTheGroup` re-reads because the loader's `memberDevices` is a boot-time answer and a stale NO would strand a seed held by a device added since | merged (#1177) |
+| 4 | **Shipped in `v0.18.29` and the salon was STILL blank**: the PC's key group was held with its OWN leaf removed - OpenMLS's resync Remove, from the PC's second join on 2026-09-25. The loader re-joins a held but inactive group, the frame path and both replays tell `evicted` once, and eviction is asked before "caught up" ([§22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)). Reproduced on the local estate first: `main` read the evicting commit as `healed=true`. Same PR: "Prendre la main" looped, one hand-over per click now ([mls-protocol](protocols/mls-protocol.md#a-document-on-its-way-out-took-the-lead-back-and-the-take-over-looped-2026-09-29)) | this PR |
 
-**Owed after `v0.18.29`**: `queued_message` for the PC's device at 0, chat-delivery `[ACK] ... deleted=51`,
-zero `past-epoch-application` on the PC, the salon rendered; a dev campaign row (4 communities,
-tab shut, a commit and a post on the 4th).
+**Measured after `v0.18.29`**: the PC's queue is at 0. **Owed after `v0.18.30`, read on the server, never asked of the user**:
+a NEW commit on Mineurchestre's key group from the PC's device (the re-join), then its later seed frames
+ACKed without `Evicted`; and one take-over on the PC with one `Promoted` line. **Not proven: why the PC
+joined twice** - the candidate is the "externalJoin FAILED to checkpoint" warning ([§22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)).
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
 

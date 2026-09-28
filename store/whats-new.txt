@@ -1,10 +1,6 @@
-version: 0.18.29
+version: 0.18.30
 
-Communautes : un ordinateur qui avait pris du retard sur une communaute se rattrape tout seul, et
-les messages de ses salons s'affichent de nouveau, historique compris.
+Communautes : un appareil qui s'etait retrouve exclu du groupe de cles d'une communaute le rejoint
+tout seul, et les messages de ses salons s'affichent de nouveau.
 
-"Prendre la main" dans un deuxieme onglet garde la main apres le rechargement.
-
-Reactions plus petites, regroupees au-dela de cinq. Le badge Discussions s'efface quand une
-conversation est lue dans un autre onglet, et "Voir plus" replie un post sans casser sa mise en
-forme. Une notification de salon porte le nom du salon.
+"Prendre la main" dans un deuxieme onglet ne fait plus basculer la main d'un onglet a l'autre.

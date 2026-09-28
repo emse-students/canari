@@ -241,7 +241,25 @@ async function joinDistributionGroup(
     );
   }
 
-  if (holdsTheGroup && !serverForgotThisDevice) {
+  // HELD IS NOT USABLE EITHER. `isGroupActive` is false exactly when a Remove naming this device's
+  // leaf was applied - and on a key group whose roster still names the device, nobody sent that
+  // Remove on purpose: OpenMLS commits one on its own when an external join carries a signature key
+  // already in the tree, so a device that joined twice evicted its first leaf, and the state left
+  // on disk may be that first one. Production 2026-09-28: the user's PC held such a state for
+  // Mineurchestre for three days, took this branch as "held" on every load, and read nothing. A
+  // Welcome owed to the device is still the door (the Welcome handler knows "held but EVICTED").
+  const evictedLocally = holdsTheGroup && !(await mlsService.isGroupActive(ref.groupId));
+  if (evictedLocally) {
+    const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
+    if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
+      log(
+        `[GRAINE] ${scopeLabel(scope)}: this device's leaf is gone from its distribution group, and a Welcome is owed or could not be ruled out - waiting for it rather than joining a second time`
+      );
+      return false;
+    }
+  }
+
+  if (holdsTheGroup && !serverForgotThisDevice && !evictedLocally) {
     // HELD IS NOT CURRENT, and the server has just said which epoch is. `ref.activeEpoch` was read on
     // every load and compared with nothing, so a device frozen behind its own key group reloaded
     // into the same freeze for a day (production 2026-09-28). The comparison needs the drain - the
@@ -267,7 +285,9 @@ async function joinDistributionGroup(
     // resolves through it, would return null, and would leave the tree standing for the join to
     // early-return on.
     log(
-      `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
+      evictedLocally
+        ? `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but its own leaf was removed from it - the local group is dead, rejoining`
+        : `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
     );
     staleForgotten = await mlsService.forgetDistributionGroupById(ref.groupId);
   }
@@ -504,12 +524,14 @@ export function distributionGapListener(
       releaseRequestsHeldForKeyGroup(groupId);
       return;
     }
-    if (verdict !== 'replay-exhausted') return;
+    if (verdict !== 'replay-exhausted' && verdict !== 'evicted') return;
     rejoinBehindDistributionGroup(
       mlsService,
       channelService,
       groupId,
-      'the commit log cannot supply the missing commits',
+      verdict === 'evicted'
+        ? "this device's own leaf is gone from it"
+        : 'the commit log cannot supply the missing commits',
       log
     )
       .then((joined) => {

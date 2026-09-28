@@ -3862,3 +3862,22 @@ traffic and no reload, and exits non-zero when a client is not its owner.
 - **WHEN A MISTAKE IS REPAIRED, THE RULE GOES IN THE SAME COMMIT AS THE REPAIR.** The display-name
   resolution was caught, understood and fixed hours earlier, and left as a story. A lesson that lives
   only in a repair is available to be repeated.
+
+## A DEFECT FROM PRODUCTION IS REPRODUCED ON THE LOCAL ESTATE, NEVER VERIFIED BY ASKING THE USER (2026-09-29)
+
+**The user's words, after being asked twice to reload a production tab and read its console**:
+*"Ne peux tu pas tester localement plutôt que de me faire tester sur la prod ??"* A fix is proven
+on the local estate (or on dev) by reproducing the production STATE first, and on `main` as the
+control. Afterwards production is read from the server side (logs, the database), never from the
+user's screen.
+
+The first run of that rule shows why the control is not optional. The held-but-evicted key group
+([channel-encryption §22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29))
+was rebuilt on W2 with three steps: snapshot the MLS blob from a static page of the same origin
+(`/robots.txt`, so no app writes meanwhile), make the device re-join, then restore the blob. The
+first control failed for a reason that had nothing to do with the defect: a WASM copied from
+another worktree lacked an export `main` now calls, and every key-group frame failed on
+`is not a function`. **Every build that is measured generates its own WASM** (`bun run generate`),
+because a copied one is a different client. With the right WASM, `main` read the evicting
+commit as `healed=true`, and the fix re-joined within the same load. That gap between control and
+fix is the whole verdict.

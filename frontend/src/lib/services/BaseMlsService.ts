@@ -355,6 +355,8 @@ export abstract class BaseMlsService implements IMlsService {
    * known", and then the old rule stands.
    */
   private readonly distributionGapTarget = new Map<string, number>();
+  /** Key groups whose eviction the listener was told of - see {@link tellEvictedOnce}. */
+  private readonly evictionTold = new Set<string>();
 
   /** Set once at wiring time; see {@link onDistributionGapVerdict}. */
   private distributionGapListener: DistributionGapListener | null = null;
@@ -3172,7 +3174,12 @@ export abstract class BaseMlsService implements IMlsService {
           Math.max(replay.activeEpoch, this.distributionGapTarget.get(groupId) ?? 0)
         );
       }
-      if (this.getEpoch(groupId) >= (this.distributionGapTarget.get(groupId) ?? target)) {
+      // EVICTED IS ASKED FIRST: the commit that removes this device's leaf still APPLIES, so a
+      // replay can reach its target on it and report `healed` (measured locally 2026-09-29:
+      // "replayed 1 commit(s), epoch 24->25, healed=true" on the very commit that evicted it).
+      if (!(await this.isGroupActive(groupId))) {
+        verdict = 'evicted';
+      } else if (this.getEpoch(groupId) >= (this.distributionGapTarget.get(groupId) ?? target)) {
         scheduleOutboundMlsPersist();
         verdict = 'caught-up';
       } else if (replay.belowFloor || replay.gapAt !== undefined) {
@@ -3183,14 +3190,15 @@ export abstract class BaseMlsService implements IMlsService {
     }
     if (verdict === 'caught-up') {
       this.closeDistributionGap(groupId);
-    } else {
+    } else if (verdict !== 'evicted') {
       log(
         verdict === 'replay-exhausted'
           ? `[GAP] key group ${short}... cannot be caught up by replay - a re-join is OWED now`
           : `[GAP] key group ${short}... still behind after rung 1 - left to the sync watchdog`
       );
     }
-    this.tellDistributionGapVerdict(groupId, verdict);
+    if (verdict === 'evicted') this.tellEvictedOnce(groupId);
+    else this.tellDistributionGapVerdict(groupId, verdict);
     return verdict;
   }
 
@@ -3215,7 +3223,10 @@ export abstract class BaseMlsService implements IMlsService {
       }
       if (replay.applied > 0) scheduleOutboundMlsPersist();
       const closesAt = this.distributionGapTarget.get(groupId);
-      if (closesAt !== undefined && this.getEpoch(groupId) >= closesAt) {
+      // Evicted first, for the reason given in `catchUpDistributionGroup`.
+      if (!(await this.isGroupActive(groupId))) {
+        this.tellEvictedOnce(groupId);
+      } else if (closesAt !== undefined && this.getEpoch(groupId) >= closesAt) {
         this.closeDistributionGap(groupId);
         this.tellDistributionGapVerdict(groupId, 'caught-up');
       } else if (replay.belowFloor || replay.gapAt !== undefined) {
@@ -3227,6 +3238,19 @@ export abstract class BaseMlsService implements IMlsService {
       console.warn(`[GAP] replay error for key group ${short}...:`, String(e));
       return false;
     }
+  }
+
+  /**
+   * Tells the listener, ONCE per group until it is forgotten, that this device's own leaf is gone
+   * from key group `groupId`. A burst of queued frames is one eviction, not one re-join per frame.
+   */
+  private tellEvictedOnce(groupId: string): void {
+    if (this.evictionTold.has(groupId)) return;
+    this.evictionTold.add(groupId);
+    console.warn(
+      `[GRAINE] this device's leaf is gone from key group ${groupId.slice(0, 8)}... - the loader decides whether a re-join is owed`
+    );
+    this.tellDistributionGapVerdict(groupId, 'evicted');
   }
 
   /** Lifts a key group's gap and its target together - never one without the other. */
@@ -3330,6 +3354,8 @@ export abstract class BaseMlsService implements IMlsService {
   async forgetDistributionGroupById(groupId: string): Promise<boolean> {
     const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
+    // The eviction belonged to the state being dropped; the next one, if any, is a new fact.
+    this.evictionTold.delete(groupId);
     await dropGroupState(this, groupId, {
       reason: 'distribution group left',
       checkpoint: 'awaited',
@@ -3546,10 +3572,20 @@ export abstract class BaseMlsService implements IMlsService {
       // epoch 0 on two distribution groups, handed back on every connection for ever and
       // dirtying eleven cells of the COMM rung by itself.
       kind === 'same-epoch-refusal' ||
-      // Removed from the distribution group. Permanent in the strongest sense of the four above:
-      // those are frames we may no longer READ, this is a group we are no longer IN, and no peer
-      // answering a history request can change that.
+      // Removed from the distribution group: the frame is unreadable to THIS state for good. What
+      // is NOT permanent is the removal itself - see the arm below.
       kind === 'evicted';
+    if (kind === 'evicted') {
+      // A KEY GROUP IS NOT A CONVERSATION ONE WAS REMOVED FROM. Nobody removes a device from a
+      // community's key group while its roster still names it - but OpenMLS does, on its own: an
+      // external join commits a Remove of every leaf carrying the joiner's signature key, so a
+      // device that joins twice with one key pair evicts its own first leaf, and the state that
+      // survived on disk may be that first one. Production 2026-09-28: the user's PC, removed so by
+      // its own second join on 2026-09-25, acknowledged every frame of Mineurchestre's key group as
+      // "no repair is owed" for three days. Whether a re-join is owed is the SERVER's answer, which
+      // only the loader reads - so this tells the fact, once, and the listener asks.
+      this.tellEvictedOnce(groupId);
+    }
     if (permanent) {
       // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
       // is a peer answering `requestCommunityHistory`, never the server handing the same

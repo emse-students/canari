@@ -2826,3 +2826,41 @@ joined the key group 2026-09-12..28, the phone included. The repair walk behaved
 declined, the seven other members were really offline, the waiter re-asks on presence. It is a
 measured limit of section 4.5: "the sender always holds its seed" is false once the author's device
 is gone.
+
+### 22.2 A key group held with its own leaf removed is not held - FIXED 2026-09-29
+
+**The same PC, after `v0.18.29`: the salon was still blank.** Its local key group sat at epoch 5,
+**inactive**. OpenMLS 0.9 (`external_commits.rs`) adds a Remove to an external commit for every leaf
+whose signature key equals the joiner's (a resync). The credential `user:device` and its key pair
+live in the MLS state, so a device that joins twice with one key pair removes its own first leaf.
+The server's commit log shows exactly that: the PC joined Mineurchestre's key group twice on
+2026-09-25, and the second join's commit 4->5 was 864 bytes, one inline Remove. The state that
+survived on disk was the FIRST join's. Replaying commit 4->5 into it applied the Remove, and from
+then on every frame answered `Evicted` and was acknowledged as "no repair is owed". The loader
+took the group as held on every load, because held meant "a tree exists", never "this device
+is in it".
+
+**Reproduced on the local estate, W2, 2026-09-29**: snapshot the MLS blob, delete W2's roster row so
+its next load re-joins (commit 24->25, sent by W2 itself), then restore the snapshot. On `main` the
+replay reported `replayed 1 commit(s), epoch 24->25, healed=true` on the very commit that evicted
+it. Four seed frames were ACKed and dropped. Only the sync watchdog rescued the group, 45 s later,
+and only because the server was further ahead (on the PC it was not, for three days).
+
+**Held is now three questions, and the second one is asked everywhere it matters**:
+
+- **The loader** (`joinDistributionGroup`) reads `isGroupActive` on a held group. Held but inactive is
+  stale: it forgets the tree and joins, **unless a Welcome may be owed to this device**
+  (`readWelcomeOwedForThisDevice`), which is the only other way back in and which a second join
+  would race.
+- **The frame path and both replays** tell a new verdict, `evicted`, ONCE per group until it is
+  forgotten (`tellEvictedOnce`), since a queued burst is one eviction. The frame is still
+  acknowledged: its epoch belongs to a leaf this device no longer holds, and the seeds come back
+  through the history request the re-join sends. **Eviction is asked BEFORE "reached the target"**,
+  because the Remove applies like any commit, and the epoch alone would say caught up.
+- **The listener** re-joins on `evicted` through the one door `replay-exhausted` already used
+  (`rejoinBehindDistributionGroup`).
+
+**Why the PC joined twice is NOT proven.** The candidate is the known warning "externalJoin FAILED
+to checkpoint - a reload before the next write would rejoin", or two tabs before the leader lock
+settled. Either way the join leaves a state on disk that a later commit evicts, and that state is
+what this section now repairs on sight.

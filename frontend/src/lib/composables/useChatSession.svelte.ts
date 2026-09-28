@@ -265,9 +265,10 @@ export function useChatSession() {
   setTabLeaderDemotedHandler(() => {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
-    if (typeof window !== 'undefined') {
-      setTimeout(() => window.location.reload(), 50);
-    }
+    if (typeof window === 'undefined') return;
+    setTimeout(() => window.location.reload(), 50);
+    // Said, so this document neither queues nor accepts the lead on its way out.
+    return 'reloads';
   });
 
   // ── Exposed API ───────────────────────────────────────────────────────────

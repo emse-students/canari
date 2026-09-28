@@ -404,6 +404,7 @@ stateDiagram-v2
     [*] --> NOGRP
     NOGRP --> GRP: ensureDistributionGroup, BaseMlsService.ts:3201
     NOGRP --> NOGRP: GraineDistributionUnavailableError, seedDistribution.ts:19
+    GRP --> NOGRP: this device's own leaf is gone (isGroupActive false), forget and re-join
 
     GRP --> LIVE: reserveOutboundSlot mints then distributes, sessionManager.ts:115
     LIVE --> LIVE: index is firstIndex plus sentCount
@@ -450,6 +451,17 @@ arriving, or on the roster being exhausted
 members: asking the community's would elect an answerer who cannot even see the request, since it
 travels on the salon's own group
 (`resolveRepairTargets`, [repair.ts](../../../frontend/src/lib/utils/graine/repair.ts)).
+
+**GROUP HELD IS NOT GROUP USABLE, and the gap between them had no exit (fixed 2026-09-29).** A
+key group can be held on disk with this device's own leaf removed from it. Nobody removes a device
+from a key group while its roster still names it, but OpenMLS does: an external join commits a
+Remove of every leaf carrying the joiner's signature key, so a device that joined twice evicted its
+first leaf. The state left on disk may be that first one. Every frame then answered `Evicted` and was
+acknowledged as "no repair owed", and the loader took the group as held on every load
+(production, 2026-09-28, for three days). `isGroupActive` is now read at both ends: the loader treats
+a held but inactive group as stale and re-joins, unless a Welcome may be owed; the frame path and the
+replay tell the `evicted` verdict once per group, and the listener re-joins through the same door as
+`replay-exhausted` ([channel-encryption section 22.2](channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)).
 
 **Graine has no wiki page of its own** and `channel-encryption.md` is the de-facto one for roughly
 forty code files. That is section 10's P2-3.

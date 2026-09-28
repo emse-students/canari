@@ -81,6 +81,7 @@ const proto = BaseMlsService.prototype as unknown as {
   stepDistributionGroup(groupId: string): Promise<boolean>;
   closeDistributionGap(groupId: string): void;
   tellDistributionGapVerdict(groupId: string, verdict: string): void;
+  tellEvictedOnce(groupId: string): void;
 };
 
 /** An in-memory `DistributionGroupStore`, so a test reads back what a registration wrote. */
@@ -150,6 +151,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     stepDistributionGroup: proto.stepDistributionGroup,
     closeDistributionGap: proto.closeDistributionGap,
     tellDistributionGapVerdict: proto.tellDistributionGapVerdict,
+    evictionTold: new Set<string>(),
+    tellEvictedOnce: proto.tellEvictedOnce,
+    isGroupActive: vi.fn().mockResolvedValue(true),
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
@@ -962,5 +966,107 @@ describe('a frame from an epoch this device has not reached', () => {
 
     expect(listener).toHaveBeenCalledWith('g-1', 'replay-exhausted');
     log.mockRestore();
+  });
+});
+
+/**
+ * A KEY GROUP'S EVICTION IS A FACT FOR THE LOADER, NOT A DISPOSITION (production 2026-09-28). The
+ * user's PC held a state whose leaf its own second join had removed, and every frame on the group
+ * was acknowledged as "no repair is owed" for three days.
+ */
+describe('a key group this device was evicted from', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('acknowledges each frame and tells the listener ONCE for the whole burst', async () => {
+    const listener = vi.fn();
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      processIncomingMessage: vi.fn().mockRejectedValue(new Error('EVICTED: g-1')),
+      distributionGapListener: listener,
+    });
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    for (let i = 0; i < 5; i++) {
+      expect(await route(ctx, 'g-1', 'peer', new Uint8Array([i]))).toBe(true);
+    }
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith('g-1', 'evicted');
+    warn.mockRestore();
+  });
+
+  it('tells it again once the dead state was forgotten - the next eviction is a new fact', () => {
+    const ctx = makeCtx({ distributionGapListener: vi.fn() });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    proto.tellEvictedOnce.call(ctx, 'g-1');
+    ctx.evictionTold.delete('g-1');
+    proto.tellEvictedOnce.call(ctx, 'g-1');
+
+    expect(ctx.distributionGapListener).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('reads a replay stopped on an inactive tree as an eviction, from the fact and not the message', async () => {
+    const listener = vi.fn();
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn().mockReturnValue(5),
+      processIncomingMessage: vi.fn().mockRejectedValue(new Error('anything at all')),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: [{ baseEpoch: 5, proto: 'AA==' }],
+        activeEpoch: 16,
+        belowFloor: false,
+      })),
+      isGroupActive: vi.fn().mockResolvedValue(false),
+      distributionGapListener: listener,
+    });
+    const quiet = [
+      vi.spyOn(console, 'log').mockImplementation(() => undefined),
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+    ];
+
+    const verdict = await (
+      proto as unknown as { catchUpDistributionGroup(g: string, t: number): Promise<string> }
+    ).catchUpDistributionGroup.call(ctx, 'g-1', 16);
+
+    expect(verdict).toBe('evicted');
+    expect(listener).toHaveBeenCalledWith('g-1', 'evicted');
+    quiet.forEach((q) => q.mockRestore());
+  });
+
+  it('reads a replay that REACHED its target on the commit removing this device as an eviction, not a catch-up', async () => {
+    // Measured locally 2026-09-29: "replayed 1 commit(s), epoch 24->25, healed=true" - the Remove
+    // applies like any commit, so the epoch alone says caught up.
+    let epoch = 24;
+    const listener = vi.fn();
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn(() => epoch),
+      processIncomingMessage: vi.fn(async () => {
+        epoch = 25;
+      }),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: [{ baseEpoch: 24, proto: 'AA==' }],
+        activeEpoch: 25,
+        belowFloor: false,
+      })),
+      isGroupActive: vi.fn().mockResolvedValue(false),
+      distributionGapListener: listener,
+    });
+    const quiet = [
+      vi.spyOn(console, 'log').mockImplementation(() => undefined),
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+    ];
+
+    const verdict = await (
+      proto as unknown as { catchUpDistributionGroup(g: string, t: number): Promise<string> }
+    ).catchUpDistributionGroup.call(ctx, 'g-1', 25);
+
+    expect(verdict).toBe('evicted');
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith('g-1', 'evicted');
+    quiet.forEach((q) => q.mockRestore());
   });
 });

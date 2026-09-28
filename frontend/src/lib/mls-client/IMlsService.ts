@@ -127,7 +127,7 @@ export type DistributionGroupStore = Pick<
  * - `replay-failed`: the attempt failed for a reason that says nothing about the next one; the group
  *   stays in the epoch-gap registry and the sync watchdog owns it.
  */
-export type DistributionGapVerdict = 'caught-up' | 'replay-exhausted' | 'replay-failed';
+export type DistributionGapVerdict = 'caught-up' | 'replay-exhausted' | 'replay-failed' | 'evicted';
 
 /** Told every {@link DistributionGapVerdict}, for the key group it concerns. */
 export type DistributionGapListener = (groupId: string, verdict: DistributionGapVerdict) => void;
