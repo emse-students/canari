@@ -94,6 +94,9 @@ function mlsWasmStub() {
       if (id === VIRTUAL_ID) {
         return `export async function loadAndInitWasm() {
   throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds - TauriMlsService should be used instead.');
+}
+export function wasmGraineSignatureEngine() {
+  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds - TauriMlsService answers graineSignatureEngine.');
 }`;
       }
     },

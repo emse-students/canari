@@ -2784,6 +2784,53 @@ nothing verifies anything. That is G2-4.
   - An upload whose package names another device is refused, measured at zero on both estates
     ([chat-delivery](../services/chat-delivery.md#routes)).
 
+### 21.4 The web reader (WP-G2-4a)
+
+The web app reads v2 now. Nothing writes it until G2-5, so on today's rows none of this runs.
+
+**Opening a row** (`openChannelMessage`). A session with no `v2` block opens as v1, unchanged. A v2
+session's row is refused, in this order:
+
+1. served in another salon than the session's (`GraineChannelMismatchError`);
+2. naming an author who is not the session's minter (`GraineAuthorMismatchError`). Both ids are
+   compared lowercased, as the rest of the client reads them. The SIGNED header uses the minter
+   exactly as endorsed, so a served id's case proves nothing either way;
+3. carrying no signature (`GraineSignatureError`). The version belongs to the session, which came
+   over MLS, so dropping the signature is not a downgrade to v1;
+4. a signature that does not verify under the session key, over `H || nonce || ciphertext`
+   (`GraineSignatureError`). This covers a row moved to another index, and a member signing a
+   header that names another minter.
+
+**A replay is shown once.** `claimOpenedKey` (in `runtime.ts`) remembers which row id first opened
+each `sessionId#index`. A second row id under the same key is a `GraineReplayError`, and the same row
+opened twice (history, then the live event) is not. The key is claimed only AFTER the row
+authenticated, so a forged row cannot take a key first and get the real one refused as its replay.
+
+**All four refusals are FAULTS.** `reportUnreadableChannelMessage` says each class ONCE per page at
+ERROR (`REFUSED`, `author mismatch`, `channel mismatch`, `bad signature`, `replay`) and never asks a
+peer for a seed, since the seed is right. A missing seed stays a warn that asks.
+
+**A new v2 seed is stored only once its endorsement verifies** (`utils/graine/endorsement.ts`,
+called from `storeIncomingSeed`, which both the single seed and the repair bundle go through).
+
+- The minter device's key comes from the key group's TREE, via `memberSignatureKey`
+  (`mls-core` `member_signature_key`, exposed to WASM and Tauri), when the device is still a leaf.
+  A failure there is a refusal: the server is not asked as a second try.
+- It comes from the server's published history (`fetchDeviceSignatureKeys`, §21.3) only when the
+  device has left the tree.
+- `refused` (a forged minter, a substituted key or seed, missing fields) stores nothing and says
+  `[GRAINE] REFUSED v2 seed` at ERROR.
+- `unanswered` (the device has left the tree and the server cannot be reached) stores nothing and
+  refuses nothing. A later row under the session is then a missing seed, which asks again.
+- A copy of a HELD session is not re-checked, since `seedConflict` already proved it byte-identical.
+
+**The Ed25519 engine** is `IMlsService.graineSignatureEngine()`: the WASM free functions on the web
+(`wasmGraineSignatureEngine`) and the Tauri commands on native. Both are `mls-core`. Tests use
+`crypto/graineV2.testEngine.ts`, a WebCrypto copy that production never imports.
+
+**Not yet**: the native push readers (Kotlin, the NSE, `canari_push.mm`) and the attached-frame
+endorsement check are G2-4b, and the signature joins the push's inline group with them.
+
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 
 **Measured on the user's PC, production `v0.18.28`, 2026-09-28.** Mineurchestre -> `#general` was

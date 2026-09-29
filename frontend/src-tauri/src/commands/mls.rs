@@ -1155,3 +1155,21 @@ pub(crate) fn graine_sign_with_device_credential(
         .sign_with_device_credential(&message)
         .map_err(|e| e.to_string())
 }
+
+/// The signature key the tree of `group_id` holds for the leaf `identity`, or `None` when no leaf
+/// carries it (channel-encryption section 21: what a v2 endorsement is checked against).
+#[tauri::command]
+pub(crate) fn graine_member_signature_key(
+    group_id: String,
+    identity: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<Vec<u8>>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .member_signature_key(&group_id, &identity)
+        .map_err(|e| e.to_string())
+}

@@ -4,7 +4,7 @@ import { ackMessagesWithRetry } from './ackRetry';
 import { DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
-import type { DeviceKeyPackageAnswer } from './deviceKeyPackage';
+import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -375,6 +375,37 @@ export class MlsDeliveryApi {
     } catch (e) {
       console.warn('[MLS] revocation check unreachable - treated as NOT revoked:', e);
       return false;
+    }
+  }
+
+  /**
+   * Every MLS signature key a device has published, oldest first - what a Graine v2 endorsement is
+   * checked against once the minter's device has left the key group's tree (channel-encryption
+   * section 21.3).
+   *
+   * An empty list is an ANSWER ("this device endorsed nothing checkable") and `unanswered` is not:
+   * an unreachable server says nothing about the device, and the caller must not refuse a seed for
+   * ever on it.
+   */
+  async fetchDeviceSignatureKeys(userId: string, deviceId: string): Promise<DeviceSignatureKeys> {
+    let res: Response;
+    try {
+      res = await this.f(
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/signature-keys`,
+        { headers: await this.auth() }
+      );
+    } catch (e) {
+      return { kind: 'unanswered', detail: `unreachable: ${String(e).slice(0, 120)}` };
+    }
+    if (!res.ok) return { kind: 'unanswered', detail: `HTTP ${res.status}` };
+    try {
+      const d = (await res.json()) as { keys?: unknown };
+      if (!Array.isArray(d.keys) || !d.keys.every((k) => typeof k === 'string')) {
+        return { kind: 'unanswered', detail: 'a 200 with no key list in it' };
+      }
+      return { kind: 'keys', keys: (d.keys as string[]).map((k) => fromBase64(k)) };
+    } catch (e) {
+      return { kind: 'unanswered', detail: `unreadable body: ${String(e).slice(0, 120)}` };
     }
   }
 

@@ -227,12 +227,8 @@ export async function openWithGraineV2(
     graineSignedBytesV2(h, nonce, ciphertext),
     signature
   );
-  if (verdict !== 'valid') {
-    console.error(
-      `[GRAINE] v2 message signature refused (${verdict}) session=${header.sessionId.slice(0, 8)} index=${header.index}`
-    );
-    throw new GraineSignatureError(verdict, 'message');
-  }
+  // Not logged here: the caller reports the row as a FAULT, once per page (`reportUnreadableChannelMessage`).
+  if (verdict !== 'valid') throw new GraineSignatureError(verdict, 'message');
   const key = await deriveMessageKey(seed, header.sessionId, header.index);
   const plaintext = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: nonce as BufferSource, additionalData: h as BufferSource },

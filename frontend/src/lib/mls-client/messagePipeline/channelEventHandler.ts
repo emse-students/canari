@@ -278,6 +278,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           // Opened here rather than left to the history reload: a live bubble that only appeared
           // after a refetch is the symptom the epoch-key path used to have.
           const bytes = await openChannelMessage(data.channelId, {
+            // The same id the bubble is keyed by below, and the history load reads: a row opened
+            // on both paths is one row, never its own replay.
+            id: String(data.messageId || data.id),
+            senderId: String(sender || ''),
+            signature: data.signature ?? null,
             ciphertext: data.ciphertext,
             nonce: data.nonce ?? null,
             senderSessionId: data.senderSessionId ?? null,

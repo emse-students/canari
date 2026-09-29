@@ -63,6 +63,7 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     scopeByChannel.clear();
     historyVisibilityByWorkspace.clear();
     seedCache.clear();
+    openedKeys.clear();
     repairListener = null;
     // Same reason: the markers name salons of this account, and "already told my other devices" is
     // a claim about THIS account's devices. The next one inherits none of it.
@@ -167,6 +168,31 @@ export function cacheGraineSession(session: StoredGraineSession): void {
 /** A session read earlier in this session, or null. */
 export function cachedGraineSession(sessionId: string): StoredGraineSession | null {
   return seedCache.get(sessionId) ?? null;
+}
+
+/**
+ * Which row first opened each message key, `sessionId#index` -> row id.
+ *
+ * A key is HKDF(seed, session, index), so two rows naming one key are one message shown twice - a
+ * replayed ciphertext - whatever the server says their ids are. Migration 065 refuses the second
+ * row at the door; this is what makes that true against a server that serves one anyway. Written
+ * only AFTER a row authenticated, so a forged row cannot claim the slot first and hide the real one.
+ * Cleared with the runtime, like the seeds it is keyed on.
+ */
+const openedKeys = new Map<string, string>();
+
+/**
+ * Records that `rowId` opened message `index` of `sessionId`, and answers the OTHER row that
+ * already did, or null. The same row opened twice (history, then the live event) is not a replay.
+ */
+export function claimOpenedKey(sessionId: string, index: number, rowId: string): string | null {
+  const key = `${sessionId}#${index}`;
+  const first = openedKeys.get(key);
+  if (first === undefined) {
+    openedKeys.set(key, rowId);
+    return null;
+  }
+  return first === rowId ? null : first;
 }
 
 /** The session's Graine wiring. @throws {GraineNotReadyError} when none is installed. */

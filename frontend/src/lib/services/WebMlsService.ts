@@ -1,3 +1,4 @@
+import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -8,6 +9,7 @@ import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
+  wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
@@ -1329,6 +1331,17 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return Array.from(this.client.get_member_identities(groupId) as Iterable<string>);
+  }
+
+  /** WASM client wrapper - the tree's signature key for one leaf, or null when it has none. */
+  async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
+    if (!this.client) throw new Error(`[MLS] WASM client not ready - cannot read 's tree`);
+    return (this.client.member_signature_key(groupId, identity) as Uint8Array | undefined) ?? null;
+  }
+
+  /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
+  graineSignatureEngine(): GraineSignatureEngine {
+    return wasmGraineSignatureEngine();
   }
 
   /** WASM client wrapper - returns the current MLS epoch for a group via `this.client.get_epoch`, or 0 if unavailable. */

@@ -16,6 +16,7 @@ import { historyFloorsFor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteSeedUnavailable } from './repair';
 import { seedFromWire, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
+import { checkSeedEndorsement } from './endorsement';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -31,14 +32,18 @@ import { seedFromWire, storedV2Of, toWireSeed, type IncomingSeed } from './wireS
 /**
  * Stores an incoming Graine seed, or explains why it was ignored.
  *
+ * @param keyGroupId The distribution group the frame arrived on - whose tree names a v2 minter.
  * @returns true when the seed is now held (including when it already was).
  */
 export async function storeIncomingSeed(
   workspaceId: string,
   senderId: string,
-  seed: IncomingSeed
+  seed: IncomingSeed,
+  keyGroupId: string
 ): Promise<boolean> {
-  const { storage, deviceKeyB64 } = requireGraineRuntime('cannot store an incoming seed');
+  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime(
+    'cannot store an incoming seed'
+  );
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
     console.warn(
       `[GRAINE] ignoring a malformed seed frame from ${senderId} in community ${workspaceId.slice(0, 8)}`
@@ -69,6 +74,28 @@ export async function storeIncomingSeed(
     // A lower floor is strictly more history: same seed, more of it readable. Anything else is a
     // replay of what is already held.
     if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId);
+  }
+
+  // A NEW v2 SESSION IS STORED ONLY ONCE ITS MINTER'S DEVICE IS SHOWN TO HAVE ENDORSED IT - this key
+  // and this seed (section 21). A copy of a HELD session needs no second check: `seedConflict`
+  // above already proved it byte-identical to the one that passed.
+  if (!existing && seed.v2) {
+    const verdict = await checkSeedEndorsement(mlsService, keyGroupId, seed);
+    if (verdict.kind === 'refused') {
+      console.error(
+        `[GRAINE] REFUSED v2 seed ${seed.sessionId} from ${senderId} in community ${workspaceId.slice(0, 8)}: ${verdict.why}`
+      );
+      return false;
+    }
+    if (verdict.kind === 'unanswered') {
+      // Not a refusal: nothing is known against the seed. Not stored either - a half-checked
+      // session is what "never stored half" forbids - and a later row under it is a missing seed,
+      // which asks again.
+      console.warn(
+        `[GRAINE] v2 seed ${seed.sessionId} from ${senderId} NOT stored yet: ${verdict.why}`
+      );
+      return false;
+    }
   }
 
   const session: StoredGraineSession = existing
@@ -160,7 +187,8 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
     const stored = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
-      seedFromWire(msg.graine)
+      seedFromWire(msg.graine),
+      frame.groupId
     );
     if (stored) {
       console.debug(
@@ -414,7 +442,12 @@ async function absorbSeedBundle(
   const repaired = new Set<string>();
   let absorbed = 0;
   for (const seed of bundle.seeds ?? []) {
-    const stored = await storeIncomingSeed(frame.workspaceId, frame.sender, seedFromWire(seed));
+    const stored = await storeIncomingSeed(
+      frame.workspaceId,
+      frame.sender,
+      seedFromWire(seed),
+      frame.groupId
+    );
     if (stored) {
       absorbed++;
       if (seed.channelId) repaired.add(String(seed.channelId));

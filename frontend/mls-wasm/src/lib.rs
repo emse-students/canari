@@ -284,6 +284,19 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// The signature key the TREE of `group_id` holds for the leaf `identity` (`userId:deviceId`), or
+    /// `undefined` when no leaf carries it - what a v2 endorsement is checked against (section 21).
+    #[wasm_bindgen]
+    pub fn member_signature_key(
+        &self,
+        group_id: String,
+        identity: String,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        self.manager
+            .member_signature_key(&group_id, &identity)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     // Create a group
     #[wasm_bindgen]
     pub fn create_group(&mut self, group_id: String) -> Result<(), JsValue> {

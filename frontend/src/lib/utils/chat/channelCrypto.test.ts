@@ -170,6 +170,44 @@ describe('UnreadableRowTally', () => {
     expect(warn.mock.calls[0][0]).toContain('row-0, row-1, row-2, ...');
   });
 
+  it('says a REFUSED row at ERROR, apart from the ones it cannot read yet, and asks nobody', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { GraineAuthorMismatchError, GraineReplayError } =
+      await import('$lib/utils/graine/channelSeal');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tally = new UnreadableRowTally(CHANNEL);
+
+    for (let i = 0; i < 20; i++) {
+      reportUnreadableChannelMessage(
+        CHANNEL,
+        `row-${i}`,
+        'mallory',
+        undefined,
+        new GraineAuthorMismatchError('sess-v2', 'mallory', 'bob'),
+        tally
+      );
+    }
+    reportUnreadableChannelMessage(
+      CHANNEL,
+      'row-again',
+      'bob',
+      undefined,
+      new GraineReplayError('sess-v2', 3, 'row-3'),
+      tally
+    );
+    tally.report();
+
+    // One line per class, both at ERROR: each one accuses the server or a member.
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error.mock.calls[0][0]).toContain('20 message(s)');
+    expect(error.mock.calls[0][0]).toContain('REFUSED');
+    expect(error.mock.calls[0][0]).toContain('author mismatch');
+    expect(error.mock.calls[1][0]).toContain('replay');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('says nothing for a page that read whole', async () => {
     const { UnreadableRowTally } = await import('$lib/utils/chat/channelCrypto');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
