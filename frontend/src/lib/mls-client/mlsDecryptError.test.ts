@@ -126,3 +126,17 @@ describe('classifyIncomingDecryptError - a frame for a group we were removed fro
     ).toBe('unknown');
   });
 });
+
+describe('classifyIncomingDecryptError - a frame refused for its sender (WP-G2-1b)', () => {
+  it('reads the type, and reads it before any marker its message could carry', async () => {
+    const { SenderMismatchError } = await import('./verifiedSender');
+    const e = new SenderMismatchError('g-1', 'user');
+    expect(classifyIncomingDecryptError(e)).toBe('sender-mismatch');
+  });
+
+  it('never reads the sentence alone as one', () => {
+    expect(
+      classifyIncomingDecryptError(new Error('its sender does not match MLS (user)'))
+    ).not.toBe('sender-mismatch');
+  });
+});

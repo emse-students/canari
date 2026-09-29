@@ -14,7 +14,7 @@ import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
-import { checkVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
+import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -1061,7 +1061,7 @@ export class TauriMlsService extends BaseMlsService {
       { groupId, messageBytes: Array.from(messageBytes) }
     );
     if (!res) return null;
-    checkVerifiedSender(groupId, envelope, res.sender);
+    assertVerifiedSender(groupId, envelope, res.sender);
     return Uint8Array.from(res.data);
   }
 
