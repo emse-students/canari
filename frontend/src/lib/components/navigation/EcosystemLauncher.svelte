@@ -6,7 +6,7 @@
   import { ECOSYSTEM_SITES } from '$lib/navigation/ecosystemSites';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
-  import { fade } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
 
   /**
    * THE APP LAUNCHER: one grid button in the app header, opening the other student sites -
@@ -53,9 +53,9 @@
     aria-haspopup="menu"
     aria-label={m.ecosystem_launcher_label()}
     title={m.ecosystem_launcher_label()}
-    class="ui-icon-button text-text-muted hover:text-text hover:bg-cn-surface rounded-full {open
-      ? 'bg-cn-surface text-text'
-      : ''}"
+    class="ui-icon-button hover:bg-text-main/10 hover:text-text-main rounded-lg transition-colors {open
+      ? 'bg-text-main/10 text-text-main'
+      : 'text-text-muted'}"
   >
     <Grip size={22} strokeWidth={2.5} />
   </button>
@@ -68,7 +68,7 @@
       tabindex="-1"
       aria-label={m.ecosystem_launcher_label()}
       class="bg-surface-elevated border-cn-border fixed z-(--z-popover) grid w-64 grid-cols-2 gap-1 rounded-xl border p-2 shadow-lg"
-      transition:fade={{ duration: 120 }}
+      transition:slide={{ duration: 150 }}
       onkeydown={(e) => {
         if (e.key === 'Escape') {
           close('escape');
