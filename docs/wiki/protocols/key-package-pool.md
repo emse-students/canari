@@ -111,7 +111,7 @@ IT.** The user's 2026-09-10 decision to prune the test fixture by hand was recor
 doing were clerical. It is not: the only thing that deletes these bundles is
 `MlsManager::prune_key_packages_expired_at(now_secs)`, called with an instant ~100 days ahead, which
 the tests do and **nothing in the product can**. There is no debug surface to hang it on -
-`VITE_ENABLE_DEV_ROUTES` survives only in generated ambient types, no route reads it, and
+there is no dev flag at all (`ENABLE_DEV_ROUTES` was read by no code and was deleted 2026-09-29), and
 `commands/mls.rs` carries no `cfg(debug_assertions)` command. Shipping a dev-gated destructive
 command into the product for one phone would violate both *one-off actions go to the user* and *a
 destructive control needs an allowlist of what it may touch*, and would leave a permanent hazard
