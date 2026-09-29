@@ -222,7 +222,10 @@ describe('ChannelSettingsPanel - a member without channel.manage', () => {
     await mountOnAccessTab('salon-a', false);
 
     expect(document.querySelector('button[role=switch]')).toBeNull();
-    expect((document.querySelector('select') as HTMLSelectElement).disabled).toBe(true);
+    const writePolicy = document.querySelector(
+      `[aria-label^="${m.chat_channel_who_can_write()}"]`
+    ) as HTMLButtonElement;
+    expect(writePolicy.disabled).toBe(true);
     expect(document.getElementById('channel-access-autocomplete')).toBeNull();
     expect(
       document.querySelector(`[aria-label="${m.chat_channel_remove_access_title()}"]`)
