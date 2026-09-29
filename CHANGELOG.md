@@ -14,6 +14,24 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.30] - 2026-09-29
+
+### Security - fast-uri 3.1.8 and multer 2.4.0 in the four NestJS services
+
+Two `fast-uri` advisories (high) and one `multer` advisory (moderate) failed every dependency audit; both are in-range upgrades, lockfiles only ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a community salon stays blank when this device's own leaf was removed from its key group
+
+A device that joined a key group twice had its first leaf removed by OpenMLS, and a state restored from before the second join was taken as "held" on every load. It now re-joins ([channel-encryption §22.2](docs/wiki/protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)).
+
+### Fixed - "Prendre la main" no longer bounces the lead between two tabs
+
+A tab that reloads after handing over no longer queues for the lock on its way out, so one click gives exactly one hand-over ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-document-on-its-way-out-took-the-lead-back-and-the-take-over-looped-2026-09-29)).
+
+### Changed - the Cercle webhook targets cercle.emse.fr, the wiki redirect waits, two Cloudflare tokens rolled
+
+The top-up webhook row now names `cercle.emse.fr`; `wiki.canari-emse.fr` has its `301` vhost ready, and the two agent tokens were rolled ([estate-migration](docs/wiki/infrastructure/estate-migration.md), [cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#working-against-the-api)).
+
 ## [0.18.29] - 2026-09-28
 
 ### Changed - Le Cercle is `cercle.emse.fr`
