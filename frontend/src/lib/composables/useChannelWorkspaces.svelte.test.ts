@@ -445,6 +445,44 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.channelWorkspaces[0].viewerCanManage).toBe(false);
   });
 
+  // The salon settings panel reads this flag. It moves with the event when the server sends it, and
+  // an older server that does not send it must not be read as a demotion.
+  it('applies canManageChannels from the event, and leaves it alone when the event omits it', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Gestion des salons',
+      canManage: false,
+      canManageChannels: true,
+      permissions: ['channel.manage'],
+    });
+    expect(store.channelWorkspaces[0].viewerCanManageChannels).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Gestion des salons',
+      canManage: false,
+      permissions: ['channel.manage'],
+    });
+    expect(store.channelWorkspaces[0].viewerCanManageChannels).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Membre',
+      canManage: false,
+      canManageChannels: false,
+      permissions: [],
+    });
+    expect(store.channelWorkspaces[0].viewerCanManageChannels).toBe(false);
+  });
+
   // An event for a community this device does not hold must change nothing at all - not throw, and
   // not create a phantom entry in the sidebar.
   it('ignores a role change for a community it does not have', async () => {

@@ -921,11 +921,12 @@
         workspaceId: string;
         roleName: string;
         canManage: boolean;
+        canManageChannels?: boolean;
         permissions: string[];
       }) => {
         globalChannels.handleWorkspaceRoleChanged(event);
         appendLog(
-          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage})`
+          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'})`
         );
       },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {

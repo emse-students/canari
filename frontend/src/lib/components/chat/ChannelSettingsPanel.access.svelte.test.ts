@@ -51,6 +51,7 @@ const workspaces = [
   {
     id: 'ws',
     name: 'Community',
+    viewerCanManageChannels: true,
     channels: [
       { id: 'salon-a', name: 'a', isPrivate: true },
       { id: 'salon-b', name: 'b', isPrivate: true },
@@ -103,12 +104,17 @@ function buttonByText(text: string): HTMLButtonElement {
   return b as HTMLButtonElement;
 }
 
-async function mountOnAccessTab(channelId: string) {
+async function mountOnAccessTab(channelId: string, canManage = true) {
   const props = $state({
     selectedChannelId: channelId,
     channelWorkspaces: [
-      ...workspaces,
-      { id: 'ws2', name: 'Other', channels: [{ id: 'public-salon', name: 'p' }] },
+      ...workspaces.map((w) => ({ ...w, viewerCanManageChannels: canManage })),
+      {
+        id: 'ws2',
+        name: 'Other',
+        viewerCanManageChannels: canManage,
+        channels: [{ id: 'public-salon', name: 'p' }],
+      },
     ],
     onClose: () => {},
   });
@@ -191,5 +197,40 @@ describe('ChannelSettingsPanel - access tab', () => {
 
     expect(showConfirmMock).not.toHaveBeenCalled();
     expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner'], 'admins');
+  });
+});
+
+/**
+ * A MEMBER WHO CANNOT GOVERN THE SALON IS SHOWN ITS SETTINGS, NOT OFFERED THEM.
+ *
+ * Reported by the user 2026-09-29: a plain member opened this panel and got the visibility toggle,
+ * the write-policy pick, rename and delete - every one of which the server refuses without
+ * `channel.manage`. The decision is the server's (`viewerCanManageChannels`), read, never derived.
+ */
+describe('ChannelSettingsPanel - a member without channel.manage', () => {
+  it('shows the access settings read-only, with no control that the server would refuse', async () => {
+    await mountOnAccessTab('salon-a', false);
+
+    expect(document.querySelector('button[role=switch]')).toBeNull();
+    expect((document.querySelector('select') as HTMLSelectElement).disabled).toBe(true);
+    expect(document.getElementById('channel-access-autocomplete')).toBeNull();
+    expect(
+      document.querySelector(`[aria-label="${m.chat_channel_remove_access_title()}"]`)
+    ).toBeNull();
+    expect(document.body.textContent).toContain(m.chat_channel_settings_read_only_hint());
+    // The allowlist itself is still shown: reading it is allowed, only changing it is not.
+    expect(service.getChannelAccess).toHaveBeenCalledWith('salon-a');
+  });
+
+  it('offers neither rename nor delete on the overview, and keeps "leave" for a private salon', async () => {
+    await mountOnAccessTab('salon-a', false);
+    buttonByText(m.chat_channel_overview_tab()).click();
+    await settle();
+
+    const labels = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes(m.chat_rename_channel_button()))).toBe(false);
+    expect(labels.some((t) => t.includes(m.chat_delete_channel_button()))).toBe(false);
+    expect(labels.some((t) => t.includes(m.chat_leave_channel_button()))).toBe(true);
+    expect((document.getElementById('channel-name') as HTMLInputElement).readOnly).toBe(true);
   });
 });

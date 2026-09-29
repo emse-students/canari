@@ -182,6 +182,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         typeof data.canManage === 'boolean'
           ? data.canManage
           : Array.isArray(data.permissions) && data.permissions.includes('workspace.manage'),
+      // No fallback derivation for this one: an older server that does not send it leaves the
+      // cached flag where the last listing put it, which is what "absent" means here.
+      canManageChannels:
+        typeof data.canManageChannels === 'boolean' ? data.canManageChannels : undefined,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;
