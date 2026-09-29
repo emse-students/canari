@@ -237,7 +237,12 @@ blueprints ship with the RELEASE pipeline** (the deploy library copies `compose.
 `blueprints/` to the host, no fifth visible workflow); **and authentik gets a DEV instance of its
 own**, fed the same blueprints, so a flow change and the profile editor (WP4) are tried on dev
 without touching the 600 real accounts - which also needs the CAS to accept a second client (a DSI
-request) and a dev copy of the providers.
+request) and a dev copy of the providers. **Second round, same day:** internal NAMES in English with a
+`miconnect-` prefix (`miconnect-enrollment-prompt-cursus`, `miconnect-claim-promo`), displayed TEXT
+in French in the "tu" register; the Cercle's 30 s / 2 min tokens are KEPT and documented, because it
+reads the verified id_token once at its callback and discards the rest
+(`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
+`akadmin` is KEPT with its password, as the break-glass account if the CAS is down.
 
 **WP1 - Authentik holds the profile; nothing observable changes.**
 

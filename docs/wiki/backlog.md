@@ -319,8 +319,8 @@ this, so somebody met it before and it was never measured.
 page left open past its webflow timeout, a bookmarked CAS page, or a CAS SSO session answering a
 request it no longer holds. Read the access log of ONE failing sequence end to end (the request
 before the bare callback, its `Referer`, the time since `/source/oauth/login/cas-emse/`), then
-reproduce it on purpose. What the user SEES afterwards is also unobserved. Nothing may be changed on
-the CAS side from here; the fix may be a DSI ticket, or a MiConnect flow that restarts the
+reproduce it on purpose. What the user SEES afterwards is also unobserved. **A request is already with the DSI (user, 2026-09-29), and the rest waits for its
+answer.** Nothing may be changed on the CAS side from here; the fix may be a DSI ticket, or a MiConnect flow that restarts the
 authorization instead of failing. [authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29).
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
