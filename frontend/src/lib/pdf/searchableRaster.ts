@@ -32,6 +32,7 @@ import { rasterizeElementToCanvas, type RasterizeOptions } from '$lib/utils/pdfR
 import { containsEmoji } from '$lib/utils/emoji';
 import { Log } from '$lib/utils/Log';
 import { registerAppFonts, pickAppFont } from './appFonts';
+import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 
 /**
  * One line of a run, exactly as the BROWSER laid it out, in the root's natural coordinate space.
@@ -490,7 +491,15 @@ export async function exportSearchablePdf(
   }
 
   const safe = opts.filename.replace(/[^a-zA-Z0-9À-ž\- ]/g, '_').trim() || 'export';
-  pdf.save(`${safe}.pdf`);
+
+  // `pdf.save()` IS AN `<a download>` CLICK, AND THAT IS THE WHOLE OF "the download button does
+  // nothing on mobile" (user, 2026-09-29, on the agenda export). jsPDF's own save builds an object
+  // URL and clicks an anchor; a WebView installs no download handler, so on Android and iOS the
+  // click dispatches and produces no file, no error and no console line. Every other download in
+  // this app already goes through `fileDownload`, which owns that split - the PDF exports were the
+  // one path that did not. Handing it the blob routes the native runtimes through the OS save
+  // dialog and leaves the browser on the same anchor jsPDF would have clicked.
+  await downloadDecryptedFile(pdf.output('blob'), `${safe}.pdf`);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { Log } from '$lib/utils/Log';
+import { copyText } from '$lib/utils/clipboard';
 
 /**
  * Copies an opaque identifier to the clipboard, for the admin surfaces that display one.
@@ -12,14 +12,10 @@ import { Log } from '$lib/utils/Log';
  * Truncating instead answers neither. `truncate` leaves the hidden half unreadable AND unselectable
  * by pointer, and a `title` tooltip does not exist on a touch screen at all.
  *
- * A REFUSAL IS LOGGED RATHER THAN SWALLOWED. `writeText` rejects on a document that is not focused
- * and in any non-secure context, and a copy button that silently does nothing is indistinguishable
- * from one that worked - so the one line this leaves is the only trace there would be.
+ * THE WRITE ITSELF IS {@link copyText}, which every copy button in the app shares - including the
+ * refusal log, which is the only trace a clipboard that says no would leave. What stays here is the
+ * id-shaped contract above: these call sites show a cut value and copy the whole one.
  */
 export async function copyId(id: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(id);
-  } catch (e) {
-    Log.d('CopyId', `clipboard refused the write: ${String(e)}`);
-  }
+  await copyText(id, 'id');
 }

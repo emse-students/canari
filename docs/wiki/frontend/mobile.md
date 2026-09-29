@@ -256,6 +256,12 @@ that saves a file goes through `utils/fileDownload.ts`, which keeps the anchor o
 through the native save dialog on Tauri (`ACTION_CREATE_DOCUMENT` on Android, the document picker on
 iOS, the OS save panel on desktop). Two rules come with it:
 
+- **A library that saves for you is that anchor wearing another name.** `pdf.save()` builds the
+  object URL and clicks the anchor itself, so the PDF exports looked like the one family of
+  downloads that had nothing to do with `fileDownload` - and stayed dead on mobile for as long
+  (user, 2026-09-29, on the agenda sheet). `exportSearchablePdf` now hands its `pdf.output('blob')`
+  to `downloadDecryptedFile`; its test's fake jsPDF throws from `save()` so the regression cannot
+  return quietly. When a dependency offers to write a file, look for what it does under the name.
 - **Never ask for a directory.** Android's storage access framework offers a *document* picker;
   `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
 - **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,

@@ -2353,6 +2353,8 @@
   "shop_partnership_visit_link": "Voir le partenaire",
   "shop_partnership_members_only_hint": "Réservé aux cotisants de cette association.",
   "shop_partnership_your_code_label": "Votre code",
+  "shop_partnership_copy_code": "Copier le code",
+  "shop_partnership_code_copied": "Code copié",
   "shop_partnership_claiming": "Réclamation…",
   "shop_partnership_claim_button": "Réclamer mon code",
   "shop_partnership_error_no_codes_left": "Il n'y a plus de code disponible pour ce partenariat.",

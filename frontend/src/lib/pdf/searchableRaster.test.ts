@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { rasterizeElementToCanvas, textCalls, textAngles, rasterState } = vi.hoisted(() => ({
-  textCalls: [] as string[],
-  textAngles: [] as (number | undefined)[],
-  rasterState: { markedDuringRaster: null as string | null, hideRule: '' },
-  rasterizeElementToCanvas: vi.fn(),
-}));
+const { rasterizeElementToCanvas, textCalls, textAngles, rasterState, downloads } = vi.hoisted(
+  () => ({
+    textCalls: [] as string[],
+    textAngles: [] as (number | undefined)[],
+    rasterState: { markedDuringRaster: null as string | null, hideRule: '' },
+    rasterizeElementToCanvas: vi.fn(),
+    // The saved file, as the ONE download path sees it. `pdf.save()` is an `<a download>` click,
+    // which a WebView drops on the floor - so the assertion below is that this exporter never
+    // reaches for it again.
+    downloads: [] as { fileName: string; isBlob: boolean }[],
+  })
+);
 
 rasterizeElementToCanvas.mockImplementation(async (el: HTMLElement) => {
   // Captured at raster time: proves the emoji node is exempt from the hide rule right when the
@@ -23,6 +29,11 @@ rasterizeElementToCanvas.mockImplementation(async (el: HTMLElement) => {
 });
 
 vi.mock('$lib/utils/pdfRaster', () => ({ rasterizeElementToCanvas }));
+vi.mock('$lib/utils/fileDownload', () => ({
+  downloadDecryptedFile: async (source: string | Blob, fileName: string) => {
+    downloads.push({ fileName, isBlob: source instanceof Blob });
+  },
+}));
 vi.mock('./appFonts', () => ({
   registerAppFonts: vi.fn(async () => {}),
   pickAppFont: vi.fn(() => null),
@@ -36,7 +47,12 @@ vi.mock('jspdf', () => ({
     setTextColor() {}
     addImage() {}
     addPage() {}
-    save() {}
+    save() {
+      throw new Error('pdf.save() is dead on mobile - the export must go through fileDownload');
+    }
+    output() {
+      return new Blob(['%PDF'], { type: 'application/pdf' });
+    }
     splitTextToSize(text: string) {
       return [text];
     }
@@ -137,6 +153,34 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
     textAngles.length = 0;
     rasterState.markedDuringRaster = null;
     rasterState.hideRule = '';
+    downloads.length = 0;
+  });
+
+  /*
+   * THE EXPORT IS SAVED THE WAY EVERY OTHER FILE IN THIS APP IS SAVED, and nothing else will do.
+   * jsPDF's own `save()` builds an object URL and clicks an `<a download>`; Tauri installs no
+   * download handler in either WebView, so on Android and iOS that click dispatches, resolves, and
+   * produces no file, no error and no console line - which is exactly how the agenda export's
+   * button looked broken on a phone (user, 2026-09-29). The fake `save()` above throws, so a
+   * regression to it fails here rather than on a device.
+   */
+  it('hands the PDF to the shared download path instead of jsPDF save()', async () => {
+    const root = document.createElement('div');
+    Object.defineProperty(root, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
+    });
+    document.body.appendChild(root);
+
+    await exportSearchablePdf(root, {
+      filename: 'canari-agenda-2026-10',
+      format: 'a4',
+      orientation: 'landscape',
+      naturalWidth: 1000,
+      naturalHeight: 1000,
+    });
+
+    expect(downloads).toEqual([{ fileName: 'canari-agenda-2026-10.pdf', isBlob: true }]);
+    root.remove();
   });
 
   it('marks an emoji node as raster-only during the raster pass, then clears the marker', async () => {

@@ -519,6 +519,36 @@ real answer rather than a failure.
 It runs on IMPORT only, never on reset: a reset is a request for the defaults, and quietly putting
 the picture's colours back would make the button do nothing visible.
 
+### THE SHEET ON A PHONE: NO LOGOS, AND A DOWNLOAD BUTTON THAT DID NOTHING (2026-09-29)
+
+Reported from the app with a screenshot of the export page: *"Sur mobile, le bouton telecharger ne
+marche pas et les logos des associations ne s'affichent pas."* Two independent defects on one
+screen, both invisible to every gate here because both need a WebView to appear.
+
+**The logos.** An association's `logoUrl` is stored app-relative (`/api/media/public/<id>`), and
+`associationLogoSrc()` is what turns it into something a Tauri page can load - the origin is
+`tauri://localhost`, whose asset server answers `index.html` for that path. `MonthCalendarGridRich`
+has called it all along; `calendarExport.ts`, which draws the same logos for the preview AND
+pre-fetches them for the PDF, used the raw field for both. On the web the two are identical, which
+is why the copy survived. On a phone the `<img>` failed to decode with nothing thrown and nothing
+logged, and the export's own pre-fetch read the shell's HTML as a **200** and inlined it as a data
+URL - so a `resp.ok` check could never have caught it. Both sites go through `associationLogoSrc`
+now, and `calendarExport.test.ts` pins the preview's `src`. The scanner in `apiUrl.absolute.test.ts`
+was blind to it twice over: the URL is a variable, so there is no literal `/api/` to match, and the
+element is built inside an HTML string rather than bound as `src={x.logoUrl}`.
+
+**The button.** `exportSearchablePdf` finished with `pdf.save()`, which is jsPDF's own object URL
+plus an `<a download>` click - the exact gesture `utils/fileDownload.ts` exists to replace, and the
+only path in the app that still made it ([mobile](../mobile.md)). The click dispatches and resolves,
+so there is no exception, no log and no file. It hands the blob to `downloadDecryptedFile` now, which
+means the agenda sheet, the trombinoscope and the carte de la vie asso all reached the OS save dialog
+in one change. The fake jsPDF in `searchableRaster.test.ts` THROWS from `save()`, so a regression
+fails there rather than on a device.
+
+**Still owed: one press on real hardware.** A green suite says the blob reaches the right function;
+it says nothing about the picker, and the two `capabilities/default.json` grants this depends on
+(`fs:allow-write-file`, `dialog:allow-save`) are the kind that ship and install before rejecting.
+
 ## ICS export
 
 `GET /api/associations/calendar/feed.ics` returns an ICS file for the aggregated agenda, optionally

@@ -504,6 +504,21 @@ then writes the badge from what remains — computed from the array already in h
 | POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
 | POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
 
+### A claimed code is copied by a button, not by a long press (2026-09-29)
+
+Asked for with the defect above it in the same report: *"les codes des partenariats (mettre un bouton
+avec l'icone 'copier' peut-etre bien)"*. The value exists to be pasted into a partner's checkout, and
+the gesture it took was a long press, two drag handles and the system menu, over a `break-all` string
+that wraps mid-token - against an app that disables selection on a coarse pointer
+([posts](../frontend/modules/posts.md)). `PartnershipCardList` now draws a copy button beside the
+code and marks the code itself `select-text`, so the manual path exists too.
+
+**The write is `utils/clipboard.ts`, and its boolean is load-bearing**: `writeText` rejects on an
+unfocused document and outside a secure context, and "Code copie" over an empty clipboard is worse
+than no button at all - the student pastes whatever they had before. The toast is shown only on a
+resolved write; a refusal leaves the log line that is the sole trace there would be. `copyId` is that
+same write with the admin-surface contract on top of it.
+
 ### A user id is not a UUID, and one partnership column said it was
 
 `partnership_codes."claimedByUserId"` was created `uuid` by migration 047. A user id in this estate
