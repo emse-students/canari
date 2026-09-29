@@ -1,4 +1,10 @@
-import { ForbiddenException, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -915,6 +921,89 @@ describe('ChannelService security hardening', () => {
       const { done, messageRepo } = send(extra);
       expect(await code(done)).toBe('CHANNEL_SEED_FRAME_INVALID');
       expect(messageRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Graine v2 on the server: a signature relayed, one row per key (migration 065)', () => {
+    const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
+    const send = (extra: Record<string, unknown>, save?: (row: any) => Promise<unknown>) => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+      });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(
+        save ?? (async (row: any) => ({ ...row, id: 'm1', createdAt: new Date() }))
+      );
+      const done = repos.service.sendMessage('ch1', {
+        senderId: 'u1',
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 3,
+        ...extra,
+      } as never);
+      return { ...repos, done };
+    };
+    const code = async (p: Promise<unknown>) =>
+      (
+        (await p.then(
+          () => null,
+          (e: BadRequestException) => e.getResponse()
+        )) as { code?: string } | null
+      )?.code;
+
+    it('stores the signature and relays it in the live event', async () => {
+      const { done, messageRepo, redis } = send({ signature: SIGNATURE });
+      await done;
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ signature: SIGNATURE })
+      );
+      expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+        'channel.message.created',
+        expect.objectContaining({ signature: SIGNATURE }),
+        expect.anything()
+      );
+    });
+
+    it('stores null for a v1 sender, which carries none', async () => {
+      const { done, messageRepo } = send({});
+      await done;
+      expect(messageRepo.create).toHaveBeenCalledWith(expect.objectContaining({ signature: null }));
+    });
+
+    it.each([
+      ['a signature of another length', Buffer.alloc(63, 7).toString('base64')],
+      ['a signature that is not base64', '!'.repeat(88)],
+      ['a signature that is not a string', 42],
+    ])('refuses %s with a typed code, storing nothing', async (_label, signature) => {
+      const { done, messageRepo } = send({ signature });
+      expect(await code(done)).toBe('CHANNEL_SIGNATURE_INVALID');
+      expect(messageRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('answers a second row under one message key with a typed 409, never a 500', async () => {
+      const { done } = send({}, async () => {
+        throw Object.assign(new Error('duplicate key value'), { code: '23505' });
+      });
+      const error = await done.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(((error as ConflictException).getResponse() as { code: string }).code).toBe(
+        'CHANNEL_MESSAGE_KEY_REUSED'
+      );
+    });
+
+    it('lets any other save failure through untouched', async () => {
+      const { done } = send({}, async () => {
+        throw new Error('connection reset');
+      });
+      await expect(done).rejects.toThrow('connection reset');
     });
   });
 

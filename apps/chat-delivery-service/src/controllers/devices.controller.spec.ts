@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 import { MAX_DEVICES_PER_USER } from '../retention.constants';
 
 /**
@@ -40,6 +41,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
   };
   /** The number `countLiveDevices` reads back, set per test. */
   let liveDevices: number;
+  let recordKeys: jest.Mock;
 
   const BODY = {
     userId: 'u1',
@@ -55,6 +57,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
       create: jest.fn(),
     };
     liveDevices = 0;
+    recordKeys = jest.fn().mockResolvedValue(undefined);
     // `countLiveDevices` asks the database the whole question in one statement, so the seam a test
     // can hold is the builder - what it ASKS is asserted in devices.controller.live-cap.spec.ts.
     const qb = {
@@ -84,6 +87,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
         { provide: MessagingService, useValue: {} },
+        { provide: DeviceSignatureKeysService, useValue: { record: recordKeys } },
       ],
     })
       .overrideGuard(HeaderAuthGuard)
@@ -112,6 +116,16 @@ describe('DevicesController.registerDevice - revoked device', () => {
     await controller.registerDevice(BODY, 'u1', undefined);
 
     expect(keyPackageRepo.save).toHaveBeenCalled();
+  });
+
+  it('records the device signature key BEFORE storing the package, so a failure is retried', async () => {
+    revokedDeviceRepo.findOne.mockResolvedValue(null);
+    recordKeys.mockRejectedValue(new Error('db down'));
+
+    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toThrow('db down');
+
+    expect(recordKeys).toHaveBeenCalledWith('u1', 'd1', ['a2V5'], 'register-device');
+    expect(keyPackageRepo.save).not.toHaveBeenCalled();
   });
 
   /**

@@ -3,7 +3,8 @@ import { scopeLabel, type DistributionScope } from '$lib/mls-client/distribution
 import type { GraineDistributionFrame, StoredGraineSession } from '$lib/db/types';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { encodeAppMessage, mkGraine } from '$lib/proto/codec';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { toBase64 } from '$lib/utils/hex';
+import { toWireSeed } from './wireSeed';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 
@@ -81,13 +82,8 @@ export async function distributeGraineSeed(
   if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
   const frame = encodeAppMessage({
-    ...mkGraine({
-      channelId: session.channelId,
-      sessionId: session.sessionId,
-      seed: fromBase64(session.seedB64),
-      firstIndex: session.firstIndex,
-      createdAt: session.createdAt,
-    }),
+    // The same wire form a repair relays, so a v2 session's endorsement leaves exactly as held.
+    ...mkGraine(toWireSeed(session)),
     sentAt: session.createdAt,
   });
   const sealed = await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.keyMaterial);

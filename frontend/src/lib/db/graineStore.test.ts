@@ -213,6 +213,32 @@ describe('graineCodec - the seam both backends share', () => {
     }
   });
 
+  // Graine v2 (channel-encryption section 21): the v2 half rides in the SEALED payload - the session
+  // secret must never reach a clear column - and a half-written block reads as v1-less, never as a
+  // v2 session with nothing to verify against.
+  it('keeps the v2 half sealed, round-trips it whole, and reads a partial one as absent', () => {
+    const v2 = {
+      minterDeviceId: 'dev-a',
+      signingPublicKeyB64: 'cGs=',
+      endorsementB64: 'ZW5k',
+      signingSecretKeyB64: 'c2Vj',
+    };
+    const s = session({ v2 });
+
+    expect(JSON.stringify(graineClearColumns(s))).not.toContain('c2Vj');
+    const payload = encodeGraineSensitive(s);
+    expect(decodeGraineSession(graineClearColumns(s), payload).v2).toEqual(v2);
+    expect(
+      decodeGraineSession(graineClearColumns(session()), { seedB64: 'abc' }).v2
+    ).toBeUndefined();
+    expect(
+      decodeGraineSession(graineClearColumns(s), {
+        seedB64: 'abc',
+        v2: { minterDeviceId: 'dev-a', signingPublicKeyB64: 'cGs=' },
+      }).v2
+    ).toBeUndefined();
+  });
+
   it('orders ties by session id, so two devices keep the same sessions', () => {
     const a = session({ sessionId: 'aaa', createdAt: 5 });
     const b = session({ sessionId: 'bbb', createdAt: 5 });

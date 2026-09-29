@@ -13,6 +13,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 import { DEVICE_ENROLMENT_GRACE_MS, RETENTION_WINDOW_MS } from '../retention.constants';
 
 /**
@@ -88,6 +89,7 @@ describe('DevicesController - the cap counts live devices', () => {
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
         { provide: MessagingService, useValue: {} },
+        { provide: DeviceSignatureKeysService, useValue: { record: jest.fn() } },
       ],
     })
       .overrideGuard(HeaderAuthGuard)

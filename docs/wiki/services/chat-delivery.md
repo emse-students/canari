@@ -806,6 +806,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
 | GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package |
+| GET | `/api/mls/devices/:userId/:deviceId/signature-keys` | Every MLS signature key the device ever published (Graine v2 endorsements) |
 | GET | `/api/mls/devices/:userId` | List all registered devices for a user |
 | GET | `/api/mls/devices/:userId/:deviceId/revoked` | Is this device denylisted (gates the wipe) |
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
@@ -828,6 +829,26 @@ preview cache states below for a different reason - **only an answer may be a 40
 request that was never malformed. The statuses are pinned by
 `devices.controller.not-found.spec.ts`, which carries the empty-metadata-body case as its control:
 that one IS the caller's fault and keeps its 400.
+
+**A KEY PACKAGE MUST NAME THE DEVICE UPLOADING IT, AND ITS SIGNATURE KEY IS KEPT FOR EVER
+(2026-09-29, Graine v2).** Both upload routes read every package's clear leaf
+(`utils/key-package-leaf.ts`, on `utils/mls-tls.ts`, the one RFC 9420 varint reader
+`mls-frame-epoch.ts` also uses). The batch is refused whole, with a 400 carrying
+`code: KEY_PACKAGE_IDENTITY_INVALID` and a `[DEVICE_KEY] REFUSED` line at ERROR, if any package does
+not parse or if its BasicCredential identity is not `userId:deviceId`. Such a package would be added
+to a group as someone else, and until then nothing looked. **It was measured before it was refused**:
+every stored package on both estates, 38 525 in production over 870 devices and 38 177 in dev over
+857, parsed, named its uploader, and carried the one key of its device. So no shipped client can hit
+this 400, and like the others it is not classified.
+
+Each key read is appended to `device_signature_key` (migration 027, unique on
+`(userId, deviceId, signatureKey)`, never updated) BEFORE the packages are stored, so a failure
+fails the upload and the client's retry re-sends it. `GET .../signature-keys` serves that history
+plus the key in the device's CURRENT static package, so no backfill is needed. It answers `{keys}`,
+oldest first, and an empty list rather than a 404. It is for a member checking a relayed Graine v2
+seed's endorsement once the minter's device has left the tree
+([channel-encryption §21.3](../protocols/channel-encryption.md#213-the-data-model-carries-the-minter-and-its-key-wp-g2-3)).
+Any authenticated caller may read it, like `key-package`, which already serves the same bytes.
 
 
 ### Group management

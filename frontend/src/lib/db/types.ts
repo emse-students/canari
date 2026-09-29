@@ -285,6 +285,32 @@ export interface StoredGraineSession {
    * predates the field and is rotated ({@link shouldRotateGraineSession}).
    */
   distributionFrame?: GraineDistributionFrame;
+  /**
+   * What makes this a Graine v2 session (channel-encryption section 21); absent is v1.
+   *
+   * On a v2 session `senderId` IS the minter the endorsement names, never whoever relayed the seed.
+   * Encrypted with the seed rather than in a column: nothing lists or purges by it, and every reader
+   * of it has just decrypted the seed anyway - so no store needed a migration, and a backup carries
+   * it as it is.
+   */
+  v2?: StoredGraineV2;
+}
+
+/** The Graine v2 half of a stored session, as the minter's endorsement states it. */
+export interface StoredGraineV2 {
+  /** The device whose MLS credential key signed the endorsement. */
+  minterDeviceId: string;
+  /** The session's Ed25519 public key, base64: every message under the session is signed by it. */
+  signingPublicKeyB64: string;
+  /** The minter device's signature over the endorsement descriptor, base64 - relayed untouched. */
+  endorsementB64: string;
+  /**
+   * The session's Ed25519 SECRET, base64 - present only on a session this device minted, like
+   * `sentCount`. A backup carries it inside the sealed blob and never uses it: a restored session
+   * has no `distributionEpoch` (the backup does not carry one), so it always rotates rather than
+   * continuing an index another copy of this device may already have written past.
+   */
+  signingSecretKeyB64?: string;
 }
 
 /** A seed frame as a salon message carries it: the key group it was sealed on, and its bytes. */

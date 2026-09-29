@@ -40,6 +40,15 @@ vi.mock('$lib/services/ChannelService', () => ({
 
 const SEED = new Uint8Array(32).fill(3);
 
+/** The five v2 fields of a seed minted by carol on dev-c (values are opaque here: G2-4 checks them). */
+const V2_WIRE = {
+  version: 2,
+  minterUserId: 'carol',
+  minterDeviceId: 'dev-c',
+  signingPublicKey: new Uint8Array(32).fill(4),
+  endorsement: new Uint8Array(64).fill(5),
+};
+
 function fakeStorage(seed: StoredGraineSession[] = []) {
   const rows = new Map(seed.map((s) => [s.sessionId, s]));
   const saved: StoredGraineSession[] = [];
@@ -278,6 +287,37 @@ describe('a seed arriving on the distribution group', () => {
     setGraineRepairListener(null);
   });
 
+  // Graine v2 (channel-encryption section 21): a relayed seed is recorded under the minter its
+  // endorsement NAMES, never under whoever relayed it - and it keeps every v2 field as sent.
+  it('records a v2 seed under its MINTER, even when somebody else relayed it', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(frame(V2_WIRE));
+
+    expect(saved[0].senderId).toBe('carol');
+    expect(saved[0].v2).toEqual({
+      minterDeviceId: 'dev-c',
+      signingPublicKeyB64: toBase64(V2_WIRE.signingPublicKey),
+      endorsementB64: toBase64(V2_WIRE.endorsement),
+    });
+  });
+
+  it('refuses a held v2 session re-sent WITHOUT its endorsement - a downgrade, not a copy', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    await handleDistributionFrame(frame(V2_WIRE));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await handleDistributionFrame(frame({ firstIndex: 0 }));
+    await handleDistributionFrame(frame({ ...V2_WIRE, minterUserId: 'mallory' }));
+
+    expect(saved).toHaveLength(1);
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(String(error.mock.calls[0][0])).toContain('different endorsement');
+    error.mockRestore();
+  });
+
   it('declines a malformed seed and says so', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -372,6 +412,40 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // Every member of the community receives the frame and every member but one must ignore it:
     // answering anyway is how a salon of three hundred pays three hundred bundles for one seed.
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('relays a v2 session with its endorsement untouched, and never its secret', async () => {
+    const minted: StoredGraineSession = {
+      ...heldSeed('sess-v2', 0),
+      v2: {
+        minterDeviceId: 'dev-a',
+        signingPublicKeyB64: toBase64(V2_WIRE.signingPublicKey),
+        endorsementB64: toBase64(V2_WIRE.endorsement),
+        signingSecretKeyB64: toBase64(new Uint8Array(32).fill(9)),
+      },
+    };
+    const { storage } = fakeStorage([minted]);
+    const sendMessage = wireWithMls(storage);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-v2'],
+        answererUserId: 'Alice',
+        requestId: 'r-v2',
+      })
+    );
+
+    const seed = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds?.[0];
+    expect(Number(seed?.version)).toBe(2);
+    expect(seed?.minterUserId).toBe('alice');
+    expect(seed?.minterDeviceId).toBe('dev-a');
+    expect(Uint8Array.from(seed?.signingPublicKey ?? [])).toEqual(V2_WIRE.signingPublicKey);
+    expect(Uint8Array.from(seed?.endorsement ?? [])).toEqual(V2_WIRE.endorsement);
+    expect(JSON.stringify(sendMessage.mock.calls[0][1])).not.toContain(
+      toBase64(new Uint8Array(32).fill(9))
+    );
   });
 
   it('answers with the seeds it holds, at the floor it holds them at', async () => {

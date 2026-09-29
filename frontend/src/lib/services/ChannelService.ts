@@ -155,6 +155,8 @@ export interface SendChannelMessageDto {
   /** The Graine session this message was sealed under, and which of its message keys. */
   senderSessionId: string;
   messageIndex: number;
+  /** Graine v2 (channel-encryption section 21): the session key's signature. Absent from v1. */
+  signature?: string;
   messageId?: string;
   /** When set, the message is a poll: auto-pinned server-side and votable. */
   poll?: ChannelPollInput;
@@ -241,6 +243,11 @@ export interface ChannelMessageRow {
   /** The sender's Graine session, and which of its message keys. Null only on a pre-Graine row. */
   senderSessionId: string | null;
   messageIndex: number | null;
+  /**
+   * Graine v2: the session key's signature over the header, nonce and ciphertext; null on a v1 row.
+   * Optional because the field is newer than the route - the reader treats absent as null.
+   */
+  signature?: string | null;
   replyTo: string | null;
   createdAt: string;
   pinned: boolean;

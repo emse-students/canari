@@ -19,6 +19,12 @@ import {
 @Index('IDX_channel_messages_sender_session', ['senderSessionId'], {
   where: '"senderSessionId" IS NOT NULL',
 })
+// Graine v2 (migration 065): a second row under one message key is a replay or a key reused, never a
+// message - refused at the door so no reader has to guess which of the two is real.
+@Index('UQ_channel_messages_session_index', ['senderSessionId', 'messageIndex'], {
+  unique: true,
+  where: '"senderSessionId" IS NOT NULL',
+})
 export class ChannelMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -56,6 +62,16 @@ export class ChannelMessage {
    */
   @Column({ type: 'int', nullable: true })
   messageIndex: number | null;
+
+  /**
+   * Graine v2: the session key's Ed25519 signature over the header, nonce and ciphertext, base64.
+   *
+   * Stored and relayed, never verified: the server holds no key and cannot tell a v2 session from a
+   * v1 one - the version travels with the seed, over MLS. Null on a v1 row, which is what the v1
+   * reader's removal condition counts (channel-encryption section 21).
+   */
+  @Column({ type: 'varchar', length: 88, nullable: true })
+  signature: string | null;
 
   @Column({ type: 'uuid', nullable: true })
   replyTo: string;

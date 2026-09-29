@@ -114,6 +114,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device metadata |
 | GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get consumable key package |
+| GET | `/api/mls/devices/:userId/:deviceId/signature-keys` | Every signature key the device published (`{keys}`) |
 | GET | `/api/mls/devices/:userId` | List all devices for a user |
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/list` | List published prekey IDs |

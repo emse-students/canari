@@ -1,3 +1,5 @@
+import { readMlsOpaque } from './mls-tls';
+
 /**
  * The epoch an MLS frame was sealed at, read from its CLEAR header - the one fact about a
  * ciphertext this server can know without a key.
@@ -28,24 +30,9 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
   const wireFormat = bytes.readUInt16BE(2);
   if (wireFormat !== 1 && wireFormat !== 2) return null;
 
-  let offset = 4;
-  const prefix = bytes[offset] >> 6;
-  let groupIdLength: number;
-  if (prefix === 0) {
-    groupIdLength = bytes[offset] & 0x3f;
-    offset += 1;
-  } else if (prefix === 1) {
-    if (bytes.length < offset + 2) return null;
-    groupIdLength = bytes.readUInt16BE(offset) & 0x3fff;
-    offset += 2;
-  } else if (prefix === 2) {
-    if (bytes.length < offset + 4) return null;
-    groupIdLength = bytes.readUInt32BE(offset) & 0x3fffffff;
-    offset += 4;
-  } else {
-    return null;
-  }
-  offset += groupIdLength;
+  const groupId = readMlsOpaque(bytes, 4);
+  if (!groupId) return null;
+  const offset = groupId.next;
   if (bytes.length < offset + 8) return null;
   const epoch = bytes.readBigUInt64BE(offset);
   return epoch > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(epoch);

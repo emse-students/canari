@@ -13,6 +13,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 
 /**
  * THE PURGE MUST SAY WHAT IT DELETED, BECAUSE THE CLIENT CANNOT WORK IT OUT.
@@ -77,6 +78,7 @@ describe('DevicesController - a purge that reports what it removed', () => {
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
         { provide: MessagingService, useValue: {} },
+        { provide: DeviceSignatureKeysService, useValue: { record: jest.fn() } },
       ],
     })
       .overrideGuard(HeaderAuthGuard)
