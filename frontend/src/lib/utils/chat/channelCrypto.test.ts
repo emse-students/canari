@@ -52,6 +52,7 @@ beforeEach(() => {
     nonce: 'bm9uY2U=',
     senderSessionId: 'sess-1',
     messageIndex: 7,
+    signature: 'c2ln',
     seedFrame: 'ZnJhbWU=',
     seedGroupId: 'dist-group',
   });
@@ -65,11 +66,13 @@ describe('sendEncryptedChannelMessage', () => {
     expect(sealChannelMessage).toHaveBeenCalledWith(RAW, PAYLOAD);
     // Both fields, or the message is one nobody can open: the key is HKDF(seed, session, index).
     // ...and the seed frame, so a phone opens the seed from this message's own push (section 19).
+    // ...and the session's signature, without which a v2 reader refuses the row (section 21).
     expect(sendMessage).toHaveBeenCalledWith(RAW, {
       ciphertext: 'Y2lwaGVy',
       nonce: 'bm9uY2U=',
       senderSessionId: 'sess-1',
       messageIndex: 7,
+      signature: 'c2ln',
       seedFrame: 'ZnJhbWU=',
       seedGroupId: 'dist-group',
     });

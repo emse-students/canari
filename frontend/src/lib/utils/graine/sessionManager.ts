@@ -1,6 +1,11 @@
 import { GraineInputError, newGraineSeed, newGraineSessionId } from '$lib/crypto/graine';
 import { GRAINE_ROTATE_AFTER_MESSAGES, GRAINE_ROTATE_AFTER_MS } from '$lib/crypto/graineConstants';
-import type { GraineDistributionFrame, IStorage, StoredGraineSession } from '$lib/db/types';
+import type {
+  GraineDistributionFrame,
+  IStorage,
+  StoredGraineSession,
+  StoredGraineV2,
+} from '$lib/db/types';
 import { toBase64 } from '$lib/utils/hex';
 
 /**
@@ -42,6 +47,12 @@ export interface GraineOutboundDeps {
    * which the session keeps so every message sealed under it can carry it.
    */
   distribute: (session: StoredGraineSession) => Promise<GraineDistributionFrame>;
+  /**
+   * Makes a freshly minted session a Graine v2 one: its key pair and this device's endorsement
+   * (`endorseNewSession`). Awaited BEFORE the seed is distributed, since the endorsement travels
+   * with it - a v2 seed handed over without one is refused by every reader.
+   */
+  endorse: (session: StoredGraineSession) => Promise<StoredGraineV2>;
   /** Injectable clock, for tests. Never used to decide anything but the age threshold. */
   now?: () => number;
 }
@@ -94,6 +105,9 @@ export function shouldRotateGraineSession(
   return (
     session.distributionEpoch !== at.distributionEpoch ||
     !session.distributionFrame ||
+    // EVERY SESSION THIS DEVICE SEALS UNDER IS V2 (WP-G2-5), so a v1 one rotates, once, and so
+    // does a v2 one whose secret is not here to sign with - a session restored from a backup.
+    !session.v2?.signingSecretKeyB64 ||
     (session.sentCount ?? 0) >= GRAINE_ROTATE_AFTER_MESSAGES ||
     at.now - session.createdAt >= GRAINE_ROTATE_AFTER_MS
   );
@@ -167,7 +181,7 @@ async function reserve(
     return { session: updated, index, minted: false };
   }
 
-  const minted: StoredGraineSession = {
+  const draft: StoredGraineSession = {
     workspaceId: scope.workspaceId,
     channelId: scope.channelId,
     senderId: scope.senderId,
@@ -179,6 +193,9 @@ async function reserve(
     sentCount: 0,
     distributionEpoch: deps.distributionEpoch,
   };
+  // Endorsed, then distributed, then persisted: each step needs the one before it, and a failure
+  // at any of them leaves nothing behind for the reason the distribution comment above gives.
+  const minted: StoredGraineSession = { ...draft, v2: await deps.endorse(draft) };
   const distributionFrame = await deps.distribute(minted);
   const stored: StoredGraineSession = { ...minted, sentCount: 1, distributionFrame };
   await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);

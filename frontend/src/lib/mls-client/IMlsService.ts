@@ -927,6 +927,12 @@ export interface IMlsService {
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
+  /**
+   * Signs `message` with THIS device's MLS credential key - the key its leaf in every group
+   * carries. What a Graine v2 endorsement is (channel-encryption section 21): a member checks it
+   * against that leaf, so no new key has to be distributed or trusted.
+   */
+  signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */

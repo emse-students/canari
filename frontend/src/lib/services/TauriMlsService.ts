@@ -1143,9 +1143,20 @@ export class TauriMlsService extends BaseMlsService {
     return key ? new Uint8Array(key) : null;
   }
 
+  /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */
+  async signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array> {
+    return new Uint8Array(
+      await invoke<number[]>('graine_sign_with_device_credential', { message: Array.from(message) })
+    );
+  }
+
   /** The Rust engine's Ed25519 commands, the same `mls-core` code the web runs as WASM. */
   graineSignatureEngine(): GraineSignatureEngine {
     return {
+      async newSessionKeyPair() {
+        const pair = await invoke<{ secret: number[]; public: number[] }>('graine_session_keypair');
+        return { secret: new Uint8Array(pair.secret), publicKey: new Uint8Array(pair.public) };
+      },
       async signWithSessionKey(secret, message) {
         return new Uint8Array(
           await invoke<number[]>('graine_sign_with_session_key', {

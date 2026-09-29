@@ -299,6 +299,7 @@ export async function sendEncryptedChannelMessage(
     nonce: sealed.nonce,
     senderSessionId: sealed.senderSessionId,
     messageIndex: sealed.messageIndex,
+    signature: sealed.signature,
     ...(messageId ? { messageId } : {}),
     ...(poll ? { poll } : {}),
     ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
