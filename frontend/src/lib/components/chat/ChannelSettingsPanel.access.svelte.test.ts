@@ -12,7 +12,7 @@
  * themselves too, the same way the allowlist already did - the toggle behind a confirmation, since
  * flipping it changes who can read the channel; the write policy without one, like `setNotifLevel`.
  */
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 
 const service = vi.hoisted(() => ({
@@ -46,6 +46,10 @@ vi.mock('$lib/utils/apiFetch', () => ({
 
 import ChannelSettingsPanel from './ChannelSettingsPanel.svelte';
 import { m } from '$lib/paraglide/messages';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// Picking a write policy closes the Picker, which plays an outro.
+afterAll(adoptTransitionAnimations());
 
 const workspaces = [
   {
@@ -190,9 +194,15 @@ describe('ChannelSettingsPanel - access tab', () => {
   it('writes the write policy the moment it changes, with no confirmation asked', async () => {
     await mountOnAccessTab('salon-a');
 
-    const select = document.querySelector('select') as HTMLSelectElement;
-    select.value = 'admins';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    // The write policy is the panel's in-app Picker: open it, then pick "admins" by its label.
+    (document.querySelector('button[aria-haspopup="listbox"]') as HTMLButtonElement).click();
+    flushSync();
+    await tick();
+    const admins = [...document.querySelectorAll('[role="option"]')].find(
+      (o) => (o.textContent ?? '').trim() === m.chat_channel_write_admins()
+    ) as HTMLButtonElement | undefined;
+    expect(admins).toBeDefined();
+    admins!.click();
     await settle();
 
     expect(showConfirmMock).not.toHaveBeenCalled();

@@ -14,6 +14,8 @@
   import { Download, GripVertical, UserPlus } from '@lucide/svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
   import { showConfirm } from '$lib/stores/confirm.svelte';
 
@@ -31,6 +33,10 @@
   let newMemberRole = $state('Membre');
   /** 0 = simple member; ASSOCIATION_ADMIN_PRESET = full association admin. */
   let newMemberPermissions = $state(0);
+  const permissionOptions: PickerOption[] = [
+    { value: '0', label: m.asso_members_role_member() },
+    { value: String(ASSOCIATION_ADMIN_PRESET), label: m.asso_members_role_admin() },
+  ];
   let addingMember = $state(false);
   let memberError = $state('');
 
@@ -238,13 +244,16 @@
         placeholder={m.asso_members_role_placeholder()}
         class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm lg:w-36"
       />
-      <select
-        bind:value={newMemberPermissions}
-        class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm lg:w-auto"
-      >
-        <option value={0}>{m.asso_members_role_member()}</option>
-        <option value={ASSOCIATION_ADMIN_PRESET}>{m.asso_members_role_admin()}</option>
-      </select>
+      <div class="w-full shrink-0 lg:w-auto">
+        <Picker
+          value={String(newMemberPermissions)}
+          options={permissionOptions}
+          onValueChange={(v) => (newMemberPermissions = Number(v))}
+          label={m.asso_members_access_label()}
+          variant="field"
+          density="compact"
+        />
+      </div>
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}

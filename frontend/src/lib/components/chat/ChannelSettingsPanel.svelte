@@ -23,6 +23,8 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '../ui/Picker.svelte';
+  import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
@@ -122,6 +124,13 @@
   let addingUserId = $state('');
   let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
+
+  /** The three write policies, most open first. */
+  const writePolicyOptions = $derived<PickerOption[]>([
+    { value: 'everyone', label: m.chat_channel_write_everyone() },
+    { value: 'admins_moderators', label: m.chat_channel_write_admins_mods() },
+    { value: 'admins', label: m.chat_channel_write_admins() },
+  ] satisfies { value: ChannelWritePolicy; label: string }[]);
 
   // ── Member access list (for removing users from private channel) ───────
   let membersLoading = $state(false);
@@ -694,18 +703,15 @@
                   {m.chat_channel_who_can_write()}
                 </p>
               </div>
-              <!-- The native arrow stays: `appearance-none` drew this choice as a text field. -->
               <div class="flex items-center gap-2">
-                <select
-                  class="bg-cn-surface text-text-main w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                <Picker
+                  label={m.chat_channel_who_can_write()}
                   value={writePolicy}
+                  options={writePolicyOptions}
                   disabled={writePolicySaving || !canManage}
-                  onchange={(e) => void setWritePolicy(e.currentTarget.value as ChannelWritePolicy)}
-                >
-                  <option value="everyone">{m.chat_channel_write_everyone()}</option>
-                  <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
-                  <option value="admins">{m.chat_channel_write_admins()}</option>
-                </select>
+                  onValueChange={(v) => void setWritePolicy(v as ChannelWritePolicy)}
+                  triggerClass="bg-cn-surface text-text-main flex w-full items-center justify-between gap-2 rounded-xl border border-black/10 px-4 py-3 text-left text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                />
                 {#if writePolicySaving}
                   <Loader size={16} class="text-text-muted animate-spin" />
                 {/if}

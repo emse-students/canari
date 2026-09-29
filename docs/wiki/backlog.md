@@ -262,9 +262,11 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
    with Publier at the right; Photo/video (gallery + camera) split from Fichier; a vertical video
    drawn at its own aspect ratio. **The composer MERGED (#1226)**; its first on-device review
    (user, 2026-09-29) moved the captions behind a chip, took the halo off the chips and put the
-   identity and linked-event choices in the app's own `Picker` - its PR. **Not yet checked: the
-   vertical video in the FEED.** **OPEN, from the same review: every other native `<select>` in the
-   app (~38 in 22 files) and the six native date inputs** move to the app's own pickers ([rule](durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
+   identity and linked-event choices in the app's own `Picker` - its PR. Its second review
+   (2026-09-29) is the next PR: every other native `<select>` (35) and the six date inputs are the
+   app's own, and a feed video plays like Instagram's - vertical at its own shape, muted, one sound
+   button for every video ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+   **Owed: the user's own look on the Mi 9T.**
 2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
    tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
    plays and seeks by segment, ranged reads on the media service; old single-block blobs stay

@@ -20,6 +20,8 @@
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
+  import { followVideoSound } from '$lib/actions/playWhileVisible';
   import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
   import { m } from '$lib/paraglide/messages';
 
@@ -224,6 +226,7 @@
         src={blobUrl}
         controls
         autoplay
+        use:followVideoSound
         class="max-h-full max-w-full rounded-xl bg-black object-contain"
       ></video>
     {:else}
@@ -244,7 +247,9 @@
       </div>
     {:else if mediaType === 'video'}
       <div
-        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-3xl bg-black/5 dark:bg-white/10"
+        class="flex animate-pulse items-center justify-center bg-black/5 dark:bg-white/10 {letterbox
+          ? 'h-full w-full'
+          : 'aspect-video w-full max-w-md rounded-3xl'}"
       >
         <VideoIcon size={32} class="text-text-muted opacity-20" />
       </div>
@@ -319,32 +324,22 @@
       </button>
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
-      <div
-        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-3xl bg-black/10 shadow-sm dark:bg-black/40"
-      >
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video src={blobUrl} controls preload="metadata" class="h-full w-full object-contain"
-        ></video>
-        <button
-          type="button"
-          onclick={handleClick}
-          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg transition-all duration-300 hover:bg-black/70"
-          aria-label={m.post_fullscreen_label()}
-        >
-          {m.post_fullscreen_label()}
-        </button>
-        <button
-          type="button"
-          onclick={(e) => {
-            e.stopPropagation();
-            downloadBlob(blobUrl!, media.fileName ?? 'video.mp4');
-          }}
-          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
-          aria-label={m.post_download_label()}
-        >
-          <Download size={16} strokeWidth={2.5} />
-        </button>
-      </div>
+      <!-- UNDER A SINGLE-ATTACHMENT POST THE BOX IS THE CALLER'S (`letterbox`): `PostContent`
+           reserves it at the video's own shape, so the video FILLS it, cropped only by the
+           `--media-max-height` ceiling. It used to draw its own 16:9 box inside that reservation,
+           which put a phone's vertical clip in a narrow strip over a grey band (Mi 9T, 2026-09-29).
+           Cropping is right for a video where it is not for a still: the poster rule
+           (`mediaAspectStyle`) is about text at the edge of a picture, a clip's subject is in its
+           middle, and the whole frame is one tap away in the viewer. -->
+      <InlineVideo
+        src={blobUrl}
+        onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
+        openLabel={m.post_fullscreen_label()}
+        class={letterbox
+          ? 'h-full w-full bg-black'
+          : 'aspect-video w-full max-w-md rounded-3xl bg-black/10 shadow-sm dark:bg-black/40'}
+        videoClass="h-full w-full {letterbox ? 'object-cover object-center' : 'object-contain'}"
+      />
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
       <div class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5">
@@ -468,6 +463,7 @@
           src={blobUrl}
           controls
           autoplay
+          use:followVideoSound
           class="max-h-full max-w-full rounded-xl bg-black object-contain"
         ></video>
       {/if}

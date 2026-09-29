@@ -8,11 +8,8 @@
   } from '$lib/forms/cotisationSettings';
   import Input from '$lib/components/ui/Input.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
-  import {
-    CONTROL_HINT_CLASS,
-    CONTROL_LABEL_CLASS,
-    controlClass,
-  } from '$lib/components/ui/controlClasses';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import CotisationTierPicker from '$lib/components/pricing/CotisationTierPicker.svelte';
   import FormSection from './FormSection.svelte';
@@ -108,7 +105,14 @@
 
     <div>
       <label for="form-opens-at" class={CONTROL_LABEL_CLASS}>{m.form_opens_at_label()}</label>
-      <input id="form-opens-at" type="datetime-local" bind:value={opensAt} class={controlClass()} />
+      <DateTimeField
+        id="form-opens-at"
+        value={opensAt}
+        onValueChange={(v) => (opensAt = v)}
+        label={m.form_opens_at_label()}
+        clearable
+        density="default"
+      />
       <p class={CONTROL_HINT_CLASS}>{m.form_opens_at_hint()}</p>
     </div>
   </div>

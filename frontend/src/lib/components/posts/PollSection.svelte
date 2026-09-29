@@ -9,6 +9,10 @@
     type PollDraftOption,
   } from '$lib/posts/pollDraft';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import { toDatetimeLocalValue } from '$lib/utils/dates';
+  import type { PickerOption } from '$lib/components/ui/picker';
 
   /**
    * Collapsible card that lets the author configure a poll.
@@ -67,6 +71,18 @@
       (_, i) => i + POLL_MIN_OPTIONS
     )
   );
+
+  /**
+   * "Unlimited" then each offered cap. `null` cannot be a picker value, so it is carried as the
+   * empty string and mapped back in `onValueChange`.
+   */
+  const capOptions = $derived<PickerOption[]>([
+    { value: '', label: m.post_poll_max_selections_unlimited() },
+    ...capChoices.map((choice) => ({
+      value: String(choice),
+      label: m.post_poll_max_selections_option({ count: choice }),
+    })),
+  ]);
 
   // A cap survives the removal of the options that justified it, and would then silently mean
   // something else. It is dropped as soon as it stops being offered.
@@ -132,37 +148,41 @@
     <!-- The cap only exists where it can mean something: two answers or more are allowed, and
          there are enough options for "some but not all" to be a distinction. -->
     {#if multipleChoice && capChoices.length > 0}
-      <label class="block">
-        <span class="text-text-main mb-2 ml-1 block text-sm font-bold"
-          >{m.post_poll_max_selections_label()}</span
+      <div>
+        <label for="poll-max-selections" class="text-text-main mb-2 ml-1 block text-sm font-bold"
+          >{m.post_poll_max_selections_label()}</label
         >
-        <select
-          bind:value={maxSelections}
-          class="border-cn-border/70 bg-cn-surface text-text-main focus:border-cn-yellow focus:ring-cn-yellow/25 w-full cursor-pointer appearance-none rounded-xl border px-4 py-3 text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
-        >
-          <option value={null}>{m.post_poll_max_selections_unlimited()}</option>
-          {#each capChoices as choice (choice)}
-            <option value={choice}>{m.post_poll_max_selections_option({ count: choice })}</option>
-          {/each}
-        </select>
-      </label>
+        <Picker
+          id="poll-max-selections"
+          label={m.post_poll_max_selections_label()}
+          value={maxSelections === null ? '' : String(maxSelections)}
+          options={capOptions}
+          onValueChange={(v) => (maxSelections = v === '' ? null : Number(v))}
+          triggerClass="border-cn-border/70 bg-cn-surface text-text-main focus:border-cn-yellow focus:ring-cn-yellow/25 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border px-4 py-3 text-left text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
+        />
+      </div>
     {/if}
 
-    <label class="block">
-      <span class="text-text-main mb-2 ml-1 block text-sm font-bold">
+    <div>
+      <label for="poll-ends-at" class="text-text-main mb-2 ml-1 block text-sm font-bold">
         {m.poll_deadline_label()}
         <span class="text-text-muted font-medium">{m.poll_deadline_optional()}</span>
-      </span>
-      <input
-        type="datetime-local"
-        bind:value={endsAt}
-        class="border-cn-border/70 bg-cn-surface text-text-main focus:border-cn-yellow focus:ring-cn-yellow/25 w-full rounded-xl border px-4 py-3 text-sm font-medium shadow-sm transition-all outline-none focus:ring-2"
+      </label>
+      <DateTimeField
+        id="poll-ends-at"
+        value={endsAt}
+        onValueChange={(v) => (endsAt = v)}
+        label={m.poll_deadline_label()}
+        min={toDatetimeLocalValue(new Date().toISOString())}
+        clearable
+        density="default"
+        invalid={issue === 'endsAt'}
       />
       {#if issue === 'endsAt'}
         <p class="text-2xs pt-1.5 font-bold text-red-600 dark:text-red-400">
           {m.post_poll_issue_ends_at()}
         </p>
       {/if}
-    </label>
+    </div>
   </div>
 </div>

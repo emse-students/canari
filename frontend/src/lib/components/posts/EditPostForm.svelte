@@ -4,7 +4,7 @@
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
-  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
+  import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import {
     updatePost,
@@ -255,21 +255,8 @@
       // Upload new media files and get their refs.
       const uploadedRefs: PostMediaRef[] = [];
       for (let i = 0; i < newFiles.length; i++) {
-        const file = newFiles[i];
-        let uploadFile = file;
-        let dims: { width: number; height: number } | undefined;
-        if (file.type.startsWith('image/')) {
-          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
-          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
-          uploadFile = compressed.file;
-          dims = { width: compressed.width, height: compressed.height };
-        }
-        const ref = await mediaService.encryptAndUpload(
-          uploadFile,
-          currentAuthToken,
-          dims,
-          'archive'
-        );
+        const { file, dims } = await preparePostMedia(newFiles[i]);
+        const ref = await mediaService.encryptAndUpload(file, currentAuthToken, dims, 'archive');
         const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
       }

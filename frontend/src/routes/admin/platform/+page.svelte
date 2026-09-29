@@ -9,6 +9,8 @@
   import { Wrench, Save, RefreshCw, Megaphone, Trash2 } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
 
   type PlatformConfig = {
     maintenanceEnabled: boolean;
@@ -26,6 +28,11 @@
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
   let paymentProvider = $state<'stripe' | 'lydia'>('stripe');
+  /** Product names, not prose: they read the same in every locale. */
+  const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = [
+    { value: 'stripe', label: 'Stripe' },
+    { value: 'lydia', label: 'Lydia' },
+  ];
 
   /** The live announcement as the server holds it, or null when none is published. */
   type ActiveAnnouncement = {
@@ -289,14 +296,16 @@
         <label for="payment-provider" class="text-text-main text-sm font-bold">
           {m.admin_platform_payment_provider_label()}
         </label>
-        <select
+        <Picker
           id="payment-provider"
-          bind:value={paymentProvider}
-          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-        >
-          <option value="stripe">Stripe</option>
-          <option value="lydia">Lydia</option>
-        </select>
+          value={paymentProvider}
+          options={PAYMENT_PROVIDER_OPTIONS}
+          label={m.admin_platform_payment_provider_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            if (v === 'stripe' || v === 'lydia') paymentProvider = v;
+          }}
+        />
         <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
         </p>

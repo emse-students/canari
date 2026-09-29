@@ -3,6 +3,8 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
@@ -113,6 +115,45 @@
       .filter((o: any) => o.id && o.label)
       .map((o: any) => ({ id: o.id, label: o.label }));
   }
+
+  /** A linear scale starts at 0 or 1. */
+  const SCALE_MIN_OPTIONS: PickerOption[] = [0, 1].map((v) => ({
+    value: String(v),
+    label: String(v),
+  }));
+  /** ...and ends anywhere from 2 to 10. */
+  const SCALE_MAX_OPTIONS: PickerOption[] = Array.from({ length: 9 }, (_, i) => i + 2).map((v) => ({
+    value: String(v),
+    label: String(v),
+  }));
+
+  /** The two scale pickers wear the question's own field box, sized to their content. */
+  const scaleTriggerClass = `${fieldClass} w-auto min-w-[4rem] flex items-center justify-between gap-2 text-left`;
+
+  /** The two condition pickers: a compact box sharing the row. */
+  const conditionTriggerClass =
+    'border-cn-border text-text-main focus:border-cn-yellow flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-left text-xs transition-all outline-none';
+
+  /** "Always show", then every question this one may depend on. */
+  const conditionSourceOptions = $derived<PickerOption[]>([
+    { value: '', label: m.form_builder_always_show() },
+    ...eligibleConditionSources.map((src: any) => ({
+      value: src.id,
+      label:
+        src.label ||
+        m.form_builder_untitled_question({
+          n: allItems.findIndex((q: any) => q.id === src.id) + 1,
+        }),
+    })),
+  ]);
+
+  /** "Value..." (no value yet), then the answers of the question this one depends on, by id. */
+  const conditionValueOptions = $derived<PickerOption[]>([
+    { value: '', label: m.form_builder_condition_value_placeholder() },
+    ...(item.dependsOn
+      ? getOptions(item.dependsOn).map((o) => ({ value: o.id, label: o.label }))
+      : []),
+  ]);
 
   let uploadingImage = $state(false);
   let imageUploadError = $state('');
@@ -401,16 +442,21 @@
         <span class="text-text-main w-full text-sm font-bold sm:w-auto"
           >{m.form_builder_scale_prefix()}</span
         >
-        <select bind:value={item.scale.min} class={fieldClass + ' w-auto min-w-[4rem]'}>
-          <option value={0} class="bg-white dark:bg-zinc-800">0</option>
-          <option value={1} class="bg-white dark:bg-zinc-800">1</option>
-        </select>
+        <Picker
+          label={m.form_builder_scale_min_picker()}
+          value={String(item.scale.min)}
+          options={SCALE_MIN_OPTIONS}
+          onValueChange={(v) => (item.scale.min = Number(v))}
+          triggerClass={scaleTriggerClass}
+        />
         <span class="text-text-muted text-xs font-bold uppercase">{m.form_builder_scale_to()}</span>
-        <select bind:value={item.scale.max} class={fieldClass + ' w-auto min-w-[4rem]'}>
-          {#each Array.from({ length: 9 }, (_, i) => i + 2) as val (val)}
-            <option value={val} class="bg-white dark:bg-zinc-800">{val}</option>
-          {/each}
-        </select>
+        <Picker
+          label={m.form_builder_scale_max_picker()}
+          value={String(item.scale.max)}
+          options={SCALE_MAX_OPTIONS}
+          onValueChange={(v) => (item.scale.max = Number(v))}
+          triggerClass={scaleTriggerClass}
+        />
       </div>
       <div class="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2 sm:gap-5 sm:pt-2">
         <Input
@@ -623,32 +669,25 @@
         >
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <select
-          bind:value={item.dependsOn}
-          class="border-cn-border text-text-main focus:border-cn-yellow min-w-0 flex-1 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-xs transition-all outline-none"
-          onchange={() => {
+        <Picker
+          label={m.form_builder_conditional_label()}
+          value={item.dependsOn ?? ''}
+          options={conditionSourceOptions}
+          onValueChange={(v) => {
+            item.dependsOn = v;
             item.dependsValue = '';
           }}
-        >
-          <option value="">{m.form_builder_always_show()}</option>
-          {#each eligibleConditionSources as src (src.id)}
-            <option value={src.id}
-              >{src.label ||
-                `Question ${allItems.findIndex((q: any) => q.id === src.id) + 1}`}</option
-            >
-          {/each}
-        </select>
+          triggerClass={conditionTriggerClass}
+        />
         {#if item.dependsOn}
           <span class="text-text-muted shrink-0 text-xs">=</span>
-          <select
-            bind:value={item.dependsValue}
-            class="border-cn-border text-text-main focus:border-cn-yellow min-w-0 flex-1 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-xs transition-all outline-none"
-          >
-            <option value="">{m.form_builder_condition_value_placeholder()}</option>
-            {#each getOptions(item.dependsOn) as option (option.id)}
-              <option value={option.id}>{option.label}</option>
-            {/each}
-          </select>
+          <Picker
+            label={m.form_builder_conditional_label()}
+            value={item.dependsValue ?? ''}
+            options={conditionValueOptions}
+            onValueChange={(v) => (item.dependsValue = v)}
+            triggerClass={conditionTriggerClass}
+          />
         {/if}
       </div>
     </div>

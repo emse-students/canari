@@ -30,7 +30,9 @@
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import EventFormModal from '$lib/components/calendar/EventFormModal.svelte';
   import {
     blankEventFormValues,
@@ -76,9 +78,9 @@
   async function loadAssociations() {
     try {
       const list = await listAssociations();
-      // Sorted for `associations[0]`, the default deposit target - NOT for the two selects, whose
-      // order is `AssociationOptions`. A default that moved with the API response order would be
-      // a different association on two loads of the same page.
+      // Sorted for `associations[0]`, the default deposit target - NOT for the two association
+      // choices, whose order is `groupAssociationsForSelect`. A default that moved with the API
+      // response order would be a different association on two loads of the same page.
       associations = [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     } catch {
       associations = [];
@@ -97,6 +99,11 @@
       void goto(path, { replaceState: true, keepFocus: true, noScroll: true });
     }
   }
+
+  const filterOptions = $derived<PickerOption[]>([
+    { value: '', label: m.calendar_filter_all() },
+    ...associationPickerOptions(associations),
+  ]);
 
   function onFilterSelectChange() {
     agenda.selectedDay = null;
@@ -515,17 +522,20 @@
     {/snippet}
 
     {#snippet associationFilter()}
-      <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
-        {m.calendar_filter_label()}
-        <select
-          class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
-          bind:value={filterAssociationId}
-          onchange={onFilterSelectChange}
-        >
-          <option value="">{m.calendar_filter_all()}</option>
-          <AssociationOptions {associations} />
-        </select>
-      </label>
+      <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
+        <label for="calendar-association-filter">{m.calendar_filter_label()}</label>
+        <Picker
+          id="calendar-association-filter"
+          value={filterAssociationId}
+          options={filterOptions}
+          label={m.calendar_filter_label()}
+          triggerClass="border-cn-border text-text-main flex items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2 text-left text-sm font-medium"
+          onValueChange={(v) => {
+            filterAssociationId = v;
+            onFilterSelectChange();
+          }}
+        />
+      </div>
     {/snippet}
 
     {#snippet exportActions()}

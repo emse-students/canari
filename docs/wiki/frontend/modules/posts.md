@@ -91,6 +91,24 @@ empty field, four unlabelled icons, and "Publier" ABOVE them.
   on a phone, a popover on a wide window - never a native `<select>`, which on Android opens the
   system's dialog of bare names (user: *"il ne vaut mieux pas sortir de l'experience de
   l'application"*). The rule is app-wide, in [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
+- **So is every date**: the schedule chip, a poll's deadline, a form's opening, an event's start
+  and end are `ui/DateTimeField` - a month grid with hour and minute columns, a draft until
+  "Valider". The schedule chip's minimum used to be `toISOString().slice(0, 16)`, a UTC time read
+  as local, so in Paris it refused the next two hours; it is `toDatetimeLocalValue` now.
+- **A video in the feed plays like Instagram's** (user, Mi 9T: *"L'affichage actuel est assez moche
+  non ? Je veux un truc joli comme instagram"*). It drew the native controls - Android's grey bar -
+  inside a 16:9 box of its own, a "Plein ecran" pill and a download button over it, and a phone's
+  vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
+  a video's `width`/`height` at upload (`readVideoDimensions`), so `PostContent` reserves the box
+  at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
+  `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
+  whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
+  [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
+  The download lives in the viewer. A video posted before this carries no dimensions and keeps the
+  4:3 box, filled the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
+  playing, looping, silent at every start until its button is pressed, then audible on every video
+  at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
+  the two played together, sound on both.
 
 ## Key components
 
