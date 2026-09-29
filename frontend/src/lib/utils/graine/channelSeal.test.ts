@@ -1,9 +1,14 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { byNewestSession } from '$lib/db/graineCodec';
 import { openWithGraine } from '$lib/crypto/graine';
+import { GraineSignatureError, sealWithGraineV2 } from '$lib/crypto/graineV2';
+import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
+  GraineAuthorMismatchError,
   GraineBelowFirstIndexError,
+  GraineChannelMismatchError,
+  GraineReplayError,
   GraineSessionUnavailableError,
   GraineUnknownChannelError,
   openChannelMessage,
@@ -64,6 +69,7 @@ function fakeMls(epoch: number | null) {
       // window of `ensureDistributionGroup`, and every seal below happens long after one.
       isDistributionBaseSettled: () => true,
       getEpoch: () => epoch ?? 0,
+      graineSignatureEngine: () => webCryptoEngine,
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
         // What MLS would hand back: the sealed frame, which the session keeps (section 19).
@@ -176,6 +182,8 @@ describe('opening', () => {
     wire(storage, fakeMls(4).mls);
 
     const err = await openChannelMessage(CHANNEL, {
+      id: 'row-1',
+      senderId: 'bob',
       ciphertext: 'x',
       nonce: 'y',
       senderSessionId: 'sess-unknown',
@@ -192,6 +200,8 @@ describe('opening', () => {
 
     await expect(
       openChannelMessage(CHANNEL, {
+        id: 'row-1',
+        senderId: 'bob',
         ciphertext: 'x',
         nonce: null,
         senderSessionId: null,
@@ -205,6 +215,8 @@ describe('opening', () => {
     wire(storage, fakeMls(4).mls);
 
     const err = await openChannelMessage(CHANNEL, {
+      id: 'row-1',
+      senderId: 'bob',
       ciphertext: 'x',
       nonce: 'y',
       senderSessionId: 'sess-1',
@@ -225,6 +237,8 @@ describe('opening', () => {
     rows.set(mine.sessionId, { ...mine, firstIndex: sealed.messageIndex });
 
     const opened = await openChannelMessage(CHANNEL, {
+      id: 'row-1',
+      senderId: 'bob',
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
       senderSessionId: sealed.senderSessionId,
@@ -294,5 +308,126 @@ describe('a private salon seals on its OWN group', () => {
       GraineDistributionUnavailableError
     );
     expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * WP-G2-4: a row under a v2 session is opened only when the server's labels match what the session
+ * was endorsed with, the signature covers them, and no other row already showed the same key.
+ * Every refusal is a TYPE the unreadable-row accounting files as a fault.
+ */
+describe('opening a v2 row', () => {
+  const SECRET = Uint8Array.from({ length: 32 }, (_, i) => i + 7);
+  const SEED = toBase64(new Uint8Array(32).fill(4));
+  const SEED_BYTES = fromBase64(SEED);
+
+  async function v2Session(): Promise<StoredGraineSession> {
+    return {
+      workspaceId: WS,
+      channelId: CHANNEL,
+      sessionId: 'sess-v2',
+      senderId: 'bob',
+      seedB64: SEED,
+      firstIndex: 0,
+      createdAt: 1,
+      v2: {
+        minterDeviceId: 'dev-b',
+        signingPublicKeyB64: toBase64(await ed25519PublicKeyOf(SECRET)),
+        endorsementB64: toBase64(new Uint8Array(64)),
+      },
+    };
+  }
+
+  async function sealedRow(index: number, overrides: { channelId?: string; minter?: string } = {}) {
+    const sealed = await sealWithGraineV2(
+      SEED_BYTES,
+      {
+        channelId: overrides.channelId ?? CHANNEL,
+        sessionId: 'sess-v2',
+        minterUserId: overrides.minter ?? 'bob',
+        index,
+      },
+      new Uint8Array([9, index]),
+      SECRET,
+      webCryptoEngine
+    );
+    return {
+      id: `row-${index}`,
+      senderId: 'bob',
+      senderSessionId: 'sess-v2',
+      messageIndex: index,
+      ...sealed,
+    };
+  }
+
+  async function wired() {
+    const { storage } = fakeStorage([await v2Session()]);
+    wire(storage, fakeMls(4).mls);
+  }
+
+  it('opens a row the session signed, bound to its salon, author and index', async () => {
+    await wired();
+    const opened = await openChannelMessage(CHANNEL, await sealedRow(3));
+    expect([...opened]).toEqual([9, 3]);
+  });
+
+  it('refuses a row the server re-attributes to someone else', async () => {
+    await wired();
+    const err = await openChannelMessage(CHANNEL, {
+      ...(await sealedRow(3)),
+      senderId: 'mallory',
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(GraineAuthorMismatchError);
+    expect(err.minter).toBe('bob');
+  });
+
+  it('refuses a row served in another salon than its session', async () => {
+    await wired();
+    registerChannelWorkspace('chan-2', WS, false);
+    const err = await openChannelMessage('chan-2', await sealedRow(3)).catch((e) => e);
+    expect(err).toBeInstanceOf(GraineChannelMismatchError);
+  });
+
+  it('refuses a row moved to another index, or whose signature was stripped', async () => {
+    await wired();
+    const moved = await openChannelMessage(CHANNEL, {
+      ...(await sealedRow(3)),
+      messageIndex: 4,
+    }).catch((e) => e);
+    expect(moved).toBeInstanceOf(GraineSignatureError);
+
+    const stripped = await openChannelMessage(CHANNEL, {
+      ...(await sealedRow(5)),
+      signature: null,
+    }).catch((e) => e);
+    // The version belongs to the session, so dropping the signature is not a downgrade to v1.
+    expect(stripped).toBeInstanceOf(GraineSignatureError);
+  });
+
+  it('refuses a row a member signed with a header naming another minter', async () => {
+    await wired();
+    const err = await openChannelMessage(CHANNEL, await sealedRow(3, { minter: 'carol' })).catch(
+      (e) => e
+    );
+    expect(err).toBeInstanceOf(GraineSignatureError);
+  });
+
+  it('shows a replayed key once: the same row twice is fine, a second row is refused', async () => {
+    await wired();
+    const row = await sealedRow(6);
+    await openChannelMessage(CHANNEL, row);
+    await expect(openChannelMessage(CHANNEL, row)).resolves.toBeTruthy();
+
+    const err = await openChannelMessage(CHANNEL, { ...row, id: 'row-replayed' }).catch((e) => e);
+    expect(err).toBeInstanceOf(GraineReplayError);
+    expect(err.firstRowId).toBe('row-6');
+  });
+
+  it('never lets a forged row claim a key before the real one', async () => {
+    await wired();
+    const real = await sealedRow(7);
+    const forged = { ...real, id: 'row-forged', ciphertext: toBase64(new Uint8Array(20)) };
+    await expect(openChannelMessage(CHANNEL, forged)).rejects.toBeInstanceOf(GraineSignatureError);
+    await expect(openChannelMessage(CHANNEL, real)).resolves.toBeTruthy();
   });
 });

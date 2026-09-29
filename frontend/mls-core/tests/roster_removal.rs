@@ -166,3 +166,41 @@ fn removing_a_user_who_is_not_in_the_tree_is_an_error_not_an_empty_commit() {
         "an empty removal must not stage a commit that moves the epoch for nothing"
     );
 }
+
+/// THE KEY A GRAINE V2 ENDORSEMENT IS CHECKED AGAINST IS THE ONE THE TREE HOLDS, and it is the key
+/// the device really signs with: bob's endorsement verifies under the key alice reads for
+/// `bob:dev1` from her own copy of the tree, and under no other leaf's.
+#[test]
+fn a_member_signature_key_is_the_key_that_device_signs_with() {
+    use mls_core::graine_signature::verify_graine_signature;
+    let gid = "g-signature-key";
+    let (alice, others) = group_with(gid, &[("bob", "dev1"), ("bob", "dev2")]);
+    let endorsement = others[0]
+        .sign_with_device_credential(b"canari-graine-v2-endorse")
+        .expect("bob:dev1 signs");
+
+    let bob1 = alice
+        .member_signature_key(gid, "bob:dev1")
+        .expect("group held")
+        .expect("bob:dev1 has a leaf");
+    assert_eq!(
+        verify_graine_signature(&bob1, b"canari-graine-v2-endorse", &endorsement),
+        Ok(())
+    );
+    let bob2 = alice
+        .member_signature_key(gid, "bob:dev2")
+        .unwrap()
+        .unwrap();
+    assert!(verify_graine_signature(&bob2, b"canari-graine-v2-endorse", &endorsement).is_err());
+
+    assert_eq!(
+        alice.member_signature_key(gid, "carol:dev1").unwrap(),
+        None,
+        "a device with no leaf is an answer, not an error"
+    );
+    assert!(
+        alice
+            .member_signature_key("g-never-created", "bob:dev1")
+            .is_err()
+    );
+}

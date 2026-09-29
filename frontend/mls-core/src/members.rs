@@ -61,6 +61,31 @@ impl MlsManager {
         group.members().map(|m| leaf_identity(&m)).collect()
     }
 
+    /// The signature public key of the leaf whose identity is `identity` (`userId:deviceId`) in
+    /// `group_id`, or `None` when no leaf carries it.
+    ///
+    /// What a Graine v2 endorsement is checked against (channel-encryption section 21): the key the
+    /// TREE holds for the minting device, which every member of the key group already agreed on -
+    /// no new key has to be distributed or trusted. `None` is an answer, not an error: the device
+    /// has left the tree, and the caller asks the server's published history instead.
+    pub fn member_signature_key(
+        &self,
+        group_id: &str,
+        identity: &str,
+    ) -> Result<Option<Vec<u8>>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        for member in group.members() {
+            if leaf_identity(&member)? == identity {
+                return Ok(Some(member.signature_key));
+            }
+        }
+        log::debug!("[GRAINE_SIG] no leaf for {identity} in {group_id}");
+        Ok(None)
+    }
+
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.
     /// Returns the serialized commit bytes that must be broadcast to all group members.
     ///

@@ -51,3 +51,11 @@ export type DeviceKeyPackageAnswer =
 export function refusalIsTemporary(reason: DeviceKeyPackageRefusal): boolean {
   return reason === 'expired';
 }
+
+/**
+ * What the server answers about a device's published signature keys (Graine v2 endorsements).
+ * `keys` may be empty, which is an answer; `unanswered` establishes nothing about the device.
+ */
+export type DeviceSignatureKeys =
+  | { kind: 'keys'; keys: Uint8Array[] }
+  | { kind: 'unanswered'; detail: string };

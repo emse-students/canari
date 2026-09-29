@@ -11,6 +11,9 @@ import {
   mkText,
 } from '$lib/proto/codec';
 import { toBase64 } from '$lib/utils/hex';
+import { encodeGraineEndorsementV2, graineSeedCommitment } from '$lib/crypto/graineV2';
+import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
+import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import {
   registerCommunityHistoryVisibility,
@@ -40,15 +43,63 @@ vi.mock('$lib/services/ChannelService', () => ({
 
 const SEED = new Uint8Array(32).fill(3);
 
-/** The five v2 fields of a seed minted by carol on dev-c (values are opaque here: G2-4 checks them). */
-const V2_WIRE = {
-  version: 2,
-  minterUserId: 'carol',
-  minterDeviceId: 'dev-c',
-  signingPublicKey: new Uint8Array(32).fill(4),
-  endorsement: new Uint8Array(64).fill(5),
+/** carol's device credential key, and the session key she minted - real Ed25519, so G2-4 checks bite. */
+const CAROL_DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 100 + i);
+const SESSION_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 50 + i);
+let CAROL_DEVICE_PK: Uint8Array;
+
+/**
+ * The five v2 fields of a seed minted by carol on dev-c, endorsed over `frame()`'s channel, session,
+ * seed and date. Built once: Ed25519 is deterministic, so every test sees the same bytes.
+ */
+let V2_WIRE: {
+  version: number;
+  minterUserId: string;
+  minterDeviceId: string;
+  signingPublicKey: Uint8Array;
+  endorsement: Uint8Array;
 };
 
+beforeAll(async () => {
+  CAROL_DEVICE_PK = await ed25519PublicKeyOf(CAROL_DEVICE_SECRET);
+  const signingPublicKey = await ed25519PublicKeyOf(SESSION_SECRET);
+  const descriptor = encodeGraineEndorsementV2({
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    minterUserId: 'carol',
+    minterDeviceId: 'dev-c',
+    signingPublicKey,
+    seedCommitment: await graineSeedCommitment(SEED),
+    createdAt: 1_700_000_000_000,
+  });
+  V2_WIRE = {
+    version: 2,
+    minterUserId: 'carol',
+    minterDeviceId: 'dev-c',
+    signingPublicKey,
+    endorsement: await webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, descriptor),
+  };
+});
+
+/**
+ * The key group's tree, as `memberSignatureKey` reads it, and the server's published history for
+ * a device that has left it. carol:dev-c is in the tree unless a test takes her out.
+ */
+const tree = new Map<string, Uint8Array>();
+let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
+function graineMls(extra: Record<string, unknown> = {}) {
+  return {
+    memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
+    fetchDeviceSignatureKeys: async () => published,
+    graineSignatureEngine: () => webCryptoEngine,
+    ...extra,
+  } as never;
+}
+beforeEach(() => {
+  tree.clear();
+  tree.set('carol:dev-c', CAROL_DEVICE_PK);
+  published = { kind: 'keys', keys: [] };
+});
 function fakeStorage(seed: StoredGraineSession[] = []) {
   const rows = new Map(seed.map((s) => [s.sessionId, s]));
   const saved: StoredGraineSession[] = [];
@@ -89,7 +140,7 @@ function wire(storage: IStorage) {
     storage,
     deviceKeyB64: 'device-key',
     userId: 'alice',
-    mlsService: {} as never,
+    mlsService: graineMls(),
   });
 }
 
@@ -318,6 +369,76 @@ describe('a seed arriving on the distribution group', () => {
     error.mockRestore();
   });
 
+  // WP-G2-4: a NEW v2 session is stored only once its minter's device is shown to have endorsed
+  // this key and this seed.
+  describe('the endorsement of a new v2 seed', () => {
+    it('refuses a seed whose endorsement another device signed, and stores nothing', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      tree.set('carol:dev-c', await ed25519PublicKeyOf(SESSION_SECRET));
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await handleDistributionFrame(frame(V2_WIRE));
+
+      expect(saved).toHaveLength(0);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain('REFUSED v2 seed sess-1');
+      error.mockRestore();
+    });
+
+    it('refuses a substituted seed, since the endorsement commits to the real one', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await handleDistributionFrame(frame({ ...V2_WIRE, seed: new Uint8Array(32).fill(8) }));
+
+      expect(saved).toHaveLength(0);
+      error.mockRestore();
+    });
+
+    it('refuses a v2 seed stripped of its endorsement fields rather than reading it as v1', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await handleDistributionFrame(frame({ ...V2_WIRE, endorsement: new Uint8Array(0) }));
+
+      expect(saved).toHaveLength(0);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+        'without its minter, key or endorsement'
+      );
+      error.mockRestore();
+    });
+
+    it('checks a minter who has LEFT the tree against the keys the server published', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      tree.clear();
+      published = { kind: 'keys', keys: [new Uint8Array(32).fill(1), CAROL_DEVICE_PK] };
+
+      await handleDistributionFrame(frame(V2_WIRE));
+
+      expect(saved[0]?.senderId).toBe('carol');
+    });
+
+    it('stores nothing, and refuses nothing, when the server cannot be asked', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      tree.clear();
+      published = { kind: 'unanswered', detail: 'HTTP 503' };
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await handleDistributionFrame(frame(V2_WIRE));
+
+      expect(saved).toHaveLength(0);
+      expect(error).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls.at(-1)?.[0])).toContain('NOT stored yet');
+      warn.mockRestore();
+      error.mockRestore();
+    });
+  });
+
   it('declines a malformed seed and says so', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -382,7 +503,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       storage,
       deviceKeyB64: 'device-key',
       userId: 'alice',
-      mlsService: { sendMessage } as never,
+      mlsService: graineMls({ sendMessage }),
     });
     return sendMessage;
   }
@@ -700,7 +821,7 @@ describe('a history request from a joiner (WP-34)', () => {
       } as unknown as IStorage,
       deviceKeyB64: 'device-key',
       userId: 'alice',
-      mlsService: { sendMessage } as never,
+      mlsService: graineMls({ sendMessage }),
     });
     return sendMessage;
   }

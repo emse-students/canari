@@ -59,6 +59,22 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the Graine v1 reader: a salon row with no signature, under a session with no endorsement
+
+**Site:** `openChannelMessage` in `frontend/src/lib/utils/graine/channelSeal.ts`, the `openWithGraine`
+branch taken when the session carries no `v2` block; its native twin is `open_graine_message` in
+`src-tauri/src/mobile/graine.rs`. And `storeIncomingSeed`, which still ACCEPTS a new v1 seed.
+**Shim:** Graine v2 (channel-encryption section 21) binds a row to its salon, author and index and
+signs it. A v1 row proves none of that, and a v1 seed names no minter. v1 is kept because every row
+written before the v2 writer is v1, and they stay readable for as long as they are kept.
+**Removal condition, in two steps (user, 2026-09-28):**
+- once `minClientVersion` is the v2 WRITER (G2-5) and both stores serve it, a v1 seed that ARRIVES
+  is refused, since a modified client could otherwise keep minting v1 sessions to forge an author;
+- the v1 READER goes when no v1 row is left:
+  `SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL`
+  on production answers 0. Rows age out of the 365-day window, so that is at most a year after the
+  writer ships. A count, not a date: a salon nobody prunes keeps its rows.
+
 ### No date yet - a carte publish body that is the bare document, with no fingerprint
 
 **Site:** `PosterService.readPublishBody` in `apps/social-service/src/associations/poster.service.ts`,

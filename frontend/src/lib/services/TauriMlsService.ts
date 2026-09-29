@@ -1,3 +1,4 @@
+import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -1134,6 +1135,33 @@ export class TauriMlsService extends BaseMlsService {
    */
   async getGroupMemberIdentities(groupId: string): Promise<string[]> {
     return invoke<string[]>('lister_identites_membres', { groupId });
+  }
+
+  /** The tree's signature key for one leaf, or null when it has none (`graine_member_signature_key`). */
+  async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
+    const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });
+    return key ? new Uint8Array(key) : null;
+  }
+
+  /** The Rust engine's Ed25519 commands, the same `mls-core` code the web runs as WASM. */
+  graineSignatureEngine(): GraineSignatureEngine {
+    return {
+      async signWithSessionKey(secret, message) {
+        return new Uint8Array(
+          await invoke<number[]>('graine_sign_with_session_key', {
+            secret: Array.from(secret),
+            message: Array.from(message),
+          })
+        );
+      },
+      verifySignature(publicKey, message, signature) {
+        return invoke<GraineSignatureVerdict>('graine_verify_signature', {
+          publicKey: Array.from(publicKey),
+          message: Array.from(message),
+          signature: Array.from(signature),
+        });
+      },
+    };
   }
 
   /** Returns the last cached MLS epoch for a group, or 0 if unknown; cache is refreshed by `refreshEpochCache`. */

@@ -1,7 +1,11 @@
 import { openWithGraine, sealWithGraine } from '$lib/crypto/graine';
+import { GraineSignatureError, openWithGraineV2 } from '$lib/crypto/graineV2';
+import type { StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
+import type { IMlsService } from '$lib/mls-client/IMlsService';
 import {
   cacheGraineSession,
   cachedGraineSession,
+  claimOpenedKey,
   rawChannelId,
   requireGraineRuntime,
   scopeForChannel,
@@ -40,12 +44,18 @@ export interface SealedChannelMessage {
   seedGroupId: string;
 }
 
-/** The three fields opening a message needs, exactly as the server hands them back. */
+/** What opening a message needs, exactly as the server hands it back. */
 export interface OpenableChannelMessage {
+  /** The server row id - what a replay is told apart by. */
+  id: string;
+  /** The author the SERVER names. Under a v2 session it must be the session's minter. */
+  senderId: string;
   ciphertext: string;
   nonce: string | null;
   senderSessionId: string | null;
   messageIndex: number | null;
+  /** Graine v2's session signature; absent from a v1 row, and REQUIRED under a v2 session. */
+  signature?: string | null;
 }
 
 /**
@@ -83,6 +93,56 @@ export class GraineBelowFirstIndexError extends Error {
       `[GRAINE] message ${index} of session ${sessionId} is below the handover floor ${firstIndex}`
     );
     this.name = 'GraineBelowFirstIndexError';
+  }
+}
+
+/**
+ * Thrown when a row under a v2 session names an author who is not the session's minter.
+ *
+ * The server relabelled it, or a member tried to post under a session that is not theirs. A FAULT,
+ * never a missing seed: a repair would hand back the same seed, whose minter is still somebody else.
+ */
+export class GraineAuthorMismatchError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly claimed: string,
+    readonly minter: string
+  ) {
+    super(
+      `[GRAINE] AUTHOR MISMATCH session ${sessionId}: the row names ${claimed}, the session was minted by ${minter}`
+    );
+    this.name = 'GraineAuthorMismatchError';
+  }
+}
+
+/** Thrown when a row under a v2 session is served in another salon than the session's. A FAULT. */
+export class GraineChannelMismatchError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly servedIn: string,
+    readonly sessionChannel: string
+  ) {
+    super(
+      `[GRAINE] CHANNEL MISMATCH session ${sessionId}: served in ${servedIn.slice(0, 8)}, belongs to ${sessionChannel.slice(0, 8)}`
+    );
+    this.name = 'GraineChannelMismatchError';
+  }
+}
+
+/**
+ * Thrown for a second row naming a message key another row already opened - a replayed ciphertext.
+ * Shown once: the first row stays, this one is not rendered.
+ */
+export class GraineReplayError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly index: number,
+    readonly firstRowId: string
+  ) {
+    super(
+      `[GRAINE] REPLAY of message ${index} of session ${sessionId}, first seen as ${firstRowId}`
+    );
+    this.name = 'GraineReplayError';
   }
 }
 
@@ -183,7 +243,7 @@ export async function openChannelMessage(
     throw new GraineSessionUnavailableError(row.senderSessionId ?? '(none)', channel);
   }
 
-  const { storage, deviceKeyB64 } = requireGraineRuntime(
+  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime(
     `cannot open a message of channel ${channel.slice(0, 8)}`
   );
   let session = cachedGraineSession(row.senderSessionId);
@@ -196,8 +256,72 @@ export async function openChannelMessage(
     throw new GraineBelowFirstIndexError(row.senderSessionId, row.messageIndex, session.firstIndex);
   }
 
-  return openWithGraine(fromBase64(session.seedB64), row.senderSessionId, row.messageIndex, {
-    ciphertext: row.ciphertext,
-    nonce: row.nonce,
-  });
+  const bytes = session.v2
+    ? await openV2Row(
+        channel,
+        {
+          ...row,
+          senderSessionId: row.senderSessionId,
+          nonce: row.nonce,
+          messageIndex: row.messageIndex,
+        },
+        session,
+        session.v2,
+        mlsService
+      )
+    : await openWithGraine(fromBase64(session.seedB64), row.senderSessionId, row.messageIndex, {
+        ciphertext: row.ciphertext,
+        nonce: row.nonce,
+      });
+
+  // AFTER the row authenticated, never before: a forged row claiming the key first would otherwise
+  // be the one shown and the real one refused as its replay.
+  const first = claimOpenedKey(row.senderSessionId, row.messageIndex, row.id);
+  if (first !== null) {
+    throw new GraineReplayError(row.senderSessionId, row.messageIndex, first);
+  }
+  return bytes;
+}
+
+/**
+ * Opens a row under a v2 session: the author and the salon the server names are checked against
+ * what the session was ENDORSED with, then the signature and the additional data bind the rest.
+ *
+ * The version belongs to the session, which came over MLS, so a server cannot downgrade the row by
+ * dropping its signature: a v2 session's row with none is refused like a bad one.
+ *
+ * Nothing here logs: every refusal is a typed FAULT the caller reports once per page, at ERROR
+ * (`reportUnreadableChannelMessage`), so a relabelled page is one line and not two hundred.
+ */
+async function openV2Row(
+  channel: string,
+  row: OpenableChannelMessage & { senderSessionId: string; nonce: string; messageIndex: number },
+  session: StoredGraineSession,
+  v2: StoredGraineV2,
+  mlsService: IMlsService
+): Promise<Uint8Array> {
+  const sessionChannel = rawChannelId(session.channelId);
+  if (sessionChannel !== channel) {
+    throw new GraineChannelMismatchError(row.senderSessionId, channel, sessionChannel);
+  }
+  // Ids are compared as the rest of the client reads them, lowercased. The SIGNED header uses the
+  // minter exactly as endorsed, so the case of the served id changes nothing it proves.
+  if (row.senderId.toLowerCase() !== session.senderId.toLowerCase()) {
+    throw new GraineAuthorMismatchError(row.senderSessionId, row.senderId, session.senderId);
+  }
+  if (!row.signature) {
+    throw new GraineSignatureError('malformed-signature', 'message');
+  }
+  return openWithGraineV2(
+    fromBase64(session.seedB64),
+    {
+      channelId: session.channelId,
+      sessionId: row.senderSessionId,
+      minterUserId: session.senderId,
+      index: row.messageIndex,
+    },
+    { ciphertext: row.ciphertext, nonce: row.nonce, signature: row.signature },
+    fromBase64(v2.signingPublicKeyB64),
+    mlsService.graineSignatureEngine()
+  );
 }

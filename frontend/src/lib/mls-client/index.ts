@@ -12,7 +12,11 @@ export type {
   BulkIngestObserver,
 } from './IMlsService';
 export { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from './IMlsService';
-export { loadAndInitWasm, migrateLegacyMlsStateBlob } from './mlsWasmLoader';
+export {
+  loadAndInitWasm,
+  migrateLegacyMlsStateBlob,
+  wasmGraineSignatureEngine,
+} from './mlsWasmLoader';
 export {
   shouldAckAfterSuccess,
   shouldAckAfterException,

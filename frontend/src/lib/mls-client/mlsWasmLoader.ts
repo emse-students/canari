@@ -10,6 +10,7 @@
  * WASM assets live under `$lib/wasm/` (built output).
  */
 import { beginBootSpan, endBootSpan, timeBootSpan } from './bootBenchmark';
+import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
 
@@ -188,4 +189,22 @@ export async function loadAndInitWasm(
   } finally {
     endBootSpan('wasm-client-construct');
   }
+}
+
+/**
+ * Graine v2's Ed25519 half on the web: the stateless free functions of the WASM crate, which are
+ * `mls-core/src/graine_signature.rs` - the one implementation on every platform (channel-encryption
+ * section 21.2). Loading is memoised, so the first call waits for the module and none after it do.
+ */
+export function wasmGraineSignatureEngine(): GraineSignatureEngine {
+  return {
+    async signWithSessionKey(secret, message) {
+      const wasm = await loadMlsWasmModule();
+      return wasm.graine_sign_with_session_key(secret, message) as Uint8Array;
+    },
+    async verifySignature(publicKey, message, signature) {
+      const wasm = await loadMlsWasmModule();
+      return wasm.graine_verify_signature(publicKey, message, signature) as GraineSignatureVerdict;
+    },
+  };
 }

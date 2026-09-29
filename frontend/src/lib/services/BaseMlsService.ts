@@ -1,3 +1,4 @@
+import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type {
   IMlsService,
   GroupMeta,
@@ -37,7 +38,7 @@ import type {
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
 import { setSenderMismatchReporter, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { DeviceKeyPackageAnswer } from '$lib/mls-client/deviceKeyPackage';
+import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -2411,6 +2412,11 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.fetchDeviceKeyPackage(userId, deviceId);
   }
 
+  /** Delegates to the delivery API; see {@link IMlsService.fetchDeviceSignatureKeys}. */
+  async fetchDeviceSignatureKeys(userId: string, deviceId: string): Promise<DeviceSignatureKeys> {
+    return this.delivery.fetchDeviceSignatureKeys(userId, deviceId);
+  }
+
   async registerMember(groupId: string, userId: string): Promise<void> {
     return this.delivery.registerMember(groupId, userId);
   }
@@ -4155,5 +4161,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract isGroupActive(groupId: string): Promise<boolean>;
   abstract getEpoch(groupId: string): number;
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
+  abstract memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
 }

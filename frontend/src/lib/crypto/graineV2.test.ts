@@ -10,7 +10,6 @@ import {
   verifyGraineEndorsementV2,
   type GraineEndorsementV2,
   type GraineMessageHeaderV2,
-  type GraineSignatureEngine,
 } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -22,40 +21,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
  * (aes-gcm, sha2, ed25519-dalek) - the pair is the contract a push decrypted natively rests on.
  */
 
-const PKCS8_ED25519_PREFIX = Uint8Array.from([
-  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
-]);
-
-const webCryptoEngine: GraineSignatureEngine = {
-  async signWithSessionKey(secret, message) {
-    const key = await crypto.subtle.importKey(
-      'pkcs8',
-      new Uint8Array([...PKCS8_ED25519_PREFIX, ...secret]),
-      { name: 'Ed25519' },
-      false,
-      ['sign']
-    );
-    return new Uint8Array(await crypto.subtle.sign('Ed25519', key, message as BufferSource));
-  },
-  async verifySignature(publicKey, message, signature) {
-    if (publicKey.length !== 32) return 'malformed-public-key';
-    if (signature.length !== 64) return 'malformed-signature';
-    const key = await crypto.subtle.importKey(
-      'raw',
-      publicKey as BufferSource,
-      { name: 'Ed25519' },
-      false,
-      ['verify']
-    );
-    const ok = await crypto.subtle.verify(
-      'Ed25519',
-      key,
-      signature as BufferSource,
-      message as BufferSource
-    );
-    return ok ? 'valid' : 'invalid';
-  },
-};
+import { webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 
 const range = (start: number, length: number) => Uint8Array.from({ length }, (_, i) => start + i);
 const hex = (bytes: Uint8Array) =>

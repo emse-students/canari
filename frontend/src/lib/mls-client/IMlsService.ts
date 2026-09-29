@@ -1,5 +1,6 @@
+import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { DatedKeyPackage } from './keyPackages';
-import type { DeviceKeyPackageAnswer } from './deviceKeyPackage';
+import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -612,6 +613,8 @@ export interface IMlsService {
    * anything about the device. See {@link DeviceKeyPackageAnswer}.
    */
   fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer>;
+  /** Every signature key the device published (`GET ./signature-keys`), for a v2 endorsement. */
+  fetchDeviceSignatureKeys(userId: string, deviceId: string): Promise<DeviceSignatureKeys>;
   /** Uploads a single KeyPackage to the server so other devices can invite this one. */
   publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
@@ -913,6 +916,17 @@ export interface IMlsService {
    * opposite facts, and conflating them would read "nobody is left" off a group never joined.
    */
   getGroupMemberIdentities(groupId: string): Promise<string[]>;
+  /**
+   * The signature key the TREE of `groupId` holds for the leaf `identity` (`userId:deviceId`), or
+   * `null` when no leaf carries it. What a Graine v2 endorsement is checked against
+   * (channel-encryption section 21): the key every member of the key group already agreed on.
+   *
+   * Throws when this device does not hold the group, for the reason
+   * {@link getGroupMemberIdentities} does: an absent leaf and an absent group are opposite facts.
+   */
+  memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
+  graineSignatureEngine(): GraineSignatureEngine;
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */

@@ -7,11 +7,15 @@ import { encodeAppMessage, decodeAppMessage, mkPoll, mkReaction } from '$lib/pro
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
+  GraineAuthorMismatchError,
   GraineBelowFirstIndexError,
+  GraineChannelMismatchError,
+  GraineReplayError,
   GraineSessionUnavailableError,
   openChannelMessage,
   sealChannelMessage,
 } from '$lib/utils/graine/channelSeal';
+import { GraineSignatureError } from '$lib/crypto/graineV2';
 import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
@@ -92,7 +96,11 @@ export function reportUnreadableChannelMessage(
         ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
         : String(err);
   if (tally) {
-    tally.note(rowId, unreadableCauseClass(err), cause);
+    tally.note(rowId, unreadableCauseClass(err), cause, isGraineFault(err));
+  } else if (isGraineFault(err)) {
+    console.error(
+      `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is REFUSED and not rendered - ${cause}`
+    );
   } else {
     console.warn(
       `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is unreadable and is not rendered - ${cause}`
@@ -106,10 +114,29 @@ export function reportUnreadableChannelMessage(
   }
 }
 
+/**
+ * A row this device REFUSED rather than could not read: it names an author or a salon the session
+ * denies, carries a bad signature, or replays a key already shown. A repair would change nothing
+ * (the seed is right), and each one accuses the server or a member - so it is said at ERROR, and
+ * never asks a peer for anything.
+ */
+function isGraineFault(err: unknown): boolean {
+  return (
+    err instanceof GraineAuthorMismatchError ||
+    err instanceof GraineChannelMismatchError ||
+    err instanceof GraineReplayError ||
+    err instanceof GraineSignatureError
+  );
+}
+
 /** The class a row's unreadability is counted under - the three responses it needs, never its prose. */
 function unreadableCauseClass(err: unknown): string {
   if (err instanceof GraineSessionUnavailableError) return 'missing seed';
   if (err instanceof GraineBelowFirstIndexError) return 'below the handover floor';
+  if (err instanceof GraineAuthorMismatchError) return 'author mismatch';
+  if (err instanceof GraineChannelMismatchError) return 'channel mismatch';
+  if (err instanceof GraineReplayError) return 'replay';
+  if (err instanceof GraineSignatureError) return 'bad signature';
   return err instanceof Error ? err.name : 'unknown';
 }
 
@@ -122,25 +149,34 @@ function unreadableCauseClass(err: unknown): string {
  * request is unaffected - it is still noted per row and deduplicated per session downstream.
  */
 export class UnreadableRowTally {
-  private readonly byClass = new Map<string, { rows: string[]; causes: Set<string> }>();
+  private readonly byClass = new Map<
+    string,
+    { rows: string[]; causes: Set<string>; fault: boolean }
+  >();
 
   constructor(private readonly channelId: string) {}
 
-  /** Counts one row under its class; `cause` is the per-row sentence, kept as a distinct sample. */
-  note(rowId: string, causeClass: string, cause: string): void {
-    const entry = this.byClass.get(causeClass) ?? { rows: [], causes: new Set<string>() };
+  /**
+   * Counts one row under its class; `cause` is the per-row sentence, kept as a distinct sample.
+   * `fault` marks a class that ACCUSES someone (see {@link isGraineFault}) and is said at ERROR.
+   */
+  note(rowId: string, causeClass: string, cause: string, fault = false): void {
+    const entry = this.byClass.get(causeClass) ?? { rows: [], causes: new Set<string>(), fault };
     entry.rows.push(rowId);
     entry.causes.add(cause);
     this.byClass.set(causeClass, entry);
   }
 
-  /** Logs the page's unreadable rows, one warn per class, and nothing for a page that read whole. */
+  /**
+   * Logs the page's unreadable rows, one line per class, and nothing for a page that read whole: a
+   * warn for a row this device cannot read yet, an ERROR for a row it REFUSED.
+   */
   report(): void {
     const channel = rawChannelId(this.channelId).slice(0, 8);
-    for (const [causeClass, { rows, causes }] of this.byClass) {
+    for (const [causeClass, { rows, causes, fault }] of this.byClass) {
       const samples = [...causes].slice(0, 3).join('; ');
-      console.warn(
-        `[CHANNEL] ${rows.length} message(s) of ${channel} are unreadable and not rendered - ` +
+      (fault ? console.error : console.warn)(
+        `[CHANNEL] ${rows.length} message(s) of ${channel} are ${fault ? 'REFUSED' : 'unreadable'} and not rendered - ` +
           `${causeClass}, ${causes.size} distinct cause(s): ${samples} ` +
           `(rows ${rows.slice(0, 3).join(', ')}${rows.length > 3 ? ', ...' : ''})`
       );
