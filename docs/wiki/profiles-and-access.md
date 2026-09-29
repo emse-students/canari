@@ -182,8 +182,8 @@ application computed from the same profile, so no application keeps a hard-coded
 
 - **A MiGallery API key travels in plain text in claims.** The property mapping `avatar` builds a
   URL carrying it, and it is attached to MinoWiki and Archives MINO, so any user of either can read
-  it in their own id_token or userinfo. The value is not written here. Tracked in
-  [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
+  it in their own id_token or userinfo. The value is not written here. Closed by WP0 on 2026-09-30
+  ([section 4](#the-work-packages-in-order)).
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
   Whether its button renders on the sign-in page was not observed.
 
@@ -219,7 +219,31 @@ mapping switches to it, THEN the key is deleted in MiGallery's `/admin/api-keys`
 breaks both apps' avatars. A MiGallery key is
 `read`/`write`/`admin`, never per-route (`src/lib/server/permissions.ts`), so a `read` key reads
 every read-scoped API. Canari, Sky and the Cercle send their own keys in a header and are not
-affected. [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
+affected.
+
+**WP0 is DONE (2026-09-30), in that order.**
+
+1. MiGallery `v2.15.6` ([#371](https://github.com/emse-students/MiGallery/pull/371)) serves
+   `/api/users/<id_user>/avatar?sig=<s>`, where `s = base64url(HMAC-SHA256(key, id_user))`, unpadded.
+   A signature opens ONE avatar: a bad one gets `403`, no signature and no key gets `401`.
+2. The `avatar` mapping computes the same value in Python from `MIGALLERY_AVATAR_SIGNING_KEY`, which
+   is passed through `infrastructure/authentik/compose.yml` from `/srv/miconnect/.env`. MiGallery reads
+   the same key as `AVATAR_SIGNING_KEY` from its GitHub secret.
+3. Before saving, the switch evaluated the new expression for one account and fetched the URL.
+   MiGallery answered `200`, and only then was the mapping saved.
+4. The leaked key was deleted. It was MiGallery row 11 (`authentik`, scope `read`), matched by its
+   hash prefix and label, never by its value.
+
+Two things are worth knowing next time:
+
+- **The edge blocks a `Python-urllib` user agent** with a `403` that never reaches MiGallery. The
+  probe's first attempt read as a signature mismatch. It needs a browser user agent.
+- **MinoWiki and Archives may still hold the old URL**, with the dead key, for an account that has
+  not signed in since the switch. That URL now gets a `401`. The next sign-in replaces it, and nothing
+  is exposed by it.
+
+The `?api_key=` query path that only this mapping used is still accepted by the route. Removing it
+is a MiGallery follow-up.
 
 **WPA - authentik as code, BEFORE WP1 (user, 2026-09-29: *"on a tout fait à la main, peut-être
 qu'on peut faire mieux et plus propre, homogène"*).** Every custom object - flows, stages, prompts,

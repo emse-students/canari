@@ -288,25 +288,9 @@ the single truth edited from Canari by admins only, per-application access decid
 migration of the 600 accounts. **Thirty-two decisions, all on
 [profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
 were taken against. **The technical plan is its section 4, eleven work packages, VALIDATED by the
-user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 is the P1 below and needs nothing else.
+user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED 2026-09-30; WPA is next.
 
 ## Open defects, in severity order
-
-### P1 - a MiGallery API key is handed to every user of MinoWiki and Archives in their own claims (found 2026-09-29)
-
-The MiConnect property mapping `avatar` returns an avatar URL with a MiGallery `api_key` in its
-query string, and the mapping is attached to the `MinoWiki` and `Archives MINO` providers. Every
-user of either app therefore receives the key in their id_token/userinfo. Read on production with
-`ak shell`, 2026-09-29; the value is deliberately not written in this public repository. **Owed**:
-a keyless avatar URL in MiGallery first, the mapping switched to it, then the key revoked -
-revoking first breaks both apps' avatars (user, 2026-09-29, D29). A MiGallery key is read, write or
-admin, never per-route, so this one reads every read-scoped API. **Where it stands (2026-09-30):** the leaked key is MiGallery
-row 11 (`authentik`, scope `read`, found by its SHA-256, the value never printed); the signed URL is
-[MiGallery#371](https://github.com/emse-students/MiGallery/pull/371); the signing key is set on
-BOTH sides (MiGallery's GitHub secret, and `MIGALLERY_AVATAR_SIGNING_KEY` in `/srv/miconnect/.env`,
-read back at 64 characters after the restart). **Left, in order:** MiGallery `v2.15.6` released,
-the `avatar` mapping switched to `?sig=`, one avatar observed in MinoWiki, THEN row 11 deleted.
-Found during the [profile reform](profiles-and-access.md#3-found-on-the-way).
 
 ### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
 
