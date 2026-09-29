@@ -109,6 +109,16 @@ empty field, four unlabelled icons, and "Publier" ABOVE them.
   playing, looping, silent at every start until its button is pressed, then audible on every video
   at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
   the two played together, sound on both.
+- **No stray logo before a video's first frame** (user, Mi 9T: *"un logo bizarre qui s'affiche avant
+  que la video ne charge"*, also on every swipe back to the feed). Filmed at 60 fps it was TWO
+  things. The loading placeholder drew a camera icon over media already decrypted in memory, because
+  a rebuilt feed waited one frame for its `nearViewport` observer before asking -
+  `retainWarmDecryptedMediaBlobUrl` now answers synchronously and deferring only holds a COLD media
+  (it exists to spare the network). And the Android WebView draws its own default poster, a large
+  grey play button, until a frame is decoded - `object-cover` blew it up to the whole card - so a
+  video that plays by itself carries `TRANSPARENT_VIDEO_POSTER` (`utils/videoPoster.ts`), and the
+  box's black shows instead. The composer's paused preview keeps no poster: one would hide the
+  first frame `#t=0.1` decodes.
 
 ## Key components
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { Volume2, VolumeX } from '@lucide/svelte';
   import { playWhileVisible } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -49,6 +50,7 @@
   <video
     bind:this={videoEl}
     src="{src}#t=0.1"
+    poster={TRANSPARENT_VIDEO_POSTER}
     muted
     loop
     playsinline

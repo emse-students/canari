@@ -176,6 +176,20 @@ export async function acquireDecryptedMediaBlobUrl(
   return loadDecryptedBlobUrl(ref, baseUrl, signal);
 }
 
+/**
+ * The decrypted blob URL when this media is ALREADY in memory, retained exactly as
+ * {@link acquireDecryptedMediaBlobUrl} would - or `null`, and then nothing is held.
+ *
+ * WHY A SYNCHRONOUS ANSWER EXISTS: a feed rebuilt by a tab swipe holds every one of its media
+ * decrypted, yet each card waited for its `nearViewport` observer - one frame after the first paint
+ * - before asking, so the returning page drew its loading placeholders (the camera icon the user
+ * called *"un logo bizarre"*, Mi 9T, 2026-09-29) over media it already had. Deferring exists to
+ * spare the NETWORK; a blob in memory costs nothing, so the caller takes it at once.
+ */
+export function retainWarmDecryptedMediaBlobUrl(ref: MediaRef): string | null {
+  return decryptedPool.tryRetain(decryptedKey(ref));
+}
+
 /** Releases a decrypted media blob URL acquired via {@link acquireDecryptedMediaBlobUrl}. */
 export function releaseDecryptedMediaBlobUrl(ref: MediaRef): void {
   decryptedPool.release(decryptedKey(ref));

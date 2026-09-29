@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
   import {
     FileText,
@@ -395,6 +396,7 @@
         src={blobUrl}
         controls
         autoplay
+        poster={TRANSPARENT_VIDEO_POSTER}
         use:followVideoSound
         class="max-h-full max-w-full rounded-xl bg-black object-contain"
       ></video>

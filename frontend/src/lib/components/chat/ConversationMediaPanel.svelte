@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import {
     Image as ImageIcon,
     ImageOff,
@@ -295,6 +296,7 @@
           src={lightboxUrl}
           controls
           autoplay
+          poster={TRANSPARENT_VIDEO_POSTER}
           use:followVideoSound
           class="max-h-full max-w-full"
         ></video>
