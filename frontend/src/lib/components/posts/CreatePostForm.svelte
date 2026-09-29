@@ -1,7 +1,7 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
-  import { FileText, Film, Music, CalendarCheck, CircleAlert, ChevronDown } from '@lucide/svelte';
+  import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount } from 'svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
@@ -37,7 +37,9 @@
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import { isGlobalAdmin, getSavedDisplayName } from '$lib/stores/user';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -47,12 +49,15 @@
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
   import PickedMediaPreview from './PickedMediaPreview.svelte';
+  import MediaCaptionChip from './MediaCaptionChip.svelte';
+  import MediaCaptionField from './MediaCaptionField.svelte';
+  import { shiftAfterRemoval } from './mediaCaptionIndex';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { linkableEventLabel } from '$lib/utils/time';
+  import { linkableEventPickerOptions } from '$lib/utils/time';
 
   /**
    * Full-featured post creation form. Supports:
@@ -138,7 +143,25 @@
    */
   const personalLabel = getSavedDisplayName() || m.post_create_personal_profile_label();
 
+  /**
+   * Who may publish, in the app's own picker: the member, anonymous, then the associations and lists
+   * they may speak for, each with its avatar. It was a native `<select>`, which on Android opened
+   * the system's dialog of bare names (user, 2026-09-29).
+   */
+  const identityOptions = $derived<PickerOption[]>([
+    { value: '', label: personalLabel },
+    { value: ANONYMOUS_POST_IDENTITY, label: m.post_create_anonymous_label() },
+    ...associationPickerOptions(postAsAssociations),
+  ]);
+
+  /** The events a post as an association may link to, "no event" first. */
+  const linkableEventOptions = $derived(
+    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+  );
+
   let editorField = $state<MarkdownComposerField | null>(null);
+  /** Which picked file's caption field is open under the strip - at most one (`MediaCaptionChip`). */
+  let captionIndex = $state<number | null>(null);
 
   // --- UI state ---
   let publishing = $state(false);
@@ -319,6 +342,7 @@
     filePreviews = filePreviews.filter((_, idx) => idx !== i);
     fileThumbIcons = fileThumbIcons.filter((_, idx) => idx !== i);
     mediaCaptions = mediaCaptions.filter((_, idx) => idx !== i);
+    captionIndex = shiftAfterRemoval(captionIndex, i);
   }
 
   /** Icon matching the media type for generic file previews. */
@@ -440,6 +464,7 @@
       filePreviews = [];
       fileThumbIcons = [];
       mediaCaptions = [];
+      captionIndex = null;
       includePoll = false;
       pollQuestion = '';
       pollOptions = emptyPollOptions();
@@ -491,27 +516,35 @@
           <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
         {/if}
       </div>
-      <div class="relative min-w-0">
-        <select
+      <div class="min-w-0">
+        <Picker
           id="post-association-select"
-          bind:value={selectedAssociationId}
-          aria-label={m.post_create_post_as_label()}
-          class="text-text-main w-full max-w-full cursor-pointer appearance-none truncate rounded-lg bg-transparent py-1 pr-7 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
+          value={selectedAssociationId}
+          options={identityOptions}
+          onValueChange={(v) => (selectedAssociationId = v)}
+          label={m.post_create_post_as_label()}
+          triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
         >
-          <option value="" class="bg-white font-medium dark:bg-zinc-900">{personalLabel}</option>
-          <option value={ANONYMOUS_POST_IDENTITY} class="bg-white font-medium dark:bg-zinc-900"
-            >{m.post_create_anonymous_label()}</option
-          >
-          <AssociationOptions
-            associations={postAsAssociations}
-            optionClass="bg-white font-medium dark:bg-zinc-900"
-          />
-        </select>
-        <ChevronDown
-          size={16}
-          strokeWidth={2.5}
-          class="text-text-muted pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
-        />
+          {#snippet leading(option)}
+            <span class="block h-9 w-9">
+              {#if option.value === ANONYMOUS_POST_IDENTITY}
+                <AnonymousAvatar fill />
+              {:else if option.value === ''}
+                {#if globalSession.userId}
+                  <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
+                {/if}
+              {:else}
+                {@const asso = postAsAssociations.find((a) => a.id === option.value)}
+                <AssociationAvatar
+                  fill
+                  shape="circle"
+                  name={asso?.name ?? option.label}
+                  logoUrl={asso?.logoUrl}
+                />
+              {/if}
+            </span>
+          {/snippet}
+        </Picker>
       </div>
     </div>
     {#if isAnonymousSelected}
@@ -529,22 +562,15 @@
           <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
           {m.post_create_link_event_label()}
         </label>
-        <select
+        <Picker
           id="post-linked-calendar-event"
-          bind:value={selectedLinkedCalendarEventId}
+          value={selectedLinkedCalendarEventId}
+          options={linkableEventOptions}
+          onValueChange={(v) => (selectedLinkedCalendarEventId = v)}
+          label={m.post_create_link_event_label()}
           disabled={loadingLinkableEvents}
-          title={m.post_create_validated_events_hint()}
-          class="text-text-main border-cn-border w-full cursor-pointer appearance-none rounded-lg border bg-transparent px-3 py-2 text-sm font-semibold outline-none focus:border-amber-500 disabled:opacity-60"
-        >
-          <option value="" class="bg-white font-medium dark:bg-zinc-900">
-            {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
-          </option>
-          {#each linkableCalendarEvents as ev (ev.id)}
-            <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-              {linkableEventLabel(ev)}
-            </option>
-          {/each}
-        </select>
+          variant="field"
+        />
       </div>
     {/if}
 
@@ -619,17 +645,24 @@
                 title={m.common_delete_button()}
                 onclick={() => removeFile(i)}
               />
+              <MediaCaptionChip
+                hasCaption={!!mediaCaptions[i]?.trim()}
+                active={captionIndex === i}
+                onclick={() => (captionIndex = captionIndex === i ? null : i)}
+              />
             </div>
-            <input
-              type="text"
-              bind:value={mediaCaptions[i]}
-              placeholder={m.post_create_caption_placeholder()}
-              maxlength="120"
-              class="text-text-main placeholder:text-text-muted/60 border-cn-border text-2xs w-full rounded-md border bg-transparent px-2 py-1 outline-none focus:border-amber-500"
-            />
           </div>
         {/each}
       </div>
+      {#if captionIndex !== null && captionIndex < selectedFiles.length}
+        {#key captionIndex}
+          <MediaCaptionField
+            bind:value={mediaCaptions[captionIndex]}
+            position={captionIndex + 1}
+            onDone={() => (captionIndex = null)}
+          />
+        {/key}
+      {/if}
     {/if}
 
     {#if includePoll}

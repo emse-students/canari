@@ -78,6 +78,19 @@ empty field, four unlabelled icons, and "Publier" ABOVE them.
   audio file did too because `needsThumbIcon` only iconised `'file'`. Only a picture or a video has
   a frame now; everything else is the icon card.
 - **The error banner is in the footer**, above the bar, so the keyboard cannot cover it.
+- **One caption field, opened from its photo** (user, Mi 9T: *"A-t-on besoin d'un 'Legende
+  (opt.)' ?"*). An input under every thumbnail put four empty boxes under a four-photo post. The
+  feed prints a caption under its photo, so it stays - behind a `MediaCaptionChip` in the thumbnail's
+  corner, which opens ONE `MediaCaptionField` under the strip and turns amber once that photo has a
+  caption. The field is keyed by index, so `shiftAfterRemoval` moves it with its photo when an
+  earlier one is removed instead of re-pointing it at the next.
+- **No chip wears a ring after a tap.** The ring was `focus-within`, and a file input keeps focus
+  once its chooser closes, so the last chip tapped kept a halo, cut flat by the scrolling row. It is
+  `:focus-visible` now (keyboard focus only), asked of the input through `has-`.
+- **Who publishes, and the linked event, are the app's own `Picker`** - a bottom sheet with avatars
+  on a phone, a popover on a wide window - never a native `<select>`, which on Android opens the
+  system's dialog of bare names (user: *"il ne vaut mieux pas sortir de l'experience de
+  l'application"*). The rule is app-wide, in [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
 
 ## Key components
 

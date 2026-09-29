@@ -94,8 +94,16 @@
     if (files.length > 0) onFiles(files);
   }
 
+  /*
+   * THE RING IS FOR A KEYBOARD, NEVER FOR A TAP. It was `focus-within`, and a file input keeps focus
+   * after its chooser closes - so the chip last tapped wore a ring for good, clipped flat at top and
+   * bottom by the scrolling row (Mi 9T, 2026-09-29: *"le halo autour de Photo/video n'est pas tres
+   * bien rendu"*). `:focus-visible` is what a browser sets for keyboard focus only; a label has no
+   * focus of its own, so it asks its input with `has-`. The row carries `py-1` so a ring that IS
+   * drawn has room.
+   */
   const chipClass =
-    'relative flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-within:ring-2 focus-within:ring-amber-500/50 active:scale-95';
+    'relative flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-amber-500/50 active:scale-95';
   const idleChip = 'border-cn-border text-text-main hover:bg-black/5 dark:hover:bg-white/10';
   const activeChip = 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400';
 
@@ -108,7 +116,7 @@
     {#if formatting}
       <MarkdownComposerToolbar row {onFormat} class="w-full" />
     {:else}
-      <div class="no-scrollbar flex w-full items-center gap-2 overflow-x-auto">
+      <div class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1">
         <label class="{chipClass} {idleChip}">
           <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
           {m.post_composer_photo_video()}
