@@ -587,6 +587,53 @@ Once the user swipes the app away on iOS:
 
 Android has no equivalent restriction.
 
+### The native iOS tab bar
+
+**In the iOS app the bottom bar is a native `UITabBar`, not HTML** (user, 2026-09-29: the Apple
+Liquid Glass chantier). It comes from `tauri-plugin-system-components` and floats over the WebView:
+a Liquid Glass pill on iOS 26 when the app is built with Xcode 26, the classic translucent bar
+before. Everything else - web, Android, an iPad at `md` width - keeps `BottomNav`.
+
+| Concern | Where it lives |
+|---|---|
+| The dependency | `src-tauri/Cargo.toml`, `[target.'cfg(target_os = "ios")'.dependencies]`, **`=0.1.8` exact** |
+| Its registration | `src-tauri/src/lib.rs`, under `#[cfg(target_os = "ios")]` |
+| Its permission | `capabilities/ios-system-components.json`, `platforms: ["iOS"]`, listed in both `tauri*.conf.json` |
+| The JS API | `@sosweetham/tauri-plugin-system-components-api`, exact `0.1.8` |
+| The bar | `components/navigation/NativeTabBar.svelte`, mounted by `routes/+layout.svelte` |
+| The places and the dot | `MOBILE_NAV_PLACES` (`navigation/places.ts`) and `placeBadge` (`navigation/placeBadge.svelte.ts`), shared with `BottomNav` |
+| The Xcode | `ios.yml` requires `^26.0`: an older toolchain builds the classic bar WITHOUT an error |
+
+**The same bar, drawn natively.** The four places, the unread dot (an EMPTY `badgeValue`, UIKit's
+dot, never a count), and the same visibility: not on the login page (not mounted there, so it
+never flashes), hidden - not unmounted - while the keyboard is up or a conversation is open, and
+hidden at `md` width like `md:hidden`. A tap `goto`s the place; the ROUTE drives the selection
+back (`selectTab`). What the bar covers is the plugin's `getTabBarInsets`, written to
+`--bottom-nav-reserve` - the one variable `.page-scroll-wrap`, `.mobile-nav-inset` and the
+keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem` + safe area.
+
+**Three limits, each taken knowingly:**
+- **Icons only, and VoiceOver names no tab** (user, 2026-09-29). The plugin's `title` is both the
+  visible label and the accessible one, with no separate accessibility label; the web bar draws no
+  text, and the user chose icons over labels knowing the tabs are announced without names. Names
+  come back with a `title`, or with a patched plugin.
+- **`selectTab` cannot clear a selection**, so on a page outside the four places (a profile, the
+  calendar) the last one stays lit, where the web bar lights none.
+- **The plugin's keyboard guard is always on** and has no switch: after every keyboard dismissal it
+  resizes the WebView by 0.5 pt and back, 100 ms later, to make WebKit re-measure. Canari already
+  resizes that frame itself (`CanariApplyKeyboardLayout`, [above](#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice)),
+  so two native owners touch it. The user took the plugin as it is (2026-09-29); vendoring it
+  under `patches/` without the guard is the way back if the two are ever seen to disagree.
+
+**A failed setup hands the bottom back to the web bar, at error level** - an app with no navigation
+is worse than the wrong bar, and the line accuses the build that was meant to have it. **The accent
+is iOS's default tint**: the web's amber is an oklch token and the plugin wants a hex.
+
+**Nothing here has run on an iPhone.** `NativeTabBar.svelte.test.ts` pins what Canari ASKS of the
+plugin (mocked); `ios.yml`'s dispatch compiles the Swift; how the bar LOOKS, where the reserve
+lands on a notched phone, and the keyboard guard beside `CanariApplyKeyboardLayout` are owed on
+hardware.
+
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:

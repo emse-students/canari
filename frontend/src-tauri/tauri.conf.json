@@ -20,9 +20,7 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": [
-        "default"
-      ]
+      "capabilities": ["default", "ios-system-components"]
     }
   },
   "plugins": {
