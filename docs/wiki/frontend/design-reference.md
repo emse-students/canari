@@ -2733,3 +2733,22 @@ header already carried `+`, search and the bell. With the launcher and the avata
 under the `+`. `CanariBrand`'s `fitContainer` draws the name only when its `@container` (the brand
 link, now `flex-1`) is at least 8rem wide. Measured on 2026-09-27: at 360px, bird only; at 390px,
 name drawn with 3px to spare; on every non-feed tab, name drawn.
+
+**Its hover painted the bar's own colour, and four other buttons did the same (user, 2026-09-29).**
+The class said `hover:text-text hover:bg-cn-surface`. `text-text` names no token (the scale is
+`text-text-main`), and `--cn-surface` is `#ffffff` in light, the colour of the bar it sits on, so
+nothing moved under the pointer. The phone header's `+` and search, the notification bell and the
+form-reminder button carried the same pair. All five now take `hover:bg-text-main/10`, the ink at
+10%. That is section 3's measured overlay (`rgba(255,255,255,0.1)` over Messenger's dark surfaces)
+in dark, and its mirror in light, from ONE class, because the ink flips with the theme. Read on the
+computed style at 1440, light and dark: rest transparent, hover `oklab(0.115 / 0.1)` on white and
+`oklab(0.925 / 0.1)` on `rgb(36,36,36)`, and the open state keeps it with the icon at `text-main`.
+The open state is its own branch now: stacked after `text-text-muted`, `text-text-main` lost the
+cascade and the icon went grey the moment the pointer left.
+
+**It opens like the post menu.** The panel had a 120ms fade, too little to read as motion; it takes
+`PostActionsMenu`'s `slide` of 150ms, the other button-anchored portalled menu (measured mid-run at
+156 of 222px). The global reduced-motion rule in `app.css` shortens it to nothing.
+
+**The desktop order is status, launcher, then the account pair**: logout beside the avatar it signs
+out, the avatar last. The launcher used to sit between the two account controls.

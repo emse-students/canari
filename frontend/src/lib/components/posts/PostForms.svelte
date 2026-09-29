@@ -136,7 +136,7 @@
             fi.id
           ]
             ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400'
-            : 'text-text-muted hover:text-text hover:bg-cn-surface'}"
+            : 'text-text-muted hover:text-text-main hover:bg-text-main/10'}"
           title={subscribed[fi.id]
             ? m.post_form_disable_reminder_label()
             : m.post_form_notify_when_available_label()}

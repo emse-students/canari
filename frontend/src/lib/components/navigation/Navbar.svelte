@@ -38,13 +38,17 @@
       <CanariBrand compact={true} />
     </div>
 
-    <!-- Right: Status + Theme + actions -->
+    <!--
+      Right: what the app IS (its connection), then where it LEADS (the other sites), then the
+      account pair at the edge - logout beside the avatar it signs out, the avatar last as every
+      app puts it (user, 2026-09-29: the launcher used to sit between the two account controls).
+    -->
     <div class="ml-auto flex shrink-0 items-center gap-2">
       <StatusPill isConnected={globalSession.isWsConnected} />
-      <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}
+      <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"
