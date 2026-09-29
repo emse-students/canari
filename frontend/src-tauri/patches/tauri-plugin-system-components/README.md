@@ -1,3 +1,9 @@
+> **CANARI'S COPY OF 0.1.8, PATCHED - read this before the upstream text below.** Two changes,
+> each marked `CANARI PATCH` in `ios/Sources`: a tab item's `template` flag (a bitmap icon tinted
+> like an SF Symbol), and NO keyboard guard - `KeyboardViewportGuard.swift` is deleted, so the
+> "the plugin repairs the keyboard's layout-viewport shrink" caveat below does NOT hold here.
+> Canari's own `CanariApplyKeyboardLayout` owns the WebView frame. Why: `docs/wiki/frontend/mobile.md#the-native-ios-tab-bar`.
+
 # tauri-plugin-system-components
 
 Native **system UI components** for [Tauri 2](https://tauri.app) apps — real UIKit/AppKit controls over the webview, including Apple's Liquid Glass material on iOS 26 / macOS 26:

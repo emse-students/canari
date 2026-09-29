@@ -99,13 +99,13 @@ class SystemComponentsPlugin: Plugin {
     private var componentsOverlay: ComponentsOverlayController?
     private var webView: WKWebView?
     private var sheets: [String: SheetController] = [:]
-    /// Restores the layout viewport WebKit shrinks for the input accessory bar
-    /// and then forgets to give back. See KeyboardViewportGuard.
-    private var keyboardGuard: KeyboardViewportGuard?
+    // CANARI PATCH: no KeyboardViewportGuard. Upstream installs one at load, with no switch, and it
+    // resizes the WebView by 0.5 pt and back 100 ms after every keyboard dismissal. Canari already
+    // owns that frame (`CanariApplyKeyboardLayout`, canari_ios.mm, on every keyboard frame change),
+    // so the guard was a second native owner of the same frame; the file is deleted with it.
 
     @objc public override func load(webview: WKWebView) {
         self.webView = webview
-        self.keyboardGuard = KeyboardViewportGuard(webView: webview)
     }
 
     @objc public func configureTabBar(_ invoke: Invoke) throws {

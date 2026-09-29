@@ -613,18 +613,21 @@ back (`selectTab`). What the bar covers is the plugin's `getTabBarInsets`, writt
 `--bottom-nav-reserve` - the one variable `.page-scroll-wrap`, `.mobile-nav-inset` and the
 keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem` + safe area.
 
-**Three limits, each taken knowingly:**
+**Two limits taken knowingly, and one the patch removed:**
 - **Icons only, and VoiceOver names no tab** (user, 2026-09-29). The plugin's `title` is both the
   visible label and the accessible one, with no separate accessibility label; the web bar draws no
   text, and the user chose icons over labels knowing the tabs are announced without names. Names
   come back with a `title`, or with a patched plugin.
 - **`selectTab` cannot clear a selection**, so on a page outside the four places (a profile, the
   calendar) the last one stays lit, where the web bar lights none.
-- **The plugin's keyboard guard is always on** and has no switch: after every keyboard dismissal it
-  resizes the WebView by 0.5 pt and back, 100 ms later, to make WebKit re-measure. Canari already
-  resizes that frame itself (`CanariApplyKeyboardLayout`, [above](#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice)),
-  so two native owners touch it. The user took the plugin as it is (2026-09-29); vendoring it
-  under `patches/` without the guard is the way back if the two are ever seen to disagree.
+- **The plugin's keyboard guard is REMOVED (user, 2026-09-30).** Upstream installs one at load,
+  with no switch: after every keyboard dismissal it resized the WebView by 0.5 pt and back, 100 ms
+  later, to make WebKit re-measure. Canari already resizes that frame itself on every keyboard frame
+  change (`CanariApplyKeyboardLayout`, [above](#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice)),
+  so the guard was a second native owner of one frame. The `v0.18.32-alpha.1` build carried it;
+  the patch deletes `KeyboardViewportGuard.swift` and its installation. What it repaired - a layout
+  viewport left short after the keyboard leaves - is `CanariApplyKeyboardLayout`'s to hold, and is
+  owed ONE look on an iPhone: dismiss the keyboard and the bottom bar must sit on the screen's edge.
 
 **A failed setup hands the bottom back to the web bar, at error level** - an app with no navigation
 is worse than the wrong bar, and the line accuses the build that was meant to have it.
@@ -643,8 +646,8 @@ badge - the dot is sent again after each one.
 
 **Nothing here has run on an iPhone.** `NativeTabBar.svelte.test.ts` pins what Canari ASKS of the
 plugin (mocked); `ios.yml`'s dispatch compiles the Swift; how the bar LOOKS, where the reserve
-lands on a notched phone, and the keyboard guard beside `CanariApplyKeyboardLayout` are owed on
-hardware.
+lands on a notched phone, and the bar's place after a keyboard dismissal without the guard are owed
+on hardware.
 
 ### iOS project
 
