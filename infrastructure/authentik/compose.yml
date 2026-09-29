@@ -51,6 +51,10 @@ services:
       # `info`, pas `debug` : debug faisait 63 % des lignes (mesure 2026-09-29) et y ecrivait les
       # adresses e-mail des utilisateurs. Le journal d acces (`authentik.asgi`) est emis en info.
       AUTHENTIK_LOG_LEVEL: info
+      # Signe l URL d avatar que le mapping `avatar` donne a MinoWiki et Archives : la MEME valeur
+      # que le secret AVATAR_SIGNING_KEY de MiGallery, qui verifie la signature. Remplace la cle
+      # API qui voyageait dans les claims (backlog Canari, 2026-09-29).
+      MIGALLERY_AVATAR_SIGNING_KEY: ${MIGALLERY_AVATAR_SIGNING_KEY:?cle de signature des avatars MiGallery requise}
     # ONE publish, and an ADDRESS rather than a bare port. `9443` was dropped on 2026-09-24:
     # the tunnel ingress reaches this stack at `http://10.0.0.7:9000`, measured on the connector
     # itself, so the TLS listener had no consumer. On the shared host, TLS is terminated by the
