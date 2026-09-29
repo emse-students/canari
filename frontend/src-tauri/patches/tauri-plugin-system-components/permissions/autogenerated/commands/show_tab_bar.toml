@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-show-tab-bar"
+description = "Enables the show_tab_bar command without any pre-configured scope."
+commands.allow = ["show_tab_bar"]
+
+[[permission]]
+identifier = "deny-show-tab-bar"
+description = "Denies the show_tab_bar command without any pre-configured scope."
+commands.deny = ["show_tab_bar"]

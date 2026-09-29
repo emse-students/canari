@@ -1,0 +1,57 @@
+[package]
+name = "tauri-plugin-system-components"
+version = "0.1.8"
+authors = ["SoSweetHam <sosweetham@gmail.com>"]
+license = "MIT"
+description = "Native system UI components for Tauri 2 — native iOS tab bar over the webview, native controls, and glass window backgrounds on macOS/iOS."
+edition = "2021"
+rust-version = "1.77.2"
+readme = "README.md"
+repository = "https://github.com/sosweetham/tauri-plugin-system-components"
+# crates.io: max 5, only [a-z0-9-_], must start with a letter, ≤20 chars each.
+keywords = ["tauri", "tauri-plugin", "system-components", "ios", "macos"]
+categories = ["api-bindings", "gui"]
+exclude = [
+  "/examples",
+  "/dist-js",
+  "/guest-js",
+  "/node_modules",
+  "/.tauri",
+  "/ios/.build",
+  "/ios/.tauri",
+  "package.json",
+  "pnpm-lock.yaml",
+  "tsconfig.json",
+  "rollup.config.js",
+]
+links = "tauri-plugin-system-components"
+
+[dependencies]
+tauri = { version = "2.10" }
+serde = "1.0"
+thiserror = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+  "NSWindow",
+  "NSView",
+  "NSVisualEffectView",
+  "NSColor",
+  "NSResponder",
+  "NSGraphics",
+  "NSControl",
+  "NSSegmentedControl",
+  "NSCell",
+  "NSSegmentedCell",
+  "NSImage",
+  "NSImageView",
+  "NSSwitch",
+  "NSButton",
+  "NSSlider",
+  "NSProgressIndicator",
+] }
+objc2-foundation = "0.3"
+
+[build-dependencies]
+tauri-plugin = { version = "2.5", features = ["build"] }

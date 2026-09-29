@@ -58,11 +58,17 @@ tao = { path = "patches/tao" }
 # local patch adds the whole *_key_bytes API (an alias-addressed MLS device key), the second
 # background-readable item the iOS notification extension needs, and caller-supplied prompt text.
 tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
+# tauri-plugin-system-components 0.1.8 draws every bitmap tab icon `.alwaysOriginal`, so the app's
+# own Lucide glyphs could not take the tint and the selected tab could not show (user, 2026-09-30:
+# the same icons as the app, highlighted in yellow). The local patch adds `template` to a tab item,
+# and REMOVES the plugin's keyboard guard (user, 2026-09-30), which resized the WebView after every
+# keyboard dismissal alongside `CanariApplyKeyboardLayout` - the `CANARI PATCH` hunks in
+# `ios/Sources`; everything else is the published crate, unchanged.
+tauri-plugin-system-components = { path = "patches/tauri-plugin-system-components" }
 
 # The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).
-# iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app. Its keyboard
-# guard resizes the WebView after every keyboard dismissal, alongside `CanariApplyKeyboardLayout`;
-# the user took the plugin as it is (2026-09-29), knowing that.
+# iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app - PATCHED, see
+# `[patch.crates-io]` above.
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-system-components = "=0.1.8"
 

@@ -596,12 +596,13 @@ before. Everything else - web, Android, an iPad at `md` width - keeps `BottomNav
 
 | Concern | Where it lives |
 |---|---|
-| The dependency | `src-tauri/Cargo.toml`, `[target.'cfg(target_os = "ios")'.dependencies]`, **`=0.1.8` exact** |
+| The dependency | `src-tauri/Cargo.toml`, `[target.'cfg(target_os = "ios")'.dependencies]`, **`=0.1.8` exact, PATCHED** from `patches/tauri-plugin-system-components` |
 | Its registration | `src-tauri/src/lib.rs`, under `#[cfg(target_os = "ios")]` |
 | Its permission | `capabilities/ios-system-components.json`, `platforms: ["iOS"]`, listed in both `tauri*.conf.json` |
 | The JS API | `@sosweetham/tauri-plugin-system-components-api`, exact `0.1.8` |
 | The bar | `components/navigation/NativeTabBar.svelte`, mounted by `routes/+layout.svelte` |
-| The places and the dot | `MOBILE_NAV_PLACES` (`navigation/places.ts`) and `placeBadge` (`navigation/placeBadge.svelte.ts`), shared with `BottomNav` |
+| The places, the glyphs and the dot | `MOBILE_NAV_PLACES` (`navigation/places.ts`), `PLACE_ICONS` (`navigation/placeIcons.ts`) and `placeBadge` (`navigation/placeBadge.svelte.ts`), all shared with `BottomNav` |
+| The glyphs as bitmaps, and the yellow | `mobile/nativeTabIcons.ts` |
 | The Xcode | `ios.yml` requires `^26.0`: an older toolchain builds the classic bar WITHOUT an error |
 
 **The same bar, drawn natively.** The four places, the unread dot (an EMPTY `badgeValue`, UIKit's
@@ -612,27 +613,41 @@ back (`selectTab`). What the bar covers is the plugin's `getTabBarInsets`, writt
 `--bottom-nav-reserve` - the one variable `.page-scroll-wrap`, `.mobile-nav-inset` and the
 keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem` + safe area.
 
-**Three limits, each taken knowingly:**
+**Two limits taken knowingly, and one the patch removed:**
 - **Icons only, and VoiceOver names no tab** (user, 2026-09-29). The plugin's `title` is both the
   visible label and the accessible one, with no separate accessibility label; the web bar draws no
   text, and the user chose icons over labels knowing the tabs are announced without names. Names
   come back with a `title`, or with a patched plugin.
 - **`selectTab` cannot clear a selection**, so on a page outside the four places (a profile, the
   calendar) the last one stays lit, where the web bar lights none.
-- **The plugin's keyboard guard is always on** and has no switch: after every keyboard dismissal it
-  resizes the WebView by 0.5 pt and back, 100 ms later, to make WebKit re-measure. Canari already
-  resizes that frame itself (`CanariApplyKeyboardLayout`, [above](#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice)),
-  so two native owners touch it. The user took the plugin as it is (2026-09-29); vendoring it
-  under `patches/` without the guard is the way back if the two are ever seen to disagree.
+- **The plugin's keyboard guard is REMOVED (user, 2026-09-30).** Upstream installs one at load,
+  with no switch: after every keyboard dismissal it resized the WebView by 0.5 pt and back, 100 ms
+  later, to make WebKit re-measure. Canari already resizes that frame itself on every keyboard frame
+  change (`CanariApplyKeyboardLayout`, [above](#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice)),
+  so the guard was a second native owner of one frame. The `v0.18.32-alpha.1` build carried it;
+  the patch deletes `KeyboardViewportGuard.swift` and its installation. What it repaired - a layout
+  viewport left short after the keyboard leaves - is `CanariApplyKeyboardLayout`'s to hold, and is
+  owed ONE look on an iPhone: dismiss the keyboard and the bottom bar must sit on the screen's edge.
 
 **A failed setup hands the bottom back to the web bar, at error level** - an app with no navigation
-is worse than the wrong bar, and the line accuses the build that was meant to have it. **The accent
-is iOS's default tint**: the web's amber is an oklch token and the plugin wants a hex.
+is worse than the wrong bar, and the line accuses the build that was meant to have it.
+
+**The web bar's glyphs, selected in its yellow (user, 2026-09-30 - the first build drew SF Symbols
+in iOS's blue).** `lucideIconPng` mounts the same Lucide component `BottomNav` draws, reads its SVG,
+and rasterises it at 3x into the plugin's 26 pt box. The plugin as published draws every bitmap
+`.alwaysOriginal` - its use is avatars - so a glyph could take no tint and the selection would not
+show at all: that is the ONE patch (`TabItemArgs.template`, two hunks marked `CANARI PATCH` in
+`ios/Sources`, the crate otherwise byte-identical to 0.1.8 and shipped with its MIT text, which the
+published crate omits). The tint is the web bar's own active class, `text-amber-600
+dark:text-amber-400`, read from a probe element and painted onto a 1 px canvas because the token is
+`oklch()` - measured in WebKit and Chromium: `#e17100` light, `#ffb900` dark. A theme change
+reconfigures the bar, and since the plugin REBUILDS its items on configuration - clearing every
+badge - the dot is sent again after each one.
 
 **Nothing here has run on an iPhone.** `NativeTabBar.svelte.test.ts` pins what Canari ASKS of the
 plugin (mocked); `ios.yml`'s dispatch compiles the Swift; how the bar LOOKS, where the reserve
-lands on a notched phone, and the keyboard guard beside `CanariApplyKeyboardLayout` are owed on
-hardware.
+lands on a notched phone, and the bar's place after a keyboard dismissal without the guard are owed
+on hardware.
 
 ### iOS project
 

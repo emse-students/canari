@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The native sheet needs no special permissions; it draws over the activity. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

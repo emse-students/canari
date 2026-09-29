@@ -1,0 +1,93 @@
+name: Publish npm package
+
+# Triggers on a published GitHub release. The release tag (e.g. `v0.2.0`) must
+# match `package.json`'s `version` field — this workflow's first step bails
+# out otherwise so npm doesn't end up out of sync with git tags.
+#
+# `workflow_dispatch` lets you re-publish a specific tag manually from the
+# Actions tab if the release-triggered run failed mid-way and you need to
+# retry without recreating the release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  # `id-token: write` does double duty here:
+  # 1. Authentication: npm Trusted Publishing reads GitHub's OIDC token to
+  #    authenticate the publish — no NPM_TOKEN secret involved. The trusted
+  #    publisher must be configured on npm at the org or package level
+  #    pointing at this exact `<owner>/<repo>` + workflow filename.
+  # 2. Provenance: `--provenance` signs the package with the same OIDC token
+  #    so the npm listing shows a verified link back to this workflow run.
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # On `release: published` the tag is in github.event.release.tag_name.
+          # On manual dispatch we read it from inputs. Either way we check
+          # out the exact tag, not the default branch.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # npm 11.5+ is required for Trusted Publishing's OIDC flow. Node 24
+          # ships npm 11.x; staying on Node 20 (npm 10) would force us back
+          # onto an NPM_TOKEN secret.
+          node-version: 24
+          cache: pnpm
+          # Setting registry-url tells the npm/pnpm CLI which registry to
+          # exchange the OIDC token against. No `_authToken=` is written
+          # because we're not using a long-lived token.
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify package.json version matches release tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          TAG_VERSION="${TAG#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match release tag ($TAG_VERSION). Bump package.json + Cargo.toml together before tagging."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm check-types
+
+      - name: Publish to npm
+        # Trusted Publishing — pnpm reads the GitHub OIDC token from the
+        # runner's `ACTIONS_ID_TOKEN_REQUEST_*` env vars (set by the
+        # `id-token: write` permission), exchanges it at npm's registry
+        # for a short-lived publish token, and uses that. No long-lived
+        # secret needed.
+        #
+        # `--provenance` signs the same OIDC token into the published
+        # package's provenance attestation; `--no-git-checks` skips pnpm's
+        # clean-tree check (we're on a detached tag checkout, not a branch);
+        # `--access public` is required for first-time publish of a scoped
+        # package (npm defaults `@scope/...` to private).
+        #
+        # The `prepack` hook in package.json runs rollup → dist-js before
+        # the tarball is assembled, so no separate build step is needed.
+        run: pnpm publish --no-git-checks --provenance --access public

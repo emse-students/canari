@@ -1,0 +1,10 @@
+/target
+node_modules/
+dist-js/
+/.tauri
+/ios/.build
+/ios/.tauri
+/ios/Package.resolved
+.DS_Store
+
+.turbo

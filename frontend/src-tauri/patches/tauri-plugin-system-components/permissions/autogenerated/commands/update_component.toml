@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-update-component"
+description = "Enables the update_component command without any pre-configured scope."
+commands.allow = ["update_component"]
+
+[[permission]]
+identifier = "deny-update-component"
+description = "Denies the update_component command without any pre-configured scope."
+commands.deny = ["update_component"]
