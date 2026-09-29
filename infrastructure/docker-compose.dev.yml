@@ -301,9 +301,6 @@ services:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
-      # Left false even here. `ENABLE_DEV_ROUTES` is not "the dev environment's routes" - it opens
-      # endpoints, and this environment is publicly resolvable with a copy of production's data.
-      ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       # A DEDICATED OIDC CLIENT, on the SAME Authentik instance, so a real account can sign in here
       # without production's client ever seeing a dev redirect. The provider's `issuer_mode` is
       # per_provider, so a dev id token cannot be mistaken for a production one.

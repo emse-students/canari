@@ -270,7 +270,6 @@ services:
       ALLOW_INSECURE_COOKIES: "true"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
-      ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin

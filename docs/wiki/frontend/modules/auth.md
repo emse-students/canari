@@ -7,7 +7,6 @@
 ## Responsibilities
 
 - OIDC login via Authentik (redirect flow with PKCE).
-- Dev login (email/password) when `ENABLE_DEV_ROUTES=true`.
 - Access token management (in-memory only).
 - Refresh token rotation via HttpOnly cookie.
 - WebSocket auth cookie (`canari_ws_token`) synchronization.
