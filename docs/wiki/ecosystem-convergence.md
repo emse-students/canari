@@ -1365,62 +1365,41 @@ it fails.
 
 ### Where the chantier stands, and the restart order
 
-Last updated 2026-09-27. The date lives here and not in the heading: CLAUDE.md and a
+Last updated 2026-09-29. The date lives here and not in the heading: CLAUDE.md and a
 changelog entry link to this section's anchor, and a dated heading broke both at the first update.
 
 Everything below is pushed; nothing lives only in a scratch directory. Phone checks are done on the
 Mi 9T (adb reverse to a local rig, or prod).
 
-**Shipped and verified on the phone:** MiGallery v2.3.0 (flat), v2.4.0 (viewer gestures), v2.5.0
-(full-screen viewer, video checked in prod), v2.6.0 (album photos first, justified grid), v2.7.0
-(album opens on its cover over its own blurred cover, Google Photos selection mode, 3 a row with a
-pinch between 2/3/4, aligned menus - checked on the rig and in prod on the Mi 9T), v2.8.0 (the
-albums list copies Google Photos, the home page no longer repaints its blobs and greeting on hydration,
-the bars no longer overscroll-stretch, Photos CV and Mes photos edge to edge - checked on the rig,
-the release run watched; **not yet looked at in prod**), v2.9.0 (the 2026 logo everywhere - prod
-serves `og-image.jpg` 42 KB, `MiGallery.png` is a 404 -, bars in the action pill's blurred material,
-opaque dialogs over a blurred page, viewer margins and a Google-Photos Informations panel, Photos CV
-like the albums list, real plurals instead of "(s)"); Portail-etu v1.0.2 (MiGallery's new icon,
-checked live at 7466 bytes); Sky v1.1.0 +
-v1.1.1 (Sky Map chrome, opens on my star, pinch redraws, no idle redraw) - **v1.1.1 itself is not
-yet looked at in prod**; Le Cercle dashboard (MR !20); MiConnect flat + French + lands on Canari
-([authentik](infrastructure/authentik.md)).
+**Nothing of the interface chantier is left to BUILD.** What shipped up to 2026-09-27 is in each
+repo's own release notes and wiki (MiGallery v2.3.0 to v2.15.4, Portail-etu v1.0.2, Sky v1.1.1,
+Le Cercle MR !20 to !23, MiConnect in [authentik](infrastructure/authentik.md)); this section
+keeps only what is still open.
+
+**2026-09-29, the hardware pass (Mi 9T, signed in on the production sites):**
+
+- MiGallery prod: the albums list, an album's cover page, selection mode and a two-photo share
+  (the sheet opened on "Partager 2 images" and was cancelled) all hold. **The grid pinch did not.**
+  One pinch changed the density by one step only, because the row under the fingers was
+  re-rendered and a detached node bubbles nothing. Fixed in v2.15.5 (#369, measured on the rig),
+  together with an album that looked empty after a failed load (#370)
+  ([photo-grid](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/photo-grid.md#density-and-the-pinch)).
+- Canari: the launcher opens on the phone and its links leave for the system browser. On desktop
+  it now answers a hover, slides open like the post menu, and the header reads connection,
+  launcher, logout, avatar (user, 2026-09-29) - `v0.18.31`
+  ([design-reference](frontend/design-reference.md)).
+- Le Cercle (now `cercle.emse.fr`): Accueil and Compte correct; the phone's bottom bar is icons
+  only, 48 px, the name kept for a screen reader (MR !24, seen in prod).
 
 **Restart order:**
 
-1. **Nothing of the interface chantier is left to BUILD (2026-09-27).** Shipped that day:
-   - Canari `v0.18.27`: its viewers take MiGallery's frame, gestures and an Informations panel
-     ([posts](frontend/modules/posts.md#the-photo-viewer-takes-migallerys-frame-gestures-and-information-panel-2026-09-27)),
-     and a launcher opens MiGallery, Le Cercle, Sky and Portail-etu
-     ([design-reference](frontend/design-reference.md)).
-   - MiGallery v2.14.0 (one page gutter, one sign-in on a landing that no longer scrolls, rows
-     #19-#23, a real manifest) and v2.15.0 (#25 recounted to zero glow and zero backdrop-filter
-     outside dialogs, the bottom bar on Canari's Instagram reference - 48 px, no visible label -,
-     the global `button` centring scoped to `.btn`), then v2.15.1 (every photo tile named, not only
-     the loaded ones; the year count read as a phrase; `theme-color` follows the painted theme). Its work list is pruned in
-     [ui-redesign](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/ui-redesign.md).
-   - Le Cercle MR !21 (Accueil is "what is happening now", Compte is the account in Lydia/Revolut
-     order, one column of priority at every width) and MR !22 (the operation disc was invisible in
-     dark, `bg-subtle` on a card).
-   - MiConnect: the two strings read; see item 3.
-2. **Owed on hardware (Mi 9T, prod):** Canari's viewer feel and the launcher; MiGallery's grid
-   pinch and a multi-file share from a selection (v2.7.0), v2.8.0 to v2.15.1 signed in; Le Cercle's
-   two pages signed in. None of these was seen signed in on a production site.
-3. **The user's decisions, taken 2026-09-27, and what each became:**
-   - MiGallery's dead CodeQL configurations (`cd.yml`, `ci-cd.yml`, `code-analysis.yml`) are
-     DELETED: 684 analyses across 200 (category, ref) chains, newest first, because only a
-     chain's newest analysis is deletable and the DELETE returns no next link. `ci.yml` and
-     `scheduled.yml` are the live ones.
-   - MiGallery's two remaining blurs (dialog backdrop, drop overlay) STAY.
-   - MiConnect's "Élève" label is WRITTEN ([authentik](infrastructure/authentik.md)).
-   - Le Cercle: the two misspelled menu rows are renamed in production ("Cocktail passion",
-     "Cocktail soft"; the purchase ledger keeps its history as written); the Accueil shortcuts are gone
-     and menu categories arrived (MR !23, schema 3); nothing is classified yet, the managers do that.
-   - Sky's history is REWRITTEN: four SQLite files gone from every commit
-     ([Sky deployment](https://github.com/emse-students/Sky/blob/main/docs/wiki/deployment.md)).
-     **Owed: the user sends GitHub Support the `refs/pull/*` garbage-collection request.**
-4. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
-   Every rig, the Immich tunnel and the other MiGallery worktrees are removed at the pause.
+1. **Owed on hardware:** Canari's photo viewer on a PRODUCTION build - the Mi 9T carries a
+   sideloaded rig build, which shows the offline banner against prod; MiGallery v2.15.5's pinch
+   in prod (the fix was measured on the rig only).
+2. **Seen, not decided - the user's call:** Le Cercle's Accueil shows the balance twice (header
+   pill and the card); the "Perm 3A" has been open since 2026-09-22 (data, a manager closes it).
+3. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
+   Every rig, the Immich tunnel and the other worktrees are removed at the pause.
 
 **Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose
 `IMMICH_BASE_URL` was an SSH tunnel to the PRODUCTION Immich; 28 empty `[TEST]` albums landed there
