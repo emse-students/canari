@@ -52,7 +52,7 @@
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
+  import { linkableEventLabel } from '$lib/utils/time';
 
   /**
    * Full-featured post creation form. Supports:
@@ -248,14 +248,6 @@
         loadingLinkableEvents = false;
       });
   });
-
-  function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
-    const d = new Date(ev.startsAt);
-    const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-    return `${date} ${time} - ${ev.title}`;
-  }
 
   const mediaService = new MediaService();
 
@@ -549,7 +541,7 @@
           </option>
           {#each linkableCalendarEvents as ev (ev.id)}
             <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-              {formatLinkableEventLabel(ev)}
+              {linkableEventLabel(ev)}
             </option>
           {/each}
         </select>

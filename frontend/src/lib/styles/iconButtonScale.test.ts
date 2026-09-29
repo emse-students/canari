@@ -53,6 +53,10 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 2,
     why: 'crosses overlaying a 64px media thumbnail',
   },
+  'lib/components/posts/MediaThumbRemoveButton.svelte': {
+    count: 1,
+    why: 'a cross overlaying a 7rem composer thumbnail - a 44px box covered half the photo on the Mi 9T, so the hit area is widened by a ::before instead',
+  },
   'lib/components/messages/MessageBubbleToolbar.svelte': {
     count: 1,
     why: 'matched to the quick-reaction emoji buttons beside it',

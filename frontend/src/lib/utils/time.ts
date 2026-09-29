@@ -28,6 +28,18 @@ export function exactDate(dateStr: string): string {
   });
 }
 
+/**
+ * The option label of a calendar event a post can be linked to: "12 mai 2026 14:30 - Gala".
+ * One implementation for the composer and the editor, which each carried a copy.
+ */
+export function linkableEventLabel(ev: { startsAt: string; title: string }): string {
+  const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
+  const d = new Date(ev.startsAt);
+  const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  return `${date} ${time} - ${ev.title}`;
+}
+
 /** "il y a 3 min" / "3 min ago", etc. */
 export function formatRelative(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);

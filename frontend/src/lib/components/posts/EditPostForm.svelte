@@ -21,7 +21,7 @@
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
+  import { linkableEventLabel } from '$lib/utils/time';
   import PollSection from './PollSection.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -173,14 +173,6 @@
       }
     }
   });
-
-  function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
-    const d = new Date(ev.startsAt);
-    const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-    return `${date} ${time} - ${ev.title}`;
-  }
 
   /**
    * Adds media to the pending list, whatever route it arrived by.
@@ -355,7 +347,7 @@
             </option>
             {#each linkableCalendarEvents as ev (ev.id)}
               <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-                {formatLinkableEventLabel(ev)}
+                {linkableEventLabel(ev)}
               </option>
             {/each}
           </select>

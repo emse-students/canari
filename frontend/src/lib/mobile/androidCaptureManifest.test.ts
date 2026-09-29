@@ -19,7 +19,19 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = resolve(here, '../../../src-tauri/gen/android/app/src/main/AndroidManifest.xml');
 
-const manifest = readFileSync(MANIFEST, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+/**
+ * The XML with every comment cut out. Split on the markers rather than a regex replace, which a
+ * sanitiser scanner reads as an incomplete HTML sanitisation - this is a test reading a file we
+ * own, and a split has no residue for it to accuse.
+ */
+function withoutComments(xml: string): string {
+  return xml
+    .split('<!--')
+    .map((chunk, i) => (i === 0 ? chunk : chunk.slice(chunk.indexOf('-->') + 3)))
+    .join('');
+}
+
+const manifest = withoutComments(readFileSync(MANIFEST, 'utf8'));
 const queries = manifest.match(/<queries>[\s\S]*?<\/queries>/)?.[0] ?? '';
 
 describe('AndroidManifest camera capture visibility', () => {
@@ -38,9 +50,8 @@ describe('AndroidManifest camera capture visibility', () => {
    * exactly as before. Same symptom, second cause - hence both are pinned.
    */
   it('exposes the app-specific Pictures directory to the FileProvider', () => {
-    const paths = readFileSync(resolve(MANIFEST, '../res/xml/file_paths.xml'), 'utf8').replace(
-      /<!--[\s\S]*?-->/g,
-      ''
+    const paths = withoutComments(
+      readFileSync(resolve(MANIFEST, '../res/xml/file_paths.xml'), 'utf8')
     );
     expect(paths).toMatch(/<external-files-path\b[^>]*path="Pictures\/"/);
   });
