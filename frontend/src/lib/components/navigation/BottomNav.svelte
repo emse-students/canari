@@ -9,11 +9,9 @@
     ShoppingBag,
     ClipboardList,
   } from '@lucide/svelte';
-  import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
-  import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
-  import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import { page } from '$app/state';
 
   const pathname = $derived(page.url.pathname);
@@ -32,25 +30,6 @@
 
   function getIcon(icon: keyof typeof ICONS) {
     return ICONS[icon];
-  }
-
-  const totalUnread = $derived(
-    globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
-  );
-
-  /**
-   * Unread badge count for a given place.
-   *
-   * The bar draws the four `mobileNav` places, and `chat` is the only one of them that can carry a
-   * badge - which is why the dot's `aria-label` is the unread-MESSAGES sentence. The notifications
-   * branch is the rule for a place that is not currently drawn here; giving it a badge in this bar
-   * means giving it a sentence of its own too.
-   */
-  function placeBadge(placeId: string, isActive: boolean): number {
-    if (isActive) return 0;
-    if (placeId === 'chat') return totalUnread;
-    if (placeId === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
-    return 0;
   }
 </script>
 
@@ -89,7 +68,7 @@
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-12 items-stretch justify-around">
-    {#each APP_PLACES.filter((p) => p.mobileNav) as place (place.id)}
+    {#each MOBILE_NAV_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
       {@const badge = placeBadge(place.id, isActive)}

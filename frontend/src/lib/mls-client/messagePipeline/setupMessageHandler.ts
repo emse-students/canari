@@ -32,6 +32,7 @@ import {
 } from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
+import { SenderMismatchError } from '../verifiedSender';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -619,8 +620,16 @@ async function handleWelcome({
                 }
               }
             }
-          } catch {
-            /* ignore replay errors */
+          } catch (e) {
+            // A frame refused for its sender WAS decrypted: its generation is spent, so it is recorded
+            // like one that opened, or the archive replay would later call it a loss.
+            if (e instanceof SenderMismatchError) {
+              noteFrameConsumed(userId, joinedGroupId, msg.content);
+            } else {
+              log(
+                `[MLS] buffered frame for ${joinedGroupId.slice(0, 8)}... not replayed after the Welcome: ${String(e).slice(0, 120)}`
+              );
+            }
           }
         }
         statePersister.persistNow();
@@ -1092,6 +1101,13 @@ async function handleKnownGroup({
     const kind = classifyIncomingDecryptError(e);
 
     if (kind === 'own-message') return true;
+    // REFUSED FOR ITS SENDER (WP-G2-1b): decrypted, so its generation is spent and it is recorded
+    // as consumed - but its envelope names someone MLS did not verify, so nothing of it is shown.
+    // `assertVerifiedSender` already said so at ERROR and reported it; nothing here is a heal.
+    if (kind === 'sender-mismatch') {
+      noteConsumed();
+      return true;
+    }
     // EVICTED - and this arm is the whole reason the kind exists. The frame is for a group whose
     // Remove commit retired our leaf: it was in flight, or the server registry the removal cleans
     // best-effort had not caught up. There is no plaintext and there is nothing broken, so it is

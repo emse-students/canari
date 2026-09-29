@@ -12,7 +12,7 @@
  * themselves too, the same way the allowlist already did - the toggle behind a confirmation, since
  * flipping it changes who can read the channel; the write policy without one, like `setNotifLevel`.
  */
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 
 const service = vi.hoisted(() => ({
@@ -46,11 +46,16 @@ vi.mock('$lib/utils/apiFetch', () => ({
 
 import ChannelSettingsPanel from './ChannelSettingsPanel.svelte';
 import { m } from '$lib/paraglide/messages';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// Picking a write policy closes the Picker, which plays an outro.
+afterAll(adoptTransitionAnimations());
 
 const workspaces = [
   {
     id: 'ws',
     name: 'Community',
+    viewerCanManageChannels: true,
     channels: [
       { id: 'salon-a', name: 'a', isPrivate: true },
       { id: 'salon-b', name: 'b', isPrivate: true },
@@ -103,12 +108,17 @@ function buttonByText(text: string): HTMLButtonElement {
   return b as HTMLButtonElement;
 }
 
-async function mountOnAccessTab(channelId: string) {
+async function mountOnAccessTab(channelId: string, canManage = true) {
   const props = $state({
     selectedChannelId: channelId,
     channelWorkspaces: [
-      ...workspaces,
-      { id: 'ws2', name: 'Other', channels: [{ id: 'public-salon', name: 'p' }] },
+      ...workspaces.map((w) => ({ ...w, viewerCanManageChannels: canManage })),
+      {
+        id: 'ws2',
+        name: 'Other',
+        viewerCanManageChannels: canManage,
+        channels: [{ id: 'public-salon', name: 'p' }],
+      },
     ],
     onClose: () => {},
   });
@@ -184,12 +194,56 @@ describe('ChannelSettingsPanel - access tab', () => {
   it('writes the write policy the moment it changes, with no confirmation asked', async () => {
     await mountOnAccessTab('salon-a');
 
-    const select = document.querySelector('select') as HTMLSelectElement;
-    select.value = 'admins';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    // The write policy is the panel's in-app Picker: open it, then pick "admins" by its label.
+    (document.querySelector('button[aria-haspopup="listbox"]') as HTMLButtonElement).click();
+    flushSync();
+    await tick();
+    const admins = [...document.querySelectorAll('[role="option"]')].find(
+      (o) => (o.textContent ?? '').trim() === m.chat_channel_write_admins()
+    ) as HTMLButtonElement | undefined;
+    expect(admins).toBeDefined();
+    admins!.click();
     await settle();
 
     expect(showConfirmMock).not.toHaveBeenCalled();
     expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner'], 'admins');
+  });
+});
+
+/**
+ * A MEMBER WHO CANNOT GOVERN THE SALON IS SHOWN ITS SETTINGS, NOT OFFERED THEM.
+ *
+ * Reported by the user 2026-09-29: a plain member opened this panel and got the visibility toggle,
+ * the write-policy pick, rename and delete - every one of which the server refuses without
+ * `channel.manage`. The decision is the server's (`viewerCanManageChannels`), read, never derived.
+ */
+describe('ChannelSettingsPanel - a member without channel.manage', () => {
+  it('shows the access settings read-only, with no control that the server would refuse', async () => {
+    await mountOnAccessTab('salon-a', false);
+
+    expect(document.querySelector('button[role=switch]')).toBeNull();
+    const writePolicy = document.querySelector(
+      `[aria-label^="${m.chat_channel_who_can_write()}"]`
+    ) as HTMLButtonElement;
+    expect(writePolicy.disabled).toBe(true);
+    expect(document.getElementById('channel-access-autocomplete')).toBeNull();
+    expect(
+      document.querySelector(`[aria-label="${m.chat_channel_remove_access_title()}"]`)
+    ).toBeNull();
+    expect(document.body.textContent).toContain(m.chat_channel_settings_read_only_hint());
+    // The allowlist itself is still shown: reading it is allowed, only changing it is not.
+    expect(service.getChannelAccess).toHaveBeenCalledWith('salon-a');
+  });
+
+  it('offers neither rename nor delete on the overview, and keeps "leave" for a private salon', async () => {
+    await mountOnAccessTab('salon-a', false);
+    buttonByText(m.chat_channel_overview_tab()).click();
+    await settle();
+
+    const labels = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes(m.chat_rename_channel_button()))).toBe(false);
+    expect(labels.some((t) => t.includes(m.chat_delete_channel_button()))).toBe(false);
+    expect(labels.some((t) => t.includes(m.chat_leave_channel_button()))).toBe(true);
+    expect((document.getElementById('channel-name') as HTMLInputElement).readOnly).toBe(true);
   });
 });

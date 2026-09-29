@@ -1,25 +1,10 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
-  import {
-    Image,
-    FileText,
-    Film,
-    Music,
-    ChartColumn,
-    CalendarCheck,
-    ClipboardList,
-    Clock,
-    X,
-    CircleAlert,
-    Building2,
-    User,
-    VenetianMask,
-    ChevronDown,
-  } from '@lucide/svelte';
+  import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount } from 'svelte';
-  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
+  import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
@@ -52,15 +37,27 @@
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
-  import { isGlobalAdmin } from '$lib/stores/user';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { isGlobalAdmin, getSavedDisplayName } from '$lib/stores/user';
+  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import PostComposerBar from './PostComposerBar.svelte';
+  import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
+  import PickedMediaPreview from './PickedMediaPreview.svelte';
+  import MediaCaptionChip from './MediaCaptionChip.svelte';
+  import MediaCaptionField from './MediaCaptionField.svelte';
+  import { shiftAfterRemoval } from './mediaCaptionIndex';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
+  import { linkableEventPickerOptions } from '$lib/utils/time';
 
   /**
    * Full-featured post creation form. Supports:
@@ -134,6 +131,37 @@
 
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
+  const selectedAssociation = $derived(
+    isAssociationSelected
+      ? postAsAssociations.find((a) => a.id === selectedAssociationId)
+      : undefined
+  );
+  /**
+   * The personal option is labelled with the member's OWN NAME, because the select is drawn as the
+   * author line ("Jolan Boudin" and a chevron, as Facebook heads its composer), and a heading that
+   * read "Profil personnel" would say what kind of identity this is rather than whose.
+   */
+  const personalLabel = getSavedDisplayName() || m.post_create_personal_profile_label();
+
+  /**
+   * Who may publish, in the app's own picker: the member, anonymous, then the associations and lists
+   * they may speak for, each with its avatar. It was a native `<select>`, which on Android opened
+   * the system's dialog of bare names (user, 2026-09-29).
+   */
+  const identityOptions = $derived<PickerOption[]>([
+    { value: '', label: personalLabel },
+    { value: ANONYMOUS_POST_IDENTITY, label: m.post_create_anonymous_label() },
+    ...associationPickerOptions(postAsAssociations),
+  ]);
+
+  /** The events a post as an association may link to, "no event" first. */
+  const linkableEventOptions = $derived(
+    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+  );
+
+  let editorField = $state<MarkdownComposerField | null>(null);
+  /** Which picked file's caption field is open under the strip - at most one (`MediaCaptionChip`). */
+  let captionIndex = $state<number | null>(null);
 
   // --- UI state ---
   let publishing = $state(false);
@@ -244,16 +272,7 @@
       });
   });
 
-  function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
-    const d = new Date(ev.startsAt);
-    const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-    return `${date} ${time} - ${ev.title}`;
-  }
-
   const mediaService = new MediaService();
-  const mediaInputId = 'create-post-media-input';
 
   onMount(async () => {
     const saved = loadPostComposerDraft();
@@ -292,30 +311,17 @@
     }
   });
 
-  /** Returns true for files whose preview should show a generic icon instead of an object URL. */
-  /** Replace the current media selection with a new set of files. Revokes stale object URLs. */
-  function onPickFiles(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    filePreviews.forEach((url) => URL.revokeObjectURL(url));
-    selectedFiles = files;
-    filePreviews = files.map((f) => (needsThumbIcon(f) ? '' : URL.createObjectURL(f)));
-    fileThumbIcons = files.map((f) => needsThumbIcon(f));
-    mediaCaptions = files.map(() => '');
-  }
-
   /**
-   * Adds media to the selection, KEEPING what is already there.
+   * Adds media to the selection, KEEPING what is already there - from a picker, the camera, a drop
+   * or a paste alike.
    *
-   * Why this is not `onPickFiles`. That one replaces, and must: an `<input type="file">` hands over
-   * its entire selection on every change, so appending would duplicate everything already picked. A
-   * drop or a paste carries only what the reader just brought, and replacing on one would silently
-   * throw away the media they chose a moment earlier.
-   *
-   * The destination is otherwise identical - same previews, same icons, same empty caption - so a
-   * dropped file is indistinguishable from a picked one from here on, which is what was asked
-   * (user, 2026-09-18: *"Que glisser deposer ajoute le media au post (comme si on cliquait sur
-   * Medias -> Envoi du fichier)"*).
+   * A pick used to REPLACE the selection, because an `<input type="file">` hands over its entire
+   * selection on every change and appending would have duplicated it. Since the composer has four
+   * inputs (photos, camera, video, documents - `PostComposerBar`) a replacing pick would throw away
+   * the photo taken a moment ago the instant a PDF was added, so every input now empties itself
+   * after each pick and hands over only what was just chosen. From here on a dropped file is
+   * indistinguishable from a picked one, which is what was asked (user, 2026-09-18: *"Que glisser
+   * deposer ajoute le media au post (comme si on cliquait sur Medias -> Envoi du fichier)"*).
    */
   function addFiles(files: File[]) {
     if (files.length === 0) return;
@@ -326,10 +332,7 @@
     ];
     fileThumbIcons = [...fileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
     mediaCaptions = [...mediaCaptions, ...files.map(() => '')];
-    Log.d(
-      'POST_COMPOSER',
-      `${files.length} media dropped or pasted, ${selectedFiles.length} total`
-    );
+    Log.d('POST_COMPOSER', `${files.length} media added, ${selectedFiles.length} total`);
   }
 
   /** Remove a single media file from the selection by index. */
@@ -339,6 +342,7 @@
     filePreviews = filePreviews.filter((_, idx) => idx !== i);
     fileThumbIcons = fileThumbIcons.filter((_, idx) => idx !== i);
     mediaCaptions = mediaCaptions.filter((_, idx) => idx !== i);
+    captionIndex = shiftAfterRemoval(captionIndex, i);
   }
 
   /** Icon matching the media type for generic file previews. */
@@ -403,16 +407,8 @@
       stage = 'mediaUpload';
       const media = [];
       for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        let uploadFile = file;
-        let dims: { width: number; height: number } | undefined;
-        if (file.type.startsWith('image/')) {
-          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
-          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
-          uploadFile = compressed.file;
-          dims = { width: compressed.width, height: compressed.height };
-        }
-        const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims, 'archive');
+        const { file, dims } = await preparePostMedia(selectedFiles[i]);
+        const ref = await mediaService.encryptAndUpload(file, authToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
       }
@@ -460,6 +456,7 @@
       filePreviews = [];
       fileThumbIcons = [];
       mediaCaptions = [];
+      captionIndex = null;
       includePoll = false;
       pollQuestion = '';
       pollOptions = emptyPollOptions();
@@ -483,116 +480,100 @@
   }
 </script>
 
-<article
-  class="bg-cn-surface relative mb-6 overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
->
-  <!-- En-tête du Formulaire -->
-  <div class="bg-cn-surface border-b border-black/5 px-5 py-4 dark:border-white/10">
-    <p class="text-2xs mb-0.5 font-bold tracking-widest text-amber-500 uppercase">
-      {m.post_create_title()}
-    </p>
-    <p class="text-text-main text-sm font-semibold opacity-90">
-      {m.post_create_subtitle()}
-    </p>
-  </div>
+<!--
+  ONE COLUMN: a scroll region, and a footer that is never scrolled away.
 
-  <div class="p-4 sm:p-5">
-    <!-- Publier en tant que : toujours visible, accessible a tout le monde (l'option "Anonyme"
-         ne requiert aucun droit d'admin d'association, contrairement aux options d'association). -->
-    <div class="mb-5 grid gap-4 sm:grid-cols-2">
-      <div>
-        <label
-          for="post-association-select"
-          class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
-        >
-          {m.post_create_post_as_label()}
-        </label>
-        <div class="group relative">
-          <span
-            class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 transition-colors group-focus-within:text-amber-500"
-            aria-hidden="true"
-          >
-            {#if isAssociationSelected}<Building2
-                size={16}
-                strokeWidth={2.5}
-              />{:else if isAnonymousSelected}<VenetianMask
-                size={16}
-                strokeWidth={2.5}
-              />{:else}<User size={16} strokeWidth={2.5} />{/if}
-          </span>
-          <select
-            id="post-association-select"
-            bind:value={selectedAssociationId}
-            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-          >
-            <option value="" class="bg-white font-medium dark:bg-zinc-900"
-              >{m.post_create_personal_profile_label()}</option
-            >
-            <option value={ANONYMOUS_POST_IDENTITY} class="bg-white font-medium dark:bg-zinc-900"
-              >{m.post_create_anonymous_label()}</option
-            >
-            <AssociationOptions
-              associations={postAsAssociations}
-              optionClass="bg-white font-medium dark:bg-zinc-900"
-            />
-          </select>
-          <div
-            class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
-          >
-            <ChevronDown size={16} strokeWidth={2.5} />
-          </div>
-        </div>
+  Inside `Modal`'s `phoneFullScreen` the panel fills the space above the keyboard, so the footer -
+  attachments, formatting and "Publier" - sits on the keyboard while the text scrolls above it. That
+  is the layout the user asked for after comparing with Facebook's composer on the Mi 9T
+  (2026-09-29): the author as one line, the text taking the height, the actions under the thumb.
+  The error banner is in the FOOTER for the reason its comment in the script gives: a keyboard used
+  to cover the one sentence that named the cause.
+-->
+<div class="flex min-h-0 flex-1 flex-col">
+  <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3 sm:px-6">
+    <!-- Who is publishing: the avatar of that identity, and the choice itself drawn as the name. -->
+    <div class="flex items-center gap-3">
+      <div class="h-11 w-11 shrink-0">
         {#if isAnonymousSelected}
-          <p class="text-text-muted text-2xs mt-1.5 ml-1" transition:fade={{ duration: 200 }}>
-            {m.post_create_anonymous_hint()}
-          </p>
+          <AnonymousAvatar fill />
+        {:else if selectedAssociation}
+          <AssociationAvatar
+            fill
+            shape="circle"
+            name={selectedAssociation.name}
+            logoUrl={selectedAssociation.logoUrl}
+          />
+        {:else if globalSession.userId}
+          <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
         {/if}
       </div>
-
-      {#if isAssociationSelected}
-        <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
-          <label
-            for="post-linked-calendar-event"
-            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
-          >
-            <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
-            {m.post_create_link_event_label()}
-          </label>
-          <select
-            id="post-linked-calendar-event"
-            bind:value={selectedLinkedCalendarEventId}
-            disabled={loadingLinkableEvents}
-            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-          >
-            <option value="" class="bg-white font-medium dark:bg-zinc-900">
-              {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
-            </option>
-            {#each linkableCalendarEvents as ev (ev.id)}
-              <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-                {formatLinkableEventLabel(ev)}
-              </option>
-            {/each}
-          </select>
-          <p class="text-text-muted text-2xs mt-1.5 ml-1">
-            {m.post_create_validated_events_hint()}
-          </p>
-        </div>
-      {/if}
+      <div class="min-w-0">
+        <Picker
+          id="post-association-select"
+          value={selectedAssociationId}
+          options={identityOptions}
+          onValueChange={(v) => (selectedAssociationId = v)}
+          label={m.post_create_post_as_label()}
+          triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
+        >
+          {#snippet leading(option)}
+            <span class="block h-9 w-9">
+              {#if option.value === ANONYMOUS_POST_IDENTITY}
+                <AnonymousAvatar fill />
+              {:else if option.value === ''}
+                {#if globalSession.userId}
+                  <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
+                {/if}
+              {:else}
+                {@const asso = postAsAssociations.find((a) => a.id === option.value)}
+                <AssociationAvatar
+                  fill
+                  shape="circle"
+                  name={asso?.name ?? option.label}
+                  logoUrl={asso?.logoUrl}
+                />
+              {/if}
+            </span>
+          {/snippet}
+        </Picker>
+      </div>
     </div>
+    {#if isAnonymousSelected}
+      <p class="text-text-muted text-2xs mt-2" transition:fade={{ duration: 200 }}>
+        {m.post_create_anonymous_hint()}
+      </p>
+    {/if}
 
-    <!-- Bannière Brouillon Restauré -->
+    {#if isAssociationSelected}
+      <div class="mt-3" transition:fade={{ duration: 200 }}>
+        <label
+          for="post-linked-calendar-event"
+          class="text-text-muted text-2xs mb-1 flex items-center gap-1.5 font-semibold"
+        >
+          <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+          {m.post_create_link_event_label()}
+        </label>
+        <Picker
+          id="post-linked-calendar-event"
+          value={selectedLinkedCalendarEventId}
+          options={linkableEventOptions}
+          onValueChange={(v) => (selectedLinkedCalendarEventId = v)}
+          label={m.post_create_link_event_label()}
+          disabled={loadingLinkableEvents}
+          variant="field"
+        />
+      </div>
+    {/if}
+
     {#if draftRestored}
       <div
-        class="mb-3 flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 shadow-sm"
+        class="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-500/10 px-3 py-2"
         transition:slide={{ duration: 200 }}
       >
-        <span
-          class="text-2xs flex items-center gap-1.5 font-bold text-amber-700 dark:text-amber-400"
-        >
+        <span class="text-2xs font-semibold text-amber-700 dark:text-amber-400">
           {m.post_create_draft_restored_label()}
-          <span class="font-medium text-amber-700/70 dark:text-amber-400/70"
-            >{m.post_create_draft_restored_detail()}</span
-          >
+          <span class="font-medium opacity-70">{m.post_create_draft_restored_detail()}</span>
         </span>
         <button
           type="button"
@@ -601,103 +582,83 @@
             clearPostComposerDraft();
             draftRestored = false;
           }}
-          class="text-xs font-bold text-amber-700/60 transition-colors outline-none hover:text-amber-700 focus-visible:underline dark:text-amber-400/60 dark:hover:text-amber-400"
+          class="text-2xs shrink-0 font-bold text-amber-700 outline-none hover:underline focus-visible:underline dark:text-amber-400"
         >
           {m.post_create_clear_draft_label()}
         </button>
       </div>
     {/if}
 
-    <!-- Zone de Texte & Aperçu Médias (Inner Shadow Container) -->
-    <div
-      class="focus-within:bg-cn-surface relative mb-2 rounded-2xl border border-black/5 bg-black/5 p-2 shadow-inner transition-colors dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
-    >
-      <!-- Feedback de Sauvegarde auto -->
-      {#if draftSaved}
-        <span
-          class="text-text-muted text-2xs pointer-events-none absolute top-3 right-4 font-bold tracking-wider uppercase opacity-60"
-          transition:fade={{ duration: 200 }}
-        >
-          {m.post_create_draft_saved_label()}
-        </span>
-      {/if}
+    <MarkdownComposerField
+      bind:this={editorField}
+      bind:value={markdown}
+      onmedia={addFiles}
+      showToolbar={false}
+      placeholder={m.post_create_message_placeholder()}
+      minHeight={selectedFiles.length > 0 ? '3rem' : '10rem'}
+      class="mt-2 w-full min-w-0"
+      editorClass="w-full max-w-full bg-transparent px-1 py-2 text-base leading-relaxed text-text-main"
+    />
 
-      <MarkdownComposerField
-        bind:value={markdown}
-        onmedia={addFiles}
-        placeholder={m.post_create_message_placeholder()}
-        minHeight="120px"
-        toolbarClass="mb-1"
-        editorClass="min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
-      />
-
-      <!-- Aperçu des médias & Légendes -->
-      {#if selectedFiles.length > 0}
-        <div
-          class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
-          transition:slide={{ duration: 200 }}
-          role="list"
-        >
-          {#each selectedFiles as file, i (file.name + i)}
-            {@const Icon = fileTypeIcon(file)}
+    {#if selectedFiles.length > 0}
+      <div
+        class="-mx-1 flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-1 pt-1 pb-2"
+        transition:slide={{ duration: 200 }}
+        role="list"
+      >
+        {#each selectedFiles as file, i (file.name + i)}
+          {@const Icon = fileTypeIcon(file)}
+          <div class="flex w-28 shrink-0 snap-start flex-col gap-1.5" role="listitem">
             <div
-              class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
-              role="listitem"
+              class="border-cn-border relative aspect-square w-full overflow-hidden rounded-lg border"
             >
-              <!-- Miniature -->
-              <div
-                class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
-              >
-                {#if fileThumbIcons[i]}
-                  <div
-                    class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 dark:bg-white/5"
-                  >
-                    <Icon size={28} strokeWidth={1.5} />
-                    <span
-                      class="text-2xs w-full truncate px-2 text-center font-bold tracking-wider uppercase"
-                    >
-                      {file.type.split('/')[1] ?? 'file'}
-                    </span>
-                  </div>
-                {:else}
-                  <img
-                    src={filePreviews[i]}
-                    alt={file.type.startsWith('image/')
-                      ? m.post_create_image_preview_alt()
-                      : m.post_create_media_preview_alt()}
-                    class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                {/if}
-                <button
-                  type="button"
-                  onclick={() => removeFile(i)}
-                  class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
-                  aria-label={m.post_create_remove_image_label()}
-                  title={m.common_delete_button()}
+              {#if fileThumbIcons[i]}
+                <div
+                  class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 dark:bg-white/5"
                 >
-                  <X size={14} strokeWidth={2.5} />
-                </button>
-              </div>
-              <!-- Input Légende -->
-              <input
-                type="text"
-                bind:value={mediaCaptions[i]}
-                placeholder={m.post_create_caption_placeholder()}
-                maxlength="120"
-                class="text-text-main placeholder:text-text-muted/60 bg-cn-surface text-2xs w-full rounded-lg border border-black/10 px-2.5 py-1.5 font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10"
+                  <Icon size={28} strokeWidth={1.5} />
+                  <span
+                    class="text-2xs w-full truncate px-2 text-center font-bold tracking-wider uppercase"
+                  >
+                    {file.type.split('/')[1] ?? 'file'}
+                  </span>
+                </div>
+              {:else}
+                <PickedMediaPreview
+                  {file}
+                  src={filePreviews[i]}
+                  alt={file.type.startsWith('image/')
+                    ? m.post_create_image_preview_alt()
+                    : m.post_create_media_preview_alt()}
+                />
+              {/if}
+              <MediaThumbRemoveButton
+                label={m.post_create_remove_image_label()}
+                title={m.common_delete_button()}
+                onclick={() => removeFile(i)}
+              />
+              <MediaCaptionChip
+                hasCaption={!!mediaCaptions[i]?.trim()}
+                active={captionIndex === i}
+                onclick={() => (captionIndex = captionIndex === i ? null : i)}
               />
             </div>
-          {/each}
-        </div>
+          </div>
+        {/each}
+      </div>
+      {#if captionIndex !== null && captionIndex < selectedFiles.length}
+        {#key captionIndex}
+          <MediaCaptionField
+            bind:value={mediaCaptions[captionIndex]}
+            position={captionIndex + 1}
+            onDone={() => (captionIndex = null)}
+          />
+        {/key}
       {/if}
-    </div>
-  </div>
+    {/if}
 
-  <!-- Sections Optionnelles & Footer -->
-  <div class="space-y-4 border-t border-black/5 px-4 pt-5 pb-5 sm:px-5 dark:border-white/10">
-    <!-- Sondage -->
     {#if includePoll}
-      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
+      <div class="mt-3" transition:slide={{ duration: 250 }}>
         <PollSection
           bind:question={pollQuestion}
           bind:options={pollOptions}
@@ -713,9 +674,8 @@
       </div>
     {/if}
 
-    <!-- Formulaire attaché -->
     {#if includeForm}
-      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
+      <div class="mt-3" transition:slide={{ duration: 250 }}>
         <FormSection
           bind:selectedFormId
           {availableForms}
@@ -725,154 +685,56 @@
         />
       </div>
     {/if}
+  </div>
 
-    <!-- Bannière d'Erreur -->
+  <div class="border-cn-border bg-cn-surface shrink-0 border-t px-3 pt-2 pb-2 sm:px-5 sm:pb-4">
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 shadow-inner dark:text-red-400"
+        role="alert"
+        class="mb-2 flex items-start gap-2.5 rounded-lg bg-red-500/10 px-3 py-2.5 text-red-600 dark:text-red-400"
       >
         <CircleAlert size={18} strokeWidth={2.5} class="mt-0.5 shrink-0" />
-        <span class="flex-1 text-sm leading-snug font-bold">{errorMessage}</span>
+        <span class="flex-1 text-sm leading-snug font-semibold">{errorMessage}</span>
         <button
           type="button"
           onclick={() => (errorMessage = '')}
-          class="shrink-0 text-xs font-bold text-red-600/60 transition-colors outline-none hover:text-red-600 focus-visible:underline dark:text-red-400/60 dark:hover:text-red-400"
+          class="shrink-0 text-xs font-bold outline-none hover:underline focus-visible:underline"
         >
           {m.post_create_error_dismiss_label()}
         </button>
       </div>
     {/if}
 
-    <!-- Barre d'outils (Toggles) + Bouton Publier -->
-    <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
-      <!-- Boutons d'ajouts (Toolbar) -->
-      <div
-        class="bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-2xl border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
-      >
-        <!-- Ajouter des médias -->
-        <label
-          for={mediaInputId}
-          title={m.post_create_photos_label()}
-          class="text-text-muted flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {selectedFiles.length > 0
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+    <PostComposerBar
+      onFiles={addFiles}
+      onFormat={(type) => editorField?.format(type)}
+      pollActive={includePoll}
+      onTogglePoll={() => (includePoll = !includePoll)}
+      formActive={includeForm}
+      onToggleForm={() => (includeForm = !includeForm)}
+      bind:scheduledAt
+      status={draftSaved ? m.post_create_draft_saved_label() : ''}
+    >
+      {#snippet action()}
+        <Button
+          type="button"
+          class="shrink-0 px-5 py-2 text-sm !font-bold"
+          disabled={publishing || !hasContent(markdown, selectedFiles.length)}
+          loading={publishing}
+          onclick={publishPost}
         >
-          {#if selectedFiles.length > 0 && selectedFiles.every((f) => f.type.startsWith('image/'))}
-            <Image size={18} strokeWidth={2.5} />
-          {:else if selectedFiles.length > 0 && selectedFiles.every( (f) => f.type.startsWith('video/') )}
-            <Film size={18} strokeWidth={2.5} />
-          {:else if selectedFiles.length > 0 && selectedFiles.every( (f) => f.type.startsWith('audio/') )}
-            <Music size={18} strokeWidth={2.5} />
+          {#if publishing}
+            {scheduledAt
+              ? m.post_create_scheduling_in_progress_label()
+              : m.post_create_publishing_in_progress_label()}
           {:else}
-            <FileText size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
+            {scheduledAt
+              ? m.post_create_schedule_button_label()
+              : m.post_create_publish_button_label()}
           {/if}
-          <span class="hidden text-xs sm:inline">{m.post_create_photos_label()}</span>
-        </label>
-        <input
-          id={mediaInputId}
-          type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub"
-          multiple
-          onchange={onPickFiles}
-          class="sr-only"
-        />
-
-        <!-- Ajouter un sondage -->
-        <button
-          type="button"
-          title={m.post_poll_section_title()}
-          onclick={() => (includePoll = !includePoll)}
-          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {includePoll
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-        >
-          <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">{m.post_poll_section_title()}</span>
-        </button>
-
-        <!-- Ajouter un formulaire -->
-        <button
-          type="button"
-          title={m.post_form_fallback_title()}
-          onclick={() => (includeForm = !includeForm)}
-          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {includeForm
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-        >
-          <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">{m.post_form_fallback_title()}</span>
-        </button>
-
-        <!-- Séparateur vertical visuel -->
-        <div class="mx-0.5 hidden h-6 w-px shrink-0 bg-black/10 sm:block dark:bg-white/10"></div>
-
-        <!-- Programmation (Date Picker intégré) -->
-        <div
-          class="relative flex shrink-0 items-center rounded-xl bg-black/5 px-2 py-1.5 transition-all focus-within:ring-2 focus-within:ring-amber-500/50 dark:bg-white/5 {scheduledAt
-            ? 'border border-amber-500/20 bg-amber-500/10'
-            : ''}"
-        >
-          <Clock
-            size={16}
-            strokeWidth={2.5}
-            class="text-text-muted ml-1 {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}"
-          />
-          <input
-            type="datetime-local"
-            bind:value={scheduledAt}
-            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            title={m.post_create_schedule_publication_label()}
-            class="text-text-main text-2xs cursor-pointer bg-transparent pr-1 pl-2 font-bold outline-none {scheduledAt
-              ? 'w-36 text-amber-700 dark:text-amber-400'
-              : 'sm:text-text-main w-5 text-transparent sm:w-28'} transition-all"
-          />
-          {#if scheduledAt}
-            <button
-              type="button"
-              onclick={() => (scheduledAt = '')}
-              class="ui-icon-button text-text-muted rounded-full transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
-              title={m.post_create_cancel_schedule_label()}
-            >
-              <X size={14} strokeWidth={2.5} />
-            </button>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Bouton Publier / Programmer -->
-      <Button
-        type="button"
-        class="min-w-[10rem] shrink-0 px-8 py-3 text-sm !font-bold shadow-md shadow-amber-500/20 active:translate-y-0 sm:w-auto"
-        disabled={publishing || !hasContent(markdown, selectedFiles.length)}
-        loading={publishing}
-        onclick={publishPost}
-      >
-        {#if publishing}
-          {scheduledAt
-            ? m.post_create_scheduling_in_progress_label()
-            : m.post_create_publishing_in_progress_label()}
-        {:else}
-          {scheduledAt
-            ? m.post_create_schedule_button_label()
-            : m.post_create_publish_button_label()}
-        {/if}
-      </Button>
-    </div>
+        </Button>
+      {/snippet}
+    </PostComposerBar>
   </div>
-</article>
-
-<style>
-  /* Hide Webkit's native calendar icon so only the custom Lucide one shows */
-  input[type='datetime-local']::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    opacity: 0;
-    position: absolute;
-    left: 0;
-    width: 100%;
-    height: 100%;
-  }
-</style>
+</div>

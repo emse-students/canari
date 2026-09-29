@@ -37,7 +37,11 @@ import type {
   BaseRefreshOutcome,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
-import { setSenderMismatchReporter, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
+import {
+  SenderMismatchError,
+  setSenderMismatchReporter,
+  type EnvelopeSender,
+} from '$lib/mls-client/verifiedSender';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -3536,10 +3540,17 @@ export abstract class BaseMlsService implements IMlsService {
     sender: string,
     ciphertext: Uint8Array
   ): Promise<Uint8Array | null> {
-    const plaintext = await this.processIncomingMessage(groupId, ciphertext, {
-      userId: sender,
-      path: 'distribution',
-    });
+    let plaintext: Uint8Array | null;
+    try {
+      plaintext = await this.processIncomingMessage(groupId, ciphertext, {
+        userId: sender,
+        path: 'distribution',
+      });
+    } catch (e) {
+      // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
+      if (e instanceof SenderMismatchError) noteFrameConsumed(this.userId, groupId, ciphertext);
+      throw e;
+    }
     // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
     // This group's frames are not what a conversation replay walks, so the mark is cheap insurance
     // rather than a known fix - and the direction it can be wrong in is the safe one: a recorded
@@ -3565,6 +3576,11 @@ export abstract class BaseMlsService implements IMlsService {
     // The permanence is decided at the throw, by `classifyIncomingDecryptError`, and never by
     // re-reading a sentence here.
     const kind = classifyIncomingDecryptError(e);
+    // A FRAME WHOSE ENVELOPE LIED ABOUT ITS SENDER (WP-G2-1b) is acknowledged and never handed to
+    // the seed handler: redelivery would bring back the same lie. `assertVerifiedSender` already
+    // accused it at ERROR, so the "comes back through a history request" line below would only be
+    // a second, wrong, account of it.
+    if (kind === 'sender-mismatch') return true;
     const permanent =
       kind === 'own-message' ||
       kind === 'secret-reuse' ||

@@ -187,6 +187,13 @@
    entirely has to be PORTALLED to the body, and `$lib/actions/portal` is how.
    ========================================================================================== */
 :root {
+  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) is 4rem
+     plus the home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26
+     floating pill and the classic bar each have their own height - so that component overwrites
+     this on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset`
+     and the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number. */
+  --bottom-nav-reserve: calc(4rem + var(--safe-area-inset-bottom, 0px));
+
   /* The navigation frame. Each scrim is one rung UNDER the thing it dims: a scrim exists to catch
      the click that closes it, so putting it OVER that thing makes the thing stop answering. */
   --z-nav-scrim: 22;
@@ -521,6 +528,23 @@ img.emoji {
     -webkit-user-select: text;
     user-select: text;
   }
+
+  /*
+   * RENDERED MARKDOWN IS THE CONTENT THIS INVERSION EXISTS TO SPARE, AND IT HAD NO WAY TO SAY SO.
+   * The opt-in above is `select-text` written at a call site, and only the chat message body ever
+   * wrote it - so a post, a comment, a profile bio and a partnership description were all chrome as
+   * far as a thumb was concerned: *"on ne peut pas copier le texte dans les posts (ce qui peut etre
+   * utile pour recuperer une info)"* (user, 2026-09-29, on a phone).
+   *
+   * `.post-markdown` IS THE CLASS AND NOT FOUR ATTRIBUTES, for the reason the block rules above it
+   * are stated once: a rule written into one class string is a rule the other three surfaces cannot
+   * inherit, and that is exactly how the list markers went missing on the most-read surface in the
+   * app. `user-select` inherits, so the block's descendants come with it.
+   */
+  .post-markdown {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /* Mobile swipe between main tabs (+layout.svelte) */
@@ -548,16 +572,79 @@ img.emoji {
   transition: none;
 }
 
-.page-scroll-wrap.swipe-nav-exit-left {
-  transition: transform 220ms ease-out;
-  transform: translateX(-100%);
+/* THE RELEASE, AND THE REASON THE PAGE ARRIVING IS FINALLY VISIBLE.
+   `+layout.svelte`'s `onNavigate` names this wrapper `swipe-nav-out` for the snapshot taken BEFORE
+   the route changes and `swipe-nav-in` for the one taken after, so the two captures land in two
+   groups and can slide past each other. One shared name puts them in ONE group, which the browser
+   morphs and cross-fades - the animation everybody writes first, and it looks exactly like the
+   440ms of empty background this replaced.
+
+   `--swipe-nav-from` is how far the finger had already carried the page, as a MAGNITUDE: the
+   direction is in the selector, so each keyframe spells its own sign (`swipeNavigation.ts`). The
+   outgoing page therefore travels the REMAINDER of a screen width and the incoming one starts
+   exactly one width behind it - the pair moves as one strip, with no seam at the release. */
+.page-scroll-wrap.swipe-nav-capture-out {
+  view-transition-name: swipe-nav-out;
 }
 
-.page-scroll-wrap.swipe-nav-exit-right {
-  transition: transform 220ms ease-out;
-  transform: translateX(100%);
+.page-scroll-wrap.swipe-nav-capture-in {
+  view-transition-name: swipe-nav-in;
 }
 
+/* The chrome does NOT slide. It is captured in `root`, and the old capture is hidden outright so
+   the header and the bottom bar show the destination on the first frame; animating it would make
+   the active-tab indicator lag the page it indexes by the whole transition. */
+html[data-swipe-nav]::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+
+html[data-swipe-nav]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html[data-swipe-nav='next']::view-transition-old(swipe-nav-out) {
+  animation: swipeNavPageOutLeft 220ms ease-out both;
+}
+
+html[data-swipe-nav='next']::view-transition-new(swipe-nav-in) {
+  animation: swipeNavPageInFromRight 220ms ease-out both;
+}
+
+html[data-swipe-nav='prev']::view-transition-old(swipe-nav-out) {
+  animation: swipeNavPageOutRight 220ms ease-out both;
+}
+
+html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
+  animation: swipeNavPageInFromLeft 220ms ease-out both;
+}
+
+@keyframes swipeNavPageOutLeft {
+  to {
+    transform: translateX(calc(-100% + var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageInFromRight {
+  from {
+    transform: translateX(calc(100% - var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageOutRight {
+  to {
+    transform: translateX(calc(100% - var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageInFromLeft {
+  from {
+    transform: translateX(calc(-100% + var(--swipe-nav-from, 0px)));
+  }
+}
+
+/* The entrance kept for engines without view transitions (WebKit before 18). */
 .page-scroll-wrap.swipe-nav-enter-left {
   animation: swipeNavEnterFromLeft 220ms ease-out;
 }
@@ -1009,7 +1096,7 @@ img.emoji {
    gesture reads as "scrolling is broken". A scroller inside the chat shell that reaches the bottom
    of the viewport carries this class instead of that reservation. */
 .mobile-nav-inset {
-  padding-bottom: calc(4rem + var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--bottom-nav-reserve);
 }
 
 /* MIRRORS THE NAV'S OWN MOUNT CONDITIONS, because reserved space the bar does not occupy is a dead
@@ -1029,9 +1116,7 @@ img.emoji {
 }
 
 html.keyboard-open .page-scroll-wrap {
-  scroll-padding-bottom: calc(
-    4rem + var(--safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
-  );
+  scroll-padding-bottom: calc(var(--bottom-nav-reserve) + var(--keyboard-layout-inset-bottom, 0px));
 }
 
 /* Block background scroll only in chat (non-chat pages like forms must keep their scroll) */
@@ -1068,6 +1153,29 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 .keyboard-aware-modal-panel {
   max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
+}
+
+/*
+ * `Modal`'s `phoneFullScreen`, below Tailwind's `sm` (40rem): no moat and no 92dvh cap, so the panel
+ * fills the overlay, and the overlay is already the space above the keyboard. The safe areas go on
+ * the PANEL, whose background covers them, rather than on the overlay, whose dimmed backdrop would
+ * show through under the status bar. The bottom one is dropped while the keyboard is up, which is
+ * what then sits under the panel.
+ */
+@media (width < 40rem) {
+  [data-keyboard-aware-overlay].modal-phone-full {
+    padding: 0;
+  }
+
+  .modal-phone-full .keyboard-aware-modal-panel {
+    max-height: none !important;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: var(--safe-area-inset-bottom, 0px);
+  }
+
+  .keyboard-open .modal-phone-full .keyboard-aware-modal-panel {
+    padding-bottom: 0;
+  }
 }
 
 /* Message action wheel (long-press menu) - above composer / bottom nav */

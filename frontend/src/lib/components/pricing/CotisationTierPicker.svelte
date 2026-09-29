@@ -7,7 +7,7 @@
    * Picks one of an association's cotisation tiers - by NAME, always.
    *
    * The tier travels as an opaque `variantKey` and is displayed as `MembershipTier.name`, so no
-   * slug, id or tag ever reaches the screen. It is also why this is a `<select>` over a known list
+   * slug, id or tag ever reaches the screen. It is also why this is a choice over a known list
    * rather than the free-text autocomplete it replaced: a tier that can be typed can be mistyped,
    * and a mistyped tier grants a membership nobody can see.
    *
@@ -47,7 +47,7 @@
   }: Props = $props();
 
   /**
-   * `null` cannot be a `<select>` value, so it is carried as the empty string and mapped back on
+   * `null` cannot be a picker value, so it is carried as the empty string and mapped back on
    * the way out. A tier whose `variantKey` were literally '' would collide - the backend treats a
    * blank key as null anyway, so the two agree.
    */

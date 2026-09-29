@@ -11,12 +11,18 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
 
   let query = $state('');
   let promoFilter = $state<number | ''>('');
   let formationFilter = $state('');
   let associationFilter = $state('');
   let associations = $state<Association[]>([]);
+  const associationOptions = $derived<PickerOption[]>([
+    { value: '', label: m.directory_asso_all() },
+    ...associations.map((a) => ({ value: a.id, label: a.name })),
+  ]);
 
   let results = $state<DirectoryUserRow[]>([]);
   let total = $state(0);
@@ -120,16 +126,14 @@
           <label for="dir-asso" class="text-text-muted mb-1 block text-xs font-semibold"
             >{m.directory_label_association()}</label
           >
-          <select
+          <Picker
             id="dir-asso"
-            bind:value={associationFilter}
-            class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
-          >
-            <option value="">{m.directory_asso_all()}</option>
-            {#each associations as a (a.id)}
-              <option value={a.id}>{a.name}</option>
-            {/each}
-          </select>
+            value={associationFilter}
+            options={associationOptions}
+            label={m.directory_label_association()}
+            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+            onValueChange={(v) => (associationFilter = v)}
+          />
         </div>
       </div>
 

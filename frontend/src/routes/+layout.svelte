@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
-  import { beforeNavigate, goto } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
@@ -10,6 +10,8 @@
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
+  import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
+  import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
@@ -39,6 +41,7 @@
     isSwipeNavViewport,
     shouldIgnoreSwipeTarget,
     swipeDragResistancePx,
+    swipeNavSlideOriginPx,
     swipeNavTargetHref,
     swipeNavTransitionMs,
     updateSwipeNavGesture,
@@ -59,6 +62,8 @@
   let { children } = $props();
 
   const pathname = $derived(page.url.pathname);
+  /** Read once: the platform does not change under a running app. */
+  const isIosApp = isIosTauriRuntime();
   const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
 
   const showMaintenanceAdminBanner = $derived.by(() => {
@@ -204,7 +209,23 @@
   let appShell = $state<HTMLDivElement | null>(null);
   let pageScrollWrap = $state<HTMLDivElement | null>(null);
   let swipeGesture = $state<SwipeNavGestureState | null>(null);
-  let swipeEnterClass = $state('');
+  let swipeEnterClass = '';
+
+  /**
+   * THE RELEASE HANDS THIS TO `onNavigate`, AND IT IS THE ONLY THING THAT TELLS A SWIPE FROM A TAP
+   * ON THE BOTTOM BAR. Both reach the router through `goto`, and only the swipe may take over the
+   * navigation's rendering; a tab tapped in the nav must still swap instantly. Plain `let`, not
+   * `$state`: nothing renders from it, it is read once by the hook it was written for and cleared
+   * there, and a reactive read would tie the hook to a render it does not run inside.
+   */
+  let swipeNavSlide: { direction: SwipeNavDirection; fromPx: number } | null = null;
+
+  /**
+   * The neighbour asked for as soon as the gesture locks horizontal, so the page has its data by
+   * the time the finger lets go - one `preloadData` per destination per gesture, which is what
+   * makes the `goto` below resolve inside the same animation instead of after it.
+   */
+  let swipeNavPreloadedHref: string | null = null;
 
   /**
    * The viewport half of arming, held as STATE because a `matchMedia` read answers once and never
@@ -235,8 +256,8 @@
     el.style.removeProperty('transition');
     el.classList.remove(
       'swipe-nav-dragging',
-      'swipe-nav-exit-left',
-      'swipe-nav-exit-right',
+      'swipe-nav-capture-out',
+      'swipe-nav-capture-in',
       'swipe-nav-enter-left',
       'swipe-nav-enter-right'
     );
@@ -245,10 +266,15 @@
   function handleTouchStart(e: TouchEvent) {
     if (!isSwipeNavActive(swipeNavContext())) return;
     if (shouldIgnoreSwipeTarget(e.target)) {
-      swipeGesture = { startX: 0, startY: 0, phase: 'ignored', dragPx: 0 };
+      swipeGesture = { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
       return;
     }
-    swipeGesture = createSwipeNavGestureState(e.touches[0].clientX, e.touches[0].clientY);
+    swipeNavPreloadedHref = null;
+    swipeGesture = createSwipeNavGestureState(
+      e.touches[0].clientX,
+      e.touches[0].clientY,
+      performance.now()
+    );
   }
 
   function handleTouchMove(e: TouchEvent) {
@@ -266,6 +292,21 @@
     const offset = swipeDragResistancePx(updated.dragPx, null, canNext, canPrev);
     pageScrollWrap.classList.add('swipe-nav-dragging');
     pageScrollWrap.style.transform = `translate3d(${offset}px, 0, 0)`;
+
+    // THE DESTINATION IS FETCHED WHILE THE FINGER IS STILL DOWN. Without this the release waited on
+    // a cold `goto`, and the only way to hide that wait was to spend it animating the OLD page off
+    // screen first - which is why the two pages were never on screen together. The direction can
+    // still flip under the finger, so the preload follows the current sign rather than the release.
+    const previewHref = swipeNavTargetHref(pathname, updated.dragPx < 0 ? 'next' : 'prev');
+    if (previewHref && previewHref !== swipeNavPreloadedHref) {
+      swipeNavPreloadedHref = previewHref;
+      void preloadData(previewHref).catch((err) =>
+        // Best-effort only: a failed preload costs the release its head start and nothing else, so
+        // it is logged rather than surfaced - but it IS logged, because silence here reads exactly
+        // like a slow network.
+        console.warn('[SwipeNav] preload failed:', previewHref, err)
+      );
+    }
   }
 
   function snapSwipeBack() {
@@ -275,28 +316,94 @@
     window.setTimeout(() => clearSwipeTransform(pageScrollWrap), swipeNavTransitionMs);
   }
 
-  async function commitSwipeNav(direction: SwipeNavDirection) {
+  /**
+   * THE RELEASE NAVIGATES IMMEDIATELY, AND THE PAGE IT LEAVES IS NO LONGER WAITED FOR.
+   *
+   * It used to slide the outgoing page fully off screen, sleep the full 220ms, THEN `goto`, THEN
+   * animate the new page in from 28% - two animations back to back over an empty background, 440ms
+   * in which the destination was never once visible. That is the whole of what a reader feels as
+   * "the next page does not come" (user, 2026-09-29): nothing was wrong with the gesture, the two
+   * pages simply never existed at the same time.
+   *
+   * `onNavigate` below is what puts them there. All this function does is declare the geometry the
+   * transition needs - which way, and where the finger left the page - and hand the router the
+   * destination it already preloaded.
+   */
+  function commitSwipeNav(direction: SwipeNavDirection, releaseOffsetPx: number) {
     const href = swipeNavTargetHref(pathname, direction);
     if (!href || !pageScrollWrap) {
       snapSwipeBack();
       return;
     }
 
-    const width = pageScrollWrap.offsetWidth || window.innerWidth;
-    const exitX = direction === 'next' ? -width : width;
-
-    pageScrollWrap.classList.remove('swipe-nav-dragging');
-    pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
-    pageScrollWrap.style.transform = `translate3d(${exitX}px, 0, 0)`;
-
-    await new Promise((r) => setTimeout(r, swipeNavTransitionMs));
-
-    await goto(href);
-
-    if (!pageScrollWrap) return;
-    clearSwipeTransform(pageScrollWrap);
-    swipeEnterClass = direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
+    // The inline drag transform STAYS until the view transition has captured it: the snapshot is
+    // what carries the finger's position into the animation, so clearing it here would snap the
+    // page back to zero for however many frames the navigation takes to start.
+    swipeNavSlide = { direction, fromPx: swipeNavSlideOriginPx(releaseOffsetPx) };
+    void goto(href).catch((err) => {
+      console.error('[SwipeNav] navigation failed:', href, err);
+      swipeNavSlide = null;
+      snapSwipeBack();
+    });
   }
+
+  /**
+   * THE TWO PAGES ON SCREEN AT ONCE, which is the one thing a single-page-at-a-time router cannot
+   * give by itself: SvelteKit mounts exactly one route, so the outgoing page has to be a PICTURE of
+   * itself while the incoming one takes its place. That is what a view transition is.
+   *
+   * The name is swapped between the two captures - `swipe-nav-capture-out` before, `-in` inside the
+   * update callback - so the old and new snapshots land in SEPARATE groups. Sharing one name is the
+   * obvious thing to write and it is wrong: the browser then treats them as the same box moving,
+   * morphs the group and cross-fades inside it, and no amount of keyframes on the old and new
+   * pseudo-elements makes them slide PAST each other.
+   *
+   * `::view-transition-old(root)` is hidden rather than animated (see `app.css`), so the header and
+   * the bottom bar adopt the new tab on the first frame while the pages are still sliding - a nav
+   * indicator that lagged the page by 220ms would be the same defect in a smaller place.
+   *
+   * WITHOUT THE API (WebKit before 18) THIS RETURNS AND THE NAVIGATION IS ORDINARY. That is a
+   * capability branch, not a fallback: there is no second implementation of the transition to keep
+   * correct, the destination is reached by exactly the same `goto` either way, and what the reader
+   * loses is the slide - `afterNavigate` still plays the entrance the app had before.
+   */
+  onNavigate((navigation) => {
+    const slide = swipeNavSlide;
+    swipeNavSlide = null;
+    if (!slide) return;
+
+    const wrap = pageScrollWrap;
+    const startViewTransition = document.startViewTransition?.bind(document);
+    if (!wrap || !startViewTransition) {
+      swipeEnterClass =
+        slide.direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
+      return;
+    }
+
+    const root = document.documentElement;
+    root.style.setProperty('--swipe-nav-from', `${slide.fromPx}px`);
+    root.dataset.swipeNav = slide.direction;
+    wrap.classList.add('swipe-nav-capture-out');
+
+    return new Promise<void>((resolve) => {
+      const transition = startViewTransition(async () => {
+        // The old snapshot is taken before this callback runs, so the drag transform has served its
+        // purpose and the incoming page must be captured square.
+        clearSwipeTransform(wrap);
+        wrap.classList.add('swipe-nav-capture-in');
+        resolve();
+        await navigation.complete;
+      });
+
+      void transition.finished
+        .catch((err) => console.warn('[SwipeNav] view transition interrupted:', err))
+        .finally(() => {
+          root.style.removeProperty('--swipe-nav-from');
+          delete root.dataset.swipeNav;
+          wrap.classList.remove('swipe-nav-capture-out', 'swipe-nav-capture-in');
+        });
+    });
+  });
 
   function handleTouchEnd(e: TouchEvent) {
     if (!swipeGesture || swipeGesture.phase === 'ignored') {
@@ -306,7 +413,12 @@
 
     const dx = e.changedTouches[0].clientX - swipeGesture.startX;
     const dy = e.changedTouches[0].clientY - swipeGesture.startY;
-    const direction = classifySwipeRelease(dx, dy, swipeGesture.phase);
+    const direction = classifySwipeRelease(
+      dx,
+      dy,
+      swipeGesture.phase,
+      performance.now() - swipeGesture.startedAt
+    );
     swipeGesture = null;
 
     if (!pageScrollWrap) return;
@@ -317,7 +429,9 @@
       return;
     }
 
-    void commitSwipeNav(direction);
+    const canNext = swipeNavTargetHref(pathname, 'next') !== null;
+    const canPrev = swipeNavTargetHref(pathname, 'prev') !== null;
+    commitSwipeNav(direction, swipeDragResistancePx(dx, null, canNext, canPrev));
   }
 
   function handleTouchCancel() {
@@ -325,16 +439,19 @@
     snapSwipeBack();
   }
 
-  $effect(() => {
-    void pathname;
+  /**
+   * The entrance the app keeps where view transitions do not exist, played from `afterNavigate`
+   * rather than from an effect keyed on the pathname. The effect it replaces fired the moment
+   * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
+   * landed on the page being left and had to be re-added when the path caught up.
+   */
+  afterNavigate(() => {
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
-    pageScrollWrap.classList.add(cls);
-    const timer = window.setTimeout(() => {
-      pageScrollWrap?.classList.remove(cls);
-      swipeEnterClass = '';
-    }, swipeNavTransitionMs);
-    return () => window.clearTimeout(timer);
+    const wrap = pageScrollWrap;
+    swipeEnterClass = '';
+    wrap.classList.add(cls);
+    window.setTimeout(() => wrap.classList.remove(cls), swipeNavTransitionMs);
   });
 
   /**
@@ -462,7 +579,7 @@
       <main id="main-content" class="relative flex-1 overflow-hidden">
         <div
           bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
           <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
             {@render children?.()}
@@ -482,7 +599,17 @@
         </div>
       </main>
 
-      {#if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
+      <!-- THE iOS APP DRAWS THE BAR NATIVELY (Liquid Glass on iOS 26) and hands the bottom back to
+           the web bar only if the native one could not be configured - which it says at error
+           level. Both obey the same rule, passed to the native bar as `visible`. -->
+      {#if isIosApp && nativeTabBar.status !== 'failed'}
+        <!-- Mounted outside the login page only: configuring it there would draw it for a frame
+             before `visible` hid it. The keyboard and an open conversation hide it without
+             unmounting, because a reconfiguration per keystroke would be a native round trip each. -->
+        {#if !isLoginPage}
+          <NativeTabBar visible={!isKeyboardOpen && !isMobileConvoOpen} />
+        {/if}
+      {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
         <BottomNav />
       {/if}
     </div>

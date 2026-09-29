@@ -5,20 +5,34 @@
     /** Called with format id (`bold`, `italic`, `heading`, …). */
     onFormat: (type: string) => void;
     class?: string;
+    /**
+     * One row that scrolls sideways, with no rule under it, instead of a wrapping block that heads
+     * the editor. For a toolbar that lives in a composer's pinned bottom bar, where a second row
+     * would be taken from the text above the keyboard.
+     */
+    row?: boolean;
   }
 
   import { m } from '$lib/paraglide/messages';
 
-  let { onFormat, class: className = '' }: Props = $props();
+  let { onFormat, class: className = '', row = false }: Props = $props();
+
+  const layoutClass = $derived(
+    row
+      ? 'flex-nowrap overflow-x-auto'
+      : 'flex-wrap border-b border-black/5 px-2 pt-1.5 pb-1.5 dark:border-white/5'
+  );
 
   const btnClass =
     'ui-icon-button rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500';
 </script>
 
 <div
-  class="flex flex-wrap items-center gap-0.5 border-b border-black/5 px-2 pt-1.5 pb-1.5 dark:border-white/5 {className}"
+  class="flex items-center gap-0.5 {layoutClass} {className}"
   role="toolbar"
+  tabindex="-1"
   aria-label={m.md_toolbar_aria_label()}
+  onmousedown={(e) => e.preventDefault()}
 >
   <button
     type="button"

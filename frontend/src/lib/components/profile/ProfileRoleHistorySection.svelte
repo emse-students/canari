@@ -7,7 +7,8 @@
     type UserRoleHistoryRow,
   } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import Picker from '$lib/components/ui/Picker.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
@@ -27,6 +28,7 @@
   let saving = $state(false);
   let formError = $state('');
   let associations = $state<Association[]>([]);
+  const associationOptions = $derived(associationPickerOptions(associations));
 
   let formAssociationId = $state('');
   let formRoleTitle = $state('');
@@ -163,14 +165,15 @@
             <label for="rh-asso" class="text-text-muted mb-1 block text-xs font-semibold"
               >{m.asso_select_group_assos()}</label
             >
-            <select
+            <Picker
               id="rh-asso"
-              bind:value={formAssociationId}
-              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-            >
-              <option value="">{m.profile_role_history_choose_asso()}</option>
-              <AssociationOptions {associations} />
-            </select>
+              label={m.asso_select_group_assos()}
+              value={formAssociationId}
+              options={associationOptions}
+              placeholder={m.profile_role_history_choose_asso()}
+              onValueChange={(v) => (formAssociationId = v)}
+              triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2 text-left text-sm"
+            />
           </div>
           <div class="sm:col-span-2">
             <label for="rh-role" class="text-text-muted mb-1 block text-xs font-semibold"

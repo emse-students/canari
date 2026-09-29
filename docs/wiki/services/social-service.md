@@ -125,7 +125,7 @@ The numbers and what they imply are in
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/channels/workspaces` | Create workspace |
-| GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
+| GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |
 | PATCH | `/api/channels/workspaces/:workspaceId/history-visibility` | Set what a newcomer may read: `shared` or `joined`, MANAGE_WORKSPACE only. Stored on `channel_workspaces."historyVisibility"` (migration 039) and broadcast as `workspace.updated`. **The server enforces nothing here** - it holds no seed; members apply the rule ([channel-encryption](../protocols/channel-encryption.md)) |
@@ -214,8 +214,21 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   be declined while a load is already in flight, and would return exactly what the event already
   carries. Best-effort and logged - the role is written before the announcement is attempted, so a
   failed publish leaves the member where they were. **The invariant this rests on, written down because
-  nothing enforces it:** `viewerCanManage` is the only permission-derived value the client caches; the
-  event carries the full list so that the day a second one is cached, only the client handler changes.
+  nothing enforces it:** the client caches exactly two permission-derived values, `viewerCanManage` and
+  `viewerCanManageChannels`, and the event carries both as DECISIONS (`canManage`, `canManageChannels`;
+  an absent one means unchanged) - a third cached flag owes a third field here, never a derivation from
+  `permissions` on the client.
+- **Editing what a role grants re-announces its HOLDERS' standing** (2026-09-29). `workspace.role.permissions`
+  only redraws the grid, so granting `channel.manage` to Moderateur left every moderator without the
+  salon controls until a full load, and revoking it left them offered controls that fail.
+  `announceStandingToHolders` sends the same `workspace.role.changed` to the role's holders, split by
+  verdict (four publishes at most, never one per member).
+- **The salon settings panel offers only what the server would accept** (reported by the user
+  2026-09-29): a plain member was shown visibility, write policy, allowlist, rename and delete, each
+  refused with a 403 behind a confirmation. `ChannelSettingsPanel` reads `viewerCanManageChannels`;
+  without it the access tab is read-only (the settings are still READABLE - `GET :id/access` answers
+  any reader) and rename/delete are absent. `roleGrantsChannelManagement` (`permissions.ts`) is the
+  ONE definition behind create, rename, delete, the access write and the flag, which were four inline copies.
 - **Three roles ARE the product** (decided 2026-08-20). The settings grid renders a permission matrix
   over whichever roles a workspace has - the three seeded ones - and offers no way to add a fourth;
   `ChannelService.createRole` was dead client code and is deleted. `POST /channels/roles` is KEPT
@@ -503,6 +516,21 @@ then writes the badge from what remains — computed from the array already in h
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
 | POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
 | POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
+
+### A claimed code is copied by a button, not by a long press (2026-09-29)
+
+Asked for with the defect above it in the same report: *"les codes des partenariats (mettre un bouton
+avec l'icone 'copier' peut-etre bien)"*. The value exists to be pasted into a partner's checkout, and
+the gesture it took was a long press, two drag handles and the system menu, over a `break-all` string
+that wraps mid-token - against an app that disables selection on a coarse pointer
+([posts](../frontend/modules/posts.md)). `PartnershipCardList` now draws a copy button beside the
+code and marks the code itself `select-text`, so the manual path exists too.
+
+**The write is `utils/clipboard.ts`, and its boolean is load-bearing**: `writeText` rejects on an
+unfocused document and outside a secure context, and "Code copie" over an empty clipboard is worse
+than no button at all - the student pastes whatever they had before. The toast is shown only on a
+resolved write; a refusal leaves the log line that is the sole trace there would be. `copyId` is that
+same write with the admin-surface contract on top of it.
 
 ### A user id is not a UUID, and one partnership column said it was
 

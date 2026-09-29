@@ -14,6 +14,24 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.31] - 2026-09-29
+
+### Removed - `ENABLE_DEV_ROUTES` and `VITE_ENABLE_DEV_ROUTES`
+
+No code read either variable; they only named a dev-login route that no longer exists ([architecture](docs/wiki/architecture.md)).
+
+### Security - a key package must name the device uploading it, and Graine v2's minter, key and signature are carried everywhere
+
+A KeyPackage whose credential names another device is refused (none of the 76 702 stored ones did). Every signature key a device publishes is now kept, a salon row carries its signature, and one key can seal one row only ([channel-encryption §21.3](docs/wiki/protocols/channel-encryption.md#213-the-data-model-carries-the-minter-and-its-key-wp-g2-3)).
+
+### Security - the web app reads Graine v2: a salon row's author, salon and index are proven, and a replay is shown once
+
+A row under a v2 session is refused when the server re-attributes it, moves it or strips its signature, and a new v2 seed is stored only once its minter's device endorsement verifies ([channel-encryption §21.4](docs/wiki/protocols/channel-encryption.md#214-the-web-reader-wp-g2-4a)).
+
+### Fixed - the launcher and four header buttons showed nothing on hover
+
+Their hover painted the bar's own colour; they now take the ink at 10% in both themes, the launcher slides open like the post menu, and the desktop header reads status, launcher, logout, avatar ([design-reference](docs/wiki/frontend/design-reference.md#30-the-app-launcher---one-control-for-the-other-student-sites)).
+
 ## [0.18.30] - 2026-09-29
 
 ### Security - fast-uri 3.1.8 and multer 2.4.0 in the four NestJS services

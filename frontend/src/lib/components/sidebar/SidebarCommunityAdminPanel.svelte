@@ -35,6 +35,8 @@
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Log } from '$lib/utils/Log';
+  import Picker from '../ui/Picker.svelte';
+  import type { PickerOption } from '../ui/picker';
 
   interface ChannelItem {
     id: string;
@@ -161,6 +163,44 @@
   let shareMaxUses = $state(0);
   const SHARE_EXPIRY_CHOICES = [0, 1, 7, 30];
   const SHARE_MAX_USES_CHOICES = [0, 1, 5, 25, 100];
+  const shareExpiryOptions = $derived<PickerOption[]>(
+    SHARE_EXPIRY_CHOICES.map((days) => ({
+      value: String(days),
+      label:
+        days === 0
+          ? m.chat_community_invite_expiry_never()
+          : m.chat_community_invite_expiry_days({ days }),
+    }))
+  );
+  const shareMaxUsesOptions = $derived<PickerOption[]>(
+    SHARE_MAX_USES_CHOICES.map((count) => ({
+      value: String(count),
+      label:
+        count === 0
+          ? m.chat_community_invite_max_uses_unlimited()
+          : m.chat_community_invite_max_uses_count({ count }),
+    }))
+  );
+
+  /** The three roles a member can hold, in the order every role choice offers them. */
+  const roleOptions = $derived<PickerOption[]>([
+    { value: 'member', label: m.chat_role_member() },
+    { value: 'moderator', label: m.chat_role_moderator() },
+    { value: 'admin', label: m.chat_role_admin() },
+  ]);
+  const historyVisibilityOptions = $derived<PickerOption[]>([
+    { value: 'shared', label: m.chat_community_history_shared_option() },
+    { value: 'joined', label: m.chat_community_history_joined_option() },
+  ]);
+
+  /** Narrows a picked value back to a role; the picker only offers `roleOptions`. */
+  function asCanonicalRole(value: string): CanonicalRole | null {
+    return value === 'member' || value === 'moderator' || value === 'admin' ? value : null;
+  }
+
+  /** The bordered box the panel's settings choices wear (history rule, invite link bounds). */
+  const PANEL_PICKER_TRIGGER =
+    'border-cn-border bg-cn-surface text-text-main flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-normal disabled:opacity-50';
 
   /**
    * All workspace-level permissions, editable per role in the grid.
@@ -727,20 +767,14 @@
               <p class="text-text-muted text-sm">
                 {m.chat_community_history_visibility_description()}
               </p>
-              <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
-                <select
-                  value={historyVisibility}
-                  disabled={historyVisibilitySaving}
-                  onchange={(event) =>
-                    void saveHistoryVisibility(
-                      (event.currentTarget as HTMLSelectElement).value as GraineHistoryVisibility
-                    )}
-                  class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal disabled:opacity-50"
-                >
-                  <option value="shared">{m.chat_community_history_shared_option()}</option>
-                  <option value="joined">{m.chat_community_history_joined_option()}</option>
-                </select>
-              </label>
+              <Picker
+                value={historyVisibility}
+                options={historyVisibilityOptions}
+                label={m.chat_community_history_visibility_label()}
+                disabled={historyVisibilitySaving}
+                triggerClass={PANEL_PICKER_TRIGGER}
+                onValueChange={(v) => void saveHistoryVisibility(v as GraineHistoryVisibility)}
+              />
               <p class="text-text-muted text-xs">
                 {historyVisibility === 'shared'
                   ? m.chat_community_history_shared_note()
@@ -812,14 +846,13 @@
                       excludeIds={communityMembers.map((member) => member.userId)}
                     />
                   </div>
-                  <select
-                    bind:value={inviteRole}
-                    class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/40 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
-                  >
-                    <option value="member">{m.chat_role_member()}</option>
-                    <option value="moderator">{m.chat_role_moderator()}</option>
-                    <option value="admin">{m.chat_role_admin()}</option>
-                  </select>
+                  <Picker
+                    value={inviteRole}
+                    options={roleOptions}
+                    label={m.chat_assign_role_label()}
+                    triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/40 flex items-center justify-between gap-1 rounded-lg border px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+                    onValueChange={(v) => (inviteRole = asCanonicalRole(v) ?? inviteRole)}
+                  />
                   <button
                     class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50"
                     onclick={handleGenerateInvitation}
@@ -859,21 +892,17 @@
                     {#if canManage}
                       <div class="flex shrink-0 items-center gap-1.5">
                         <div class="relative">
-                          <select
-                            class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/50 w-32 rounded-lg border px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 disabled:opacity-50"
+                          <Picker
                             value={member.role}
+                            options={roleOptions}
+                            label={m.chat_assign_role_label()}
                             disabled={memberRoleSaving[member.userId]}
-                            onchange={(e) => {
-                              const val = (e.target as HTMLSelectElement).value;
-                              if (val === 'member' || val === 'moderator' || val === 'admin') {
-                                void handleMemberRoleUpdate(member.userId, val);
-                              }
+                            triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/50 flex w-32 items-center justify-between gap-1 rounded-lg border px-2 py-1.5 text-left text-xs font-semibold outline-none focus-visible:ring-1 disabled:opacity-50"
+                            onValueChange={(v) => {
+                              const role = asCanonicalRole(v);
+                              if (role) void handleMemberRoleUpdate(member.userId, role);
                             }}
-                          >
-                            <option value="member">{m.chat_role_member()}</option>
-                            <option value="moderator">{m.chat_role_moderator()}</option>
-                            <option value="admin">{m.chat_role_admin()}</option>
-                          </select>
+                          />
                           {#if memberRoleSaving[member.userId]}
                             <span class="absolute top-1/2 right-1.5 -translate-y-1/2">
                               <Loader size={12} class="text-cn-yellow animate-spin" />
@@ -920,36 +949,32 @@
               <p class="text-text-muted text-sm">{m.chat_community_invite_single_link_note()}</p>
 
               <div class="flex flex-wrap gap-3">
-                <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
-                  {m.chat_community_invite_expiry_label()}
-                  <select
-                    bind:value={shareExpiryDays}
-                    class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal"
+                <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
+                  <label for="community-share-expiry"
+                    >{m.chat_community_invite_expiry_label()}</label
                   >
-                    {#each SHARE_EXPIRY_CHOICES as days (days)}
-                      <option value={days}>
-                        {days === 0
-                          ? m.chat_community_invite_expiry_never()
-                          : m.chat_community_invite_expiry_days({ days })}
-                      </option>
-                    {/each}
-                  </select>
-                </label>
-                <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
-                  {m.chat_community_invite_max_uses_label()}
-                  <select
-                    bind:value={shareMaxUses}
-                    class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal"
+                  <Picker
+                    id="community-share-expiry"
+                    value={String(shareExpiryDays)}
+                    options={shareExpiryOptions}
+                    label={m.chat_community_invite_expiry_label()}
+                    triggerClass={PANEL_PICKER_TRIGGER}
+                    onValueChange={(v) => (shareExpiryDays = Number(v))}
+                  />
+                </div>
+                <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
+                  <label for="community-share-max-uses"
+                    >{m.chat_community_invite_max_uses_label()}</label
                   >
-                    {#each SHARE_MAX_USES_CHOICES as count (count)}
-                      <option value={count}>
-                        {count === 0
-                          ? m.chat_community_invite_max_uses_unlimited()
-                          : m.chat_community_invite_max_uses_count({ count })}
-                      </option>
-                    {/each}
-                  </select>
-                </label>
+                  <Picker
+                    id="community-share-max-uses"
+                    value={String(shareMaxUses)}
+                    options={shareMaxUsesOptions}
+                    label={m.chat_community_invite_max_uses_label()}
+                    triggerClass={PANEL_PICKER_TRIGGER}
+                    onValueChange={(v) => (shareMaxUses = Number(v))}
+                  />
+                </div>
               </div>
 
               {#if shareLink}

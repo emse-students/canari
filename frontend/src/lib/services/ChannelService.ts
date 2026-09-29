@@ -17,6 +17,8 @@ export interface WorkspaceDto {
   viewerCanManage?: boolean;
   /** Server-authoritative flag: true when the calling user holds `channel.moderate` (or a permission that subsumes it), i.e. may delete other members' channel messages. */
   viewerCanModerate?: boolean;
+  /** Server-authoritative flag: true when the calling user may govern salons here (`channel.manage` or `workspace.manage`) - create, rename, delete, set access and write policy. */
+  viewerCanManageChannels?: boolean;
   /**
    * What this community lets a newcomer read: `shared` (the past) or `joined` (nothing older).
    *

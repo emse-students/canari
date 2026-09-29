@@ -152,6 +152,57 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
 }
 
 /**
+ * The frame size of a video file, read from its metadata - or `null` when it has none.
+ *
+ * WHY A POST RECORDS IT (Mi 9T, 2026-09-29): only images carried `width`/`height`, so the feed
+ * reserved every video at the default 4:3 and drew a phone's vertical clip as a narrow strip with a
+ * grey band under it. The box can only take the video's own shape if the post says what it is.
+ * Ends on `loadedmetadata` or `error` - both events a media element always fires - never a timer.
+ */
+export async function readVideoDimensions(file: File): Promise<ImageDimensions | null> {
+  if (!file.type.startsWith('video/')) return null;
+
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(file);
+    const done = (dims: ImageDimensions | null) => {
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute('src');
+      resolve(dims);
+    };
+    video.preload = 'metadata';
+    video.muted = true;
+    video.onloadedmetadata = () => {
+      const { videoWidth: width, videoHeight: height } = video;
+      done(width > 0 && height > 0 ? { width, height } : null);
+    };
+    video.onerror = () => {
+      console.warn(`[media] readVideoDimensions: ${file.type} has no readable metadata`);
+      done(null);
+    };
+    video.src = objectUrl;
+  });
+}
+
+/**
+ * What a post uploads for one picked file, and the size it is drawn at: a picture compressed with
+ * the `post` preset and its final size, a video as it is with its frame size, anything else as it
+ * is with no size. One implementation for the composer and the editor, which each carried a copy
+ * that knew only pictures.
+ */
+export async function preparePostMedia(
+  file: File
+): Promise<{ file: File; dims?: ImageDimensions }> {
+  if (file.type.startsWith('image/')) {
+    const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
+    const compressed = await compressImage(file, maxWidth, maxHeight, quality);
+    return { file: compressed.file, dims: { width: compressed.width, height: compressed.height } };
+  }
+  const videoDims = await readVideoDimensions(file);
+  return { file, dims: videoDims ?? undefined };
+}
+
+/**
  * Reasons `compressImage` can hand back the ORIGINAL file. Several of them ship megabytes.
  *
  * Measured 2026-08-11 (WP-STORAGE-1): a 3840x2400 photograph through this compressor costs

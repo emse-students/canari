@@ -15,7 +15,9 @@
   import { Check } from '@lucide/svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -53,6 +55,14 @@
   let editName2 = $state(initial.name2 ?? '');
   /** Candidate parent associations (regular associations only), for the select. */
   let parentOptions = $state<Association[]>([]);
+  const parentPickerOptions = $derived<PickerOption[]>([
+    { value: '', label: m.list_new_parent_none() },
+    ...associationPickerOptions(parentOptions),
+  ]);
+  const categoryPickerOptions = $derived<PickerOption[]>([
+    { value: '', label: m.asso_edit_category_none() },
+    ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
+  ]);
 
   onMount(async () => {
     // Load the thematic categories for regular associations (used by the poster generator).
@@ -241,14 +251,14 @@
       <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
         {m.list_new_parent_label()}
       </label>
-      <select
+      <Picker
         id="edit-list-parent"
-        bind:value={editParentId}
-        class="border-cn-border bg-cn-bg/30 text-text-main w-full rounded-xl border px-4 py-2.5 text-sm"
-      >
-        <option value="">{m.list_new_parent_none()}</option>
-        <AssociationOptions associations={parentOptions} />
-      </select>
+        value={editParentId}
+        options={parentPickerOptions}
+        onValueChange={(v) => (editParentId = v)}
+        label={m.list_new_parent_label()}
+        variant="field"
+      />
     </div>
   {/if}
 
@@ -312,16 +322,14 @@
       <label for="edit-asso-category" class="text-text-main mb-2 ml-1 block text-sm font-bold">
         {m.asso_edit_category_label()}
       </label>
-      <select
+      <Picker
         id="edit-asso-category"
-        bind:value={editCategoryId}
-        class="border-cn-border bg-cn-bg/30 text-text-main w-full rounded-xl border px-4 py-2.5 text-sm"
-      >
-        <option value="">{m.asso_edit_category_none()}</option>
-        {#each categoryOptions as cat (cat.id)}
-          <option value={cat.id}>{cat.label}</option>
-        {/each}
-      </select>
+        value={editCategoryId}
+        options={categoryPickerOptions}
+        onValueChange={(v) => (editCategoryId = v)}
+        label={m.asso_edit_category_label()}
+        variant="field"
+      />
       <p class="text-text-muted mt-1.5 ml-1 text-xs">{m.asso_edit_category_hint()}</p>
     </div>
   {/if}

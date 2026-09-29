@@ -1,21 +1,10 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
-  import {
-    Image,
-    FileText,
-    Film,
-    Music,
-    ChartColumn,
-    CalendarCheck,
-    ClipboardList,
-    Clock,
-    X,
-    CircleAlert,
-  } from '@lucide/svelte';
+  import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
-  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
+  import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import {
     updatePost,
@@ -32,7 +21,15 @@
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
+  import { linkableEventPickerOptions } from '$lib/utils/time';
   import PollSection from './PollSection.svelte';
+  import PostComposerBar from './PostComposerBar.svelte';
+  import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
+  import PickedMediaPreview from './PickedMediaPreview.svelte';
+  import MediaCaptionChip from './MediaCaptionChip.svelte';
+  import MediaCaptionField from './MediaCaptionField.svelte';
+  import { shiftAfterRemoval } from './mediaCaptionIndex';
+  import Picker from '$lib/components/ui/Picker.svelte';
   import { localPublishBlocker } from '$lib/posts/composerReadiness';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { LocalizedError } from '$lib/utils/localizedError';
@@ -80,6 +77,8 @@
   let newFilePreviews = $state<string[]>([]);
   let newFileThumbIcons = $state<boolean[]>([]);
   let newMediaCaptions = $state<string[]>([]);
+  /** Which new file's caption field is open under the strip - at most one (`MediaCaptionChip`). */
+  let captionIndex = $state<number | null>(null);
 
   // --- Polls ---
   const _initialPoll = untrack(() => post.polls?.[0]);
@@ -139,23 +138,23 @@
   let selectedLinkedCalendarEventId = $state(untrack(() => post.linkedCalendarEventId ?? ''));
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
+  const linkableEventOptions = $derived(
+    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+  );
   // --- UI state ---
   let saving = $state(false);
   let errorMessage = $state('');
   let currentAuthToken = $state(untrack(() => authToken));
+  let editorField = $state<MarkdownComposerField | null>(null);
 
-  /** Auto-clear error banner after 5 seconds. */
-  $effect(() => {
-    if (errorMessage) {
-      const timer = setTimeout(() => {
-        errorMessage = '';
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  });
+  /*
+   * NO TIMER CLEARS THE ERROR BANNER, for the reason `CreatePostForm` gives at length: this one
+   * erased itself after 5 seconds, so a keyboard covering it for that long left an editor that does
+   * not save and says nothing. It is cleared by the next attempt, a successful save, or its own
+   * dismiss button.
+   */
 
   const mediaService = new MediaService();
-  const mediaInputId = 'edit-post-media-input';
 
   onMount(async () => {
     if (!currentAuthToken) {
@@ -184,13 +183,6 @@
     }
   });
 
-  function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
-    const d = new Date(ev.startsAt);
-    const date = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    return `${date} ${time} - ${ev.title}`;
-  }
-
   /**
    * Adds media to the pending list, whatever route it arrived by.
    *
@@ -208,14 +200,6 @@
     newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
   }
 
-  /** Appends newly picked files to the new-files list. */
-  function onPickFiles(event: Event) {
-    const input = event.target as HTMLInputElement;
-    addFiles(Array.from(input.files ?? []));
-    // Reset input so the same file can be picked again.
-    input.value = '';
-  }
-
   /** Removes an existing media item (already uploaded) by index. */
   function removeExistingMedia(i: number) {
     existingMedia = existingMedia.filter((_, idx) => idx !== i);
@@ -228,6 +212,7 @@
     newFilePreviews = newFilePreviews.filter((_, idx) => idx !== i);
     newFileThumbIcons = newFileThumbIcons.filter((_, idx) => idx !== i);
     newMediaCaptions = newMediaCaptions.filter((_, idx) => idx !== i);
+    captionIndex = shiftAfterRemoval(captionIndex, i);
   }
 
   /** Icon matching the media type for generic file previews. */
@@ -238,40 +223,40 @@
   }
 
   async function submitEdit() {
+    Log.d('POST_EDITOR', 'submitEdit');
     saving = true;
     errorMessage = '';
     try {
       markdown = trimComposerText(markdown);
-      if (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0) {
-        throw new Error('Post content or a media attachment is required.');
-      }
+
+      // THE SAME RULE AS THE COMPOSER'S, FROM THE SAME MODULE, AND BEFORE ANY UPLOAD. It ran after
+      // the uploads, behind an empty-content check that threw English dev prose - which the catch
+      // below replaced with "Impossible d'enregistrer", so an editor was told nothing at all, and a
+      // poll with one option still paid for every new photo first. `localPublishBlocker` counts
+      // media without needing them uploaded, so the question is answered here, for nothing.
+      const blocker = localPublishBlocker({
+        markdown,
+        fileCount: existingMedia.length + newFiles.length,
+        poll: pollDraft,
+        storedPollEndsAt: _initialEndsAt,
+        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
+      });
+      pollIssue = blocker?.pollIssue ?? null;
+      if (blocker) throw new LocalizedError(blocker.message);
 
       if (newFiles.length > 0 && !currentAuthToken) {
         try {
           currentAuthToken = await getToken();
         } catch {
-          throw new Error('Failed to obtain an auth token for media upload.');
+          throw new LocalizedError(m.post_create_image_token_error());
         }
       }
 
       // Upload new media files and get their refs.
       const uploadedRefs: PostMediaRef[] = [];
       for (let i = 0; i < newFiles.length; i++) {
-        const file = newFiles[i];
-        let uploadFile = file;
-        let dims: { width: number; height: number } | undefined;
-        if (file.type.startsWith('image/')) {
-          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
-          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
-          uploadFile = compressed.file;
-          dims = { width: compressed.width, height: compressed.height };
-        }
-        const ref = await mediaService.encryptAndUpload(
-          uploadFile,
-          currentAuthToken,
-          dims,
-          'archive'
-        );
+        const { file, dims } = await preparePostMedia(newFiles[i]);
+        const ref = await mediaService.encryptAndUpload(file, currentAuthToken, dims, 'archive');
         const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
       }
@@ -285,20 +270,6 @@
         attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
         linkedCalendarEventId: selectedLinkedCalendarEventId || null,
       };
-
-      // THE SAME RULE AS THE COMPOSER'S, FROM THE SAME MODULE. This threw
-      // `new Error('A poll requires a question and at least two options.')` - English dev prose
-      // which the catch below then replaced with "Impossible d'enregistrer", so an editor was told
-      // nothing at all. Third call site of the defect `publishFailure.ts` was written for.
-      const blocker = localPublishBlocker({
-        markdown,
-        fileCount: allMedia.length,
-        poll: pollDraft,
-        storedPollEndsAt: _initialEndsAt,
-        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
-      });
-      pollIssue = blocker?.pollIssue ?? null;
-      if (blocker) throw new LocalizedError(blocker.message);
 
       if (includePoll) {
         const options = filledPollOptions(pollOptions);
@@ -326,7 +297,8 @@
       newFilePreviews.forEach((url) => URL.revokeObjectURL(url));
       onSaved(updated);
     } catch (err) {
-      Log.d('submitEdit failed', err);
+      // Accused, not debug-logged: this is the one failure an editor reports (see CreatePostForm).
+      console.error('[POST_EDITOR] save failed', err);
       errorMessage = publishFailureMessage(err, m.post_edit_save_error());
     } finally {
       saving = false;
@@ -337,19 +309,15 @@
 <article
   class="bg-cn-surface relative overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
 >
-  <!-- Header. -->
-  <div class="bg-cn-surface border-b border-black/5 px-5 py-4 dark:border-white/10">
-    <p class="text-2xs mb-0.5 font-bold tracking-widest text-amber-500 uppercase">
-      Modifier la publication
-    </p>
-    <p class="text-text-main text-sm font-semibold opacity-90">
-      {#if post.association}
+  <!-- Header: what this is, and - since the identity cannot change - who it is published as. -->
+  <div class="border-cn-border border-b px-5 py-3">
+    <p class="text-text-main text-sm font-bold">{m.post_edit_post_label()}</p>
+    {#if post.association}
+      <p class="text-text-muted text-2xs mt-0.5 font-semibold">
         {m.post_edit_published_as()}
-        <span class="text-amber-600 dark:text-amber-400">{post.association.name}</span>.
-      {:else}
-        Modifiez le texte, les images, le sondage ou le formulaire.
-      {/if}
-    </p>
+        <span class="text-amber-600 dark:text-amber-400">{post.association.name}</span>
+      </p>
+    {/if}
   </div>
 
   <div class="p-4 sm:p-5">
@@ -365,21 +333,15 @@
             <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
             {m.post_create_link_event_label()}
           </label>
-          <select
+          <Picker
             id="edit-post-linked-calendar-event"
-            bind:value={selectedLinkedCalendarEventId}
+            value={selectedLinkedCalendarEventId}
+            options={linkableEventOptions}
+            onValueChange={(v) => (selectedLinkedCalendarEventId = v)}
+            label={m.post_create_link_event_label()}
             disabled={loadingLinkableEvents}
-            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-          >
-            <option value="" class="bg-white font-medium dark:bg-zinc-900">
-              {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
-            </option>
-            {#each linkableCalendarEvents as ev (ev.id)}
-              <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-                {formatLinkableEventLabel(ev)}
-              </option>
-            {/each}
-          </select>
+            variant="field"
+          />
           <p class="text-text-muted text-2xs mt-1.5 ml-1">
             {m.post_create_validated_events_hint()}
           </p>
@@ -392,11 +354,12 @@
       class="focus-within:bg-cn-surface relative mb-2 rounded-2xl border border-black/5 bg-black/5 p-2 shadow-inner transition-colors dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
     >
       <MarkdownComposerField
+        bind:this={editorField}
         bind:value={markdown}
         onmedia={addFiles}
+        showToolbar={false}
         placeholder={m.post_create_message_placeholder()}
         minHeight="120px"
-        toolbarClass="mb-1"
         editorClass="min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
       />
 
@@ -417,15 +380,11 @@
                 class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
               >
                 <PostMedia media={mediaItem} authToken={currentAuthToken} />
-                <button
-                  type="button"
+                <MediaThumbRemoveButton
+                  label={m.post_edit_remove_image_aria()}
+                  title={m.common_delete_button()}
                   onclick={() => removeExistingMedia(i)}
-                  class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
-                  aria-label={m.post_edit_remove_image_aria()}
-                  title="Supprimer"
-                >
-                  <X size={14} strokeWidth={2.5} />
-                </button>
+                />
               </div>
               {#if mediaItem.caption}
                 <p
@@ -460,32 +419,38 @@
                     </span>
                   </div>
                 {:else}
-                  <img
+                  <PickedMediaPreview
+                    {file}
                     src={newFilePreviews[i]}
                     alt={m.post_create_image_preview_alt()}
-                    class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    class="transition-transform duration-500 group-hover:scale-105"
                   />
                 {/if}
-                <button
-                  type="button"
+                <MediaThumbRemoveButton
+                  label={m.post_edit_remove_image_aria()}
+                  title={m.common_delete_button()}
                   onclick={() => removeNewFile(i)}
-                  class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
-                  aria-label={m.post_edit_remove_image_aria()}
-                  title="Supprimer"
-                >
-                  <X size={14} strokeWidth={2.5} />
-                </button>
+                />
+                <MediaCaptionChip
+                  hasCaption={!!newMediaCaptions[i]?.trim()}
+                  active={captionIndex === i}
+                  onclick={() => (captionIndex = captionIndex === i ? null : i)}
+                />
               </div>
-              <input
-                type="text"
-                bind:value={newMediaCaptions[i]}
-                placeholder={m.post_edit_caption_placeholder()}
-                maxlength="120"
-                class="text-text-main placeholder:text-text-muted/60 bg-cn-surface text-2xs w-full rounded-lg border border-black/10 px-2.5 py-1.5 font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10"
-              />
             </div>
           {/each}
         </div>
+        {#if captionIndex !== null && captionIndex < newFiles.length}
+          <div class="px-3 pb-3">
+            {#key captionIndex}
+              <MediaCaptionField
+                bind:value={newMediaCaptions[captionIndex]}
+                position={existingMedia.length + captionIndex + 1}
+                onDone={() => (captionIndex = null)}
+              />
+            {/key}
+          </div>
+        {/if}
       {/if}
     </div>
   </div>
@@ -524,128 +489,45 @@
       </div>
     {/if}
 
-    <!-- Error banner. -->
+    <!-- Error banner: stays until the next attempt, a save, or the reader dismisses it. -->
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 shadow-inner dark:text-red-400"
+        role="alert"
+        class="flex items-start gap-2.5 rounded-lg bg-red-500/10 px-3 py-2.5 text-red-600 dark:text-red-400"
       >
         <CircleAlert size={18} strokeWidth={2.5} class="mt-0.5 shrink-0" />
-        <span class="text-sm leading-snug font-bold">{errorMessage}</span>
+        <span class="flex-1 text-sm leading-snug font-semibold">{errorMessage}</span>
+        <button
+          type="button"
+          onclick={() => (errorMessage = '')}
+          class="shrink-0 text-xs font-bold outline-none hover:underline focus-visible:underline"
+        >
+          {m.post_create_error_dismiss_label()}
+        </button>
       </div>
     {/if}
 
-    <!-- Barre d'outils + boutons -->
-    <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
-      <!-- Toolbar -->
-      <div
-        class="bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-2xl border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
-      >
-        <!-- Add media. -->
-        <label
-          for={mediaInputId}
-          title={m.post_create_photos_label()}
-          class="text-text-muted flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {newFiles.length > 0
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-        >
-          {#if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('image/'))}
-            <Image size={18} strokeWidth={2.5} />
-          {:else if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('video/'))}
-            <Film size={18} strokeWidth={2.5} />
-          {:else if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('audio/'))}
-            <Music size={18} strokeWidth={2.5} />
-          {:else}
-            <FileText size={18} strokeWidth={newFiles.length > 0 ? 2.5 : 2} />
-          {/if}
-          <span class="hidden text-xs sm:inline">{m.post_create_photos_label()}</span>
-        </label>
-        <input
-          id={mediaInputId}
-          type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub"
-          multiple
-          onchange={onPickFiles}
-          class="sr-only"
-        />
-
-        <!-- Sondage -->
-        <button
-          type="button"
-          title="Sondage"
-          onclick={() => (includePoll = !includePoll)}
-          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {includePoll
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-        >
-          <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Sondage</span>
-        </button>
-
-        <!-- Formulaire -->
-        <button
-          type="button"
-          title="Formulaire"
-          onclick={() => (includeForm = !includeForm)}
-          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
- {includeForm
-            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
-            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-        >
-          <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Formulaire</span>
-        </button>
-
-        <!-- Separator. -->
-        <div class="mx-0.5 hidden h-6 w-px shrink-0 bg-black/10 sm:block dark:bg-white/10"></div>
-
-        <!-- Programmation -->
-        <div
-          class="relative flex shrink-0 items-center rounded-xl bg-black/5 px-2 py-1.5 transition-all focus-within:ring-2 focus-within:ring-amber-500/50 dark:bg-white/5 {scheduledAt
-            ? 'border border-amber-500/20 bg-amber-500/10'
-            : ''}"
-        >
-          <Clock
-            size={16}
-            strokeWidth={2.5}
-            class="text-text-muted ml-1 {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}"
-          />
-          <input
-            type="datetime-local"
-            bind:value={scheduledAt}
-            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            title={m.post_edit_schedule_title()}
-            class="text-text-main text-2xs cursor-pointer bg-transparent pr-1 pl-2 font-bold outline-none {scheduledAt
-              ? 'w-36 text-amber-700 dark:text-amber-400'
-              : 'sm:text-text-main w-5 text-transparent sm:w-28'} transition-all"
-          />
-          {#if scheduledAt}
-            <button
-              type="button"
-              onclick={() => (scheduledAt = '')}
-              class="ui-icon-button text-text-muted rounded-full transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
-              title={m.post_edit_cancel_schedule_title()}
-            >
-              <X size={14} strokeWidth={2.5} />
-            </button>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Boutons Annuler / Enregistrer -->
-      <div class="flex shrink-0 items-center gap-3">
+    <PostComposerBar
+      onFiles={addFiles}
+      onFormat={(type) => editorField?.format(type)}
+      pollActive={includePoll}
+      onTogglePoll={() => (includePoll = !includePoll)}
+      formActive={includeForm}
+      onToggleForm={() => (includeForm = !includeForm)}
+      bind:scheduledAt
+    >
+      {#snippet action()}
         <button
           type="button"
           onclick={onCancel}
-          class="text-text-muted hover:text-text-main rounded-xl px-4 py-2.5 text-sm font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          class="text-text-muted hover:text-text-main shrink-0 rounded-lg px-3 py-2 text-sm font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
         >
           {m.common_cancel_button()}
         </button>
         <Button
           type="button"
-          class="min-w-[9rem] px-7 py-3 text-sm !font-bold shadow-md shadow-amber-500/20 active:translate-y-0"
+          class="shrink-0 px-5 py-2 text-sm !font-bold"
           disabled={saving ||
             (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}
@@ -653,18 +535,7 @@
         >
           {saving ? m.common_saving_label() : m.post_edit_save_button()}
         </Button>
-      </div>
-    </div>
+      {/snippet}
+    </PostComposerBar>
   </div>
 </article>
-
-<style>
-  input[type='datetime-local']::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    opacity: 0;
-    position: absolute;
-    left: 0;
-    width: 100%;
-    height: 100%;
-  }
-</style>

@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { X, ClipboardList, ChevronDown, Plus } from '@lucide/svelte';
+  import { X, ClipboardList, Plus } from '@lucide/svelte';
   import type { Form } from '$lib/forms/api';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
 
   interface Props {
     selectedFormId: string;
@@ -21,10 +23,8 @@
     onRemove,
   }: Props = $props();
 
-  const selectPlainClass =
-    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface px-4 pr-10 py-3 text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
-  const chevronWrapClass =
-    'pointer-events-none absolute inset-y-0 right-3 flex items-center text-text-muted';
+  const pickerTriggerClass =
+    'flex w-full items-center justify-between gap-2 rounded-xl border border-cn-border/70 bg-cn-surface px-4 py-3 text-left text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
 
   const selectedForm = $derived(availableForms.find((f) => f.id === selectedFormId));
   const selectedOpensLater = $derived(
@@ -39,6 +39,12 @@
     });
     return ` - ${euros} €`;
   }
+
+  /** "Choose a form" (none linked), then every form the post may carry. */
+  const formOptions = $derived<PickerOption[]>([
+    { value: '', label: m.post_form_choose_label() },
+    ...availableForms.map((form) => ({ value: form.id, label: formOptionLabel(form) })),
+  ]);
 
   function formOptionLabel(form: Form): string {
     const base = `${form.title} (${m.post_form_questions_label({ count: form.items.length })})${formPriceLabel(form)}`;
@@ -68,17 +74,13 @@
   </div>
 
   {#if availableForms.length > 0}
-    <div class="relative">
-      <select bind:value={selectedFormId} class={selectPlainClass}>
-        <option value="">{m.post_form_choose_label()}</option>
-        {#each availableForms as form (form.id)}
-          <option value={form.id}>{formOptionLabel(form)}</option>
-        {/each}
-      </select>
-      <div class={chevronWrapClass}>
-        <ChevronDown size={18} strokeWidth={2} />
-      </div>
-    </div>
+    <Picker
+      label={m.post_form_fallback_title()}
+      value={selectedFormId}
+      options={formOptions}
+      onValueChange={(v) => (selectedFormId = v)}
+      triggerClass={pickerTriggerClass}
+    />
     {#if selectedOpensLater && selectedForm?.opensAt}
       <p class="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">
         {m.post_form_opens_planned_label({ date: formatFormOpensAt(selectedForm.opensAt) })}

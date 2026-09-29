@@ -1,7 +1,7 @@
 {
   "app": {
     "security": {
-      "capabilities": ["default", "local-estate"]
+      "capabilities": ["default", "local-estate", "ios-system-components"]
     }
   }
 }

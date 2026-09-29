@@ -690,6 +690,10 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 `arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),
 `chat` = [chat](frontend/modules/chat.md), `mob` = [mobile](frontend/mobile.md).
 
+- **A CHOICE IS DRAWN BY THE APP - NEVER A NATIVE `<select>`** (user, 2026-09-29, on the Mi 9T: *"c'est un truc natif, pas in app. A cet endroit comme a d'autres, il ne vaut mieux pas sortir de l'experience de l'application"*). On Android a select opens the SYSTEM's dialog - its font, its radios, none of the app's colours - and it cannot draw what the choice is about: who publishes a post was a list of bare names beside a composer showing avatars. **Use `ui/Picker.svelte`** (a sheet under `40rem`, a popover above, a listbox either way; `variant="field"` for a settings form) or `ui/Select.svelte`, which draws it; **a date is `ui/DateTimeField.svelte`**, never `type="datetime-local"`, which opens the system's own dialogs twice. Both open in `ui/FloatingSurface.svelte`, the one sheet/popover shell. Since 2026-09-29 the app has NO native select and NO native date input left, so one reappearing is a regression, not a style ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
+- **A VIDEO PLAYS WHERE IT IS, ONE AT A TIME, AND ONE ANSWER SAYS WHETHER ANY MAKES SOUND** (user, 2026-09-29: *"la video doit se lire directement (avec un bouton pour mettre ou enlever le son, qui agit sur toutes les videos de l'app)"*, *"defaut sans son a l'ouverture de l'app"*). An inline video is `shared/InlineVideo.svelte` - it plays muted while on screen, with no native controls; a tap opens the viewer. The sound is `stores/videoSound`, in memory ONLY so every start is silent; a viewer's `<video>` wears `use:followVideoSound` so its own controls give the same answer. `playWhileVisible` lets ONE video play in the app: the viewer opening over a playing feed video left two soundtracks talking at once (Mi 9T, 2026-09-29).
+
 - **A STORE WITH ONE SLOT AND A PROMISE PER CALLER OWES AN ANSWER TO WHATEVER IT EVICTS.** `showConfirm` kept the pending dialog - message, labels and RESOLVER - in a single `_pending`, and a second call overwrote all three. The first dialog left the screen and its promise never settled, so whatever awaited it awaited for the rest of the process: no error, no log, no timeout, just a continuation that never ran. Nothing typed the omission, because the resolver is data in a record like any other. **Wherever a single slot holds an outstanding promise, evicting it is a decision about that promise and must be spelt** - here the replaced dialog answers `false`, which is what a user who never saw it decided, and says so in a log. Found on 2026-09-15 while making `startPushService` await one of these ([story](../../CHANGELOG.md)).
 
 **Tokens, and the things that outrank them**
@@ -1393,6 +1397,15 @@ What must not be forgotten between the pages:
 - **A COMPARISON PROVES EQUALITY OF WHATEVER IT ACTUALLY READ, AND AN ERROR COMPARES EQUAL TO ITSELF.** A per-table content fingerprint was run on both databases either side of the Authentik move, and `diff` returned IDENTICAL - over three lines of `ERROR: column "relname" does not exist`, because `pg_tables` exposes `tablename`. Both sides failed the same way, so the differential was perfectly satisfied and the migration was, for a moment, declared proven. **What caught it was the SHAPE, not the tooling**: three tables is not what Authentik looks like. So a differential check owes an assertion about its own output before its verdict counts - a row count against what the system is known to hold, or a count of `ERROR` lines that must be zero. Without one it can only ever confirm that two failures failed identically, which is the easiest agreement in computing to obtain. Read alongside the probe rule above: that one is about a check that cannot fail, this one about a check that fails on both sides at once. [estate-migration](infrastructure/estate-migration.md)
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
+
+- **AN INTENT TO ANOTHER APP IS INVISIBLE UNTIL THE MANIFEST QUERIES FOR IT, AND THE FAILURE LOOKS
+  LIKE SUCCESS.** Since API 30, `resolveActivity()` returns null for any app the manifest has no
+  `<queries>` entry for, and wry's file chooser then falls back to the photo picker: the composer's
+  "Appareil photo" chip opened, showed a screen, and was simply the wrong one (Mi 9T, 2026-09-29,
+  logcat `Tauri/FileChooser: Media capture intent could not be launched`). **A new intent to a
+  system app ships with its `<queries>` entry, a FileProvider root for any file it hands that app,
+  and a manifest test**, and is verified by what the
+  phone SHOWS, never by the fact that something opened ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
 
 - **A RELEASE BINARY IS INSPECTABLE IF ANY DEPENDENCY COMPILED THE CALL IN, AND THE CALL SITE YOU
   WILL AUDIT IS NOT THE ONE THAT DECIDES.** `open_devtools()` is `#[cfg(debug_assertions)]`-gated,

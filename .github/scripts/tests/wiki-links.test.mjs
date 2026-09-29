@@ -38,7 +38,21 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, '..', '..', '..'));
-const SKIP = new Set(['.git', 'node_modules', 'target', 'build', 'dist', '.svelte-kit', 'gen']);
+// `.claude` holds git WORKTREES, which are whole copies of this repository at other commits. They
+// are gitignored and CI never has them, so every link they carry was checked once already at the
+// commit they were cut from - but a workstation with one open saw this gate fail with dozens of
+// findings that named files it could not see and could not fix. A gate whose failures a reader
+// learns to skip is the one that hides the next real finding.
+const SKIP = new Set([
+  '.git',
+  '.claude',
+  'node_modules',
+  'target',
+  'build',
+  'dist',
+  '.svelte-kit',
+  'gen',
+]);
 
 /** Collects every markdown file under `dir`, skipping generated and vendored trees. */
 function collect(dir, out = []) {

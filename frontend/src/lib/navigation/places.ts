@@ -90,6 +90,13 @@ export const APP_PLACES: AppPlace[] = [
   },
 ];
 
+/**
+ * The four places of the phone's bottom bar, in order - drawn by `BottomNav` on the web and
+ * Android, and handed to the native tab bar on iOS (`NativeTabBar`). One list, so the two bars
+ * cannot offer different places.
+ */
+export const MOBILE_NAV_PLACES: AppPlace[] = APP_PLACES.filter((p) => p.mobileNav);
+
 /** Returns the active place ID for the given pathname, or null if no place matches. */
 export function resolveActivePlaceId(pathname: string): string | null {
   const exact = APP_PLACES.find(

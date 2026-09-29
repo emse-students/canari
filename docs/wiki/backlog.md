@@ -199,6 +199,83 @@ fingerprint of the document that went live, because no timestamp can answer that
 8. Pre-release on dev - **canari-64's to cut** (D18) - an A0 export measured there, the user's look,
    then the stable (D11). D8's cost is measured in the same run.
 
+## The composer and CanaReels chantier - compared on the Mi 9T 2026-09-29, every decision taken
+
+Asked by the user on 2026-09-29: *"Regarde a quoi ressemble ce qui s'affiche quand on veut publier
+un post [...] Note les differences avec la facon de faire de Canari, peu ergonomique [...] On peut
+aussi regarder la facon de faire d'instagram [...] Les gens attendent les "CanaReels" avec
+impatience"*, then live streaming *"dans le futur"*.
+
+### What the three composers were measured to do (Mi 9T, 2026-09-29)
+
+| | Facebook | Instagram | Canari (`CreatePostForm.svelte`) |
+| --- | --- | --- | --- |
+| Frame | Full screen, one title | Full screen | A modal over the feed, THREE nested bordered boxes |
+| Header | "Nouvelle publication" | same | "Nouveau post" + "CREER UNE PUBLICATION" + an explanatory sentence - three titles for one thing |
+| Author | Avatar + name, one line | - | A full-width "PUBLIER EN TANT QUE" select |
+| Text area | The whole screen, borderless, no toolbar | - | ~250 px, boxed, behind 8 Markdown buttons on two rows |
+| Primary action | "Suivant", bottom right, disabled while empty | "Suivant", top right | "Publier" ABOVE the attachment bar, so it is met before anything is attached |
+| Attachments | Labelled chips (Musique, Personnes, Lieu, Humeur) + a pinned bottom bar (Galerie, GIF, Evenement, Direct) | Gallery grid, camera as the FIRST tile, multi-select | Four UNLABELLED icons (file, chart = poll, clipboard = form, clock = schedule); no event button although the subtitle promises one |
+| Adding a photo | Full-screen photo grid, camera top right | same | **Android's generic DocumentsUI** ("Recents", Audio, Documents...) |
+| Camera | From the gallery | `+`, or a swipe right from the feed straight into the camera; a PUBLIER / STORY / REEL / EN DIRECT switcher at the bottom | None |
+
+**The DocumentsUI has one cause**: the input's `accept` lists images, video, audio, PDF, Office and
+zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo picker. Photo/video and
+"Fichier" have to be two inputs.
+
+### What the video path is today, read from the code
+
+- **Video is already accepted** in a post, capped at 50 MB of ciphertext on both estates
+  ([media-service](services/media-service.md)).
+- **It is drawn in a 16:9 box at most `max-w-md` wide** (`PostMedia.svelte:323`): a vertical phone
+  video is small and letterboxed.
+- **A media file is ONE AES-GCM operation under ONE IV** (`mediaCrypto.ts:48-62`), and the download
+  fetches the whole blob and decrypts it once (`media.ts:581`). GCM's tag closes the file, so
+  **nothing plays before the last byte arrives** - the upload is chunked for TRANSPORT only.
+- **A post's CEK travels in the post row**, so post media is sealed against the STORAGE, not against
+  the Canari server - consistent with a post every member can read, and what makes a public live
+  keyable at all (C9).
+- **Live has its bricks and none has run**: the SFU is `call-service` (webrtc-rs, already
+  one-to-many), frames are E2E-encrypted with MLS keys through `RTCRtpScriptTransform`
+  (`CallService.ts:734`), TURN is up in prod - and `CALLS_ENABLED = false`, never exercised
+  ([calls](frontend/modules/calls.md)).
+
+### Decided by the user, 2026-09-29
+
+| # | Decision |
+| --- | --- |
+| C1 | **Markdown STAYS** in posts; its layout is ours to make clean (formatting on demand, not two rows of buttons above an empty field). |
+| C2 | **Any member may publish a CanaReel**, as for a post; the existing reports cover moderation. |
+| C3 | **The PHONE compresses, the server only stores** - *"il faut que la charge serveur soit minimale, sinon on va vite avoir des problemes de stockage et de memoire"*. No server transcoding, no server thumbnails. Target 720p at ~2.5 Mb/s: ~28 MB for 90 s, under the 50 MB cap. |
+| C4 | **A CanaReel lasts 90 seconds at most.** |
+| C5 | **The camera is a TAB, left of the feed** (user's proposal): a swipe right from the feed opens it through the tab swipe that exists since #1223 - no competing gesture. |
+| C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
+| C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
+| C8 | **Stories: not now.** The user was not convinced and asked where they would even show; with one-month reels the two formats overlap. |
+| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). |
+| C10 | **Delivered in stages**, each its own release (below). |
+
+### The order to build it in (C10)
+
+1. **R1 - the composer.** Full screen on a phone, one title, the author as an avatar line, the text
+   area taking the height, Markdown on demand (C1), labelled chips, a bar pinned above the keyboard
+   with Publier at the right; Photo/video (gallery + camera) split from Fichier; a vertical video
+   drawn at its own aspect ratio. **The composer MERGED (#1226)**; its first on-device review
+   (user, 2026-09-29) moved the captions behind a chip, took the halo off the chips and put the
+   identity and linked-event choices in the app's own `Picker` - its PR. Its second review
+   (2026-09-29) is the next PR: every other native `<select>` (35) and the six date inputs are the
+   app's own, and a feed video plays like Instagram's - vertical at its own shape, muted, one sound
+   button for every video ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+   **Owed: the user's own look on the Mi 9T.**
+2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
+   tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
+   plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
+   readable. On-device compression (C3).
+3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
+   full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
+   save-to-gallery.
+4. **R4 - live** (C9), behind the calls revival.
+
 ## Open defects, in severity order
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
@@ -235,7 +312,7 @@ One pull request per package, in this order. R1 = G2-0 to G2-4, R2 = G2-5. **Dec
 | WP | What | State |
 | --- | --- | --- |
 | G2-0 | Docs (§4.1 claimed a ratchet the code never had; §7 names v1's limits; §21) and the one hole v1 can close alone: a held seed re-sent with other bytes or for another salon is REFUSED, by `storeIncomingSeed` and by the native `merge_graine_seed`; a lower floor no longer re-attributes the session to its answerer | shipped in `v0.18.29` (#1163) |
-| G2-1 | The verified MLS sender reaches the app - `mls-core/src/messaging.rs` returns it, WASM and Tauri carry it ([§21.1](protocols/channel-encryption.md#211-the-verified-sender-as-measured-wp-g2-1)); `background.rs` and native notifications naming it come with the refusal (G2-1b). **MEASURED BEFORE IT REFUSES (user, 2026-09-28)**: one release logs every envelope `senderId` contradicting it at ERROR (`[MLS] SENDER MISMATCH`), DMs included, and refuses nothing; production is read; only then the refusal - a legitimate mismatch nobody foresaw (an external joiner's commit, an id's case, a system frame) would otherwise lose messages | measurement shipped in `v0.18.29` (#1166); production read 2026-09-29: ZERO `[SENDER_MISMATCH]` in ~7 h since chat-delivery restarted at 01:03Z (338 sends, 234 history pages; the 19:30-01:03 window was lost with the restart). **Refusal (G2-1b) BUILT NOW and shipped in R1, and a full day is re-read before R1 is cut; any line blocks it until explained (user, 2026-09-29)** |
+| G2-1 | The verified MLS sender reaches the app - `mls-core/src/messaging.rs` returns it, WASM and Tauri carry it ([§21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)); the native push decrypts take the same comparison in Rust with G2-4b. **MEASURED BEFORE IT REFUSES (user, 2026-09-28)**: one release logs every envelope `senderId` contradicting it at ERROR (`[MLS] SENDER MISMATCH`), DMs included, and refuses nothing; production is read; only then the refusal - a legitimate mismatch nobody foresaw (an external joiner's commit, an id's case, a system frame) would otherwise lose messages | measurement shipped in `v0.18.29` (#1166); production read 2026-09-29: ZERO `[SENDER_MISMATCH]` in ~7 h since chat-delivery restarted at 01:03Z (338 sends, 234 history pages; the 19:30-01:03 window was lost with the restart). **Refusal (G2-1b, web and Tauri, four paths): MERGED 2026-09-29 (#1218) WHILE STILL HELD** - its auto-merge was off DELIBERATELY, and a session re-armed it after reading a green-but-unmerged PR as a broken mechanism rather than as a decision. **A DISARMED AUTO-MERGE ON A GREEN PULL REQUEST IS NOT A DIAGNOSIS, IT IS THE ABSENCE OF ONE** ([durable-rules](durable-rules.md)). Nothing deployed - nothing deploys on a merge here - and the hold's substance is untouched: **the full day of prod `[SENDER_MISMATCH]` (~2026-09-30 01:03Z) is STILL re-read before R1 is cut, any line blocking it until explained** (user, 2026-09-29) |
 | G2-2 | Pure additions ([§21.2](protocols/channel-encryption.md#212-the-v2-primitives-wp-g2-2---written-tested-wired-to-nothing), which also adds a SEED COMMITMENT to the endorsement): sign/verify with the device's MLS credential key and with a per-session Ed25519 pair, in `mls-core`, exposed to WASM and Tauri; `sealWithGraineV2`/`openWithGraineV2` in TS and Rust; shared v2 vectors and a FROZEN v2 fixture beside `v0.14.14-graine-push.bin`; every negative case typed | shipped in `v0.18.29` (#1168) |
 | G2-3 | Data: `GraineMsg` gains `version`, minter user and device, `signing_public_key`, `endorsement`; the store, codec, backup and native mirror carry them (the mirror gains `firstIndex` too); social-service gains a `signature` column and a UNIQUE `(senderSessionId, messageIndex)` - count existing duplicates on production FIRST; chat-delivery keeps every signature key a device published and serves it ([§21.3](protocols/channel-encryption.md#213-the-data-model-carries-the-minter-and-its-key-wp-g2-3)); duplicates counted first (0 on both estates), and every stored KeyPackage read first (76 702, all naming their uploader) so a foreign identity is now REFUSED | merged (#1214), in no release yet |
 | G2-4 | The READER, web and both natives: author and salon checked, AAD and signature verified, endorsements verified on arrival, a replay shown once; v1 stays readable ([legacy-compatibility](legacy-compatibility.md)). Split in two PRs, both in R1: **G2-4a the web** ([§21.4](protocols/channel-encryption.md#214-the-web-reader-wp-g2-4a)), **G2-4b the natives** (Kotlin, NSE, `canari_push.mm`, the attached frame's endorsement, and the signature joining the push) | G2-4a MERGED (#1217), in `0.18.31`; **G2-4b: its PR** ([§21.5](protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)) - the three native readers open through `open_graine_push`, an arriving v2 seed is checked against the tree, the signature joins the push, and the native half of G2-1b (a DM push naming another sender) rides with it; owed after R1: NOTIF-19/20 on the Mi 9T on a v2 session once G2-5 writes one |

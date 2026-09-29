@@ -1,14 +1,15 @@
 import {
+  assertVerifiedSender,
   checkVerifiedSender,
+  SenderMismatchError,
   resetReportedSenderMismatches,
   setSenderMismatchReporter,
   type SenderMismatchReporter,
 } from './verifiedSender';
 
 /**
- * WP-G2-1, the measurement half (channel-encryption section 21): the sender a delivery envelope
- * names is compared with the one OpenMLS verified, and a disagreement is logged and REPORTED - never
- * refused, until production has been read (decided by the user, 2026-09-28).
+ * WP-G2-1 and G2-1b (channel-encryption section 21.1): the sender a delivery envelope names is
+ * compared with the one OpenMLS verified; a disagreement is logged, REPORTED, and then refused.
  */
 
 let reporter: ReturnType<typeof vi.fn<SenderMismatchReporter>>;
@@ -90,5 +91,33 @@ describe('checkVerifiedSender', () => {
     checkVerifiedSender('g-1', { userId: 'mallory', path: 'live' }, 'bob:dev-b');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('no reporter is wired'));
     warn.mockRestore();
+  });
+});
+
+describe('assertVerifiedSender (WP-G2-1b)', () => {
+  it('lets an agreeing frame through', () => {
+    expect(() =>
+      assertVerifiedSender('g-1', { userId: 'bob', deviceId: 'dev-b', path: 'live' }, 'bob:dev-b')
+    ).not.toThrow();
+  });
+
+  it('REFUSES a disagreement with a typed error naming its kind, after reporting it', () => {
+    let thrown: unknown;
+    try {
+      assertVerifiedSender('g-1', { userId: 'mallory', path: 'live' }, 'bob:dev-b');
+    } catch (e) {
+      thrown = e;
+    }
+    // Typed, because every consumer decides by `instanceof` - never by reading the sentence.
+    expect(thrown).toBeInstanceOf(SenderMismatchError);
+    expect((thrown as InstanceType<typeof SenderMismatchError>).kind).toBe('user');
+    expect(reporter).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED'));
+  });
+
+  it('refuses a credential it cannot read', () => {
+    expect(() => assertVerifiedSender('g-1', { userId: 'bob', path: 'history' }, null)).toThrow(
+      SenderMismatchError
+    );
   });
 });

@@ -9,8 +9,8 @@
   chosen names and colours on the card. The label and its hint now say exactly that, which is the
   arbitration ("toute asso, et le libelle le dit") rather than a narrowing nobody asked for.
 
-  This one is a multi-select over its own dropdown rather than a `<select>`, so it cannot use
-  `AssociationOptions` - `<optgroup>` has no meaning here. It reads the SAME grouping helper, so
+  This one is a multi-select over its own dropdown rather than the single-choice `Picker`. It reads
+  the SAME grouping helper, so
   the order and the two headings are decided in one place for every picker in the app.
 
   It also used to render `candidates.slice(0, 12)`, which is the "12" a user counted: the estate is

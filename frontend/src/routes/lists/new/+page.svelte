@@ -7,7 +7,9 @@
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import { m } from '$lib/paraglide/messages';
   import { slugify } from '$lib/utils/textFold';
 
@@ -18,6 +20,10 @@
   let promo = $state<number | ''>('');
   let parentAssociationId = $state('');
   let associations = $state<Association[]>([]);
+  const parentOptions = $derived<PickerOption[]>([
+    { value: '', label: m.list_new_parent_none() },
+    ...associationPickerOptions(associations),
+  ]);
   let submitting = $state(false);
   let error = $state('');
 
@@ -90,14 +96,15 @@
       <label for="list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold"
         >{m.list_new_parent_label()}</label
       >
-      <select
+      <Picker
         id="list-parent"
-        bind:value={parentAssociationId}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base outline-none"
-      >
-        <option value="">{m.list_new_parent_none()}</option>
-        <AssociationOptions {associations} />
-      </select>
+        value={parentAssociationId}
+        options={parentOptions}
+        label={m.list_new_parent_label()}
+        variant="field"
+        density="default"
+        onValueChange={(v) => (parentAssociationId = v)}
+      />
     </div>
 
     <Textarea

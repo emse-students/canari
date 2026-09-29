@@ -4,6 +4,8 @@ import {
   isSwipeNavRoute,
   resolveSwipeNavIndex,
   shouldIgnoreSwipeTarget,
+  swipeCommitTravelPx,
+  swipeNavSlideOriginPx,
   swipeNavTargetHref,
   updateSwipeNavGesture,
 } from './swipeNavigation';
@@ -95,24 +97,56 @@ describe('shouldIgnoreSwipeTarget', () => {
 });
 
 describe('gesture classification', () => {
+  // jsdom reports 1024, so a quarter of the screen is 256px here.
+  const SLOW_MS = 600;
+
   it('locks horizontal after dominant move', () => {
     const state = updateSwipeNavGesture(
-      { startX: 0, startY: 0, phase: 'pending', dragPx: 0 },
+      { startX: 0, startY: 0, startedAt: 0, phase: 'pending', dragPx: 0 },
       40,
       2
     );
     expect(state.phase).toBe('horizontal');
-    expect(classifySwipeRelease(-80, 2, state.phase)).toBe('next');
+    expect(classifySwipeRelease(-300, 2, state.phase, SLOW_MS)).toBe('next');
   });
 
   it('treats vertical scroll as non-navigating', () => {
     const state = updateSwipeNavGesture(
-      { startX: 0, startY: 0, phase: 'pending', dragPx: 0 },
+      { startX: 0, startY: 0, startedAt: 0, phase: 'pending', dragPx: 0 },
       4,
       50
     );
     expect(state.phase).toBe('vertical');
-    expect(classifySwipeRelease(100, 50, state.phase)).toBeNull();
+    expect(classifySwipeRelease(100, 50, state.phase, SLOW_MS)).toBeNull();
+  });
+
+  // THE REPORT THIS SECTION EXISTS FOR (user, 2026-09-29): a tap that drifts changed the page.
+  it('refuses a slow drift that clears the floor but not a quarter of the screen', () => {
+    expect(swipeCommitTravelPx()).toBe(256);
+    expect(classifySwipeRelease(-90, 8, 'horizontal', 260)).toBeNull();
+  });
+
+  it('commits a flick that never reaches the travel distance', () => {
+    expect(classifySwipeRelease(-90, 8, 'horizontal', 120)).toBe('next');
+  });
+
+  it('refuses a flick below the floor, however brief', () => {
+    expect(classifySwipeRelease(-30, 2, 'horizontal', 20)).toBeNull();
+  });
+
+  it('commits a deliberate drag at any speed once it passes a quarter of the screen', () => {
+    expect(classifySwipeRelease(300, 20, 'horizontal', 1500)).toBe('prev');
+  });
+});
+
+describe('swipeNavSlideOriginPx', () => {
+  it('hands the release a magnitude, so the keyframes carry the direction', () => {
+    expect(swipeNavSlideOriginPx(-140)).toBe(140);
+    expect(swipeNavSlideOriginPx(140)).toBe(140);
+  });
+
+  it('never places a page beyond the screen it slides in from', () => {
+    expect(swipeNavSlideOriginPx(-9000)).toBe(1024);
   });
 });
 

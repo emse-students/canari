@@ -2648,7 +2648,7 @@ refuses**: one release logs every envelope that contradicts it and refuses nothi
 legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
 the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
 
-### 21.1 The verified sender, as measured (WP-G2-1)
+### 21.1 The verified sender, measured then refused (WP-G2-1, G2-1b)
 
 **Where it comes from.** OpenMLS verifies an application message's signature against the sender's
 leaf before it decrypts, and `ProcessedMessage::credential()` is that leaf's credential - read in
@@ -2668,16 +2668,34 @@ body claimed, so a `device` mismatch is either the server relabelling a frame or
 about which device sent it - both worth knowing, and the measurement does not need to tell them
 apart before the refusal exists.
 
-**What a mismatch does, for now.** `[MLS] SENDER MISMATCH (...) - measured, not refused` at ERROR,
-and ONE report per `(group, path, kind, envelope, verified)` per session to
-`POST /api/mls/sender-mismatch`, which logs `[SENDER_MISMATCH]` on chat-delivery with the reporter
-and stores nothing. **Reading production is that grep**; the refusal (WP-G2-1b) is written only
-once it has come back empty, or every line it holds has been explained.
+**What a mismatch does: it is REFUSED (WP-G2-1b).** `[MLS] SENDER MISMATCH (...) - REFUSED,
+consumed and not shown` at ERROR, and ONE report per `(group, path, kind, envelope, verified)` per
+session to `POST /api/mls/sender-mismatch`, which logs `[SENDER_MISMATCH]` on chat-delivery with the
+reporter and stores nothing - so production keeps its grep after the refusal exists. The measurement
+came first (user, 2026-09-28) and read ZERO lines on production before the refusal was written.
+
+`processIncomingMessage` (web and Tauri) throws a `SenderMismatchError` - a TYPE, which
+`classifyIncomingDecryptError` reads first as `sender-mismatch`, never a sentence. The frame DID
+decrypt, so its generation is spent, and each path does the same three things - mark it consumed,
+acknowledge it, show nothing - and asks for no repair, because the group is fine and the envelope
+lied:
+
+| Path | Where | What it does |
+| --- | --- | --- |
+| `live` | `setupMessageHandler.ts` catch | `noteConsumed()`, ACK, nothing reaches the chat |
+| `welcome-replay` | the buffered-frame replay after a Welcome | `noteFrameConsumed`, nothing dispatched (its other failures now log instead of vanishing) |
+| `distribution` | `BaseMlsService.openDistributionFrame` + `dispositionOfUnreadableFrame` | consumed, ACKed, never handed to the seed handler, and no second "lost seed" line |
+| `history` | `history.ts`, after the page is marked consumed | the row is skipped, nothing stored |
+
+A `null` verified sender (a credential the engine cannot read) is `unverifiable`, and is refused
+like the other two kinds: a frame whose sender nobody checked is not one to attribute.
 
 **What it does not cover yet.** The native push decrypts - `mobile/background.rs`, the Android
-service and the iOS NSE - still name the envelope's sender on a notification. They move with the
-refusal in G2-1b, since the foreground paths already see the whole population the measurement is
-for.
+service and the iOS NSE - still name the envelope's sender on a notification. They take the same
+comparison IN RUST (the envelope's `senderId` handed to the decrypt, one implementation for both
+platforms) with G2-4b, the package that already moves those files; a refused push shows the generic
+banner. Until then a relabelled DM push can mislabel ONE notification, never a stored message: the
+foreground decrypt of the same frame refuses it.
 
 ### 21.2 The v2 primitives (WP-G2-2) - written, tested, wired to nothing
 

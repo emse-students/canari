@@ -259,3 +259,35 @@ describe('a frame from an epoch whose secrets are gone', () => {
     expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * WP-G2-1b: a frame whose envelope names a sender MLS did not verify is REFUSED. It decrypted, so
+ * its generation is spent and it is recorded consumed - the replay must never call it a loss - and
+ * nothing of it reaches the chat, nor asks for any repair: the group is fine, the envelope lied.
+ */
+describe('a frame refused for its sender', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetSeenCipherCacheForTests();
+  });
+
+  it('is acknowledged, recorded consumed, shown to nobody, and repairs nothing', async () => {
+    const { SenderMismatchError } = await import('../verifiedSender');
+    const { hasHistoryFrameBeenConsumed } = await import('$lib/utils/chat/history');
+    const body = [9, 8, 7];
+    const deps = baseDeps();
+    vi.mocked(deps.mlsService.processIncomingMessage).mockRejectedValue(
+      new SenderMismatchError(groupId, 'user')
+    );
+
+    expect(await deliver(deps, body)).toBe(true);
+
+    expect(
+      hasHistoryFrameBeenConsumed('user-a', groupId, frameFingerprint(new Uint8Array(body)))
+    ).toBe(true);
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+    expect(vi.mocked(reconcileGroup)).not.toHaveBeenCalled();
+    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
+  });
+});

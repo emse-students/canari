@@ -10,6 +10,8 @@
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -45,6 +47,13 @@
     purchaseFilterProductId
       ? purchases.filter((p) => p.productId === purchaseFilterProductId)
       : purchases
+  );
+  const filterOptions = $derived<PickerOption[]>([
+    { value: '', label: m.asso_achats_filter_all() },
+    ...products.map((p) => ({ value: p.id, label: p.name })),
+  ]);
+  const grantProductOptions = $derived<PickerOption[]>(
+    grantableProducts.map((p) => ({ value: p.id, label: p.name }))
   );
 
   onMount(loadPurchases);
@@ -122,16 +131,15 @@
       <label for="purchase-filter" class="text-text-muted text-xs font-semibold"
         >{m.asso_achats_filter_label()}</label
       >
-      <select
+      <Picker
         id="purchase-filter"
-        bind:value={purchaseFilterProductId}
-        class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-      >
-        <option value="">{m.asso_achats_filter_all()}</option>
-        {#each products as product (product.id)}
-          <option value={product.id}>{product.name}</option>
-        {/each}
-      </select>
+        value={purchaseFilterProductId}
+        options={filterOptions}
+        onValueChange={(v) => (purchaseFilterProductId = v)}
+        label={m.asso_achats_filter_label()}
+        variant="field"
+        density="compact"
+      />
     </div>
   </div>
 
@@ -163,17 +171,16 @@
         <label for="grant-product" class="text-text-muted mb-1 block text-xs font-semibold"
           >{m.asso_achats_grant_product_label()}</label
         >
-        <select
+        <Picker
           id="grant-product"
-          bind:value={grantProductId}
-          class="border-cn-border w-full rounded-xl border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
-          required
-        >
-          <option value="">{m.asso_achats_grant_product_placeholder()}</option>
-          {#each grantableProducts as product (product.id)}
-            <option value={product.id}>{product.name}</option>
-          {/each}
-        </select>
+          value={grantProductId}
+          options={grantProductOptions}
+          onValueChange={(v) => (grantProductId = v)}
+          label={m.asso_achats_grant_product_label()}
+          placeholder={m.asso_achats_grant_product_placeholder()}
+          variant="field"
+          density="compact"
+        />
       </div>
       {#if grantNeedsAmount}
         <div>

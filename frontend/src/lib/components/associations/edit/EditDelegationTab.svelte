@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import {
     listAssociations,
     getPaymentDelegation,
@@ -62,6 +64,7 @@
   const canReceiveDelegation = $derived(asso.stripeOnboardingComplete === true);
   /** Candidate parents: every other regular association (server enforces chain/parent rules). */
   const parentCandidates = $derived(associations.filter((a) => a.id !== asso.id));
+  const parentPickerOptions = $derived<PickerOption[]>(associationPickerOptions(parentCandidates));
 
   onMount(loadAll);
 
@@ -259,14 +262,16 @@
             <label for="deleg-parent" class="text-text-muted mb-1 block text-xs font-semibold">
               {m.asso_deleg_select_label()}
             </label>
-            <select
+            <Picker
               id="deleg-parent"
-              bind:value={selectedParentId}
-              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
-            >
-              <option value="">{m.asso_deleg_select_placeholder()}</option>
-              <AssociationOptions associations={parentCandidates} />
-            </select>
+              value={selectedParentId}
+              options={parentPickerOptions}
+              onValueChange={(v) => (selectedParentId = v)}
+              label={m.asso_deleg_select_label()}
+              placeholder={m.asso_deleg_select_placeholder()}
+              variant="field"
+              density="compact"
+            />
           </div>
           <button
             type="button"

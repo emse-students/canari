@@ -3,7 +3,7 @@ import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
-import { checkVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
+import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
@@ -1166,7 +1166,7 @@ export class WebMlsService extends BaseMlsService {
       sender: string | null;
     } | null;
     if (!result) return null;
-    checkVerifiedSender(groupId, envelope, result.sender);
+    assertVerifiedSender(groupId, envelope, result.sender);
     return result.data;
   }
 

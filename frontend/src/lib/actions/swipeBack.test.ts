@@ -38,6 +38,26 @@ describe('swipeBack', () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
+  it('does not arm on a message bubble, whose own reply swipe is the same stroke', () => {
+    const node = document.createElement('section');
+    const bubble = document.createElement('div');
+    bubble.setAttribute('data-swipe-reply', '');
+    node.appendChild(bubble);
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    // A received bubble sits against the left edge, so it is inside the 28px strip; dragging it
+    // right to reply used to carry past this action's 90px and dismiss the thread underneath.
+    touch(bubble, 'touchstart', 12);
+    touch(bubble, 'touchmove', 120);
+    touch(bubble, 'touchend', 120);
+    node.dispatchEvent(new Event('transitionend'));
+
+    expect(node.style.transform).toBe('');
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
   it('still commits when the touch starts on plain space inside the edge zone', () => {
     const node = document.createElement('section');
     node.appendChild(document.createElement('div'));

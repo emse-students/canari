@@ -39,6 +39,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   RETIRED_PERMISSIONS,
+  roleGrantsChannelManagement,
   writePolicyAllows,
 } from './permissions';
 
@@ -1109,7 +1110,7 @@ export class ChannelService {
     });
     await this.channelRepo.save(generalChannel);
 
-    return { ...savedWs, viewerCanManage: true };
+    return { ...savedWs, viewerCanManage: true, viewerCanManageChannels: true };
   }
 
   /**
@@ -1487,6 +1488,7 @@ export class ChannelService {
     // and could never join it - a capability nobody can reach is not a capability.
     let viewerCanManage = false;
     let viewerCanModerate = false;
+    let viewerCanManageChannels = false;
     if (viewerMember.roleIds?.length) {
       const manageRoleIds = new Set(
         roles
@@ -1498,6 +1500,10 @@ export class ChannelService {
       );
       viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
       viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
+      const held = new Set(viewerMember.roleIds);
+      viewerCanManageChannels = roles.some(
+        (r) => held.has(r.id) && roleGrantsChannelManagement(r.permissions)
+      );
     }
 
     const channels: Array<{
@@ -1537,7 +1543,12 @@ export class ChannelService {
       });
     }
 
-    return { workspace: { ...ws, viewerCanManage, viewerCanModerate }, channels, members, roles };
+    return {
+      workspace: { ...ws, viewerCanManage, viewerCanModerate, viewerCanManageChannels },
+      channels,
+      members,
+      roles,
+    };
   }
 
   /** Returns all workspaces the user belongs to (derived from their ChannelMember records). */
@@ -1571,11 +1582,22 @@ export class ChannelService {
     const moderateRoleIds = new Set(
       roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
     );
+    const manageChannelsRoleIds = new Set(
+      roles.filter((r) => roleGrantsChannelManagement(r.permissions)).map((r) => r.id)
+    );
     const canManageByWorkspace = new Map<string, boolean>();
     const canModerateByWorkspace = new Map<string, boolean>();
+    const canManageChannelsByWorkspace = new Map<string, boolean>();
     for (const membership of memberships) {
       const canManage = (membership.roleIds ?? []).some((id) => manageRoleIds.has(id));
       const canModerate = (membership.roleIds ?? []).some((id) => moderateRoleIds.has(id));
+      const canManageChannels = (membership.roleIds ?? []).some((id) =>
+        manageChannelsRoleIds.has(id)
+      );
+      canManageChannelsByWorkspace.set(
+        membership.workspaceId,
+        (canManageChannelsByWorkspace.get(membership.workspaceId) ?? false) || canManageChannels
+      );
       // A user may hold several membership rows for the same workspace; any one row
       // bearing a MANAGE_WORKSPACE role is enough to manage it.
       canManageByWorkspace.set(
@@ -1604,6 +1626,7 @@ export class ChannelService {
         id: w.id,
         viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
         viewerCanModerate: canModerateByWorkspace.get(w.id) ?? false,
+        viewerCanManageChannels: canManageChannelsByWorkspace.get(w.id) ?? false,
       }))
       .sort(
         (a, b) => (sortOrderByWorkspace.get(a.id) ?? 0) - (sortOrderByWorkspace.get(b.id) ?? 0)
@@ -1662,16 +1685,8 @@ export class ChannelService {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!(await this.memberCanManageChannels(actorMember)))
+      throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     const channelName = (input.name ?? '').trim().toLowerCase();
     if (!channelName) throw new BadRequestException('Channel name cannot be empty');
@@ -1947,16 +1962,8 @@ export class ChannelService {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!(await this.memberCanManageChannels(actorMember)))
+      throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     const trimmedName = newName.trim().toLowerCase();
     if (!trimmedName) throw new BadRequestException('Channel name cannot be empty');
@@ -2005,13 +2012,7 @@ export class ChannelService {
     // "may I read the SETTINGS I am already allowed to write", on one channel, from the one panel
     // that writes them.
     const readable = this.canAccessChannel(channel, member, actorUserId);
-    const mayManage =
-      readable ||
-      (await this.memberHasWorkspacePermission(
-        channel.workspaceId,
-        actorUserId,
-        CHANNEL_PERMISSIONS.MANAGE_CHANNEL
-      ));
+    const mayManage = readable || (await this.memberCanManageChannels(member));
     if (!mayManage) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
@@ -2047,16 +2048,8 @@ export class ChannelService {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!(await this.memberCanManageChannels(actorMember)))
+      throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     // WHO LOSES ACCESS, COMPUTED BEFORE THE ROW CHANGES. After the save the old roster is gone, and
     // a member dropped from a private salon would keep being routed its seeds with nothing left
@@ -2195,16 +2188,8 @@ export class ChannelService {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!(await this.memberCanManageChannels(actorMember)))
+      throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     // Snapshot the audience BEFORE anything goes. `channelAudience` reads the salon's own roster off
     // the row this is about to delete, so afterwards there is nobody left to address the event to -
@@ -2289,6 +2274,16 @@ export class ChannelService {
     if (!member.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
     return roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
+  }
+
+  /**
+   * Whether the member may govern the salons of their workspace - {@link roleGrantsChannelManagement}
+   * over the roles they hold. Every salon-governing write refuses on it, and the listings send it.
+   */
+  private async memberCanManageChannels(member: ChannelMember): Promise<boolean> {
+    if (!member.roleIds?.length) return false;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return roles.some((r) => roleGrantsChannelManagement(r.permissions));
   }
 
   /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
@@ -2661,8 +2656,8 @@ export class ChannelService {
     // stayed open. Nothing was breakable, because the server re-checks each of those actions; what
     // the person got was a screen full of buttons that now fail with no explanation.
     //
-    // THE PERMISSIONS TRAVEL WITH THE EVENT rather than being fetched back. The client caches
-    // exactly one permission-derived flag today (`viewerCanManage`), and it is DERIVED FROM THIS
+    // THE PERMISSIONS TRAVEL WITH THE EVENT rather than being fetched back. The client caches two
+    // permission-derived flags (`viewerCanManage`, `viewerCanManageChannels`), each DERIVED FROM THIS
     // ROLE, which is known here - so handing it over is the discriminator carried to where the
     // decision is made, instead of a round trip that can fail, race a load already in flight, or
     // arrive after the user has clicked. The whole permission list is sent, not just the one flag,
@@ -2680,6 +2675,7 @@ export class ChannelService {
           roleName: role.name,
           permissions: role.permissions,
           canManage: role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+          canManageChannels: roleGrantsChannelManagement(role.permissions),
           changedBy: actorUserId,
         },
         [targetUserId]
@@ -3858,6 +3854,67 @@ export class ChannelService {
       { workspaceId: role.workspaceId, roleId: role.id, permissions: role.permissions },
       members.map((m) => m.userId)
     );
+    await this.announceStandingToHolders(role, members);
+  }
+
+  /**
+   * Tells each HOLDER of an edited role what they may now do - the same `workspace.role.changed`
+   * an assignment sends, because from where they stand it is the same event.
+   *
+   * `workspace.role.permissions` redraws the grid and nothing else: the client caches its OWN
+   * standing as decisions (`viewerCanManage`, `viewerCanManageChannels`), never re-derived from the
+   * grid. So granting `channel.manage` to Moderateur left every moderator without the salon controls,
+   * and revoking it left them offered controls that now fail, until their next full load.
+   *
+   * The audience is SPLIT BY THE ANSWER, one publish per distinct verdict (four at most), because one
+   * payload cannot carry a per-viewer answer and a publish per holder would be one per member for
+   * Membre. A holder's other roles count, so the verdict is over everything they hold. Best-effort
+   * and logged, like the assignment's: the permissions are already written.
+   */
+  private async announceStandingToHolders(
+    role: ChannelRole,
+    members: ChannelMember[]
+  ): Promise<void> {
+    const holders = members.filter((m) => m.roleIds?.includes(role.id));
+    if (holders.length === 0) return;
+    try {
+      const roles = await this.roleRepo.find({ where: { workspaceId: role.workspaceId } });
+      const byId = new Map(roles.map((r) => [r.id, r]));
+      byId.set(role.id, role);
+      const byVerdict = new Map<
+        string,
+        { canManage: boolean; canManageChannels: boolean; to: string[] }
+      >();
+      for (const holder of holders) {
+        const held = (holder.roleIds ?? []).flatMap((id) => byId.get(id)?.permissions ?? []);
+        const canManage = held.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
+        const canManageChannels = roleGrantsChannelManagement(held);
+        const key = `${canManage}:${canManageChannels}`;
+        const group = byVerdict.get(key) ?? { canManage, canManageChannels, to: [] };
+        group.to.push(holder.userId);
+        byVerdict.set(key, group);
+      }
+      for (const { canManage, canManageChannels, to } of byVerdict.values()) {
+        await this.redis.publishChannelEvent(
+          'workspace.role.changed',
+          {
+            workspaceId: role.workspaceId,
+            roleName: role.name,
+            permissions: role.permissions,
+            canManage,
+            canManageChannels,
+          },
+          to
+        );
+      }
+      this.logger.log(
+        `[ROLE] standing announced role=${role.id} holders=${holders.length} verdicts=${byVerdict.size}`
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[ROLE] permissions saved but holders not told role=${role.id} holders=${holders.length}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 
   /**

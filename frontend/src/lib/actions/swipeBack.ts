@@ -16,6 +16,24 @@ function startsOnInteractiveElement(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest('button, a[href], [role="button"]');
 }
 
+/**
+ * True when the touch started on a message bubble, which owns a RIGHTWARD drag of its own.
+ *
+ * REPLY-SWIPING A RECEIVED MESSAGE USED TO CLOSE THE CONVERSATION (user, 2026-09-29: *"parfois un
+ * clic un peu baveux change de page (ou ferme la discussion)"*). The two gestures are the same
+ * stroke in the same direction over the same pixels: a received bubble sits against the left edge,
+ * so it lies inside this action's 28px activation strip, and a finger that carries it past
+ * `REPLY_SWIPE_TRIGGER_PX` (56) and on to this action's 90px armed BOTH - the reply was staged and
+ * the thread was dismissed underneath it. Nothing reconciled them because neither knew the other
+ * existed; `swipeNavigation.ts` had already met this exact collision and excluded the same marker.
+ *
+ * The bubble wins because it is the inner, more specific target: an edge-swipe-to-go-back has the
+ * whole rest of the strip, while a reply swipe has nowhere else to happen.
+ */
+function startsOnCompetingGesture(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('[data-swipe-reply]');
+}
+
 export interface SwipeBackOptions {
   /** Called when the gesture is confirmed (swipe right past threshold). */
   onBack: () => void;
@@ -43,6 +61,7 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     // and drifts even a few px landed in neither outcome: too far for a native click, short of
     // this gesture's own 90px commit threshold.
     if (startsOnInteractiveElement(e.target)) return;
+    if (startsOnCompetingGesture(e.target)) return;
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;

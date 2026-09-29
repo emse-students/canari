@@ -871,16 +871,22 @@ export async function replayConversationHistory(params: {
           const decryptedBytes = batchResult.plaintext;
           if (!decryptedBytes) continue;
           // The archive row names its sender like the live envelope does, and is checked the same
-          // way against the one MLS verified - measured, not refused (channel-encryption §21).
-          checkVerifiedSender(
-            id,
-            {
-              userId: msg.sender_id,
-              deviceId: msg.sender_device_id || undefined,
-              path: 'history',
-            },
-            batchResult.sender
-          );
+          // way against the one MLS verified. A disagreement is REFUSED (channel-encryption 21.1):
+          // the bytes are already marked consumed above, so skipping the row shows nothing of it and
+          // leaves nothing to replay; `checkVerifiedSender` has said so at ERROR.
+          if (
+            checkVerifiedSender(
+              id,
+              {
+                userId: msg.sender_id,
+                deviceId: msg.sender_device_id || undefined,
+                path: 'history',
+              },
+              batchResult.sender
+            )
+          ) {
+            continue;
+          }
 
           const parsed = decodeAppMessage(decryptedBytes);
 

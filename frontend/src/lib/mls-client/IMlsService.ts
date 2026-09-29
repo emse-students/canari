@@ -540,8 +540,9 @@ export interface IMlsService {
    * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
    *
    * `envelope` is the sender the delivery server named for this frame. When given, it is checked
-   * against the sender OpenMLS verified (`checkVerifiedSender`) - measured and reported, never
-   * refused, until production has been read (channel-encryption section 21, WP-G2-1).
+   * against the sender OpenMLS verified, and a disagreement throws a `SenderMismatchError`: the
+   * frame is decrypted and consumed, and nothing of it is shown (channel-encryption section 21.1,
+   * WP-G2-1b).
    */
   processIncomingMessage(
     groupId: string,

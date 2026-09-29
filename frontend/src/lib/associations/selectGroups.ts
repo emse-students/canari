@@ -1,4 +1,6 @@
 import type { Association } from './api';
+import type { PickerOption } from '$lib/components/ui/picker';
+import { m } from '$lib/paraglide/messages';
 
 /** Associations and lists split for grouped `<optgroup>` rendering in selects. */
 export interface GroupedAssociations {
@@ -28,4 +30,20 @@ export function groupAssociationsForSelect(associations: Association[]): Grouped
 /** Display label for a list option, appending the promo year when present. */
 export function listOptionLabel(list: Association): string {
   return list.promo ? `${list.name} (${list.promo})` : list.name;
+}
+
+/**
+ * The two groups as options for the in-app `Picker` - so every picker offering associations reads
+ * in the same order under the same headings.
+ */
+export function associationPickerOptions(associations: Association[]): PickerOption[] {
+  const { assos, lists } = groupAssociationsForSelect(associations);
+  return [
+    ...assos.map((a) => ({ value: a.id, label: a.name, group: m.asso_select_group_assos() })),
+    ...lists.map((a) => ({
+      value: a.id,
+      label: listOptionLabel(a),
+      group: m.asso_select_group_lists(),
+    })),
+  ];
 }

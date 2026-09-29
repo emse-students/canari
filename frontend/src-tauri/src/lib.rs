@@ -814,6 +814,10 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_customtabs::init());
 
+    // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_system_components::init());
+
     builder
         .manage(AppState {
             mls_manager: Arc::new(Mutex::new(None)),

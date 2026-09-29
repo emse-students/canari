@@ -4,7 +4,10 @@
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import {
     validateEventForm,
@@ -80,6 +83,15 @@
   let saving = $state(false);
   let error = $state('');
 
+  /** The associations the event may be filed under, in the app-wide grouping and order. */
+  const associationOptions = $derived<PickerOption[]>(associationPickerOptions(associations));
+
+  /** "No form" first, then every form the event may link. */
+  const linkableFormOptions = $derived<PickerOption[]>([
+    { value: '', label: m.asso_calendar_link_form_none_option() },
+    ...(linkableForms ?? []).map((f) => ({ value: f.id, label: f.title })),
+  ]);
+
   /** Clears the refusal left by the previous attempt whenever the modal is reopened. */
   $effect(() => {
     if (open) error = '';
@@ -153,13 +165,15 @@
             <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-asso"
               >{m.calendar_deposit_on_behalf()}</label
             >
-            <select
+            <Picker
               id="event-form-asso"
-              bind:value={values.targetAssociationId}
-              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-            >
-              <AssociationOptions {associations} />
-            </select>
+              label={m.calendar_deposit_on_behalf()}
+              value={values.targetAssociationId}
+              options={associationOptions}
+              onValueChange={(v) => (values.targetAssociationId = v)}
+              variant="field"
+              density="compact"
+            />
           </div>
         {/if}
 
@@ -211,22 +225,22 @@
             <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-start"
               >{m.asso_calendar_event_start_label()}</label
             >
-            <input
+            <DateTimeField
               id="event-form-start"
-              type="datetime-local"
-              bind:value={values.start}
-              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
+              value={values.start}
+              onValueChange={(v) => (values.start = v)}
+              label={m.asso_calendar_event_start_label()}
             />
           </div>
           <div>
             <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-end"
               >{m.asso_calendar_event_end_label()}</label
             >
-            <input
+            <DateTimeField
               id="event-form-end"
-              type="datetime-local"
-              bind:value={values.end}
-              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
+              value={values.end}
+              onValueChange={(v) => (values.end = v)}
+              label={m.asso_calendar_event_end_label()}
             />
           </div>
         </div>
@@ -312,16 +326,15 @@
               <label class="text-text-main mb-1 block text-xs font-semibold" for="event-form-link"
                 >{m.asso_calendar_form_label()}</label
               >
-              <select
+              <Picker
                 id="event-form-link"
-                bind:value={values.linkedFormId}
-                class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-              >
-                <option value="">{m.asso_calendar_link_form_none_option()}</option>
-                {#each linkableForms as f (f.id)}
-                  <option value={f.id}>{f.title}</option>
-                {/each}
-              </select>
+                label={m.asso_calendar_form_label()}
+                value={values.linkedFormId}
+                options={linkableFormOptions}
+                onValueChange={(v) => (values.linkedFormId = v)}
+                variant="field"
+                density="compact"
+              />
             </div>
           </div>
         {/if}

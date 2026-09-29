@@ -11,6 +11,8 @@
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import { m } from '$lib/paraglide/messages';
   import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import { toDatetimeLocalValue } from '$lib/utils/dates';
 
   /**
    * Modal that lets a member compose a community poll (question, 2+ options,
@@ -143,11 +145,13 @@
         {m.poll_deadline_label()}
         <span class="text-text-muted font-normal">{m.poll_deadline_optional()}</span>
       </label>
-      <input
+      <DateTimeField
         id="poll-deadline"
-        type="datetime-local"
-        bind:value={deadline}
-        class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+        value={deadline}
+        onValueChange={(v) => (deadline = v)}
+        label={m.poll_deadline_label()}
+        min={toDatetimeLocalValue(new Date().toISOString())}
+        clearable
       />
     </div>
 

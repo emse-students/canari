@@ -796,3 +796,64 @@ describe('a mark made while a replay is walking', () => {
     expect(persisted()).toEqual(['stream-id-1', 'fp-live']);
   });
 });
+
+/**
+ * WP-G2-1b: an archive row naming a sender MLS did not verify is REFUSED like a live one. Its bytes
+ * are consumed with the rest of the page, and nothing of it is stored.
+ */
+describe('an archive row whose sender does not match MLS', () => {
+  const replayWithSender = async (verified: string) => {
+    const { encodeAppMessage, mkText } = await import('$lib/proto/codec');
+    const { resetReportedSenderMismatches } = await import('$lib/mls-client/verifiedSender');
+    resetReportedSenderMismatches();
+    const wire = new Uint8Array([0x61, 0x62, 0x63]);
+    const plaintext = encodeAppMessage({ ...mkText('hi'), messageId: 'm-1' });
+    const saveMessages = vi.fn().mockResolvedValue(undefined);
+    const mlsService = createMlsServiceStub({
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
+      createDecryptSession: vi.fn().mockResolvedValue({
+        decryptPage: vi.fn().mockResolvedValue([{ ok: true, plaintext, sender: verified }]),
+        finish: vi.fn().mockResolvedValue(undefined),
+      }),
+      fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
+    });
+    await replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: { getMessages: vi.fn().mockResolvedValue([]), saveMessages } as never,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+      primedFirstPage: {
+        rows: [
+          {
+            id: '1786655250946-0',
+            sender_id: 'peer',
+            content: toBase64(wire),
+            timestamp: String(1786655250946),
+          },
+        ],
+      },
+    });
+    return { saveMessages, wire };
+  };
+
+  it('stores the row when the two agree', async () => {
+    const { saveMessages } = await replayWithSender('peer:dev-p');
+    expect(saveMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores nothing of it when they do not, and still counts its bytes consumed', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { saveMessages, wire } = await replayWithSender('mallory:dev-m');
+
+    expect(saveMessages).not.toHaveBeenCalled();
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('SENDER MISMATCH (user)'));
+    error.mockRestore();
+  });
+});

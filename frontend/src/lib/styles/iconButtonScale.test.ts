@@ -53,12 +53,16 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 2,
     why: 'crosses overlaying a 64px media thumbnail',
   },
+  'lib/components/posts/MediaThumbRemoveButton.svelte': {
+    count: 1,
+    why: 'a cross overlaying a 7rem composer thumbnail - a 44px box covered half the photo on the Mi 9T, so the hit area is widened by a ::before instead',
+  },
   'lib/components/messages/MessageBubbleToolbar.svelte': {
     count: 1,
     why: 'matched to the quick-reaction emoji buttons beside it',
   },
   'lib/components/messages/MessageMediaRenderer.svelte': {
-    count: 2,
+    count: 1,
     why: 'overlays an image and must not cover it',
   },
   'lib/components/messages/MessageMobileActions.svelte': {
@@ -73,9 +77,9 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 1,
     why: '16px cross on an attachment chip',
   },
-  'lib/components/posts/PostMedia.svelte': {
+  'lib/components/shared/InlineVideo.svelte': {
     count: 1,
-    why: 'overlays a video and must not cover it',
+    why: 'the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture; the download moved into the viewer',
   },
   'lib/components/settings/MinesweeperModal.svelte': {
     count: 3,

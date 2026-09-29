@@ -51,6 +51,8 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -442,6 +444,25 @@
   /** Whether choosing this option would land on a combination the manager marked as not existing. */
   function optionClosed(opt: { id?: string }): boolean {
     return !!opt.id && unavailableOptionIds.has(opt.id);
+  }
+
+  /**
+   * A dropdown question's choices, each read as the option label plus what it changes: closed, or
+   * its supplement. An option saved without an id falls back to its label, as a `<select>` did.
+   */
+  function dropdownOptions(item: FormItem, currency: string | undefined): PickerOption[] {
+    return (item.options ?? []).map((opt) => {
+      const closed = optionClosed(opt);
+      const modifier = optionModifier(item, opt);
+      const suffix = closed
+        ? ` - ${m.form_grid_cell_unavailable()}`
+        : modifier > 0
+          ? ` (+${formatCurrency(modifier, currency)})`
+          : modifier < 0
+            ? ` (${formatCurrency(modifier, currency)})`
+            : '';
+      return { value: opt.id ?? opt.label, label: `${opt.label}${suffix}`, disabled: closed };
+    });
   }
 
   function calculateTotal(): number {
@@ -938,24 +959,15 @@
               placeholder={m.form_view_answer_placeholder()}
               disabled={submitted || isNotOpenYet}></textarea>
           {:else if item.type === 'dropdown' || item.type === 'single'}
-            <select
-              class="border-cn-border text-text-main bg-cn-bg focus:border-cn-yellow w-full appearance-none rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-              bind:value={selections[item.id]}
+            <Picker
+              value={selections[item.id] ?? ''}
+              options={dropdownOptions(item, form.currency)}
+              label={item.label}
+              placeholder={m.form_view_select_placeholder()}
               disabled={submitted || isNotOpenYet}
-            >
-              <option value="" disabled>{m.form_view_select_placeholder()}</option>
-              {#each item.options ?? [] as opt (opt.id)}
-                <option value={opt.id} disabled={optionClosed(opt)}>
-                  {opt.label}{optionClosed(opt)
-                    ? ` - ${m.form_grid_cell_unavailable()}`
-                    : optionModifier(item, opt) > 0
-                      ? ` (+${formatCurrency(optionModifier(item, opt), form.currency)})`
-                      : optionModifier(item, opt) < 0
-                        ? ` (${formatCurrency(optionModifier(item, opt), form.currency)})`
-                        : ''}
-                </option>
-              {/each}
-            </select>
+              triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-cn-yellow flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              onValueChange={(v) => (selections[item.id] = v)}
+            />
           {:else if item.type === 'single_choice'}
             <div class="space-y-2">
               {#each item.options ?? [] as opt (opt.id)}

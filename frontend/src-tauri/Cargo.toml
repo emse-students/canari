@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "0.18.31-alpha.1"
+version = "0.18.32-alpha.1"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -58,6 +58,13 @@ tao = { path = "patches/tao" }
 # local patch adds the whole *_key_bytes API (an alias-addressed MLS device key), the second
 # background-readable item the iOS notification extension needs, and caller-supplied prompt text.
 tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
+
+# The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).
+# iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app. Its keyboard
+# guard resizes the WebView after every keyboard dismissal, alongside `CanariApplyKeyboardLayout`;
+# the user took the plugin as it is (2026-09-29), knowing that.
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-system-components = "=0.1.8"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

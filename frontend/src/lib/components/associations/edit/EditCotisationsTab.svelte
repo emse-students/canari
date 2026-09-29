@@ -29,6 +29,8 @@
     ChevronDown,
   } from '@lucide/svelte';
   import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import {
     emptyMatrix,
     matrixOf,
@@ -82,6 +84,11 @@
   let newTierMemberPriceEuros = $state<number | ''>('');
 
   let expandedTierId = $state<string | null>(null);
+  /**
+   * The expanded tier's "upgrade from" tag, read back by `handleSaveTier` through its hidden
+   * `memberPriceTag` input. One slot for the same reason as `editingMatrix` below.
+   */
+  let editingUpgradeFromTag = $state('');
   let savingTierId = $state<string | null>(null);
   /** Which tier's on-sale switch is in flight, so only that row's control is disabled. */
   let togglingTierId = $state<string | null>(null);
@@ -109,6 +116,24 @@
    */
   let gridTiers = $derived(tierProducts.map((p) => ({ variantKey: p.variantKey, name: p.name })));
 
+  const modeOptions: PickerOption[] = [
+    { value: 'lifetime', label: m.asso_cotisations_mode_lifetime() },
+    { value: 'dated', label: m.asso_cotisations_mode_dated() },
+  ];
+
+  /**
+   * The tiers a tier's member price may be conditioned on, "none" first. A sibling that grants no
+   * tag yet is left out: its value would be the empty string, the same as "none".
+   */
+  function upgradeFromOptions(excludeProductId?: string): PickerOption[] {
+    return [
+      { value: '', label: m.asso_cotisations_tier_upgrade_none() },
+      ...tierProducts
+        .filter((p) => p.id !== excludeProductId && p.grantedTagName)
+        .map((p) => ({ value: p.grantedTagName ?? '', label: p.name })),
+    ];
+  }
+
   // ── Roster ────────────────────────────────────────────────────────────────
   let search = $state('');
   let rosterItems = $state<CotisantRosterItem[]>([]);
@@ -132,6 +157,9 @@
    */
   let cotisationTiers = $state<CotisationTier[]>([]);
   let addVariantKey = $state('');
+  const cotisationTierOptions = $derived<PickerOption[]>(
+    cotisationTiers.map((t) => ({ value: t.variantKey ?? '', label: t.name }))
+  );
   let tiersLoadedForMembersAssoId: string | null = null;
   /** Roster row whose tier switch is in flight, so its picker can be disabled meanwhile. */
   let switchingTagId = $state<string | null>(null);
@@ -372,6 +400,7 @@
       return;
     }
     expandedTierId = product.id;
+    editingUpgradeFromTag = product.memberPriceTag ?? '';
     editingMatrix = matrixOf(product.priceMatrix);
     void loadFormations();
   }
@@ -531,7 +560,7 @@
     } catch (e) {
       rosterError = m.asso_cotisations_tier_change_error();
       console.error('[Cotisations] Failed to switch tier:', e);
-      // Put the <select> back on the tier actually held - the change never happened.
+      // Redraw the picker on the tier actually held - the change never happened.
       rosterItems = [...rosterItems];
     } finally {
       switchingTagId = null;
@@ -611,14 +640,15 @@
             <label for="activate-mode" class="text-text-muted text-xs font-semibold"
               >{m.asso_cotisations_mode_label()}</label
             >
-            <select
+            <Picker
               id="activate-mode"
-              bind:value={activateMode}
-              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
-            >
-              <option value="lifetime">{m.asso_cotisations_mode_lifetime()}</option>
-              <option value="dated">{m.asso_cotisations_mode_dated()}</option>
-            </select>
+              value={activateMode}
+              options={modeOptions}
+              onValueChange={(v) => (activateMode = v as 'lifetime' | 'dated')}
+              label={m.asso_cotisations_mode_label()}
+              variant="field"
+              density="compact"
+            />
           </div>
           {#if activateMode === 'dated'}
             <p class="text-text-muted self-end pb-2.5 text-xs">
@@ -669,14 +699,15 @@
             <label for="config-mode" class="text-text-muted text-xs font-semibold"
               >{m.asso_cotisations_mode_label()}</label
             >
-            <select
+            <Picker
               id="config-mode"
-              bind:value={configMode}
-              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
-            >
-              <option value="lifetime">{m.asso_cotisations_mode_lifetime()}</option>
-              <option value="dated">{m.asso_cotisations_mode_dated()}</option>
-            </select>
+              value={configMode}
+              options={modeOptions}
+              onValueChange={(v) => (configMode = v as 'lifetime' | 'dated')}
+              label={m.asso_cotisations_mode_label()}
+              variant="field"
+              density="compact"
+            />
           </div>
           {#if configMode === 'dated'}
             <p class="text-text-muted self-end pb-2.5 text-xs">
@@ -915,17 +946,20 @@
                               class="text-text-muted text-xs font-semibold"
                               >{m.asso_cotisations_tier_upgrade_from_label()}</label
                             >
-                            <select
+                            <Picker
                               id="tier-upgrade-from-{product.id}"
+                              value={editingUpgradeFromTag}
+                              options={upgradeFromOptions(product.id)}
+                              onValueChange={(v) => (editingUpgradeFromTag = v)}
+                              label={m.asso_cotisations_tier_upgrade_from_label()}
+                              variant="field"
+                              density="compact"
+                            />
+                            <input
+                              type="hidden"
                               name="memberPriceTag"
-                              value={product.memberPriceTag ?? ''}
-                              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-                            >
-                              <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
-                              {#each tierProducts.filter((p) => p.id !== product.id) as sibling (sibling.id)}
-                                <option value={sibling.grantedTagName ?? ''}>{sibling.name}</option>
-                              {/each}
-                            </select>
+                              value={editingUpgradeFromTag}
+                            />
                           </div>
                           <div class="space-y-1 sm:col-span-2">
                             <label
@@ -1055,16 +1089,15 @@
                 <label for="new-tier-upgrade-from" class="text-text-muted text-xs font-semibold"
                   >{m.asso_cotisations_tier_upgrade_from_label()}</label
                 >
-                <select
+                <Picker
                   id="new-tier-upgrade-from"
-                  bind:value={newTierMemberPriceTag}
-                  class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-                >
-                  <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
-                  {#each tierProducts as sibling (sibling.id)}
-                    <option value={sibling.grantedTagName ?? ''}>{sibling.name}</option>
-                  {/each}
-                </select>
+                  value={newTierMemberPriceTag}
+                  options={upgradeFromOptions()}
+                  onValueChange={(v) => (newTierMemberPriceTag = v)}
+                  label={m.asso_cotisations_tier_upgrade_from_label()}
+                  variant="field"
+                  density="compact"
+                />
               </div>
               {#if newTierMemberPriceTag}
                 <div class="space-y-1">
@@ -1180,18 +1213,19 @@
                         <!-- Multi-tier: the badge becomes a picker, so a forfait can be upgraded
                              or downgraded in place (the server swaps the tags atomically). -->
                         {#if canManageMembers && cotisationTiers.length > 1}
-                          <select
-                            aria-label={m.asso_cotisations_tier_change_label()}
-                            title={m.asso_cotisations_tier_change_label()}
-                            disabled={switchingTagId !== null}
+                          <Picker
                             value={currentVariantKey(item)}
-                            onchange={(e) => void handleChangeTier(item, e.currentTarget.value)}
-                            class="border-amber-warn/40 bg-amber-warn/15 text-amber-warn rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                            options={cotisationTierOptions}
+                            onValueChange={(v) => void handleChangeTier(item, v)}
+                            label={m.asso_cotisations_tier_change_label()}
+                            disabled={switchingTagId !== null}
+                            triggerClass="border-amber-warn/40 bg-amber-warn/15 text-amber-warn flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
                           >
-                            {#each cotisationTiers as tier (tier.tagName)}
-                              <option value={tier.variantKey ?? ''}>{tier.name}</option>
-                            {/each}
-                          </select>
+                            {#snippet trigger(selected)}
+                              <span class="truncate">{selected?.label ?? item.tier}</span>
+                              <ChevronDown size={12} strokeWidth={2.5} class="shrink-0" />
+                            {/snippet}
+                          </Picker>
                         {:else if item.tier}
                           <span
                             class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
@@ -1268,15 +1302,15 @@
               >
                 {m.asso_cotisations_add_tier_label()}
               </label>
-              <select
+              <Picker
                 id="add-cotisant-tier"
-                bind:value={addVariantKey}
-                class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
-              >
-                {#each cotisationTiers as tier (tier.tagName)}
-                  <option value={tier.variantKey ?? ''}>{tier.name}</option>
-                {/each}
-              </select>
+                value={addVariantKey}
+                options={cotisationTierOptions}
+                onValueChange={(v) => (addVariantKey = v)}
+                label={m.asso_cotisations_add_tier_label()}
+                variant="field"
+                density="compact"
+              />
             </div>
           {/if}
           <button

@@ -37,13 +37,87 @@ Posts are loaded via `GET /api/posts` (social-service), paginated with infinite 
 - Optional scheduling (publish at a future time).
 - Publish on behalf of an association (if admin with `MANAGE_ASSO`).
 
+### The composer's layout: full screen, the text taking the height, the actions under the thumb (2026-09-29)
+
+Compared on the Mi 9T with Facebook's and Instagram's composers (the measurements and the user's
+decisions are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+What it was: a modal over the feed holding three nested bordered boxes, three titles saying the
+same thing, a full-width "Publier en tant que" select, eight Markdown buttons on two rows above an
+empty field, four unlabelled icons, and "Publier" ABOVE them.
+
+- **`Modal`'s `phoneFullScreen`**. Below `sm` the panel covers the screen edge to edge and the body
+  is handed over unpadded and unscrolled. The overlay already follows the visual viewport, so a
+  panel that fills it has its bottom edge on the keyboard: `CreatePostForm` is a scroll region plus
+  a footer, and the footer sits on the keyboard with nothing computed. The rules are
+  `.modal-phone-full` in `app.css`, which lift the 1rem moat and the `92dvh` cap and move the safe
+  areas onto the panel.
+- **The author is one line.** The avatar of the chosen identity, and the "who is publishing"
+  `<select>` drawn AS the name - its personal option carries the member's own name, not "Profil
+  personnel".
+- **`PostComposerBar`, shared by the composer and `EditPostForm`.** Row one: labelled chips
+  (Photo/vidéo, Appareil photo, Filmer, Sondage, Formulaire, Fichier, Programmer). Row two: "Aa",
+  a status, and the action. **Markdown stays** (user) and "Aa" swaps row one for the formatting
+  row: a pinned bar above the keyboard cannot afford a third row. The field is driven through
+  `MarkdownComposerField.format()`, and the toolbar prevents `mousedown` so a tap keeps the caret
+  and the keyboard.
+- **Four file inputs, because the accept list chooses the chooser.** One input taking images,
+  video, audio, PDF, Office and zip is what made Android open its generic file browser instead of
+  the photo picker. Photos/videos, documents, and two `capture` inputs - which the app's WebView
+  (wry, `RustWebChromeClient.onShowFileChooser`) turns into the system camera for `image/*` and the
+  recorder for `video/*`. The two camera chips are not drawn for a fine pointer, where `capture`
+  means nothing. **That needs a `<queries>` block in the Android manifest** for
+  `IMAGE_CAPTURE` / `VIDEO_CAPTURE`: wry launches the intent only if `resolveActivity()` finds a
+  camera, which API 30+ package visibility hides otherwise - and then it silently opens the photo
+  picker (measured on the Mi 9T: `Tauri/FileChooser: Media capture intent could not be launched`).
+  A photo also needs the app-specific `Pictures/` root in `res/xml/file_paths.xml`, where wry
+  writes the capture - the second cause of the same symptom. `androidCaptureManifest.test.ts`
+  guards both. **Every pick ADDS**: each input empties itself after handing its files over, so a
+  PDF added after a photo no longer replaces the photo.
+- **A picked video shows its first frame** (`PickedMediaPreview`, both forms). Every previewable
+  pick used to go into an `<img>`, so a video - gallery or "Filmer" - drew a broken image, and an
+  audio file did too because `needsThumbIcon` only iconised `'file'`. Only a picture or a video has
+  a frame now; everything else is the icon card.
+- **The error banner is in the footer**, above the bar, so the keyboard cannot cover it.
+- **One caption field, opened from its photo** (user, Mi 9T: *"A-t-on besoin d'un 'Legende
+  (opt.)' ?"*). An input under every thumbnail put four empty boxes under a four-photo post. The
+  feed prints a caption under its photo, so it stays - behind a `MediaCaptionChip` in the thumbnail's
+  corner, which opens ONE `MediaCaptionField` under the strip and turns amber once that photo has a
+  caption. The field is keyed by index, so `shiftAfterRemoval` moves it with its photo when an
+  earlier one is removed instead of re-pointing it at the next.
+- **No chip wears a ring after a tap.** The ring was `focus-within`, and a file input keeps focus
+  once its chooser closes, so the last chip tapped kept a halo, cut flat by the scrolling row. It is
+  `:focus-visible` now (keyboard focus only), asked of the input through `has-`.
+- **Who publishes, and the linked event, are the app's own `Picker`** - a bottom sheet with avatars
+  on a phone, a popover on a wide window - never a native `<select>`, which on Android opens the
+  system's dialog of bare names (user: *"il ne vaut mieux pas sortir de l'experience de
+  l'application"*). The rule is app-wide, in [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
+- **So is every date**: the schedule chip, a poll's deadline, a form's opening, an event's start
+  and end are `ui/DateTimeField` - a month grid with hour and minute columns, a draft until
+  "Valider". The schedule chip's minimum used to be `toISOString().slice(0, 16)`, a UTC time read
+  as local, so in Paris it refused the next two hours; it is `toDatetimeLocalValue` now.
+- **A video in the feed plays like Instagram's** (user, Mi 9T: *"L'affichage actuel est assez moche
+  non ? Je veux un truc joli comme instagram"*). It drew the native controls - Android's grey bar -
+  inside a 16:9 box of its own, a "Plein ecran" pill and a download button over it, and a phone's
+  vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
+  a video's `width`/`height` at upload (`readVideoDimensions`), so `PostContent` reserves the box
+  at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
+  `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
+  whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
+  [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
+  The download lives in the viewer. A video posted before this carries no dimensions and keeps the
+  4:3 box, filled the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
+  playing, looping, silent at every start until its button is pressed, then audible on every video
+  at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
+  the two played together, sound on both.
+
 ## Key components
 
 | Component | Role |
 |---|---|
 | `posts/+page.svelte` | Feed page with tabs, search, infinite scroll |
 | `posts/[postId]/+page.svelte` | Single post detail page |
-| `EditPostForm.svelte` | Create/edit post (markdown, image, poll) |
+| `CreatePostForm.svelte` / `EditPostForm.svelte` | Create / edit a post (markdown, media, poll, form, schedule) |
+| `PostComposerBar.svelte` | The shared bottom bar: attachment chips, the formatting row, the action |
 | `PostCard.svelte` | Post card in the feed |
 | `PostReactions.svelte` | Emoji reaction bar |
 | `PostComments.svelte` | Comment thread + composer (text, mentions, image/GIF) |
@@ -187,6 +261,21 @@ would hide the "Voir moins" that folds it back. The cut is therefore at a line a
 count. Measured on Chromium and Firefox at 390px, across a heading, paragraphs and a list: eight
 lines ending in `…`, the bold rendered, no raw `**`. **WebKit is not measured** (no engine here);
 `-webkit-line-clamp` originates there. `PostContent.seeMore.svelte.test.ts` fails on the old cut.
+
+## A post's text could not be copied on a phone, because nothing marked it as content (2026-09-29)
+
+Reported from the app: *"on ne peut pas copier le texte dans les posts (ce qui peut etre utile pour
+recuperer une info)"*. Not a post-specific defect: `app.css` INVERTS `user-select` under
+`@media (pointer: coarse)`, because a long press was selecting navigation labels and setting
+descriptions - and the opt-in it left is Tailwind's `select-text` written at a call site. Exactly one
+call site ever wrote it, the chat message body. Everything else rendered from Markdown - a post, a
+comment, a profile bio, a partnership description - was chrome as far as a thumb was concerned.
+
+**The opt-in is `.post-markdown` in the stylesheet, not four class attributes**, for the same reason
+the list and blockquote rules live there: a rule written into one class string is a rule the other
+three surfaces cannot inherit, which is precisely how the list markers went missing on the most-read
+surface in the app. `user-select` inherits, so the block's descendants come with it, and a mouse drag
+on a desktop was never affected - the media query is the whole scope.
 
 ## Attachment layout (PostContent / PostMedia)
 

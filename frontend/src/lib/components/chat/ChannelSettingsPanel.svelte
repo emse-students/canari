@@ -23,6 +23,8 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import Picker from '../ui/Picker.svelte';
+  import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
@@ -37,6 +39,8 @@
     name: string;
     /** Real workspace UUID (the sidebar `id` is a slug-based local id). */
     workspaceDbId?: string | null;
+    /** The server's verdict on whether this user may govern the community's salons. */
+    viewerCanManageChannels?: boolean;
     channels: ChannelSidebarItem[];
   }
 
@@ -80,6 +84,15 @@
     selectedWorkspace?.channels.find((c) => c.id === selectedChannelId)
   );
 
+  /**
+   * THE SERVER'S DECISION, NEVER A RULE RE-DERIVED HERE. Rename, delete, visibility, write policy
+   * and the allowlist all refuse without `channel.manage` (or `workspace.manage`); this panel used
+   * to offer every one of them to any member, who read the 403 behind the confirmation as a broken
+   * app. The flag comes from the workspace listing and moves live with `workspace.role.changed`, so
+   * a member demoted with the panel open loses the controls then. Absent means no.
+   */
+  let canManage = $derived(selectedWorkspace?.viewerCanManageChannels ?? false);
+
   let channelNameInput = $state('');
 
   // Ensure the input updates when switching channels.
@@ -111,6 +124,13 @@
   let addingUserId = $state('');
   let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
+
+  /** The three write policies, most open first. */
+  const writePolicyOptions = $derived<PickerOption[]>([
+    { value: 'everyone', label: m.chat_channel_write_everyone() },
+    { value: 'admins_moderators', label: m.chat_channel_write_admins_mods() },
+    { value: 'admins', label: m.chat_channel_write_admins() },
+  ] satisfies { value: ChannelWritePolicy; label: string }[]);
 
   // ── Member access list (for removing users from private channel) ───────
   let membersLoading = $state(false);
@@ -442,17 +462,20 @@
                 bind:value={channelNameInput}
                 onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
                 placeholder={m.chat_channel_name_placeholder()}
+                readonly={!canManage}
               />
             </div>
-            <button
-              type="button"
-              onclick={handleRenameChannel}
-              disabled={!channelNameInput.trim() ||
-                channelNameInput.trim() === selectedChannel?.name}
-              class="text-cn-ink rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
-            >
-              {m.chat_rename_channel_button()}
-            </button>
+            {#if canManage}
+              <button
+                type="button"
+                onclick={handleRenameChannel}
+                disabled={!channelNameInput.trim() ||
+                  channelNameInput.trim() === selectedChannel?.name}
+                class="text-cn-ink rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+              >
+                {m.chat_rename_channel_button()}
+              </button>
+            {/if}
           </div>
         </div>
 
@@ -547,32 +570,36 @@
           end, while this block was hidden by the matching `md:hidden`. The destructive controls of
           a channel were reachable only by scrolling a row of tabs sideways.
         -->
-        <div class="space-y-3 border-t border-black/10 pt-6 dark:border-white/10">
-          <h3 class="mb-2 px-1 text-xs font-bold tracking-wider text-red-500 uppercase">
-            {m.chat_danger_zone_label()}
-          </h3>
-          <!-- Only a private channel can be left: a public one is readable by every member of the
+        {#if selectedChannel?.isPrivate || canManage}
+          <div class="space-y-3 border-t border-black/10 pt-6 dark:border-white/10">
+            <h3 class="mb-2 px-1 text-xs font-bold tracking-wider text-red-500 uppercase">
+              {m.chat_danger_zone_label()}
+            </h3>
+            <!-- Only a private channel can be left: a public one is readable by every member of the
                community, so there is no per-member access to give up. Leaving is a community-level
                action there (the community panel's own "leave"). -->
-          {#if selectedChannel?.isPrivate}
-            <button
-              type="button"
-              onclick={handleLeaveChannel}
-              class="flex w-full items-center justify-center gap-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all active:scale-[0.98] dark:text-orange-400"
-            >
-              <LogOut size={18} strokeWidth={2.5} />
-              {m.chat_leave_channel_button()}
-            </button>
-          {/if}
-          <button
-            type="button"
-            onclick={handleDeleteChannel}
-            class="flex w-full items-center justify-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all active:scale-[0.98] dark:text-red-400"
-          >
-            <Trash2 size={18} strokeWidth={2.5} />
-            {m.chat_delete_channel_button()}
-          </button>
-        </div>
+            {#if selectedChannel?.isPrivate}
+              <button
+                type="button"
+                onclick={handleLeaveChannel}
+                class="flex w-full items-center justify-center gap-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all active:scale-[0.98] dark:text-orange-400"
+              >
+                <LogOut size={18} strokeWidth={2.5} />
+                {m.chat_leave_channel_button()}
+              </button>
+            {/if}
+            {#if canManage}
+              <button
+                type="button"
+                onclick={handleDeleteChannel}
+                class="flex w-full items-center justify-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all active:scale-[0.98] dark:text-red-400"
+              >
+                <Trash2 size={18} strokeWidth={2.5} />
+                {m.chat_delete_channel_button()}
+              </button>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -601,6 +628,9 @@
           <div
             class="bg-cn-surface space-y-5 rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
           >
+            {#if !canManage}
+              <p class="text-text-muted text-xs">{m.chat_channel_settings_read_only_hint()}</p>
+            {/if}
             {#if saveError}
               <div
                 class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-sm"
@@ -639,28 +669,30 @@
                   </div>
                 {/if}
               </div>
-              <button
-                type="button"
-                onclick={() => void handleTogglePrivacy()}
-                disabled={privacySaving}
-                class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
-                  ? 'bg-amber-500'
-                  : 'bg-black/10 dark:bg-white/20'}"
-                role="switch"
-                aria-checked={accessIsPrivate}
-                aria-busy={privacySaving}
-              >
-                <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
-                {#if privacySaving}
-                  <Loader size={12} class="absolute inset-0 m-auto animate-spin text-white" />
-                {:else}
-                  <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
-                      ? 'translate-x-6'
-                      : 'translate-x-1'}"
-                  ></span>
-                {/if}
-              </button>
+              {#if canManage}
+                <button
+                  type="button"
+                  onclick={() => void handleTogglePrivacy()}
+                  disabled={privacySaving}
+                  class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
+                    ? 'bg-amber-500'
+                    : 'bg-black/10 dark:bg-white/20'}"
+                  role="switch"
+                  aria-checked={accessIsPrivate}
+                  aria-busy={privacySaving}
+                >
+                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
+                  {#if privacySaving}
+                    <Loader size={12} class="absolute inset-0 m-auto animate-spin text-white" />
+                  {:else}
+                    <span
+                      class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
+                        ? 'translate-x-6'
+                        : 'translate-x-1'}"
+                    ></span>
+                  {/if}
+                </button>
+              {/if}
             </div>
 
             <!-- ═══ Qui peut écrire ? ═══ -->
@@ -671,18 +703,15 @@
                   {m.chat_channel_who_can_write()}
                 </p>
               </div>
-              <!-- The native arrow stays: `appearance-none` drew this choice as a text field. -->
               <div class="flex items-center gap-2">
-                <select
-                  class="bg-cn-surface text-text-main w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                <Picker
+                  label={m.chat_channel_who_can_write()}
                   value={writePolicy}
-                  disabled={writePolicySaving}
-                  onchange={(e) => void setWritePolicy(e.currentTarget.value as ChannelWritePolicy)}
-                >
-                  <option value="everyone">{m.chat_channel_write_everyone()}</option>
-                  <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
-                  <option value="admins">{m.chat_channel_write_admins()}</option>
-                </select>
+                  options={writePolicyOptions}
+                  disabled={writePolicySaving || !canManage}
+                  onValueChange={(v) => void setWritePolicy(v as ChannelWritePolicy)}
+                  triggerClass="bg-cn-surface text-text-main flex w-full items-center justify-between gap-2 rounded-xl border border-black/10 px-4 py-3 text-left text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                />
                 {#if writePolicySaving}
                   <Loader size={16} class="text-text-muted animate-spin" />
                 {/if}
@@ -722,64 +751,68 @@
                             class="text-text-main truncate text-sm font-medium"
                           />
                         </div>
-                        <button
-                          type="button"
-                          onclick={() => handleRemoveMemberFromChannel(uid)}
-                          disabled={memberRemoving[uid]}
-                          class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
-                          title={m.chat_channel_remove_access_title()}
-                          aria-label={m.chat_channel_remove_access_title()}
-                        >
-                          {#if memberRemoving[uid]}
-                            <Loader size={16} class="animate-spin" />
-                          {:else}
-                            <Trash2 size={16} strokeWidth={2.25} />
-                          {/if}
-                        </button>
+                        {#if canManage}
+                          <button
+                            type="button"
+                            onclick={() => handleRemoveMemberFromChannel(uid)}
+                            disabled={memberRemoving[uid]}
+                            class="ui-icon-button text-red-err hover:bg-red-err/10 rounded-lg transition-all"
+                            title={m.chat_channel_remove_access_title()}
+                            aria-label={m.chat_channel_remove_access_title()}
+                          >
+                            {#if memberRemoving[uid]}
+                              <Loader size={16} class="animate-spin" />
+                            {:else}
+                              <Trash2 size={16} strokeWidth={2.25} />
+                            {/if}
+                          </button>
+                        {/if}
                       </li>
                     {/each}
                   </ul>
                 {/if}
 
                 <!-- Add a user -->
-                <div class="space-y-2 pt-1">
-                  <p
-                    class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
-                  >
-                    {m.chat_channel_add_user_label()}
-                  </p>
-                  <!-- Wraps rather than squeezing the search to a sliver on a phone-width panel. -->
-                  <div class="flex flex-wrap items-start justify-end gap-2">
-                    <div class="min-w-48 flex-1">
-                      <!--
+                {#if canManage}
+                  <div class="space-y-2 pt-1">
+                    <p
+                      class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
+                    >
+                      {m.chat_channel_add_user_label()}
+                    </p>
+                    <!-- Wraps rather than squeezing the search to a sliver on a phone-width panel. -->
+                    <div class="flex flex-wrap items-start justify-end gap-2">
+                      <div class="min-w-48 flex-1">
+                        <!--
                           Already-granted users are not offered again. `addAllowedUser` deduped
                           them silently, so picking one looked like it worked and changed nothing.
                         -->
-                      <UserAutocomplete
-                        value={addingUserId}
-                        onValueChange={(v) => (addingUserId = v)}
-                        onSubmit={() => void addAllowedUser()}
-                        placeholder={m.chat_search_user_placeholder()}
-                        inputId="channel-access-autocomplete"
-                        filterUserIds={workspaceMemberIds}
-                        excludeIds={accessAllowedUserIds}
-                      />
+                        <UserAutocomplete
+                          value={addingUserId}
+                          onValueChange={(v) => (addingUserId = v)}
+                          onSubmit={() => void addAllowedUser()}
+                          placeholder={m.chat_search_user_placeholder()}
+                          inputId="channel-access-autocomplete"
+                          filterUserIds={workspaceMemberIds}
+                          excludeIds={accessAllowedUserIds}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onclick={() => void addAllowedUser()}
+                        disabled={!addingUserId.trim() || memberAdding}
+                        class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {#if memberAdding}
+                          <Loader size={14} class="animate-spin" />
+                        {:else}
+                          <Check size={14} strokeWidth={3} />
+                        {/if}
+                        {m.common_add_button()}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onclick={() => void addAllowedUser()}
-                      disabled={!addingUserId.trim() || memberAdding}
-                      class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {#if memberAdding}
-                        <Loader size={14} class="animate-spin" />
-                      {:else}
-                        <Check size={14} strokeWidth={3} />
-                      {/if}
-                      {m.common_add_button()}
-                    </button>
                   </div>
-                </div>
+                {/if}
               </div>
             {/if}
           </div>

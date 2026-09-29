@@ -32,6 +32,8 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
   const ROLE = 'r-moderator';
   const ADMIN = 'u-admin';
   const OTHER_ADMIN = 'u-admin-2';
+  /** Holds the role being edited, so an edit changes what THEY may do. */
+  const MODERATOR = 'u-mod';
 
   const ADMIN_ROLE = {
     id: 'r-admin',
@@ -116,6 +118,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
       find: jest.fn().mockResolvedValue([
         { workspaceId: WORKSPACE, userId: ADMIN, roleIds: [ADMIN_ROLE.id] },
         { workspaceId: WORKSPACE, userId: OTHER_ADMIN, roleIds: [ADMIN_ROLE.id] },
+        { workspaceId: WORKSPACE, userId: MODERATOR, roleIds: [ROLE] },
       ]),
       save: jest.fn(),
     };
@@ -227,7 +230,36 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     expect(sent.length).toBe(1);
     expect(sent[0][1]).toMatchObject({ workspaceId: WORKSPACE, roleId: ROLE });
     expect(sent[0][1].permissions).toContain(CHANNEL_PERMISSIONS.MANAGE_ROLES);
-    expect(sent[0][2]).toEqual([ADMIN, OTHER_ADMIN]);
+    expect(sent[0][2]).toEqual([ADMIN, OTHER_ADMIN, MODERATOR]);
+  });
+
+  /**
+   * THE HOLDER'S OWN STANDING MOVED, and the grid event does not say so: the client caches its
+   * standing as decisions it never re-derives. Granting `channel.manage` to Moderateur must reach
+   * each moderator as the verdict itself, and reach nobody who does not hold the role.
+   */
+  it('tells the holders of the edited role what they may now do, and nobody else', async () => {
+    const { service, redis } = makeService();
+
+    await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_CHANNEL, true);
+
+    const standing = redis.publishChannelEvent.mock.calls.filter(
+      ([type]: [string]) => type === 'workspace.role.changed'
+    );
+    expect(standing.length).toBe(1);
+    expect(standing[0][1]).toMatchObject({
+      workspaceId: WORKSPACE,
+      canManage: false,
+      canManageChannels: true,
+    });
+    expect(standing[0][2]).toEqual([MODERATOR]);
+
+    redis.publishChannelEvent.mockClear();
+    await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_CHANNEL, false);
+    const revoked = redis.publishChannelEvent.mock.calls.find(
+      ([type]: [string]) => type === 'workspace.role.changed'
+    );
+    expect(revoked?.[1]).toMatchObject({ canManageChannels: false });
   });
 
   /**
