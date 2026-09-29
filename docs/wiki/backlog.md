@@ -199,6 +199,77 @@ fingerprint of the document that went live, because no timestamp can answer that
 8. Pre-release on dev - **canari-64's to cut** (D18) - an A0 export measured there, the user's look,
    then the stable (D11). D8's cost is measured in the same run.
 
+## The composer and CanaReels chantier - compared on the Mi 9T 2026-09-29, every decision taken
+
+Asked by the user on 2026-09-29: *"Regarde a quoi ressemble ce qui s'affiche quand on veut publier
+un post [...] Note les differences avec la facon de faire de Canari, peu ergonomique [...] On peut
+aussi regarder la facon de faire d'instagram [...] Les gens attendent les "CanaReels" avec
+impatience"*, then live streaming *"dans le futur"*.
+
+### What the three composers were measured to do (Mi 9T, 2026-09-29)
+
+| | Facebook | Instagram | Canari (`CreatePostForm.svelte`) |
+| --- | --- | --- | --- |
+| Frame | Full screen, one title | Full screen | A modal over the feed, THREE nested bordered boxes |
+| Header | "Nouvelle publication" | same | "Nouveau post" + "CREER UNE PUBLICATION" + an explanatory sentence - three titles for one thing |
+| Author | Avatar + name, one line | - | A full-width "PUBLIER EN TANT QUE" select |
+| Text area | The whole screen, borderless, no toolbar | - | ~250 px, boxed, behind 8 Markdown buttons on two rows |
+| Primary action | "Suivant", bottom right, disabled while empty | "Suivant", top right | "Publier" ABOVE the attachment bar, so it is met before anything is attached |
+| Attachments | Labelled chips (Musique, Personnes, Lieu, Humeur) + a pinned bottom bar (Galerie, GIF, Evenement, Direct) | Gallery grid, camera as the FIRST tile, multi-select | Four UNLABELLED icons (file, chart = poll, clipboard = form, clock = schedule); no event button although the subtitle promises one |
+| Adding a photo | Full-screen photo grid, camera top right | same | **Android's generic DocumentsUI** ("Recents", Audio, Documents...) |
+| Camera | From the gallery | `+`, or a swipe right from the feed straight into the camera; a PUBLIER / STORY / REEL / EN DIRECT switcher at the bottom | None |
+
+**The DocumentsUI has one cause**: the input's `accept` lists images, video, audio, PDF, Office and
+zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo picker. Photo/video and
+"Fichier" have to be two inputs.
+
+### What the video path is today, read from the code
+
+- **Video is already accepted** in a post, capped at 50 MB of ciphertext on both estates
+  ([media-service](../services/media-service.md)).
+- **It is drawn in a 16:9 box at most `max-w-md` wide** (`PostMedia.svelte:323`): a vertical phone
+  video is small and letterboxed.
+- **A media file is ONE AES-GCM operation under ONE IV** (`mediaCrypto.ts:48-62`), and the download
+  fetches the whole blob and decrypts it once (`media.ts:581`). GCM's tag closes the file, so
+  **nothing plays before the last byte arrives** - the upload is chunked for TRANSPORT only.
+- **A post's CEK travels in the post row**, so post media is sealed against the STORAGE, not against
+  the Canari server - consistent with a post every member can read, and what makes a public live
+  keyable at all (C9).
+- **Live has its bricks and none has run**: the SFU is `call-service` (webrtc-rs, already
+  one-to-many), frames are E2E-encrypted with MLS keys through `RTCRtpScriptTransform`
+  (`CallService.ts:734`), TURN is up in prod - and `CALLS_ENABLED = false`, never exercised
+  ([calls](../frontend/modules/calls.md)).
+
+### Decided by the user, 2026-09-29
+
+| # | Decision |
+| --- | --- |
+| C1 | **Markdown STAYS** in posts; its layout is ours to make clean (formatting on demand, not two rows of buttons above an empty field). |
+| C2 | **Any member may publish a CanaReel**, as for a post; the existing reports cover moderation. |
+| C3 | **The PHONE compresses, the server only stores** - *"il faut que la charge serveur soit minimale, sinon on va vite avoir des problemes de stockage et de memoire"*. No server transcoding, no server thumbnails. Target 720p at ~2.5 Mb/s: ~28 MB for 90 s, under the 50 MB cap. |
+| C4 | **A CanaReel lasts 90 seconds at most.** |
+| C5 | **The camera is a TAB, left of the feed** (user's proposal): a swipe right from the feed opens it through the tab swipe that exists since #1223 - no competing gesture. |
+| C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
+| C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
+| C8 | **Stories: not now.** The user was not convinced and asked where they would even show; with one-month reels the two formats overlap. |
+| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). |
+| C10 | **Delivered in stages**, each its own release (below). |
+
+### The order to build it in (C10)
+
+1. **R1 - the composer.** Full screen on a phone, one title, the author as an avatar line, the text
+   area taking the height, Markdown on demand (C1), labelled chips, a bar pinned above the keyboard
+   with Publier at the right; Photo/video (gallery + camera) split from Fichier; a vertical video
+   drawn at its own aspect ratio.
+2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
+   tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
+   plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
+   readable. On-device compression (C3).
+3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
+   full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
+   save-to-gallery.
+4. **R4 - live** (C9), behind the calls revival.
+
 ## Open defects, in severity order
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
