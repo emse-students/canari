@@ -233,6 +233,10 @@ asked*, is being read as *and therefore you are complete*. Refusing to terminate
 stands costs nothing and adds no traffic. Whether it is sufficient - whether the walk then reaches the
 holder rather than merely re-asking the same agreeing peers - is the part still owed a measurement.
 
+### QUESTION - why did the user's PC join Mineurchestre's key group twice on 2026-09-25?
+
+**Raised 2026-09-29, when the defect it caused was closed.** Rejoining a key group with the same key pair removes the device's own first leaf. That is how the PC's salon went blank ([channel-encryption §22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)). Since `v0.18.30`, a device in that state re-joins as soon as it loads, so the consequence is repaired. The cause of the double join is not. The candidates are the "externalJoin FAILED to checkpoint - a reload before the next write would rejoin" warning, or two tabs joining before the leader lock settled. **What would settle it**: a second commit from one device on one key group within minutes, read from `mls_commit_log` (`senderDeviceId`, `baseEpoch`, `createdAt`), together with that device's console from the same load.
+
 ### Is a Remove meant to be durable against a later re-add?
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
