@@ -226,7 +226,7 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
 ### What the video path is today, read from the code
 
 - **Video is already accepted** in a post, capped at 50 MB of ciphertext on both estates
-  ([media-service](../services/media-service.md)).
+  ([media-service](services/media-service.md)).
 - **It is drawn in a 16:9 box at most `max-w-md` wide** (`PostMedia.svelte:323`): a vertical phone
   video is small and letterboxed.
 - **A media file is ONE AES-GCM operation under ONE IV** (`mediaCrypto.ts:48-62`), and the download
@@ -238,7 +238,7 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
 - **Live has its bricks and none has run**: the SFU is `call-service` (webrtc-rs, already
   one-to-many), frames are E2E-encrypted with MLS keys through `RTCRtpScriptTransform`
   (`CallService.ts:734`), TURN is up in prod - and `CALLS_ENABLED = false`, never exercised
-  ([calls](../frontend/modules/calls.md)).
+  ([calls](frontend/modules/calls.md)).
 
 ### Decided by the user, 2026-09-29
 
