@@ -42,6 +42,13 @@ on:
         default: true
         type: boolean
 
+      # DECLARED HERE ONLY SO THE CONTEXT EXISTS: a release never sets it, and the job refuses a
+      # non-empty value alongside `publish`. See the dispatch input of the same name.
+      local_url:
+        required: false
+        default: ''
+        type: string
+
   # A COMPILE CHECK, and it ships nothing: `publish` defaults to false here and every publishing
   # step is gated on it. `sha` may be left empty, in which case the branch this is dispatched from
   # is what gets built - which is the whole point when the question is "does this native change
@@ -68,6 +75,16 @@ on:
         required: false
         default: false
         type: boolean
+      # A BUILD FOR ONE PHONE ON A BENCH, not a compile check and not a release. Non-empty (say
+      # `http://192.168.1.32:8081`) it builds an UNSIGNED app whose seven origins are that address,
+      # with no banner, and uploads it as `ios-local-device`; the workstation then signs it with a
+      # development certificate that never leaves it (docs/wiki/frontend/mobile.md#a-build-for-the-phone-on-the-bench).
+      # It exists because an iPhone has no `adb reverse` and Windows cannot compile Apple code.
+      local_url:
+        description: 'Local-device build: the workstation origin the phone reaches, e.g. http://192.168.1.32:8081. Empty = a normal compile check.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-ios:
@@ -75,6 +92,11 @@ jobs:
     runs-on: macos-15 # carries Xcode 26.x, which the step below REQUIRES
     permissions:
       contents: write
+    env:
+      # READ BY `if:` AS `env.LOCAL_URL`. A release-only step is `env.LOCAL_URL == ''`, a
+      # local-device-only one is `env.LOCAL_URL != ''`, and no step reads `inputs` for the choice
+      # itself, so the two modes cannot disagree about which one this run is.
+      LOCAL_URL: ${{ inputs.local_url }}
 
     steps:
       - uses: actions/checkout@v7
@@ -142,7 +164,37 @@ jobs:
         working-directory: frontend
         run: bun run proto:gen
 
+      # THE LOCAL-DEVICE BUILD'S OWN PRECONDITIONS, and they are stricter than a release's in the one
+      # place that matters: it may never publish. The bench build points at a workstation, carries
+      # no banner and is signed with a development certificate, so a store must not be able to
+      # receive it. It also needs FAR fewer secrets - no distribution certificate, no profiles.
+      - name: Validate the local-device build
+        if: env.LOCAL_URL != ''
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH" = "true" ]; then
+            echo "::error::local_url and publish are mutually exclusive - a bench build must never reach a store."
+            exit 1
+          fi
+          case "$LOCAL_URL" in
+            http://*) ;;
+            *) echo "::error::local_url must be an http:// origin the phone can reach, got '${LOCAL_URL}'"; exit 1 ;;
+          esac
+          for key in GOOGLE_SERVICE_INFO_PLIST AUTHENTIK_URL AUTHENTIK_CLIENT_ID; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required GitHub secret: ${key}"
+              exit 1
+            fi
+          done
+          echo "Local-device build for ${LOCAL_URL}"
+
       - name: Validate iOS release secrets
+        if: env.LOCAL_URL == ''
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -183,6 +235,7 @@ jobs:
           echo "✅ Required iOS secrets are present"
 
       - name: Install Apple signing certificate
+        if: env.LOCAL_URL == ''
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -207,6 +260,7 @@ jobs:
           echo "✅ Signing certificate installed"
 
       - name: Install provisioning profiles
+        if: env.LOCAL_URL == ''
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
@@ -274,7 +328,64 @@ jobs:
       # android-release.yml makes, for the same reason: a store build bakes its backend origin in
       # and cannot be re-pointed afterwards, and neither wrong answer is visible in a green
       # pipeline. No fallback between the two secret sets, ever.
+      # THE SAME SEVEN ORIGINS `tools/cross-client-harness/a1apk.mjs` gives the Android APK, with the
+      # workstation's address in place of `http://localhost:8081` - and the SAME identity provider,
+      # because the local estate authenticates against PRODUCTION's (workflow-migration decision 8).
+      # NO `VITE_DEPLOY_ENVIRONMENT`: that variable IS the banner, unset means production, and the
+      # bench phone's job is to look like the product. What it points at is not in doubt - the
+      # origin is what the phone reaches, and the banner exists for a member who cannot tell.
+      - name: Create frontend .env (local device)
+        if: env.LOCAL_URL != ''
+        working-directory: frontend
+        env:
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
+        run: |
+          set -euo pipefail
+          {
+            echo "VITE_FRONTEND_URL=${LOCAL_URL}"
+            echo "VITE_GATEWAY_URL=${LOCAL_URL}"
+            echo "VITE_DELIVERY_URL=${LOCAL_URL}"
+            echo "VITE_MEDIA_URL=${LOCAL_URL}"
+            echo "VITE_CALL_URL=${LOCAL_URL}"
+            echo "VITE_SOCIAL_URL=${LOCAL_URL}"
+            echo "VITE_CORE_URL=${LOCAL_URL}"
+            echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}"
+            echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}"
+            echo "VITE_CALL_E2E_ENCRYPTION=false"
+          } > .env
+          if [ -n "$KLIPY_API_KEY" ]; then
+            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
+          fi
+          # ITS OWN CAPABILITY SET, and a step of its own: `tauri-build` merges TAURI_CONFIG into
+          # the config the Rust lib is compiled against, which is how `--config tauri.local.conf.json`
+          # reaches Android. This build bypasses `tauri ios build`, so nothing else would add
+          # `local-estate` and every fetch to the workstation would be refused by the plugin. It is
+          # written to GITHUB_ENV so it exists for the Rust step ONLY in this mode - an EMPTY
+          # TAURI_CONFIG would be parsed and fail every release.
+          echo 'TAURI_CONFIG={"app":{"security":{"capabilities":["default","local-estate","ios-system-components"]}}}' >> "$GITHUB_ENV"
+
+      # THE TWO KEYS iOS NEEDS BEFORE A WEBVIEW MAY TALK CLEARTEXT TO A MACHINE ON THE WI-FI, patched
+      # into THIS build's Info.plist and never into the committed one: a store build must keep
+      # refusing cleartext. `NSAllowsLocalNetworking` admits IP literals and `.local` names and
+      # nothing else; the usage string is what iOS 14+ shows in the local-network permission prompt,
+      # and without it the first request is refused silently.
+      - name: Allow the local network (local device)
+        if: env.LOCAL_URL != ''
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          PLIST="src-tauri/gen/apple/canari_iOS/Info.plist"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string Canari reaches the test stack on your computer." "$PLIST"
+          echo "Info.plist now allows local networking"
+
       - name: Create frontend .env
+        if: env.LOCAL_URL == ''
         working-directory: frontend
         env:
           IS_PRERELEASE: ${{ steps.release_tag.outputs.prerelease }}
@@ -411,7 +522,61 @@ jobs:
           cp "$LIB" "$DEST/libapp.a"
           echo "✅ libapp.a staged at $DEST ($(du -h "$DEST/libapp.a" | cut -f1))"
 
+      # UNSIGNED ON PURPOSE. The signing identity and both development profiles live on the
+      # workstation and nowhere else: the private key of a certificate that can install on a real
+      # phone is not something to hand a CI secret store for the sake of skipping one command. This
+      # step hands back a bundle the workstation signs (`rcodesign`, appex first, then the app).
+      - name: Build the unsigned app (local device)
+        if: env.LOCAL_URL != ''
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          rm -rf src-tauri/gen/apple/assets
+          mkdir -p src-tauri/gen/apple/assets
+          cp -r build/. src-tauri/gen/apple/assets/
+
+          ARCHIVE="src-tauri/gen/apple/build/canari_iOS.xcarchive"
+          rm -rf "$ARCHIVE"
+          xcodebuild archive \
+            -project src-tauri/gen/apple/canari.xcodeproj \
+            -scheme canari_iOS \
+            -archivePath "$ARCHIVE" \
+            -configuration release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM=""
+
+          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::the archive holds no .app"
+            exit 1
+          fi
+          if [ ! -d "$APP/PlugIns/canari_NSE.appex" ] && [ -z "$(find "$APP/PlugIns" -maxdepth 1 -name '*.appex' | head -1)" ]; then
+            echo "::error::the app carries no notification extension - a local build must keep it"
+            exit 1
+          fi
+
+          rm -rf "$RUNNER_TEMP/payload"
+          mkdir -p "$RUNNER_TEMP/payload/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/payload/Payload/"
+          (cd "$RUNNER_TEMP/payload" && zip -qry "$GITHUB_WORKSPACE/canari-local-unsigned.ipa" Payload)
+          ls -la "$GITHUB_WORKSPACE/canari-local-unsigned.ipa"
+          echo "Unsigned bench build for ${LOCAL_URL}: $(basename "$APP")"
+
+      - name: Upload the unsigned app (local device)
+        if: env.LOCAL_URL != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-local-device
+          path: canari-local-unsigned.ipa
+          # THREE DAYS: it points at one workstation address and is worthless afterwards.
+          retention-days: 3
+
       - name: Build iOS archive
+        if: env.LOCAL_URL == ''
         working-directory: frontend
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -456,6 +621,7 @@ jobs:
           echo "Archive produced: ${ARCHIVE_PATH}"
 
       - name: Export signed IPA
+        if: env.LOCAL_URL == ''
         id: outputs
         working-directory: frontend/src-tauri/gen/apple
         env:
@@ -530,6 +696,7 @@ jobs:
           echo "Build number: $BUILD_NUMBER"
 
       - name: Upload IPA Artifact
+        if: env.LOCAL_URL == ''
         uses: actions/upload-artifact@v7
         with:
           name: ios-release

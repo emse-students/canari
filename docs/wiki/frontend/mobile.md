@@ -659,6 +659,30 @@ on hardware.
 - `aps-environment: production` for TestFlight/App Store
 - Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
 
+### A build for the phone on the bench
+
+**The iPhone joins the local test stack the way the Mi 9T does, and the route differs in exactly
+one place: it has no `adb reverse`**, so it reaches the workstation by its address on the Wi-Fi
+(`http://<LAN ip>:8081`) instead of `localhost`. Windows cannot compile Apple code, so a macOS runner
+does it - `ios.yml` dispatched with `local_url`:
+
+```sh
+gh workflow run ios.yml --ref <branch> -f local_url=http://192.168.1.32:8081
+```
+
+What that mode does differently from a release, all gated on `env.LOCAL_URL`: it needs no
+distribution certificate or profile, writes the seven `VITE_*` origins as that address (identity
+provider = production's, like Android's `a1apk.mjs`), sets NO `VITE_DEPLOY_ENVIRONMENT` (that
+variable IS the banner), adds `NSAllowsLocalNetworking` and `NSLocalNetworkUsageDescription` to THIS
+build's `Info.plist` only, merges the `local-estate` capability through `TAURI_CONFIG` (the build
+bypasses `tauri ios build`, so `--config` never applies), and builds UNSIGNED. **It refuses
+`publish`**, and the artefact (`ios-local-device`) lives three days.
+
+**Signing stays on the workstation, and that is the design**: the key of a certificate that installs
+on a real phone is not handed to a CI secret store to save one command. The team's development
+certificate, the phone's UDID and two development profiles (`fr.emse.canari`, `.notifications`) were
+created through the App Store Connect API, and `rcodesign` signs the appex first and the app second.
+
 ## Android specifics
 
 ### The process exists before the first unlock, and nothing in it may assume otherwise (WP-DIRECTBOOT-1)
