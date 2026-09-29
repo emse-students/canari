@@ -3298,7 +3298,7 @@ export class ChannelService {
   }
 
   /**
-   * Records that `userId` has read `channelId` and fans out a silent `channel_read` push to that
+   * Signals - and stores nothing - that `userId` has read `channelId`, as a silent `channel_read` push to that
    * user's own devices so any device still showing the channel's notification clears it (cross-device
    * read-state sync). The reading device ignores it (foreground guard); sibling devices in the
    * background cancel the notification. Access-controlled: the caller must be able to see the channel.
@@ -3319,6 +3319,108 @@ export class ChannelService {
       workspaceId: channel.workspaceId,
       senderId: userId,
     });
+  }
+
+  /**
+   * Raises how far `userId` has read `channelId` to `at`, and tells the salon's readers when it moved.
+   *
+   * THE SALON'S READ RECEIPT, which it never had: a DM's travels over MLS as a watermark, and a salon
+   * has no MLS group, so a sender was shown "Envoyé" for ever. Same shape as the DM one - one instant
+   * per reader, merged as max - so the client renders both through the same code.
+   *
+   * `at` is a message's server `createdAt` (a salon message's timestamp on every client IS that), and
+   * it is BOUNDED BY THE SALON'S NEWEST MESSAGE rather than trusted: a merge that only rises cannot
+   * take back a value in the future, which would show every later message read by this member.
+   *
+   * ONE STATEMENT, and its `WHERE` carries the comparison: two devices of one member advancing at
+   * once cannot lower the mark, and the row count says whether it moved - which decides whether
+   * anybody is told. Distinct from {@link markChannelRead}, which dismisses this account's own
+   * notifications and answers a different question at a different moment.
+   *
+   * @returns the stored instant, or `null` when nothing moved.
+   */
+  async advanceChannelReadMark(
+    channelId: string,
+    userId: string,
+    at: number
+  ): Promise<{ at: number } | null> {
+    if (!Number.isSafeInteger(at) || at <= 0) {
+      throw new BadRequestException('at must be a positive integer (epoch ms)');
+    }
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const newest = await this.messageRepo.findOne({
+      where: { channelId },
+      order: { createdAt: 'DESC' },
+    });
+    if (!newest) {
+      this.logger.debug(`[CHANNEL_READ] nothing to read channel=${channelId}`);
+      return null;
+    }
+    const bounded = Math.min(at, newest.createdAt.getTime());
+    if (bounded < at) {
+      this.logger.warn(
+        `[CHANNEL_READ] mark past the newest message bounded channel=${channelId} user=${userId.slice(0, 8)} asked=${at} kept=${bounded}`
+      );
+    }
+
+    const result = await this.memberRepo
+      .createQueryBuilder()
+      .update(ChannelMember)
+      .set({
+        readMarks: () =>
+          `jsonb_set("readMarks", ARRAY[CAST(:channelId AS text)], to_jsonb(CAST(:at AS bigint)), true)`,
+      })
+      .where('id = :memberId', { memberId: member.id })
+      .andWhere(
+        `COALESCE(("readMarks" ->> CAST(:channelId AS text))::bigint, 0) < CAST(:at AS bigint)`
+      )
+      .setParameters({ channelId, at: bounded })
+      .execute();
+    if (!result.affected) return null;
+
+    const audience = await this.channelAudience(channel);
+    await this.redis.publishChannelEvent(
+      'channel.read',
+      { channelId, workspaceId: channel.workspaceId, userId, at: bounded },
+      audience
+    );
+    this.logger.debug(
+      `[CHANNEL_READ] advanced channel=${channelId} user=${userId.slice(0, 8)} at=${bounded} audience=${audience.length}`
+    );
+    return { at: bounded };
+  }
+
+  /**
+   * Every reader's mark on `channelId`, for the client to hydrate on each history load - the live
+   * `channel.read` events only carry what moved while it was connected.
+   *
+   * Restricted to members who can read the salon NOW: a mark left by someone taken off a private
+   * salon's allowlist says nothing about this salon any more, and it is that person's business.
+   */
+  async listChannelReadMarks(channelId: string, userId: string): Promise<Record<string, number>> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const viewer = members.find((m) => m.userId === userId);
+    if (!viewer || !this.canAccessChannel(channel, viewer, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+    const marks: Record<string, number> = {};
+    for (const m of members) {
+      const at = Number(m.readMarks?.[channelId]);
+      if (!Number.isFinite(at) || at <= 0) continue;
+      if (!this.canAccessChannel(channel, m, m.userId)) continue;
+      marks[m.userId.toLowerCase()] = at;
+    }
+    return marks;
   }
 
   /**
