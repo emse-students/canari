@@ -37,11 +37,11 @@ on:
       # WHICH HALF TO RUN, AND WHY THE HALVES ARE ASKED SEPARATELY ON A PULL REQUEST.
       # `ci.yml` calls this file TWICE. The `code` half - CodeQL, the secret scan and the two
       # lockfile guards - takes about two minutes and feeds `CI passed`, so a live secret still
-      # stops a merge. The `dependencies` half does NOT feed it, because the npm advisory endpoint
-      # answered 503 to 26 of 60 requests measured on 2026-09-04 and exhausted five attempt budgets
-      # outright: a gate whose dependency fails two times in five is not a gate, it is a coin toss
-      # that blocks merges. It still runs on every pull request, and it is still the same file the
-      # nightly pass runs with `all`, where nothing is behind it and a silence IS the report.
+      # stops a merge. The `dependencies` half feeds it too since 2026-09-29, but only through an
+      # ANSWER: the npm advisory endpoint answered 503 to 26 of 60 requests measured on 2026-09-04,
+      # so a pull request runs it with `registry_outage_is_failure: false` and an outage passes as a
+      # warning while a real advisory fails (`ci.yml` carries the decision). It is still the same
+      # file the nightly pass runs with `all`, where nothing is behind it and a silence IS the report.
       # `default: all` so `scheduled.yml` needs no change to keep asking both.
       scope:
         description: 'Which half to run: `all` (the nightly), `code` (CodeQL, secrets, lockfile guards) or `dependencies` (the audits).'

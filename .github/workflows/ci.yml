@@ -1056,26 +1056,21 @@ jobs:
       scope: code
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  # THE DEPENDENCY AUDIT RUNS ON EVERY PULL REQUEST AND IS NOT IN `ci-passed`
+  # THE DEPENDENCY AUDIT GATES `ci-passed` ON AN ANSWER, NEVER ON A SILENCE (user, 2026-09-29)
   #
-  # NOT BECAUSE IT IS UNIMPORTANT, BUT BECAUSE ITS DEPENDENCY FAILS TWO TIMES IN FIVE. Measured over
-  # twelve `ci.yml` runs on 2026-09-04: sixty tree-audits, TWENTY-SIX 503s from npm's advisory
-  # endpoint, and FIVE attempt budgets exhausted outright - five trees that went unaudited. The rate
-  # is not even stationary; the older runs in that window scored 0, 0, 0, 0, 1, 1 and the newer ones
-  # 2, 6, 3, 4, 4, 5. A required check that answers "no" on a coin toss stops being a gate and
-  # becomes a tax on every merge, and the standing instruction here is the opposite of that: gates
-  # are for things a test can settle.
+  # It was left out of `ci-passed` on 2026-09-04 (#369) because npm's advisory endpoint failed two
+  # times in five, and a required check that answers "no" on a coin toss is a tax, not a gate. That
+  # left the hole it named: #1229 merged with a real advisory red on this job (GHSA-253c-mchw-3w2r,
+  # published an hour before its run), fixed only by #1230 afterwards. The user asked for the gate
+  # back, on the condition that decides it: a REAL advisory blocks the merge, an outage does not.
   #
-  # WHAT CARRIES THE VERDICT INSTEAD is `scheduled.yml`, which calls the same file with the default
-  # `scope: all` AND `registry_outage_is_failure: true` - so a tree npm never answered for is a
-  # FAILURE there rather than a tolerated warning. That is the half a pull request cannot see anyway:
-  # a new advisory landing against code nobody touched.
-  #
-  # THIS IS A REAL LOSS AND IT IS WRITTEN DOWN AS ONE: a pull request can now merge with a known
-  # HIGH advisory in a lockfile it edited, and the only thing that will say so is a nightly run. The
-  # honest fix is not to re-gate this on a 43%-failure endpoint - it is a source of advisories that
-  # answers. GitHub's own Dependabot alert list is that source, it is already computed for this
-  # repository, and nothing here reads it yet.
+  # `audit-dependencies.sh` already draws that line - 0 clean, 1 an advisory or anything it cannot
+  # classify, 2 the registry never answered - and a pull request runs it with
+  # `registry_outage_is_failure: false`, so an outage is a warning that passes and only an ANSWER
+  # fails. What stays true: an advisory published against code nobody touched turns every pull
+  # request red until the one that fixes it merges, which is the point; and an outage makes this
+  # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
+  # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
@@ -1136,7 +1131,7 @@ jobs:
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-android, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, security]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, security, dependency-audit]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do
