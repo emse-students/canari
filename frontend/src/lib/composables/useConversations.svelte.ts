@@ -71,6 +71,7 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { mergeReadWatermarks, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import {
   mapStoredMessagesToChatMessages,
@@ -462,7 +463,21 @@ export function useConversations() {
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
       // `decodeChannelMessageRow` rather than silently skipped, and repaired by WP-33.
-      const rows = await channelService.listMessages(rawId, 200);
+      //
+      // THE READ MARKS COME WITH EVERY LOAD, beside the page they describe: the live `channel.read`
+      // events only carry what moved while this device was connected, so a load is the one moment
+      // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
+      // page still loads, and the next load asks again.
+      const [rows, rawMarks] = await Promise.all([
+        channelService.listMessages(rawId, 200),
+        channelService.listReadMarks(rawId).catch((e) => {
+          console.warn(
+            `[CHANNEL_READ] read marks of ${rawId.slice(0, 8)} not loaded - who read what stays` +
+              ` unknown here until the next load: ${String(e)}`
+          );
+          return undefined;
+        }),
+      ]);
       const loaded: ChatMessage[] = [];
       const meLower = ctx.userId.toLowerCase();
 
@@ -505,6 +520,9 @@ export function useConversations() {
         conversations.set(channelConversationId, {
           ...current,
           messages: mergeMessagePage(current.messages, loaded),
+          readWatermarks:
+            mergeReadWatermarks(current.readWatermarks, parseReadWatermarks(rawMarks)) ??
+            current.readWatermarks,
         });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),

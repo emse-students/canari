@@ -39,7 +39,7 @@
  * WHY THERE IS NO `sleep` DRIVING THE PASS/FAIL ASSERTIONS. Every deadline here is the app's (the
  * 2 s debounce), so each wait is a poll for a STATE with a bound derived from that constant plus
  * slack for the CDP round trip. Sleeps appear only where the spec calls for a NEGATIVE window
- * (READ-3, READ-6, READ-10: "prove it stays absent, not just that it hasn't arrived yet").
+ * (READ-3, READ-10: "prove it stays absent, not just that it hasn't arrived yet").
  *
  * OBSERVATION IS PART OF EVERY CHECK HERE TOO, and it was missing until 2026-08-15: this runner
  * asserted its outcomes and never classified a single console line, so eight PASSes rested on
@@ -528,36 +528,36 @@ function read5() {
   return null;
 }
 
-// ─── READ-6: a channel message must NEVER carry an MLS read receipt ──────────────────────────────
+// ─── READ-6: a salon message is marked read for its sender, through the SERVER, never MLS ─────────
+//
+// REDEFINED 2026-09-29. Until then this row asserted the OPPOSITE - that a salon message never shows
+// a read indicator - because a salon had no read state at all and a sender saw "Envoye" for ever
+// (reported by the user). The receipt now goes to social-service (`POST :id/read-mark`), which fans
+// it out as `channel.read`. What must still hold from the old row: the MLS outbox is never asked,
+// which would loop on resolveTerminalGroup/welcome-request 500s for a `channel_` id - so the window
+// must carry no exception on the reader.
 async function read6() {
   const [w1, w2] = await Promise.all([client(W1), client(W2)]);
   await openChannel(w2);
   await openChannel(w1);
 
   const m = mark('READ6');
-  await send(w2, `${m} channel no-receipt probe`);
+  // Clear the log HERE, not at connection start - everything before this point is navigation
+  // noise, and folding it in would blame this check for an unrelated page-load error.
+  const [oW1, oW2] = [await watch(w1, 'channel-viewer'), await watch(w2, 'sender')];
+  await send(w2, `${m} channel receipt probe`);
   await awaitMessage(w1, m, 15000);
 
-  // Clear the log HERE, not at connection start - everything before this point is navigation
-  // noise, and folding it in would blame this check for an unrelated page-load error. `watch` does
-  // exactly that clear, so it is also where the observation window opens.
-  const [oW1, oW2] = [await watch(w1, 'channel-viewer'), await watch(w2, 'sender')];
-
-  // W1 sits on it focused + visible + open - exactly the state that fires a DM receipt. The
-  // channel branch (`if (isSelectedChannel) return;`, MainChatPage.svelte:420) must return before
-  // ever calling `sendReadReceipt` - routing a channel id through the MLS outbox is what the
-  // surrounding comment says loops forever on resolveTerminalGroup/welcome-request 500s.
-  await sleep(4000); // full debounce window + slack, for a receipt that must never be sent
-
-  const readAppeared = await evaluate(w2, hasStatus('.msg-status-read'));
+  // W1 sits on it focused + visible + open, which is what fires a receipt; 2 s debounce + slack.
+  const readMs = await until(w2, hasStatus('.msg-status-read'), 6000, 100).catch(() => null);
   const exceptions = exceptionsOf(w1);
 
-  // `exceptionsOf` is kept ALONGSIDE the classifier rather than replaced by it: this verdict is
-  // about exceptions specifically, and a verdict may not be computed over a projection of its own
+  // `exceptionsOf` is kept ALONGSIDE the classifier rather than replaced by it: half of this verdict
+  // is about exceptions specifically, and a verdict may not be computed over a projection of its own
   // evidence (rule 1). `gate` then adds whatever else the window contained.
-  const ok = readAppeared === false && exceptions.length === 0;
+  const ok = readMs !== null && exceptions.length === 0;
   const gated = gate(ok ? 'PASS' : 'FAIL', { W1: await report(oW1), W2: await report(oW2) });
-  record('READ-6', gated.verdict, { ...gated.detail, marker: m, readAppeared, exceptions });
+  record('READ-6', gated.verdict, { ...gated.detail, marker: m, readMs, exceptions });
   [w1, w2].forEach((c) => c.close());
   return ok;
 }

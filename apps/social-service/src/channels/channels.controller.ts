@@ -695,6 +695,32 @@ export class ChannelsController {
     return { ok: true };
   }
 
+  /**
+   * The salon's read receipt: raises how far the caller has read it to `at` (a message's server
+   * `createdAt`, epoch ms) and tells the salon's readers when it moved. `{ at: null }` = unchanged.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/read-mark')
+  async advanceReadMark(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: { at?: unknown }
+  ) {
+    const moved = await this.service.advanceChannelReadMark(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      Number(body?.at)
+    );
+    return { at: moved?.at ?? null };
+  }
+
+  /** Every current reader's read mark on the salon, `{ [userId]: epochMs }`. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/read-marks')
+  listReadMarks(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.listChannelReadMarks(channelId, xUserId.trim().toLowerCase());
+  }
+
   /** Returns recent messages for a channel accessible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')

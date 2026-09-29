@@ -475,6 +475,27 @@ channel's notification (`cancelConversationNotification("channel_<uuid>")`); the
 ignores it (foreground guard). This mirrors the MLS DM/group behaviour, where a self read-receipt
 push clears the conversation's notification on the user's other devices.
 
+#### Read receipts in a salon
+
+**A salon had none until 2026-09-29** (reported by the user): a DM's receipt is an MLS watermark, a
+salon has no MLS group, and the client simply skipped it - while `READ-6` asserted that absence and
+read `PASS`. The same watermark now lives on the server: `channel_members."readMarks"` (jsonb keyed by
+channel id, migration 066), one instant per reader, only ever raised.
+
+- `POST /api/channels/:channelId/read-mark` `{ at }` - `advanceChannelReadMark`. `at` is a message's
+  server `createdAt` in epoch ms (which IS a salon message's timestamp on every client), BOUNDED by the
+  salon's newest message because a max-merge cannot take a future value back. One `UPDATE` whose
+  `WHERE` carries the comparison; when it moved, `channel.read` `{ channelId, workspaceId, userId, at }`
+  goes to `channelAudience` (the reader's own devices included, which is what moves their badge).
+- `GET /api/channels/:channelId/read-marks` - every CURRENT reader's mark; the client reads it beside
+  every history page, since live events only carry what moved while it was connected.
+- Distinct from `POST :id/read` above, on purpose: that one dismisses this account's notifications
+  on arrival; the receipt waits for the same focus guard and 2 s debounce as a DM's
+  (`MainChatPage`), so a phone in a pocket never tells a sender it read anything.
+
+The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
+render through exactly the group code. No read tone for a salon.
+
 **The cancel keys on the notification's THREAD, not on an identifier we chose.** A conversation's
 notification has two possible posters and they do not agree on an identifier: the in-app path
 (`CanariShowLocalNotification`) uses `canari-<stableId>`, while the NSE — the only path that runs

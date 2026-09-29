@@ -31,6 +31,14 @@ export class ChannelMember {
   @Column('jsonb', { default: {} })
   notifLevels: Record<string, 'all' | 'mentions' | 'none'>;
 
+  /**
+   * How far this member has read each salon, keyed by channelId: the server `createdAt` (epoch ms)
+   * of the newest message read. Only ever raised (`advanceChannelReadMark`), and what a salon's
+   * read receipts are made of (migration 066).
+   */
+  @Column('jsonb', { default: {} })
+  readMarks: Record<string, number>;
+
   /** Display order of this member's workspaces in their own sidebar (ascending). Personal, not shared across members. */
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

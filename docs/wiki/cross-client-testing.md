@@ -127,7 +127,7 @@ rows is `PASS`** - the campaign ends green or it does not end.
 | READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean |
 | READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean |
 | READ-5 | "Seen by" resolves to display names, and to `+N` past three - the watermark is per USER, so it needs FOUR readers where the estate has TWO accounts | `+user` | `SKIPPED` 2026-09-04 23:29 - STRUCTURAL, not a gap in the rig: `+N` renders only past three readers (`MessageMetadata.svelte:118`) and the estate has TWO accounts, so a fourth reader cannot be produced. It needs `+user`, and it is the only row of this rung that does |
-| READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean |
+| READ-6 | A salon message is marked read for its sender - through the server (`channel.read`), never the MLS outbox | `W1 W2` | `pending` - REDEFINED 2026-09-29: salons had no receipts at all and the old PASS asserted exactly that absence; the row now asserts the receipt |
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean |
 | READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean |
 | READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 2026-09-04 23:30 on 0.16.3, clean |

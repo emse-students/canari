@@ -8,6 +8,7 @@ import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import { mergeReadWatermark } from '$lib/utils/chat/readState';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
@@ -264,6 +265,26 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       `[EPOCH] Commit rejected for group ${groupId.slice(0, 8)}… (server epoch: ${currentEpoch}) - re-add`
     );
     if (groupId) await onOutOfSync(groupId);
+    return;
+  }
+
+  // A SALON'S READ RECEIPT, the server's twin of the DM `read_watermark` frame: one reader's mark
+  // moved, merged as max into the same `readWatermarks` the "Lu par" row and the unread badge read,
+  // so a salon renders exactly as a group does. It includes this user's OWN mark from another
+  // device, which is what moves the in-thread badge here. No read tone: a salon of two hundred
+  // would ring for ever.
+  if (event.type === 'channel.read') {
+    const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const userId = String(data.userId || '');
+    if (!channelId) return unaddressable(log, event.type, 'channelId');
+    if (!userId) return unaddressable(log, event.type, 'userId');
+    const key = `channel_${channelId}`;
+    const convo = conversations.get(key);
+    // Not held here: nothing draws it, and its next load reads every mark from the server.
+    if (!convo) return;
+    const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
+    if (merged) conversations.set(key, { ...convo, readWatermarks: merged });
     return;
   }
 

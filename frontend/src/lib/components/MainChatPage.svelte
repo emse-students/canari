@@ -567,21 +567,16 @@
       }, 0);
     });
 
-    // A CHANNEL IS REFUSED THE RECEIPT, NEVER THE WATERMARK, AND FOR YEARS IT WAS REFUSED BOTH.
+    // A SALON'S RECEIPT GOES TO THE SERVER, A DM'S OVER MLS - AND UNTIL 2026-09-29 A SALON HAD NONE.
     //
     // The MLS half genuinely cannot run here: a channel is server-authoritative and has no MLS
-    // group, so `sendReadWatermark` -> `enqueueControlEvent` leaves the flusher looping on
-    // resolveTerminalGroup / welcome-request 500s for a `channel_` conversation id. The guard that
-    // says so used to sit at the top of this effect, which also skipped the LOCAL write above -
-    // and the local watermark is the one thing the in-thread unread badge reads. Every channel
-    // therefore sat at watermark 0 for ever, so "unread" meant "every message this device holds
-    // that is not mine", and scrolling up - which is what loads more of them - made the badge
-    // COUNT UP. Reported from a community thread on 2026-09-09.
-    //
-    // The server keeps its own read state for a channel and `markChannelRead` is what moves it;
-    // that is the sidebar's count. This is the in-thread one, and it is now written the same way
-    // in a salon as in a DM.
-    if (isSelectedChannel) return;
+    // group, so `sendReadWatermark` -> `enqueueControlEvent` would leave the flusher looping on
+    // resolveTerminalGroup / welcome-request 500s for a `channel_` conversation id. So this effect
+    // returned here for a salon, and nothing replaced it: the server kept no read state at all, and
+    // every sender in a community saw "Envoyé" for ever (reported by the user 2026-09-29). The
+    // receipt now takes the same debounce, the same focus guard and the same instant, and only the
+    // transport differs - `advanceReadMark`, which the server stores and fans out as `channel.read`.
+    const channelReceipt = isSelectedChannel;
 
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
 
@@ -592,6 +587,18 @@
           pendingReadWatermark = 0;
           readReceiptTimer = null;
           if (toSend <= 0) return;
+          if (channelReceipt) {
+            channelService
+              .advanceReadMark(currentContact, toSend)
+              .catch((e) =>
+                console.warn(
+                  `[READ] salon mark ${toSend} for ${currentContact} was not sent - its senders keep` +
+                    ' seeing it unread by this user until they read again:',
+                  e
+                )
+              );
+            return;
+          }
           // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
           // `pendingReadWatermark`, so nothing will retry: whatever this device has read up to is
           // lost for the peer, which keeps showing the conversation unread until something else

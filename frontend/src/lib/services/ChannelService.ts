@@ -807,6 +807,35 @@ export class ChannelService {
   }
 
   /**
+   * The salon's read receipt: raises how far the caller has read `channelId` to `at` (the newest
+   * read message's timestamp, which for a salon message IS its server `createdAt`). The server
+   * bounds it, stores it and tells the salon's readers with `channel.read`.
+   *
+   * Throws on a refusal - the caller owns the one line a lost receipt leaves.
+   *
+   * @returns the stored instant, or `null` when the server already held as much.
+   */
+  async advanceReadMark(channelId: string, at: number): Promise<number | null> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read-mark`, {
+      method: 'POST',
+      body: JSON.stringify({ at }),
+    });
+    await this.handleError(res);
+    const body = (await res.json()) as { at: number | null };
+    Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);
+    return body.at;
+  }
+
+  /** Every current reader's read mark on `channelId`, `{ [userId]: epochMs }`, raw off the wire. */
+  async listReadMarks(channelId: string): Promise<unknown> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read-marks`);
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
    * Fetches a single page of channel messages (newest-first). When `before` (ISO timestamp) is
    * set, only messages strictly older than it are returned - the keyset cursor used to page back
    * through history.
