@@ -21,11 +21,15 @@
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
-  import { linkableEventLabel } from '$lib/utils/time';
+  import { linkableEventPickerOptions } from '$lib/utils/time';
   import PollSection from './PollSection.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
   import PickedMediaPreview from './PickedMediaPreview.svelte';
+  import MediaCaptionChip from './MediaCaptionChip.svelte';
+  import MediaCaptionField from './MediaCaptionField.svelte';
+  import { shiftAfterRemoval } from './mediaCaptionIndex';
+  import Picker from '$lib/components/ui/Picker.svelte';
   import { localPublishBlocker } from '$lib/posts/composerReadiness';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { LocalizedError } from '$lib/utils/localizedError';
@@ -73,6 +77,8 @@
   let newFilePreviews = $state<string[]>([]);
   let newFileThumbIcons = $state<boolean[]>([]);
   let newMediaCaptions = $state<string[]>([]);
+  /** Which new file's caption field is open under the strip - at most one (`MediaCaptionChip`). */
+  let captionIndex = $state<number | null>(null);
 
   // --- Polls ---
   const _initialPoll = untrack(() => post.polls?.[0]);
@@ -132,6 +138,9 @@
   let selectedLinkedCalendarEventId = $state(untrack(() => post.linkedCalendarEventId ?? ''));
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
+  const linkableEventOptions = $derived(
+    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+  );
   // --- UI state ---
   let saving = $state(false);
   let errorMessage = $state('');
@@ -203,6 +212,7 @@
     newFilePreviews = newFilePreviews.filter((_, idx) => idx !== i);
     newFileThumbIcons = newFileThumbIcons.filter((_, idx) => idx !== i);
     newMediaCaptions = newMediaCaptions.filter((_, idx) => idx !== i);
+    captionIndex = shiftAfterRemoval(captionIndex, i);
   }
 
   /** Icon matching the media type for generic file previews. */
@@ -336,21 +346,15 @@
             <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
             {m.post_create_link_event_label()}
           </label>
-          <select
+          <Picker
             id="edit-post-linked-calendar-event"
-            bind:value={selectedLinkedCalendarEventId}
+            value={selectedLinkedCalendarEventId}
+            options={linkableEventOptions}
+            onValueChange={(v) => (selectedLinkedCalendarEventId = v)}
+            label={m.post_create_link_event_label()}
             disabled={loadingLinkableEvents}
-            class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-          >
-            <option value="" class="bg-white font-medium dark:bg-zinc-900">
-              {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
-            </option>
-            {#each linkableCalendarEvents as ev (ev.id)}
-              <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
-                {linkableEventLabel(ev)}
-              </option>
-            {/each}
-          </select>
+            variant="field"
+          />
           <p class="text-text-muted text-2xs mt-1.5 ml-1">
             {m.post_create_validated_events_hint()}
           </p>
@@ -440,17 +444,26 @@
                   title={m.common_delete_button()}
                   onclick={() => removeNewFile(i)}
                 />
+                <MediaCaptionChip
+                  hasCaption={!!newMediaCaptions[i]?.trim()}
+                  active={captionIndex === i}
+                  onclick={() => (captionIndex = captionIndex === i ? null : i)}
+                />
               </div>
-              <input
-                type="text"
-                bind:value={newMediaCaptions[i]}
-                placeholder={m.post_edit_caption_placeholder()}
-                maxlength="120"
-                class="text-text-main placeholder:text-text-muted/60 bg-cn-surface text-2xs w-full rounded-lg border border-black/10 px-2.5 py-1.5 font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10"
-              />
             </div>
           {/each}
         </div>
+        {#if captionIndex !== null && captionIndex < newFiles.length}
+          <div class="px-3 pb-3">
+            {#key captionIndex}
+              <MediaCaptionField
+                bind:value={newMediaCaptions[captionIndex]}
+                position={existingMedia.length + captionIndex + 1}
+                onDone={() => (captionIndex = null)}
+              />
+            {/key}
+          </div>
+        {/if}
       {/if}
     </div>
   </div>

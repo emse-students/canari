@@ -260,7 +260,11 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
 1. **R1 - the composer.** Full screen on a phone, one title, the author as an avatar line, the text
    area taking the height, Markdown on demand (C1), labelled chips, a bar pinned above the keyboard
    with Publier at the right; Photo/video (gallery + camera) split from Fichier; a vertical video
-   drawn at its own aspect ratio.
+   drawn at its own aspect ratio. **The composer MERGED (#1226)**; its first on-device review
+   (user, 2026-09-29) moved the captions behind a chip, took the halo off the chips and put the
+   identity and linked-event choices in the app's own `Picker` - its PR. **Not yet checked: the
+   vertical video in the FEED.** **OPEN, from the same review: every other native `<select>` in the
+   app (~38 in 22 files) and the six native date inputs** move to the app's own pickers ([rule](durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
 2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
    tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
    plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
