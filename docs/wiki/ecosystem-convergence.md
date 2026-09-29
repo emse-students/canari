@@ -1391,15 +1391,24 @@ keeps only what is still open.
 - Le Cercle (now `cercle.emse.fr`): Accueil and Compte correct; the phone's bottom bar is icons
   only, 48 px, the name kept for a screen reader (MR !24, seen in prod).
 
-**Restart order:**
+**The chantier is CLOSED (2026-09-29).** The last two hardware checks passed on the Mi 9T, in production:
 
-1. **Owed on hardware:** Canari's photo viewer on a PRODUCTION build - the Mi 9T carries a
-   sideloaded rig build, which shows the offline banner against prod; MiGallery v2.15.5's pinch
-   in prod (the fix was measured on the rig only).
-2. **Seen, not decided - the user's call:** Le Cercle's Accueil shows the balance twice (header
-   pill and the card); the "Perm 3A" has been open since 2026-09-22 (data, a manager closes it).
-3. **Cleanup last**: the one worktree left, `MiGallery-tooling` (it holds the rigs' dev database).
-   Every rig, the Immich tunnel and the other worktrees are removed at the pause.
+- Canari `0.18.31`, the release APK (the rig build was uninstalled first: it is signed with another
+  key, so it cannot be updated in place), signed in: a post photo opens full screen with its date,
+  download and Informations; a double tap zooms where it lands, a drag pans the zoomed photo, a second
+  double tap zooms out, the panel names date, author, file, size and dimensions, and a swipe down
+  closes it. A TWO-finger pinch was not driven: a release WebView is not inspectable, and `adb input`
+  has one finger.
+- MiGallery `v2.15.5`'s pinch in prod, driven over CDP: one spread takes the grid from dense to
+  large and one pinch from large to dense, both in a single gesture, and a x1.3 moves exactly one
+  step each way.
+
+**What is left is the user's, not the chantier's:** Le Cercle's Accueil shows the balance twice
+(header pill and card), and "Perm 3A" has been open since 2026-09-22 (data, a manager closes it).
+
+**The Mi 9T now carries the PRODUCTION Canari, signed in as the user.** A campaign row that needs
+the rig build installs it again (uninstall first, for the signature) and registers a new device.
+`MiGallery-tooling` is the one worktree kept: it holds the rigs' dev database.
 
 **Learnt the hard way, 2026-09-25:** MiGallery's test runner copied a developer `.env` whose
 `IMMICH_BASE_URL` was an SSH tunnel to the PRODUCTION Immich; 28 empty `[TEST]` albums landed there
