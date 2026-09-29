@@ -8,12 +8,12 @@ import { deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
  * system event's origin - named whoever the server's envelope claimed. The envelope is a claim; the
  * credential is a proof (channel-encryption section 21, WP-G2-1).
  *
- * **THIS IS THE MEASUREMENT HALF, AND IT REFUSES NOTHING** (decided by the user, 2026-09-28). A
- * legitimate disagreement nobody foresaw - an id's case, a system frame, a path that names the
- * sender differently - would lose messages if it were refused blind. So one release logs every
- * disagreement at ERROR and REPORTS it to the server, where `[SENDER_MISMATCH]` is readable, and the
- * refusal follows once production has been read. The console alone would be no measurement:
- * nothing in this product collects a client's console.
+ * **MEASURED, THEN REFUSED** (decided by the user, 2026-09-28 and 2026-09-29). One release (v0.18.29)
+ * logged every disagreement at ERROR and REPORTED it to the server, where `[SENDER_MISMATCH]` is
+ * readable, and refused nothing, since a legitimate disagreement nobody foresaw would otherwise lose
+ * messages. Production read ZERO, and since WP-G2-1b a disagreement is a {@link SenderMismatchError}:
+ * the frame is consumed (MLS has spent its generation) and never shown. It is still reported, so
+ * the day a legitimate case appears it is counted, not guessed at.
  */
 
 /** Which decrypt path the frame came through - each names its envelope from a different field. */
@@ -72,8 +72,8 @@ export function resetReportedSenderMismatches(): void {
  * service that has not been given one) - nothing to compare, and not a disagreement. `null` is the
  * credential being UNREADABLE, which is: a frame whose sender cannot be checked.
  *
- * @returns the kind of disagreement, or null when the two agree - for the log and the tests; this
- *   half decides nothing with it.
+ * @returns the kind of disagreement, or null when the two agree. A caller REFUSES the frame on a
+ *   kind - {@link assertVerifiedSender} is that refusal for the paths that throw.
  */
 export function checkVerifiedSender(
   groupId: string,
@@ -93,7 +93,7 @@ export function checkVerifiedSender(
     verifiedIdentity: verified,
   };
   console.error(
-    `[MLS] SENDER MISMATCH (${kind}) group=${groupId.slice(0, 8)} path=${envelope.path} envelope=${report.envelopeUserId}:${report.envelopeDeviceId ?? '?'} verified=${verified ?? 'unreadable'} - measured, not refused`
+    `[MLS] SENDER MISMATCH (${kind}) group=${groupId.slice(0, 8)} path=${envelope.path} envelope=${report.envelopeUserId}:${report.envelopeDeviceId ?? '?'} verified=${verified ?? 'unreadable'} - REFUSED, consumed and not shown`
   );
 
   const key = `${groupId}|${envelope.path}|${kind}|${report.envelopeUserId}|${report.envelopeDeviceId ?? ''}|${verified ?? ''}`;
@@ -107,6 +107,31 @@ export function checkVerifiedSender(
     console.warn(`[MLS] SENDER MISMATCH report failed: ${String(e)}`);
   });
   return kind;
+}
+
+/**
+ * The refusal a disagreement becomes on a decrypt path (WP-G2-1b). The frame WAS decrypted, so its
+ * generation is spent: every consumer marks it consumed and acknowledges it, like an own-message,
+ * and shows nothing. Never a heal - the group is fine; the ENVELOPE lied, or the sender did.
+ */
+export class SenderMismatchError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly kind: SenderMismatchKind
+  ) {
+    super(`[MLS] frame on ${groupId.slice(0, 8)} refused: its sender does not match MLS (${kind})`);
+    this.name = 'SenderMismatchError';
+  }
+}
+
+/** {@link checkVerifiedSender}, then a {@link SenderMismatchError} on any disagreement. */
+export function assertVerifiedSender(
+  groupId: string,
+  envelope: EnvelopeSender | undefined,
+  verified: string | null | undefined
+): void {
+  const kind = checkVerifiedSender(groupId, envelope, verified);
+  if (kind) throw new SenderMismatchError(groupId, kind);
 }
 
 function classify(envelope: EnvelopeSender, verified: string | null): SenderMismatchKind | null {

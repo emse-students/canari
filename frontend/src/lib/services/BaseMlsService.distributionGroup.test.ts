@@ -474,6 +474,26 @@ describe('routing a frame that arrived on the group', () => {
     warn.mockRestore();
   });
 
+  it('acknowledges a frame refused for its SENDER, records it consumed, and hands it to nobody', async () => {
+    // WP-G2-1b: the frame decrypted, so its generation is spent - but its envelope named somebody
+    // MLS did not verify, so the seed it carries is never filed. Redelivery would bring the same lie.
+    const { SenderMismatchError } = await import('$lib/mls-client/verifiedSender');
+    const { frameFingerprint, hasFrameBeenProcessed } =
+      await import('$lib/mls-client/inboundFrameLedger');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const frame = new Uint8Array([7, 7, 7]);
+    const ctx = registered({
+      processIncomingMessage: vi.fn().mockRejectedValue(new SenderMismatchError('g-1', 'user')),
+    });
+
+    expect(await route(ctx, 'g-1', 'mallory', frame)).toBe(true);
+    expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+    expect(hasFrameBeenProcessed('g-1', frameFingerprint(frame))).toBe(true);
+    // Accused once, at ERROR, where it was refused - not again here as a lost seed.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('still redelivers what a later epoch may repair', async () => {
     // `GAP_QUEUED` WITHOUT the same-epoch marker: the native layer wraps what it does not
     // recognise, and a genuine gap is the one thing on this whole path a redelivery does repair.

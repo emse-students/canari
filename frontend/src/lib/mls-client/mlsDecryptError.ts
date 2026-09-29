@@ -1,3 +1,4 @@
+import { SenderMismatchError } from './verifiedSender';
 /**
  * Centralized classification of DECRYPTION errors for an incoming MLS message.
  *
@@ -65,6 +66,12 @@ export type MlsDecryptErrorKind =
    * campaign rung that way (COMM, prod 2026-08-26).
    */
   | 'same-epoch-refusal'
+  /**
+   * The frame DECRYPTED, and its envelope names another sender than the one MLS verified
+   * ({@link SenderMismatchError}, WP-G2-1b). Its generation is spent and it is shown nowhere: ACKed
+   * like `own-message`, never a heal, and never a loss to reconcile.
+   */
+  | 'sender-mismatch'
   /** Everything else -> likely out-of-sync; the policy (re-add, log) is up to the caller. */
   | 'unknown';
 
@@ -82,6 +89,9 @@ export type MlsDecryptErrorKind =
  * what is left when none of them applies.
  */
 export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKind {
+  // A TYPE, so it is read by class before any sentence is: the one kind here raised by this client
+  // rather than by MLS, and the one whose fall-through (`unknown` -> re-add) would be pure damage.
+  if (error instanceof SenderMismatchError) return 'sender-mismatch';
   const s = String(error);
   // FIRST, because it is the only kind here that is not about the frame at all but about our
   // membership - and because the fall-through it used to take (`unknown` -> out-of-sync -> re-add)
