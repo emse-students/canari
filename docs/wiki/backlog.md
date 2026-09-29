@@ -278,7 +278,29 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
    save-to-gallery.
 4. **R4 - live** (C9), behind the calls revival.
 
+## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
+
+Anyone with a CAS (soon an Alumni SSO) account reaches MiConnect, and what decides access today is
+one self-declared string, `formation = 'ICM'`, hard-coded in three places. The user decided the
+whole model in one sitting: cumulative affiliations (cursus or staff post), one campus, spaces =
+formation x campus, audiences fixed by the publishing association, one BDE per space, Authentik as
+the single truth edited from Canari by admins only, per-application access decided centrally, and the
+migration of the 600 accounts. **Twenty-eight decisions, all on
+[profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
+were taken against. **Owed next: the technical plan, cut into work packages, for the user to
+validate before anything is built.**
+
 ## Open defects, in severity order
+
+### P1 - a MiGallery API key is handed to every user of MinoWiki and Archives in their own claims (found 2026-09-29)
+
+The MiConnect property mapping `avatar` returns an avatar URL with a MiGallery `api_key` in its
+query string, and the mapping is attached to the `MinoWiki` and `Archives MINO` providers. Every
+user of either app therefore receives the key in their id_token/userinfo. Read on production with
+`ak shell`, 2026-09-29; the value is deliberately not written in this public repository. **Owed**:
+find what that key may do in MiGallery, replace the mechanism by a URL that needs no secret (or a
+key scoped to avatars only), then revoke the old key - revoking first breaks both apps' avatars.
+Found during the [profile reform](profiles-and-access.md#3-found-on-the-way).
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
 

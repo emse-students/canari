@@ -382,9 +382,11 @@ apart on 2026-09-02 gave 465 and then 511, which was chased as a discrepancy aft
 were created; a third gave 517. There is **no LDAP source** (`LDAPSource.objects.all()` is empty) -
 real people are enrolling continuously, several in the hour that was measured. So a count is a
 snapshot of something moving: compare identities, never totals, and if a total must be quoted, quote
-the instant with it. Every account is `type=internal` (`external` and `service_account` are both
-zero, with one `internal_service_account`), which is why the campaign's dedicated accounts had to be
-`internal` too - see [cross-client-campaign-resume](../cross-client-campaign-resume.md).
+the instant with it. Every account was `type=internal` until 2026-09-25, when all but the admins
+became `external` ([above](#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25));
+read 2026-09-29: 600 `external`, 5 `internal` (the `authentik Admins` group), 1
+`internal_service_account`. What each account declared at enrolment, and what the applications
+decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1-what-exists-today-measured-on-production-2026-09-29-1436-utc).
 
 ## See also
 
