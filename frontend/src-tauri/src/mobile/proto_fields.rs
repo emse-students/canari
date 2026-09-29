@@ -670,6 +670,37 @@ pub(crate) fn build_graine_app_message(
     msg
 }
 
+/// The v2 half of a seed, as `seedDistribution.ts` sends it: version 6, minter 7, its device 8,
+/// the session's signing key 9, the endorsement 10.
+#[cfg(test)]
+pub(crate) struct GraineV2Fields<'a> {
+    pub minter_user_id: &'a str,
+    pub minter_device_id: &'a str,
+    pub signing_public_key: &'a [u8],
+    pub endorsement: &'a [u8],
+}
+
+/// [`build_graine_app_message`] for a v2 session.
+#[cfg(test)]
+pub(crate) fn build_graine_v2_app_message(
+    channel: &str,
+    session: &str,
+    seed: &[u8],
+    created_at: i64,
+    v2: &GraineV2Fields<'_>,
+) -> Vec<u8> {
+    let mut g = build_graine_msg(channel, session, seed, created_at);
+    write_tag(&mut g, 6, 0);
+    write_varint(&mut g, 2);
+    write_string_field(&mut g, 7, v2.minter_user_id);
+    write_string_field(&mut g, 8, v2.minter_device_id);
+    write_bytes_field(&mut g, 9, v2.signing_public_key);
+    write_bytes_field(&mut g, 10, v2.endorsement);
+    let mut msg = Vec::new();
+    write_bytes_field(&mut msg, 10, &g);
+    msg
+}
+
 pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
     let data = serde_json::json!({ "at": at }).to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);

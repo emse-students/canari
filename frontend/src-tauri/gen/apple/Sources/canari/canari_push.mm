@@ -710,7 +710,8 @@ static NSString *_Nullable CanariFetchCommitsFromBackend(NSString *groupId, long
 }
 
 static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *ctx, NSString *groupId,
-                                                           NSString *protoB64, NSData *stateBytes) {
+                                                           NSString *senderId, NSString *protoB64,
+                                                           NSData *stateBytes) {
   if (ctx.deviceKeyB64.length == 0) {
     return nil;
   }
@@ -724,7 +725,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   char *jsonPtr = canari_native_decrypt_message(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-      (const unsigned char *)cipher.bytes, cipher.length);
+      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -734,6 +735,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
 }
 
 static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessageId, NSString *groupId,
+                                                         NSString *senderId,
                                                          NSString *_Nullable inlineProto) {
   if (queuedMessageId.length == 0) {
     return nil;
@@ -762,7 +764,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
     if (stateBytes == nil) {
       NSLog(@"[CanariPush] tryDecrypt: mls.bin absent");
     } else {
-      result = CanariDecryptProto(ctx, groupId, protoB64, stateBytes);
+      result = CanariDecryptProto(ctx, groupId, senderId, protoB64, stateBytes);
     }
   } @finally {
     [g_mlsStateLock unlock];
@@ -772,8 +774,8 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
 
 // Parses the JSON from canari_native_decrypt_message_with_commits (mirror of CanariDecryptProto).
 static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
-    CanariPushContext *ctx, NSString *groupId, NSString *commitsJson, NSString *protoB64,
-    NSData *stateBytes) {
+    CanariPushContext *ctx, NSString *groupId, NSString *senderId, NSString *commitsJson,
+    NSString *protoB64, NSData *stateBytes) {
   if (ctx.deviceKeyB64.length == 0) {
     return nil;
   }
@@ -785,7 +787,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
   }
   char *jsonPtr = canari_native_decrypt_message_with_commits(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
-      ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, commitsJson.UTF8String,
+      ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, senderId.UTF8String,
+      commitsJson.UTF8String,
       (const unsigned char *)cipher.bytes, cipher.length);
   if (jsonPtr == nil) {
     return nil;
@@ -800,7 +803,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
 // the current epoch, fetches the missing ordered commits (PushSecret), and applies them in memory to
 // decrypt this message - a real notification instead of a generic fallback. NEVER persists mls.bin.
 static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
-    NSString *queuedMessageId, NSString *groupId, NSString *_Nullable inlineProto) {
+    NSString *queuedMessageId, NSString *groupId, NSString *senderId,
+    NSString *_Nullable inlineProto) {
   if (queuedMessageId.length == 0 || groupId.length == 0) {
     return nil;
   }
@@ -857,7 +861,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
   @try {
     NSData *stateBytes = CanariLoadMlsState();
     if (stateBytes != nil) {
-      result = CanariDecryptProtoWithCommits(ctx, groupId, commitsJson, protoB64, stateBytes);
+      result = CanariDecryptProtoWithCommits(ctx, groupId, senderId, commitsJson, protoB64, stateBytes);
     }
   } @finally {
     [g_mlsStateLock unlock];
@@ -2805,13 +2809,13 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
   BOOL silent = [data[@"silent"] isEqualToString:@"true"];
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-    CanariDecryptedMessage *decrypted = CanariTryDecrypt(queuedMessageId, groupId, inlineProto);
+    CanariDecryptedMessage *decrypted = CanariTryDecrypt(queuedMessageId, groupId, senderId, inlineProto);
     int raceAttempt = 0;
     while (!silent && decrypted == nil && queuedMessageId.length > 0 &&
            raceAttempt < kWelcomeRaceRetries) {
       raceAttempt++;
       usleep(kWelcomeRaceRetryDelayUs);
-      decrypted = CanariTryDecrypt(queuedMessageId, groupId, inlineProto);
+      decrypted = CanariTryDecrypt(queuedMessageId, groupId, senderId, inlineProto);
     }
 
     if (silent) {
@@ -2832,7 +2836,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     // background (push decrypt is read-only). Attempt an in-memory commit catch-up (read-only,
     // mls.bin unchanged) to produce a real notification instead of the generic fallback.
     if (decrypted == nil && queuedMessageId.length > 0) {
-      decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto);
+      decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, senderId, inlineProto);
     }
 
     // Call signaling over MLS (WP-XP-5, app running in background). Invite -> CallKit ring
@@ -2968,9 +2972,18 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
             ? CanariLookupGraineSeed(channelId, sessionId)
             : nil;
     if (seedB64.length > 0) {
-      char *jsonPtr = canari_native_decrypt_graine_message(
-          seedB64.UTF8String, sessionId.UTF8String, (uint32_t)[messageIndexStr intValue],
-          nonce.UTF8String, ciphertext.UTF8String);
+      // Rust reads the session from the mirror itself and applies the floor and, under a v2
+      // session, the author, the signature and the AAD (channel-encryption section 21.5).
+      // `seedB64` above only says whether the mirror holds it.
+      NSString *signature =
+          [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
+      NSString *dir = CanariTauriDataDir();
+      char *jsonPtr =
+          dir == nil ? nil
+                     : canari_native_open_graine_push(
+                           dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
+                           (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
+                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);
@@ -2988,7 +3001,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
           }
           body = text.length > 0 ? text : nil;
         } else {
-          NSLog(@"[CanariPush] handleChannelMessage: decrypt ok=false channel=%@", channelId);
+          id reason = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"reason"]
+                                                                  : nil;
+          NSLog(@"[CanariPush] handleChannelMessage: decrypt ok=false reason=%@ channel=%@",
+                [reason isKindOfClass:[NSString class]] ? reason : @"none", channelId);
         }
       }
     } else {

@@ -1123,6 +1123,7 @@ describe('ChannelService security hardening', () => {
           mentionedUserIds: ['u5'],
           seedFrame: 'ZnJhbWU=',
           seedGroupId: 'dist-ws1',
+          signature: 'c2lnbmF0dXJl',
         }
       );
 
@@ -1170,10 +1171,12 @@ describe('ChannelService security hardening', () => {
       // THE CIPHERTEXT AND ITS SEED FRAME ARE ONE GROUP, handed over apart from the fields every push
       // carries: chat-delivery inlines the whole of it or none of it, per device, on the payload it
       // really sends (channel-encryption section 19). A frame without its message opens nothing.
+      // The v2 signature joins the group: a native reader refuses a v2 row without it (section 21.5).
       expect(sent[0].inline).toEqual({
         ciphertext: 'c',
         seedFrame: 'ZnJhbWU=',
         seedGroupId: 'dist-ws1',
+        signature: 'c2lnbmF0dXJl',
       });
       expect(sent[0].data.messageIndex).toBe('4');
 

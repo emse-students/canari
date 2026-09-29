@@ -20,11 +20,13 @@ extern "C" {
 #endif
 
 /// Decrypts an MLS application message. Returns a heap JSON string
-/// (`{"ok":true,"text":...}` or `{"ok":false}`); free with canari_free_string.
+/// (`{"ok":true,"text":...}` or `{"ok":false,"reason":...}`); free with canari_free_string.
+/// sender_id is the push's own: a frame MLS verified as sent by somebody else is refused with
+/// `reason=sender-mismatch` (WP-G2-1b).
 char *canari_native_decrypt_message(const unsigned char *state_ptr, size_t state_len,
                                     const char *device_key_b64, const char *user_id, const char *device_id,
-                                    const char *group_id, const unsigned char *cipher_ptr,
-                                    size_t cipher_len);
+                                    const char *group_id, const char *sender_id,
+                                    const unsigned char *cipher_ptr, size_t cipher_len);
 
 /// Returns the persisted group's current MLS epoch, or -1 if unknown / unreadable.
 /// Used to compute the `sinceEpoch` before an in-memory commit catch-up.
@@ -38,17 +40,18 @@ long long canari_native_group_epoch(const unsigned char *state_ptr, size_t state
 char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr, size_t state_len,
                                                  const char *device_key_b64, const char *user_id,
                                                  const char *device_id, const char *group_id,
-                                                 const char *commits_json,
+                                                 const char *sender_id, const char *commits_json,
                                                  const unsigned char *cipher_ptr, size_t cipher_len);
 
-/// Decrypts a community-channel message sealed under a Graine session (AES-256-GCM, not MLS).
-/// seed_b64 is the session's 32-byte seed from graine_seeds.json; session_id + message_index name
-/// which message key to derive from it. nonce_b64 (12 bytes) and ciphertext_b64
-/// (`ciphertext||tag`) are the push's own fields. Same JSON contract as
-/// canari_native_decrypt_message. Stateless and read-only.
-char *canari_native_decrypt_graine_message(const char *seed_b64, const char *session_id,
-                                           uint32_t message_index, const char *nonce_b64,
-                                           const char *ciphertext_b64);
+/// Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
+/// data_dir/graine_seeds.json: Rust reads the session and applies the floor and, under a v2 session,
+/// the author, the signature and the AAD (channel-encryption section 21.5). nonce_b64,
+/// ciphertext_b64 and signature_b64 are the push's own fields; signature_b64 is "" when it carried
+/// none. Same JSON contract as canari_native_decrypt_message. Read-only and lock-free.
+char *canari_native_open_graine_push(const char *data_dir, const char *channel_id,
+                                     const char *session_id, uint32_t message_index,
+                                     const char *sender_id, const char *nonce_b64,
+                                     const char *ciphertext_b64, const char *signature_b64);
 
 /// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
 /// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were

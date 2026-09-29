@@ -119,33 +119,157 @@ pub fn decrypt_channel_message(
     }
 }
 
-/// Decrypts a community-channel push sealed under a Graine session, and returns the same metadata
-/// JSON [`decrypt_channel_message`] returns.
+/// A salon push as a native service hands it over: the cleartext fields it read off the payload.
 ///
-/// The difference is one HKDF: the push names a SESSION and an INDEX, the mirror holds the
-/// session's 32-byte seed (`graine_seeds.json`, written by the foreground), and the message key is
-/// derived from the pair. The server holds no seed at all, which is the whole point of the rework -
-/// so unlike the epoch key this replaces, there is nothing anyone could ask it for.
+/// `signature_b64` is empty when the push carried none - a v1 row, or a v2 row the server stripped,
+/// which the session's version tells apart.
+#[derive(Debug, Clone, Copy)]
+pub struct GrainePush<'a> {
+    pub channel_id: &'a str,
+    pub session_id: &'a str,
+    pub index: u32,
+    /// The author the server named. Under a v2 session it must be the session's minter.
+    pub sender_id: &'a str,
+    pub nonce_b64: &'a str,
+    pub ciphertext_b64: &'a str,
+    pub signature_b64: &'a str,
+}
+
+/// Opens a salon push against the seed mirror, and returns the metadata JSON of
+/// [`decrypt_channel_message`] or a `refused` with its reason.
 ///
-/// Returns None on any failure, and LOGS which one: a wrong seed, a wrong index and a truncated
-/// ciphertext are three different faults that all end as a generic "new message" banner.
-pub fn decrypt_graine_message(
+/// ONE IMPLEMENTATION FOR BOTH PLATFORMS (channel-encryption section 21.5): Android's
+/// `nativeOpenGrainePush` and the iOS `canari_native_open_graine_push` hand it the push's fields and
+/// the data directory, and every rule the web reader applies to a row is applied here, in the order
+/// it applies them:
+///
+/// - the session is looked up under the push's OWN channel, so a row moved to another salon finds
+///   nothing to open with;
+/// - an index below the session's floor is refused, as the app refuses it;
+/// - under a v2 session the named author must be the minter, the signature must be there, and it
+///   must verify against the endorsed session key BEFORE AES-GCM runs with the header as AAD.
+///
+/// What it cannot do is refuse a REPLAY: a notification path holds no record of the rows it has
+/// opened. A replayed push re-shows a banner the device already showed; the app, which does hold
+/// that record, shows the row once.
+pub fn open_graine_push(data_dir: &Path, push: &GrainePush<'_>) -> serde_json::Value {
+    let held =
+        match crate::commands::push::read_graine_seed(data_dir, push.channel_id, push.session_id) {
+            Ok(Some(held)) => held,
+            Ok(None) => {
+                log::debug!(
+                    "[GraineBG] session {} of channel {} is not mirrored",
+                    push.session_id,
+                    push.channel_id
+                );
+                return refused("seed-not-mirrored");
+            }
+            Err(e) => {
+                log::error!("[GraineBG] mirror unreadable: {e}");
+                return refused("mirror-unreadable");
+            }
+        };
+    if push.index < held.first_index {
+        log::warn!(
+            "[GraineBG] index {} is below session {}'s floor {} - refused, as the app refuses it",
+            push.index,
+            push.session_id,
+            held.first_index
+        );
+        return refused("below-floor");
+    }
+    let decode = |name: &str, b64: &str| {
+        let bytes = STANDARD.decode(b64.trim()).ok();
+        if bytes.is_none() {
+            log::error!("[GraineBG] push field {name} is not base64");
+        }
+        bytes
+    };
+    let (Some(seed), Some(nonce), Some(ciphertext)) = (
+        decode("seed", &held.seed_b64),
+        decode("nonce", push.nonce_b64),
+        decode("ciphertext", push.ciphertext_b64),
+    ) else {
+        return refused("push-field-malformed");
+    };
+
+    let Some((minter, signing_pk_b64)) = &held.v2 else {
+        return open_graine_push_v1(&seed, push, &nonce, &ciphertext);
+    };
+    if !push.sender_id.eq_ignore_ascii_case(minter) {
+        log::error!(
+            "[GraineBG] REFUSED: push names {} as the author of session {}, minted by {minter}",
+            push.sender_id,
+            push.session_id
+        );
+        return refused("author-mismatch");
+    }
+    if push.signature_b64.is_empty() {
+        log::error!(
+            "[GraineBG] REFUSED: a row of v2 session {} carries no signature",
+            push.session_id
+        );
+        return refused("signature-missing");
+    }
+    let (Some(signature), Some(signing_pk)) = (
+        decode("signature", push.signature_b64),
+        decode("signingPk", signing_pk_b64),
+    ) else {
+        return refused("push-field-malformed");
+    };
+    let header = crate::mobile::graine::GraineHeaderV2 {
+        channel_id: push.channel_id,
+        session_id: push.session_id,
+        minter_user_id: minter,
+        index: push.index,
+    };
+    // `open_graine_message_v2` logs which check refused it.
+    let plaintext = match crate::mobile::graine::open_graine_message_v2(
+        &seed,
+        &header,
+        &nonce,
+        &ciphertext,
+        &signature,
+        &signing_pk,
+    ) {
+        Ok(p) => p,
+        Err(crate::mobile::graine::GraineV2Error::Signature(_)) => {
+            return refused("signature-refused")
+        }
+        Err(_) => return refused("graine-open-failed"),
+    };
+    let info = extract_full_message_info(&plaintext);
+    if info["ok"].as_bool().unwrap_or(false) {
+        info
+    } else {
+        log::debug!(
+            "[GraineBG] v2 row of session {} opened and is not renderable",
+            push.session_id
+        );
+        refused("plaintext-not-renderable")
+    }
+}
+
+/// The v1 half of [`open_graine_push`]: no author, no signature, no AAD - what v1 is.
+fn open_graine_push_v1(
     seed: &[u8],
-    session_id: &str,
-    index: u32,
+    push: &GrainePush<'_>,
     nonce: &[u8],
     ciphertext: &[u8],
-) -> Option<serde_json::Value> {
-    let key = match crate::mobile::graine::derive_message_key(seed, session_id, index) {
+) -> serde_json::Value {
+    let key = match crate::mobile::graine::derive_message_key(seed, push.session_id, push.index) {
         Ok(k) => k,
         Err(e) => {
             log::error!(
-                "[GraineBG] cannot derive key for session {session_id} index {index}: {e:?}"
+                "[GraineBG] cannot derive key for session {} index {}: {e:?}",
+                push.session_id,
+                push.index
             );
-            return None;
+            return refused("graine-open-failed");
         }
     };
     decrypt_channel_message(&key, nonce, ciphertext)
+        .unwrap_or_else(|| refused("graine-open-failed"))
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
@@ -436,6 +560,15 @@ pub fn cleanup_pending_db(files_dir: &Path) -> Result<(), String> {
 // These never persist `mls.bin`: a background decrypt must not advance the on-disk state
 // (the foreground owns it), so the loaded manager is discarded after the plaintext is read.
 
+/// One MLS frame a push carried, as the native service read it off the payload.
+#[derive(Debug, Clone, Copy)]
+pub struct PushFrame<'a> {
+    pub group_id: &'a str,
+    /// The push's `senderId`. The frame is refused when MLS verified somebody else (WP-G2-1b).
+    pub sender_id: &'a str,
+    pub ciphertext: &'a [u8],
+}
+
 /// Decrypts an MLS push payload for a notification preview, read-only.
 ///
 /// Uses the pre-derived 32-byte device key (base64) from `push_context.json`. Returns the
@@ -446,16 +579,15 @@ pub fn decrypt_push_message_with_key(
     key_b64: &str,
     user_id: &str,
     device_id: &str,
-    group_id: &str,
-    ciphertext: &[u8],
+    frame: &PushFrame<'_>,
 ) -> serde_json::Value {
     let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
     else {
         return refused("state-unreadable");
     };
 
-    let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
-        Ok(Some(p)) => p,
+    let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
+        Ok(Some(app)) => app,
         Ok(None) => {
             // NOT A FAILURE, AND THE CALLERS USED TO BE TOLD IT WAS. A commit or a proposal is
             // applied and yields no application message: the state ADVANCED, there is simply
@@ -471,7 +603,123 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    classify_plaintext(&plaintext)
+    classify_verified(&manager, frame.group_id, frame.sender_id, app)
+}
+
+/// Refuses a decrypted frame whose envelope names another sender than the one MLS verified, then
+/// classifies it - and drops every v2 seed it carries whose endorsement the key group's tree does
+/// not bear out (channel-encryption section 21.5).
+///
+/// The native twin of `verifiedSender.ts` and `endorsement.ts`, in ONE place for both platforms.
+/// `envelope_sender` is the push's `senderId`, which the server always sends; a credential the
+/// engine cannot read is refused like a mismatch, as the app refuses it.
+fn classify_verified(
+    manager: &MlsManager,
+    group_id: &str,
+    envelope_sender: &str,
+    app: mls_core::IncomingApplication,
+) -> serde_json::Value {
+    let verified_user = app
+        .sender_identity
+        .as_deref()
+        .map(|identity| identity.split_once(':').map_or(identity, |(user, _)| user));
+    if !verified_user.is_some_and(|user| user.eq_ignore_ascii_case(envelope_sender)) {
+        log::error!(
+            "[PushBG] SENDER MISMATCH group={} envelope={envelope_sender} verified={} - REFUSED, the generic banner is shown",
+            group_id.get(..8).unwrap_or(group_id),
+            app.sender_identity.as_deref().unwrap_or("unreadable")
+        );
+        return refused("sender-mismatch");
+    }
+    let mut out = classify_plaintext(&app.plaintext);
+    if out["reason"] == "graine-key-material" {
+        let seeds = out["seeds"].as_array().cloned().unwrap_or_default();
+        let offered = seeds.len();
+        let kept: Vec<serde_json::Value> = seeds
+            .into_iter()
+            .filter(|seed| endorsed_by_tree(manager, group_id, seed))
+            .collect();
+        if kept.len() < offered {
+            log::warn!(
+                "[PushBG] kept {} of {offered} seed(s) on {}: the rest wait for the app",
+                kept.len(),
+                group_id.get(..8).unwrap_or(group_id)
+            );
+        }
+        out["seeds"] = kept.into();
+    }
+    out
+}
+
+/// Whether a seed a key-material frame carried may reach the mirror: a v1 seed always, a v2 seed
+/// only once its endorsement verifies against the minting device's leaf in `group_id`'s tree.
+///
+/// NO SERVER HERE, unlike the app: a push handler holds no user session to ask the published keys
+/// with. A minter that has left the tree is therefore UNANSWERED, not refused - the seed is not
+/// mirrored, the app checks it against the server when it runs, and mirrors it then.
+fn endorsed_by_tree(manager: &MlsManager, group_id: &str, seed: &serde_json::Value) -> bool {
+    if seed["version"].as_u64() != Some(2) {
+        return true;
+    }
+    let text = |k: &str| seed[k].as_str().unwrap_or_default();
+    let bytes = |k: &str| STANDARD.decode(text(k)).unwrap_or_default();
+    let (session_id, minter, minter_device) = (
+        text("sessionId"),
+        text("minterUserId"),
+        text("minterDeviceId"),
+    );
+    let (seed_bytes, signing_pk, endorsement) = (
+        bytes("seedB64"),
+        bytes("signingPublicKeyB64"),
+        bytes("endorsementB64"),
+    );
+    if minter.is_empty()
+        || minter_device.is_empty()
+        || signing_pk.is_empty()
+        || endorsement.is_empty()
+    {
+        log::error!(
+            "[GRAINE_V2] REFUSED v2 seed {session_id}: its minter, key or endorsement is missing"
+        );
+        return false;
+    }
+    let identity = format!("{minter}:{minter_device}");
+    let device_key = match manager.member_signature_key(group_id, &identity) {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            log::warn!(
+                "[GRAINE_V2] v2 seed {session_id}: {identity} has left the tree - NOT mirrored, the app checks it against the server"
+            );
+            return false;
+        }
+        Err(e) => {
+            log::error!("[GRAINE_V2] v2 seed {session_id}: the key group cannot be read ({e})");
+            return false;
+        }
+    };
+    let commitment = crate::mobile::graine::seed_commitment(&seed_bytes);
+    let descriptor = crate::mobile::graine::GraineEndorsementV2 {
+        channel_id: text("channelId"),
+        session_id,
+        minter_user_id: minter,
+        minter_device_id: minter_device,
+        signing_public_key: &signing_pk,
+        seed_commitment: &commitment,
+        created_at: seed["createdAt"].as_i64().unwrap_or(0).max(0) as u64,
+    };
+    // `verify_endorsement_v2` logs which check refused it.
+    match crate::mobile::graine::verify_endorsement_v2(
+        &descriptor,
+        &seed_bytes,
+        &endorsement,
+        &device_key,
+    ) {
+        Ok(()) => true,
+        Err(_) => {
+            log::error!("[GRAINE_V2] REFUSED v2 seed {session_id}: not endorsed by {identity}");
+            false
+        }
+    }
 }
 
 /// What a DECRYPTED push frame is, in the one shape both push decrypt paths return.
@@ -541,9 +789,8 @@ pub fn decrypt_push_message_with_commits_with_key(
     key_b64: &str,
     user_id: &str,
     device_id: &str,
-    group_id: &str,
     commits: &[Vec<u8>],
-    ciphertext: &[u8],
+    frame: &PushFrame<'_>,
 ) -> serde_json::Value {
     let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
     else {
@@ -551,7 +798,7 @@ pub fn decrypt_push_message_with_commits_with_key(
     };
 
     for commit in commits {
-        match manager.process_incoming_message(group_id, commit) {
+        match manager.process_incoming_message(frame.group_id, commit) {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("[PushBG] key-based catch-up: commit apply failed, stopping - {e}");
@@ -560,8 +807,8 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     }
 
-    let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
-        Ok(Some(p)) => p,
+    let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
+        Ok(Some(app)) => app,
         Ok(None) => {
             log::debug!("[PushBG] key-based catch-up: control frame applied, nothing to render");
             return refused("control-frame");
@@ -572,7 +819,7 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     };
 
-    classify_plaintext(&plaintext)
+    classify_verified(&manager, frame.group_id, frame.sender_id, app)
 }
 
 #[cfg(test)]
@@ -816,8 +1063,11 @@ mod tests {
             &key_b64(11),
             "graine-bob",
             "dev-b",
-            &group_id,
-            ciphertext,
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "graine-alice",
+                ciphertext,
+            },
         );
 
         assert_eq!(info["ok"], false, "key material must still ring nobody");
@@ -879,8 +1129,11 @@ mod tests {
             &key_b64(13),
             "graine-ahead-bob",
             "dev-b",
-            &group_id,
-            ciphertext,
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "graine-ahead-alice",
+                ciphertext,
+            },
         );
         assert_eq!(direct["reason"], "mls-refused");
 
@@ -889,9 +1142,12 @@ mod tests {
             &key_b64(13),
             "graine-ahead-bob",
             "dev-b",
-            &group_id,
             &[commit],
-            ciphertext,
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "graine-ahead-alice",
+                ciphertext,
+            },
         );
         assert_eq!(info["ok"], false, "key material must still ring nobody");
         assert_eq!(info["reason"], "graine-key-material");
@@ -901,6 +1157,134 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0]["sessionId"], "sess-new");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+    }
+
+    /// Alice seals `frame` for the group; bob's saved state is what the push path loads.
+    fn alice_frame_for_bob(tag: &str, seed: u8, frame: &[u8]) -> (Vec<u8>, Vec<u8>, String) {
+        let (alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let out = send_messages_background_with_key(
+            &temp_dir(tag),
+            &alice_state,
+            &key_b64(seed),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("frame-1", &group_id, frame)],
+        )
+        .expect("alice encrypts");
+        let ciphertext = ciphertexts_of(&out)[0].clone();
+        let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        (bob_state, ciphertext, group_id)
+    }
+
+    /// WP-G2-1b, natively: a push whose `senderId` is not the sender MLS verified shows nothing of
+    /// its text - the web refuses the same frame, and a banner must not say otherwise.
+    #[test]
+    fn a_push_naming_another_sender_is_refused() {
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let (bob_state, ciphertext, group_id) = alice_frame_for_bob("sender", 17, &frame);
+        let open = |envelope: &str| {
+            decrypt_push_message_with_key(
+                &bob_state,
+                &key_b64(17),
+                "sender-bob",
+                "dev-b",
+                &PushFrame {
+                    group_id: &group_id,
+                    sender_id: envelope,
+                    ciphertext: &ciphertext,
+                },
+            )
+        };
+
+        assert_eq!(open("mallory")["reason"], "sender-mismatch");
+        // The case of an id is not a disagreement: the web compares lowercased too.
+        assert_eq!(open("SENDER-ALICE")["ok"], true);
+    }
+
+    /// A v2 seed reaches the mirror only once its minter's leaf endorses it (channel-encryption
+    /// section 21.5): forged, or minted by a device the tree does not hold, it waits for the app.
+    #[test]
+    fn a_v2_seed_is_kept_only_when_the_tree_endorses_it() {
+        use super::super::graine::{encode_endorsement_v2, seed_commitment, GraineEndorsementV2};
+        use super::super::proto_fields::{build_graine_v2_app_message, GraineV2Fields};
+
+        let tag = "endorse";
+        let seed = [3u8; 32];
+        let signing_pk = [9u8; 32];
+        let created_at = 1_700_000_000_000i64;
+        // Each case seals its own frame, so each gets its own group and its own endorsement.
+        let case = |n: u8, device: &'static str, sign: &dyn Fn(&MlsManager, &[u8]) -> Vec<u8>| {
+            let (alice, bob, group_id) = joined_pair(&format!("{tag}-{n}"));
+            let alice_id = format!("{tag}-{n}-alice");
+            let d = encode_endorsement_v2(&GraineEndorsementV2 {
+                channel_id: "ch-salon",
+                session_id: "sess-v2",
+                minter_user_id: &alice_id,
+                minter_device_id: device,
+                signing_public_key: &signing_pk,
+                seed_commitment: &seed_commitment(&seed),
+                created_at: created_at as u64,
+            })
+            .expect("descriptor");
+            let endorsement = sign(if n == 2 { &bob } else { &alice }, &d);
+            let frame = build_graine_v2_app_message(
+                "ch-salon",
+                "sess-v2",
+                &seed,
+                created_at,
+                &GraineV2Fields {
+                    minter_user_id: &alice_id,
+                    minter_device_id: device,
+                    signing_public_key: &signing_pk,
+                    endorsement: &endorsement,
+                },
+            );
+            let key = decode_base64_to_32_bytes(&key_b64(20 + n)).expect("key");
+            let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+            let out = send_messages_background_with_key(
+                &temp_dir(&format!("{tag}-{n}")),
+                &alice_state,
+                &key_b64(20 + n),
+                &alice_id,
+                "dev-a",
+                &[entry("seed", &group_id, &frame)],
+            )
+            .expect("alice encrypts");
+            let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+            let info = decrypt_push_message_with_key(
+                &bob_state,
+                &key_b64(20 + n),
+                &format!("{tag}-{n}-bob"),
+                "dev-b",
+                &PushFrame {
+                    group_id: &group_id,
+                    sender_id: &alice_id,
+                    ciphertext: &ciphertexts_of(&out)[0],
+                },
+            );
+            assert_eq!(info["reason"], "graine-key-material");
+            info["seeds"].as_array().expect("seeds").len()
+        };
+        let by_device = |m: &MlsManager, d: &[u8]| m.sign_with_device_credential(d).expect("sign");
+
+        assert_eq!(
+            case(1, "dev-a", &by_device),
+            1,
+            "endorsed by alice's own leaf"
+        );
+        assert_eq!(
+            case(2, "dev-a", &by_device),
+            0,
+            "bob signed an endorsement claiming alice"
+        );
+        assert_eq!(
+            case(3, "dev-gone", &by_device),
+            0,
+            "a device the tree does not hold"
+        );
     }
 
     /// The FFI contract is a string on both platforms and nothing type-checks it, so pin the shape

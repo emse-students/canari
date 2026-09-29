@@ -14,9 +14,9 @@ use crate::concurrency::mark_foreground_active;
 
 use super::background::{
     background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
-    decode_commits_b64_json, decrypt_graine_message, decrypt_push_message_with_commits_with_key,
-    decrypt_push_message_with_key, parse_outbox_entries_json, process_welcome_background_with_key,
-    send_messages_background_with_key,
+    decode_commits_b64_json, decrypt_push_message_with_commits_with_key,
+    decrypt_push_message_with_key, open_graine_push, parse_outbox_entries_json,
+    process_welcome_background_with_key, send_messages_background_with_key, GrainePush, PushFrame,
 };
 use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
 
@@ -61,6 +61,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
+    sender_id: *const c_char,
     cipher_ptr: *const u8,
     cipher_len: usize,
 ) -> *mut c_char {
@@ -69,6 +70,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
+        || sender_id.is_null()
         || cipher_ptr.is_null()
     {
         return json_to_c_string(serde_json::json!({ "ok": false }));
@@ -89,8 +91,11 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
         &device_key_str,
         &user_id_str,
         &device_id_str,
-        &group_id_str,
-        ciphertext,
+        &PushFrame {
+            group_id: &group_id_str,
+            sender_id: &str_from_c_str(sender_id),
+            ciphertext,
+        },
     ))
 }
 
@@ -146,6 +151,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
+    sender_id: *const c_char,
     commits_json: *const c_char,
     cipher_ptr: *const u8,
     cipher_len: usize,
@@ -155,6 +161,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
+        || sender_id.is_null()
         || commits_json.is_null()
         || cipher_ptr.is_null()
     {
@@ -174,51 +181,65 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
         &device_key_str,
         &user_id_str,
         &device_id_str,
-        &group_id_str,
         &commits,
-        ciphertext,
+        &PushFrame {
+            group_id: &group_id_str,
+            sender_id: &str_from_c_str(sender_id),
+            ciphertext,
+        },
     ))
 }
 
-/// Decrypts a community-channel message sealed under a Graine session (AES-256-GCM, outside MLS).
-///
-/// `seed_b64` is the session's 32-byte seed as the mirror holds it, `session_id` and
-/// `message_index` name which message key to derive from it, and `nonce_b64` / `ciphertext_b64` are
-/// the push's own base64 fields. Returns the same JSON as `canari_native_decrypt_message`
-/// (`{"ok":true,"text":...}`), or `{"ok":false}`. No MLS state and no lock: stateless and
-/// read-only. FFI mirror of the Android JNI `nativeDecryptGraineMessage`.
+/// Opens a salon push against the seed mirror under `data_dir`: every v1 and v2 rule, in the one
+/// implementation both platforms share (`background::open_graine_push`). `signature_b64` is an
+/// empty string when the push carried none. Returns the same JSON as
+/// `canari_native_decrypt_message`. Read-only and lock-free. FFI mirror of the Android JNI
+/// `nativeOpenGrainePush`.
 #[no_mangle]
-pub unsafe extern "C" fn canari_native_decrypt_graine_message(
-    seed_b64: *const c_char,
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn canari_native_open_graine_push(
+    data_dir: *const c_char,
+    channel_id: *const c_char,
     session_id: *const c_char,
     message_index: u32,
+    sender_id: *const c_char,
     nonce_b64: *const c_char,
     ciphertext_b64: *const c_char,
+    signature_b64: *const c_char,
 ) -> *mut c_char {
-    if seed_b64.is_null() || session_id.is_null() || nonce_b64.is_null() || ciphertext_b64.is_null()
+    if [
+        data_dir,
+        channel_id,
+        session_id,
+        sender_id,
+        nonce_b64,
+        ciphertext_b64,
+        signature_b64,
+    ]
+    .iter()
+    .any(|p| p.is_null())
     {
-        return json_to_c_string(serde_json::json!({ "ok": false }));
+        return json_to_c_string(serde_json::json!({ "ok": false, "reason": "ffi-null" }));
     }
-
-    let decode = |s: String| STANDARD.decode(s.trim()).ok();
+    let dir = str_from_c_str(data_dir);
+    let channel = str_from_c_str(channel_id);
     let session = str_from_c_str(session_id);
-    let seed = match decode(str_from_c_str(seed_b64)) {
-        Some(v) => v,
-        None => return json_to_c_string(serde_json::json!({ "ok": false })),
-    };
-    let nonce = match decode(str_from_c_str(nonce_b64)) {
-        Some(v) => v,
-        None => return json_to_c_string(serde_json::json!({ "ok": false })),
-    };
-    let ciphertext = match decode(str_from_c_str(ciphertext_b64)) {
-        Some(v) => v,
-        None => return json_to_c_string(serde_json::json!({ "ok": false })),
-    };
-
-    match decrypt_graine_message(&seed, &session, message_index, &nonce, &ciphertext) {
-        Some(v) => json_to_c_string(v),
-        None => json_to_c_string(serde_json::json!({ "ok": false })),
-    }
+    let sender = str_from_c_str(sender_id);
+    let nonce = str_from_c_str(nonce_b64);
+    let ciphertext = str_from_c_str(ciphertext_b64);
+    let signature = str_from_c_str(signature_b64);
+    json_to_c_string(open_graine_push(
+        std::path::Path::new(&dir),
+        &GrainePush {
+            channel_id: &channel,
+            session_id: &session,
+            index: message_index,
+            sender_id: &sender,
+            nonce_b64: &nonce,
+            ciphertext_b64: &ciphertext,
+            signature_b64: &signature,
+        },
+    ))
 }
 
 /// Writes the seeds of a key-material frame into `{data_dir}/graine_seeds.json`, and returns how
