@@ -64,6 +64,7 @@
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
+- [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding

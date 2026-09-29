@@ -24,14 +24,13 @@ one `status 400` carrying `tauri://localhost/auth/callback` from a user agent ca
 
 ## Deployment
 
-The CD pipeline ([`cicd.md`](../cicd.md), job `deploy-to-server`):
-
-1. Creates `/home/canari/miconnect/{data,certs,custom-templates}` if absent
-2. Copies `infrastructure/authentik/compose.yml` to `/home/canari/miconnect/compose.yml` (versioned source of truth)
-3. Generates `/home/canari/miconnect/.env` from GitHub Secrets
-4. Runs `docker compose up -d` from the miconnect directory
-
-`up -d` is idempotent: without config changes, Authentik is not recreated.
+**No pipeline deploys this stack.** It runs from `/srv/miconnect/` on the Portail-etu host, its
+`.env` written by hand beside `infrastructure/authentik/compose.yml`, which is a RECONSTRUCTION
+REFERENCE: the live file was compared on 2026-09-29 and differs from it by comments only. The
+history, and the job `deploy-to-server` this section described until then (it does not exist), are
+in [the stack's README](../../../infrastructure/authentik/README.md). A change to `compose.yml`
+reaches production only when someone copies it there and runs `docker compose up -d` in
+`/srv/miconnect/`, which recreates `server` and `worker`: sign-in is down for the restart.
 
 ## OIDC flow
 
@@ -371,6 +370,52 @@ Deliberately left:
   rewrites the text in "tu" first.
 - `initial-setup` keeps "Welcome to authentik!" - only the first admin ever sees it.
 
+## The hand-built configuration, audited 2026-09-29
+
+The whole configuration was built by hand in the admin UI, and nothing but the 31 DEFAULT
+blueprints describes any of it. Read in full with `ak shell` on 2026-09-29 (cross-references,
+orphans, logs); the user asked for it to be made clean and homogeneous.
+
+**Applied that day, in ONE transaction, every object re-proven unreferenced before its deletion and
+printed in full (the rollback):**
+
+- Deleted, all bound to nothing: the stages `Alumni Only`, `Force Link Alumni Notice`,
+  `miconnect-demande-promo-et-formation` (an older copy of `Request Promo & Formation`, sharing its
+  prompts) and `Force Link Alumni`; the prompt `Alumni Force Link Continue`; the policy
+  `Need Alumni Source`; the empty flow `miconnect-enroll-aluni-from-cas`. The alumni sketch they
+  formed is recorded where it will be rebuilt ([profiles-and-access WP8](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)),
+  including the one useful fact in it: the link was a redirect to
+  `/source/saml/login/alumni/` while signed in.
+- **Logging out of ANY of the nine applications ended on the Archives.** A redirect stage `Archives
+  MINO logout redirect` had been bound to `default-provider-invalidation-flow`, the invalidation
+  flow all nine providers share. It now lives in `mino-provider-invalidation-flow`, set on
+  `Archives MINO` and `MinoWiki` only; the default flow is stageless again, as its blueprint ships
+  it. No application calls `end-session` today except, presumably, those two, so the reach of the
+  defect was the MINO pair's siblings.
+
+**Found and left, each with its reason:**
+
+- `password-login` is reachable by URL only and is NOT dead: the test campaign signs in through it
+  (`PASSWORD_LOGIN_FLOW_SLUG`, [cross-client-campaign-resume](../cross-client-campaign-resume.md)).
+  It is not an opening for the rest: 586 accounts have an EMPTY password, which matches nothing;
+  6 have a real one.
+- `miconnect-auth-fallback` is referenced by nothing inside authentik; its deny text describes the
+  CAS failure below.
+- The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29 - the
+  `initial-setup` flow it manages was edited by hand. Harmless for sign-in, and it is noise.
+- **`AUTHENTIK_LOG_LEVEL` was `debug`** in `compose.yml`: 63 % of the lines, and user e-mail addresses
+  written into the log. The file now says `info` (the access log, `authentik.asgi`, is emitted at
+  info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
+`compose.yml.bak-2026-09-29`), `docker compose up -d`, both containers read back `info`, the
+`/authorize` probe answered `302` to `miconnect-auth` and no warning or error followed.
+- **About 1 CAS return in 6 fails**: [backlog](../backlog.md#p2---about-one-cas-return-in-six-reaches-miconnect-with-no-code-and-no-state-and-the-sign-in-fails-measured-2026-09-29).
+- The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
+  `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
+  `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
+  provider has 5 min / 30 days. Each is decided in the "authentik as code" package
+  ([profiles-and-access](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)),
+  not patched one by one.
+
 ## Database and backup
 
 The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
@@ -382,9 +427,11 @@ apart on 2026-09-02 gave 465 and then 511, which was chased as a discrepancy aft
 were created; a third gave 517. There is **no LDAP source** (`LDAPSource.objects.all()` is empty) -
 real people are enrolling continuously, several in the hour that was measured. So a count is a
 snapshot of something moving: compare identities, never totals, and if a total must be quoted, quote
-the instant with it. Every account is `type=internal` (`external` and `service_account` are both
-zero, with one `internal_service_account`), which is why the campaign's dedicated accounts had to be
-`internal` too - see [cross-client-campaign-resume](../cross-client-campaign-resume.md).
+the instant with it. Every account was `type=internal` until 2026-09-25, when all but the admins
+became `external` ([above](#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25));
+read 2026-09-29: 600 `external`, 5 `internal` (the `authentik Admins` group), 1
+`internal_service_account`. What each account declared at enrolment, and what the applications
+decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1-what-exists-today-measured-on-production-2026-09-29-1436-utc).
 
 ## See also
 
