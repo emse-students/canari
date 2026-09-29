@@ -69,6 +69,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     companion object {
         const val TAG = "CanariFCM"
 
+        /** The `open_graine_push` refusals that accuse somebody, rather than miss a seed. */
+        private val GRAINE_V2_REFUSALS =
+            setOf("author-mismatch", "signature-missing", "signature-refused")
+
         /**
          * The one thread on which every push that touches `mls.bin` runs. See
          * [runSerializedWithWakeLock] for what it replaced and why.
@@ -1875,12 +1879,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // for all background MLS decryption. The PIN is never stored on the filesystem.
 
     /** Decrypts an MLS message using the pre-derived device key (base64). */
+    // `senderId` is the push's own: Rust refuses the frame (`reason=sender-mismatch`) when it is not
+    // the sender MLS verified, so a banner never names someone the app would refuse (WP-G2-1b).
     external fun nativeDecryptMessageWithKey(
         stateBytes: ByteArray,
         keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
+        senderId: String,
         ciphertext: ByteArray
     ): String
 
@@ -1900,6 +1907,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         groupId: String,
+        senderId: String,
         commitsJson: String,
         ciphertext: ByteArray
     ): String
@@ -1918,17 +1926,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeStoreGraineSeeds(dataDir: String, seedsJson: String): Int
 
-    // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS).
-    // `seedB64` is the session's 32-byte seed from graine_seeds.json; `sessionId` + `messageIndex`
-    // name which message key to derive from it (HKDF, in Rust, the one copy shared by all three
-    // platforms). Nonce and ciphertext||tag are base64. Returns the same JSON shape as
-    // nativeDecryptMessage, or {"ok":false} on failure. No state file involved.
-    external fun nativeDecryptGraineMessage(
-        seedB64: String,
+    // Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
+    // the seed mirror in `dataDir`. Rust reads the session itself and applies every rule the app
+    // applies to a row - the floor, and under a v2 session the author, the signature and the AAD
+    // (channel-encryption section 21.5) - in the one implementation all platforms share.
+    // `signatureB64` is empty when the push carried none. Returns the same JSON shape as
+    // nativeDecryptMessage, or {"ok":false,"reason":...}.
+    external fun nativeOpenGrainePush(
+        dataDir: String,
+        channelId: String,
         sessionId: String,
         messageIndex: Int,
+        senderId: String,
         nonceB64: String,
-        ciphertextB64: String
+        ciphertextB64: String,
+        signatureB64: String
     ): String
 
     // Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
@@ -2319,7 +2331,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        var outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
+        var outcome = tryDecrypt(queuedMessageId, groupId, inlineProto, senderId)
 
         // ITS WELCOME IS BEHIND IT ON THIS LANE, SO IT GOES BEHIND ITS WELCOME. Nothing about this
         // frame is wrong: the group it belongs to is joined by a task already queued, and on one
@@ -2349,7 +2361,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 isRefused = { it is PushDecrypt.Refused },
                 locality = { groupLocality(groupId) },
                 catchUp = {
-                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto, senderId)
                 },
                 log = { Log.d(TAG, it) },
             )
@@ -2991,6 +3003,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         groupId: String,
         inlineProto: String?,
+        senderId: String,
     ): PushDecrypt {
         // The id is only what FETCHES a proto that did not travel inline. A seed frame riding on a
         // salon push (channel-encryption §19) has no queued row of its own and needs none.
@@ -3038,6 +3051,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "tryDecrypt: MLS state loaded (${stateBytes.size} bytes), userId=${ctx.userId} deviceId=${ctx.deviceId}")
             return decryptProto(
                 stateBytes, ctx.userId, ctx.deviceId, groupId, protoB64,
+                senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
             )
         } finally {
@@ -3281,6 +3295,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "$where: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
                     PushDecrypt.KeyMaterial(seeds)
                 }
+                "sender-mismatch" -> {
+                    // REFUSED, AND NOTHING RETRIES IT (WP-G2-1b): the frame decrypted, and its push
+                    // names somebody MLS did not verify. The app refuses the same frame; a catch-up
+                    // would decrypt it into the same disagreement. Said here because the Rust line
+                    // goes nowhere in a killed app.
+                    Log.e(TAG, "$where: SENDER MISMATCH - REFUSED, the push names a sender MLS did not verify")
+                    PushDecrypt.NothingToRender
+                }
                 "graine-request" -> {
                     // A PEER ASKING, NOT A PEER GIVING. Only the foreground can answer one -
                     // it needs the group's history and a send - so the background states what
@@ -3328,11 +3350,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         protoB64: String,
         deviceKeyB64: String? = null,
+        senderId: String,
     ): PushDecrypt {
         return try {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes)
             parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
@@ -3359,6 +3382,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         groupId: String,
         inlineProto: String?,
+        senderId: String,
     ): PushDecrypt? {
         if (groupId.isEmpty() || (queuedMessageId.isNullOrEmpty() && inlineProto == null)) return null
         val ctx = MlsContextLoader.loadPushContext(this) ?: return null
@@ -3405,6 +3429,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
             decryptProtoWithCommits(
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
+                senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
             )
         }
@@ -3486,10 +3511,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         commitsJson: String,
         cipherBytes: ByteArray,
         deviceKeyB64: String? = null,
+        senderId: String,
     ): PushDecrypt {
         return try {
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, commitsJson, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes)
             parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
@@ -4056,11 +4082,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return null
         }
         val outcome = SeedFrameLadder.open(
-            initial = tryDecrypt(null, groupId, frame),
+            initial = tryDecrypt(null, groupId, frame, data["senderId"] ?: ""),
             groupTag = groupId.take(8),
             isRefused = { it is PushDecrypt.Refused },
             locality = { groupLocality(groupId) },
-            catchUp = { tryDecryptWithCommitCatchup(null, groupId, frame) },
+            catchUp = { tryDecryptWithCommitCatchup(null, groupId, frame, data["senderId"] ?: "") },
             log = { Log.w(TAG, "openSeedFrame: $it") },
         )
         val keyMaterial = outcome as? PushDecrypt.KeyMaterial
@@ -4120,7 +4146,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
-                    nativeDecryptGraineMessage(seedB64, sessionId, messageIndex, nonce, ciphertext)
+                    nativeOpenGrainePush(
+                        MlsContextLoader.tauriDataDir(this).absolutePath,
+                        channelId, sessionId, messageIndex, senderId, nonce, ciphertext,
+                        data["signature"] ?: "",
+                    )
                 )
                 if (json.optBoolean("ok", false)) {
                     // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking
@@ -4130,7 +4160,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ?.let { renderMentions(it, myUserId, res).take(200) }
                         ?: buildChannelFallbackText(res, channelName)
                 } else {
-                    Log.w(TAG, "handleChannelMessage: decrypt ok=false channel=$channelId")
+                    // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
+                    // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
+                    // naming the check goes nowhere in a killed app, so this token is the witness.
+                    val reason = json.optString("reason")
+                    if (reason in GRAINE_V2_REFUSALS) {
+                        Log.e(TAG, "handleChannelMessage: REFUSED reason=$reason channel=$channelId session=$sessionId")
+                    } else {
+                        Log.w(TAG, "handleChannelMessage: decrypt ok=false reason=$reason channel=$channelId")
+                    }
                     buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {

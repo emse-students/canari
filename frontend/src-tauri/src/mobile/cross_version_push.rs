@@ -409,3 +409,136 @@ fn freeze_the_graine_v2_generation() {
     std::fs::write(&path, &blob).expect("write the fixture");
     println!("froze {} ({} bytes)", path.display(), blob.len());
 }
+
+/// The frozen pushes, opened the way a push handler opens them: through the mirror, by
+/// `open_graine_push` (channel-encryption section 21.5). What the three platforms share is THIS
+/// function, so every rule the web reader applies is pinned here once.
+mod through_the_mirror {
+    use super::*;
+    use crate::mobile::background::{open_graine_push, GrainePush};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    /// A data directory holding one mirror entry for `channel`/`GRAINE_SESSION`.
+    fn mirror(tag: &str, channel: &str, entry: serde_json::Value) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-open-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let root = serde_json::json!({ channel: { GRAINE_SESSION: entry } });
+        std::fs::write(dir.join("graine_seeds.json"), root.to_string()).expect("write mirror");
+        dir
+    }
+
+    fn v2_entry(first_index: u32) -> serde_json::Value {
+        serde_json::json!({
+            "seed": STANDARD.encode(GRAINE_SEED),
+            "createdAt": 1,
+            "firstIndex": first_index,
+            "version": 2,
+            "minterUserId": GRAINE_V2_MINTER,
+            "signingPk": STANDARD.encode(unhex(GRAINE_V2_SESSION_PUBLIC_KEY)),
+        })
+    }
+
+    /// Opens the frozen v2 push against `dir`, with the fields a handler would read off it.
+    fn open_v2(
+        dir: &std::path::Path,
+        channel: &str,
+        sender: &str,
+        with_signature: bool,
+    ) -> serde_json::Value {
+        let (nonce, signature, ciphertext) = frozen_v2();
+        let (nonce, ciphertext) = (STANDARD.encode(nonce), STANDARD.encode(ciphertext));
+        let signature = if with_signature {
+            STANDARD.encode(signature)
+        } else {
+            String::new()
+        };
+        open_graine_push(
+            dir,
+            &GrainePush {
+                channel_id: channel,
+                session_id: GRAINE_SESSION,
+                index: GRAINE_INDEX,
+                sender_id: sender,
+                nonce_b64: &nonce,
+                ciphertext_b64: &ciphertext,
+                signature_b64: &signature,
+            },
+        )
+    }
+
+    #[test]
+    fn a_v2_push_opens_against_its_mirrored_session() {
+        let dir = mirror("v2-ok", GRAINE_V2_CHANNEL, v2_entry(0));
+        assert_is_the_frozen_message(&open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, true));
+    }
+
+    #[test]
+    fn a_v2_push_naming_another_author_is_refused_before_anything_opens() {
+        let dir = mirror("v2-author", GRAINE_V2_CHANNEL, v2_entry(0));
+        assert_eq!(
+            open_v2(&dir, GRAINE_V2_CHANNEL, "someone-else", true)["reason"],
+            "author-mismatch"
+        );
+    }
+
+    #[test]
+    fn a_v2_push_stripped_of_its_signature_is_refused_not_downgraded() {
+        let dir = mirror("v2-nosig", GRAINE_V2_CHANNEL, v2_entry(0));
+        assert_eq!(
+            open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, false)["reason"],
+            "signature-missing"
+        );
+    }
+
+    #[test]
+    fn a_push_moved_to_another_salon_finds_nothing_to_open_with() {
+        let dir = mirror("v2-moved", GRAINE_V2_CHANNEL, v2_entry(0));
+        assert_eq!(
+            open_v2(&dir, "another-salon", GRAINE_V2_MINTER, true)["reason"],
+            "seed-not-mirrored"
+        );
+    }
+
+    #[test]
+    fn a_push_below_the_session_floor_is_refused_as_the_app_refuses_it() {
+        let dir = mirror("v2-floor", GRAINE_V2_CHANNEL, v2_entry(GRAINE_INDEX + 1));
+        assert_eq!(
+            open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, true)["reason"],
+            "below-floor"
+        );
+    }
+
+    #[test]
+    fn a_v2_session_held_without_its_key_is_unreadable_never_opened_as_v1() {
+        let mut entry = v2_entry(0);
+        entry["signingPk"] = "".into();
+        let dir = mirror("v2-nokey", GRAINE_V2_CHANNEL, entry);
+        assert_eq!(
+            open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, true)["reason"],
+            "mirror-unreadable"
+        );
+    }
+
+    #[test]
+    fn a_v1_push_still_opens_whoever_it_names() {
+        let (nonce, ciphertext) = frozen(GRAINE_FIXTURE);
+        let dir = mirror(
+            "v1",
+            "v1-salon",
+            serde_json::json!({ "seed": STANDARD.encode(GRAINE_SEED), "createdAt": 1, "firstIndex": 0 }),
+        );
+        let info = open_graine_push(
+            &dir,
+            &GrainePush {
+                channel_id: "v1-salon",
+                session_id: GRAINE_SESSION,
+                index: GRAINE_INDEX,
+                sender_id: "anyone",
+                nonce_b64: &STANDARD.encode(nonce),
+                ciphertext_b64: &STANDARD.encode(ciphertext),
+                signature_b64: "",
+            },
+        );
+        assert_is_the_frozen_message(&info);
+    }
+}

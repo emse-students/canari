@@ -148,10 +148,11 @@ describe('channel push payload contract (social-service writer vs the three nati
       'seedGroupId',
       'senderId',
       'senderSessionId',
+      'signature',
       'type',
       'workspaceName',
     ]);
-    expect(inlineKeys).toEqual(['ciphertext', 'seedFrame', 'seedGroupId']);
+    expect(inlineKeys).toEqual(['ciphertext', 'seedFrame', 'seedGroupId', 'signature']);
     // `mentioned` is not in the shared literal: it is computed per recipient and spread in at the
     // send, which is the whole point - it is the only field whose value differs between recipients.
     expect(fanOutBody).toMatch(/mentioned:\s*mentioned\.has\(/);

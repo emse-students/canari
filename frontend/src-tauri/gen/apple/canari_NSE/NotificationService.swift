@@ -367,7 +367,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     var decrypted: DecryptResult?
     if !protoB64.isEmpty {
-      decrypted = runDecryptLadder(ctx: ctx, groupId: groupId, protoB64: protoB64)
+      decrypted = runDecryptLadder(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64)
     }
 
     // Call signaling over MLS (WP-XP-5, killed-app path). Only pre-WP-XP-5 callers send these
@@ -407,13 +407,15 @@ class NotificationService: UNNotificationServiceExtension {
   /// 2. if the locality could not be established, stop - see `GroupLocality.unknown`;
   /// 3. if the group is already local, in-memory commit catch-up;
   /// 4. if the group is genuinely absent, stop - nothing this extension can wait for joins it.
-  private func runDecryptLadder(ctx: PushContext, groupId: String, protoB64: String) -> DecryptResult? {
+  private func runDecryptLadder(
+    ctx: PushContext, groupId: String, senderId: String, protoB64: String
+  ) -> DecryptResult? {
     guard let state = loadMlsState() else {
       NSLog("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8))")
       return nil
     }
 
-    var decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
+    var decrypted = decryptProto(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state)
     guard decrypted == nil, !groupId.isEmpty else { return decrypted }
 
     let locality = groupLocality(groupId: groupId, ctx: ctx)
@@ -427,7 +429,7 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     if locality == .local {
-      decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
+      decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64)
       return decrypted
     }
 
@@ -525,15 +527,17 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Decrypts the ciphertext directly against the persisted state. Read-only.
   private func decryptProto(
-    ctx: PushContext, groupId: String, protoB64: String, state: Data
+    ctx: PushContext, groupId: String, senderId: String, protoB64: String, state: Data
   ) -> DecryptResult? {
-    Self.parseDecrypted(decryptProtoJson(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state))
+    Self.parseDecrypted(
+      decryptProtoJson(
+        ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state))
   }
 
   /// The raw JSON of a direct decrypt - a message, or a refusal carrying its `reason` - or nil
   /// when nothing could be attempted. Split out for the seed frame, whose answer is a refusal.
   private func decryptProtoJson(
-    ctx: PushContext, groupId: String, protoB64: String, state: Data
+    ctx: PushContext, groupId: String, senderId: String, protoB64: String, state: Data
   ) -> String? {
     guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let cipher = Data(base64Encoded: protoB64, options: .ignoreUnknownCharacters),
@@ -545,6 +549,7 @@ class NotificationService: UNNotificationServiceExtension {
         guard let raw = canari_native_decrypt_message(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
           ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId,
+          senderId,
           cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
         else { return nil }
         defer { canari_free_string(raw) }
@@ -557,13 +562,16 @@ class NotificationService: UNNotificationServiceExtension {
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
   /// memory to decrypt a push that is ahead of the persisted state. Never persists mls.bin.
   private func decryptWithCommitCatchup(
-    ctx: PushContext, groupId: String, protoB64: String
+    ctx: PushContext, groupId: String, senderId: String, protoB64: String
   ) -> DecryptResult? {
-    Self.parseDecrypted(catchupJson(ctx: ctx, groupId: groupId, protoB64: protoB64))
+    Self.parseDecrypted(
+      catchupJson(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64))
   }
 
   /// The raw JSON of a commit catch-up, as `decryptProtoJson` is to a direct decrypt.
-  private func catchupJson(ctx: PushContext, groupId: String, protoB64: String) -> String? {
+  private func catchupJson(
+    ctx: PushContext, groupId: String, senderId: String, protoB64: String
+  ) -> String? {
     guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let state = loadMlsState() else { return nil }
 
@@ -592,7 +600,7 @@ class NotificationService: UNNotificationServiceExtension {
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message_with_commits(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
-          ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId, commitsJson,
+          ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId, senderId, commitsJson,
           cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
         else { return nil }
         defer { canari_free_string(raw) }
@@ -851,12 +859,23 @@ class NotificationService: UNNotificationServiceExtension {
     if seedB64 != nil {
       NSLog("[CanariNSE] handleChannelMessage: seed source=\(seedSource) channel=\(channelId) session=\(sessionId)")
     }
-    if openable, let index = messageIndex, let seedB64 = seedB64 {
-      if let raw = canari_native_decrypt_graine_message(seedB64, sessionId, index, nonce, ciphertext)
+    // RUST READS THE SESSION FROM THE MIRROR ITSELF and applies every rule the app applies to a row
+    // - the floor, and under a v2 session the author, the signature and the AAD (channel-encryption
+    // section 21.5) - in the one implementation Android shares. `seedB64` above only says whether
+    // the mirror holds the session, which is what decides between the mirror and the frame.
+    if openable, let index = messageIndex, seedB64 != nil, let dir = Self.appGroupDir() {
+      let signature = Self.string(userInfo["signature"]) ?? ""
+      if let raw = canari_native_open_graine_push(
+        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature)
       {
         let json = String(cString: raw)
         canari_free_string(raw)
         body = Self.parseDecryptedText(json)
+        if body == nil {
+          NSLog(
+            "[CanariNSE] handleChannelMessage: not opened reason=\(Self.refusalReason(json) ?? "none") channel=\(channelId) session=\(sessionId)"
+          )
+        }
       }
     } else {
       NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
@@ -919,12 +938,19 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] openSeedFrame: push context, MLS state or App Group unavailable group=\(groupId.prefix(8))")
       return nil
     }
-    var json = decryptProtoJson(ctx: ctx, groupId: groupId, protoB64: frame, state: state)
+    // The frame's MLS sender is the salon message's author, who attached it: Rust refuses the frame
+    // when the push names anybody else (WP-G2-1b).
+    guard let frameSender = Self.nonEmpty(Self.string(userInfo["senderId"])) else {
+      NSLog("[CanariNSE] openSeedFrame: the push names no sender group=\(groupId.prefix(8))")
+      return nil
+    }
+    var json = decryptProtoJson(
+      ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame, state: state)
     if Self.refusalReason(json) == "mls-refused" {
       switch groupLocality(groupId: groupId, ctx: ctx) {
       case .local:
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
-        json = catchupJson(ctx: ctx, groupId: groupId, protoB64: frame) ?? json
+        json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; no join to wait for")
       case .unknown:

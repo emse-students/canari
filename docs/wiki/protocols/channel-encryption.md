@@ -2846,8 +2846,49 @@ called from `storeIncomingSeed`, which both the single seed and the repair bundl
 (`wasmGraineSignatureEngine`) and the Tauri commands on native. Both are `mls-core`. Tests use
 `crypto/graineV2.testEngine.ts`, a WebCrypto copy that production never imports.
 
-**Not yet**: the native push readers (Kotlin, the NSE, `canari_push.mm`) and the attached-frame
-endorsement check are G2-4b, and the signature joins the push's inline group with them.
+**The native push readers** are §21.5, and the signature joins the push's inline group with them.
+
+### 21.5 The native readers (WP-G2-4b)
+
+**One implementation for both platforms, in Rust.** A push handler on Android (Kotlin) or iOS (the
+NSE, and `canari_push.mm` in the app process) used to read the seed out of `graine_seeds.json` and
+hand it to a key-derivation call. That split put half of the rules in three languages. Now it hands
+over the push's own fields and the data directory, and
+`mobile/background.rs` `open_graine_push` does the rest:
+- `nativeOpenGrainePush` on Android;
+- `canari_native_open_graine_push` on iOS.
+
+| Check | How | Refusal (`reason`) |
+| --- | --- | --- |
+| The salon | the session is read under the push's OWN `channelId`, so a row moved to another salon finds nothing | `seed-not-mirrored` |
+| The floor | `index < firstIndex` of the mirrored session | `below-floor` |
+| A v2 session held whole | a v2 entry without its minter or key is unreadable, never opened as v1 | `mirror-unreadable` |
+| The author (v2) | the push's `senderId` must be the session's minter (case-insensitive, as the web) | `author-mismatch` |
+| The signature (v2) | present, then verified over `H \|\| nonce \|\| ciphertext` BEFORE AES-GCM runs with `H` as AAD | `signature-missing`, `signature-refused` |
+
+The three accusing refusals are logged at ERROR by Kotlin, because a Rust log line goes nowhere in a
+killed app. **A replay is not refused here**: a notification path keeps no record of the rows it
+opened, so a replayed push shows its banner again. The app, which does keep that record, shows the row
+once.
+
+**The verified sender of an MLS push (the native half of WP-G2-1b).** Both push decrypts
+(`decrypt_push_message_with_key` and the commit catch-up) now take the push's `senderId` in a
+`PushFrame`. They decrypt with `process_incoming_message_with_sender`, and a frame whose verified
+leaf names another user, or no readable one, is `sender-mismatch`. That covers a DM's banner and an
+attached seed frame alike. Kotlin reads it as `NothingToRender`: no catch-up, no worker, and the
+generic banner on a visible push.
+
+**An arriving v2 seed is checked against the tree before it is mirrored.** `classify_verified` keeps
+a key-material frame's v2 seed only when its endorsement verifies against the minting device's leaf
+in that key group (`member_signature_key`). A push handler has no user session to reach the
+server's published keys, so a minter that has left the tree is UNANSWERED, as on the web: nothing is
+mirrored and nothing is refused, and the app checks and mirrors the seed when it next runs. A v1 seed
+is kept as before.
+
+**Pinned by** `cross_version_push.rs` `through_the_mirror`, which opens the frozen v2 fixture through a
+temporary mirror, with each refusal falsified. `background.rs` covers the sender refusal and the
+three endorsement cases (endorsed, forged by another member, minted by a device the tree does not
+hold). `channelPushFields.test.ts` now expects `signature` in the inline group on all three readers.
 
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 

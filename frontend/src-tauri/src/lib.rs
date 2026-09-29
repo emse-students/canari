@@ -229,56 +229,68 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     commands::push::store_graine_seeds_json(std::path::Path::new(&dir), &json)
 }
 
+/// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
+/// implementation both platforms share (`mobile::background::open_graine_push`). `signatureB64` is
+/// empty when the push carried none. Returns the same JSON as `nativeDecryptMessageWithKey`.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptGraineMessage<
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeOpenGrainePush<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
-    seed_b64: jni::objects::JString<'a>,
+    data_dir: jni::objects::JString<'a>,
+    channel_id: jni::objects::JString<'a>,
     session_id: jni::objects::JString<'a>,
     message_index: jni::sys::jint,
+    sender_id: jni::objects::JString<'a>,
     nonce_b64: jni::objects::JString<'a>,
     ciphertext_b64: jni::objects::JString<'a>,
+    signature_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
     let result = (|| -> serde_json::Value {
-        let decode = |s: jni::objects::JString<'a>, env: &mut jni::JNIEnv<'a>| -> Option<Vec<u8>> {
-            let raw: String = env.get_string(&s).ok()?.into();
-            STANDARD.decode(raw.trim()).ok()
-        };
         // A negative index cannot exist: it is a uint32 on the wire and in the derivation. Refusing
         // it here keeps the cast from wrapping into an index that derives a plausible wrong key.
         if message_index < 0 {
             log::error!("[GraineBG] negative message index {message_index}");
-            return serde_json::json!({ "ok": false });
+            return serde_json::json!({ "ok": false, "reason": "jni-message-index" });
         }
-        let session: String = match env.get_string(&session_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
+        let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+            env.get_string(s).ok().map(Into::into)
         };
-        let seed = match decode(seed_b64, &mut env) {
-            Some(v) => v,
-            None => return serde_json::json!({ "ok": false }),
-        };
-        let nonce = match decode(nonce_b64, &mut env) {
-            Some(v) => v,
-            None => return serde_json::json!({ "ok": false }),
-        };
-        let ciphertext = match decode(ciphertext_b64, &mut env) {
-            Some(v) => v,
-            None => return serde_json::json!({ "ok": false }),
-        };
-        mobile::background::decrypt_graine_message(
-            &seed,
-            &session,
-            message_index as u32,
-            &nonce,
-            &ciphertext,
+        let (
+            Some(dir),
+            Some(channel),
+            Some(session),
+            Some(sender),
+            Some(nonce),
+            Some(ciphertext),
+            Some(signature),
+        ) = (
+            read(&data_dir),
+            read(&channel_id),
+            read(&session_id),
+            read(&sender_id),
+            read(&nonce_b64),
+            read(&ciphertext_b64),
+            read(&signature_b64),
         )
-        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+        else {
+            return serde_json::json!({ "ok": false, "reason": "jni-string" });
+        };
+        mobile::background::open_graine_push(
+            std::path::Path::new(&dir),
+            &mobile::background::GrainePush {
+                channel_id: &channel,
+                session_id: &session,
+                index: message_index as u32,
+                sender_id: &sender,
+                nonce_b64: &nonce,
+                ciphertext_b64: &ciphertext,
+                signature_b64: &signature,
+            },
+        )
     })();
 
     let json_str = result.to_string();
@@ -300,6 +312,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    sender_id: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> serde_json::Value {
@@ -323,6 +336,10 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Ok(s) => s.into(),
             Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-group-id" }),
         };
+        let sender_id_str: String = match env.get_string(&sender_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-sender-id" }),
+        };
         let cipher_vec = match env.convert_byte_array(&ciphertext) {
             Ok(v) => v,
             Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-ciphertext" }),
@@ -338,8 +355,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &cipher_vec,
+            &mobile::background::PushFrame {
+                group_id: &group_id_str,
+                sender_id: &sender_id_str,
+                ciphertext: &cipher_vec,
+            },
         )
     })();
 
@@ -392,6 +412,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    sender_id: jni::objects::JString<'a>,
     commits_json: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
 ) -> jni::objects::JString<'a> {
@@ -416,6 +437,10 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Ok(s) => s.into(),
             Err(_) => return serde_json::json!({ "ok": false }),
         };
+        let sender_id_str: String = match env.get_string(&sender_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-sender-id" }),
+        };
         let commits_json_str: String = match env.get_string(&commits_json) {
             Ok(s) => s.into(),
             Err(_) => return serde_json::json!({ "ok": false }),
@@ -431,9 +456,12 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
             &commits,
-            &cipher_vec,
+            &mobile::background::PushFrame {
+                group_id: &group_id_str,
+                sender_id: &sender_id_str,
+                ciphertext: &cipher_vec,
+            },
         )
     })();
 

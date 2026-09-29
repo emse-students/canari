@@ -3173,6 +3173,9 @@ export class ChannelService {
     // notification degrades to the generic body until the app fetches the channel.
     const inline: Record<string, string> = {
       ciphertext: input.ciphertext,
+      // The v2 signature is part of what opens the row natively (channel-encryption 21.5), so it
+      // travels with the ciphertext or not at all - a v2 row inlined without it is refused.
+      ...(input.signature ? { signature: input.signature } : {}),
       ...(input.seedFrame && input.seedGroupId
         ? { seedFrame: input.seedFrame, seedGroupId: input.seedGroupId }
         : {}),

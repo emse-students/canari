@@ -408,6 +408,59 @@ pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) ->
     stored
 }
 
+/// One session as the mirror HOLDS it, read back for a push to be opened against.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeldGraineSeed {
+    pub seed_b64: String,
+    pub first_index: u32,
+    /// `(minterUserId, signingPk base64)` for a v2 session, `None` for a v1 one.
+    pub v2: Option<(String, String)>,
+}
+
+/// Reads one session from the mirror, without the lock: every writer renames a whole file over the
+/// old one ([`with_graine_mirror`]), so a reader sees one version or the other, never half of one.
+///
+/// `Ok(None)` is a session the mirror does not hold - expected for an old one, since the mirror is
+/// bounded. `Err` is a file that exists and cannot be read, which is a different fact. A v2 entry
+/// missing its minter or key is refused as unreadable rather than opened as v1: that would be the
+/// downgrade a session's version exists to make impossible.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn read_graine_seed(
+    data_dir: &std::path::Path,
+    channel_id: &str,
+    session_id: &str,
+) -> Result<Option<HeldGraineSeed>, String> {
+    let path = data_dir.join("graine_seeds.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+    let root: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("graine_seeds.json unparsable: {e}"))?;
+    let entry = &root[channel_id][session_id];
+    let Some(seed_b64) = entry["seed"].as_str().filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let v2 = match held_v2(entry) {
+        Some((minter, pk)) if !minter.is_empty() && !pk.is_empty() => {
+            Some((minter.to_string(), pk.to_string()))
+        }
+        Some(_) => {
+            return Err(format!(
+                "v2 session {session_id} held without its minter or key"
+            ))
+        }
+        None => None,
+    };
+    Ok(Some(HeldGraineSeed {
+        seed_b64: seed_b64.to_string(),
+        first_index: entry["firstIndex"].as_u64().unwrap_or(0) as u32,
+        v2,
+    }))
+}
+
 /// How many Graine sessions per channel the mirror keeps. Mirrors
 /// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
 const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;

@@ -16,6 +16,7 @@ char *canari_native_decrypt_message(
     const char *user_id,
     const char *device_id,
     const char *group_id,
+    const char *sender_id,
     const unsigned char *cipher_ptr,
     size_t cipher_len);
 
@@ -34,16 +35,20 @@ char *canari_native_decrypt_message_with_commits(
     const char *user_id,
     const char *device_id,
     const char *group_id,
+    const char *sender_id,
     const char *commits_json,
     const unsigned char *cipher_ptr,
     size_t cipher_len);
 
-char *canari_native_decrypt_graine_message(
-    const char *seed_b64,
+char *canari_native_open_graine_push(
+    const char *data_dir,
+    const char *channel_id,
     const char *session_id,
     uint32_t message_index,
+    const char *sender_id,
     const char *nonce_b64,
-    const char *ciphertext_b64);
+    const char *ciphertext_b64,
+    const char *signature_b64);
 
 /// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
 /// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were
