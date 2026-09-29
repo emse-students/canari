@@ -287,8 +287,8 @@ formation x campus, audiences fixed by the publishing association, one BDE per s
 the single truth edited from Canari by admins only, per-application access decided centrally, and the
 migration of the 600 accounts. **Twenty-eight decisions, all on
 [profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
-were taken against. **Owed next: the technical plan, cut into work packages, for the user to
-validate before anything is built.**
+were taken against. **The technical plan is its section 4, ten work packages, PROPOSED: owed, the
+user's validation before anything is built.** WP0 is the P1 below and needs nothing else.
 
 ## Open defects, in severity order
 

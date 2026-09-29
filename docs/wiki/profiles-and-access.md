@@ -1,8 +1,8 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
 **Status: DECIDED, NOT BUILT.** Every answer below was given by the user on 2026-09-29, one question
-at a time; the technical plan that turns them into work packages is the next step and is NOT on this
-page yet. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
+at a time. The technical plan that turns them into work packages is section 4, PROPOSED and
+awaiting the user's validation. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
@@ -174,3 +174,120 @@ application computed from the same profile, so no application keeps a hard-coded
   [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
   Whether its button renders on the sign-in page was not observed.
+
+## 4. The technical plan - PROPOSED 2026-09-29, awaiting the user's validation
+
+### Four facts the plan is shaped by
+
+- **Canari never re-reads Authentik after the first sign-in.** `refreshToken`
+  (`apps/core-service/src/auth/auth.controller.ts`) reloads only `admin`, and the session is 7 days
+  IDLE with no absolute cap (`auth-sessions.service.ts`). An active user never passes through
+  `oidc/callback` again, so "at the next sign-in" (D14) would be NEVER for Canari. Hence Canari, the
+  editor, writes its OWN row in the same request (WP4), and the migration writes Canari's rows
+  directly (WP3). D14 then holds for the other applications, which re-read claims at sign-in.
+- **The `sub` every application holds is `hashed_user_id`** (`sha256("{pk}-{install id}")`, all nine
+  providers), and authentik's user API cannot filter on it (`UsersFilter` has `uuid`, `username`,
+  `attributes`... and no `uid`). So Canari must also receive the Authentik `uuid` to address a user
+  it edits.
+- **A client chooses its scopes, and old APKs request `openid profile promo name formation`.** New
+  claims under a NEW scope would never reach an old client's login, so they are attached to the
+  `profile` scope, which every client but the Cercle already requests (a scope may carry several
+  mappings; `profile` carries two today).
+- **`users` is ONE table in `auth_db`, read by raw SQL from social-service** (feed audience, promo
+  floor, custom feed, rosters), and core serves promo/formation to pricing over HTTP. There is ONE
+  `isBDE` association (27 members) among 47 associations and 44 lists (production, 2026-09-29), and
+  no notion of campus anywhere in code.
+
+### The work packages, in order
+
+**WP0 - P1, independent, first: the MiGallery key in MinoWiki's and Archives' claims.** Remove the
+`avatar` mapping from both providers (or give them a keyless avatar URL), THEN delete the key in
+MiGallery's `/admin/api-keys` - deleting first breaks both apps' avatars. A MiGallery key is
+`read`/`write`/`admin`, never per-route (`src/lib/server/permissions.ts`), so a `read` key reads
+every read-scoped API. Canari, Sky and the Cercle send their own keys in a header and are not
+affected. [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
+
+**WP1 - Authentik holds the profile; nothing observable changes.**
+
+- `attributes.profile = {version: 1, campus: "saint-etienne" | "gardanne", cursus: [{formation,
+  promo}], posts: ["EMSE" | "ME" | "ALUMNI"], firstName?, lastName?}` - the explicit names end the
+  capitals heuristic for the 6 accounts (D10).
+- A mapping on scope `profile` emits `campus`, `cursus` and `posts`; a second one, on Canari's three
+  providers only, emits `miconnect_uuid` (`user.uuid`).
+- `Promotion` and `Formation` are re-derived from `profile.cursus[0]`, and `First + Last Names`
+  prefers the explicit names, so every consumer keeps working untouched. That is a shim, declared in
+  [legacy-compatibility](legacy-compatibility.md) with its removal condition (WP9).
+- The migration (D26, D27) is ONE idempotent `ak shell` script: a dry run printing every change,
+  then the write; the old keys stay until WP9. Before it, the daily `authentik_db` dump is checked.
+
+**WP2 - The enrolment flow (D11, D12, D7).** One flow bound to BOTH sources: campus (radio); "Je
+suis ou j'ai été élève" (checkbox) -> formation + entry year; "Je travaille pour" -> three checkboxes
+EMSE / ME / Alumni. A validation policy refuses "none of them" with the D12 message, and an
+expression policy writes `attributes.profile`. `custom_statut`, `is-student`, `Merge attributes` and
+the `Personnel de l'école` mapping retire with WP9.
+
+**WP3 - Canari reads the profile.** A core migration adds `miconnectUuid`, `campus`, `cursus` (jsonb)
+and `posts` (text[]); the callback REPLACES them wholesale (a claim that disappears clears, unlike
+today). `promo` and `formation` stay as columns derived from the first cursus until every consumer
+has moved (WP6). Backfill: a script run in `ak shell` emits `{uid, uuid, profile}` for every account,
+imported into `auth_db` in one transaction - the only way to reach users who will never sign in
+again. Profile and directory show campus, cursus and posts; the directory gains campus and post
+filters.
+
+**WP4 - Editing from Canari (D9, D10).**
+
+- An authentik service account with an RBAC role limited to viewing and changing users; its token is
+  a new secret (`infrastructure/MIGRATION.md`). **Production only**: dev and production share ONE
+  MiConnect, so a dev edit would change a real person - on dev the endpoint refuses with a typed
+  error, and dev holds no token.
+- `PUT /users/:id/profile` (global admin): read the authentik user by `uuid`, write
+  `attributes.profile` (a read-modify-write of the whole `attributes`, which a PATCH replaces), then
+  Canari's row, then an audit row `profile_changes(user, actor, before, after, at)`.
+- The correction request (D10): a button on the profile, a queue in `/admin`, a notification when it
+  is applied or refused. Every string through Paraglide.
+
+**WP5 - Access to each application, decided by MiConnect (D15).** Expression policies bound to the
+applications, engine mode `any`: `profile-valid` on all of them except Sky, which gets `cursus-icm`;
+and on each application a group `acces-<app>` for nominative exceptions (Sky's non-ICM admins,
+today `SKY_ADMIN_SUBS`, move there). Then, and only then, the applications: Sky DELETES its ICM gate
+(callback and `hooks.server.ts`) rather than keeping a second copy; the Cercle drops `promo` and
+`formation` from `requiredClaims`, makes both columns nullable (a STRICT table, so a rebuild
+migration), and its UI stops assuming them.
+
+**WP6 - Spaces in Canari (D16 to D22), five pull requests.**
+
+- **6a, data.** `spaces(id, formation, campus, opened_at, bde_association_id)`,
+  `association_spaces(association, space)`, `post_extra_spaces(post, space)`, and
+  `associations.type` gains `institution`. Migration: open `ICM x saint-etienne`, attach every
+  existing association and list to it, make today's `isBDE` association its BDE. The `isBDE` column
+  is deleted at the end of 6c, never kept beside the new model.
+- **6b, readers.** ONE function, `readerSpaces(user)`: the open spaces matching (a cursus's
+  formation, the person's campus), plus the content of the associations they belong to (D21). It
+  replaces `feed-audience.ts`, its client twin `feedAudience.ts`, the announce scheduler's audience
+  and the agenda filter. A post is visible when its association's spaces, or its extra spaces, meet
+  the reader's.
+- **6c, governance.** Validating an event is VALIDATE_EVENTS in the BDE of the event association's
+  space, and only those people are notified; the BDE's MANAGE_ASSO powers are scoped the same way;
+  MODERATE stays global (D23).
+- **6d, admin UI.** A spaces page (open a space, designate its BDE) replaces the `isBDE` toggle; an
+  association's spaces are edited there.
+- **6e, institutions.** Created by a global admin, members added nominatively (D20); they publish and
+  propose events like an association.
+
+**WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
+`document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions
+page. A BDE grants within its space; cross-space capabilities (widening a post, institutions,
+profiles) stay with global admins.
+
+**WP8 - The colle (D28), BLOCKED on the Alumni SSO existing.** A real `sso_url` and mappings (name,
+alumni id) on the `alumni` SAML source, bound to WP2's flow; a claim `alumni_linked`; a Canari banner
+for promo N-1; a stage in `miconnect-auth`, skippable before the date the user sets and blocking
+after it. authentik links a source to the account that is ALREADY signed in, which is exactly the
+colle - to be proven on dev with a real alumni account.
+
+**WP9 - The shims go.** The `promo`/`formation`/`school_status` claims and columns and the old
+attribute keys, once nothing reads them - each removal measured, per
+[legacy-compatibility](legacy-compatibility.md).
+
+**Dependencies.** WP0 whenever. WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 waits
+for the SSO; WP9 last.
