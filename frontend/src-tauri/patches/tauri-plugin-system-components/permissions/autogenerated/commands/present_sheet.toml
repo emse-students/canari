@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-present-sheet"
+description = "Enables the present_sheet command without any pre-configured scope."
+commands.allow = ["present_sheet"]
+
+[[permission]]
+identifier = "deny-present-sheet"
+description = "Denies the present_sheet command without any pre-configured scope."
+commands.deny = ["present_sheet"]

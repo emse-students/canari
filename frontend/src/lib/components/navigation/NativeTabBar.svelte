@@ -1,16 +1,4 @@
 <script lang="ts" module>
-  /**
-   * The SF Symbol each bar place is drawn with - the native counterpart of `BottomNav`'s Lucide
-   * glyph. Keyed by place id, and asserted against `MOBILE_NAV_PLACES` by the component's test, so
-   * a fifth place cannot reach the native bar without an icon.
-   */
-  export const NATIVE_TAB_SYMBOLS: Record<string, string> = {
-    posts: 'newspaper',
-    communities: 'person.3',
-    chat: 'bubble.left.and.bubble.right',
-    dashboard: 'square.grid.2x2',
-  };
-
   /** Where the bar's state stands - `failed` is what hands the bottom back to the web bar. */
   export const nativeTabBar = $state<{ status: 'pending' | 'native' | 'failed' }>({
     status: 'pending',
@@ -34,14 +22,18 @@
   } from '@sosweetham/tauri-plugin-system-components-api';
   import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
+  import { PLACE_ICONS } from '$lib/navigation/placeIcons';
+  import { activeTabTint, lucideIconPng } from '$lib/mobile/nativeTabIcons';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
    *
    * It replaces `BottomNav` in the iOS app and offers the same four places (`MOBILE_NAV_PLACES`),
-   * the same unread dot (`placeBadge`), and appears under the same conditions the layout already
-   * applies to the web bar, which it receives as `visible`. The web bar is `md:hidden`, so this one
+   * the same GLYPHS (`PLACE_ICONS`, rasterised - user, 2026-09-30), the selected one in the web
+   * bar's yellow, the same unread dot (`placeBadge`), and appears under the same conditions the
+   * layout already applies to the web bar, which it receives as `visible`. The web bar is `md:hidden`, so this one
    * hides at the same width.
    *
    * ICONS ONLY, AND VOICEOVER NAMES NOTHING - A DECISION, NOT AN OVERSIGHT. The plugin's item title is
@@ -65,7 +57,37 @@
   let listener: TabSelectedListener | null = null;
   let destroyed = false;
   /** The last badge value sent per place, so a re-render that changes nothing sends nothing. */
-  const sentBadges: Record<string, string | undefined> = {};
+  let sentBadges: Record<string, string | undefined> = {};
+  /** The rasterised glyphs, drawn once. */
+  let icons: Record<string, string> = {};
+  /**
+   * Bumped on every configuration. The plugin REBUILDS its items when configured, which clears
+   * every badge on them - so the badge effect reads this and sends them all again.
+   */
+  let configurations = $state(0);
+
+  /**
+   * (Re)configures the bar: the places, their glyphs as templates, the tint for the CURRENT theme,
+   * and the current selection. Idempotent on the plugin side - it updates the mounted bar in place.
+   */
+  async function configure() {
+    const active = activePlaceId;
+    await configureTabBar({
+      items: MOBILE_NAV_PLACES.map((p) => ({
+        id: p.id,
+        title: '',
+        image: icons[p.id],
+        // The Canari patch (`patches/tauri-plugin-system-components`): tint the bitmap like a symbol.
+        template: true,
+      })),
+      selectedId: MOBILE_NAV_PLACES.some((p) => p.id === active)
+        ? (active ?? undefined)
+        : undefined,
+      tint: activeTabTint(),
+    });
+    sentBadges = {};
+    configurations++;
+  }
 
   const activePlaceId = $derived(resolveActivePlaceId(page.url.pathname));
   const shown = $derived(visible && !wide);
@@ -88,17 +110,10 @@
 
     void (async () => {
       try {
-        const active = activePlaceId;
-        await configureTabBar({
-          items: MOBILE_NAV_PLACES.map((p) => ({
-            id: p.id,
-            title: '',
-            sfSymbol: NATIVE_TAB_SYMBOLS[p.id],
-          })),
-          selectedId: MOBILE_NAV_PLACES.some((p) => p.id === active)
-            ? (active ?? undefined)
-            : undefined,
-        });
+        for (const place of MOBILE_NAV_PLACES) {
+          icons[place.id] = await lucideIconPng(PLACE_ICONS[place.icon]);
+        }
+        await configure();
         listener = await onTabSelected(({ id }) => {
           const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
           Log.d('NativeTabBar', `tab selected: ${id}`);
@@ -153,8 +168,24 @@
     void selectTab(active).catch(logFailure('select'));
   });
 
+  // The theme decides the yellow (`amber-600`, or `amber-400` in dark), so a theme change
+  // reconfigures the bar with the new tint. The first run is the mount's own configuration.
+  let tintedForDark: boolean | null = null;
+  $effect(() => {
+    const dark = themeStore.isDark;
+    if (nativeTabBar.status !== 'native') return;
+    if (tintedForDark === null) {
+      tintedForDark = dark;
+      return;
+    }
+    if (tintedForDark === dark) return;
+    tintedForDark = dark;
+    void configure().catch(logFailure('re-tint'));
+  });
+
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.
   $effect(() => {
+    void configurations;
     if (nativeTabBar.status !== 'native') return;
     for (const place of MOBILE_NAV_PLACES) {
       const value = placeBadge(place.id, place.id === activePlaceId) > 0 ? '' : undefined;

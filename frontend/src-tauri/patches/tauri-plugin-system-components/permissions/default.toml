@@ -1,0 +1,38 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = """
+Default permissions for the system-components plugin.
+
+#### Granted Permissions
+
+- Full control of the native tab bar (`configure_tab_bar`,
+  `remove_tab_bar`, `show_tab_bar`, `hide_tab_bar`, `select_tab`,
+  `set_badge`, `get_tab_bar_insets`).
+- Native overlay components (`create_component`, `update_component`,
+  `remove_component`).
+- `register_listener` / `remove_listener` — required for `onTabSelected` /
+  `onComponentEvent` subscriptions.
+- macOS window glass (`is_glass_supported`, `set_window_glass`,
+  `clear_window_glass`).
+"""
+permissions = [
+  "allow-configure-tab-bar",
+  "allow-remove-tab-bar",
+  "allow-show-tab-bar",
+  "allow-hide-tab-bar",
+  "allow-select-tab",
+  "allow-set-badge",
+  "allow-get-tab-bar-insets",
+  "allow-present-sheet",
+  "allow-dismiss-sheet",
+  "allow-create-component",
+  "allow-update-component",
+  "allow-update-components",
+  "allow-remove-component",
+  "allow-register-listener",
+  "allow-remove-listener",
+  "allow-is-glass-supported",
+  "allow-set-window-glass",
+  "allow-clear-window-glass",
+]

@@ -1,0 +1,522 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PermissionFile",
+  "description": "Permission file that can define a default permission, a set of permissions or a list of inlined permissions.",
+  "type": "object",
+  "properties": {
+    "default": {
+      "description": "The default permission set for the plugin",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/DefaultPermission"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "set": {
+      "description": "A list of permissions sets defined",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PermissionSet"
+      }
+    },
+    "permission": {
+      "description": "A list of inlined permissions",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Permission"
+      }
+    }
+  },
+  "definitions": {
+    "DefaultPermission": {
+      "description": "The default permission set of the plugin.\n\nWorks similarly to a permission with the \"default\" identifier.",
+      "type": "object",
+      "required": [
+        "permissions"
+      ],
+      "properties": {
+        "version": {
+          "description": "The version of the permission.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 1.0
+        },
+        "description": {
+          "description": "Human-readable description of what the permission does. Tauri convention is to use `<h4>` headings in markdown content for Tauri documentation generation purposes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permissions": {
+          "description": "All permissions this set contains.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "PermissionSet": {
+      "description": "A set of direct permissions grouped together under a new name.",
+      "type": "object",
+      "required": [
+        "description",
+        "identifier",
+        "permissions"
+      ],
+      "properties": {
+        "identifier": {
+          "description": "A unique identifier for the permission.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Human-readable description of what the permission does.",
+          "type": "string"
+        },
+        "permissions": {
+          "description": "All permissions this set contains.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PermissionKind"
+          }
+        }
+      }
+    },
+    "Permission": {
+      "description": "Descriptions of explicit privileges of commands.\n\nIt can enable commands to be accessible in the frontend of the application.\n\nIf the scope is defined it can be used to fine grain control the access of individual or multiple commands.",
+      "type": "object",
+      "required": [
+        "identifier"
+      ],
+      "properties": {
+        "version": {
+          "description": "The version of the permission.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 1.0
+        },
+        "identifier": {
+          "description": "A unique identifier for the permission.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Human-readable description of what the permission does. Tauri internal convention is to use `<h4>` headings in markdown content for Tauri documentation generation purposes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commands": {
+          "description": "Allowed or denied commands when using this permission.",
+          "default": {
+            "allow": [],
+            "deny": []
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Commands"
+            }
+          ]
+        },
+        "scope": {
+          "description": "Allowed or denied scoped when using this permission.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Scopes"
+            }
+          ]
+        },
+        "platforms": {
+          "description": "Target platforms this permission applies. By default all platforms are affected by this permission.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Target"
+          }
+        }
+      }
+    },
+    "Commands": {
+      "description": "Allowed and denied commands inside a permission.\n\nIf two commands clash inside of `allow` and `deny`, it should be denied by default.",
+      "type": "object",
+      "properties": {
+        "allow": {
+          "description": "Allowed command.",
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deny": {
+          "description": "Denied command, which takes priority.",
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "Scopes": {
+      "description": "An argument for fine grained behavior control of Tauri commands.\n\nIt can be of any serde serializable type and is used to allow or prevent certain actions inside a Tauri command. The configured scope is passed to the command and will be enforced by the command implementation.\n\n## Example\n\n```json { \"allow\": [{ \"path\": \"$HOME/**\" }], \"deny\": [{ \"path\": \"$HOME/secret.txt\" }] } ```",
+      "type": "object",
+      "properties": {
+        "allow": {
+          "description": "Data that defines what is allowed by the scope.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Value"
+          }
+        },
+        "deny": {
+          "description": "Data that defines what is denied by the scope. This should be prioritized by validation logic.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Value"
+          }
+        }
+      }
+    },
+    "Value": {
+      "description": "All supported ACL values.",
+      "anyOf": [
+        {
+          "description": "Represents a null JSON value.",
+          "type": "null"
+        },
+        {
+          "description": "Represents a [`bool`].",
+          "type": "boolean"
+        },
+        {
+          "description": "Represents a valid ACL [`Number`].",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Number"
+            }
+          ]
+        },
+        {
+          "description": "Represents a [`String`].",
+          "type": "string"
+        },
+        {
+          "description": "Represents a list of other [`Value`]s.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Value"
+          }
+        },
+        {
+          "description": "Represents a map of [`String`] keys to [`Value`]s.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Value"
+          }
+        }
+      ]
+    },
+    "Number": {
+      "description": "A valid ACL number.",
+      "anyOf": [
+        {
+          "description": "Represents an [`i64`].",
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "description": "Represents a [`f64`].",
+          "type": "number",
+          "format": "double"
+        }
+      ]
+    },
+    "Target": {
+      "description": "Platform target.",
+      "oneOf": [
+        {
+          "description": "MacOS.",
+          "type": "string",
+          "enum": [
+            "macOS"
+          ]
+        },
+        {
+          "description": "Windows.",
+          "type": "string",
+          "enum": [
+            "windows"
+          ]
+        },
+        {
+          "description": "Linux.",
+          "type": "string",
+          "enum": [
+            "linux"
+          ]
+        },
+        {
+          "description": "Android.",
+          "type": "string",
+          "enum": [
+            "android"
+          ]
+        },
+        {
+          "description": "iOS.",
+          "type": "string",
+          "enum": [
+            "iOS"
+          ]
+        }
+      ]
+    },
+    "PermissionKind": {
+      "type": "string",
+      "oneOf": [
+        {
+          "description": "Enables the clear_window_glass command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-window-glass",
+          "markdownDescription": "Enables the clear_window_glass command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_window_glass command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-window-glass",
+          "markdownDescription": "Denies the clear_window_glass command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the configure_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-configure-tab-bar",
+          "markdownDescription": "Enables the configure_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the configure_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-configure-tab-bar",
+          "markdownDescription": "Denies the configure_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-component",
+          "markdownDescription": "Enables the create_component command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-component",
+          "markdownDescription": "Denies the create_component command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dismiss_sheet command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dismiss-sheet",
+          "markdownDescription": "Enables the dismiss_sheet command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dismiss_sheet command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dismiss-sheet",
+          "markdownDescription": "Denies the dismiss_sheet command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_tab_bar_insets command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-tab-bar-insets",
+          "markdownDescription": "Enables the get_tab_bar_insets command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_tab_bar_insets command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-tab-bar-insets",
+          "markdownDescription": "Denies the get_tab_bar_insets command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the hide_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-hide-tab-bar",
+          "markdownDescription": "Enables the hide_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the hide_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-hide-tab-bar",
+          "markdownDescription": "Denies the hide_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_glass_supported command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-is-glass-supported",
+          "markdownDescription": "Enables the is_glass_supported command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_glass_supported command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-is-glass-supported",
+          "markdownDescription": "Denies the is_glass_supported command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the present_sheet command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-present-sheet",
+          "markdownDescription": "Enables the present_sheet command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the present_sheet command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-present-sheet",
+          "markdownDescription": "Denies the present_sheet command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-register-listener",
+          "markdownDescription": "Enables the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-register-listener",
+          "markdownDescription": "Denies the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-component",
+          "markdownDescription": "Enables the remove_component command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-component",
+          "markdownDescription": "Denies the remove_component command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-listener",
+          "markdownDescription": "Enables the remove_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-listener",
+          "markdownDescription": "Denies the remove_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-tab-bar",
+          "markdownDescription": "Enables the remove_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-tab-bar",
+          "markdownDescription": "Denies the remove_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-tab",
+          "markdownDescription": "Enables the select_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_tab command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-tab",
+          "markdownDescription": "Denies the select_tab command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_badge command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-badge",
+          "markdownDescription": "Enables the set_badge command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_badge command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-badge",
+          "markdownDescription": "Denies the set_badge command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_window_glass command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-window-glass",
+          "markdownDescription": "Enables the set_window_glass command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_window_glass command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-window-glass",
+          "markdownDescription": "Denies the set_window_glass command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the show_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-show-tab-bar",
+          "markdownDescription": "Enables the show_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the show_tab_bar command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-show-tab-bar",
+          "markdownDescription": "Denies the show_tab_bar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-component",
+          "markdownDescription": "Enables the update_component command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_component command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-component",
+          "markdownDescription": "Denies the update_component command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_components command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-components",
+          "markdownDescription": "Enables the update_components command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_components command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-components",
+          "markdownDescription": "Denies the update_components command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the system-components plugin.\n\n#### Granted Permissions\n\n- Full control of the native tab bar (`configure_tab_bar`,\n  `remove_tab_bar`, `show_tab_bar`, `hide_tab_bar`, `select_tab`,\n  `set_badge`, `get_tab_bar_insets`).\n- Native overlay components (`create_component`, `update_component`,\n  `remove_component`).\n- `register_listener` / `remove_listener` — required for `onTabSelected` /\n  `onComponentEvent` subscriptions.\n- macOS window glass (`is_glass_supported`, `set_window_glass`,\n  `clear_window_glass`).\n\n#### This default permission set includes:\n\n- `allow-configure-tab-bar`\n- `allow-remove-tab-bar`\n- `allow-show-tab-bar`\n- `allow-hide-tab-bar`\n- `allow-select-tab`\n- `allow-set-badge`\n- `allow-get-tab-bar-insets`\n- `allow-present-sheet`\n- `allow-dismiss-sheet`\n- `allow-create-component`\n- `allow-update-component`\n- `allow-update-components`\n- `allow-remove-component`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-is-glass-supported`\n- `allow-set-window-glass`\n- `allow-clear-window-glass`",
+          "type": "string",
+          "const": "default",
+          "markdownDescription": "Default permissions for the system-components plugin.\n\n#### Granted Permissions\n\n- Full control of the native tab bar (`configure_tab_bar`,\n  `remove_tab_bar`, `show_tab_bar`, `hide_tab_bar`, `select_tab`,\n  `set_badge`, `get_tab_bar_insets`).\n- Native overlay components (`create_component`, `update_component`,\n  `remove_component`).\n- `register_listener` / `remove_listener` — required for `onTabSelected` /\n  `onComponentEvent` subscriptions.\n- macOS window glass (`is_glass_supported`, `set_window_glass`,\n  `clear_window_glass`).\n\n#### This default permission set includes:\n\n- `allow-configure-tab-bar`\n- `allow-remove-tab-bar`\n- `allow-show-tab-bar`\n- `allow-hide-tab-bar`\n- `allow-select-tab`\n- `allow-set-badge`\n- `allow-get-tab-bar-insets`\n- `allow-present-sheet`\n- `allow-dismiss-sheet`\n- `allow-create-component`\n- `allow-update-component`\n- `allow-update-components`\n- `allow-remove-component`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-is-glass-supported`\n- `allow-set-window-glass`\n- `allow-clear-window-glass`"
+        }
+      ]
+    }
+  }
+}

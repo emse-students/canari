@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-remove-tab-bar"
+description = "Enables the remove_tab_bar command without any pre-configured scope."
+commands.allow = ["remove_tab_bar"]
+
+[[permission]]
+identifier = "deny-remove-tab-bar"
+description = "Denies the remove_tab_bar command without any pre-configured scope."
+commands.deny = ["remove_tab_bar"]

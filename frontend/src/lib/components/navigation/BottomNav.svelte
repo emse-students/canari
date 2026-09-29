@@ -1,14 +1,5 @@
 <script lang="ts">
-  import {
-    MessageCircle,
-    Newspaper,
-    Users,
-    LayoutDashboard,
-    Bell,
-    Calendar,
-    ShoppingBag,
-    ClipboardList,
-  } from '@lucide/svelte';
+  import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -17,19 +8,8 @@
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
-  const ICONS = {
-    'message-circle': MessageCircle,
-    newspaper: Newspaper,
-    users: Users,
-    'layout-dashboard': LayoutDashboard,
-    bell: Bell,
-    calendar: Calendar,
-    'shopping-bag': ShoppingBag,
-    'clipboard-list': ClipboardList,
-  } as const;
-
-  function getIcon(icon: keyof typeof ICONS) {
-    return ICONS[icon];
+  function getIcon(icon: keyof typeof PLACE_ICONS) {
+    return PLACE_ICONS[icon];
   }
 </script>
 

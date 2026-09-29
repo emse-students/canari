@@ -6468,8 +6468,6 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-system-components"
 version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca7b7476bb2d37348671994f2d47d8111d2c39b83a28ea6013c44dadc89b5580"
 dependencies = [
  "objc2",
  "objc2-app-kit",

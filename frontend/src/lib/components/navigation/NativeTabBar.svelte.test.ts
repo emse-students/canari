@@ -30,8 +30,14 @@ vi.mock('$app/navigation', () => nav);
 const badges = vi.hoisted(() => ({ placeBadge: vi.fn() }));
 vi.mock('$lib/navigation/placeBadge.svelte', () => badges);
 
-import NativeTabBar, { NATIVE_TAB_SYMBOLS, nativeTabBar } from './NativeTabBar.svelte';
+// happy-dom has no real canvas: the glyph is named by the component it was drawn from, the tint by theme.
+const icons = vi.hoisted(() => ({ lucideIconPng: vi.fn(), activeTabTint: vi.fn() }));
+vi.mock('$lib/mobile/nativeTabIcons', () => icons);
+
+import NativeTabBar, { nativeTabBar } from './NativeTabBar.svelte';
 import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
+import { PLACE_ICONS } from '$lib/navigation/placeIcons';
+import { themeStore } from '$lib/stores/themeStore.svelte';
 
 const mounted: (() => void)[] = [];
 let selectTabHandler: ((e: { id: string }) => void) | null = null;
@@ -55,6 +61,14 @@ beforeEach(() => {
     f.mockResolvedValue(undefined);
   }
   nav.goto.mockReset();
+  icons.lucideIconPng.mockReset().mockImplementation(async (icon: unknown) => {
+    const name = Object.entries(PLACE_ICONS).find(([, c]) => c === icon)?.[0];
+    return `data:image/png;base64,${name}`;
+  });
+  icons.activeTabTint
+    .mockReset()
+    .mockImplementation(() => (themeStore.isDark ? '#dark' : '#light'));
+  themeStore.setPreference('light');
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
   window.matchMedia = ((query: string) => ({
@@ -70,7 +84,10 @@ afterEach(() => {
   document.documentElement.style.removeProperty('--bottom-nav-reserve');
   window.matchMedia = originalMatchMedia;
 });
-afterAll(() => vi.restoreAllMocks());
+afterAll(() => {
+  vi.restoreAllMocks();
+  themeStore.setPreference('system');
+});
 
 /** Mounts the bar and lets its asynchronous setup and effects settle. */
 async function mountBar(props: { visible: boolean }) {
@@ -88,16 +105,38 @@ async function mountBar(props: { visible: boolean }) {
 }
 
 describe('NativeTabBar', () => {
-  it('offers the four places of the web bar, icons only, with an SF Symbol each', async () => {
+  it("offers the web bar's four places with the web bar's own glyphs, as templates, in its yellow", async () => {
     await mountBar({ visible: true });
 
-    const [{ items, selectedId }] = plugin.configureTabBar.mock.calls[0];
+    const [{ items, selectedId, tint }] = plugin.configureTabBar.mock.calls[0];
     expect(items.map((i: { id: string }) => i.id)).toEqual(MOBILE_NAV_PLACES.map((p) => p.id));
     // Icons only - the user's decision, VoiceOver included (see the component).
     expect(items.every((i: { title: string }) => i.title === '')).toBe(true);
-    for (const item of items) expect(item.sfSymbol).toBe(NATIVE_TAB_SYMBOLS[item.id]);
+    // The SAME Lucide glyph the web bar draws for each place, and tinted by the bar (the patch).
+    for (const [i, place] of MOBILE_NAV_PLACES.entries()) {
+      expect(items[i].image).toBe(`data:image/png;base64,${place.icon}`);
+      expect(items[i].template).toBe(true);
+      expect(items[i].sfSymbol).toBeUndefined();
+    }
+    expect(tint).toBe('#light');
     expect(selectedId).toBe('posts');
     expect(nativeTabBar.status).toBe('native');
+  });
+
+  it('re-tints for the dark theme, and sends the badges again - a reconfiguration clears them', async () => {
+    badges.placeBadge.mockImplementation((id: string) => (id === 'chat' ? 1 : 0));
+    await mountBar({ visible: true });
+    plugin.setBadge.mockClear();
+
+    themeStore.setPreference('dark');
+    for (let i = 0; i < 6; i++) {
+      await tick();
+      await Promise.resolve();
+    }
+
+    expect(plugin.configureTabBar).toHaveBeenCalledTimes(2);
+    expect(plugin.configureTabBar.mock.calls[1][0].tint).toBe('#dark');
+    expect(plugin.setBadge).toHaveBeenCalledWith('chat', '');
   });
 
   it('navigates to the place a tab names', async () => {
@@ -138,9 +177,5 @@ describe('NativeTabBar', () => {
     expect(nativeTabBar.status).toBe('failed');
     expect(error.mock.calls.flat().join(' ')).toContain('web bar');
     error.mockRestore();
-  });
-
-  it('has an SF Symbol for every place of the bar', () => {
-    for (const place of MOBILE_NAV_PLACES) expect(NATIVE_TAB_SYMBOLS[place.id]).toBeTruthy();
   });
 });
