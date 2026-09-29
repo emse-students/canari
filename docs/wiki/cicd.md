@@ -1592,9 +1592,17 @@ flakiness to tolerate: it is a dependency that fails two times in five.
 **WHAT IT COST, IN BOTH CURRENCIES.** Each 503 is a full five-minute timeout, so twenty-six of them
 is over two hours of runner time in one day - and `bun audit` takes about five minutes per tree even
 when it SUCCEEDS, which is why one sequential job ran 14 to 39 minutes against two minutes for
-CodeQL. **That is what made this the critical path of every pull request, and the audit is now a
-five-way matrix that is no longer part of `CI passed`** - see the block above `dependency-audit` in
-`ci.yml`, which carries the reasoning and names what is lost.
+CodeQL. **That is what made this the critical path of every pull request, and the audit became a
+five-way matrix taken out of `CI passed`** (#369).
+
+**IT GATES `CI passed` AGAIN SINCE 2026-09-29, ON AN ANSWER ONLY** (user). Out of the gate, it let
+#1229 merge with a real advisory red on the job - GHSA-253c-mchw-3w2r in `markdown-it`, published an
+hour before the run - fixed by #1230 after the fact. The classifier below already separates the two
+things a gate must not confuse, so the job is back in `ci-passed`'s `needs` with
+`registry_outage_is_failure: false`: exit 1 (an advisory, or anything unrecognised) blocks the
+merge, exit 2 (npm never answered) passes as a warning. The cost accepted with it: a new advisory on
+untouched code turns every pull request red until its fix merges, and an outage makes the job slow
+without making it red. The block above `dependency-audit` in `ci.yml` is the only other copy.
 
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
