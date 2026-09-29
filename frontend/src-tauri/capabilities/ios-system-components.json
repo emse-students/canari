@@ -1,0 +1,7 @@
+{
+  "identifier": "ios-system-components",
+  "description": "The native iOS tab bar (tauri-plugin-system-components): Liquid Glass on iOS 26, the classic bar before. iOS ONLY - the plugin is an iOS-only dependency in Cargo.toml and registered under cfg(target_os = \"ios\"), so no other platform knows its permissions and none may be granted them. See docs/wiki/frontend/mobile.md#the-native-ios-tab-bar.",
+  "windows": ["main"],
+  "platforms": ["iOS"],
+  "permissions": ["system-components:default"]
+}

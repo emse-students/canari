@@ -72,7 +72,7 @@ on:
 jobs:
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-15 # Xcode 16.2+ (required for current iOS SDK / Tauri toolchain)
+    runs-on: macos-15 # carries Xcode 26.x, which the step below REQUIRES
     permissions:
       contents: write
 
@@ -97,10 +97,16 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
 
-      - name: Select Xcode (>= 16.2)
+      # XCODE 26, REQUIRED AND NOT MERELY ALLOWED (2026-09-29). Liquid Glass exists only in an app
+      # built against the iOS 26 SDK: the native tab bar (tauri-plugin-system-components) compiles
+      # its glass branch under `#if compiler(>=6.2)`, and an older toolchain builds the classic bar
+      # WITHOUT an error - so a runner image that dropped Xcode 26 would ship an app with no glass
+      # and nothing would say so. This used to read `>=16.2.0` and got Xcode 26.3 only because the
+      # image happened to carry it. `^26.0` takes the newest 26.x and FAILS the run if there is none.
+      - name: Select Xcode 26
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '>=16.2.0'
+          xcode-version: '^26.0'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

@@ -10,6 +10,8 @@
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
+  import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
+  import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
@@ -60,6 +62,8 @@
   let { children } = $props();
 
   const pathname = $derived(page.url.pathname);
+  /** Read once: the platform does not change under a running app. */
+  const isIosApp = isIosTauriRuntime();
   const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
 
   const showMaintenanceAdminBanner = $derived.by(() => {
@@ -575,7 +579,7 @@
       <main id="main-content" class="relative flex-1 overflow-hidden">
         <div
           bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
           <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
             {@render children?.()}
@@ -595,7 +599,17 @@
         </div>
       </main>
 
-      {#if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
+      <!-- THE iOS APP DRAWS THE BAR NATIVELY (Liquid Glass on iOS 26) and hands the bottom back to
+           the web bar only if the native one could not be configured - which it says at error
+           level. Both obey the same rule, passed to the native bar as `visible`. -->
+      {#if isIosApp && nativeTabBar.status !== 'failed'}
+        <!-- Mounted outside the login page only: configuring it there would draw it for a frame
+             before `visible` hid it. The keyboard and an open conversation hide it without
+             unmounting, because a reconfiguration per keystroke would be a native round trip each. -->
+        {#if !isLoginPage}
+          <NativeTabBar visible={!isKeyboardOpen && !isMobileConvoOpen} />
+        {/if}
+      {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
         <BottomNav />
       {/if}
     </div>

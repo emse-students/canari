@@ -187,6 +187,13 @@
    entirely has to be PORTALLED to the body, and `$lib/actions/portal` is how.
    ========================================================================================== */
 :root {
+  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) is 4rem
+     plus the home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26
+     floating pill and the classic bar each have their own height - so that component overwrites
+     this on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset`
+     and the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number. */
+  --bottom-nav-reserve: calc(4rem + var(--safe-area-inset-bottom, 0px));
+
   /* The navigation frame. Each scrim is one rung UNDER the thing it dims: a scrim exists to catch
      the click that closes it, so putting it OVER that thing makes the thing stop answering. */
   --z-nav-scrim: 22;
@@ -1089,7 +1096,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    gesture reads as "scrolling is broken". A scroller inside the chat shell that reaches the bottom
    of the viewport carries this class instead of that reservation. */
 .mobile-nav-inset {
-  padding-bottom: calc(4rem + var(--safe-area-inset-bottom, 0px));
+  padding-bottom: var(--bottom-nav-reserve);
 }
 
 /* MIRRORS THE NAV'S OWN MOUNT CONDITIONS, because reserved space the bar does not occupy is a dead
@@ -1109,9 +1116,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 html.keyboard-open .page-scroll-wrap {
-  scroll-padding-bottom: calc(
-    4rem + var(--safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
-  );
+  scroll-padding-bottom: calc(var(--bottom-nav-reserve) + var(--keyboard-layout-inset-bottom, 0px));
 }
 
 /* Block background scroll only in chat (non-chat pages like forms must keep their scroll) */
