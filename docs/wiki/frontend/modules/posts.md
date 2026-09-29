@@ -188,6 +188,21 @@ count. Measured on Chromium and Firefox at 390px, across a heading, paragraphs a
 lines ending in `…`, the bold rendered, no raw `**`. **WebKit is not measured** (no engine here);
 `-webkit-line-clamp` originates there. `PostContent.seeMore.svelte.test.ts` fails on the old cut.
 
+## A post's text could not be copied on a phone, because nothing marked it as content (2026-09-29)
+
+Reported from the app: *"on ne peut pas copier le texte dans les posts (ce qui peut etre utile pour
+recuperer une info)"*. Not a post-specific defect: `app.css` INVERTS `user-select` under
+`@media (pointer: coarse)`, because a long press was selecting navigation labels and setting
+descriptions - and the opt-in it left is Tailwind's `select-text` written at a call site. Exactly one
+call site ever wrote it, the chat message body. Everything else rendered from Markdown - a post, a
+comment, a profile bio, a partnership description - was chrome as far as a thumb was concerned.
+
+**The opt-in is `.post-markdown` in the stylesheet, not four class attributes**, for the same reason
+the list and blockquote rules live there: a rule written into one class string is a rule the other
+three surfaces cannot inherit, which is precisely how the list markers went missing on the most-read
+surface in the app. `user-select` inherits, so the block's descendants come with it, and a mouse drag
+on a desktop was never affected - the media query is the whole scope.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes

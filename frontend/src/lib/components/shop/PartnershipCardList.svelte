@@ -5,13 +5,15 @@
     type PartnershipCard,
     type PartnershipClaimResult,
   } from '$lib/associations/api';
-  import { ExternalLink } from '@lucide/svelte';
+  import { Copy, ExternalLink } from '@lucide/svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { loadLogoAccent } from '$lib/utils/logoAccent';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
+  import { copyText } from '$lib/utils/clipboard';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -87,6 +89,24 @@
     return (known ?? m.shop_partnership_error_generic)();
   }
 
+  /**
+   * Puts a claimed code on the clipboard, because reading it off the screen is not what it is for.
+   *
+   * ASKED FOR AS THE FIX TO ITS OWN SYMPTOM (user, 2026-09-29): *"les codes des partenariats
+   * (mettre un bouton avec l'icone 'copier' peut-etre bien)"*. A code is typed into a partner's
+   * checkout on another screen, and on a phone the alternative is a long press, two drag handles
+   * and the system menu - over a `break-all` string that wraps mid-token.
+   *
+   * THE TOAST IS ONLY SHOWN WHEN THE WRITE HAPPENED. `writeText` refuses on an unfocused document
+   * and outside a secure context, and "Code copie" over an empty clipboard is the one outcome
+   * worse than no button: the student pastes the code they had before.
+   */
+  async function handleCopy(code: string) {
+    if (await copyText(code, 'partnership code')) {
+      showToast(m.shop_partnership_code_copied(), 'info');
+    }
+  }
+
   async function handleClaim(card: PartnershipCard) {
     claiming = card.id;
     claimErrors = { ...claimErrors, [card.id]: '' };
@@ -122,7 +142,7 @@
   <div class={CARD_GRID}>
     {#each cards as card (card.id)}
       {@const locked = card.membersOnly && !card.viewerIsCotisant}
-      {@const result = claimResults[card.id]}
+      {@const claimedCode = claimResults[card.id]?.code}
       <CardTile
         iconUrl={card.iconUrl}
         fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
@@ -180,10 +200,31 @@
               <div class="bg-cn-accent/10 border-cn-accent/30 min-w-0 rounded-lg border px-3 py-2">
                 <p class="text-text-main text-sm break-words">{card.staticText}</p>
               </div>
-            {:else if result}
-              <div class="bg-cn-accent/10 border-cn-accent/30 min-w-0 rounded-lg border px-3 py-2">
-                <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
-                <p class="text-text-main font-mono text-sm font-bold break-all">{result.code}</p>
+              <!-- THE CODE AND NOT THE RESULT: a claim that answered with no code is a failure
+                 wearing a success's shape (see `handleClaim`), and this branch is the only reader
+                 of the value - so it binds the thing it draws rather than its container. -->
+            {:else if claimedCode}
+              <div
+                class="bg-cn-accent/10 border-cn-accent/30 flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2"
+              >
+                <div class="min-w-0 flex-1">
+                  <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
+                  <!-- `select-text` because this is the one string on the card a thumb has a
+                       reason to grab by hand; the app inverts `user-select` on a coarse pointer
+                       (app.css) and the button beside it is the ordinary path, not the only one. -->
+                  <p class="text-text-main font-mono text-sm font-bold break-all select-text">
+                    {claimedCode}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onclick={() => void handleCopy(claimedCode)}
+                  class="ui-icon-button text-text-muted hover:bg-cn-accent/20 hover:text-text-main shrink-0 rounded-lg transition-colors"
+                  aria-label={m.shop_partnership_copy_code()}
+                  title={m.shop_partnership_copy_code()}
+                >
+                  <Copy size={16} />
+                </button>
               </div>
             {:else}
               {#if claimErrors[card.id]}

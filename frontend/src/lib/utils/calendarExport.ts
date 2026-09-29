@@ -4,7 +4,7 @@ import { associationAccentHex } from '$lib/associations/accent';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { getLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
-import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
+import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
 import {
   breaksOnDay,
   dayOccupancy,
@@ -456,8 +456,16 @@ function darken(hex: string, ratio: number): string {
 /**
  * Builds the inner calendar HTML (no `<!DOCTYPE>` wrapper).
  *
- * `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to use
- * `ev.associationLogoUrl` directly (suitable for the in-document preview, same origin).
+ * `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to draw the logo
+ * from its own URL (suitable for the in-document preview).
+ *
+ * EITHER WAY THE URL IS ABSOLUTIZED BY `associationLogoSrc`, AND IN A WEBVIEW THAT IS THE WHOLE
+ * DIFFERENCE BETWEEN LOGOS AND NO LOGOS. A stored `logoUrl` is the app-relative
+ * `/api/media/public/<id>`; on `tauri://localhost` it resolves against the SHELL, whose asset
+ * server answers `index.html`. The `<img>` then fails to decode with nothing thrown and nothing
+ * logged - the sheet simply had no logos on a phone (user, 2026-09-29) - and the export's own
+ * pre-fetch read that HTML as a 200 and inlined it as a data URL. `MonthCalendarGridRich` has drawn
+ * the same logos through the same helper all along; this module was the copy that did not.
  *
  * THE TWO DISPLAY FACES ARE ASKED FOR AT WEIGHT 400 AND THAT IS NOT A DETAIL. Leckerli One and
  * Chewy ship one weight; a `font-weight:700` here would be synthesised by the browser for the
@@ -580,9 +588,15 @@ function buildCalendarHtml(
           const evBg = eventBgCss(ev);
           const fg = contrastColor(eventHexColors(ev)[0]);
 
-          // Resolve logos (primary + co-owners): data URL map for the export, direct URL for preview.
+          // Resolve logos (primary + co-owners): data URL map for the export, absolutized URL for
+          // the preview. The map is keyed by the RAW stored URL, which is what the pre-fetch in
+          // `exportCalendarMonth` enumerated - it absolutizes only the request it makes.
           const resolveLogo = (url: string | null | undefined): string | null =>
-            url ? (logoMap === 'direct' ? url : (logoMap.get(url) ?? null)) : null;
+            url
+              ? logoMap === 'direct'
+                ? associationLogoSrc(url)
+                : (logoMap.get(url) ?? null)
+              : null;
           // Positional, one entry per OWNER, nulls kept: the split reserves a band per owner, so
           // dropping the unresolved ones renumbers the bands. Two owners with one usable logo then
           // collapsed to the single-logo branch and drew it WHOLE across the circle - which looks
@@ -744,7 +758,9 @@ export async function exportCalendarMonth(
       ])
     ),
   ].filter((u): u is string => !!u);
-  const resolvedLogos = await Promise.all(uniqueLogoUrls.map(fetchDataUrl));
+  const resolvedLogos = await Promise.all(
+    uniqueLogoUrls.map((url) => fetchDataUrl(associationLogoSrc(url)))
+  );
   const logoMap = new Map<string, string | null>(
     uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
   );

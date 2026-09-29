@@ -1,5 +1,18 @@
+/*
+ * A LOGO URL IS ABSOLUTIZED BEFORE IT IS DRAWN, and this stub is what proves the sheet asks. The
+ * stored value is the app-relative `/api/media/public/<id>`; in the Tauri WebView that resolves
+ * against the shell's asset server, which answers `index.html`, so the `<img>` silently fails to
+ * decode and the sheet has no logos at all (user, 2026-09-29, on a phone).
+ */
+vi.mock('$lib/associations/api', () => ({
+  associationLogoSrc: (url: string | null | undefined) =>
+    url ? (url.startsWith('/') ? `https://media.test${url}` : url) : null,
+}));
+
 import {
+  buildPreviewInnerHtml,
   DAY_NUM_H,
+  DEFAULT_EXPORT_OPTIONS,
   EVENT_TITLE_LINE_HEIGHT,
   daySlotLayout,
   eventBgCss,
@@ -297,5 +310,19 @@ describe('breakMark', () => {
     // both unreadable, which is the whole reason the two marks exist rather than one.
     expect(breakMark(true, 1)).toBe('strip');
     expect(breakMark(true, 4)).toBe('strip');
+  });
+});
+
+describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at', () => {
+  it('draws each logo from an absolutized URL, never from the stored relative path', () => {
+    const html = buildPreviewInnerHtml(
+      [makeEvent({ associationLogoUrl: '/api/media/public/m-1' })],
+      2026,
+      4,
+      { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null }
+    );
+
+    expect(html).toContain('src="https://media.test/api/media/public/m-1"');
+    expect(html).not.toContain('src="/api/media/public/m-1"');
   });
 });

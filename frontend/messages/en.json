@@ -2328,6 +2328,8 @@
   "shop_partnership_visit_link": "Visit the partner",
   "shop_partnership_members_only_hint": "Reserved to this association's cotisants.",
   "shop_partnership_your_code_label": "Your code",
+  "shop_partnership_copy_code": "Copy the code",
+  "shop_partnership_code_copied": "Code copied",
   "shop_partnership_claiming": "Claiming…",
   "shop_partnership_claim_button": "Claim my code",
   "shop_partnership_error_no_codes_left": "There are no codes left for this partnership.",

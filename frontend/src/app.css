@@ -521,6 +521,23 @@ img.emoji {
     -webkit-user-select: text;
     user-select: text;
   }
+
+  /*
+   * RENDERED MARKDOWN IS THE CONTENT THIS INVERSION EXISTS TO SPARE, AND IT HAD NO WAY TO SAY SO.
+   * The opt-in above is `select-text` written at a call site, and only the chat message body ever
+   * wrote it - so a post, a comment, a profile bio and a partnership description were all chrome as
+   * far as a thumb was concerned: *"on ne peut pas copier le texte dans les posts (ce qui peut etre
+   * utile pour recuperer une info)"* (user, 2026-09-29, on a phone).
+   *
+   * `.post-markdown` IS THE CLASS AND NOT FOUR ATTRIBUTES, for the reason the block rules above it
+   * are stated once: a rule written into one class string is a rule the other three surfaces cannot
+   * inherit, and that is exactly how the list markers went missing on the most-read surface in the
+   * app. `user-select` inherits, so the block's descendants come with it.
+   */
+  .post-markdown {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /* Mobile swipe between main tabs (+layout.svelte) */
