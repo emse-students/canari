@@ -973,6 +973,25 @@ reload queues like any other. A leader whose lock is stolen sees its request rej
 queue, the demotion handler reloads it) - two tabs advancing one ratchet is what this module exists to
 prevent. Guarded by the `a promotion reload reclaims the lock` cases in `tabLeader.test.ts`.
 
+### A document on its way out took the lead back, and the take-over looped (2026-09-29)
+
+**The fix above was not enough, and the user's console said why** (production `v0.18.29`, one
+click): five promotions and five demotions in two seconds, alternating between the two tabs. Both
+handlers reload after 50 ms, and the tab that yielded still requeued at once. So when the promoted
+tab reloaded in its turn, the lock went back to the document that was LEAVING. That document was
+promoted, marked a promotion reload, and on its next load stole the lock from the new page. The
+mark had turned one hand-over into a relay race.
+
+**A document whose demotion reloads it asks for nothing.** The demotion handler now answers
+`'reloads'` when it ends the document (`useChatSession`), and `handOver()`, the one tail shared by
+`releaseLeadership` and `onLeaderLockRejected`, then requeues nothing. The page the reload starts
+runs its own election. A hand-over also clears any promotion mark it still holds
+(`clearPromotionReload`), so a page cannot steal with a mark from a lead it already gave away. A
+handler that returns nothing (a native shell, a test) keeps the old requeue, because that document
+goes on living. Verified on the local estate, two tabs of W2: one click gives exactly one promotion
+reload and one demotion, then 25 s stable, with the take-over button on the old tab only. Guarded by
+the two `handOver` cases in `tabLeader.test.ts`.
+
 ### A follower pulled the leader's queue on every barrier (2026-09-28)
 
 **Found in the same console.** `settleBarrier` pulls whenever no pull has emptied the mailbox *while

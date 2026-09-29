@@ -94,7 +94,8 @@ export function whenTabLeadershipDecided(): Promise<'leader' | 'follower'> {
 
 let tabChannel: BroadcastChannel | null = null;
 let leaderPromotedHandler: (() => void) | null = null;
-let leaderDemotedHandler: (() => void) | null = null;
+let leaderDemotedHandler: (() => 'reloads' | void) | null = null;
+
 /** Stored resolve from holdLeaderLockUntilUnload - allows explicitly releasing the lock. */
 let releaseLeaderLock: (() => void) | null = null;
 /**
@@ -134,8 +135,11 @@ function notifyTabLeaderPromoted(): void {
  * Registers a callback invoked when this tab loses leadership (another tab took over).
  * The handler should tear down this tab's WebSocket so the MLS ratchet only ever
  * advances in one tab.
+ *
+ * It returns `'reloads'` when it ends the document: this one then neither requeues nor accepts the
+ * lead again, and the page its reload starts runs the election - see {@link handOver}.
  */
-export function setTabLeaderDemotedHandler(handler: (() => void) | null): void {
+export function setTabLeaderDemotedHandler(handler: (() => 'reloads' | void) | null): void {
   leaderDemotedHandler = handler;
 }
 
@@ -178,19 +182,37 @@ export function releaseLeadership(): void {
   }
   tabChannel?.postMessage({ type: 'leader_closing', tabId: TAB_ID });
   // Release the Web Lock if active (the next tab in the queue acquires it automatically).
-  const requeue = requeueForPromotion;
   releaseLeaderLock?.();
   releaseLeaderLock = null;
+  handOver();
+}
+
+/**
+ * The half of a demotion both paths share (a take-over, a stolen lock): tell the session, and get
+ * back in the queue ONLY if this document goes on living.
+ *
+ * Handing leadership over is not leaving the election: the tab that took over will close one day,
+ * and a document holding no outstanding request is never told - it stays read-only and offline for
+ * the rest of its life. But a document whose handler RELOADS it is leaving, and the page the reload
+ * starts runs its own election; queueing here as well is what handed the lock back to the leaving
+ * document. Only on the Web Locks path, which is what sets the requeue - the localStorage fallback
+ * has its own poll.
+ *
+ * **A DOCUMENT ON ITS WAY OUT TOOK THE LEAD BACK, AND "PRENDRE LA MAIN" LOOPED.** Both handlers
+ * reload after 50 ms, and the yielding tab used to requeue at once - so when the tab it yielded to
+ * reloaded in turn (a promoted tab reloads to read the MLS state the old leader left), the lock
+ * went back to the document that was leaving, which was promoted, marked a promotion reload, and
+ * stole the lock from the new page on its next load. Measured on production 2026-09-29, one click:
+ * five promotions and five demotions in two seconds, alternating.
+ */
+function handOver(): void {
+  const requeue = requeueForPromotion;
   requeueForPromotion = null;
-  // AND GET BACK IN THE QUEUE. Handing leadership over is not leaving the election: the tab that
-  // took over will close one day, and a tab holding no outstanding request is never told. It then
-  // stays read-only and offline for the rest of its life with nothing on screen to say why, which
-  // is the same end state as the double election above, reached from the other direction. Only on
-  // the Web Locks path, which is what set this - the localStorage fallback has its own poll.
+  clearPromotionReload();
+  // Notify the session to close its WebSocket (otherwise the MLS ratchet would advance in two tabs
+  // simultaneously) - and learn from its answer whether this document is ending.
+  if (leaderDemotedHandler?.() === 'reloads') return;
   requeue?.();
-  // Notify the session to close its WebSocket (otherwise the MLS ratchet
-  // would advance in two tabs simultaneously).
-  leaderDemotedHandler?.();
 }
 
 /**
@@ -280,6 +302,15 @@ export function markPromotionReload(): void {
   }
 }
 
+/** Drops the mark: a document that hands the lead over has no promotion left to reclaim. */
+function clearPromotionReload(): void {
+  try {
+    sessionStorage.removeItem(PROMOTION_RELOAD_KEY);
+  } catch {
+    /* no storage: there is no mark to clear either */
+  }
+}
+
 /** Reads and clears the mark: one reload reclaims once, never for the rest of the tab's life. */
 function consumePromotionReload(): boolean {
   try {
@@ -301,10 +332,7 @@ function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
   log('[TAB] Leader lock reclaimed by a tab reloading after its promotion - handing over.');
   decide('follower');
   releaseLeaderLock = null;
-  const requeue = requeueForPromotion;
-  requeueForPromotion = null;
-  requeue?.();
-  leaderDemotedHandler?.();
+  handOver();
 }
 
 /**

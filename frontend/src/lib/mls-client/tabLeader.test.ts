@@ -432,6 +432,40 @@ describe('tabLeader - the election runs once per document', () => {
     }
   });
 
+  it('a tab whose demotion RELOADS it does not queue - the page it starts does', async () => {
+    // Production 2026-09-29: the yielding tab queued at once, was granted the lock back the moment
+    // the tab it yielded to reloaded, and the two traded the lead five times in two seconds.
+    const locks = stubRealLock();
+    setTabLeaderDemotedHandler(() => 'reloads');
+    try {
+      await initTabLeadershipAsync(log);
+
+      releaseLeadership();
+
+      expect(getTabLeadership()).toBe('follower');
+      expect(locks.pending()).toBe(0);
+    } finally {
+      setTabLeaderDemotedHandler(null);
+      locks.restore();
+    }
+  });
+
+  it('a hand-over clears a promotion mark, so the next page cannot steal with it', async () => {
+    const locks = stubRealLock();
+    setTabLeaderDemotedHandler(() => 'reloads');
+    try {
+      await initTabLeadershipAsync(log);
+      markPromotionReload();
+
+      releaseLeadership();
+
+      expect(sessionStorage.getItem('canari_tab_promotion_reload')).toBeNull();
+    } finally {
+      setTabLeaderDemotedHandler(null);
+      locks.restore();
+    }
+  });
+
   it('two concurrent calls share ONE election rather than racing for the lock', async () => {
     const locks = stubRealLock();
     try {
