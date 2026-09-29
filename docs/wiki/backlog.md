@@ -300,7 +300,12 @@ user of either app therefore receives the key in their id_token/userinfo. Read o
 `ak shell`, 2026-09-29; the value is deliberately not written in this public repository. **Owed**:
 a keyless avatar URL in MiGallery first, the mapping switched to it, then the key revoked -
 revoking first breaks both apps' avatars (user, 2026-09-29, D29). A MiGallery key is read, write or
-admin, never per-route, so this one reads every read-scoped API.
+admin, never per-route, so this one reads every read-scoped API. **Where it stands (2026-09-30):** the leaked key is MiGallery
+row 11 (`authentik`, scope `read`, found by its SHA-256, the value never printed); the signed URL is
+[MiGallery#371](https://github.com/emse-students/MiGallery/pull/371); the signing key is set on
+BOTH sides (MiGallery's GitHub secret, and `MIGALLERY_AVATAR_SIGNING_KEY` in `/srv/miconnect/.env`,
+read back at 64 characters after the restart). **Left, in order:** MiGallery `v2.15.6` released,
+the `avatar` mapping switched to `?sig=`, one avatar observed in MinoWiki, THEN row 11 deleted.
 Found during the [profile reform](profiles-and-access.md#3-found-on-the-way).
 
 ### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
