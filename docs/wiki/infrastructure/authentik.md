@@ -383,7 +383,7 @@ printed in full (the rollback):**
   `miconnect-demande-promo-et-formation` (an older copy of `Request Promo & Formation`, sharing its
   prompts) and `Force Link Alumni`; the prompt `Alumni Force Link Continue`; the policy
   `Need Alumni Source`; the empty flow `miconnect-enroll-aluni-from-cas`. The alumni sketch they
-  formed is recorded where it will be rebuilt ([profiles-and-access WP8](../profiles-and-access.md#4-the-technical-plan---proposed-2026-09-29-awaiting-the-users-validation)),
+  formed is recorded where it will be rebuilt ([profiles-and-access WP8](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)),
   including the one useful fact in it: the link was a redirect to
   `/source/saml/login/alumni/` while signed in.
 - **Logging out of ANY of the nine applications ended on the Archives.** A redirect stage `Archives
@@ -405,13 +405,15 @@ printed in full (the rollback):**
   `initial-setup` flow it manages was edited by hand. Harmless for sign-in, and it is noise.
 - **`AUTHENTIK_LOG_LEVEL` was `debug`** in `compose.yml`: 63 % of the lines, and user e-mail addresses
   written into the log. The file now says `info` (the access log, `authentik.asgi`, is emitted at
-  info); **production takes it only at the next `docker compose up -d`** (see Deployment).
+  info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
+`compose.yml.bak-2026-09-29`), `docker compose up -d`, both containers read back `info`, the
+`/authorize` probe answered `302` to `miconnect-auth` and no warning or error followed.
 - **About 1 CAS return in 6 fails**: [backlog](../backlog.md#p2---about-one-cas-return-in-six-reaches-miconnect-with-no-code-and-no-state-and-the-sign-in-fails-measured-2026-09-29).
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
   provider has 5 min / 30 days. Each is decided in the "authentik as code" package
-  ([profiles-and-access](../profiles-and-access.md#4-the-technical-plan---proposed-2026-09-29-awaiting-the-users-validation)),
+  ([profiles-and-access](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)),
   not patched one by one.
 
 ## Database and backup

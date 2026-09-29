@@ -1,8 +1,8 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
-**Status: DECIDED, NOT BUILT.** Every answer below was given by the user on 2026-09-29, one question
-at a time. The technical plan that turns them into work packages is section 4, PROPOSED and
-awaiting the user's validation. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
+**Status: DECIDED AND PLANNED, NOT BUILT.** Every answer below was given by the user on 2026-09-29, one question
+at a time. The technical plan that turns them into work packages is section 4, VALIDATED the
+same day. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
@@ -187,7 +187,7 @@ application computed from the same profile, so no application keeps a hard-coded
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
   Whether its button renders on the sign-in page was not observed.
 
-## 4. The technical plan - PROPOSED 2026-09-29, awaiting the user's validation
+## 4. The technical plan - VALIDATED by the user 2026-09-29
 
 ### Four facts the plan is shaped by
 
@@ -232,8 +232,12 @@ same pass settles homogeneously what the audit found and left
 ([authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29)): one
 naming scheme, PKCE `S256` on the CAS source (one sign-in by a human proves it), launch URLs on the
 final names, the Cercle's token lifetimes justified or aligned, the OOBE blueprint back to
-`successful`. Proven first on a throwaway local authentik fed the same blueprints, then applied to
-production with the database dump taken the same hour.
+`successful`. **Decided by the user the same day: the plan is validated, WP0 then WPA; the
+blueprints ship with the RELEASE pipeline** (the deploy library copies `compose.yml` and
+`blueprints/` to the host, no fifth visible workflow); **and authentik gets a DEV instance of its
+own**, fed the same blueprints, so a flow change and the profile editor (WP4) are tried on dev
+without touching the 600 real accounts - which also needs the CAS to accept a second client (a DSI
+request) and a dev copy of the providers.
 
 **WP1 - Authentik holds the profile; nothing observable changes.**
 
