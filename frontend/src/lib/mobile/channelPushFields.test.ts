@@ -70,7 +70,9 @@ describe('channel push payload contract (social-service writer vs the three nati
   const fanOutBody = functionBody(
     serviceSource,
     /private async notifyChannelRecipients\(/,
-    /\n {2}\/\*\*\n {3}\* Records that/
+    // Ends at the NEXT METHOD's docblock, found by that method's name. It used to end at the prose
+    // "Records that", which a correction of that very docblock (it recorded nothing) broke.
+    /\n {2}\/\*\*(?:(?!\*\/)[\s\S])*\*\/\n {2}async markChannelRead\(/
   );
   const kotlinHandler = functionBody(
     kotlinSource,
