@@ -88,6 +88,21 @@ export const LEGACY_PERMISSION_MAPPING: Record<string, ChannelPermission> = {
 };
 
 /**
+ * Whether a role lets its holder GOVERN salons - create one, rename it, delete it, set its access
+ * and its write policy. THE ONLY definition: every one of those writes refuses without it, and the
+ * workspace listing hands the same answer to the client as `viewerCanManageChannels`, so the panel
+ * offering the controls and the endpoint refusing them cannot disagree.
+ *
+ * Wider than `workspace.manage` on purpose: governing rooms is what `channel.manage` IS.
+ */
+export function roleGrantsChannelManagement(permissions: readonly string[]): boolean {
+  return (
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+  );
+}
+
+/**
  * What the viewer's ROLES grant them in a workspace, reduced to the two facts a write decision
  * needs. Both are already computed wherever a decision is made - this type is what stops them
  * being re-derived a third time.

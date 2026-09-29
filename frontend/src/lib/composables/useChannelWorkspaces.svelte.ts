@@ -89,6 +89,8 @@ export interface ChannelSidebarWorkspace {
   viewerCanManage?: boolean;
   /** Server-authoritative: true when the current user holds `channel.moderate` (or a permission that subsumes it) here, letting them delete other members' channel messages. */
   viewerCanModerate?: boolean;
+  /** Server-authoritative: true when the current user may govern salons here (rename, delete, access, write policy). Defaults to false until the backend listing confirms it. */
+  viewerCanManageChannels?: boolean;
   /** What this community lets a newcomer read. Absent until the backend listing says. */
   historyVisibility?: GraineHistoryVisibility;
   /** Ordered list of channels belonging to this workspace. */
@@ -504,6 +506,8 @@ export function useChannelWorkspaces() {
         existing.viewerCanManage = workspace.viewerCanManage;
       if (workspace.viewerCanModerate !== undefined)
         existing.viewerCanModerate = workspace.viewerCanModerate;
+      if (workspace.viewerCanManageChannels !== undefined)
+        existing.viewerCanManageChannels = workspace.viewerCanManageChannels;
       if (workspace.historyVisibility !== undefined) {
         existing.historyVisibility = adoptHistoryVisibility(
           workspaceId,
@@ -522,6 +526,7 @@ export function useChannelWorkspaces() {
       imageMediaId: workspace.imageMediaId ?? null,
       viewerCanManage: workspace.viewerCanManage ?? false,
       viewerCanModerate: workspace.viewerCanModerate ?? false,
+      viewerCanManageChannels: workspace.viewerCanManageChannels ?? false,
       historyVisibility:
         workspace.historyVisibility === undefined
           ? undefined
@@ -1437,10 +1442,11 @@ export function useChannelWorkspaces() {
   /**
    * Applies this device's own new role in a community, pushed by the server.
    *
-   * ONE FLAG IS ALL THE CLIENT CACHES, and it is stated rather than re-derived: `viewerCanManage`
-   * comes from `listWorkspacesForUser`, which reads the permission set of the roles a member holds.
-   * The event carries the same answer computed by the same service, so applying it here cannot
-   * disagree with what the next load will say.
+   * TWO FLAGS ARE CACHED, and each is stated rather than re-derived: `viewerCanManage` (the
+   * community) and `viewerCanManageChannels` (its salons) come from `listWorkspacesForUser`, which
+   * reads the permission set of the roles a member holds. The event carries the same answers
+   * computed by the same service, so applying them here cannot disagree with what the next load
+   * will say.
    *
    * WHY IT IS NOT A REFETCH. A refetch can fail, can be declined because a load is already in
    * flight, and lands whenever the network allows - and what it would return is precisely the value
@@ -1454,10 +1460,19 @@ export function useChannelWorkspaces() {
     workspaceId: string;
     roleName: string;
     canManage: boolean;
+    canManageChannels?: boolean;
     permissions: string[];
   }) {
     channelWorkspaces = channelWorkspaces.map((ws) =>
-      ws.workspaceDbId === event.workspaceId ? { ...ws, viewerCanManage: event.canManage } : ws
+      ws.workspaceDbId === event.workspaceId
+        ? {
+            ...ws,
+            viewerCanManage: event.canManage,
+            ...(event.canManageChannels === undefined
+              ? {}
+              : { viewerCanManageChannels: event.canManageChannels }),
+          }
+        : ws
     );
   }
 

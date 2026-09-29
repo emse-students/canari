@@ -40,6 +40,13 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
     name: 'Membre',
     permissions: [] as string[],
   };
+  /** Governs salons without governing the community - the case the two flags exist to tell apart. */
+  const SALON_MANAGER_ROLE = {
+    id: 'r-salons',
+    workspaceId: WORKSPACE,
+    name: 'Gestion des salons',
+    permissions: [CHANNEL_PERMISSIONS.MANAGE_CHANNEL] as string[],
+  };
 
   function makeService(targetRole: typeof ADMIN_ROLE | typeof MEMBER_ROLE) {
     const roleRepo = {
@@ -105,6 +112,7 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
       roleName: 'Administrateur',
       permissions: ADMIN_ROLE.permissions,
       canManage: true,
+      canManageChannels: true,
       changedBy: ACTOR,
     });
   });
@@ -118,7 +126,24 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
 
     const [, data, recipients] = redis.publishChannelEvent.mock.calls[0];
     expect(recipients).toEqual([TARGET]);
-    expect(data).toMatchObject({ roleName: 'Membre', canManage: false, permissions: [] });
+    expect(data).toMatchObject({
+      roleName: 'Membre',
+      canManage: false,
+      canManageChannels: false,
+      permissions: [],
+    });
+  });
+
+  // THE SALON CONTROLS ARE GATED ON THIS FLAG, NOT ON `canManage`: `channel.manage` alone is enough for
+  // every salon-governing write, so deriving it from `workspace.manage` would hide them from exactly
+  // the members the role was made for.
+  it('announces canManageChannels for a role holding channel.manage without workspace.manage', async () => {
+    const { service, redis } = makeService(SALON_MANAGER_ROLE);
+
+    await service.updateWorkspaceMemberRole(WORKSPACE, TARGET, 'Gestion des salons', ACTOR);
+
+    const [, data] = redis.publishChannelEvent.mock.calls[0];
+    expect(data).toMatchObject({ canManage: false, canManageChannels: true });
   });
 
   // BEST-EFFORT, AND IT MUST STAY THAT WAY. The role is already written when the announcement is

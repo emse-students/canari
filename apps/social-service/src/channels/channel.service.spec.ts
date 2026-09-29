@@ -1425,6 +1425,39 @@ describe('ChannelService security hardening', () => {
     ]);
   });
 
+  // The salon controls read this flag, and `channel.manage` alone is enough for every salon write -
+  // so it must not be `viewerCanManage` under another name.
+  it('listWorkspacesForUser flags viewerCanManageChannels from channel.manage OR workspace.manage', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    memberRepo.find.mockResolvedValue([
+      { workspaceId: 'ws1', userId: 'u1', roleIds: ['r-admin'] },
+      { workspaceId: 'ws2', userId: 'u1', roleIds: ['r-salons'] },
+      { workspaceId: 'ws3', userId: 'u1', roleIds: ['r-member'] },
+    ]);
+    workspaceRepo.find.mockResolvedValue([
+      { id: 'ws1', name: 'Admin WS' },
+      { id: 'ws2', name: 'Salon manager WS' },
+      { id: 'ws3', name: 'Member WS' },
+    ]);
+    roleRepo.find.mockResolvedValue([
+      { id: 'r-admin', permissions: ['workspace.manage'] },
+      { id: 'r-salons', permissions: ['channel.manage'] },
+      { id: 'r-member', permissions: ['member.invite'] },
+    ]);
+
+    const result = await service.listWorkspacesForUser('u1');
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: 'ws1', viewerCanManage: true, viewerCanManageChannels: true }),
+      expect.objectContaining({ id: 'ws2', viewerCanManage: false, viewerCanManageChannels: true }),
+      expect.objectContaining({
+        id: 'ws3',
+        viewerCanManage: false,
+        viewerCanManageChannels: false,
+      }),
+    ]);
+  });
+
   it('listWorkspacesForUser defaults viewerCanManage to false when the user holds no roles', async () => {
     const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
     memberRepo.find.mockResolvedValue([{ workspaceId: 'ws1', userId: 'u1', roleIds: [] }]);

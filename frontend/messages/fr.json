@@ -387,6 +387,7 @@
   "chat_danger_zone_label": "Zone de danger",
   "chat_channel_access_title": "Accès au canal",
   "chat_channel_access_description": "Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.",
+  "chat_channel_settings_read_only_hint": "Seuls les membres ayant la permission de gérer les canaux peuvent modifier ces réglages.",
   "common_loading_label": "Chargement…",
   "common_saving_label": "Sauvegarde…",
   "common_delete_button": "Supprimer",
