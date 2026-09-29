@@ -287,7 +287,7 @@ formation x campus, audiences fixed by the publishing association, one BDE per s
 the single truth edited from Canari by admins only, per-application access decided centrally, and the
 migration of the 600 accounts. **Thirty-two decisions, all on
 [profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
-were taken against. **The technical plan is its section 4, ten work packages, PROPOSED: owed, the
+were taken against. **The technical plan is its section 4, eleven work packages, PROPOSED: owed, the
 user's validation before anything is built.** WP0 is the P1 below and needs nothing else.
 
 ## Open defects, in severity order
@@ -302,6 +302,26 @@ a keyless avatar URL in MiGallery first, the mapping switched to it, then the ke
 revoking first breaks both apps' avatars (user, 2026-09-29, D29). A MiGallery key is read, write or
 admin, never per-route, so this one reads every read-scoped API.
 Found during the [profile reform](profiles-and-access.md#3-found-on-the-way).
+
+### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
+
+`docker logs miconnect-server-1` since its 2026-09-24 restart: **72 `State check failed`**
+(`authentik.sources.oauth.views.callback`, preceded by "No state parameter returned by the source")
+against ~420 responses on `/source/oauth/callback/cas-emse/` - between 3 and 21 a day. Every failing
+request reads the BARE callback URL: no `code`, no `state`, no query string at all, while a working
+one carries `?code=...&state=...`. So this is not a stale or mismatched state: the CAS sends the
+browser to the callback without answering the authorization request. The same user agent fails
+three times in a row (twice on 2026-09-29, a Linux desktop and an Android phone), so people retry
+and stay out. The deny text of the unreferenced `miconnect-auth-fallback` flow describes exactly
+this, so somebody met it before and it was never measured.
+
+**Not yet known, and the next probe:** what brings the CAS to redirect to the bare URL - a CAS login
+page left open past its webflow timeout, a bookmarked CAS page, or a CAS SSO session answering a
+request it no longer holds. Read the access log of ONE failing sequence end to end (the request
+before the bare callback, its `Referer`, the time since `/source/oauth/login/cas-emse/`), then
+reproduce it on purpose. What the user SEES afterwards is also unobserved. Nothing may be changed on
+the CAS side from here; the fix may be a DSI ticket, or a MiConnect flow that restarts the
+authorization instead of failing. [authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29).
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)
 

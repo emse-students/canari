@@ -48,7 +48,9 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
       AUTHENTIK_URL_DOMAIN: auth.canari-emse.fr
-      AUTHENTIK_LOG_LEVEL: debug
+      # `info`, pas `debug` : debug faisait 63 % des lignes (mesure 2026-09-29) et y ecrivait les
+      # adresses e-mail des utilisateurs. Le journal d acces (`authentik.asgi`) est emis en info.
+      AUTHENTIK_LOG_LEVEL: info
     # ONE publish, and an ADDRESS rather than a bare port. `9443` was dropped on 2026-09-24:
     # the tunnel ingress reaches this stack at `http://10.0.0.7:9000`, measured on the connector
     # itself, so the TLS listener had no consumer. On the shared host, TLS is terminated by the
@@ -83,7 +85,7 @@ services:
       AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
-      AUTHENTIK_LOG_LEVEL: debug
+      AUTHENTIK_LOG_LEVEL: info
     shm_size: 512mb
     depends_on:
       postgresql:

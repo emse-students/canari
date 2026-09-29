@@ -221,6 +221,20 @@ breaks both apps' avatars. A MiGallery key is
 every read-scoped API. Canari, Sky and the Cercle send their own keys in a header and are not
 affected. [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
 
+**WPA - authentik as code, BEFORE WP1 (user, 2026-09-29: *"on a tout fait à la main, peut-être
+qu'on peut faire mieux et plus propre, homogène"*).** Every custom object - flows, stages, prompts,
+policies, mappings, sources, providers, applications, the brand and its CSS - becomes an authentik
+BLUEPRINT in `infrastructure/authentik/blueprints/`, mounted at `/blueprints/custom` and applied by
+the worker, secrets through `!Env`. Then the restore path holds by construction instead of by the
+paragraphs of [authentik](infrastructure/authentik.md) listing hand mutations to redo, and WP1/WP2
+are written as blueprint diffs, reviewed in a pull request, rather than `ak shell` sessions. The
+same pass settles homogeneously what the audit found and left
+([authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29)): one
+naming scheme, PKCE `S256` on the CAS source (one sign-in by a human proves it), launch URLs on the
+final names, the Cercle's token lifetimes justified or aligned, the OOBE blueprint back to
+`successful`. Proven first on a throwaway local authentik fed the same blueprints, then applied to
+production with the database dump taken the same hour.
+
 **WP1 - Authentik holds the profile; nothing observable changes.**
 
 - `attributes.profile = {version: 1, campus: "saint-etienne" | "gardanne", cursus: [{formation,
@@ -303,5 +317,5 @@ colle - to be proven on dev with a real alumni account.
 attribute keys, once nothing reads them - each removal measured, per
 [legacy-compatibility](legacy-compatibility.md).
 
-**Dependencies.** WP0 whenever. WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 waits
+**Dependencies.** WP0 whenever. WPA -> WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 waits
 for the SSO; WP9 last.
