@@ -33,8 +33,8 @@ export function listOptionLabel(list: Association): string {
 }
 
 /**
- * The same two groups as `AssociationOptions.svelte`, as options for the in-app `Picker` - so a
- * picker and a `<select>` offering associations read in the same order under the same headings.
+ * The two groups as options for the in-app `Picker` - so every picker offering associations reads
+ * in the same order under the same headings.
  */
 export function associationPickerOptions(associations: Association[]): PickerOption[] {
   const { assos, lists } = groupAssociationsForSelect(associations);

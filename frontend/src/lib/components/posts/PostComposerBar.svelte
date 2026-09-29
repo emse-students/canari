@@ -12,6 +12,8 @@
     X,
   } from '@lucide/svelte';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
+  import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
+  import { toDatetimeLocalValue } from '$lib/utils/dates';
   import { Log } from '$lib/utils/Log';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
@@ -183,19 +185,20 @@
             onchange={(e) => takeFiles(e, 'documents')}
           />
         </label>
-        <!-- The date input COVERS the chip, transparent: a tap anywhere on it opens the platform's
-             own date-and-time picker, and the chip only draws what was chosen. -->
-        <span class="{chipClass} {scheduledAt ? activeChip : idleChip}">
-          <Clock size={16} strokeWidth={2.25} class="text-text-muted" />
-          {scheduledLabel}
-          <input
-            type="datetime-local"
-            bind:value={scheduledAt}
-            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            aria-label={m.post_create_schedule_publication_label()}
-            class="absolute inset-0 cursor-pointer opacity-0"
-          />
-        </span>
+        <!-- The app's own date field, drawn AS the chip: the native input that used to cover it
+             opened Android's date dialog and then a separate clock dialog. -->
+        <DateTimeField
+          value={scheduledAt}
+          onValueChange={(v) => (scheduledAt = v)}
+          label={m.post_create_schedule_publication_label()}
+          min={toDatetimeLocalValue(new Date(Date.now() + 60000).toISOString())}
+          triggerClass="{chipClass} {scheduledAt ? activeChip : idleChip}"
+        >
+          {#snippet trigger()}
+            <Clock size={16} strokeWidth={2.25} class="text-text-muted" />
+            {scheduledLabel}
+          {/snippet}
+        </DateTimeField>
         {#if scheduledAt}
           <button
             type="button"

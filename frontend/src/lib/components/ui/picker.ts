@@ -11,6 +11,8 @@ export interface PickerOption {
   label: string;
   /** A second, muted line under the label. */
   description?: string;
+  /** Shown but not choosable - a reason the choice exists and is unavailable, e.g. a used slot. */
+  disabled?: boolean;
   /**
    * The heading this option sits under. Consecutive options sharing it form one group, so the
    * caller's ORDER decides the grouping - the picker never re-sorts what it was given.

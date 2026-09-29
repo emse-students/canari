@@ -1,13 +1,9 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
-  import { fade, fly } from 'svelte/transition';
   import { Check, ChevronDown } from '@lucide/svelte';
-  import { portal } from '$lib/actions/portal';
-  import { clickOutside } from '$lib/actions/clickOutside';
-  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
-  import { m } from '$lib/paraglide/messages';
+  import FloatingSurface from './FloatingSurface.svelte';
   import { groupPickerOptions, pickerKeyTarget, type PickerOption } from './picker';
   import { controlClass, type ControlDensity } from './controlClasses';
 
@@ -23,8 +19,8 @@
    *
    * The two shapes are decided when it OPENS, by the same `40rem` the full-screen composer uses, so
    * a picker inside a phone-sized window is always a sheet under the thumb and never a popover
-   * hanging off a control near the bottom of the glass. Both are portalled to the body and stack at
-   * `--z-modal-popover`, because the pickers that matter most open from inside a modal.
+   * hanging off a control near the bottom of the glass. The shell - portal, stacking, dismissal - is
+   * `FloatingSurface`, shared with `DateTimeField`.
    *
    * It is a listbox for assistive technology: the options are `role="option"` with `aria-selected`,
    * arrows move between them and wrap, Home/End jump, Escape closes and returns focus to the trigger.
@@ -93,13 +89,15 @@
   let open = $state(false);
   let asSheet = $state(false);
   let triggerEl: HTMLButtonElement | null = $state(null);
-  let panelEl: HTMLDivElement | null = $state(null);
+  let listEl: HTMLDivElement | null = $state(null);
 
   const selected = $derived(options.find((o) => o.value === value));
   const groups = $derived(groupPickerOptions(options));
 
   function optionButtons(): HTMLButtonElement[] {
-    return Array.from(panelEl?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+    return Array.from(
+      listEl?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? []
+    );
   }
 
   async function openPicker() {
@@ -148,12 +146,6 @@
     e.preventDefault();
     buttons[next].focus();
   }
-
-  $effect(() => {
-    if (!open || asSheet || !panelEl || !triggerEl) return;
-    panelEl.style.minWidth = `${triggerEl.offsetWidth}px`;
-    return bindFixedPopover(panelEl, { anchor: () => triggerEl, offset: 4, estimatedHeight: 360 });
-  });
 </script>
 
 <button
@@ -175,8 +167,9 @@
   {/if}
 </button>
 
-{#snippet list()}
+<FloatingSurface {open} {asSheet} anchor={triggerEl} {label} onClose={closePicker}>
   <div
+    bind:this={listEl}
     role="listbox"
     aria-label={label}
     tabindex="-1"
@@ -198,7 +191,9 @@
           type="button"
           role="option"
           aria-selected={isSelected}
-          class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors outline-none hover:bg-black/5 focus-visible:bg-black/5 dark:hover:bg-white/10 dark:focus-visible:bg-white/10 {isSelected
+          disabled={option.disabled}
+          aria-disabled={option.disabled}
+          class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors outline-none hover:bg-black/5 focus-visible:bg-black/5 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent dark:hover:bg-white/10 dark:focus-visible:bg-white/10 {isSelected
             ? 'text-amber-700 dark:text-amber-400'
             : 'text-text-main'}"
           onclick={() => pick(option)}
@@ -219,49 +214,4 @@
       {/each}
     {/each}
   </div>
-{/snippet}
-
-{#if open && asSheet}
-  <div use:portal class="fixed inset-0 z-(--z-modal-popover)">
-    <button
-      type="button"
-      class="absolute inset-0 cursor-default bg-black/45 outline-none"
-      aria-label={m.common_close_label()}
-      tabindex="-1"
-      onclick={() => closePicker(true)}
-      transition:fade={{ duration: 150 }}
-    ></button>
-    <div
-      bind:this={panelEl}
-      role="dialog"
-      aria-modal="true"
-      aria-label={label}
-      tabindex="-1"
-      class="bg-surface-elevated absolute inset-x-0 bottom-0 flex max-h-[70dvh] flex-col rounded-t-2xl pb-[max(0.5rem,var(--safe-area-inset-bottom,0px))] shadow-2xl"
-      transition:fly={{ y: 32, duration: 200 }}
-    >
-      <div class="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-black/15 dark:bg-white/20"></div>
-      <p class="text-text-main shrink-0 px-5 pt-3 pb-2 text-base font-bold">{label}</p>
-      <div class="min-h-0 overflow-y-auto overscroll-contain px-2">
-        {@render list()}
-      </div>
-    </div>
-  </div>
-{:else if open}
-  <div
-    bind:this={panelEl}
-    use:portal
-    use:clickOutside={{
-      enabled: open,
-      callback: () => closePicker(false),
-      ignore: () => triggerEl,
-    }}
-    role="group"
-    aria-label={label}
-    tabindex="-1"
-    class="bg-surface-elevated border-cn-border fixed z-(--z-modal-popover) w-max max-w-[min(22rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-xl border p-1.5 shadow-lg"
-    transition:fade={{ duration: 120 }}
-  >
-    {@render list()}
-  </div>
-{/if}
+</FloatingSurface>

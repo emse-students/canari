@@ -18,7 +18,9 @@
   import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
   import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import { m } from '$lib/paraglide/messages';
-  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import { getLocale } from '$lib/paraglide/runtime';
 
   /** Beneficiary preselected on arrival: in practice a Cercle balance belongs to Le Cercle. */
@@ -31,6 +33,10 @@
   let associations = $state<Association[]>([]);
   let selectedAssoId = $state('');
   const asso = $derived(associations.find((a) => a.id === selectedAssoId) ?? null);
+  const assoOptions = $derived<PickerOption[]>([
+    { value: '', label: m.admin_cercle_asso_placeholder() },
+    ...associationPickerOptions(associations),
+  ]);
   /** The single `balance_topup` product. Null until it has been configured once. */
   let product = $state<AssociationProduct | null>(null);
   let webhookFailures = $state<WebhookDelivery[]>([]);
@@ -265,15 +271,17 @@
         <label for="cercle-asso-select" class="text-text-main text-sm font-bold">
           {m.admin_cercle_asso_label()}
         </label>
-        <select
+        <Picker
           id="cercle-asso-select"
-          bind:value={selectedAssoId}
-          onchange={() => void loadProduct()}
-          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-md rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-        >
-          <option value="">{m.admin_cercle_asso_placeholder()}</option>
-          <AssociationOptions {associations} />
-        </select>
+          value={selectedAssoId}
+          options={assoOptions}
+          label={m.admin_cercle_asso_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-md items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            selectedAssoId = v;
+            void loadProduct();
+          }}
+        />
       </div>
     {/if}
 
