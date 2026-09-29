@@ -68,9 +68,14 @@ export function resolveMediaType(media: { type?: MediaType; mimeType: string }):
  * own three-way `startsWith` test, so "what kind of thing is this file" had a third and a fourth
  * answer in the app - and a new kind added here would have reached the classification while leaving
  * both forms drawing a broken preview.
+ *
+ * ONLY A PICTURE OR A VIDEO HAS A FRAME TO DRAW. This used to test `=== 'file'`, so an audio pick
+ * fell through to the picture branch and drew a broken image - the same failure a video met, for
+ * which `PickedMediaPreview` now draws the first frame (Mi 9T, 2026-09-29).
  */
 export function needsThumbIcon(file: File): boolean {
-  return resolveMediaType({ mimeType: file.type }) === 'file';
+  const type = resolveMediaType({ mimeType: file.type });
+  return type !== 'image' && type !== 'video';
 }
 
 /**

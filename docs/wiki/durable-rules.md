@@ -1394,6 +1394,15 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **AN INTENT TO ANOTHER APP IS INVISIBLE UNTIL THE MANIFEST QUERIES FOR IT, AND THE FAILURE LOOKS
+  LIKE SUCCESS.** Since API 30, `resolveActivity()` returns null for any app the manifest has no
+  `<queries>` entry for, and wry's file chooser then falls back to the photo picker: the composer's
+  "Appareil photo" chip opened, showed a screen, and was simply the wrong one (Mi 9T, 2026-09-29,
+  logcat `Tauri/FileChooser: Media capture intent could not be launched`). **A new intent to a
+  system app ships with its `<queries>` entry, a FileProvider root for any file it hands that app,
+  and a manifest test**, and is verified by what the
+  phone SHOWS, never by the fact that something opened ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
 - **A RELEASE BINARY IS INSPECTABLE IF ANY DEPENDENCY COMPILED THE CALL IN, AND THE CALL SITE YOU
   WILL AUDIT IS NOT THE ONE THAT DECIDES.** `open_devtools()` is `#[cfg(debug_assertions)]`-gated,
   so a grep for it clears the release - while wry enables
