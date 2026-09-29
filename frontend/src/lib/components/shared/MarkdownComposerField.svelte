@@ -46,6 +46,15 @@
 
   let composerEl = $state<MentionComposerInput | null>(null);
 
+  /**
+   * @public - Applies a toolbar format to the editor. Exported for a caller that renders the
+   * toolbar ITSELF, elsewhere than above the field (`showToolbar={false}`): the post composer puts it
+   * in the bar pinned above the keyboard, and the format still has to land on this editor's caret.
+   */
+  export async function format(type: string) {
+    await handleFormat(type);
+  }
+
   async function handleFormat(type: string) {
     await applyComposerMarkdownFormat(
       type,

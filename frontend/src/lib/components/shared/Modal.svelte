@@ -42,6 +42,22 @@
      * also blows the panel up to `90rem` on desktop, which a contact picker must not be.
      */
     topAnchored?: boolean;
+    /**
+     * On a phone, the panel covers the WHOLE screen, edge to edge, and the body is handed over
+     * unpadded and unscrolled - on a larger screen it stays a centred dialog.
+     *
+     * This is the lever a composer needs and `fullViewport` is not. The overlay already follows the
+     * visual viewport (`[data-keyboard-aware-overlay]` in `app.css` sets its height to the space
+     * above the keyboard), so a panel that FILLS the overlay has its bottom edge on the keyboard: a
+     * child laid out as a scroll region plus a footer gets that footer pinned above the keyboard
+     * with nothing computed here. Two things stood in the way and this flag removes both: the
+     * overlay's 1rem moat on every side, and the `92dvh` cap `.keyboard-aware-modal-panel` puts on
+     * every panel. The safe areas the moat also covered are kept (`.modal-phone-full`, `app.css`).
+     *
+     * Asked by the user on 2026-09-29, comparing the post composer with Facebook's on the Mi 9T: a
+     * full-screen page, the text area taking the height, the actions under the thumb.
+     */
+    phoneFullScreen?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -56,17 +72,20 @@
     bodyClass = '',
     fullViewport = false,
     topAnchored = false,
+    phoneFullScreen = false,
     onClose,
     children,
     footer,
   }: Props = $props();
 
   const backdropAlignClass = $derived(
-    fullViewport || topAnchored ? 'items-stretch sm:items-center' : 'items-end sm:items-center'
+    fullViewport || topAnchored || phoneFullScreen
+      ? 'items-stretch sm:items-center'
+      : 'items-end sm:items-center'
   );
 
   /*
-   * ONE OF THESE THREE IS EMITTED, NEVER TWO. They set the same properties, so a panel carrying two
+   * ONE OF THESE FOUR IS EMITTED, NEVER TWO. They set the same properties, so a panel carrying two
    * of them would be decided by Tailwind's class ORDER rather than by the flags - which is the trap
    * the `fullViewport` comment already warns about, and `topAnchored` would have walked into it.
    *
@@ -89,9 +108,11 @@
   const panelSizeClass = $derived(
     fullViewport
       ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-[min(96dvh,100%)] sm:max-h-[96dvh] sm:rounded-2xl sm:w-[min(96vw,90rem)]'
-      : topAnchored
-        ? 'rounded-2xl'
-        : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
+      : phoneFullScreen
+        ? 'rounded-none max-sm:border-0 sm:h-[min(88dvh,48rem)] sm:rounded-2xl'
+        : topAnchored
+          ? 'rounded-2xl'
+          : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
   );
 
   let historyClose: (() => void) | null = null;
@@ -174,7 +195,9 @@
     <div
       role="presentation"
       data-keyboard-aware-overlay
-      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass}"
+      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+        ? 'modal-phone-full'
+        : ''}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >
@@ -206,7 +229,11 @@
           </div>
         {/if}
 
-        <div class="flex-1 overscroll-contain px-6 py-4 {bodyClass || 'overflow-y-auto'}">
+        <div
+          class="flex-1 overscroll-contain {phoneFullScreen
+            ? 'flex min-h-0 flex-col'
+            : `px-6 py-4 ${bodyClass || 'overflow-y-auto'}`}"
+        >
           {@render children?.()}
         </div>
 

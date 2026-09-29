@@ -5,4 +5,9 @@
   <external-path name="downloads" path="Download/" />
   <!-- Fichiers temporaires créés par Tauri dans le cache interne de l'app -->
   <cache-path name="tauri_cache" path="tauri/" />
+  <!-- The photo the composer's "Appareil photo" chip takes. wry's RustWebChromeClient writes it
+       to getExternalFilesDir(DIRECTORY_PICTURES) and hands the camera app a FileProvider URI for
+       it; without this root getUriForFile throws and wry falls back to the photo picker (Mi 9T,
+       2026-09-29: "Failed to find configured root that contains .../files/Pictures/JPEG_..."). -->
+  <external-files-path name="captured_media" path="Pictures/" />
 </paths>

@@ -487,11 +487,10 @@
     open={showCreateModal}
     title={m.posts_new_post_title()}
     maxWidth="max-w-[42.5rem]"
+    phoneFullScreen
     onClose={() => (showCreateModal = false)}
   >
-    <div class="p-1">
-      <CreatePostForm {onPostCreated} />
-    </div>
+    <CreatePostForm {onPostCreated} />
   </Modal>
 
   <section>

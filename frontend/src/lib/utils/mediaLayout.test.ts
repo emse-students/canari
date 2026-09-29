@@ -1,6 +1,7 @@
 import {
   DEFAULT_MEDIA_ASPECT,
   mediaAspectStyle,
+  needsThumbIcon,
   normalizedAspectRatio,
   resolveMediaType,
   reservesAspectRatio,
@@ -9,6 +10,15 @@ import {
 const MAX_HEIGHT = 'max-height: var(--media-max-height, 80svh)';
 
 describe('mediaLayout', () => {
+  it('draws a frame only for a picture or a video, an icon for everything else', () => {
+    const pick = (type: string) => new File([''], 'x', { type });
+    expect(needsThumbIcon(pick('image/jpeg'))).toBe(false);
+    expect(needsThumbIcon(pick('video/mp4'))).toBe(false);
+    expect(needsThumbIcon(pick('audio/mpeg'))).toBe(true);
+    expect(needsThumbIcon(pick('application/pdf'))).toBe(true);
+    expect(needsThumbIcon(pick(''))).toBe(true);
+  });
+
   it('uses fallback when dimensions are missing', () => {
     expect(normalizedAspectRatio(undefined, undefined)).toBe(DEFAULT_MEDIA_ASPECT);
     expect(mediaAspectStyle()).toBe(`aspect-ratio: ${DEFAULT_MEDIA_ASPECT}; ${MAX_HEIGHT}`);
