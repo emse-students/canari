@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 
 /**
  * A 400 accuses the CALLER of sending something malformed. Two answers in this controller meant
@@ -53,6 +54,7 @@ describe('DevicesController - a missing row is 404, a malformed request stays 40
         // No transaction is reachable in these cases: the resolver returns before the OTKP pop.
         { provide: DataSource, useValue: {} },
         { provide: MessagingService, useValue: {} },
+        { provide: DeviceSignatureKeysService, useValue: { record: jest.fn() } },
       ],
     })
       .overrideGuard(HeaderAuthGuard)

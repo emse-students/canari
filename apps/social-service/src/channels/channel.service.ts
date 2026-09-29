@@ -4,7 +4,9 @@ import {
   ForbiddenException,
   Logger,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, And, LessThan, MoreThanOrEqual } from 'typeorm';
@@ -78,6 +80,9 @@ export const MAX_SEED_FRAME_CHARS = 2048;
 
 /** Standard base64, padded - what `toBase64` on the client writes and nothing else. */
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** An Ed25519 signature is 64 bytes, which padded base64 spells in exactly 88 characters. */
+const SIGNATURE_BASE64_CHARS = 88;
 
 /**
  * THE one rule for who may READ a channel, with no database in it.
@@ -2965,6 +2970,7 @@ export class ChannelService {
     }
 
     await this.assertSeedFrame(channel, input);
+    this.assertSignatureShape(channel.id, input);
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
@@ -2982,12 +2988,13 @@ export class ChannelService {
       nonce: input.nonce,
       senderSessionId: input.senderSessionId,
       messageIndex: input.messageIndex,
+      signature: input.signature ?? null,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: pollMeta !== null,
     });
 
-    const savedMsg = await this.messageRepo.save(msg);
+    const savedMsg = await this.saveUnderUnusedKey(msg, input);
     if (pollMeta) {
       this.logger.log(
         `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
@@ -3009,6 +3016,7 @@ export class ChannelService {
             nonce: input.nonce,
             senderSessionId: input.senderSessionId,
             messageIndex: input.messageIndex,
+            signature: savedMsg.signature,
             createdAt: savedMsg.createdAt,
             silent: savedMsg.silent,
             // Poll descriptor (no labels) so peers render the card live without refetch.
@@ -3048,6 +3056,52 @@ export class ChannelService {
    *
    * Absent on a silent message and on a sender older than section 19; both halves or neither.
    */
+  private assertSignatureShape(channelId: string, input: SendChannelMessageDto): void {
+    const { signature } = input;
+    if (signature === undefined) return;
+    if (
+      typeof signature !== 'string' ||
+      signature.length !== SIGNATURE_BASE64_CHARS ||
+      !BASE64.test(signature)
+    ) {
+      this.logger.warn(
+        `[CHANNEL_SIGNATURE] refused channel=${channelId} sender=${input.senderId.slice(0, 8)} ` +
+          `signature=${typeof signature === 'string' ? `${signature.length}ch` : typeof signature}`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_SIGNATURE_INVALID',
+        message: `signature is a 64-byte Ed25519 signature, base64 in ${SIGNATURE_BASE64_CHARS} characters`,
+      });
+    }
+  }
+
+  /**
+   * Saves a message, refusing a second row under a message key already used (migration 065).
+   *
+   * Every honest sender makes this impossible by construction - an index is reserved per
+   * (channel, sender) under a lock, and a restored session always rotates - so a refusal here names
+   * a replay of a stored ciphertext or a sender that sealed twice under one key. It is logged at
+   * ERROR for that reason, and answered with a code rather than a 500 so the sender can say which.
+   */
+  private async saveUnderUnusedKey(
+    msg: ChannelMessage,
+    input: SendChannelMessageDto
+  ): Promise<ChannelMessage> {
+    try {
+      return await this.messageRepo.save(msg);
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      this.logger.error(
+        `[CHANNEL_KEY_REUSED] refused channel=${msg.channelId} sender=${input.senderId.slice(0, 8)} ` +
+          `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} - a replay or a key sealed twice`
+      );
+      throw new ConflictException({
+        code: 'CHANNEL_MESSAGE_KEY_REUSED',
+        message: 'a message under this session and index already exists',
+      });
+    }
+  }
+
   private async assertSeedFrame(channel: Channel, input: SendChannelMessageDto): Promise<void> {
     const { seedFrame, seedGroupId } = input;
     if (seedFrame === undefined && seedGroupId === undefined) return;
@@ -3721,6 +3775,7 @@ export class ChannelService {
       nonce: m.nonce ?? null,
       senderSessionId: m.senderSessionId ?? null,
       messageIndex: m.messageIndex ?? null,
+      signature: m.signature ?? null,
       replyTo: m.replyTo ?? null,
       createdAt: m.createdAt,
       pinned: m.pinned,

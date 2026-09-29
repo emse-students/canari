@@ -272,8 +272,8 @@ fn ok_message_json(
     })
 }
 
-/// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
-/// Every Graine seed an `AppMessage` carries, as `[{channelId, sessionId, seedB64, createdAt}]`.
+/// Every Graine seed an `AppMessage` carries, as `[{channelId, sessionId, seedB64, createdAt,
+/// firstIndex}]`, plus the five v2 fields (section 21) on a v2 seed.
 ///
 /// TWO FIELDS, ONE SHAPE. A rotation arrives as a single `GraineMsg` (field 10); a catch-up arrives
 /// as a `GraineBundleMsg` (field 12) whose `seeds` is a repeated `GraineMsg`. They differ only in
@@ -304,6 +304,10 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
             .unwrap_or_default();
         let seed = find_length_delimited_field(graine, 3).unwrap_or_default();
         let created_at = find_varint_field(graine, 5).unwrap_or(0) as i64;
+        // The floor, read at last: a seed handed over mid-session opens only from here on, and a
+        // push is held to that exactly like the app is.
+        let first_index = find_varint_field(graine, 4).unwrap_or(0);
+        let version = find_varint_field(graine, 6).unwrap_or(0);
         if channel_id.is_empty() || session_id.is_empty() || seed.len() != GRAINE_SEED_BYTES {
             log::debug!(
                 "[GRAINE_PUSH] unusable seed: channel={} session={} seed_len={}",
@@ -313,12 +317,31 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
             );
             return;
         }
-        out.push(serde_json::json!({
+        let mut entry = serde_json::json!({
             "channelId": channel_id,
             "sessionId": session_id,
             "seedB64": BASE64.encode(&seed),
             "createdAt": created_at,
-        }));
+            "firstIndex": first_index,
+        });
+        // Graine v2 (channel-encryption section 21): the endorsement travels with the seed, so the
+        // native side can check it exactly as the app does before mirroring anything. Carried as
+        // the frame states it - an absent field stays empty, never defaulted, and is refused there.
+        if version == 2 {
+            let text = |n| {
+                find_length_delimited_field(graine, n)
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default()
+            };
+            let bytes =
+                |n| BASE64.encode(find_length_delimited_field(graine, n).unwrap_or_default());
+            entry["version"] = 2.into();
+            entry["minterUserId"] = text(7).into();
+            entry["minterDeviceId"] = text(8).into();
+            entry["signingPublicKeyB64"] = bytes(9).into();
+            entry["endorsementB64"] = bytes(10).into();
+        }
+        out.push(entry);
     };
 
     if let Some(graine) = &single {
@@ -332,6 +355,7 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
     Some(out)
 }
 
+/// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
 pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     let message_id = find_length_delimited_field(bytes, 6)
         .and_then(|b| String::from_utf8(b).ok())
@@ -790,6 +814,38 @@ mod tests {
         write_bytes_field(&mut msg, 10, &graine);
 
         assert_eq!(extract_full_message_info(&msg)["ok"], false);
+    }
+
+    /// Graine v2 (channel-encryption section 21): the floor and the five endorsement fields reach
+    /// the native side exactly as the frame states them - a relay that dropped one would leave the
+    /// phone a session it cannot verify.
+    #[test]
+    fn a_v2_seed_hands_over_its_floor_and_its_endorsement() {
+        let mut graine = build_graine_msg("ch-1", "sess-1", &[7u8; 32], 1_700_000_000_000);
+        write_tag(&mut graine, 4, 0);
+        write_varint(&mut graine, 12);
+        write_tag(&mut graine, 6, 0);
+        write_varint(&mut graine, 2);
+        write_string_field(&mut graine, 7, "alice");
+        write_string_field(&mut graine, 8, "dev-a");
+        write_bytes_field(&mut graine, 9, &[1u8; 32]);
+        write_bytes_field(&mut graine, 10, &[2u8; 64]);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 10, &graine);
+
+        let info = extract_full_message_info(&msg);
+        let seed = &info["seeds"][0];
+        assert_eq!(seed["firstIndex"], 12);
+        assert_eq!(seed["version"], 2);
+        assert_eq!(seed["minterUserId"], "alice");
+        assert_eq!(seed["minterDeviceId"], "dev-a");
+        assert_eq!(seed["signingPublicKeyB64"], BASE64.encode([1u8; 32]));
+        assert_eq!(seed["endorsementB64"], BASE64.encode([2u8; 64]));
+
+        // A v1 seed carries none of the five, and a floor of 0.
+        let v1 = extract_full_message_info(&build_graine_app_message("ch-1", "s", &[7u8; 32], 1));
+        assert_eq!(v1["seeds"][0]["firstIndex"], 0);
+        assert!(v1["seeds"][0].get("version").is_none());
     }
 
     #[test]

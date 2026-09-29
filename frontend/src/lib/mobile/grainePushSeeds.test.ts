@@ -86,12 +86,18 @@ describe('the reason token the native decrypt chooses and the Kotlin switches on
 });
 
 describe('the shape of one seed, from the frame to the mirror to the reader', () => {
-  const FIELDS = ['channelId', 'sessionId', 'seedB64', 'createdAt'];
+  const FIELDS = ['channelId', 'sessionId', 'seedB64', 'createdAt', 'firstIndex'];
 
   // THE WRITER IS `store_graine_seeds_json` IN push.rs SINCE 2026-09-27, shared by the JNI entry and
-  // the iOS FFI (the seed that travels with the message is absorbed by both). The field names are
-  // therefore read there, and each native entry must delegate to it rather than carry a copy.
-  const writer = /fn store_graine_seeds_json[\s\S]*?\n\}/.exec(pushRs)?.[0] ?? '';
+  // the iOS FFI (the seed that travels with the message is absorbed by both). Since G2-3 it reads
+  // each entry through `MirrorSeed::from_extracted`, the one place the field names are spelled, so
+  // they are read THERE - and the writer must go through it rather than carry a copy.
+  const writer = /fn from_extracted[\s\S]*?\n {4}\}/.exec(pushRs)?.[0] ?? '';
+
+  it('the native writer reads every entry through the one parser', () => {
+    const storeFn = /fn store_graine_seeds_json[\s\S]*?\n\}/.exec(pushRs)?.[0] ?? '';
+    expect(storeFn).toContain('MirrorSeed::from_extracted(');
+  });
 
   it.each(FIELDS)('%s is named by the parser and by the native writer alike', (field) => {
     expect(protoFields).toContain(`"${field}"`);
@@ -106,7 +112,7 @@ describe('the shape of one seed, from the frame to the mirror to the reader', ()
   it('the mirror keys the Rust writes are the ones the Kotlin reader asks for', () => {
     // channelId -> sessionId -> { seed, createdAt }. `seed`, not `seedB64`: the transport name
     // and the stored name differ, and conflating them is a silent miss in `lookupGraineSeed`.
-    expect(pushRs).toMatch(/"seed":\s*seed_b64/);
+    expect(pushRs).toMatch(/"seed":\s*self\.seed_b64/);
     expect(kotlin).toMatch(
       /optJSONObject\(channelId\)[\s\S]{0,80}optJSONObject\(sessionId\)[\s\S]{0,80}optString\("seed"\)/
     );

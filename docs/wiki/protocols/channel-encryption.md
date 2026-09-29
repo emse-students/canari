@@ -2732,8 +2732,57 @@ varint. No Graine bytes can be an MLS `SignContent`, so an endorsement can never
   it opens, that today's seal and signature reproduce it exactly, and that a relabelled author does
   not open it.
 
-**Nothing calls any of it yet**: the store and the wire carry the fields in G2-3, and the reader
-uses them in G2-4.
+**Nothing calls any of it yet**: the store and the wire carry the fields in G2-3 (§21.3), and the
+reader uses them in G2-4.
+
+### 21.3 The data model carries the minter and its key (WP-G2-3)
+
+Everything a v2 reader needs is now carried, stored and relayed. No v2 session exists yet, and
+nothing verifies anything. That is G2-4.
+
+- **On the wire.** `GraineMsg` gains `version = 6`, `minter_user_id = 7`, `minter_device_id = 8`,
+  `signing_public_key = 9` and `endorsement = 10`.
+  - `utils/graine/wireSeed.ts` is the one translation between that message and the store.
+    `seedFromWire` keeps a `version = 2` seed v2 even when its fields are missing, so the reader
+    refuses it rather than taking it for v1. `toWireSeed` relays the four public fields untouched
+    and NEVER the session secret.
+- **In the store.** `StoredGraineSession.v2` (`minterDeviceId`, `signingPublicKeyB64`,
+  `endorsementB64`, and `signingSecretKeyB64` on the minting device only) lives inside the payload
+  that is already sealed with the seed.
+  - So neither SQLite nor IndexedDB needed a migration, and the backup carries it as it is.
+  - A partial block reads as absent.
+  - On a v2 session `senderId` IS the minter, stored exactly as signed. A relayed seed is no longer
+    recorded under whoever relayed it.
+  - `storeIncomingSeed` extends G2-0's refusal: a copy whose endorsement, key, device or minter
+    differs from the one held is `[GRAINE] REFUSED` (`'endorsement'`), as a different seed already
+    was. So a relayed copy cannot downgrade a v2 session, nor re-attribute it.
+- **The restored secret cannot reuse a key.** A backup import carries no `distributionEpoch`, so a
+  restored session always rotates before it seals again, and the same index is never signed twice
+  from two installs.
+- **In the native mirror.** A `graine_seeds.json` entry becomes
+  `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}`.
+  - Both writers go through `MirrorSeed` in `commands/push.rs`: `store_graine_seed` from the
+    webview, and `store_graine_seeds_json` from the push's attached frame, whose `proto_fields.rs`
+    now reads `first_index` too.
+  - `merge_graine_seed` refuses a replacement whose channel, seed or v2 block differs, and may only
+    LOWER `firstIndex`.
+  - A v2 entry missing its minter or key is refused rather than written as v1.
+- **On social-service.** Migration 065 adds `channel_messages.signature` (88 base64 characters,
+  checked for SHAPE only, since the server holds no key and cannot tell a v2 session from a v1 one).
+  It is relayed with the row in `listMessages` and the `channel.message.created` event.
+  - It joins the push's inline group in G2-4, WITH the three native readers:
+    `channelPushFields.test.ts` refuses a key the server sends that no handler reads, and it
+    refused this one.
+  - The same migration adds the UNIQUE partial index `(senderSessionId, messageIndex)`, measured
+    first: 0 duplicate pairs in production (123 rows) and dev (67).
+  - A second row under one key is refused with a 409, `CHANNEL_MESSAGE_KEY_REUSED`, and
+    `[CHANNEL_KEY_REUSED]` at ERROR. By the restore argument above it can only name a bug, so no
+    client retries it.
+- **On chat-delivery.** `device_signature_key` (migration 027) keeps every MLS signature key a
+  device ever published, and `GET /api/mls/devices/:userId/:deviceId/signature-keys` serves it.
+  That is the key an endorsement is checked against once the minter's device has left the tree.
+  - An upload whose package names another device is refused, measured at zero on both estates
+    ([chat-delivery](../services/chat-delivery.md#routes)).
 
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 

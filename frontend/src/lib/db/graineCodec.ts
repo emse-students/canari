@@ -10,9 +10,16 @@
  *    device key puts it in exactly the same posture as a stored message - and, on a session this
  *    device minted, the frame that distributed it. The frame is not secret (an MLS ciphertext), it
  *    rides in the blob because that needs no column in either store and a backup carries it as is.
+ *    A v2 session's endorsement and keys ride there too, for the same reason - and the session
+ *    SECRET, on a session this device minted, is the one v2 field that has to be encrypted.
  */
 
-import type { EncryptedGraineRow, GraineDistributionFrame, StoredGraineSession } from './types';
+import type {
+  EncryptedGraineRow,
+  GraineDistributionFrame,
+  StoredGraineSession,
+  StoredGraineV2,
+} from './types';
 
 /** Non-encrypted columns of a persisted Graine row. */
 export interface GraineClearColumns {
@@ -40,11 +47,13 @@ export function graineClearColumns(session: StoredGraineSession): GraineClearCol
   };
 }
 
-/** The payload that gets encrypted: the seed, and the distribution frame when this device minted it. */
+/** The payload that gets encrypted: the seed, the distribution frame when this device minted it, and v2's half. */
 export function encodeGraineSensitive(session: StoredGraineSession): Record<string, unknown> {
-  return session.distributionFrame
-    ? { seedB64: session.seedB64, distributionFrame: session.distributionFrame }
-    : { seedB64: session.seedB64 };
+  return {
+    seedB64: session.seedB64,
+    ...(session.distributionFrame ? { distributionFrame: session.distributionFrame } : {}),
+    ...(session.v2 ? { v2: session.v2 } : {}),
+  };
 }
 
 /** The frame out of a decrypted payload, or undefined for anything that is not one - an older row. */
@@ -54,6 +63,30 @@ function frameOf(payload: unknown): GraineDistributionFrame | undefined {
   return f && typeof f.groupId === 'string' && typeof f.protoB64 === 'string'
     ? { groupId: f.groupId, protoB64: f.protoB64 }
     : undefined;
+}
+
+/**
+ * The v2 half out of a decrypted payload, or undefined for a v1 row. All three public fields or none:
+ * a half-read v2 block would be a session the reader treats as v2 with nothing to verify against.
+ */
+function v2Of(payload: unknown): StoredGraineV2 | undefined {
+  const v = (payload as { v2?: Partial<Record<keyof StoredGraineV2, unknown>> } | null)?.v2;
+  if (
+    !v ||
+    typeof v.minterDeviceId !== 'string' ||
+    typeof v.signingPublicKeyB64 !== 'string' ||
+    typeof v.endorsementB64 !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    minterDeviceId: v.minterDeviceId,
+    signingPublicKeyB64: v.signingPublicKeyB64,
+    endorsementB64: v.endorsementB64,
+    ...(typeof v.signingSecretKeyB64 === 'string'
+      ? { signingSecretKeyB64: v.signingSecretKeyB64 }
+      : {}),
+  };
 }
 
 /**
@@ -83,6 +116,7 @@ export function decodeGraineSession(
     distributionEpoch: Number.isFinite(distributionEpoch) ? distributionEpoch : undefined,
     seedB64: typeof seed === 'string' ? seed : '',
     distributionFrame: frameOf(payload),
+    v2: v2Of(payload),
   };
 }
 

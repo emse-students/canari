@@ -5,7 +5,7 @@ import { canari as canariRuntime } from '$lib/proto/canari';
 import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { toBase64 } from '$lib/utils/hex';
 import {
   announceGraineRepair,
   cacheGraineSession,
@@ -15,6 +15,7 @@ import {
 import { historyFloorsFor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteSeedUnavailable } from './repair';
+import { seedFromWire, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -35,13 +36,7 @@ import { forgetAskedSession, noteSeedUnavailable } from './repair';
 export async function storeIncomingSeed(
   workspaceId: string,
   senderId: string,
-  seed: {
-    channelId: string;
-    sessionId: string;
-    seed: Uint8Array;
-    firstIndex: number;
-    createdAt: number;
-  }
+  seed: IncomingSeed
 ): Promise<boolean> {
   const { storage, deviceKeyB64 } = requireGraineRuntime('cannot store an incoming seed');
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
@@ -85,10 +80,14 @@ export async function storeIncomingSeed(
         workspaceId,
         channelId: seed.channelId,
         sessionId: seed.sessionId,
-        senderId: senderId.toLowerCase(),
+        // A v2 session is recorded under the minter its endorsement NAMES - never the frame's
+        // sender, who on a relay is whoever answered. Kept exactly as signed: the endorsement is
+        // verified over these bytes, and a case-folded copy would stop matching them.
+        senderId: seed.v2 ? seed.v2.minterUserId : senderId.toLowerCase(),
         seedB64: toBase64(seed.seed),
         firstIndex: seed.firstIndex,
         createdAt: seed.createdAt || Date.now(),
+        v2: storedV2Of(seed),
         // Neither is ours to know. `sentCount` is what makes a session THIS device's outbound one,
         // and `distributionEpoch` is the roster it was minted under - a judgement only its sender
         // may make.
@@ -111,11 +110,22 @@ export async function storeIncomingSeed(
 function seedConflict(
   held: StoredGraineSession,
   workspaceId: string,
-  incoming: { channelId: string; seed: Uint8Array }
-): 'seed' | 'salon' | 'community' | null {
+  incoming: IncomingSeed
+): 'seed' | 'salon' | 'community' | 'endorsement' | null {
   if (held.workspaceId !== workspaceId) return 'community';
   if (held.channelId !== incoming.channelId) return 'salon';
   if (held.seedB64 !== toBase64(incoming.seed)) return 'seed';
+  // v2 is part of what a session IS: a copy that drops it, adds it, or names another minter or key
+  // is a different session wearing a held id - the downgrade this field exists to make impossible.
+  const incomingV2 = storedV2Of(incoming);
+  if (
+    held.v2?.endorsementB64 !== incomingV2?.endorsementB64 ||
+    held.v2?.signingPublicKeyB64 !== incomingV2?.signingPublicKeyB64 ||
+    held.v2?.minterDeviceId !== incomingV2?.minterDeviceId ||
+    (incoming.v2 !== undefined && held.senderId !== incoming.v2.minterUserId)
+  ) {
+    return 'endorsement';
+  }
   return null;
 }
 
@@ -147,13 +157,11 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
   }
 
   if (msg.graine) {
-    const stored = await storeIncomingSeed(frame.workspaceId, frame.sender, {
-      channelId: String(msg.graine.channelId ?? ''),
-      sessionId: String(msg.graine.sessionId ?? ''),
-      seed: msg.graine.seed instanceof Uint8Array ? msg.graine.seed : new Uint8Array(),
-      firstIndex: Number(msg.graine.firstIndex) || 0,
-      createdAt: Number(msg.graine.createdAt) || 0,
-    });
+    const stored = await storeIncomingSeed(
+      frame.workspaceId,
+      frame.sender,
+      seedFromWire(msg.graine)
+    );
     if (stored) {
       console.debug(
         `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} for channel ${String(msg.graine.channelId).slice(0, 8)}`
@@ -268,19 +276,6 @@ interface GatheredSeeds {
   /** Sessions the request named that this device does not hold. Travels, rather than being logged. */
   missing: string[];
   truncated: boolean;
-}
-
-/** Turns a held session into its wire form. */
-function toWireSeed(held: StoredGraineSession): canari.GraineMsg.$Properties {
-  return {
-    channelId: held.channelId,
-    sessionId: held.sessionId,
-    seed: fromBase64(held.seedB64),
-    // The floor travels as ours: a member cannot hand over more than they were given themselves,
-    // and raising it here is what stops a repair from widening access.
-    firstIndex: held.firstIndex,
-    createdAt: held.createdAt,
-  };
 }
 
 /**
@@ -419,13 +414,7 @@ async function absorbSeedBundle(
   const repaired = new Set<string>();
   let absorbed = 0;
   for (const seed of bundle.seeds ?? []) {
-    const stored = await storeIncomingSeed(frame.workspaceId, frame.sender, {
-      channelId: String(seed.channelId ?? ''),
-      sessionId: String(seed.sessionId ?? ''),
-      seed: seed.seed instanceof Uint8Array ? seed.seed : new Uint8Array(),
-      firstIndex: Number(seed.firstIndex) || 0,
-      createdAt: Number(seed.createdAt) || 0,
-    });
+    const stored = await storeIncomingSeed(frame.workspaceId, frame.sender, seedFromWire(seed));
     if (stored) {
       absorbed++;
       if (seed.channelId) repaired.add(String(seed.channelId));

@@ -391,18 +391,17 @@ pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) ->
 
     let mut stored = 0i32;
     for seed in &seeds {
-        let channel_id = seed["channelId"].as_str().unwrap_or_default();
-        let session_id = seed["sessionId"].as_str().unwrap_or_default();
-        let seed_b64 = seed["seedB64"].as_str().unwrap_or_default();
-        let created_at = seed["createdAt"].as_i64().unwrap_or(0);
-        if channel_id.is_empty() || session_id.is_empty() || seed_b64.is_empty() {
+        let Some(entry) = MirrorSeed::from_extracted(seed) else {
             log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
             continue;
-        }
+        };
         // PER SEED, so a bundle does not lose its tail to its first bad entry.
-        match merge_graine_seed(data_dir, channel_id, session_id, seed_b64, created_at) {
+        match merge_graine_seed(data_dir, &entry) {
             Ok(_) => stored += 1,
-            Err(e) => log::error!("[GRAINE_PUSH] merge failed for session {session_id}: {e}"),
+            Err(e) => log::error!(
+                "[GRAINE_PUSH] merge failed for session {}: {e}",
+                entry.session_id
+            ),
         }
     }
     log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
@@ -415,7 +414,7 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 
 /// Merges one Graine seed into {app_data_dir}/graine_seeds.json so the background push service can
 /// derive a message key with the app killed. The file is a JSON map
-/// `channelId -> { sessionId -> { seed: base64, createdAt: epochMs } }`.
+/// `channelId -> { sessionId -> { seed, createdAt, firstIndex, [version, minterUserId, signingPk] } }`.
 ///
 /// **Bounded, unlike the epoch mirror it replaced.** Epoch keys were few and a whole channel's
 /// worth could be kept; seeds accumulate for ever, in a file rewritten on every rotation, which is
@@ -429,14 +428,129 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 #[tauri::command]
 pub(crate) fn store_graine_seed(
     app: tauri::AppHandle,
+    seed: MirrorSeedInput,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    merge_graine_seed(&data_dir, &seed.as_mirror_seed())?;
+    Ok(())
+}
+
+/// What the foreground hands [`store_graine_seed`]: `graineMirror.ts` builds it from a stored
+/// session that has already passed every check the app makes.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MirrorSeedInput {
     channel_id: String,
     session_id: String,
     seed_b64: String,
     created_at: i64,
-) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    merge_graine_seed(&data_dir, &channel_id, &session_id, &seed_b64, created_at)?;
-    Ok(())
+    first_index: u32,
+    /// Both set on a v2 session, both null on a v1 one.
+    minter_user_id: Option<String>,
+    signing_public_key_b64: Option<String>,
+}
+
+impl MirrorSeedInput {
+    fn as_mirror_seed(&self) -> MirrorSeed<'_> {
+        MirrorSeed {
+            channel_id: &self.channel_id,
+            session_id: &self.session_id,
+            seed_b64: &self.seed_b64,
+            created_at: self.created_at,
+            first_index: self.first_index,
+            v2: match (&self.minter_user_id, &self.signing_public_key_b64) {
+                (Some(minter), Some(pk)) => Some(MirrorSeedV2 {
+                    minter_user_id: minter,
+                    signing_public_key_b64: pk,
+                }),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// One seed as the mirror holds it, whichever path wrote it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MirrorSeed<'a> {
+    pub channel_id: &'a str,
+    pub session_id: &'a str,
+    pub seed_b64: &'a str,
+    pub created_at: i64,
+    /// The lowest index a push may be opened at - the app's floor, honoured natively too.
+    pub first_index: u32,
+    /// What a v2 push is verified against; `None` is a v1 session.
+    pub v2: Option<MirrorSeedV2<'a>>,
+}
+
+/// The v2 half of a mirrored seed: the author its rows must name and the key that signs them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MirrorSeedV2<'a> {
+    pub minter_user_id: &'a str,
+    pub signing_public_key_b64: &'a str,
+}
+
+impl<'a> MirrorSeed<'a> {
+    /// Reads one entry of the push path's extraction (`proto_fields::graine_seeds`), or `None` when
+    /// it lacks what a key derivation needs. A v2 entry without its two fields is refused rather than
+    /// mirrored as v1 - the downgrade a session's version exists to make impossible.
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
+    fn from_extracted(seed: &'a serde_json::Value) -> Option<Self> {
+        let channel_id = seed["channelId"].as_str().unwrap_or_default();
+        let session_id = seed["sessionId"].as_str().unwrap_or_default();
+        let seed_b64 = seed["seedB64"].as_str().unwrap_or_default();
+        if channel_id.is_empty() || session_id.is_empty() || seed_b64.is_empty() {
+            return None;
+        }
+        let v2 = if seed["version"].as_u64() == Some(2) {
+            let minter_user_id = seed["minterUserId"].as_str().unwrap_or_default();
+            let signing_public_key_b64 = seed["signingPublicKeyB64"].as_str().unwrap_or_default();
+            if minter_user_id.is_empty() || signing_public_key_b64.is_empty() {
+                log::error!(
+                    "[GRAINE_PUSH] v2 seed {session_id} without its minter or key - refused, not mirrored as v1"
+                );
+                return None;
+            }
+            Some(MirrorSeedV2 {
+                minter_user_id,
+                signing_public_key_b64,
+            })
+        } else {
+            None
+        };
+        Some(Self {
+            channel_id,
+            session_id,
+            seed_b64,
+            created_at: seed["createdAt"].as_i64().unwrap_or(0),
+            first_index: seed["firstIndex"].as_u64().unwrap_or(0) as u32,
+            v2,
+        })
+    }
+
+    /// The entry written into the file.
+    fn to_entry(self) -> serde_json::Value {
+        let mut entry = serde_json::json!({
+            "seed": self.seed_b64,
+            "createdAt": self.created_at,
+            "firstIndex": self.first_index,
+        });
+        if let Some(v2) = self.v2 {
+            entry["version"] = 2.into();
+            entry["minterUserId"] = v2.minter_user_id.into();
+            entry["signingPk"] = v2.signing_public_key_b64.into();
+        }
+        entry
+    }
+}
+
+/// The v2 half of an entry already in the file, for the replacement check.
+fn held_v2(entry: &serde_json::Value) -> Option<(&str, &str)> {
+    (entry["version"].as_u64() == Some(2)).then(|| {
+        (
+            entry["minterUserId"].as_str().unwrap_or_default(),
+            entry["signingPk"].as_str().unwrap_or_default(),
+        )
+    })
 }
 
 /// The merge itself, without a `tauri::AppHandle` - so the BACKGROUND PUSH PATH can reach it.
@@ -450,28 +564,43 @@ pub(crate) fn store_graine_seed(
 /// Returns how many older sessions the bound dropped.
 pub(crate) fn merge_graine_seed(
     data_dir: &std::path::Path,
-    channel_id: &str,
-    session_id: &str,
-    seed_b64: &str,
-    created_at: i64,
+    seed: &MirrorSeed<'_>,
 ) -> Result<usize, String> {
+    let session_id = seed.session_id;
+    let channel_id = seed.channel_id;
     let dropped = with_graine_mirror(data_dir, |map| {
         // A SESSION ID NAMES ONE SEED IN ONE SALON, FOR EVER - the rule `storeIncomingSeed` holds for
         // the durable store, held here for the file the push path decrypts from. Searched across
         // EVERY channel, since the map is keyed by salon and a replacement may name another one.
-        for (held_channel, sessions) in map.iter() {
-            let Some(held) = sessions.get(session_id) else {
-                continue;
-            };
+        let held = map
+            .iter()
+            .find_map(|(ch, sessions)| sessions.get(session_id).map(|h| (ch.clone(), h.clone())));
+        if let Some((held_channel, held)) = held {
             let held_seed = held["seed"].as_str().unwrap_or_default();
-            if held_channel != channel_id || !same_seed(held_seed, seed_b64) {
+            let incoming_v2 = seed
+                .v2
+                .map(|v| (v.minter_user_id, v.signing_public_key_b64));
+            // v2 is part of what a session IS: a copy that adds it, drops it or names another
+            // minter or key is a different session wearing a held id.
+            if held_channel != channel_id
+                || !same_seed(held_seed, seed.seed_b64)
+                || held_v2(&held) != incoming_v2
+            {
                 log::error!(
-                    "[GRAINE_MIRROR] REFUSED seed replacement: session {session_id} is held for channel {held_channel}, a frame re-sent it for channel {channel_id} (same seed: {})",
-                    same_seed(held_seed, seed_b64)
+                    "[GRAINE_MIRROR] REFUSED seed replacement: session {session_id} is held for channel {held_channel}, a frame re-sent it for channel {channel_id} (same seed: {}, same v2: {})",
+                    same_seed(held_seed, seed.seed_b64),
+                    held_v2(&held) == incoming_v2
                 );
                 return Err(format!(
-                    "session {session_id} is already held with another seed or salon"
+                    "session {session_id} is already held with another seed, salon or endorsement"
                 ));
+            }
+            // THE FLOOR IS THE ONLY THING A SECOND COPY MAY MOVE, and only down - the durable
+            // store's rule. An entry written before the floor was mirrored has none, and reads as 0.
+            let held_floor = held["firstIndex"].as_u64().unwrap_or(0) as u32;
+            if seed.first_index < held_floor {
+                map[held_channel.as_str()][session_id]["firstIndex"] = seed.first_index.into();
+                return Ok((0, true));
             }
             // The same seed again: nothing to write, and the bound has nothing new to trim.
             return Ok((0, false));
@@ -482,10 +611,7 @@ pub(crate) fn merge_graine_seed(
         let sessions = channel_entry
             .as_object_mut()
             .ok_or("channel entry is not an object")?;
-        sessions.insert(
-            session_id.to_string(),
-            serde_json::json!({ "seed": seed_b64, "createdAt": created_at }),
-        );
+        sessions.insert(session_id.to_string(), seed.to_entry());
         Ok((prune_graine_sessions(sessions), true))
     })?;
     log::debug!("[GRAINE_MIRROR] stored seed, dropped {dropped} older session(s)");
@@ -900,8 +1026,29 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 mod graine_mirror_tests {
     use super::{
         merge_graine_seed, prune_graine_sessions, remove_graine_sessions, store_graine_seeds_json,
-        GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
+        MirrorSeed, MirrorSeedV2, GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
     };
+
+    /// A v1 seed at floor 0 - what every test below wrote before the entry carried more.
+    fn merge(
+        dir: &std::path::Path,
+        channel_id: &str,
+        session_id: &str,
+        seed_b64: &str,
+        created_at: i64,
+    ) -> Result<usize, String> {
+        merge_graine_seed(
+            dir,
+            &MirrorSeed {
+                channel_id,
+                session_id,
+                seed_b64,
+                created_at,
+                first_index: 0,
+                v2: None,
+            },
+        )
+    }
 
     /// The one native writer both platforms call: a payload that is not an array is -1 - a
     /// different fact from "zero seeds usable" - and an incomplete entry costs only itself.
@@ -933,7 +1080,7 @@ mod graine_mirror_tests {
             .map(|i| {
                 let dir = dir.clone();
                 std::thread::spawn(move || {
-                    merge_graine_seed(&dir, "chan", &format!("s-{i}"), "c2VlZA==", i).unwrap();
+                    merge(&dir, "chan", &format!("s-{i}"), "c2VlZA==", i).unwrap();
                 })
             })
             .collect();
@@ -972,9 +1119,9 @@ mod graine_mirror_tests {
     #[test]
     fn a_held_session_is_never_replaced_by_other_bytes() {
         let dir = mirror_dir("replace");
-        merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
+        merge(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
 
-        assert!(merge_graine_seed(&dir, "chan", "s-1", "b3RoZXI=", 2).is_err());
+        assert!(merge(&dir, "chan", "s-1", "b3RoZXI=", 2).is_err());
 
         assert_eq!(mirror(&dir)["chan"]["s-1"]["seed"], "c2VlZA==");
         std::fs::remove_dir_all(&dir).ok();
@@ -983,9 +1130,9 @@ mod graine_mirror_tests {
     #[test]
     fn a_held_session_is_never_moved_to_another_salon() {
         let dir = mirror_dir("move");
-        merge_graine_seed(&dir, "chan-a", "s-1", "c2VlZA==", 1).unwrap();
+        merge(&dir, "chan-a", "s-1", "c2VlZA==", 1).unwrap();
 
-        assert!(merge_graine_seed(&dir, "chan-b", "s-1", "c2VlZA==", 1).is_err());
+        assert!(merge(&dir, "chan-b", "s-1", "c2VlZA==", 1).is_err());
 
         assert!(mirror(&dir).get("chan-b").is_none());
         std::fs::remove_dir_all(&dir).ok();
@@ -996,11 +1143,71 @@ mod graine_mirror_tests {
     #[test]
     fn the_same_seed_again_is_accepted_and_changes_nothing() {
         let dir = mirror_dir("same");
-        merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
+        merge(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
 
-        assert_eq!(merge_graine_seed(&dir, "chan", "s-1", "c2VlZA==", 9), Ok(0));
+        assert_eq!(merge(&dir, "chan", "s-1", "c2VlZA==", 9), Ok(0));
 
         assert_eq!(mirror(&dir)["chan"]["s-1"]["createdAt"], 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn v2_seed<'a>(minter: &'a str, first_index: u32) -> MirrorSeed<'a> {
+        MirrorSeed {
+            channel_id: "chan",
+            session_id: "s-2",
+            seed_b64: "c2VlZA==",
+            created_at: 1,
+            first_index,
+            v2: Some(MirrorSeedV2 {
+                minter_user_id: minter,
+                signing_public_key_b64: "cGs=",
+            }),
+        }
+    }
+
+    /// Graine v2 (channel-encryption section 21): the entry carries what a push is verified
+    /// against, and a copy of a v2 session without it - or naming another minter - is a different
+    /// session wearing a held id, refused like other bytes are.
+    #[test]
+    fn a_v2_session_is_mirrored_whole_and_never_downgraded() {
+        let dir = mirror_dir("v2");
+        merge_graine_seed(&dir, &v2_seed("alice", 0)).unwrap();
+        let entry = &mirror(&dir)["chan"]["s-2"];
+        assert_eq!(entry["version"], 2);
+        assert_eq!(entry["minterUserId"], "alice");
+        assert_eq!(entry["signingPk"], "cGs=");
+
+        assert!(merge(&dir, "chan", "s-2", "c2VlZA==", 1).is_err());
+        assert!(merge_graine_seed(&dir, &v2_seed("mallory", 0)).is_err());
+        assert_eq!(mirror(&dir)["chan"]["s-2"]["minterUserId"], "alice");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The floor only ever moves DOWN on a second copy, as in the durable store.
+    #[test]
+    fn a_second_copy_may_lower_the_floor_and_never_raise_it() {
+        let dir = mirror_dir("floor");
+        merge_graine_seed(&dir, &v2_seed("alice", 10)).unwrap();
+        merge_graine_seed(&dir, &v2_seed("alice", 20)).unwrap();
+        assert_eq!(mirror(&dir)["chan"]["s-2"]["firstIndex"], 10);
+        merge_graine_seed(&dir, &v2_seed("alice", 4)).unwrap();
+        assert_eq!(mirror(&dir)["chan"]["s-2"]["firstIndex"], 4);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The push path's extraction: a v2 entry missing its minter is refused, never mirrored as v1.
+    #[test]
+    fn the_push_writer_refuses_a_v2_seed_without_its_endorsement_fields() {
+        let dir = mirror_dir("v2-json");
+        let bundle = serde_json::json!([
+            { "channelId": "chan", "sessionId": "s-3", "seedB64": "c2VlZA==", "createdAt": 1,
+              "version": 2, "signingPublicKeyB64": "cGs=" },
+            { "channelId": "chan", "sessionId": "s-4", "seedB64": "c2VlZA==", "createdAt": 1,
+              "firstIndex": 3, "version": 2, "minterUserId": "alice", "signingPublicKeyB64": "cGs=" },
+        ]);
+        assert_eq!(store_graine_seeds_json(&dir, &bundle.to_string()), 1);
+        assert!(mirror(&dir)["chan"].get("s-3").is_none());
+        assert_eq!(mirror(&dir)["chan"]["s-4"]["firstIndex"], 3);
         std::fs::remove_dir_all(&dir).ok();
     }
 

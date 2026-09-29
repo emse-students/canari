@@ -196,6 +196,15 @@ export interface SendChannelMessageDto {
   senderSessionId: string;
   messageIndex: number;
   /**
+   * Graine v2 (channel-encryption section 21): the session key's Ed25519 signature over the
+   * message's header, nonce and ciphertext - 64 bytes, base64. Absent from a v1 sender.
+   *
+   * Checked for SHAPE only. The server cannot verify it (it holds no key) and cannot require it
+   * (it cannot tell a v2 session from a v1 one): the READER refuses a row under a v2 session that
+   * carries none, which is what keeps a downgrade impossible.
+   */
+  signature?: string;
+  /**
    * A client-generated UUID, and IGNORED: `sendMessage` always mints the row id itself, so a client
    * can never choose a primary key. The client's own id travels inside the ciphertext
    * (`AppMessage.message_id`), which is the only place it is read. Kept on the DTO because every

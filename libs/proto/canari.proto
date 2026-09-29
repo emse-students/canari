@@ -182,6 +182,18 @@ message GraineMsg {
   // so a member who joined late cannot derive keys for messages sent before they were allowed to.
   uint32 first_index = 4;
   int64  created_at  = 5; // epoch ms, for the 7-day rotation and for ordering a bundle
+
+  // Graine v2 (channel-encryption section 21). All five are set on a v2 session and none on a v1
+  // one; the version is the SESSION's, so a row under a v2 session with no signature is refused and
+  // the server cannot downgrade a message. A relayed seed (repair, history bundle) carries them
+  // exactly as the minter wrote them: the endorsement is what makes the relay checkable.
+  uint32 version            = 6;  // 2, or absent (0) for v1
+  string minter_user_id     = 7;  // who minted the session - the only author its rows may name
+  string minter_device_id   = 8;  // whose MLS credential key signed the endorsement
+  bytes  signing_public_key = 9;  // the session's Ed25519 key, 32 bytes; every message is signed by it
+  // The minter device's Ed25519 signature over the endorsement descriptor, which binds the fields
+  // above, the channel, the session, created_at and SHA-256(seed) (section 21.2).
+  bytes  endorsement        = 10;
 }
 
 // What a request is FOR, stated rather than inferred from an empty list.

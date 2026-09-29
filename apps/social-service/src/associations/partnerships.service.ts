@@ -12,14 +12,12 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
+import { isUniqueViolation } from '../common/pg-errors';
 import {
   AddPartnershipCodesDto,
   CreatePartnershipCardDto,
   UpdatePartnershipCardDto,
 } from './dto/partnership.dto';
-
-/** Postgres error code for a unique constraint violation. */
-const UNIQUE_VIOLATION = '23505';
 
 /** Same limits as the association logo upload (`AssociationsService.setLogoFromUpload`). */
 const ICON_MAX_BYTES = 2 * 1024 * 1024;
@@ -482,7 +480,7 @@ export class PartnershipsService {
       );
       return { mode: 'code_pool', code };
     } catch (err) {
-      if (this.isUniqueViolation(err)) {
+      if (isUniqueViolation(err)) {
         const afterRace = await this.findClaimedCode(cardId, userId);
         if (afterRace) return { mode: 'code_pool', code: afterRace.code };
       }
@@ -492,13 +490,5 @@ export class PartnershipsService {
 
   private async findClaimedCode(cardId: string, userId: string): Promise<PartnershipCode | null> {
     return this.codeRepo.findOne({ where: { cardId, claimedByUserId: userId } });
-  }
-
-  private isUniqueViolation(err: unknown): boolean {
-    return (
-      typeof err === 'object' &&
-      err !== null &&
-      (err as { code?: string }).code === UNIQUE_VIOLATION
-    );
   }
 }

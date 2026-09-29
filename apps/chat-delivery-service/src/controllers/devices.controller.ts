@@ -31,6 +31,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 import {
   sanitizeIdentityValue,
   sanitizeQueryValue,
@@ -84,7 +85,8 @@ export class DevicesController {
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource,
-    private readonly messagingService: MessagingService
+    private readonly messagingService: MessagingService,
+    private readonly deviceSignatureKeys: DeviceSignatureKeysService
   ) {}
 
   /**
@@ -347,6 +349,7 @@ export class DevicesController {
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
         ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'}`
     );
+    await this.deviceSignatureKeys.record(userId, deviceId, [keyPackagePayload], 'register-device');
     const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
     });
@@ -445,8 +448,8 @@ export class DevicesController {
 
     // A UNION FOR EXACTLY ONE RELEASE, and the bare string is the OLD half. A client from before
     // 2026-09-16 sends `["base64", ...]` and cannot be made to send anything else; one from after
-    // sends `[{ keyPackage, notAfter }, ...]` because the server cannot parse an MLS KeyPackage and
-    // so could not tell an elapsed one from a fresh one. The old spelling stores a NULL, which the
+    // sends `[{ keyPackage, notAfter }, ...]` because the server did not read the lifetime out of the
+    // package and so could not tell an elapsed one from a fresh one. The old spelling stores a NULL, which the
     // resolver reads as "not known to be expired" - no device is locked out by a fact nobody has.
     // The removal date is on `docs/wiki/legacy-compatibility.md`.
     const parsed = body.keyPackages.map((entry) => {
@@ -469,6 +472,12 @@ export class DevicesController {
     // It rounds against us by however long the package sat before publication, which is the exact
     // approximation the migration accepted for the same reason: a package is minted to be published.
     // `key_package` gets no equivalent - see `lastResortDeadline` for why that row is different.
+    await this.deviceSignatureKeys.record(
+      userId,
+      deviceId,
+      parsed.map((kp) => kp.keyPackage),
+      'prekeys'
+    );
     const assumedNotAfter = new Date(Date.now() + KEY_PACKAGE_LIFETIME_DAYS * 86_400_000);
     const rows = parsed.map((kp) =>
       this.oneTimeKeyPackageRepo.create({
@@ -582,6 +591,27 @@ export class DevicesController {
       deviceOs: row?.deviceOs ?? undefined,
       deviceAppVersion: row?.deviceAppVersion ?? undefined,
     };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/devices/:userId/:deviceId/signature-keys')
+  /**
+   * Every MLS signature key this device has published, oldest first - what a member verifies a
+   * RELAYED Graine v2 seed's endorsement against once the minter's device has left the key group's
+   * tree (channel-encryption section 21).
+   *
+   * Any authenticated caller, like `key-package` above: the keys are read out of packages that
+   * route already serves to anyone signed in, so gating this one would hide nothing. A device with
+   * no key at all answers an EMPTY list rather than a 404 - "this device endorsed nothing you can
+   * check" is the answer, and the reader refuses the seed on it.
+   */
+  async getDeviceSignatureKeys(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    return { keys: await this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId) };
   }
 
   @UseGuards(HeaderAuthGuard)

@@ -5,7 +5,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
  * Graine native mirror - lets the background push service derive a message key with the app killed.
  *
  * The durable store is the source of truth; this additionally writes each seed to an app-private
- * file (`graine_seeds.json`, a map `channelId -> { sessionId -> { seed, createdAt } }`) so the
+ * file (`graine_seeds.json`, a map `channelId -> { sessionId -> { seed, createdAt, firstIndex, ...v2 } }`) so the
  * native handlers can decrypt an inline push ciphertext before any WebView runs. The Rust side
  * keeps only the newest sessions per channel, which is the whole difference from the epoch mirror
  * it replaces: epoch keys were few, seeds accumulate for ever.
@@ -28,10 +28,17 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('store_graine_seed', {
-      channelId: session.channelId,
-      sessionId: session.sessionId,
-      seedB64: session.seedB64,
-      createdAt: session.createdAt,
+      seed: {
+        channelId: session.channelId,
+        sessionId: session.sessionId,
+        seedB64: session.seedB64,
+        createdAt: session.createdAt,
+        // The floor, which a push must honour like the app does, and on a v2 session what the native
+        // reader verifies a push against: the minter its rows must name and the key that signs them.
+        firstIndex: session.firstIndex,
+        minterUserId: session.v2 ? session.senderId : null,
+        signingPublicKeyB64: session.v2?.signingPublicKeyB64 ?? null,
+      },
     });
   } catch (e) {
     console.warn(`[GRAINE_MIRROR] store failed: ${String(e)}`);

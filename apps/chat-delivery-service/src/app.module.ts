@@ -11,6 +11,7 @@ import { InvitationsController } from './controllers/invitations.controller';
 import { LocksController } from './controllers/locks.controller';
 import { MessagingController } from './controllers/messaging.controller';
 import { MessagingService } from './services/messaging.service';
+import { DeviceSignatureKeysService } from './services/device-signature-keys.service';
 import { CallsService } from './services/calls.service';
 import { ApnsVoipService } from './services/apns-voip.service';
 import { CallsController } from './controllers/calls.controller';
@@ -26,6 +27,7 @@ import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { GroupInvite } from './entities/group-invite.entity';
+import { DeviceSignatureKey } from './entities/device-signature-key.entity';
 import { PushToken } from './entities/push-token.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
@@ -88,6 +90,7 @@ class RedisShutdown implements OnModuleDestroy {
         GroupInvite,
         MlsCommitLog,
         MlsGroupInfo,
+        DeviceSignatureKey,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -105,6 +108,7 @@ class RedisShutdown implements OnModuleDestroy {
       GroupInvite,
       MlsCommitLog,
       MlsGroupInfo,
+      DeviceSignatureKey,
     ]),
   ],
   controllers: [
@@ -122,6 +126,13 @@ class RedisShutdown implements OnModuleDestroy {
     AdminStorageController,
     CallsController,
   ],
-  providers: [RedisProvider, RedisShutdown, MessagingService, CallsService, ApnsVoipService],
+  providers: [
+    RedisProvider,
+    RedisShutdown,
+    MessagingService,
+    DeviceSignatureKeysService,
+    CallsService,
+    ApnsVoipService,
+  ],
 })
 export class AppModule {}
