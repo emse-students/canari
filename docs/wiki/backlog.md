@@ -285,7 +285,7 @@ one self-declared string, `formation = 'ICM'`, hard-coded in three places. The u
 whole model in one sitting: cumulative affiliations (cursus or staff post), one campus, spaces =
 formation x campus, audiences fixed by the publishing association, one BDE per space, Authentik as
 the single truth edited from Canari by admins only, per-application access decided centrally, and the
-migration of the 600 accounts. **Twenty-eight decisions, all on
+migration of the 600 accounts. **Thirty-two decisions, all on
 [profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
 were taken against. **The technical plan is its section 4, ten work packages, PROPOSED: owed, the
 user's validation before anything is built.** WP0 is the P1 below and needs nothing else.
@@ -298,8 +298,9 @@ The MiConnect property mapping `avatar` returns an avatar URL with a MiGallery `
 query string, and the mapping is attached to the `MinoWiki` and `Archives MINO` providers. Every
 user of either app therefore receives the key in their id_token/userinfo. Read on production with
 `ak shell`, 2026-09-29; the value is deliberately not written in this public repository. **Owed**:
-find what that key may do in MiGallery, replace the mechanism by a URL that needs no secret (or a
-key scoped to avatars only), then revoke the old key - revoking first breaks both apps' avatars.
+a keyless avatar URL in MiGallery first, the mapping switched to it, then the key revoked -
+revoking first breaks both apps' avatars (user, 2026-09-29, D29). A MiGallery key is read, write or
+admin, never per-route, so this one reads every read-scoped API.
 Found during the [profile reform](profiles-and-access.md#3-found-on-the-way).
 
 ### P2 - after a failed biometric launch unlock, the PIN modal's biometric button does nothing (measured on the Mi 9T 2026-09-28)

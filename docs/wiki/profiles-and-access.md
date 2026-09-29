@@ -166,6 +166,18 @@ application computed from the same profile, so no application keeps a hard-coded
   stage for promo N-1 (N the current year) as soon as the Alumni SSO works; from a date the user
   sets, the MiConnect stage blocks until the link is made.
 
+**Answered while writing the plan (second round, same day).**
+
+- **D29 - WP0 builds a keyless avatar URL FIRST**, then switches MinoWiki and Archives to it, then
+  revokes the key - no avatar is lost, and the key stays exposed until then.
+- **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
+  `.ics`, as today's single feed.
+- **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
+  cannot publish one, and publishes through an institution instead.
+- **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
+  cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
+  or allowed.
+
 ## 3. Found on the way
 
 - **A MiGallery API key travels in plain text in claims.** The property mapping `avatar` builds a
@@ -200,9 +212,11 @@ application computed from the same profile, so no application keeps a hard-coded
 
 ### The work packages, in order
 
-**WP0 - P1, independent, first: the MiGallery key in MinoWiki's and Archives' claims.** Remove the
-`avatar` mapping from both providers (or give them a keyless avatar URL), THEN delete the key in
-MiGallery's `/admin/api-keys` - deleting first breaks both apps' avatars. A MiGallery key is
+**WP0 - P1, independent, first: the MiGallery key in MinoWiki's and Archives' claims (D29).**
+MiGallery gains an avatar URL that needs no secret (it has none today: the route requires a session
+or a key, and its `Cache-Control` is deliberately `private` because of the edge), the `avatar`
+mapping switches to it, THEN the key is deleted in MiGallery's `/admin/api-keys` - deleting first
+breaks both apps' avatars. A MiGallery key is
 `read`/`write`/`admin`, never per-route (`src/lib/server/permissions.ts`), so a `read` key reads
 every read-scoped API. Canari, Sky and the Cercle send their own keys in a header and are not
 affected. [backlog](backlog.md#p1---a-migallery-api-key-is-handed-to-every-user-of-minowiki-and-archives-in-their-own-claims-found-2026-09-29).
