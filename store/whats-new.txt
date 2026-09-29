@@ -1,6 +1,7 @@
-version: 0.18.30
+version: 0.18.31
 
-Communautes : un appareil qui s'etait retrouve exclu du groupe de cles d'une communaute le rejoint
-tout seul, et les messages de ses salons s'affichent de nouveau.
+Le bouton qui ouvre nos autres sites reagit au survol et s'ouvre en glissant, comme les autres
+menus. Sur ordinateur, la barre du haut suit un ordre plus logique : connexion, autres sites,
+deconnexion, puis ton profil.
 
-"Prendre la main" dans un deuxieme onglet ne fait plus basculer la main d'un onglet a l'autre.
+Les boutons publier, rechercher et notifications de la barre du haut reagissent aussi au survol.
