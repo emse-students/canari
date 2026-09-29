@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "0.18.31",
+  "version": "0.18.32",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -20,7 +20,10 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["default", "ios-system-components"]
+      "capabilities": [
+        "default",
+        "ios-system-components"
+      ]
     }
   },
   "plugins": {
@@ -130,7 +133,7 @@
       "developmentTeam": "4CLNB8SR6L"
     },
     "android": {
-      "versionCode": 1803199
+      "versionCode": 1803201
     }
   }
 }
