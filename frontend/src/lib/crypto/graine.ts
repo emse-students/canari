@@ -14,7 +14,6 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   GRAINE_HKDF_INFO,
   GRAINE_MESSAGE_KEY_BYTES,
-  GRAINE_NONCE_BYTES,
   GRAINE_SEED_BYTES,
 } from '$lib/crypto/graineConstants';
 
@@ -137,30 +136,8 @@ export interface GraineSealed {
 }
 
 /**
- * Seals `plaintext` for message `index` of a session.
- *
- * A fresh random nonce per message rather than one derived from the index: the index is public and
- * a derived nonce would repeat the moment a seed were ever reused across sessions - the one
- * catastrophic failure mode of GCM. Twelve random bytes cost twelve bytes.
- */
-export async function sealWithGraine(
-  seed: Uint8Array,
-  sessionId: string,
-  index: number,
-  plaintext: Uint8Array
-): Promise<GraineSealed> {
-  const key = await deriveMessageKey(seed, sessionId, index);
-  const nonce = crypto.getRandomValues(new Uint8Array(GRAINE_NONCE_BYTES));
-  const sealed = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce as BufferSource },
-    key,
-    plaintext as BufferSource
-  );
-  return { ciphertext: toBase64(new Uint8Array(sealed)), nonce: toBase64(nonce) };
-}
-
-/**
- * Opens a message sealed by {@link sealWithGraine}.
+ * Opens a Graine v1 message - sealed by a client older than WP-G2-5, which minted v1 sessions. No
+ * client writes v1 any more; this reader stays while v1 rows exist (`legacy-compatibility.md`).
  *
  * Rejects rather than returning null: a failure here means the seed, the session id or the index is
  * wrong, or the ciphertext was tampered with, and a caller that treated any of those as "no

@@ -79,6 +79,8 @@ branch taken when the session carries no `v2` block; its native twin is `open_gr
 **Shim:** Graine v2 (channel-encryption section 21) binds a row to its salon, author and index and
 signs it. A v1 row proves none of that, and a v1 seed names no minter. v1 is kept because every row
 written before the v2 writer is v1, and they stay readable for as long as they are kept.
+The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fixture
+`crypto/graine.testSeal.ts`, so this entry is a reader alone.
 **Removal condition, in two steps (user, 2026-09-28):**
 - once `minClientVersion` is the v2 WRITER (G2-5) and both stores serve it, a v1 seed that ARRIVES
   is refused, since a modified client could otherwise keep minting v1 sessions to forge an author;

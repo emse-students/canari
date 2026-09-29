@@ -1,4 +1,4 @@
-import type { IStorage, StoredGraineSession } from '$lib/db/types';
+import type { IStorage, StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
 import { byNewestSession } from '$lib/db/graineCodec';
 import { GRAINE_ROTATE_AFTER_MESSAGES, GRAINE_ROTATE_AFTER_MS } from '$lib/crypto/graineConstants';
 import { GraineInputError } from '$lib/crypto/graine';
@@ -23,6 +23,13 @@ const NOW = 1_700_000_000_000;
 const SCOPE = { workspaceId: 'ws-1', channelId: 'chan-1', senderId: 'alice' };
 /** What `distribute` answers: the frame it posted, which the session keeps (section 19). */
 const FRAME = { groupId: 'dist-group', protoB64: 'ZnJhbWU=' };
+/** What `endorse` answers: a v2 half this device can sign with (WP-G2-5). */
+const V2: StoredGraineV2 = {
+  minterDeviceId: 'dev-a',
+  signingPublicKeyB64: 'cGs=',
+  endorsementB64: 'ZW5k',
+  signingSecretKeyB64: 'c2s=',
+};
 
 /** An in-memory `IStorage` holding only what the manager touches, newest-first like the real ones. */
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -54,6 +61,7 @@ function session(overrides: Partial<StoredGraineSession> = {}): StoredGraineSess
     sentCount: 0,
     distributionEpoch: 4,
     distributionFrame: FRAME,
+    v2: V2,
     ...overrides,
   };
 }
@@ -64,6 +72,7 @@ function deps(storage: IStorage, overrides: Partial<GraineOutboundDeps> = {}): G
     deviceKeyB64: 'device-key',
     distributionEpoch: 4,
     distribute: vi.fn().mockResolvedValue(FRAME),
+    endorse: vi.fn().mockResolvedValue(V2),
     now: () => NOW,
     ...overrides,
   };
@@ -95,6 +104,14 @@ describe('when a session may seal another message', () => {
 
   it('rotates a session minted before its frame was kept, since every message now carries one', () => {
     expect(shouldRotateGraineSession(session({ distributionFrame: undefined }), at)).toBe(true);
+  });
+
+  it('rotates a v1 session, and a v2 one whose secret is not here to sign with (WP-G2-5)', () => {
+    // Every session this device seals under is v2: a v1 one rotates once, at the writer release.
+    expect(shouldRotateGraineSession(session({ v2: undefined }), at)).toBe(true);
+    // A session restored from a backup keeps its v2 half without a usable secret.
+    const restored = session({ v2: { ...V2, signingSecretKeyB64: undefined } });
+    expect(shouldRotateGraineSession(restored, at)).toBe(true);
   });
 
   it('rotates on a stale roster ALONE, with both counters nowhere near their thresholds', () => {
@@ -140,6 +157,28 @@ describe('reserving a slot', () => {
     expect(slot.session.distributionFrame).toEqual(FRAME);
     expect(d.distribute).toHaveBeenCalledWith(expect.objectContaining({ sentCount: 0 }));
     spySave.mockRestore();
+  });
+
+  it('endorses a minted session BEFORE distributing it, so the seed travels as v2', async () => {
+    const { storage } = fakeStorage();
+    const d = deps(storage);
+
+    const slot = await reserveOutboundSlot(d, SCOPE);
+
+    expect(d.endorse).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'alice' }));
+    // The distributed session already carries its v2 half: a v2 seed handed over without its
+    // endorsement is refused by every reader.
+    expect(d.distribute).toHaveBeenCalledWith(expect.objectContaining({ v2: V2 }));
+    expect(slot.session.v2).toEqual(V2);
+  });
+
+  it('distributes and persists NOTHING when the endorsement could not be made', async () => {
+    const { storage, saved } = fakeStorage();
+    const d = deps(storage, { endorse: vi.fn().mockRejectedValue(new Error('no credential')) });
+
+    await expect(reserveOutboundSlot(d, SCOPE)).rejects.toThrow('no credential');
+    expect(d.distribute).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
   });
 
   it('persists NOTHING when the seed could not be distributed', async () => {

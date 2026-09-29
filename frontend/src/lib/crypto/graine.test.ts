@@ -5,8 +5,8 @@ import {
   newGraineSeed,
   newGraineSessionId,
   openWithGraine,
-  sealWithGraine,
 } from './graine';
+import { sealWithGraine } from './graine.testSeal';
 import { toBase64 } from '$lib/utils/hex';
 
 /**
