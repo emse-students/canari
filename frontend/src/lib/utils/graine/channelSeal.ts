@@ -1,5 +1,5 @@
-import { openWithGraine, sealWithGraine } from '$lib/crypto/graine';
-import { GraineSignatureError, openWithGraineV2 } from '$lib/crypto/graineV2';
+import { openWithGraine } from '$lib/crypto/graine';
+import { GraineSignatureError, openWithGraineV2, sealWithGraineV2 } from '$lib/crypto/graineV2';
 import type { StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import {
@@ -16,6 +16,7 @@ import {
   GraineDistributionUnavailableError,
 } from './seedDistribution';
 import { reserveOutboundSlot } from './sessionManager';
+import { endorseNewSession } from './endorseSession';
 import { mirrorGraineSeed } from './graineMirror';
 import { fromBase64 } from '$lib/utils/hex';
 
@@ -35,6 +36,8 @@ export interface SealedChannelMessage {
   nonce: string;
   senderSessionId: string;
   messageIndex: number;
+  /** The session key's signature over the header, nonce and ciphertext (Graine v2, section 21). */
+  signature: string;
   /**
    * The frame that distributed this session's seed, and the key group it was sealed on - on EVERY
    * message, not the first: a push can be withheld (a salon set to mentions), so the first message a
@@ -191,6 +194,7 @@ export async function sealChannelMessage(
       deviceKeyB64,
       distributionEpoch,
       distribute: (session) => distributeGraineSeed(mlsService, scope, session),
+      endorse: (session) => endorseNewSession(mlsService, session),
     },
     { workspaceId, channelId: channel, senderId: userId }
   );
@@ -211,15 +215,30 @@ export async function sealChannelMessage(
     );
   }
 
-  const sealed = await sealWithGraine(
+  // V2 BY THE SAME ROTATION: `shouldRotateGraineSession` mints anew any session this device cannot
+  // sign under, so a missing secret here is a broken invariant too.
+  const secret = slot.session.v2?.signingSecretKeyB64;
+  if (!secret) {
+    throw new Error(
+      `[GRAINE] session ${slot.session.sessionId} reached the seal with no signing secret`
+    );
+  }
+  const sealed = await sealWithGraineV2(
     fromBase64(slot.session.seedB64),
-    slot.session.sessionId,
-    slot.index,
-    payload
+    {
+      channelId: channel,
+      sessionId: slot.session.sessionId,
+      minterUserId: slot.session.senderId,
+      index: slot.index,
+    },
+    payload,
+    fromBase64(secret),
+    mlsService.graineSignatureEngine()
   );
   return {
     ciphertext: sealed.ciphertext,
     nonce: sealed.nonce,
+    signature: sealed.signature,
     senderSessionId: slot.session.sessionId,
     messageIndex: slot.index,
     seedFrame: frame.protoB64,

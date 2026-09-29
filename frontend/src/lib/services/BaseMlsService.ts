@@ -4163,5 +4163,6 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
+  abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
 }
