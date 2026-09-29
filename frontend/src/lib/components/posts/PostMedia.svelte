@@ -1,17 +1,20 @@
 <script lang="ts">
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import {
     FileText,
     Download,
     CircleAlert,
     Image as ImageIcon,
     ImageOff,
-    Video as VideoIcon,
     Mic,
   } from '@lucide/svelte';
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
-  import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import {
+    releaseDecryptedMediaBlobUrl,
+    retainWarmDecryptedMediaBlobUrl,
+  } from '$lib/utils/mediaBlobCache';
   import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
@@ -105,16 +108,6 @@
       loadError = m.post_missing_auth_token();
       return;
     }
-    // Still far from the viewport: the placeholder is already the right thing on screen, so the
-    // download waits rather than competing with the page the reader IS looking at.
-    if (deferred) return;
-
-    let destroyed = false;
-    let acquired = false;
-    loading = true;
-    loadError = '';
-    mediaExpired = false;
-
     const mediaRef: MediaRef = {
       type: mediaType,
       mediaId: media.mediaId,
@@ -126,6 +119,30 @@
       width: media.width,
       height: media.height,
     };
+
+    // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame,
+    // deferred or not, instead of a placeholder the reader watches turn into what was just there.
+    const warm = retainWarmDecryptedMediaBlobUrl(mediaRef);
+    if (warm) {
+      blobUrl = warm;
+      loading = false;
+      loadError = '';
+      mediaExpired = false;
+      return () => {
+        releaseDecryptedMediaBlobUrl(mediaRef);
+        blobUrl = null;
+      };
+    }
+
+    // Still far from the viewport: the placeholder is already the right thing on screen, so the
+    // download waits rather than competing with the page the reader IS looking at.
+    if (deferred) return;
+
+    let destroyed = false;
+    let acquired = false;
+    loading = true;
+    loadError = '';
+    mediaExpired = false;
 
     const mediaService = new MediaService();
     // Leaves the gate's queue if the card is torn down before its turn comes.
@@ -226,6 +243,7 @@
         src={blobUrl}
         controls
         autoplay
+        poster={TRANSPARENT_VIDEO_POSTER}
         use:followVideoSound
         class="max-h-full max-w-full rounded-xl bg-black object-contain"
       ></video>
@@ -246,13 +264,13 @@
         <ImageIcon size={32} class="text-text-muted opacity-20" strokeWidth={1.5} />
       </div>
     {:else if mediaType === 'video'}
+      <!-- A plain dark box, the colour the video will fill it with: a camera icon pulsing in the
+           middle read as a stray logo on the Mi 9T (2026-09-29), and Instagram draws nothing. -->
       <div
-        class="flex animate-pulse items-center justify-center bg-black/5 dark:bg-white/10 {letterbox
+        class="animate-pulse bg-black/80 {letterbox
           ? 'h-full w-full'
           : 'aspect-video w-full max-w-md rounded-3xl'}"
-      >
-        <VideoIcon size={32} class="text-text-muted opacity-20" />
-      </div>
+      ></div>
     {:else if mediaType === 'audio'}
       <div
         class="flex h-14 w-full animate-pulse items-center justify-center rounded-xl bg-black/5 px-4 sm:w-56 dark:bg-white/10"
@@ -463,6 +481,7 @@
           src={blobUrl}
           controls
           autoplay
+          poster={TRANSPARENT_VIDEO_POSTER}
           use:followVideoSound
           class="max-h-full max-w-full rounded-xl bg-black object-contain"
         ></video>

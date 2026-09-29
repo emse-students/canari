@@ -10,6 +10,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import InlineVideo from './InlineVideo.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { followVideoSound } from '$lib/actions/playWhileVisible';
+import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 
 const mounted: (() => void)[] = [];
 let observed: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
@@ -54,6 +55,8 @@ it('starts muted, and its sound button answers for every video', () => {
   const first = mountVideo();
   const second = mountVideo();
   expect(first.video.muted).toBe(true);
+  // Without it the Android WebView draws its own grey play button until the first frame.
+  expect(first.video.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
 
   first.soundButton.click();
   flushSync();
