@@ -565,16 +565,79 @@ img.emoji {
   transition: none;
 }
 
-.page-scroll-wrap.swipe-nav-exit-left {
-  transition: transform 220ms ease-out;
-  transform: translateX(-100%);
+/* THE RELEASE, AND THE REASON THE PAGE ARRIVING IS FINALLY VISIBLE.
+   `+layout.svelte`'s `onNavigate` names this wrapper `swipe-nav-out` for the snapshot taken BEFORE
+   the route changes and `swipe-nav-in` for the one taken after, so the two captures land in two
+   groups and can slide past each other. One shared name puts them in ONE group, which the browser
+   morphs and cross-fades - the animation everybody writes first, and it looks exactly like the
+   440ms of empty background this replaced.
+
+   `--swipe-nav-from` is how far the finger had already carried the page, as a MAGNITUDE: the
+   direction is in the selector, so each keyframe spells its own sign (`swipeNavigation.ts`). The
+   outgoing page therefore travels the REMAINDER of a screen width and the incoming one starts
+   exactly one width behind it - the pair moves as one strip, with no seam at the release. */
+.page-scroll-wrap.swipe-nav-capture-out {
+  view-transition-name: swipe-nav-out;
 }
 
-.page-scroll-wrap.swipe-nav-exit-right {
-  transition: transform 220ms ease-out;
-  transform: translateX(100%);
+.page-scroll-wrap.swipe-nav-capture-in {
+  view-transition-name: swipe-nav-in;
 }
 
+/* The chrome does NOT slide. It is captured in `root`, and the old capture is hidden outright so
+   the header and the bottom bar show the destination on the first frame; animating it would make
+   the active-tab indicator lag the page it indexes by the whole transition. */
+html[data-swipe-nav]::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+
+html[data-swipe-nav]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html[data-swipe-nav='next']::view-transition-old(swipe-nav-out) {
+  animation: swipeNavPageOutLeft 220ms ease-out both;
+}
+
+html[data-swipe-nav='next']::view-transition-new(swipe-nav-in) {
+  animation: swipeNavPageInFromRight 220ms ease-out both;
+}
+
+html[data-swipe-nav='prev']::view-transition-old(swipe-nav-out) {
+  animation: swipeNavPageOutRight 220ms ease-out both;
+}
+
+html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
+  animation: swipeNavPageInFromLeft 220ms ease-out both;
+}
+
+@keyframes swipeNavPageOutLeft {
+  to {
+    transform: translateX(calc(-100% + var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageInFromRight {
+  from {
+    transform: translateX(calc(100% - var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageOutRight {
+  to {
+    transform: translateX(calc(100% - var(--swipe-nav-from, 0px)));
+  }
+}
+
+@keyframes swipeNavPageInFromLeft {
+  from {
+    transform: translateX(calc(-100% + var(--swipe-nav-from, 0px)));
+  }
+}
+
+/* The entrance kept for engines without view transitions (WebKit before 18). */
 .page-scroll-wrap.swipe-nav-enter-left {
   animation: swipeNavEnterFromLeft 220ms ease-out;
 }

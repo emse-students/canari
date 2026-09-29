@@ -2340,7 +2340,7 @@ gesture at all, which is what "look for an empty space" describes precisely.
 
 **THE EXCLUSION WAS NEVER WHAT MADE A TAP SAFE.** `classifySwipeRelease` (section 28's own fix)
 already tells a stationary tap from a real horizontal drag by DISPLACEMENT -
-`GESTURE_LOCK_PX`/`SWIPE_THRESHOLD_PX`/the dominance ratio - and `handleTouchMove` only calls
+`GESTURE_LOCK_PX`/the travel-and-flick rules (section 38)/the dominance ratio - and `handleTouchMove` only calls
 `preventDefault()` once the gesture is confirmed `'horizontal'`, never at `touchstart`. A touch that
 starts on a card and stays still reaches `touchend` having never left `'pending'` phase, so
 `classifySwipeRelease` returns `null`, `commitSwipeNav` never runs, and the card's own click - never
@@ -2360,7 +2360,9 @@ means, not an element type excluded because of what it happens to render as.
 **`swipeBack.ts` (chat's edge-swipe-back gesture, [chat](modules/chat.md)) is NOT this same
 predicate**, on purpose: it needs the opposite answer for its own back button, so it keeps a local,
 narrower check instead of sharing this one. Two gestures that both ask "does a button count" is not
-one question asked twice.
+one question asked twice. **It does now exclude `data-swipe-reply` as well** - not by sharing this
+predicate but by reaching the same conclusion about the same region, for the reason section 38
+records: a bubble's reply swipe and an edge-swipe-back were the same stroke over the same pixels.
 
 ---
 
@@ -2752,3 +2754,86 @@ cascade and the icon went grey the moment the pointer left.
 
 **The desktop order is status, launcher, then the account pair**: logout beside the avatar it signs
 out, the avatar last. The launcher used to sit between the two account controls.
+---
+
+## 38. The page a swipe was going to never appeared, and a tap's drift went to a different one
+
+Two reports from the user's phone, 2026-09-29, and the same gesture answers both: *"le swipe pour
+changer de page n'affichait pas la page suivante (swiper vers la gauche ne fait pas apparaitre la
+page de droite)"*, and *"le swipe est un peu trop sensible, parfois un clic un peu baveux change de
+page (ou ferme la discussion dans le cas ou je l'ai experimente)"*.
+
+### The destination was never on screen at any point in the transition
+
+`commitSwipeNav` used to slide the outgoing page fully off, `await` the full `swipeNavTransitionMs`,
+**then** call `goto`, **then** play a 28% entrance on whatever arrived. Two animations end to end,
+440ms, over an empty background - and the incoming page did not exist in the DOM for the first
+220ms of it, so there was nothing it COULD have shown. The gesture was never wrong; the reader was
+watching a page leave and, separately, a page arrive.
+
+**Nothing about SvelteKit forbids the two being on screen together - only one of them has to be a
+picture.** The router mounts exactly one route, so the page being left is captured as a snapshot by
+a view transition (`onNavigate` in `+layout.svelte`), and the real, live page takes its place
+underneath while the snapshot slides off. That is the whole mechanism, and it is why a persistent
+pager holding all four tabs - the other way to get this - was not needed: **the outgoing page does
+not have to be interactive to be visible, it only has to be visible.**
+
+**THE TWO CAPTURES MUST NOT SHARE A `view-transition-name`.** Naming the wrapper once is the
+obvious thing to write and it produces a cross-fade, not a slide: one name means one group, and the
+browser morphs that group's box from the old position to the new (identical here) while fading its
+contents. `+layout.svelte` therefore renames the same persistent element between the captures -
+`swipe-nav-capture-out` before the update callback, `swipe-nav-capture-in` inside it - so the old is
+an exit with no new, the new is an entry with no old, and each gets its own group to animate.
+
+**The finger's position is carried into the animation as a magnitude.** `--swipe-nav-from` is
+`swipeNavSlideOriginPx(...)`, unsigned, because the direction is already in the selector
+(`html[data-swipe-nav='next'|'prev']`). The outgoing page travels the REMAINDER of a screen width
+from where the release left it and the incoming one starts exactly one width behind it, so the pair
+moves as one strip with no seam at the moment of release. A signed value would have made each
+keyframe correct in one direction and mirror-imaged in the other - a defect a phone shows and a
+test does not.
+
+**`preloadData` on the horizontal lock is what makes the immediate `goto` honest.** Without it the
+release waits on a cold navigation, and hiding that wait is exactly what the old 220ms exit
+animation was doing. The preload follows the current sign of the drag, since the direction can still
+flip under the finger.
+
+**`::view-transition-old(root)` is hidden outright rather than animated.** The header and bottom bar
+are captured in `root`, and they must adopt the destination on the first frame: an active-tab
+indicator that lagged the page it indexes by 220ms is the same defect in a smaller place.
+
+**Where the API is absent (WebKit before 18) the navigation is ordinary and `afterNavigate` plays
+the 28% entrance the app had before.** That is a capability branch, not a fallback: there is no
+second implementation to keep correct, and the destination is reached by the same `goto` either way.
+
+### A tap that drifts is not a swipe, and 60px could not tell them apart
+
+The commit rule was one constant - `SWIPE_THRESHOLD_PX = 60`, any duration, any manner. On a 390px
+phone that is 15% of the screen, which a thumb pressing a card and rolling as it lifts covers
+easily. The gesture fired on touches nobody meant as a gesture, and the only defence was holding
+perfectly still.
+
+`classifySwipeRelease` now asks what a pager asks: **was this carried FAR, or was it THROWN?**
+
+| | Rule | Why it is there |
+| --- | --- | --- |
+| Floor | `SWIPE_MIN_TRAVEL_PX` = 56 | A velocity alone lets a 20px twitch through on the strength of being brief |
+| Distance | 25% of `innerWidth` | A deliberate drag commits at any speed. Proportional because 60px is a third of a thumb on a phone and a rounding error on a tablet |
+| Flick | 0.5 px/ms | A thrown gesture commits at any length above the floor |
+
+A drift is neither: it is short and slow, so it is refused and the page snaps back. The gesture
+state carries `startedAt` for this, and nothing else reads it.
+
+### Reply-swiping a received message closed the conversation
+
+The other half of the same report, and it is not the tab gesture at all. `swipeBack.ts` arms inside
+a 28px left-edge strip and commits at 90px. A received bubble sits against that edge, and a reply
+swipe is a RIGHTWARD drag over those same pixels - so a finger that carried a bubble past
+`REPLY_SWIPE_TRIGGER_PX` (56) and on to 90 armed **both**: the reply was staged and the thread was
+dismissed underneath it. Neither gesture knew the other existed.
+
+`swipeBack` now declines a touch that starts inside `[data-swipe-reply]`, which is the same marker
+`shouldIgnoreSwipeTarget` (section 32) had already excluded for the same collision - reached
+independently rather than by sharing the predicate, for the reason section 32 gives. **The bubble
+wins because it is the more specific target**: an edge-swipe-back has the rest of the strip, a reply
+swipe has nowhere else to happen.
