@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
@@ -79,7 +80,7 @@
 </script>
 
 {#if open && asSheet}
-  <div use:portal class="fixed inset-0 z-(--z-modal-popover)">
+  <div use:portal use:coversScreen class="fixed inset-0 z-(--z-modal-popover)">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"

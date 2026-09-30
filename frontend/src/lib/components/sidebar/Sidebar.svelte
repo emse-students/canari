@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
@@ -439,6 +440,7 @@
   <button
     type="button"
     class="fixed inset-0 z-(--z-nav-drawer-scrim) bg-black/30 md:hidden"
+    use:coversScreen
     onclick={() => onCloseDrawer?.()}
     aria-label={m.sidebar_close_panel_aria()}
   ></button>
@@ -660,7 +662,7 @@
                         ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
                         : ''
                     }`}
-                class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
+                class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
                 channel.id
                   ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
                   : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
@@ -701,7 +703,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('channel')}
-                class="border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20"
+                class="border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20 pointer-coarse:min-h-11"
               >
                 <Plus size={16} aria-hidden="true" />
                 <span class="text-sm font-medium">{m.chat_add_channel_label()}</span>

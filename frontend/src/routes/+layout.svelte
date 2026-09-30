@@ -18,6 +18,7 @@
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
+  import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
@@ -641,9 +642,11 @@
       {#if isIosApp && nativeTabBar.status !== 'failed'}
         <!-- Mounted outside the login page only: configuring it there would draw it for a frame
              before `visible` hid it. The keyboard and an open conversation hide it without
-             unmounting, because a reconfiguration per keystroke would be a native round trip each. -->
+             unmounting, because a reconfiguration per keystroke would be a native round trip each.
+             So does anything that covers the screen (`coversScreen`): a native bar is drawn ABOVE
+             the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
-          <NativeTabBar visible={!isKeyboardOpen && !isMobileConvoOpen} />
+          <NativeTabBar visible={!isKeyboardOpen && !isMobileConvoOpen && !screenCover.covered} />
         {/if}
       {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
         <BottomNav />

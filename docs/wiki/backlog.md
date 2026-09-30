@@ -70,6 +70,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **sign in once through the CAS after the stable that carries WPA-2** - it turns PKCE `S256` on, and no gate here talks to the real CAS; a failure is undone by reverting `pkce` and re-applying | 1 sign-in, any app | [profiles-and-access WPA-2](profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29) |
 | **dismiss code-scanning alert 2521 as a false positive** - `js/user-controlled-bypass` on the refresh endpoint's own 401; the flagged condition is the REFUSAL, and the sensitive path behind it is verified three ways. A judgement about an auth path is not an agent's to record unilaterally | 1 click, Security tab | [P3 - ONE HIGH-SEVERITY ALERT IS A FALSE POSITIVE](#p3---one-high-severity-code-scanning-alert-is-a-false-positive-and-only-a-click-closes-it) |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [P2 - that a photo now survives a restart](#p2---that-a-photo-now-survives-a-restart-is-proven-by-compiling-and-by-nothing-else---one-mi-9t-look-user-2026-09-17) |
@@ -495,12 +496,11 @@ SIDE BY SIDE (measured at 393 px on `default-source-authentication`: header 31 p
 footer 48 px), which already shifts the ordinary card ~17 px off centre. When the header and footer
 carry content, the row outgrows the viewport, centring overflows both edges and `overflow: hidden`
 clips the left one. **Fixed in the file by #1098** (the `display` override is gone, Authentik's grid
-centres the card; `overflow: hidden` stays, it clips the blobs). Open until it is PASTED into the
-Brand and seen on the Mi 9T on the error page, the source-authentication page and the consent page. Same audit, two smaller items on the same
+centres the card; `overflow: hidden` stays, it clips the blobs), live since 2026-09-25. The CSS is
+`blueprints/70-brand.yaml` since 2026-09-30, so a change to it ships with a stable release. Same audit, two smaller items on the same
 pages: the default title **"Welcome to authentik!"** (English, on a French flow) is still shown, and
 the error states raw Authentik vocabulary ("Le flux ne s'applique pas") to someone who merely
-opened the page while signed in. The #1081 fixes are still unpasted, so the paste owed there should
-carry this one too ([authentik](infrastructure/authentik.md#login-page-branding)).
+opened the page while signed in ([authentik](infrastructure/authentik.md#login-page-branding)).
 
 
 ### P3 - Canari's web login shows developer vocabulary and a glow under the sign-in button (measured on the Mi 9T, 2026-09-25)

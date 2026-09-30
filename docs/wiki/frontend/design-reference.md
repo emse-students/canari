@@ -664,7 +664,9 @@ reference ET tout aligner maintenant"*): 163 icon-only buttons visible at once, 
 Four gaps of four pixels, side by side. Nobody chose them: each button was written against the one
 neighbour its author had in mind.
 
-`.ui-icon-button` declares the box and NOTHING else - 44px below `md`, 38px from `md` up, with
+`.ui-icon-button` declares the box and NOTHING else - 44px below `md` OR on a touch screen, 38px
+from `md` up UNDER A FINE POINTER only (the width alone described a touch tablet too, whose header
+icons measured 38px in portrait, 2026-09-30), with
 `.ui-icon-button--sm` at 28px for a control that only ever appears under a pointer inside a dense
 row. **It deliberately does not declare the corner**, which #447 made a four-meaning scale, nor the
 colour: one property, one owner. Re-measured after the sweep at 1280px - 38, 38, 38, 38, 28 - and
@@ -676,6 +678,23 @@ by list: a button whose padding is asymmetric (`px-3 py-1.5` is a pill sized to 
 button that declares no box at all (an inline affordance - the 12px pencil in a comment's meta
 row, the cross in a chip, the avatar in the navbar). A third is out by name: a box measured against
 a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
+
+**A control drawn under 44px on a touch screen takes `.tap-target`** (2026-09-30, from the
+viewport audit in [phone-comparison](../phone-comparison.md)). It changes nothing visible: under
+`(pointer: coarse)` a centred `::before` extends the hit box to `max(100%, 2.75rem)` on each axis,
+so a 28px pill, a 20px inline link or a 32px avatar is tapped as a 44px target without its row
+growing. Twelve controls carry it - the feed pills, the header's "Accueil", the navbar avatar, the
+legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
+badge. Both rules are held by `touchTargets.test.ts`.
+
+**A STACKED LIST NEVER TAKES `.tap-target` - its rows take `pointer-coarse:min-h-11`.** Where two
+hit boxes overlap, the later element in the DOM wins, so in a column pitched under 44px each box
+swallows the lower part of the row above it. On the Mi 9T the legal table of contents (a 21px
+pitch) opened section N+1 on a tap on N's centre, 13 entries of 15 - found by `elementFromPoint`
+on the device, invisible to any size check since every box measured 44px. The legal lists, the
+sidebar channel rows and the admin menu items therefore got a real 44px row instead. The viewport
+audit's class `Z` (`tools/phone-bench/viewports.mjs`) probes each control's own drawing for a
+neighbour's hit box, so the next stack that takes the class is reported.
 
 ### The expanded rail clipped all eighteen of its texts
 

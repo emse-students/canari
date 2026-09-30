@@ -1,0 +1,118 @@
+# Signing in (miconnect-auth, CAS only), its failure page, the password flow the test campaign uses, and the MINO logout redirect.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-authentication
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # gives the object its new name before the entry that describes it by that name. It finds the
+  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
+  # by its old name, it would write that old name straight back. So an instance
+  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
+  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
+  - model: authentik_flows.flow
+    conditions:
+      - !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
+    identifiers:
+      pk: !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
+    attrs:
+      slug: "miconnect-invalidation-mino"
+  - model: authentik_stages_redirect.redirectstage
+    conditions:
+      - !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+    identifiers:
+      pk: !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+    attrs:
+      name: "miconnect-logout-redirect-archives"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-auth"
+    attrs:
+      name: "miconnect-auth"
+      title: "Connexion à MiConnect"
+      designation: "authentication"
+      background: "no_background.png"
+      denied_action: "continue"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-auth-fallback"
+    attrs:
+      name: "miconnect-auth-fallback"
+      title: "Connexion à MiConnect (secours)"
+      designation: "authentication"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "password-login"
+    attrs:
+      name: "password-login"
+      title: "Connexion par mot de passe"
+      designation: "authentication"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-invalidation-mino"
+    attrs:
+      name: "miconnect-invalidation-mino"
+      title: "Tu es déconnecté de %(app)s."
+      designation: "invalidation"
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: "miconnect-identification"
+    attrs:
+      user_fields: []
+      sources:
+        - !Find [authentik_sources_oauth.oauthsource, [slug, "cas-emse"]]
+      show_source_labels: true
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-auth-failed"
+    attrs:
+      deny_message: "La connexion n'a pas abouti. Ce n'est pas ton compte : le service d'authentification de l'école (CAS) est revenu sans réponse valide. Retourne dans l'application et relance la connexion, elle aboutit généralement à la deuxième tentative."
+  - model: authentik_stages_redirect.redirectstage
+    identifiers:
+      name: "miconnect-logout-redirect-archives"
+    attrs:
+      mode: "static"
+      target_static: "https://archives.canari-emse.fr/s/memoires-des-mines/"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, "miconnect-identification"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
+      order: 40
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth-fallback"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-auth-failed"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, "default-authentication-identification"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_password.passwordstage, [name, "default-authentication-password"]]
+      order: 15
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "default-source-authentication-login"]]
+      order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-archives"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false

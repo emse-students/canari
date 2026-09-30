@@ -1,0 +1,369 @@
+# One OAuth2 provider per application. Client SECRETS are deliberately absent: an entry that does not name a field leaves it as it is, so the live secrets stay where they are and never reach this public repository.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-providers
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # gives the object its new name before the entry that describes it by that name. It finds the
+  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
+  # by its old name, it would write that old name straight back. So an instance
+  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
+  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
+    attrs:
+      name: "miconnect-archives"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
+    attrs:
+      name: "miconnect-canari"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
+    attrs:
+      name: "miconnect-canari-dev"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
+    attrs:
+      name: "miconnect-canari-local"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
+    attrs:
+      name: "miconnect-cercle"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
+    attrs:
+      name: "miconnect-migallery"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
+    attrs:
+      name: "miconnect-mino-wiki"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Portail Etu"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Portail Etu"]]
+    attrs:
+      name: "miconnect-portail-etu"
+  - model: authentik_providers_oauth2.oauth2provider
+    conditions:
+      - !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
+    attrs:
+      name: "miconnect-sky"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-archives"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-avatar"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "SJ8aeGmNC3tKgBzeTDufsuJYGH_Ayxxk"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://archives.canari-emse.fr/oidc/redirect"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://archives.canari-emse.fr/s/memoires-des-mines/"
+          redirect_uri_type: "logout"
+      logout_uri: "https://archives.canari-emse.fr/s/memoires-des-mines/"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-canari"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "KyTy6F1C3LkvhHmskO9TP5iqEjge2H6FzsaHiClv"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://canari-emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://tauri.localhost/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://tauri.localhost/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1420/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://canari.emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-canari-dev"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "6cNHJotTO9THNMewP4vCO3O6aRLsNTSqKRuQjv4o"
+      access_token_validity: "minutes=5"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://dev.canari-emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://tauri.localhost/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://tauri.localhost/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1420/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-canari-local"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "qqzuUBQpD9oqLw8LrpPiMKWwdbTXoBscrC0yGjWl"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "http://localhost:1420/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://127.0.0.1:1420/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:8081/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-cercle"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "7s6QrKeD12XeAreOp4DV0L8vfOs6vHx4v22MPdYA"
+      access_token_validity: "seconds=30"
+      refresh_token_validity: "minutes=2"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "http://localhost:5173/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://cercle.canari-emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://cercle.emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-migallery"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "GMU5F3Dnq4reety8ve9k9CReNt9wYnO6EIJdKP0H"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://gallery.mitv.fr/api/auth/callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-mino-wiki"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-avatar"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "nep2XHicSXTMBdeLgZ4EBMzHRs8oMuVephzMTmD2"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://wiki.canari-emse.fr/login/9bbf0969-eccf-45f1-889f-a595b259145c/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://mino.emse.fr/login/9bbf0969-eccf-45f1-889f-a595b259145c/callback"
+          redirect_uri_type: "authorization"
+      logout_uri: "https://mino.emse.fr/logout"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-portail-etu"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "ETaOHNAWOAcrcF0YQMCOKaEnqUYCaQ7yMhb6U2hP"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://portail-etu.emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: "miconnect-sky"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
+      grant_types:
+        - "authorization_code"
+        - "refresh_token"
+      client_id: "JJqZZbhIxfcE7aZblmPONEWKe9v2ZW5RayDFLsCG"
+      access_token_validity: "minutes=5"
+      refresh_token_threshold: "hours=1"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://sky.mitv.fr/auth/callback"
+          redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://sky.emse.fr/auth/callback"
+          redirect_uri_type: "authorization"

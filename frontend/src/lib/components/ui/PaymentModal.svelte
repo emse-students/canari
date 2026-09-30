@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { paymentBrandLabel } from '$lib/utils/cardIcons';
   import {
     CreditCard,
@@ -101,6 +102,7 @@
 
 <!-- Backdrop -->
 <div
+  use:coversScreen
   data-keyboard-aware-overlay
   class="z-50 flex items-end justify-center bg-black/40 sm:items-center"
   role="presentation"

@@ -68,6 +68,7 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { portalWhile } from '$lib/actions/portal';
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
 
   let ready = $state(false);
   let loading = $state(true);
@@ -771,6 +772,7 @@
 
       <div
         use:portalWhile={isFullPage}
+        use:coversScreen={isFullPage}
         class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
           ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5'
           : ''}"

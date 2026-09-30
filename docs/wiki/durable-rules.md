@@ -1415,6 +1415,11 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
+  SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
+  it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,
+  2026-09-30). **A new modal, sheet, drawer or viewer puts `use:coversScreen` on its backdrop**, or the
+  bar comes back over it - and only an iPhone would show it ([mobile](frontend/mobile.md#the-native-ios-tab-bar)).
 - **AN INTENT TO ANOTHER APP IS INVISIBLE UNTIL THE MANIFEST QUERIES FOR IT, AND THE FAILURE LOOKS
   LIKE SUCCESS.** Since API 30, `resolveActivity()` returns null for any app the manifest has no
   `<queries>` entry for, and wry's file chooser then falls back to the photo picker: the composer's

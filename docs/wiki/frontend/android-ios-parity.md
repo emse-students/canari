@@ -32,9 +32,27 @@ reinforced by everything in section 1 here.
 
 **By the user's decision: iOS now matches Android rather than the reverse.** `UIStatusBarHidden` is
 `false` in [`Info.plist`](../../../frontend/src-tauri/gen/apple/canari_iOS/Info.plist), so both
-platforms go edge-to-edge but keep the bar, reading its inset via `env(safe-area-inset-top)`. **Still
-owed: the hardware measurement this page never had** - whether the visual result actually matches
-Android's now that both declare the same intent.
+platforms go edge-to-edge but keep the bar, reading its inset via `env(safe-area-inset-top)`.
+
+**The hardware measurement, taken 2026-09-30, found the intent was NOT met - FIXED for the bottom the
+same day.** Read over CDP on an iPhone 12 (a bench build is inspectable,
+[phone-comparison](../phone-comparison.md)): the WebView's layout viewport was 797 pt of 844 - UIKit
+insets the top by the status bar and the bottom by nothing - and WebKit reported **every**
+`env(safe-area-inset-*)` as 0. The top LOOKED right because UIKit's shift did the work; the bottom
+had no owner at all, so the post composer's "Publier" sat 26 pt into the home indicator, on every
+screen. **The obvious fix is wrong, and was measured wrong:** `contentInsetAdjustmentBehavior =
+.never` made the viewport the whole screen (844) and left `env()` at 0, so the page then drew UNDER
+the status bar ("Retour" over the clock). Do not try it again.
+`CanariPublishBottomInset` in
+[`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) instead tells
+the page the one number it lacks: the window's bottom safe area minus the part the WebView no longer
+reaches, written to `--safe-area-inset-bottom` (the variable `app.html` names as the single place
+this is decided) at every activation, after every keyboard resize and **whenever a page finishes
+loading** (a KVO on `WKWebView.loading`: a cold start publishes 34 pt at the first
+`didBecomeActive`, BEFORE the initial load ends, and the new document started without it - found in
+the syslog, which `pymobiledevice3 syslog live` reads with no Mac; `CanariIOS` lines are there).
+Checked by hand first: writing 34px into the variable over CDP moved "Publier" up by 34 pt. The top stays UIKit's. A
+WebView shrunk above the keyboard publishes 0, which is what §1.6 relied on UIKit and `env()` for.
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
 reading their insets: `enableEdgeToEdge()` in

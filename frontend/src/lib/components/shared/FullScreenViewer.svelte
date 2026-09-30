@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   /**
    * The chrome every full-screen viewer shares: portal, backdrop, card, header and footer.
    *
@@ -115,6 +116,7 @@
   -->
   <div
     role="presentation"
+    use:coversScreen
     class="fixed inset-0 z-(--z-viewer) flex items-center justify-center {immersive
       ? ''
       : 'bg-cn-scrim sm:p-4'}"

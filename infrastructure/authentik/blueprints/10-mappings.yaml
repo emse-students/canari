@@ -1,0 +1,150 @@
+# The claims every provider hands out (scope mappings) and the CAS source's own user mapping.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-mappings
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # gives the object its new name before the entry that describes it by that name. It finds the
+  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
+  # by its old name, it would write that old name straight back. So an instance
+  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
+  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "First + Last Names"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "First + Last Names"]]
+    attrs:
+      name: "miconnect-claim-name"
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "Formation"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "Formation"]]
+    attrs:
+      name: "miconnect-claim-formation"
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "Personnel de l'école"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "Personnel de l'école"]]
+    attrs:
+      name: "miconnect-claim-school-status"
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "Promotion"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "Promotion"]]
+    attrs:
+      name: "miconnect-claim-promo"
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "avatar"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "avatar"]]
+    attrs:
+      name: "miconnect-claim-avatar"
+  - model: authentik_providers_oauth2.scopemapping
+    conditions:
+      - !Find [authentik_providers_oauth2.scopemapping, [name, "fake-email"]]
+    identifiers:
+      pk: !Find [authentik_providers_oauth2.scopemapping, [name, "fake-email"]]
+    attrs:
+      name: "miconnect-claim-email"
+  - model: authentik_sources_oauth.oauthsourcepropertymapping
+    conditions:
+      - !Find [authentik_sources_oauth.oauthsourcepropertymapping, [name, "CAS EMSE"]]
+    identifiers:
+      pk: !Find [authentik_sources_oauth.oauthsourcepropertymapping, [name, "CAS EMSE"]]
+    attrs:
+      name: "miconnect-cas-identity"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-name"
+    attrs:
+      expression: |-
+        # 1. On récupère le nom complet de l'utilisateur stocké dans Authentik
+        full_name = user.name or ""
+
+        # 2. On applique ta logique de découpage
+        parts = full_name.strip().split()
+
+        # Sécurité : si le champ est vide
+        if not parts:
+            return {
+                "name": full_name
+            }
+
+        last_name_parts = []
+        first_name_parts = []
+
+        for part in parts:
+            if part == part.upper() and len(part) > 1:
+                last_name_parts.append(part)
+            else:
+                first_name_parts.append(part)
+
+        first_name = " ".join(first_name_parts) or parts[0]
+        last_name = " ".join(last_name_parts)
+
+        # 3. On retourne les attributs (claims) standards OpenID Connect
+        return {
+            "firstName": first_name,  # Le prénom extrait
+            "lastName": last_name   # Le nom de famille extrait
+        }
+      scope_name: "name"
+      description: "Gives the first and last names"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-formation"
+    attrs:
+      expression: "return {\"formation\": request.user.attributes.get(\"formation\")}"
+      scope_name: "formation"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-school-status"
+    attrs:
+      expression: "return {\"school_status\": request.user.attributes.get(\"school_status\")}"
+      scope_name: "school_status"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-promo"
+    attrs:
+      expression: "return {\"promo\": request.user.attributes.get(\"promo\")}"
+      scope_name: "promo"
+      description: "Année d'entrée à l'école"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-avatar"
+    attrs:
+      expression: |-
+        # The avatar URL MinoWiki and Archives receive: a per-person HMAC that MiGallery verifies
+        # (src/lib/server/avatar-signature.ts), so no API key travels in claims. The key is the env var
+        # MIGALLERY_AVATAR_SIGNING_KEY, the same value as MiGallery's AVATAR_SIGNING_KEY.
+        import base64, hashlib, hmac, os
+        uid = request.user.uid
+        key = os.environ["MIGALLERY_AVATAR_SIGNING_KEY"].encode()
+        sig = base64.urlsafe_b64encode(hmac.new(key, uid.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+        return {"avatar": f"https://gallery.mitv.fr/api/users/{uid}/avatar?sig={sig}"}
+      scope_name: "profile"
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-email"
+    attrs:
+      expression: "return {\"email\": f\"{request.user.username}@canari.emse.fr\"}"
+      scope_name: "email"
+  - model: authentik_sources_oauth.oauthsourcepropertymapping
+    identifiers:
+      name: "miconnect-cas-identity"
+    attrs:
+      expression: |-
+        return {
+            "username": info.get("sub") or info.get("id") or "inconnu",
+            "name": info.get("name") or f"{info.get('given_name', '')} {info.get('family_name', '')}".strip()
+        }

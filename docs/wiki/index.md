@@ -110,3 +110,4 @@
 | Available commands | `Makefile` |
 | Server bootstrap | [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) |
 | Protobuf schema | [`libs/proto/canari.proto`](../../libs/proto/canari.proto) |
+| Mi 9T vs iPhone comparison (weight, timings, layout findings) | [`phone-comparison.md`](phone-comparison.md) |

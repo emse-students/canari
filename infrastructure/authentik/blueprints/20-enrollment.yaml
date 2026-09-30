@@ -1,0 +1,222 @@
+# The first sign-in: what a new account is asked (status, formation, entry year) and how it is written.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-enrollment
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # gives the object its new name before the entry that describes it by that name. It finds the
+  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
+  # by its old name, it would write that old name straight back. So an instance
+  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
+  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
+  - model: authentik_stages_prompt.prompt
+    conditions:
+      - !Find [authentik_stages_prompt.prompt, [name, "Formation"]]
+    identifiers:
+      pk: !Find [authentik_stages_prompt.prompt, [name, "Formation"]]
+    attrs:
+      name: "miconnect-enrollment-prompt-formation"
+  - model: authentik_stages_prompt.prompt
+    conditions:
+      - !Find [authentik_stages_prompt.prompt, [name, "Promotion"]]
+    identifiers:
+      pk: !Find [authentik_stages_prompt.prompt, [name, "Promotion"]]
+    attrs:
+      name: "miconnect-enrollment-prompt-promo"
+  - model: authentik_stages_prompt.prompt
+    conditions:
+      - !Find [authentik_stages_prompt.prompt, [name, "School Worker"]]
+    identifiers:
+      pk: !Find [authentik_stages_prompt.prompt, [name, "School Worker"]]
+    attrs:
+      name: "miconnect-enrollment-prompt-status"
+  - model: authentik_policies_expression.expressionpolicy
+    conditions:
+      - !Find [authentik_policies_expression.expressionpolicy, [name, "Validate promo year"]]
+    identifiers:
+      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "Validate promo year"]]
+    attrs:
+      name: "miconnect-enrollment-validate-promo"
+  - model: authentik_policies_expression.expressionpolicy
+    conditions:
+      - !Find [authentik_policies_expression.expressionpolicy, [name, "is-student"]]
+    identifiers:
+      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "is-student"]]
+    attrs:
+      name: "miconnect-enrollment-is-student"
+  - model: authentik_policies_expression.expressionpolicy
+    conditions:
+      - !Find [authentik_policies_expression.expressionpolicy, [name, "Merge attributes"]]
+    identifiers:
+      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "Merge attributes"]]
+    attrs:
+      name: "miconnect-enrollment-merge-status"
+  - model: authentik_stages_prompt.promptstage
+    conditions:
+      - !Find [authentik_stages_prompt.promptstage, [name, "Request School Status"]]
+    identifiers:
+      pk: !Find [authentik_stages_prompt.promptstage, [name, "Request School Status"]]
+    attrs:
+      name: "miconnect-enrollment-ask-status"
+  - model: authentik_stages_prompt.promptstage
+    conditions:
+      - !Find [authentik_stages_prompt.promptstage, [name, "Request Promo & Formation"]]
+    identifiers:
+      pk: !Find [authentik_stages_prompt.promptstage, [name, "Request Promo & Formation"]]
+    attrs:
+      name: "miconnect-enrollment-ask-promo"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-formation"
+    attrs:
+      field_key: "attributes.formation"
+      label: "Formation :"
+      type: "radio-button-group"
+      placeholder: "return [\"ICM\", \"ISMIN\", \"FSSS\", \"Master\"]"
+      order: 2
+      placeholder_expression: true
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-promo"
+    attrs:
+      field_key: "attributes.promo"
+      label: "Année d'entrée à l'école (ou année précédant l'entrée à l'école pour les 2A AST)"
+      type: "number"
+      placeholder: "ex. 2018"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-status"
+    attrs:
+      field_key: "custom_statut"
+      label: "Je suis :"
+      type: "radio-button-group"
+      placeholder: "return [{\"label\": \"Élève\", \"value\": \"Elève\"}, \"Personnel de l'école\"]"
+      order: 1
+      placeholder_expression: true
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-validate-promo"
+    attrs:
+      execution_logging: true
+      expression: |-
+        from datetime import datetime
+
+        promo = context.get('prompt_data', {}).get("attributes", {}).get("promo")
+
+        return (promo <= datetime.now().year and promo >= 1816)
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-is-student"
+    attrs:
+      execution_logging: true
+      expression: |-
+        data = context.get('prompt_data', {})
+        return data.get("custom_statut") == "Elève"
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-merge-status"
+    attrs:
+      expression: |-
+        # 1. On récupère l'utilisateur qui a été créé par le premier Write Stage
+        prompt_data = request.context.get("prompt_data", {})
+
+        attributes = prompt_data.get("attributes", {})
+
+        if "custom_statut" in prompt_data:
+            attributes["school_status"] = prompt_data["custom_statut"]
+
+            prompt_data["attributes"] = attributes
+            request.context["prompt_data"] = prompt_data
+
+        # On retourne True pour autoriser le Write Stage à s'exécuter
+        return True
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-enrollment-cas"
+    attrs:
+      name: "miconnect-enrollment-cas"
+      title: "Inscription à MiConnect"
+      designation: "enrollment"
+      authentication: "require_unauthenticated"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-enrollment-alumni"
+    attrs:
+      name: "miconnect-enrollment-alumni"
+      title: "Inscription à MiConnect"
+      designation: "enrollment"
+      authentication: "require_unauthenticated"
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-enrollment-ask-status"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-status"]]
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-enrollment-ask-promo"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-formation"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-promo"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-validate-promo"]]
+  - model: authentik_stages_user_write.userwritestage
+    identifiers:
+      name: "miconnect-enrollment-write"
+    attrs:
+      user_path_template: "users"
+  - model: authentik_stages_user_login.userloginstage
+    identifiers:
+      name: "miconnect-login"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-status"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
+      order: 20
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment-cas"], [flowstagebinding__stage__name, "miconnect-enrollment-ask-promo"], [flowstagebinding__order, 20]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-is-student"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-enrollment-write"]]
+      order: 25
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment-cas"], [flowstagebinding__stage__name, "miconnect-enrollment-write"], [flowstagebinding__order, 25]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-merge-status"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
+      order: 30
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-enrollment-write"]]
+      order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
+      order: 30

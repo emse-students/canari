@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Reply,
@@ -169,7 +170,7 @@
   the ladder, on every device rather than on the ones whose wrapper happens to fill the screen.
 -->
 {#if visible}
-  <div use:portal class="fixed inset-0 z-(--z-sheet) md:hidden">
+  <div use:portal use:coversScreen class="fixed inset-0 z-(--z-sheet) md:hidden">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"
