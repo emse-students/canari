@@ -83,6 +83,7 @@ jobs:
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
+      run-miconnect: ${{ steps.matrix.outputs.miconnect }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -113,6 +114,7 @@ jobs:
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
+            echo "miconnect=true"    >> "$GITHUB_OUTPUT"
           }
 
           # ── Determine base commit ──
@@ -307,6 +309,15 @@ jobs:
             echo "mls_compat=true" >> "$GITHUB_OUTPUT"
           else
             echo "mls_compat=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- MiConnect's blueprints --
+          # Everything the fresh-instance test reads is under this one directory: the compose file it
+          # boots, the blueprints it applies and the two scripts that do it.
+          if has '^infrastructure/authentik/'; then
+            echo "miconnect=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "miconnect=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- Cross-client harness self-tests --
@@ -950,7 +961,7 @@ jobs:
             .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \
             infrastructure/dev/*.sh infrastructure/deploy/*.sh \
             infrastructure/local/*.sh infrastructure/backup/*.sh \
-            infrastructure/lib/*.sh infrastructure/egress-probe/*.sh \
+            infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh \
             scripts/*.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1126,12 +1137,34 @@ jobs:
       - name: Can the fleet still read what this commit writes?
         run: bash .github/scripts/mls-forward-compat.sh
 
+  # =================================================================================================
+  # MICONNECT'S BLUEPRINTS, ON A FRESH AUTHENTIK
+  # =================================================================================================
+  # A stable release applies `infrastructure/authentik/blueprints/` to the production MiConnect, and
+  # a pre-release dry-runs it there first. This is the step before both: the REAL compose.yml boots
+  # an empty authentik, the blueprints must build every object on it with each !Find and !Env
+  # resolved, and a second apply must report `0 change(s)` - a field a blueprint keeps rewriting is
+  # a field it would rewrite on 600 accounts' sign-in at every release. ~2 min, most of it the boot.
+  test-miconnect-blueprints:
+    name: MiConnect blueprints (fresh instance)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-miconnect == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Apply the blueprints to a fresh MiConnect, twice
+        run: bash infrastructure/authentik/test-blueprints.sh
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-android, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, security, dependency-audit]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do

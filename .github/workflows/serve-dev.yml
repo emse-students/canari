@@ -217,6 +217,17 @@ jobs:
             --image-prefix "${{ env.IMAGE_PREFIX }}" \
             --pull-services "$pull"
 
+      # MICONNECT'S CONFIGURATION, TRIED AND NOT WRITTEN. Dev signs in through the PRODUCTION
+      # MiConnect - there is no dev instance yet - so a pre-release must not change it. It applies
+      # every blueprint inside one transaction, prints what the stable release WILL change, and rolls
+      # back; a blueprint that does not apply fails here, a pre-release before it could reach the
+      # 600 accounts. The mechanism: infrastructure/authentik/README.md.
+      - name: Dry-run MiConnect's blueprints
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/apply-blueprints.sh dry-run
+
       # WHAT THE DEV ESTATE IS RUNNING, recorded where a human can read it. This is not the change
       # detector's input any more - that is the previous RELEASE now - so the tag exists only to
       # answer the question the estate itself cannot.
