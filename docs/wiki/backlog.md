@@ -472,6 +472,14 @@ while unable to answer - the elected member is then silent and the next start re
 
 A client fix reaches a phone only through a store release: the app embeds its frontend.
 
+### P1 - nothing reports a nightly backup that failed or never ran (measured 2026-09-30)
+
+Five nights in a row (2026-09-26 to 2026-09-30) wrote no archive at all, `auth_db` included, and it
+reached no one. It was found by hand. The cause is fixed ([backup](infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30));
+the silence is not. **Owed**: a check that reads the NEWEST archive's age and members (not the
+script's exit code, which a cron that never fires does not produce), and says so somewhere a
+human looks, for both the nightly archive and the 04:00 restic run. Deleted the day it reports.
+
 ### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
 
 `cloudflared` runs as `/usr/bin/cloudflared --no-autoupdate tunnel run --token <secret>`. In
