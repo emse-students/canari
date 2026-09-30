@@ -28,7 +28,8 @@ name: Scheduled
 
 on:
   schedule:
-    # Daily, an hour before the analysis, after the apt-daily-upgrade window.
+    # Daily, and TWO jobs read this one: the host's security updates, after the apt-daily-upgrade
+    # window, and last night's backups, hours after the 03:30 and 04:00 runs they judge.
     - cron: '30 7 * * *'
     # Daily. A new advisory can land against code nobody touched, which is the half the
     # pull-request path cannot see.
@@ -48,7 +49,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, analysis, alerts, caches, ghcr-cleanup, dev-refresh, stores, cargo-unreachable]
+        options: [all, hosts, backups, analysis, alerts, caches, ghcr-cleanup, dev-refresh, stores, cargo-unreachable]
       dry_run:
         description: 'dev-refresh only: report what would happen and change nothing'
         type: boolean
@@ -107,6 +108,37 @@ jobs:
       # rather than making the check quietly stop working.
       - name: Read the host and judge it
         run: bash infrastructure/deploy/host-update-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DID LAST NIGHT'S BACKUPS HAPPEN, WHOLE, AND OFFSITE?
+  #
+  # Five nights (2026-09-26 to 2026-09-30) wrote no archive, the media run stopped before its
+  # offsite mirror, and no snapshot had ever held Garage's `node_key` - all of it found by hand.
+  # The backups are the gha-runner CRONTAB, not this workflow, so a red run here is their only
+  # report; the reasons are those of `hosts` above: no alerting exists, `gh run list` is read.
+  #
+  # ON THE SELF-HOSTED RUNNER because the artefacts are local files and the runner account IS the
+  # one whose crontab runs the backups, so it reads exactly what they wrote and asks the offsite
+  # host with the same key. It reads only - restic without a lock - so it cannot block a backup.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  backups:
+    name: Last night's backups
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "backups"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 15
+    # Its own group, at the job level, for the reason `hosts` gives: a read-only report queued
+    # behind the dev refresh would only be late.
+    concurrency:
+      group: backup-report
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the artefacts and judge them
+        run: bash infrastructure/backup/backup-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE NIGHTLY SECURITY PASS

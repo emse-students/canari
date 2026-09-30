@@ -472,13 +472,14 @@ while unable to answer - the elected member is then silent and the next start re
 
 A client fix reaches a phone only through a store release: the app embeds its frontend.
 
-### P1 - nothing reports a nightly backup that failed or never ran (measured 2026-09-30)
+### P1 - no media snapshot has ever held Garage's `node_key`, and nothing reported a failed backup (measured 2026-09-30)
 
-Five nights in a row (2026-09-26 to 2026-09-30) wrote no archive at all, `auth_db` included, and it
-reached no one. It was found by hand. The cause is fixed ([backup](infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30));
-the silence is not. **Owed**: a check that reads the NEWEST archive's age and members (not the
-script's exit code, which a cron that never fires does not produce), and says so somewhere a
-human looks, for both the nightly archive and the 04:00 restic run. Deleted the day it reports.
+Five nights wrote no archive and no offsite media mirror, and it reached no one
+([backup](infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)).
+Fixed in the repository: the `backup` step reads as root, and `backup-report.sh` reports every night
+from `scheduled.yml`. **Owed**: the fix to `backup-objects.sh` reaches the host's checkout only with
+the next stable, so until then the report is RED every day on `node_key` - which is true. Deleted
+the first day it is green.
 
 ### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
 
