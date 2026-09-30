@@ -1,7 +1,11 @@
-version: 0.18.31
+version: 0.18.32
 
-Le bouton qui ouvre nos autres sites reagit au survol et s'ouvre en glissant, comme les autres
-menus. Sur ordinateur, la barre du haut suit un ordre plus logique : connexion, autres sites,
-deconnexion, puis ton profil.
+Sur iPhone, la barre du bas est la barre native d'iOS, en Liquid Glass sur iOS 26, et l'en-tete
+des conversations prend le meme style.
 
-Les boutons publier, rechercher et notifications de la barre du haut reagissent aussi au survol.
+Sur telephone, une nouvelle publication s'ouvre en plein ecran, ses actions au-dessus du clavier.
+Les choix et les dates s'ouvrent dans l'app, et une video du fil se lit comme sur Instagram.
+
+Dans les salons de communaute, tu vois qui a lu tes messages.
+
+Glisser entre les onglets est plus fluide et l'export PDF garde ses logos.
