@@ -1315,7 +1315,7 @@ its own `iss` expectation in one release, and `auth.canari-emse.fr` keeps answer
 | MinoWiki (`mino-wiki`) | `wiki.canari-emse.fr/login/<strategy-uuid>/callback` | add the same path on `mino.emse.fr` |
 | Archives MINO (`archives`) - Omeka | **`archives.canari-emse.fr`** `/oidc/redirect` and `/s/memoires-des-mines/` | add both on `archives-mino.emse.fr` once the DSI accepts that name |
 | MiGallery (`migallery`) | `gallery.mitv.fr` | nothing (no rename planned) |
-| Portail Etu (`portail-etu`) | `portail-etu.emse.fr` | nothing |
+| ~~Portail Etu (`portail-etu`)~~ | DELETED 2026-09-30: last used 2026-07-01, its callback a 404, the refonte has no sign-in | nothing |
 
 **The brand** is one, `domain=auth.canari-emse.fr`, `default=True` - so `miconnect.emse.fr` already
 gets it (a default brand answers any host); its `domain` moves at the end, not before.

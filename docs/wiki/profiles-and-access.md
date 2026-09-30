@@ -296,7 +296,11 @@ reads the verified id_token once at its callback and discards the rest
      `302` to `default-invalidation-flow`. The settings flow is WP4's to decide;
    - the brand CSS header no longer says "paste this into the admin UI";
    - the OOBE instance: re-applying it changes no object (measured, rolled back), so the `error` is
-     a status only. **Owed to the user: one command resets it.**
+     a status only. **Reset on production 2026-09-30 with the user's go**, through authentik's own
+     `apply_blueprint` task: 31 of 31 `successful`, sign-in unchanged;
+   - **the `Portail Etu` provider and application are DELETED** (user, 2026-09-30), as `state:
+     absent` entries. 949 authorizations for 81 people from April to 2026-07-01, none since; its
+     callback `portail-etu.emse.fr/auth/callback` is a `404`, and the refonte has no sign-in.
 3. **WPA-3: the dev MiConnect**, fed the same blueprints, with the brand domain and the providers as
    context. It needs the DSI's second CAS client.
 

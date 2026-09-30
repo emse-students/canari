@@ -56,13 +56,11 @@ entries:
       name: "MinoWiki"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-mino-wiki"]]
       meta_launch_url: "https://mino.emse.fr"
+  # DELETED (2026-09-30) with its provider (50-providers.yaml). Delete this entry once production has taken it.
   - model: authentik_core.application
+    state: absent
     identifiers:
       slug: "portail-etu"
-    attrs:
-      name: "Portail Etu"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-portail-etu"]]
-      meta_launch_url: "https://portail-etu.emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "sky"
