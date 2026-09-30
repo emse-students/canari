@@ -2028,7 +2028,10 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   read the installed one back from cargo's own `.crates2.json` rather than keeping a stamp of their
   own, so a manual `cargo install` is caught exactly like an automatic one - and the CI cache keys
   name the revision, because a key naming `v0.2.0` restored whichever binary was built first and
-  meant several different linters under one name.
+  meant several different linters under one name. **The cache carries the RECORD with the binary**
+  (`~/.cargo/.crates2.json`): Canari's cached only the binary, so the check read no record and
+  rebuilt oxvelte on every frontend job, 1m37s on a cache hit (`Replaced package 'unknown'`, found
+  2026-09-30) - Portail-etu's already carried it.
 - **A GUARD THAT RESTATES A FACT THE TOOL ALREADY ENFORCES ONLY HAS TO GO STALE ONCE.** The
   `MIN_RUST_VERSION=1.97.0` check copied into these install scripts refused an install that then
   built fine on the toolchain it had just rejected - oxvelte declares no `rust-version` at all, so
