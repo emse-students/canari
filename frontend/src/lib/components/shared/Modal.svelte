@@ -59,6 +59,11 @@
      * full-screen page, the text area taking the height, the actions under the thumb.
      */
     phoneFullScreen?: boolean;
+    /**
+     * Draw the title bar. False keeps `title` as the dialog's accessible name only, for a modal
+     * that draws its own heading (the PIN gate is a lock screen, not a form under a bar).
+     */
+    showTitleBar?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -74,6 +79,7 @@
     fullViewport = false,
     topAnchored = false,
     phoneFullScreen = false,
+    showTitleBar = true,
     onClose,
     children,
     footer,
@@ -214,7 +220,7 @@
         onclick={(e) => e.stopPropagation()}
         onkeydown={handlePanelKeydown}
       >
-        {#if title}
+        {#if title && showTitleBar}
           <div
             class="border-cn-border flex shrink-0 items-center justify-between border-b px-6 py-4"
           >
