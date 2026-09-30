@@ -227,10 +227,33 @@ static void CanariApplyWebViewTransparency(void) {
   webView.scrollView.backgroundColor = [UIColor clearColor];
 }
 
+/// Lays the page out edge to edge and lets the web layer reserve the safe areas itself - the iOS
+/// peer of Android's edge-to-edge window, which the web layer was written for.
+///
+/// UIKit's default `.automatic` adjustment insets the WKWebView's scroll view by the status bar, so
+/// the layout viewport started 47 pt down (`innerHeight` 797 of 844 on an iPhone 12) and WebKit
+/// reported EVERY `env(safe-area-inset-*)` as 0, the bottom included: nothing on the web side could
+/// keep a control out of the home indicator, and the post composer's "Publier" sat 26 pt into it
+/// (measured over the bench's CDP, 2026-09-30). With `.never` the viewport is the screen and the
+/// insets are the real ones (47 / 34), which every `env(safe-area-inset-top)` and
+/// `--safe-area-inset-bottom` consumer already reads. Idempotent, like the transparency above.
+static void CanariApplyWebViewEdgeToEdge(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  if (webView.scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever) {
+    return;
+  }
+  webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+  NSLog(@"[CanariIOS] webview laid out edge to edge (content inset adjustment: never)");
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
+  CanariApplyWebViewEdgeToEdge();
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();

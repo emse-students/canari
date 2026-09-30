@@ -32,9 +32,20 @@ reinforced by everything in section 1 here.
 
 **By the user's decision: iOS now matches Android rather than the reverse.** `UIStatusBarHidden` is
 `false` in [`Info.plist`](../../../frontend/src-tauri/gen/apple/canari_iOS/Info.plist), so both
-platforms go edge-to-edge but keep the bar, reading its inset via `env(safe-area-inset-top)`. **Still
-owed: the hardware measurement this page never had** - whether the visual result actually matches
-Android's now that both declare the same intent.
+platforms go edge-to-edge but keep the bar, reading its inset via `env(safe-area-inset-top)`.
+
+**The hardware measurement, taken 2026-09-30, found the intent was NOT met - FIXED the same day.**
+Read over CDP on an iPhone 12 (a bench build is inspectable, [phone-comparison](../phone-comparison.md)):
+the WKWebView's frame was the whole screen (0-844 pt) but its layout viewport was 797 pt, because
+UIKit's default `.automatic` content-inset adjustment pushed the page below the status bar - and
+WebKit then reported **every** `env(safe-area-inset-*)` as 0, the bottom included. The top only
+LOOKED right because the inset did the work; the bottom had no owner at all, so the post composer's
+"Publier" sat 26 pt into the home indicator. `CanariApplyWebViewEdgeToEdge` in
+[`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) sets
+`contentInsetAdjustmentBehavior = .never`, next to the transparency of §1.4 and on the same hook, so
+the viewport is the screen and the insets are the real ones (47 / 34) - which is what Android's
+edge-to-edge window already gives the same web code. §1.6 is unchanged by it: a frame shrunk above
+the keyboard still gets `safeAreaInsets.bottom == 0` from UIKit.
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
 reading their insets: `enableEdgeToEdge()` in
