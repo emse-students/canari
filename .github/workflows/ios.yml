@@ -527,8 +527,17 @@ jobs:
           # webview from the Vite dev server (127.0.0.1:1420) instead of the bundled
           # frontendDist assets - unreachable on a real device, producing a black screen with
           # "did you grant local network permission?" (this shipped once, TestFlight v0.14.4).
+          #
+          # A BENCH build (local_url set) also takes tauri/devtools, which marks the WKWebView
+          # inspectable in a release binary: without it the phone bench cannot read one number
+          # off the iPhone's DOM (a safe-area inset, a hit box) and is left inferring them from
+          # screenshots. A store build never reaches this branch - local_url and publish are
+          # refused together above.
+          FEATURES=tauri/custom-protocol
+          if [ -n "$LOCAL_URL" ]; then FEATURES="$FEATURES,tauri/devtools"; fi
+          echo "cargo features: $FEATURES"
           rustup target add aarch64-apple-ios
-          cargo build --lib --release --target aarch64-apple-ios --features tauri/custom-protocol
+          cargo build --lib --release --target aarch64-apple-ios --features "$FEATURES"
           LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
           if [ -z "$LIB" ]; then
             echo "::error::libmines_app_lib.a not produced by cargo"

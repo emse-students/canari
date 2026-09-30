@@ -12,6 +12,7 @@
  *   C  clipped text: overflow hidden with no ellipsis and more text than room
  *   T  small tap target: an interactive element whose HIT box (its ::before for a `.tap-target`) is
  *      under 44 px in its shortest side (touch sizes only)
+ *   Z  stolen tap: a point of a control's own drawing lands in ANOTHER control's `.tap-target` hit box
  *   B  covered control: an interactive element whose centre is under a fixed bottom bar it is not part of
  *   S  tiny text: text under 11 px
  * Results: RUNS/viewports.ndjson (one row per route x size), RUNS/viewports-summary.md (the matrix),
@@ -66,7 +67,7 @@ const AUDIT = `(() => {
     return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (t ? ' "' + t + '"' : ''); };
   const scrollerAbove = (e) => { for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) {
     const o = getComputedStyle(p).overflowX; if ((o === 'auto' || o === 'scroll' || o === 'hidden') && p.scrollWidth > p.clientWidth + 1) return true; } return false; };
-  const out = { H: [], C: [], T: [], B: [], S: [] };
+  const out = { H: [], C: [], T: [], Z: [], B: [], S: [] };
   const all = [...document.querySelectorAll('body *')].filter(vis);
   const pageOverflow = document.documentElement.scrollWidth - W;
   if (pageOverflow > 1) out.H.push('page scrolls sideways by ' + pageOverflow + 'px');
@@ -80,6 +81,11 @@ const AUDIT = `(() => {
     if (b.content === 'none' || b.position !== 'absolute') return [r.width, r.height];
     return [Math.max(r.width, parseFloat(b.width) || 0), Math.max(r.height, parseFloat(b.height) || 0)]; };
   if (touch) for (const e of inter) { const r = e.getBoundingClientRect(); const [hw, hh] = hit(e); if (Math.min(hw, hh) < 44 && r.top < H && r.bottom > 0) out.T.push(name(e) + ' ' + Math.round(hw) + 'x' + Math.round(hh)); }
+  // A hit box that grows past its drawing can swallow a NEIGHBOUR's drawing: on the Mi 9T a stacked list
+  // of \`.tap-target\` links opened section N+1 on a tap on N. Probe each control's own drawn area.
+  if (touch) for (const e of inter) { const r = e.getBoundingClientRect(); if (r.top < 0 || r.bottom > H) continue;
+    for (const y of [r.top + 2, r.top + r.height / 2, r.bottom - 2]) { const p = document.elementFromPoint(r.left + r.width / 2, y);
+      const thief = p && p.closest('.tap-target'); if (thief && thief !== e && !e.contains(thief) && !thief.contains(e)) { out.Z.push(name(e) + ' taken by ' + name(thief)); break; } } }
   const bars = all.filter((e) => { const s = getComputedStyle(e), r = e.getBoundingClientRect(); return s.position === 'fixed' && r.bottom >= H - 8 && r.height < 200 && r.width > W * 0.5; });
   for (const b of bars) { const br = b.getBoundingClientRect();
     for (const e of inter) { if (b.contains(e)) continue; const r = e.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
