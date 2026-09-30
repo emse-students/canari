@@ -26,6 +26,8 @@ from pymobiledevice3.utils import get_asyncio_loop
 
 RUNNER = "fr.emse.canari.wda.xctrunner"
 PORT = 8100
+# WDA's MJPEG screen stream, which the bench reads to time what the screen does. Same forward.
+MJPEG_PORT = 9100
 log = logging.getLogger("wda-daemon")
 
 
@@ -41,14 +43,14 @@ async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> No
         writer.close()
 
 
-async def forward(udid: str, client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
-    """Bridges one local connection to the phone's WDA port through usbmux."""
+async def forward(udid: str, port: int, client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
+    """Bridges one local connection to one of the phone's WDA ports through usbmux."""
     device = await usbmux.select_device(udid)
     if device is None:
         log.error("device %s left usbmux; dropping a forwarded connection", udid)
         client_w.close()
         return
-    sock = await device.connect(PORT)
+    sock = await device.connect(port)
     # usbmux hands back a plain socket; asyncio streams are made from it here.
     dev_r, dev_w = await asyncio.open_connection(sock=sock)
     await asyncio.gather(pipe(client_r, dev_w), pipe(dev_r, client_w))
@@ -71,10 +73,13 @@ async def main() -> None:
     # the phone's port, which is the one readiness signal there is.
     runner = await wait_for_xctest_app(rsd, RUNNER)
 
-    server = await asyncio.start_server(lambda r, w: forward(udid, r, w), "127.0.0.1", PORT)
-    log.info("WDA forwarded on http://127.0.0.1:%d - Ctrl-C to stop", PORT)
-    async with server:
-        await asyncio.wait({runner, asyncio.create_task(server.serve_forever())}, return_when=asyncio.FIRST_COMPLETED)
+    servers = [
+        await asyncio.start_server(lambda r, w, p=port: forward(udid, p, r, w), "127.0.0.1", port)
+        for port in (PORT, MJPEG_PORT)
+    ]
+    log.info("WDA forwarded on http://127.0.0.1:%d, MJPEG on %d - Ctrl-C to stop", PORT, MJPEG_PORT)
+    tasks = {asyncio.create_task(srv.serve_forever()) for srv in servers}
+    await asyncio.wait({runner, *tasks}, return_when=asyncio.FIRST_COMPLETED)
     if runner.done():
         runner.result()
         log.error("the runner exited; the daemon stops with it")
