@@ -195,6 +195,18 @@ describe('VoiceRecorder - hold, slide, release', () => {
     expect(harness.activeChanges).toEqual([true, false]);
   });
 
+  it('CANCELS at the screen edge when the microphone is nearer the edge than the full distance', async () => {
+    // The phone case: the microphone sits ~86px from the left edge, so a flat 96px could never be
+    // reached by a finger and sliding as far as the glass allows SENT the note instead.
+    await press(86);
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    moveTo(2);
+    releaseAt(2);
+
+    expect(harness.complete).not.toHaveBeenCalled();
+    expect(harness.cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('still sends when the thumb wandered left but stopped short of the bin', async () => {
     await press(300);
     await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);

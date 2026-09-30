@@ -28,7 +28,7 @@
    * layer would have been fewer lines and a z-index to get wrong later; the row becomes the
    * recorder instead.
    */
-  import { Lock, Mic, Send, Trash2 } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, Lock, Mic, Send, Trash2 } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -57,6 +57,16 @@
    */
   const CANCEL_SLIDE_PX = 96;
   const LOCK_SLIDE_PX = 72;
+  /**
+   * WHERE THE BIN IS, measured from the screen's left edge: a finger that has reached it has gone as
+   * far left as the gesture can ask. The cancel distance is capped to `originX - BIN_REACH_PX`
+   * because the microphone sits only ~86px from the edge on a phone, so a flat 96px was UNREACHABLE
+   * by a real finger - sliding to the very edge released as a SEND (measured on an iPhone 12 and a
+   * Mi 9T, 2026-09-30; a synthetic touch injected off-screen had hidden it).
+   */
+  const BIN_REACH_PX = 40;
+  /** Never shorter than this, or a thumb resting near the edge would cancel on a twitch. */
+  const MIN_CANCEL_SLIDE_PX = 40;
   /**
    * Below this, a press reads as a tap that meant something else - a mis-hit on the way to the
    * field, or someone finding out what the button does. Throwing it away with a hint is what the
@@ -97,11 +107,13 @@
   let tickId: number | null = null;
   let pointerId: number | null = null;
   let originX = 0;
+  /** The cancel distance for THIS gesture, fixed at the press: see `BIN_REACH_PX`. */
+  let cancelSlidePx = $state(CANCEL_SLIDE_PX);
 
   const isActive = $derived(phase !== 'idle');
   /** 0 to 1 as the thumb travels towards each decision; drives opacity and scale, never layout. */
   const cancelProgress = $derived(
-    phase === 'holding' ? Math.min(1, Math.max(0, -dx / CANCEL_SLIDE_PX)) : 0
+    phase === 'holding' ? Math.min(1, Math.max(0, -dx / cancelSlidePx)) : 0
   );
   const lockProgress = $derived(
     phase === 'holding' ? Math.min(1, Math.max(0, dx / LOCK_SLIDE_PX)) : 0
@@ -109,7 +121,7 @@
   const willCancel = $derived(cancelProgress >= 1);
   /** The thumb never runs past the decision it is heading for - overshoot says nothing more. */
   const thumbOffset = $derived(
-    phase === 'holding' ? Math.max(-CANCEL_SLIDE_PX, Math.min(LOCK_SLIDE_PX, dx)) : 0
+    phase === 'holding' ? Math.max(-cancelSlidePx, Math.min(LOCK_SLIDE_PX, dx)) : 0
   );
 
   // audio/mp4 is supported on both Android WebView and iOS WKWebView (webm is iOS-incompatible).
@@ -241,6 +253,10 @@
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     originX = e.clientX;
+    cancelSlidePx = Math.min(
+      CANCEL_SLIDE_PX,
+      Math.max(MIN_CANCEL_SLIDE_PX, originX - BIN_REACH_PX)
+    );
     dx = 0;
     pointerId = e.pointerId;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -271,7 +287,7 @@
     }
     if (phase !== 'holding') return;
 
-    if (dx <= -CANCEL_SLIDE_PX) {
+    if (dx <= -cancelSlidePx) {
       finish(false, 'slid past the bin');
     } else if (Date.now() - (session?.startedAt ?? 0) < MIN_RECORDING_MS) {
       showToast(m.chat_voice_hold_to_record());
@@ -338,7 +354,7 @@
     <!-- The bin is the destination of the leftward slide, so it sits where the thumb is going. -->
     <div
       class="voice-recorder-bin {willCancel ? 'is-armed' : ''}"
-      style="opacity: {0.35 + 0.65 * cancelProgress}; transform: scale({1 + 0.25 * cancelProgress})"
+      style="opacity: {0.6 + 0.4 * cancelProgress}; transform: scale({1 + 0.25 * cancelProgress})"
       aria-hidden="true"
     >
       <Trash2 size={20} strokeWidth={2} />
@@ -370,7 +386,10 @@
         <Send size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
       </button>
     {:else}
+      <!-- The chevron says WHICH WAY: a hint in words alone left people sliding the wrong way or not
+           at all (user, 2026-09-30). It nudges towards the bin until the finger takes over. -->
       <span class="voice-recorder-hint" style="opacity: {1 - cancelProgress}">
+        <ChevronLeft size={14} strokeWidth={2.5} class="voice-recorder-nudge" aria-hidden="true" />
         {willCancel ? m.chat_voice_release_to_cancel() : m.chat_voice_slide_to_cancel()}
       </span>
       <!-- The padlock is the destination of the rightward slide, filling in as the thumb nears it. -->
@@ -379,6 +398,7 @@
         style="opacity: {0.25 + 0.75 * lockProgress}; transform: scale({0.9 + 0.2 * lockProgress})"
         aria-hidden="true"
       >
+        <ChevronRight size={12} strokeWidth={2.5} aria-hidden="true" />
         <Lock size={16} strokeWidth={2.5} />
       </div>
     {/if}
