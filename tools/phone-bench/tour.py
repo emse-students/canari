@@ -82,6 +82,11 @@ def recover(p):
         else:
             return
         time.sleep(0.8)
+    # Nothing above found the tab bar (an embedded app filling the screen, say): start the app over.
+    print(f"{p.name}: recover gave up, relaunching", flush=True)
+    p.launch(cold=True)
+    time.sleep(4)
+    unlock_app(p)
 
 
 def root(p, tab):
