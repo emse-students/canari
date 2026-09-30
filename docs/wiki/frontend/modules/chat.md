@@ -66,6 +66,10 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
   centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
+**On iOS the four pieces are real Liquid Glass** (WP-G2): each is doubled by a native glass button
+drawn at its rect, the web piece kept as its invisible geometry, and the menus are native
+([mobile](../mobile.md#the-conversations-native-glass-chrome)).
+
 **Measured** on the real `ChatArea` with a stand-in group at 390x780, Chromium, light and dark: in
 the glass mode the thread scrolls under the three pieces, the menu hangs from the "..." (right edges
 at 378), the search bar floats under the header, the "+" menu opens above the "+", and typing swaps

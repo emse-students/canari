@@ -29,6 +29,18 @@ class ComponentPropsArgs: Decodable {
     /// Corner radius for `glass` panels.
     let cornerRadius: Double?
 
+    // CANARI PATCH: the conversation's native glass chrome (see `ComponentProps` in models.rs).
+    /// A button's entries: the button opens this menu on a tap and reports the chosen `id`.
+    let menu: [MenuItemArgs]?
+    /// Hide the mounted view without removing it.
+    let hidden: Bool?
+    /// VoiceOver's name for an icon-only control.
+    let accessibilityLabel: String?
+    /// Hex colour for a button's title and template glyphs (unset: the system tint).
+    let foreground: String?
+    /// Side, in points, of a button's bitmap image (default 20).
+    let imageSide: Double?
+
     // `container` layout.
     let axis: String?
     let align: String?
@@ -42,6 +54,16 @@ class ComponentPropsArgs: Decodable {
     /// width, `"centered"` hugs them in the middle, `"automatic"` (default) lets
     /// the system decide. Maps to `UITabBar.ItemPositioning`.
     let itemPositioning: String?
+}
+
+/// CANARI PATCH: one entry of a button's `menu`.
+class MenuItemArgs: Decodable {
+    let id: String
+    let title: String
+    /// Glyph drawn as a template, so the menu colours it like its text.
+    let image: String?
+    /// A toggle's state (checkmark); nil for an entry that is not a toggle.
+    let on: Bool?
 }
 
 class CreateComponentArgs: Decodable {
