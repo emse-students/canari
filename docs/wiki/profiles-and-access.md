@@ -258,17 +258,19 @@ naming scheme, PKCE `S256` on the CAS source (one sign-in by a human proves it),
 final names, the Cercle's token lifetimes justified or aligned, the OOBE blueprint back to
 `successful`. **Decided by the user the same day: the plan is validated, WP0 then WPA; the
 blueprints ship with the RELEASE pipeline** (the deploy library copies `compose.yml` and
-`blueprints/` to the host, no fifth visible workflow); **and authentik gets a DEV instance of its
-own**, fed the same blueprints, so a flow change and the profile editor (WP4) are tried on dev
-without touching the 600 real accounts - which also needs the CAS to accept a second client (a DSI
-request) and a dev copy of the providers. **Second round, same day:** internal NAMES in English with a
+`blueprints/` to the host, no fifth visible workflow). A DEV instance of authentik was decided the
+same day and **REVERSED on 2026-09-30 - ONE authentik instance, full stop** (user: *"je ne veux pas
+de https://auth-dev.canari-emse.fr ou autre ... Une seule instance d'authentik"*). The only change
+still owed by the DSI is `auth.canari-emse.fr` -> `miconnect.emse.fr`, already requested. So a flow
+change is proven by the CI instance (fresh, then upgraded) and a dry run on production, and the
+profile editor (WP4) is tried on the production instance with test accounts. **Second round, same day:** internal NAMES in English with a
 `miconnect-` prefix (`miconnect-enrollment-prompt-cursus`, `miconnect-claim-promo`), displayed TEXT
 in French in the "tu" register; the Cercle's 30 s / 2 min tokens are KEPT and documented, because it
 reads the verified id_token once at its callback and discards the rest
 (`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
 `akadmin` is KEPT with its password, as the break-glass account if the CAS is down.
 
-**WPA is three pull requests, in this order (2026-09-30).**
+**WPA is two pull requests, both MERGED AND APPLIED to production on 2026-09-30.**
 
 1. **WPA-1: the blueprints describe production as it IS, and a release applies them.** Every name
    and value is kept, so no behaviour changes. The proof: a fresh instance built from the files
@@ -282,10 +284,10 @@ reads the verified id_token once at its callback and discards the rest
    - the `miconnect-` names: 26 objects, each renamed IN PLACE by a conditioned entry, and every
      name another system holds kept
      ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30));
-   - PKCE `S256` on the CAS source. **Owed: ONE human CAS sign-in after the stable that applies
-     it**, since no gate here talks to the real CAS;
+   - PKCE `S256` on the CAS source: the CAS redirect carries `code_challenge_method=S256` since
+     the apply. **Owed: ONE human CAS sign-in**, since no gate here talks to the real CAS;
    - launch URLs on the names that answer: `cercle.emse.fr`, `mino.emse.fr` (and MinoWiki's
-     `logout_uri`), `sky.emse.fr`, `portail-etu.emse.fr`. The old hosts `301` there. Archives and
+     `logout_uri`), `sky.emse.fr`. The old hosts `301` there. Archives and
      MiGallery keep theirs, having no final host yet;
    - every provider allows `authorization_code` and `refresh_token`, nothing else. The evidence,
      read on production: every client that is code here sends `grant_type=authorization_code`; the
@@ -301,8 +303,10 @@ reads the verified id_token once at its callback and discards the rest
    - **the `Portail Etu` provider and application are DELETED** (user, 2026-09-30), as `state:
      absent` entries. 949 authorizations for 81 people from April to 2026-07-01, none since; its
      callback `portail-etu.emse.fr/auth/callback` is a `404`, and the refonte has no sign-in.
-3. **WPA-3: the dev MiConnect**, fed the same blueprints, with the brand domain and the providers as
-   context. It needs the DSI's second CAS client.
+
+   **Applied by hand on 2026-09-30 with the user's go**, before any release: 105 changes, the two
+   deletions, row counts otherwise unchanged; the dry run after it reported 0, and `/authorize`
+   still answers `302` to `miconnect-auth`. The next stable re-applies and reports 0.
 
 **WP1 - Authentik holds the profile; nothing observable changes.**
 
