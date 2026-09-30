@@ -54,11 +54,14 @@ MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
 # etait vrai jusqu au 2026-06-22 et ne l est plus : Authentik a eu sa propre VM,
 # puis a rejoint l hote mutualise le 2026-09-24.
 #
-# CE DEFAUT A CHANGE AVEC LA MACHINE, ET IL LE DEVAIT. L ancienne VM tourne encore
-# avec une copie FIGEE de la base : un defaut qui la designerait produirait une
-# sauvegarde qui reussit et qui ment, ce qui est pire qu une qui echoue. La valeur
-# est un ALIAS ~/.ssh/config, qui porte la cle dediee et IdentitiesOnly.
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-authentik-target}"
+# DEPUIS LE 2026-09-24, CANARI ET AUTHENTIK TOURNENT SUR LE MEME HOTE : le defaut est
+# donc VIDE, un `docker exec` local. L alias `authentik-target` n existait que sur
+# l ancienne boite applicative, et ce defaut qui le nommait a fait echouer TOUTE la
+# sauvegarde, auth_db compris, cinq nuits de suite (2026-09-26 au 2026-09-30).
+# Une valeur ici reste un ALIAS ~/.ssh/config (cle dediee, IdentitiesOnly), jamais
+# l ancienne VM : elle tourne encore avec une copie FIGEE, qui donnerait une
+# sauvegarde qui reussit et qui ment.
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-}"
 # Stockage secondaire offsite via SSH/rsync (serveur LAN mitv). Vide pour desactiver.
 # `-` et non `:-`, ici et pour les deux MICONNECT_* : `:-` traite le vide comme
 # l absence et remet le defaut, et "vide pour desactiver" serait un commentaire

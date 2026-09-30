@@ -82,7 +82,7 @@ journalctl -u canari-backup.service -f
 | `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | cible offsite (vide = desactive) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | dossier offsite sur mitv |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
-| `MICONNECT_SSH_HOST` | `authentik-target` | machine qui porte Authentik (vide = conteneur local) |
+| `MICONNECT_SSH_HOST` | vide | machine qui porte Authentik (vide = conteneur local, le cas depuis le 2026-09-24) |
 | `CANARI_COMPOSE_PROJECT` | `canari-prod` | nom du projet compose (`docker-compose.prod.yml`'s `name:`) - les volumes ci-dessus sont montes par un `docker run` brut, en dehors de `docker compose`, donc rien ne le resout depuis le fichier |
 
 > `authentik-target` est un **alias** `~/.ssh/config` de la boite applicative, et non

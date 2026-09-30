@@ -2,11 +2,13 @@
 
 **Source**: `infrastructure/backup/`  
 **Script**: `infrastructure/backup/backup.sh`  
-**Timer**: `infrastructure/backup/canari-backup.timer` (systemd)
+**Schedule**: the `gha-runner` user's crontab on the Portail-etu host, `30 3 * * *` (the systemd
+units in `infrastructure/backup/` belonged to the old box and are not installed there)
 
 ## Schedule
 
-Daily at 03:30 via systemd timer (`canari-backup.timer` + `canari-backup.service`). Can also be run manually:
+Daily at 03:30, from `gha-runner`'s crontab on the production host, logging to
+`/srv/canari-backups/backup.log`. Can also be run manually:
 
 ```bash
 ./infrastructure/backup/backup.sh
@@ -77,8 +79,35 @@ The SSH key for `canaribackup@10.0.0.4` must be pre-authorized on the offsite se
 | `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | Offsite rsync destination (empty to disable) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | Offsite directory |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | Authentik PostgreSQL container name (empty to skip) |
-| `MICONNECT_SSH_HOST` | `authentik-target` | `~/.ssh/config` alias of the box running Authentik (empty = the container runs on this machine) |
+| `MICONNECT_SSH_HOST` | empty | `~/.ssh/config` alias of the box running Authentik; empty = the container runs on this machine, TRUE since 2026-09-24 ([below](#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)) |
 | `POSTGRES_USER` | (required) | PostgreSQL user for `pg_dump` |
+
+## Five nights with no backup at all (2026-09-26 to 2026-09-30)
+
+**Measured 2026-09-30**, while checking the day's dump before a MiConnect write: the newest archive
+was `canari-backup-20260925-033002`. Every night since, `backup.sh` ran, dumped `auth_db`, then died
+on `ssh: Could not resolve hostname authentik-target` - and a failed step aborts the WHOLE archive,
+so Canari's own database was not saved either.
+
+**Why.** The cutover of 2026-09-24 put Canari AND Authentik on the Portail-etu host. The migration
+plan said `MICONNECT_SSH_HOST` becomes empty again once both stacks meet
+([README](../../../infrastructure/backup/README.md)); it stayed `authentik-target` in
+`.env.example`, which the deploy renders into `infrastructure/.env`. That alias lived in the OLD
+box's `~/.ssh/config`, never in `gha-runner`'s on the new host. Read in `backup.log`: on 09-25 the
+script still dumped locally (`Dump PostgreSQL Authentik…`, no `via`); the deploy of that evening
+brought the version reading this variable, and from 09-26 every run went `via authentik-target`.
+The crontab even said "no
+`MICONNECT_SSH_HOST` here, the local path is taken" - true of neither the unset case (the script's
+default was the alias) nor the `.env`, which is read after the environment.
+
+**Fixed the same day**: the default and the template are EMPTY (a local `docker exec`), the host's
+`.env` and crontab say so explicitly, and a backup run by hand wrote a 58 MB archive
+(`authentik_db.sql.gz` 29 MB with the user table, `postgres_auth_db.sql.gz` 31 MB) and copied it
+offsite.
+
+**What is NOT fixed: nothing reported it.** Five failed nights reached no one; a missing archive was
+found by hand, by a session that happened to look. That is the P1 left open in
+[backlog](../backlog.md).
 
 ## Restore
 

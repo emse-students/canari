@@ -42,7 +42,7 @@ BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
 # Alias ~/.ssh/config, et non un user@hote : cf backup.sh, meme raison.
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-authentik-target}"
+MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-}"
 # Le nom du projet compose (docker-compose.prod.yml's `name:`) : les volumes cibles
 # ci-dessous sont montes par un `docker run` brut, en dehors de `docker compose`, donc
 # rien ne le resout pour nous a partir du fichier.
