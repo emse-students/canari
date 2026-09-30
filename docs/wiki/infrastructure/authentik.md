@@ -46,6 +46,20 @@ is mounted into or copied onto the host.
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 
+**THE CI JOB TIMED OUT AT 25 MINUTES AND FAILED THREE PRs (2026-09-30), and the cause was the WAIT, not
+the blueprints.** The script waits for authentik's 31 OWN default blueprints before applying ours,
+and that wait was a bare loop bounded by the job timeout: it printed `WAIT 30/31` to the end. authentik's
+`apply_blueprint` task marks an instance `error` when its validation or a database call fails and
+**never retries it** until the file changes or the worker restarts, so one lost race at boot is a
+PERMANENT 30/31, not a slow boot. A fresh boot reaches 31/31 in about 2 minutes, and three local boots did.
+`wait-default-blueprints.sh` now ends on a proof: READY; a STALL (the count of applied instances has
+not moved for 60 s once it moved at all) re-applies what is not `successful` ONCE through the task
+authentik uses, in a `::warning::` that NAMES them; a second stall, or 10 minutes with nothing applied,
+FAILS printing the leftovers, their status and the worker's error lines. **The thirty-first has not been
+named yet** - the next warning in a CI log will name it, and THAT is the evidence to act on (a retry that
+keeps being needed is a race to fix, not a path to keep). The wait is proved against a fake `docker` in
+`.github/scripts/tests/wait-default-blueprints.test.sh`.
+
 **THE PROOF THAT THE FILES DESCRIBE PRODUCTION, and how to take it again.** `snapshot` prints every
 object the blueprints name, with relations replaced by natural names and secrets by a digest. On
 2026-09-30, a fresh instance built from the blueprints and production were compared field by field.
