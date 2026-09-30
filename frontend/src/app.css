@@ -1666,6 +1666,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 .voice-recorder-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1677,8 +1681,23 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   transition: opacity 120ms ease;
 }
 
+@keyframes voice-recorder-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-4px);
+  }
+}
+
+.voice-recorder-nudge {
+  animation: voice-recorder-nudge 1.1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .voice-recorder-dot {
+  .voice-recorder-dot,
+  .voice-recorder-nudge {
     animation: none;
   }
 }
