@@ -37,20 +37,12 @@ docker compose -p "$project" --project-directory "$work" -f "$work/compose.yml" 
 
 worker="${project}-worker-1"
 # READY MEANS authentik's OWN blueprints have all applied - ours !Find its default flows, stages
-# and mappings. The loop ends on that state; the job's timeout is what bounds a boot that hangs.
+# and mappings. What ends the wait (and what happens when one never applies) is in the sourced file.
 echo "waiting for authentik's default blueprints"
-probe="from authentik.blueprints.models import BlueprintInstance as B
-n = B.objects.count()
-ok = B.objects.filter(status='successful').count()
-print(f'READY {ok}/{n}' if n and ok == n else f'WAIT {ok}/{n}')"
-while :; do
-  # Empty while the worker is still migrating its schema, which is expected and not an error.
-  state="$(docker exec "$worker" ak shell -c "$probe" 2>/dev/null | grep -E '^(READY|WAIT) ' || true)"
-  case "$state" in READY*) break ;; esac
-  echo "  ${state:-worker not answering yet}"
-  sleep 5
-done
-echo "  $state"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=wait-default-blueprints.sh
+. "$here/wait-default-blueprints.sh"
+wait_for_default_blueprints "$worker"
 
 if [ -n "${PREVIOUS_REF:-}" ]; then
   # The UPGRADE path, which is the one production takes: build the instance from the blueprints at
