@@ -330,7 +330,8 @@ class IOS(Phone):
             if n["type"] == "Button" and n["text"] == "OK" and 0.4 < (n["y1"] + n["y2"]) / 2 / n["H"] < 0.75:
                 self.tap((n["x1"] + n["x2"]) / 2 / n["W"], (n["y1"] + n["y2"]) / 2 / n["H"])
                 return
-        self._call("POST", f"/session/{self.sid}/wda/keyboard/dismiss", {})
+        if self.keyboard_up():
+            self._call("POST", f"/session/{self.sid}/wda/keyboard/dismiss", {})
 
     def launch(self, cold=False):
         if cold:
