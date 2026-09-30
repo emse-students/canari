@@ -11,6 +11,7 @@
   import {
     pickerAlignsToEnd,
     pickerAnchor,
+    pickerDocksToBottom,
     type MessagePickerOrigin,
   } from '$lib/utils/chat/reactionPicker';
   import { getRecentEmojis, persistRecentEmoji } from './emojiPickerShared';
@@ -82,6 +83,7 @@
     unbindPosition = bindFixedPopover(panelEl, {
       anchor: positioningAnchor,
       alignEnd: pickerAlignsToEnd(origin, isOwn),
+      dockBottom: pickerDocksToBottom(origin),
       estimatedHeight: 460,
     });
 

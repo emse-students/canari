@@ -20,6 +20,12 @@ export interface FixedPopoverLayoutOptions {
    * would appear from nowhere. It is still clamped into the viewport.
    */
   stayAnchored?: boolean;
+  /**
+   * Rest on the bottom edge of the viewport, centred, and ignore the anchor's position entirely.
+   * For a panel that REPLACES a bottom sheet: anchored to a message that fills the screen it opened
+   * above it, while the sheet it came from was at the bottom.
+   */
+  dockBottom?: boolean;
 }
 
 export interface FixedPopoverOptions extends FixedPopoverLayoutOptions {
@@ -61,6 +67,18 @@ export function computeFixedPopoverPosition(
     window.innerWidth - margin * 2
   );
   const panelHeight = panel.offsetHeight || estimatedHeight;
+
+  if (options.dockBottom) {
+    const maxHeight = Math.min(estimatedHeight, window.innerHeight - margin * 2);
+    const height = Math.min(panelHeight, maxHeight);
+    return {
+      top: window.innerHeight - margin - height,
+      left: Math.max(margin, (window.innerWidth - panelWidth) / 2),
+      maxHeight,
+      side: 'top',
+      width: panelWidth,
+    };
+  }
 
   const spaceBelow = window.innerHeight - anchorRect.bottom - margin;
   const spaceAbove = anchorRect.top - margin;
