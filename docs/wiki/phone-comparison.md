@@ -141,9 +141,34 @@ Not covered, in order of what a user meets first:
 5. Scroll-to-the-end checks on the phones (whether the bar's reserve clears the last card), and any timing
    on the release-mode Android build (still debug).
 
+## The correction plan - where it stands (2026-09-30)
+
+Decided with the user: one pull request per lot, one local hardware build per lot before merging,
+design differences between iOS and Android accepted, test data created on the LOCAL stack only.
+
+| Lot | What | State |
+| --- | --- | --- |
+| 1 | The native iOS tab bar hides while anything covers the screen; the composer's attachment row fades where it scrolls (findings A, B) | MERGED #1240, read on both phones |
+| 2 | iOS safe areas: WebKit read every `env(safe-area-inset-*)` as 0, so "Publier" sat in the home indicator (finding C was NOT a defect: the last card clears the bar) | MERGED #1242, read on the iPhone - [parity §1.1](frontend/android-ios-parity.md) |
+| 3 | 44 px touch targets; a stacked list takes a real 44 px row, never `.tap-target` | MERGED #1243, read on the Mi 9T, NOT on the iPhone |
+| 4 | Readability: the iOS keyboard accessory bar (finding E, ~45 pt above every keyboard) | OPEN - the user has not decided; removing it is offered, last |
+| 5 | Coverage: the screens that need data, admin pages, Dynamic Type, landscape, iPad, Android at 200 % font, long-press and swipe overlays, three-button mode after `profile` | OPEN |
+
+**Tools the campaign left, each one a measurement that used to be a guess:**
+- `bun insets.mjs --mode ios --ios` reads the iPhone over `pymobiledevice3 webinspector cdp --port 9444`
+  (run the bridge first; it needs a BENCH build - `ios.yml` with `local_url` adds `tauri/devtools`).
+- `pymobiledevice3 syslog live` reads the iPhone's native log with no Mac; `CanariIOS` lines are there.
+- `viewports.mjs` class `Z` reports a control whose drawing lands in a neighbour's `.tap-target` box.
+
+**Owed to the user, none blocking:** whether a RELEASE APK may be installed on the Mi 9T (a different
+keystore, so the uninstall loses the A1 MLS enrolment) - until then Android timings are debug-build
+timings; revoke the App Store Connect key `U7X7X373G5`; disable Web Inspector on the iPhone; the bench
+IP `192.168.1.32` comes from DHCP. **Two folders the OS will not delete** (`canari-wt-brace`,
+`canari-wt-lot3`, a locked `.node` file in `node_modules`) are safe to remove by hand.
+
 ## What to do next
 
-1. Decide on findings A-F above; A and B are the ones a user hits.
-2. Install a release-mode APK against the local stack and redo startup and scroll.
-3. Create the data for group 1 above and extend `tour.py` (`SCREENS`) and `overlays_ios.py`.
-4. Give the iPhone a way to read the renderer (the release WebView is not inspectable).
+1. Lot 5, in the order of "What is covered" above: create the data on the local stack, extend `tour.py`
+   (`SCREENS`) and `overlays_ios.py`, then read each new screen with `insets.mjs` on both phones.
+2. Lot 4 when the user decides.
+3. The release-mode APK once the user allows it, then redo startup and scroll.
