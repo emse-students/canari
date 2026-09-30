@@ -127,6 +127,14 @@ def entry_object(entry, blueprint, renames):
     """The object an entry names, or None when it does not exist (yet). An object still under the
     name a RENAME entry gives away is found by that old name, so the rename reads as a change."""
     identifiers = entry.get_identifiers(blueprint)
+    # Before the renames run, a !Find on a NEW name finds nothing - a binding to a renamed stage
+    # would read as created. Such a reference is looked up again under the old names.
+    olds = {new: old for (_, _, new), old in renames.items()}
+    for key, value in list(identifiers.items()):
+        raw = (entry.identifiers or {}).get(key)
+        if value is None and isinstance(raw, Find) and olds:
+            found = apps.get_model(*raw.model_name.split(".")).objects.filter(**{k: olds.get(v, v) for k, v in raw.conditions}).first()
+            identifiers[key] = found.pk if found else None
     if any(value is None for value in identifiers.values()):
         return None
     model = entry_model(entry, blueprint)
@@ -190,6 +198,9 @@ def diff(before, after):
             continue
         if old is None:
             changes.append(f"CREATED  {key}")
+            continue
+        if new is None:
+            changes.append(f"DELETED  {key} ({old.get('_is')})")
             continue
         for field in sorted(set(old or {}) | set(new or {})):
             if field in SECRETS and (old or {}).get(field) != (new or {}).get(field):
