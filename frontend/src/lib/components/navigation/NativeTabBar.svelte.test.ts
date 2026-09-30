@@ -30,8 +30,13 @@ vi.mock('$app/navigation', () => nav);
 const badges = vi.hoisted(() => ({ placeBadge: vi.fn() }));
 vi.mock('$lib/navigation/placeBadge.svelte', () => badges);
 
-// happy-dom has no real canvas: the glyph is named by the component it was drawn from, the tint by theme.
-const icons = vi.hoisted(() => ({ lucideIconPng: vi.fn(), activeTabTint: vi.fn() }));
+// happy-dom has no real canvas: a glyph is named by the component it was drawn from and its colour,
+// and a colour by its class and the theme.
+const icons = vi.hoisted(() => ({
+  lucideIconPng: vi.fn(),
+  classColorHex: vi.fn(),
+  TAB_ICON_CLASSES: { normal: 'text-class', selected: 'accent-class' },
+}));
 vi.mock('$lib/mobile/nativeTabIcons', () => icons);
 
 import NativeTabBar, { nativeTabBar } from './NativeTabBar.svelte';
@@ -61,13 +66,13 @@ beforeEach(() => {
     f.mockResolvedValue(undefined);
   }
   nav.goto.mockReset();
-  icons.lucideIconPng.mockReset().mockImplementation(async (icon: unknown) => {
+  icons.lucideIconPng.mockReset().mockImplementation(async (icon: unknown, color: string) => {
     const name = Object.entries(PLACE_ICONS).find(([, c]) => c === icon)?.[0];
-    return `data:image/png;base64,${name}`;
+    return `png:${name}:${color}`;
   });
-  icons.activeTabTint
+  icons.classColorHex
     .mockReset()
-    .mockImplementation(() => (themeStore.isDark ? '#dark' : '#light'));
+    .mockImplementation((cls: string) => `${cls}@${themeStore.isDark ? 'dark' : 'light'}`);
   themeStore.setPreference('light');
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
@@ -105,25 +110,27 @@ async function mountBar(props: { visible: boolean }) {
 }
 
 describe('NativeTabBar', () => {
-  it("offers the web bar's four places with the web bar's own glyphs, as templates, in its yellow", async () => {
+  it("offers the web bar's glyphs in the text colour, the selected state in yellow, and no tint", async () => {
     await mountBar({ visible: true });
 
-    const [{ items, selectedId, tint }] = plugin.configureTabBar.mock.calls[0];
+    const [options] = plugin.configureTabBar.mock.calls[0];
+    const { items, selectedId } = options;
     expect(items.map((i: { id: string }) => i.id)).toEqual(MOBILE_NAV_PLACES.map((p) => p.id));
     // Icons only - the user's decision, VoiceOver included (see the component).
     expect(items.every((i: { title: string }) => i.title === '')).toBe(true);
-    // The SAME Lucide glyph the web bar draws for each place, and tinted by the bar (the patch).
+    // The SAME Lucide glyph the web bar draws, once per state, each already in its colour.
     for (const [i, place] of MOBILE_NAV_PLACES.entries()) {
-      expect(items[i].image).toBe(`data:image/png;base64,${place.icon}`);
-      expect(items[i].template).toBe(true);
+      expect(items[i].image).toBe(`png:${place.icon}:text-class@light`);
+      expect(items[i].selectedImage).toBe(`png:${place.icon}:accent-class@light`);
       expect(items[i].sfSymbol).toBeUndefined();
     }
-    expect(tint).toBe('#light');
+    // The bar itself is not tinted (user, 2026-09-30): both states are drawn, nothing is tinted.
+    expect(options).not.toHaveProperty('tint');
     expect(selectedId).toBe('posts');
     expect(nativeTabBar.status).toBe('native');
   });
 
-  it('re-tints for the dark theme, and sends the badges again - a reconfiguration clears them', async () => {
+  it('redraws for the dark theme, and sends the badges again - a reconfiguration clears them', async () => {
     badges.placeBadge.mockImplementation((id: string) => (id === 'chat' ? 1 : 0));
     await mountBar({ visible: true });
     plugin.setBadge.mockClear();
@@ -135,7 +142,9 @@ describe('NativeTabBar', () => {
     }
 
     expect(plugin.configureTabBar).toHaveBeenCalledTimes(2);
-    expect(plugin.configureTabBar.mock.calls[1][0].tint).toBe('#dark');
+    const [{ items }] = plugin.configureTabBar.mock.calls[1];
+    expect(items[0].image).toBe(`png:${MOBILE_NAV_PLACES[0].icon}:text-class@dark`);
+    expect(items[0].selectedImage).toBe(`png:${MOBILE_NAV_PLACES[0].icon}:accent-class@dark`);
     expect(plugin.setBadge).toHaveBeenCalledWith('chat', '');
   });
 

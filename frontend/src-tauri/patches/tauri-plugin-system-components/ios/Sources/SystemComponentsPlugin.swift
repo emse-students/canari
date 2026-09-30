@@ -25,11 +25,12 @@ class TabItemArgs: Decodable {
     /// Clip the bitmap to a circle (avatar style).
     let circular: Bool?
     let badge: String?
-    /// CANARI PATCH: render a bitmap icon as a TEMPLATE, so the bar tints it -
-    /// the selected tab in the accent, the others grey - exactly like an SF
-    /// Symbol. Upstream draws every bitmap `.alwaysOriginal` (its use is avatars),
-    /// which leaves an app's own glyphs untinted and the selection invisible.
-    let template: Bool?
+    /// CANARI PATCH: the bitmap drawn while this tab is SELECTED, in its own
+    /// colours like `image` (`.alwaysOriginal`). The app hands both states
+    /// already coloured - its glyph in the text colour, and in the accent - so
+    /// the selection shows without a `tintColor`, which on iOS 26 tinted the
+    /// bar's glass as well as the icon. Upstream has no selected image at all.
+    let selectedImage: String?
 }
 
 /// The standalone account button beside the bar (Apple Music search-button

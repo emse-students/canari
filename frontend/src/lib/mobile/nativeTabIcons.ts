@@ -2,15 +2,24 @@ import { mount, unmount, type Component } from 'svelte';
 import { Log } from '$lib/utils/Log';
 
 /**
- * The web bar's glyphs and accent, turned into what the native iOS tab bar takes (user, 2026-09-30:
- * "the same icons as the app, highlighted in yellow").
+ * The web bar's glyphs, turned into what the native iOS tab bar takes (user, 2026-09-30: "the same
+ * icons as the app", then "yellow when selected, black when not, the bar itself not tinted").
  *
- * The bar takes a bitmap per tab and a `#RRGGBB` tint. The glyphs are the Lucide components
- * `BottomNav` draws (`PLACE_ICONS`), rasterised here; the patched plugin renders them as TEMPLATES,
- * so only their alpha counts and the bar paints the selected one in the tint and the rest grey -
- * the colour drawn here is irrelevant. The tint is the web bar's own active class, resolved by the
- * browser, so it is the design token and not a copy of it.
+ * Each tab gets TWO bitmaps, already coloured, and the patched plugin draws both as they are
+ * (`image` and `selectedImage`, `.alwaysOriginal`) - so no `tintColor` is set anywhere, which is
+ * what kept the bar's glass untinted. The glyphs are the Lucide components `BottomNav` draws
+ * (`PLACE_ICONS`); the colours are the web's own classes (`TAB_ICON_CLASSES`), resolved by the
+ * browser for the current theme, so they are the design tokens and not copies of them.
  */
+
+/**
+ * The two states' colours, as the web writes them. "Black" at rest is the theme's TEXT colour -
+ * near-black in light, near-white in dark, where black would vanish on the bar.
+ */
+export const TAB_ICON_CLASSES = {
+  normal: 'text-text-main',
+  selected: 'text-amber-600 dark:text-amber-400',
+} as const;
 
 /** The bar's icon box, in points (`TabBarOverlay.imageSide`). */
 const ICON_POINTS = 26;
@@ -21,14 +30,21 @@ const GLYPH_SIZE = 24;
 const GLYPH_STROKE = 2;
 
 /**
- * One Lucide icon as a PNG data URL, drawn at {@link ICON_SCALE}x.
+ * One Lucide icon as a PNG data URL in `colorHex`, drawn at {@link ICON_SCALE}x.
  *
  * Mounted to read the exact SVG the web draws, then rasterised through an `<img>` onto a canvas -
- * the plugin decodes bitmaps, not SVG.
+ * the plugin decodes bitmaps, not SVG. The colour is a hex, never the token's `oklch()`, because an
+ * SVG loaded as an image is parsed on its own and the hex is what every engine reads.
  */
-export async function lucideIconPng(icon: Component<Record<string, unknown>>): Promise<string> {
+export async function lucideIconPng(
+  icon: Component<Record<string, unknown>>,
+  colorHex: string
+): Promise<string> {
   const host = document.createElement('div');
-  const app = mount(icon, { target: host, props: { size: GLYPH_SIZE, strokeWidth: GLYPH_STROKE } });
+  const app = mount(icon, {
+    target: host,
+    props: { size: GLYPH_SIZE, strokeWidth: GLYPH_STROKE, color: colorHex },
+  });
   const svg = host.innerHTML;
   void unmount(app);
 
@@ -55,15 +71,15 @@ export function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /**
- * The web bar's active colour, as `#rrggbb`.
+ * The colour a class list gives text right now, as `#rrggbb`.
  *
- * Read from an element carrying the bar's own active classes, so the answer is whatever the design
- * tokens and the current theme make it - `amber-600`, or `amber-400` under `[data-theme='dark']` -
- * and then painted onto a 1px canvas, because the token is `oklch()` and only a pixel gives sRGB.
+ * Read from a probe element carrying the classes, so the answer is whatever the design tokens and
+ * the current theme make it - `amber-600`, or `amber-400` under `[data-theme='dark']` - and then
+ * painted onto a 1px canvas, because a token may be `oklch()` and only a pixel gives sRGB.
  */
-export function activeTabTint(): string {
+export function classColorHex(className: string): string {
   const probe = document.createElement('span');
-  probe.className = 'text-amber-600 dark:text-amber-400';
+  probe.className = className;
   document.body.appendChild(probe);
   const color = getComputedStyle(probe).color;
   probe.remove();
@@ -77,6 +93,6 @@ export function activeTabTint(): string {
   ctx.fillRect(0, 0, 1, 1);
   const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
   const hex = rgbToHex(r, g, b);
-  Log.d('nativeTabIcons', `active tint ${color} -> ${hex}`);
+  Log.d('nativeTabIcons', `${className}: ${color} -> ${hex}`);
   return hex;
 }

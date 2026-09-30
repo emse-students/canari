@@ -644,17 +644,23 @@ one layer mounted exactly as long as the surface is open.
 **A failed setup hands the bottom back to the web bar, at error level** - an app with no navigation
 is worse than the wrong bar, and the line accuses the build that was meant to have it.
 
-**The web bar's glyphs, selected in its yellow (user, 2026-09-30 - the first build drew SF Symbols
-in iOS's blue).** `lucideIconPng` mounts the same Lucide component `BottomNav` draws, reads its SVG,
-and rasterises it at 3x into the plugin's 26 pt box. The plugin as published draws every bitmap
-`.alwaysOriginal` - its use is avatars - so a glyph could take no tint and the selection would not
-show at all: that is the ONE patch (`TabItemArgs.template`, two hunks marked `CANARI PATCH` in
-`ios/Sources`, the crate otherwise byte-identical to 0.1.8 and shipped with its MIT text, which the
-published crate omits). The tint is the web bar's own active class, `text-amber-600
-dark:text-amber-400`, read from a probe element and painted onto a 1 px canvas because the token is
-`oklch()` - measured in WebKit and Chromium: `#e17100` light, `#ffb900` dark. A theme change
-reconfigures the bar, and since the plugin REBUILDS its items on configuration - clearing every
-badge - the dot is sent again after each one.
+**The web bar's glyphs - in the text colour, the selected one in yellow, and NOTHING tinted (user,
+2026-09-30).** The first build drew SF Symbols in iOS's blue; the second tinted template glyphs with
+the yellow as the bar's `tintColor`, which on iOS 26 tinted the bar's glass as well, and left the
+resting glyphs in the system grey. Each tab now gets TWO bitmaps, already coloured, and the plugin
+draws both as they are (`.alwaysOriginal`): `image` in the theme's text colour (`text-text-main`,
+`#050505` light, `#e4e6eb` dark - "black" at rest, since black would vanish on the dark bar) and
+`selectedImage` in the web bar's active colour (`text-amber-600 dark:text-amber-400`, `#e17100` /
+`#ffb900`). No `tint` is passed at all. `lucideIconPng` mounts the same Lucide component `BottomNav`
+draws, in the given colour, and rasterises it at 3x into the plugin's 26 pt box; `classColorHex`
+reads a class list's colour off a probe element, through a 1 px canvas because the tokens may be
+`oklch()`. Measured in WebKit: both states, both themes, the four glyphs.
+
+**The plugin has no selected image, so that is the patch** - `TabItemArgs.selectedImage`, marked
+`CANARI PATCH` in `ios/Sources`, beside the removed keyboard guard (above). The crate is otherwise
+byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
+redraws both states and reconfigures the bar, and since the plugin REBUILDS its items on
+configuration - clearing every badge - the dot is sent again after each one.
 
 **Nothing here has run on an iPhone.** `NativeTabBar.svelte.test.ts` pins what Canari ASKS of the
 plugin (mocked); `ios.yml`'s dispatch compiles the Swift; how the bar LOOKS, where the reserve
