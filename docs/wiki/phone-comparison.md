@@ -187,9 +187,13 @@ oignons". Status is kept here until each item is merged; the release is cut only
 | --- | --- | --- |
 | U1 | "Environnement de test" banner takes ~180 px on EVERY screen and cannot be closed: give it an X | WRITTEN - closes for the session only (it was permanent on purpose, [dev-environment](infrastructure/dev-environment.md)); not yet read on the phone |
 | U2 | Black bars top (status bar band, the page stops under it) and bottom (a black strip below the last card on the feed): "je veux une experience belle et immersive" - the page must draw under both and publish the top inset like the bottom one | WRITTEN (top inset, theme-following status bar) - the bottom strip seen on the feed was the PIN modal closing, to re-check; not yet read on the phone |
-| U3 | Conversation: the glass header is drawn OVER the banner, the name pill wraps onto two lines, the "+" floats alone above the composer row and is not aligned with the mic and the field | OPEN |
+| U3 | Conversation: the glass header is drawn OVER the banner, the name pill wraps onto two lines, the "+" floats alone above the composer row (110 px up, 164 px with the keyboard open - not a constant offset, so not a transform) and is not aligned with the mic and the field. Cause NOT found by reading the CSS; needs the live DOM, hence a bench build (runs 36766494888 release-like, 36766646478 bench) | OPEN - investigating |
 | U4 | The bar above the keyboard (up/down arrows and a check) is iOS's form-navigation accessory bar; it is removable | WRITTEN - not yet read on the phone |
 | U5 | Walk the rest of the app for other graphical defects (seen so far: Communautes tab has its title and the "+" tile offset, profile shows a lone settings icon under the school chip) | OPEN |
+| U6 | The PIN sheet is cut on the iPhone (keypad's last row and options under the footer): full screen on phones, prose and key height trimmed under 800 px of height | WRITTEN - not yet read on the phone |
+| U7 | Black band and rounded corner above the keyboard = the window's own black | WRITTEN (window ground follows the theme) - not yet read |
+
+**Bench traps met on the way:** the PIN sheet KEEPS the digits typed on the unlock keypad when it switches to "choose a PIN" after a reset (6 + 6 = a 12-digit PIN that then matches nothing) - clear with the backspace key first and read the dots; the test banner is 4 lines on a phone, so its detail text should go on narrow screens.
 
 ## What to do next
 

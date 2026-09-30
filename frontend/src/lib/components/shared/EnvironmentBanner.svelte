@@ -54,7 +54,7 @@
     <FlaskConical size={14} aria-hidden="true" />
     <span>
       {m.env_banner_test_label()}
-      <span class="font-normal">{m.env_banner_test_detail()}</span>
+      <span class="hidden font-normal sm:inline">{m.env_banner_test_detail()}</span>
     </span>
     {#snippet action()}
       <button

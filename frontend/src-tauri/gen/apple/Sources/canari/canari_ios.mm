@@ -275,6 +275,14 @@ static void CanariApplyTheme(NSString *theme) {
     window.overrideUserInterfaceStyle = style;
     NSLog(@"[CanariIOS] interface style follows the app theme: %@", theme);
   }
+  // THE WINDOW'S OWN GROUND, in the app's: it shows wherever the WebView is not - the band between a
+  // keyboard-shrunk page and the keyboard, and the keyboard's rounded top corners (user, 2026-09-30:
+  // "la barre noire au dessus [du clavier] avec le coin"). These are `app.html`'s two literals.
+  UIColor *ground = style == UIUserInterfaceStyleDark
+                        ? [UIColor blackColor]
+                        : [UIColor colorWithRed:240.0 / 255.0 green:242.0 / 255.0 blue:245.0 / 255.0 alpha:1.0];
+  window.backgroundColor = ground;
+  window.rootViewController.view.backgroundColor = ground;
 }
 
 /// The page tells native its theme through `webkit.messageHandlers.canariTheme.postMessage(...)`

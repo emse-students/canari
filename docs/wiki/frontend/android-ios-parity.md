@@ -63,7 +63,9 @@ the clock with nothing telling it to keep out), so it now ships WITH its other h
 read the variable instead of `env()`. **The status bar's colour then needs the APP's theme**, not the
 phone's (a light Canari on a dark-mode phone would show a white clock on a pale header): `themeStore`
 posts the theme to a `canariTheme` script message handler and native sets
-`window.overrideUserInterfaceStyle`, which also themes the keyboard, the tab bar and alerts.
+`window.overrideUserInterfaceStyle`, which also themes the keyboard, the tab bar and alerts - and it
+sets the window's own background to the app's ground (`#f0f2f5` / `#000`, `app.html`'s literals),
+because that is what shows in the band above a keyboard and in its rounded top corners (black, until then).
 **OWED: one reading of the result on the iPhone** - every gate here is blind to it.
 
 **The form accessory bar is removed** (up/down arrows and a check, ~45 pt above every keyboard):
