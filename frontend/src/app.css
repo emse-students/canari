@@ -802,7 +802,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    /* THE BOX IS 44px HERE AND 38px FROM `md` UP, and the two numbers are one decision.
+    /* THE BOX IS 44px HERE AND 38px FROM `md` UP UNDER A POINTER, and the two numbers are one decision.
        38px is the size the user accepted for a pointer. It is also six pixels UNDER the touch
        target every platform asks for, and `.chat-composer-icon-button` was already paying that
        difference the other way round - 44px on a phone, 36px on a desktop - because whoever wrote
@@ -818,7 +818,10 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
       transform 120ms ease;
   }
 
-  @media (min-width: 768px) {
+  /* UNDER A POINTER, NOT FROM A WIDTH. 768px was standing in for "a mouse", and a touch tablet is
+     768px wide too: in portrait the header's icon buttons measured 38px there, under the 44px
+     floor (viewport audit, 2026-09-30). The width alone never knew which it was. */
+  @media (min-width: 768px) and (pointer: fine) {
     .ui-icon-button {
       width: 2.375rem;
       height: 2.375rem;
@@ -836,6 +839,28 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   .ui-icon-button--sm {
     width: 1.75rem;
     height: 1.75rem;
+  }
+
+  /* THE TOUCH TARGET WITHOUT THE LOOK. A control drawn smaller than 44px - a filter pill, a
+     table-of-contents link, the logo link - keeps its drawing and gets an invisible 44px hit box
+     centred on it, on a touch screen only (user, 2026-09-30: "zone de tap agrandie", not bigger
+     controls). `position: relative` is here so the box has something to centre on; in this layer
+     it loses to a positioning utility at the call site, which is what an `absolute` control needs.
+     Two stacked small targets overlap their boxes: the later one wins the overlap, which is still a
+     tap on a neighbour of the right one rather than a tap on nothing. */
+  .tap-target {
+    position: relative;
+  }
+  @media (pointer: coarse) {
+    .tap-target::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 2.75rem);
+      height: max(100%, 2.75rem);
+      transform: translate(-50%, -50%);
+    }
   }
 
   .ui-icon-button:active:not(:disabled) {
@@ -1930,14 +1955,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   }
 }
 
-@media (min-width: 768px) {
-  .chat-composer-panel {
-    gap: 0.5rem;
-    padding: 0.375rem;
-  }
-
-  /* The controls lose 6px here - 44px to 38px, in `.ui-icon-button` - so the field loses the same
-     6px or the row stops agreeing. It was 8px when the controls went to 36px. */
+/* The controls lose 6px under a POINTER - 44px to 38px, in `.ui-icon-button` - so the field loses the
+   same 6px or the row stops agreeing. It was 8px when the controls went to 36px. Same condition as
+   the button, so a touch tablet keeps both at their touch size. */
+@media (min-width: 768px) and (pointer: fine) {
   .chat-composer-panel {
     --composer-field-height: calc(var(--text-sm--line-height) + 1.125rem);
   }
@@ -1945,6 +1966,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .chat-composer-textarea,
   .mention-composer-editor.chat-composer-textarea {
     padding: 0.5625rem 0.75rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .chat-composer-panel {
+    gap: 0.5rem;
+    padding: 0.375rem;
   }
 
   .chat-floating-alert {

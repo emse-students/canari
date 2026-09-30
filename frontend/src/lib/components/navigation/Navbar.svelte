@@ -54,7 +54,7 @@
           type="button"
           onclick={() => goto('/profile')}
           title={m.nav_my_profile_title()}
-          class="rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
+          class="tap-target rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
           aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />

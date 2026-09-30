@@ -90,7 +90,7 @@
           type="button"
           onclick={() => (filter = tab.key as 'all' | 'unread')}
           aria-pressed={filter === tab.key}
-          class="rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {filter ===
+          class="tap-target rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {filter ===
           tab.key
             ? 'bg-cn-yellow text-cn-ink'
             : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"

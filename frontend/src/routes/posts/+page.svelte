@@ -448,7 +448,7 @@
       <button
         type="button"
         onclick={closeSearch}
-        class="text-text-muted hover:text-text-main absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
+        class="tap-target text-text-muted hover:text-text-main absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
         aria-label={m.common_clear_aria()}
       >
         <X size={16} />
@@ -468,7 +468,7 @@
           type="button"
           onclick={() => navigateFeed(tab.feed)}
           aria-pressed={activeFeed === tab.feed}
-          class="rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
+          class="tap-target rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
           tab.feed
             ? 'text-text-main border-amber-500/40 bg-amber-500/15'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
@@ -589,7 +589,7 @@
                 {m.posts_empty_followed()}
                 <button
                   type="button"
-                  class="font-medium underline"
+                  class="tap-target font-medium underline"
                   onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
                 >.
               </p>

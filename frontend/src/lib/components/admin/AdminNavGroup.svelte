@@ -75,7 +75,7 @@
     onclick={() => (open = !open)}
     aria-expanded={open}
     aria-controls={panelId}
-    class="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
+    class="tap-target inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
  {active
       ? 'bg-cn-yellow text-cn-ink shadow-sm'
       : 'border-cn-border text-text-muted hover:text-text-main border'}"
@@ -111,7 +111,7 @@
         <a
           href={item.href}
           onclick={() => (open = false)}
-          class="text-text-main hover:bg-cn-yellow/15 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors"
+          class="text-text-main hover:bg-cn-yellow/15 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors pointer-coarse:min-h-11"
         >
           <item.icon size={15} />
           {item.label}
