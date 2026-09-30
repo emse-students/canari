@@ -601,6 +601,13 @@ jobs:
           # THREE DAYS: it points at one workstation address and is worthless afterwards.
           retention-days: 3
 
+      # Same tint as android.yml, for the same reason: the Icon Composer document is rewritten in the
+      # working tree of this run, and the compile check (prerelease defaults to "true") exercises it.
+      - name: Tint the app icon for a pre-release
+        if: inputs.prerelease == 'true'
+        working-directory: frontend
+        run: bun scripts/gen-ios-icon.mjs --dev
+
       - name: Build iOS archive
         if: env.LOCAL_URL == ''
         working-directory: frontend

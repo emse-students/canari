@@ -8,7 +8,7 @@
  * background is a gradient DRAWABLE written here rather than a colour resource, so its numbers
  * come from the one spec.
  *
- * Run from the `frontend` directory: `bun scripts/gen-android-icons.mjs`
+ * Run from the `frontend` directory: `bun scripts/gen-android-icons.mjs [--dev]`
  */
 import sharp from 'sharp';
 import fs from 'node:fs/promises';
@@ -18,14 +18,15 @@ import { renderBird } from './logo-render.mjs';
 import {
   ANDROID_VISIBLE,
   BIRD_ICON_FILL,
-  NAVY_BOTTOM,
-  NAVY_TOP,
   gradientBackground,
+  paletteFor,
   silhouette,
 } from './icon-spec.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
+/** The pre-release build is tinted violet (`--dev`), applied by `android.yml` and never committed. */
+const PALETTE = paletteFor(process.argv);
 const RES = path.join(ROOT, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res');
 
 const FOREGROUND = { mdpi: 108, hdpi: 162, xhdpi: 216, xxhdpi: 324, xxxhdpi: 432 };
@@ -64,7 +65,7 @@ async function makeMonochrome(canvas, outPath) {
 }
 
 async function makeLegacy(size, outPath, round) {
-  const bg = await gradientBackground(size, round ? 'circle' : 'squircle');
+  const bg = await gradientBackground(size, round ? 'circle' : 'squircle', PALETTE);
   const bird = await renderBird(Math.round(size * BIRD_ICON_FILL));
   await sharp(bg)
     .composite([{ input: bird, gravity: 'center' }])
@@ -81,7 +82,7 @@ async function makeNotification(size, outPath) {
 async function writeBackgroundDrawable() {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-  <gradient android:angle="270" android:startColor="${NAVY_TOP}" android:endColor="${NAVY_BOTTOM}"/>
+  <gradient android:angle="270" android:startColor="${PALETTE.top}" android:endColor="${PALETTE.bottom}"/>
 </shape>
 `;
   await fs.mkdir(path.join(RES, 'drawable'), { recursive: true });

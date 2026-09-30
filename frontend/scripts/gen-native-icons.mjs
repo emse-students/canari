@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { renderBird } from './logo-render.mjs';
 import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
 import { perchLogo } from './perch-logo.mjs';
+import { packIco } from './ico.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -64,6 +65,29 @@ async function stripAlpha(dir) {
   }
 }
 
+/**
+ * Desktop sizes that must not be a 1024 px source scaled down: `tauri icon` shrinks the master, which
+ * turns the bird into a smear at 32 px - the taskbar size. Each is rendered AT its size instead, and
+ * the ICO is packed from natively rendered frames.
+ */
+const NATIVE_SIZES = {
+  '32x32.png': 32,
+  '64x64.png': 64,
+  'Square30x30Logo.png': 30,
+  'Square44x44Logo.png': 44,
+  'StoreLogo.png': 50,
+};
+const ICO_FRAMES = [16, 24, 32, 48, 64, 256];
+
+async function renderSmallDesktop() {
+  for (const [name, size] of Object.entries(NATIVE_SIZES)) {
+    await fs.writeFile(path.join(ICONS, name), await perchLogo(size));
+  }
+  const frames = [];
+  for (const size of ICO_FRAMES) frames.push({ size, data: await perchLogo(size) });
+  await fs.writeFile(path.join(ICONS, 'icon.ico'), packIco(frames));
+}
+
 async function copyAll(from, to, keep) {
   for (const name of await fs.readdir(from)) {
     if (keep(name)) await fs.copyFile(path.join(from, name), path.join(to, name));
@@ -84,6 +108,7 @@ async function main() {
     tauriIcon(iosSource, iosOut);
 
     await copyAll(desktopOut, ICONS, (n) => !['android', 'ios'].includes(n));
+    await renderSmallDesktop();
     await stripAlpha(path.join(iosOut, 'ios'));
     await copyAll(path.join(iosOut, 'ios'), path.join(ICONS, 'ios'), (n) => n.endsWith('.png'));
     console.log('Desktop and iOS icons regenerated.');

@@ -11,21 +11,25 @@
  * that the system can darken or tint it per appearance. The bird is the only layer, taken from
  * `store/icons/layers/bird.svg` (`gen-icon-layers.mjs`), already sized by `BIRD_ICON_FILL`.
  *
- * Run from the `frontend` directory, after `gen-icon-layers.mjs`: `bun scripts/gen-ios-icon.mjs`
+ * Run from the `frontend` directory, after `gen-icon-layers.mjs`: `bun scripts/gen-ios-icon.mjs [--dev]`
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NAVY_BOTTOM, NAVY_TOP } from './icon-spec.mjs';
+import { paletteFor } from './icon-spec.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const BIRD_SVG = path.resolve(ROOT, '..', 'store', 'icons', 'layers', 'bird.svg');
 const OUT = path.join(ROOT, 'src-tauri', 'gen', 'apple', 'AppIcon.icon');
 
-/** Dark appearance: the same two stops pulled towards black, so the icon recedes on a dark home screen. */
-const DARK_TOP = '#141A2E';
-const DARK_BOTTOM = '#080B14';
+/**
+ * Dark appearance: the same two stops pulled towards black, so the icon recedes on a dark home
+ * screen. `--dev` tints the whole document violet, and `ios.yml` applies it to a pre-release.
+ */
+const DEV = process.argv.includes('--dev');
+const PALETTE = paletteFor(process.argv);
+const DARK = DEV ? { top: '#1A1233', bottom: '#0A0716' } : { top: '#141A2E', bottom: '#080B14' };
 
 /** `#rrggbb` as the `srgb:r,g,b,a` string the document uses, components in 0..1. */
 function srgb(hex) {
@@ -43,10 +47,10 @@ function gradient(top, bottom) {
 
 async function main() {
   const doc = {
-    fill: gradient(NAVY_TOP, NAVY_BOTTOM),
+    fill: gradient(PALETTE.top, PALETTE.bottom),
     'fill-specializations': [
-      { value: gradient(NAVY_TOP, NAVY_BOTTOM) },
-      { appearance: 'dark', value: gradient(DARK_TOP, DARK_BOTTOM) },
+      { value: gradient(PALETTE.top, PALETTE.bottom) },
+      { appearance: 'dark', value: gradient(DARK.top, DARK.bottom) },
     ],
     groups: [
       {

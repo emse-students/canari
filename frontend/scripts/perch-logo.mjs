@@ -16,6 +16,8 @@ import { NAVY, NAVY_BOTTOM, NAVY_TOP } from './icon-spec.mjs';
 
 /** Measured on the 1080 px original, as fractions of the canvas. */
 const SQUARE = { x: 255 / 1080, y: 108 / 1080, side: 733 / 1080, radius: 0.115 };
+/** Edge at and under which the square is flat navy. The bird is rendered AT the size, never shrunk. */
+export const SMALL = 64;
 const BIRD = { left: 92 / 1080, width: 808 / 1080, feetBelowEdge: 4 / 1080 };
 
 /** Row of the lowest opaque pixel in the right 45 percent of the bird - its feet, not its tail. */
@@ -38,9 +40,13 @@ async function feetRow(bird) {
  *
  * @param {number} size Edge in pixels.
  * @param {{ top: string, bottom: string } | null} [gradient] Square fill; the brand gradient by
- *   default, `null` for the flat navy.
+ *   default, `null` for the flat navy - which is the default at `SMALL` px and under, where a gradient
+ *   is invisible and only costs the bird its contrast.
  */
-export async function perchLogo(size, gradient = { top: NAVY_TOP, bottom: NAVY_BOTTOM }) {
+export async function perchLogo(
+  size,
+  gradient = size <= SMALL ? null : { top: NAVY_TOP, bottom: NAVY_BOTTOM }
+) {
   const s = SQUARE.side * size;
   const fill = gradient ? 'url(#g)' : NAVY;
   const defs = gradient

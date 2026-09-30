@@ -305,6 +305,14 @@ jobs:
           grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
           echo "✅ Android frontend env prepared"
 
+      # A PRE-RELEASE WEARS A VIOLET LAUNCHER ICON, so a tester tells it from production on a home screen
+      # (user, 2026-09-30). The pre-release has no application id of its own, so the tint is applied to
+      # the working tree of THIS run and never committed. docs/wiki/frontend/app-icons.md
+      - name: Tint the launcher icons for a pre-release
+        if: inputs.prerelease == 'true'
+        working-directory: frontend
+        run: bun scripts/gen-android-icons.mjs --dev
+
       - name: Build Android AAB + APK
         working-directory: frontend
         run: |

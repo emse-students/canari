@@ -29,7 +29,10 @@ drawn by hand per surface.
   chosen: square 67.9 percent of the canvas at the top right, bird 74.8 percent wide, feet 0.4 percent
   BELOW the square's lower edge. **The feet must rest on that edge** - every first redraw floated them inside.
 - **The DEV mark**: the launcher mark with the gradient pulled from navy to violet (`DEV_TOP` /
-  `DEV_BOTTOM`), so a pre-release is told from production on a home screen. Constants only so far.
+  `DEV_BOTTOM`), so a pre-release is told from production on a home screen. `gen-android-icons.mjs --dev` and
+  `gen-ios-icon.mjs --dev` write it into the working tree of the run, from a step that `android.yml` and
+  `ios.yml` run only when `inputs.prerelease == 'true'`; it is never committed, because a pre-release has
+  no application id of its own.
 
 ## Who writes what
 
