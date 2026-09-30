@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import sharp from 'sharp';
 import { LOGO_BIRD_FILL, SVG } from '../scripts/logo-render.mjs';
 import {
+  ANDROID_LAUNCHER_ZOOM_COMPENSATION,
   ANDROID_VISIBLE,
   BIRD_ICON_FILL,
   BRAND_PALETTE,
@@ -234,11 +235,14 @@ describe('the bird inside each generated icon', () => {
     expect(bird / icon).toBeCloseTo(BIRD_ICON_FILL, 1);
   });
 
-  it('is half of the 72 dp window the launcher shows, not of the 108 dp canvas', async () => {
+  it('is sized against the 72 dp window, less the zoom measured on the Mi 9T launcher', async () => {
     const { bird, icon } = await yellowWidth(
       `${ANDROID_RES}/mipmap-xxxhdpi/ic_launcher_foreground.png`
     );
-    expect(bird / icon).toBeCloseTo(BIRD_ICON_FILL * ANDROID_VISIBLE, 1);
+    expect(bird / icon).toBeCloseTo(
+      BIRD_ICON_FILL * ANDROID_VISIBLE * ANDROID_LAUNCHER_ZOOM_COMPENSATION,
+      2
+    );
   });
 
   it('is half of the legacy icon, which has no window', async () => {

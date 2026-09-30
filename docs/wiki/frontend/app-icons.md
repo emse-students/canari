@@ -10,7 +10,7 @@ drawn by hand per surface.
   40, 50 and 60 percent. It was too big everywhere and by different amounts: `0.76` of the iOS
   home-screen icon, and `0.5` of the Android adaptive CANVAS - where the launcher shows only the
   central 72 dp of 108, so the bird filled three quarters of what is visible. Two constants in two
-  scripts had drifted apart; `ANDROID_VISIBLE` (72/108) is what reconciles them.
+  scripts had drifted apart; `ANDROID_VISIBLE` (72/108) reconciles them, and `ANDROID_LAUNCHER_ZOOM_COMPENSATION` (0.75) absorbs the ~1.48x zoom MEASURED on the Mi 9T launcher, where a bird at 0.5 of the window drew at 0.74 of the round icon, on the edge.
 - **Background: a soft gradient centred on the brand navy** - `#1E2742` at the top, `#0E1220` at the
   bottom, `#151B2C` (the app's `--color-cn-ink` and `theme-color`) in the middle.
 - **The yellow stays `#fac809`**, NOT the app's `--cn-yellow` (`#f6c232`). The logo is the identity,

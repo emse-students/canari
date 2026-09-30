@@ -22,6 +22,15 @@ export const BIRD_ICON_FILL = 0.5;
 export const ANDROID_VISIBLE = 72 / 108;
 
 /**
+ * What the Mi 9T launcher (Launcher3 Quickstep, Android 16) does on top of that, MEASURED on a
+ * capture of its drawer: a bird sized at 0.5 of the window rendered at 0.74 of the round icon,
+ * tail and beak on the edge - the launcher zooms the layers about 1.48x. The Android bird is
+ * drawn at this fraction of the spec so its extremities sit near three quarters of the radius
+ * there, and still clear the edge on a launcher that does not zoom.
+ */
+export const ANDROID_LAUNCHER_ZOOM_COMPENSATION = 0.75;
+
+/**
  * The brand navy, `--color-cn-ink` in `app.css` and the `theme-color` in `app.html`, as the
  * MIDDLE of the background gradient: the icon stays the colour the app is wearing around it.
  */

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { renderBird } from './logo-render.mjs';
 import {
+  ANDROID_LAUNCHER_ZOOM_COMPENSATION,
   ANDROID_VISIBLE,
   BIRD_ICON_FILL,
   gradientBackground,
@@ -52,7 +53,9 @@ function centred(canvas, layer) {
 
 /** Adaptive layer: the bird at `BIRD_ICON_FILL` of the visible window, on a transparent canvas. */
 function birdLayer(canvas) {
-  return renderBird(Math.round(canvas * ANDROID_VISIBLE * BIRD_ICON_FILL));
+  return renderBird(
+    Math.round(canvas * ANDROID_VISIBLE * BIRD_ICON_FILL * ANDROID_LAUNCHER_ZOOM_COMPENSATION)
+  );
 }
 
 async function makeForeground(canvas, outPath) {
