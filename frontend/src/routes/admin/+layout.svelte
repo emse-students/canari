@@ -151,7 +151,7 @@
   <PageContainer width="tool" class="space-y-6">
     <a
       href="/dashboard"
-      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
+      class="tap-target text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={14} />
       {m.admin_dashboard_link()}
@@ -172,7 +172,7 @@
     <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={scope.title()} data-swipe-nav-ignore>
       <a
         href="/admin"
-        class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
+        class="tap-target shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
  {path === '/admin'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border-cn-border text-text-muted hover:text-text-main border'}"
@@ -190,7 +190,7 @@
       {#each directLinks as item (item.href)}
         <a
           href={item.href}
-          class="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
+          class="tap-target inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
  {path.startsWith(item.href)
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border'}"

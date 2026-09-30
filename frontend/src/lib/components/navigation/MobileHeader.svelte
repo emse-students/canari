@@ -65,7 +65,7 @@
   <a
     href="/posts"
     aria-label={m.nav_home_label()}
-    class="@container flex min-w-0 flex-1 items-center"
+    class="tap-target @container flex min-w-0 flex-1 items-center"
   >
     <CanariBrand subtitle="" fitContainer />
   </a>

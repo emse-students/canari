@@ -220,7 +220,7 @@
             onclick={changeProfilePhoto}
             title={m.profile_photo_change_label()}
             aria-label={m.profile_photo_change_label()}
-            class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
+            class="tap-target bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
  w-8 items-center justify-center
  rounded-full shadow-md ring-2 ring-white transition-all
  active:scale-95 dark:ring-(--cn-bg)"

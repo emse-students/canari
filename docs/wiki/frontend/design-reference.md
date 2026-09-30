@@ -664,7 +664,9 @@ reference ET tout aligner maintenant"*): 163 icon-only buttons visible at once, 
 Four gaps of four pixels, side by side. Nobody chose them: each button was written against the one
 neighbour its author had in mind.
 
-`.ui-icon-button` declares the box and NOTHING else - 44px below `md`, 38px from `md` up, with
+`.ui-icon-button` declares the box and NOTHING else - 44px below `md` OR on a touch screen, 38px
+from `md` up UNDER A FINE POINTER only (the width alone described a touch tablet too, whose header
+icons measured 38px in portrait, 2026-09-30), with
 `.ui-icon-button--sm` at 28px for a control that only ever appears under a pointer inside a dense
 row. **It deliberately does not declare the corner**, which #447 made a four-meaning scale, nor the
 colour: one property, one owner. Re-measured after the sweep at 1280px - 38, 38, 38, 38, 28 - and
@@ -676,6 +678,16 @@ by list: a button whose padding is asymmetric (`px-3 py-1.5` is a pill sized to 
 button that declares no box at all (an inline affordance - the 12px pencil in a comment's meta
 row, the cross in a chip, the avatar in the navbar). A third is out by name: a box measured against
 a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
+
+**A control drawn under 44px on a touch screen takes `.tap-target`** (2026-09-30, from the
+viewport audit in [phone-comparison](../phone-comparison.md)). It changes nothing visible: under
+`(pointer: coarse)` a centred `::before` extends the hit box to `max(100%, 2.75rem)` on each axis,
+so a 28px pill, a 20px inline link or a 32px avatar is tapped as a 44px target without its row
+growing. Seventeen controls carry it - the feed pills, the header's "Accueil", the navbar avatar,
+the legal back link and table of contents, the admin navigation, the sidebar channel rows, the
+notification filters and the profile photo badge. Both rules are held by `touchTargets.test.ts`.
+Two neighbours whose boxes would overlap must not both take it: the later one in the DOM wins the
+tap.
 
 ### The expanded rail clipped all eighteen of its texts
 

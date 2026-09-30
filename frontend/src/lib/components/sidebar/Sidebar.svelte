@@ -660,7 +660,7 @@
                         ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
                         : ''
                     }`}
-                class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
+                class="tap-target flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
                 channel.id
                   ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
                   : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
@@ -701,7 +701,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('channel')}
-                class="border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20"
+                class="tap-target border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20"
               >
                 <Plus size={16} aria-hidden="true" />
                 <span class="text-sm font-medium">{m.chat_add_channel_label()}</span>
