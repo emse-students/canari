@@ -154,6 +154,8 @@ static void CanariSetupFirebaseIfAvailable(void) {
 #endif
 }
 
+static void CanariPublishBottomInset(void);
+
 /// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
 /// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
 ///
@@ -208,7 +210,9 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                    animations:^{
                      webView.frame = target;
                    }
-                   completion:nil];
+                   completion:^(__unused BOOL finished) {
+                     CanariPublishBottomInset();
+                   }];
 }
 
 /// Makes the WKWebView transparent so the window's background shows through while SvelteKit
@@ -227,33 +231,48 @@ static void CanariApplyWebViewTransparency(void) {
   webView.scrollView.backgroundColor = [UIColor clearColor];
 }
 
-/// Lays the page out edge to edge and lets the web layer reserve the safe areas itself - the iOS
-/// peer of Android's edge-to-edge window, which the web layer was written for.
+/// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
+/// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
+/// place this is decided").
 ///
-/// UIKit's default `.automatic` adjustment insets the WKWebView's scroll view by the status bar, so
-/// the layout viewport started 47 pt down (`innerHeight` 797 of 844 on an iPhone 12) and WebKit
-/// reported EVERY `env(safe-area-inset-*)` as 0, the bottom included: nothing on the web side could
-/// keep a control out of the home indicator, and the post composer's "Publier" sat 26 pt into it
-/// (measured over the bench's CDP, 2026-09-30). With `.never` the viewport is the screen and the
-/// insets are the real ones (47 / 34), which every `env(safe-area-inset-top)` and
-/// `--safe-area-inset-bottom` consumer already reads. Idempotent, like the transparency above.
-static void CanariApplyWebViewEdgeToEdge(void) {
+/// WebKit reports EVERY `env(safe-area-inset-*)` as 0 in this WebView, the bottom included: the page
+/// reaches the screen's bottom edge (`innerHeight` 797 of 844 because UIKit insets the top by the
+/// status bar and the bottom by nothing), so nothing on the web side could keep a control out of the
+/// home indicator - the post composer's "Publier" sat 26 pt into it. Measured over the bench's CDP
+/// on an iPhone 12, 2026-09-30. `contentInsetAdjustmentBehavior = .never` was tried and is WRONG:
+/// the viewport became the whole screen, the insets stayed 0, and the page drew under the status bar.
+/// So the top stays UIKit's (the page starts below the bar) and only the bottom is told to the page.
+///
+/// The inset is the window's bottom safe area MINUS the part of it the WebView no longer reaches,
+/// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
+/// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
+/// Re-read at every activation (a reload of the page loses the property) and after every keyboard
+/// resize; portrait only on iPhone, so there is no rotation to follow.
+static void CanariPublishBottomInset(void) {
+  static CGFloat published = -1;
   WKWebView *webView = CanariFindWebView();
-  if (webView == nil) {
+  UIWindow *window = webView.window;
+  if (webView == nil || window == nil) {
     return;
   }
-  if (webView.scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever) {
-    return;
+  CGRect inWindow = [webView.superview convertRect:webView.frame toView:nil];
+  CGFloat unreached = MAX(0.0, CGRectGetHeight(window.bounds) - CGRectGetMaxY(inWindow));
+  CGFloat inset = MAX(0.0, window.safeAreaInsets.bottom - unreached);
+  NSString *js = [NSString
+      stringWithFormat:@"document.documentElement.style.setProperty('--safe-area-inset-bottom', '%.0fpx')",
+                       inset];
+  [webView evaluateJavaScript:js completionHandler:nil];
+  if (inset != published) {
+    published = inset;
+    NSLog(@"[CanariIOS] bottom safe area published to the page: %.0f pt", inset);
   }
-  webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-  NSLog(@"[CanariIOS] webview laid out edge to edge (content inset adjustment: never)");
 }
 
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
-  CanariApplyWebViewEdgeToEdge();
+  CanariPublishBottomInset();
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();

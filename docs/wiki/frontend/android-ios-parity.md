@@ -34,18 +34,21 @@ reinforced by everything in section 1 here.
 `false` in [`Info.plist`](../../../frontend/src-tauri/gen/apple/canari_iOS/Info.plist), so both
 platforms go edge-to-edge but keep the bar, reading its inset via `env(safe-area-inset-top)`.
 
-**The hardware measurement, taken 2026-09-30, found the intent was NOT met - FIXED the same day.**
-Read over CDP on an iPhone 12 (a bench build is inspectable, [phone-comparison](../phone-comparison.md)):
-the WKWebView's frame was the whole screen (0-844 pt) but its layout viewport was 797 pt, because
-UIKit's default `.automatic` content-inset adjustment pushed the page below the status bar - and
-WebKit then reported **every** `env(safe-area-inset-*)` as 0, the bottom included. The top only
-LOOKED right because the inset did the work; the bottom had no owner at all, so the post composer's
-"Publier" sat 26 pt into the home indicator. `CanariApplyWebViewEdgeToEdge` in
-[`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) sets
-`contentInsetAdjustmentBehavior = .never`, next to the transparency of §1.4 and on the same hook, so
-the viewport is the screen and the insets are the real ones (47 / 34) - which is what Android's
-edge-to-edge window already gives the same web code. §1.6 is unchanged by it: a frame shrunk above
-the keyboard still gets `safeAreaInsets.bottom == 0` from UIKit.
+**The hardware measurement, taken 2026-09-30, found the intent was NOT met - FIXED for the bottom the
+same day.** Read over CDP on an iPhone 12 (a bench build is inspectable,
+[phone-comparison](../phone-comparison.md)): the WebView's layout viewport was 797 pt of 844 - UIKit
+insets the top by the status bar and the bottom by nothing - and WebKit reported **every**
+`env(safe-area-inset-*)` as 0. The top LOOKED right because UIKit's shift did the work; the bottom
+had no owner at all, so the post composer's "Publier" sat 26 pt into the home indicator, on every
+screen. **The obvious fix is wrong, and was measured wrong:** `contentInsetAdjustmentBehavior =
+.never` made the viewport the whole screen (844) and left `env()` at 0, so the page then drew UNDER
+the status bar ("Retour" over the clock). Do not try it again.
+`CanariPublishBottomInset` in
+[`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) instead tells
+the page the one number it lacks: the window's bottom safe area minus the part the WebView no longer
+reaches, written to `--safe-area-inset-bottom` (the variable `app.html` names as the single place
+this is decided) at every activation and after every keyboard resize. The top stays UIKit's. A
+WebView shrunk above the keyboard publishes 0, which is what §1.6 relied on UIKit and `env()` for.
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
 reading their insets: `enableEdgeToEdge()` in
