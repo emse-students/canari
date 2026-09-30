@@ -10,7 +10,8 @@
  * Classes of finding, each one a thing a user sees:
  *   H  horizontal overflow: the page scrolls sideways, or an element pokes past the right edge
  *   C  clipped text: overflow hidden with no ellipsis and more text than room
- *   T  small tap target: an interactive element under 44 px in its shortest side (touch sizes only)
+ *   T  small tap target: an interactive element whose HIT box (its ::before for a `.tap-target`) is
+ *      under 44 px in its shortest side (touch sizes only)
  *   B  covered control: an interactive element whose centre is under a fixed bottom bar it is not part of
  *   S  tiny text: text under 11 px
  * Results: RUNS/viewports.ndjson (one row per route x size), RUNS/viewports-summary.md (the matrix),
@@ -74,7 +75,11 @@ const AUDIT = `(() => {
   for (const e of all) { const s = getComputedStyle(e);
     if ((s.overflow === 'hidden' || s.overflowX === 'hidden') && s.textOverflow !== 'ellipsis' && !e.closest('#bottom-nav') && e.scrollWidth > e.clientWidth + 2 && e.children.length === 0 && e.textContent.trim()) out.C.push(name(e) + ' ' + e.scrollWidth + '>' + e.clientWidth); }
   const inter = all.filter((e) => e.matches('a[href],button,[role=button],[role=tab],input:not([type=hidden]),select,textarea,[tabindex]:not([tabindex="-1"])'));
-  if (touch) for (const e of inter) { const r = e.getBoundingClientRect(); if (Math.min(r.width, r.height) < 44 && r.top < H && r.bottom > 0) out.T.push(name(e) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height)); }
+  // The HIT box, not the drawing: a \`.tap-target\` carries an invisible ::before that is the real touch area.
+  const hit = (e) => { const r = e.getBoundingClientRect(); const b = getComputedStyle(e, '::before');
+    if (b.content === 'none' || b.position !== 'absolute') return [r.width, r.height];
+    return [Math.max(r.width, parseFloat(b.width) || 0), Math.max(r.height, parseFloat(b.height) || 0)]; };
+  if (touch) for (const e of inter) { const r = e.getBoundingClientRect(); const [hw, hh] = hit(e); if (Math.min(hw, hh) < 44 && r.top < H && r.bottom > 0) out.T.push(name(e) + ' ' + Math.round(hw) + 'x' + Math.round(hh)); }
   const bars = all.filter((e) => { const s = getComputedStyle(e), r = e.getBoundingClientRect(); return s.position === 'fixed' && r.bottom >= H - 8 && r.height < 200 && r.width > W * 0.5; });
   for (const b of bars) { const br = b.getBoundingClientRect();
     for (const e of inter) { if (b.contains(e)) continue; const r = e.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
