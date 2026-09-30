@@ -279,6 +279,38 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
    save-to-gallery.
 4. **R4 - live** (C9), behind the calls revival.
 
+## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
+
+**The rule, verbatim from the user:** *"only static ui element, that are apart from content, should
+be liquid glass"* - chrome that stays put while content scrolls under it, never content itself. The
+native tab bar is the first ([mobile](frontend/mobile.md#the-native-ios-tab-bar)); the conversation's
+top bar and its composer are next: *"replace the bar on top of messages with just a back and menu
+button that then grows (as intended by the liquid glass design) to show the other options
+(pictures, search, etc.) and do the same for the composer"*.
+
+**Decisions (user, 2026-09-30):**
+- **L1 - the header is three pieces of glass:** back on the left, the contact's avatar and name in a
+  CENTRE PILL (tap: the conversation's settings/info panel), and a menu on the right that GROWS into
+  the actions the header carries today - Members (community channels), Media, Search, Settings, and
+  the call buttons once `CALLS_ENABLED` returns. The lock and the channel label go with the actions.
+- **L2 - the composer's actions become ONE "+" that grows** into Photos and videos, All files, GIF,
+  and Poll (channels). The chevron fold (`controlsCollapsed`) goes: a single button needs none. The
+  text field, the microphone and Send stay where they are - and stay WEB on iOS too, since the
+  plugin has no native text field.
+- **L3 - the same layout everywhere**, CSS glass where Liquid Glass does not exist (web, Android):
+  one layout to keep and to test, not two.
+- **L4 (assumed, not asked) - phone width only.** The desktop header has no back button and room for
+  its icons; it and the desktop composer are unchanged. Overrule here if wrong.
+
+**Order:**
+- **WP-G1 (web, every platform):** L1-L3 in HTML/CSS at the narrow chat layout, with the grow as a
+  CSS transition. Verifiable here, in Chromium, Firefox and WebKit.
+- **WP-G2 (iOS native):** the same pieces as real Liquid Glass, their web counterparts hidden on iOS.
+  What the plugin lacks and must be written in the vendored copy (`patches/tauri-plugin-system-components`):
+  the GROWING capsule (`UIGlassContainerEffect` morph, none in the plugin today), and a composer "+"
+  that FOLLOWS THE KEYBOARD (the plugin anchors to screen edges; the composer rides the keyboard).
+  Verifiable only through `ios.yml`'s compile check and an iPhone.
+
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
 
 Anyone with a CAS (soon an Alumni SSO) account reaches MiConnect, and what decides access today is
