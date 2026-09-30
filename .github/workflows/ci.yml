@@ -745,13 +745,21 @@ jobs:
         with:
           path: |
             ~/.cargo/bin/oxvelte
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
             ~/.cargo/git/db
           # The pinned REVISION, not the version number: 0.2.0 has meant several different
           # binaries. It must move with OXVELTE_REV in scripts/install-oxvelte.sh, or this cache
           # restores the previous one and the install script rebuilds it on every run.
-          key: oxvelte-7196779a-${{ runner.os }}
+          #
+          # CARGO'S INSTALL RECORDS TRAVEL WITH THE BINARY (2026-09-30). `install-oxvelte.sh` knows
+          # oxvelte is installed from `.crates2.json`, and only the binary was cached - so every run
+          # restored it, found no record, and rebuilt it: `Replaced package 'unknown'`, 1m37s on the
+          # 2026-09-22 frontend job, on a cache HIT. `-records` starts a fresh cache, because a hit on
+          # the old key never saves again and would keep restoring the record-less one for ever.
+          key: oxvelte-7196779a-records-${{ runner.os }}
 
       - name: Install oxvelte
         run: sh ./scripts/install-oxvelte.sh
