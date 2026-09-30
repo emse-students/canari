@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import sharp from 'sharp';
 import { LOGO_BIRD_FILL, SVG } from '../scripts/logo-render.mjs';
 import { ANDROID_VISIBLE, BIRD_ICON_FILL } from '../scripts/icon-spec.mjs';
@@ -159,6 +159,17 @@ describe('static/favicon.svg', () => {
     // silently changes size, on the one surface nobody looks at after a deploy.
     const { fill } = await birdBox();
     expect(fill).toBeCloseTo(LOGO_BIRD_FILL, 2);
+  });
+});
+
+describe('the icons the App Store reads', () => {
+  it('carry NO alpha channel at all, opaque or not - the store refuses one that has it', async () => {
+    const dir = 'src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset';
+    const files = readdirSync(dir).filter((n) => n.endsWith('.png'));
+    expect(files.length).toBeGreaterThan(10);
+    for (const name of [...files.map((n) => `${dir}/${n}`), '../store/icons/app-store-1024.png']) {
+      expect({ name, alpha: (await sharp(name).metadata()).hasAlpha }).toEqual({ name, alpha: false });
+    }
   });
 });
 

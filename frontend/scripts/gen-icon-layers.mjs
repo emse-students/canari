@@ -38,6 +38,7 @@ async function composed(size) {
   return sharp(await gradientBackground(size))
     .composite([{ input: bird, gravity: 'center' }])
     .flatten()
+    .removeAlpha()
     .png()
     .toBuffer();
 }

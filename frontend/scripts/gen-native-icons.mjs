@@ -57,6 +57,18 @@ function tauriIcon(source, outDir) {
   if (run.status !== 0) throw new Error(`tauri icon failed for ${source}`);
 }
 
+/**
+ * Re-encodes every PNG in `dir` without an alpha channel. `tauri icon` writes RGBA even from an
+ * opaque source, and the App Store refuses an icon that HAS an alpha channel, opaque or not.
+ */
+async function stripAlpha(dir) {
+  for (const name of await fs.readdir(dir)) {
+    if (!name.endsWith('.png')) continue;
+    const file = path.join(dir, name);
+    await fs.writeFile(file, await sharp(file).removeAlpha().png().toBuffer());
+  }
+}
+
 async function copyAll(from, to, keep) {
   for (const name of await fs.readdir(from)) {
     if (keep(name)) await fs.copyFile(path.join(from, name), path.join(to, name));
@@ -77,6 +89,7 @@ async function main() {
     tauriIcon(iosSource, iosOut);
 
     await copyAll(desktopOut, ICONS, (n) => !['android', 'ios'].includes(n));
+    await stripAlpha(path.join(iosOut, 'ios'));
     await copyAll(path.join(iosOut, 'ios'), path.join(ICONS, 'ios'), (n) => n.endsWith('.png'));
     await copyAll(path.join(iosOut, 'ios'), APPICONSET, (n) => n.endsWith('.png'));
     console.log('Desktop and iOS icons regenerated.');

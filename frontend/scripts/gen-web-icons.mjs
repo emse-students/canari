@@ -48,6 +48,7 @@ async function makeTouchIcon() {
   await sharp(await gradientBackground(TOUCH_ICON_SIZE))
     .composite([{ input: bird, gravity: 'center' }])
     .flatten()
+    .removeAlpha()
     .png()
     .toFile(out);
   return out;
