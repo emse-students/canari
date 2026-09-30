@@ -193,6 +193,17 @@ oignons". Status is kept here until each item is merged; the release is cut only
 | U6 | The PIN sheet is cut on the iPhone (keypad's last row and options under the footer): full screen on phones, prose and key height trimmed under 800 px of height | WRITTEN - not yet read on the phone |
 | U7 | Black band and rounded corner above the keyboard = the window's own black | WRITTEN (window ground follows the theme) - not yet read |
 
+**The same walk on the Mi 9T (2026-09-30, debug APK from `d9944953b`, dark system theme, gesture bar):**
+the PIN sheet, the feed, the chat list, a conversation and the keyboard all hold - the glass header,
+the "+" and the composer row are aligned, and Android already draws edge to edge with the status bar
+and the gesture pill owning their strips. **One two-tone defect, candidate U8:** on the brand screens
+the status strip is the page's own ground (`#000` in dark) and the header under it is a lighter
+surface, so the top reads as two bands - the iPhone has the same thing in light (a grey strip over a
+white header). Painting the inset with the header's surface would fix both and is OWED, not done.
+**Not covered:** three-button navigation - `settings put global force_fsg_nav_bar 0` left the phone in
+gesture mode on this MIUI (restored with `settings delete`, the key was unset), so it needs the
+switch in the phone's own settings; and Android at 200 % font.
+
 **Bench traps met on the way:** the PIN sheet KEEPS the digits typed on the unlock keypad when it switches to "choose a PIN" after a reset (6 + 6 = a 12-digit PIN that then matches nothing) - clear with the backspace key first and read the dots; the test banner is 4 lines on a phone, so its detail text should go on narrow screens.
 
 ## What to do next
