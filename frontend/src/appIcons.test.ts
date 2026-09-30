@@ -164,12 +164,38 @@ describe('static/favicon.svg', () => {
 
 describe('the icons the App Store reads', () => {
   it('carry NO alpha channel at all, opaque or not - the store refuses one that has it', async () => {
-    const dir = 'src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset';
+    const dir = 'src-tauri/icons/ios';
     const files = readdirSync(dir).filter((n) => n.endsWith('.png'));
     expect(files.length).toBeGreaterThan(10);
     for (const name of [...files.map((n) => `${dir}/${n}`), '../store/icons/app-store-1024.png']) {
-      expect({ name, alpha: (await sharp(name).metadata()).hasAlpha }).toEqual({ name, alpha: false });
+      expect({ name, alpha: (await sharp(name).metadata()).hasAlpha }).toEqual({
+        name,
+        alpha: false,
+      });
     }
+  });
+});
+
+describe('the iOS 26 icon document', () => {
+  const ICON = 'src-tauri/gen/apple/AppIcon.icon';
+  const doc = JSON.parse(readFileSync(`${ICON}/icon.json`, 'utf8'));
+
+  it('has a background fill with a dark appearance and one layer whose artwork ships', () => {
+    expect(doc.fill['linear-gradient']).toHaveLength(2);
+    const appearances = doc['fill-specializations'].map(
+      (f: { appearance?: string }) => f.appearance
+    );
+    expect(appearances).toEqual([undefined, 'dark']);
+    const layers = doc.groups.flatMap((g: { layers: { 'image-name': string }[] }) => g.layers);
+    expect(layers).toHaveLength(1);
+    expect(() => readFileSync(`${ICON}/Assets/${layers[0]['image-name']}`)).not.toThrow();
+  });
+
+  it('is what the Xcode project bundles, under the name the build setting asks for', () => {
+    const pbx = readFileSync('src-tauri/gen/apple/canari.xcodeproj/project.pbxproj', 'utf8');
+    expect(pbx).toContain('AppIcon.icon in Resources');
+    expect(pbx).toContain('lastKnownFileType = folder.iconcomposer.icon');
+    expect(pbx).toContain('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;');
   });
 });
 

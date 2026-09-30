@@ -82,7 +82,10 @@ async function main() {
   await fs.writeFile(path.join(LAYERS, 'bird.svg'), svg);
   await fs.writeFile(path.join(LAYERS, 'background.svg'), backgroundSvg());
 
-  const birdPng = await sharp(Buffer.from(svg), { density: 192 }).resize(2048, 2048).png().toBuffer();
+  const birdPng = await sharp(Buffer.from(svg), { density: 192 })
+    .resize(2048, 2048)
+    .png()
+    .toBuffer();
   await fs.writeFile(path.join(LAYERS, 'bird-2048.png'), birdPng);
   await fs.writeFile(path.join(LAYERS, 'bird-mono-2048.png'), await silhouette(birdPng));
   await fs.writeFile(path.join(LAYERS, 'background-2048.png'), await gradientBackground(2048));

@@ -24,7 +24,8 @@ drawn by hand per surface.
 | --- | --- |
 | `gen-android-icons.mjs` | adaptive foreground and THEMED (monochrome) layers, legacy square and round icons, the gradient background drawable, the status-bar icon |
 | `gen-web-icons.mjs` | `apple-touch-icon.png` (opaque), `favicon.ico` |
-| `gen-native-icons.mjs` | the desktop set (`.icns`, `.ico`, Windows tiles) and the iOS `AppIcon` set, through `tauri icon` |
+| `gen-native-icons.mjs` | the desktop set (`.icns`, `.ico`, Windows tiles) and `src-tauri/icons/ios`, through `tauri icon` |
+| `gen-ios-icon.mjs` | `gen/apple/AppIcon.icon`, the Icon Composer document the app actually ships (the old `appiconset` is deleted) |
 | `gen-icon-layers.mjs` | `store/icons/`: the Play and App Store icons and the bird / background layers an icon editor takes |
 
 The Android files are NOT taken from `tauri icon`: it cannot express the gradient background, the
@@ -33,8 +34,11 @@ the home-screen, adaptive and legacy icons, so a constant changed in one script 
 
 ## Still open
 
-- iOS 26 **clear / dark / tinted** variants (an Icon Composer `.icon`) - the current set is the
-  classic single-image one. Needs a check that `gen/apple` survives a `tauri ios init`.
+- The iOS 26 icon is `gen/apple/AppIcon.icon` (clear / dark / tinted with the Liquid Glass treatment), written by
+  `gen-ios-icon.mjs` WITHOUT the Mac application: the format is a folder (`icon.json` + artwork) and its
+  schema is not published, so it is checked by `ios.yml`'s compile check, which builds it with Xcode 26 and
+  dumps the compiled appearances. **Not yet compiled on a runner.** Liquid Composer was tried and exports
+  baked PNG previews, not a `.icon` - unusable as an App Store icon (transparent corners, relief drawn twice).
 - A distinct icon for **dev / pre-release builds** (tint or banner), so testers can tell them apart.
 - `og-canari.png`, the splash screen, and the store listing graphics.
 - Nothing above was looked at on a device: the gates are blind to how a launcher masks an icon.

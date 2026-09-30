@@ -4,7 +4,8 @@
  * `tauri icon` knows every size and container (`.icns`, `.ico`, the Windows tiles, the whole iOS
  * set), so this script only builds its two 1024 px sources and copies the results where they live:
  *
- * - iOS: a full-bleed OPAQUE square. The system cuts the corners itself, and the App Store refuses
+ * - iOS: only `src-tauri/icons/ios`, the set `tauri ios init` reads. The icon the app ships is the
+ *   Icon Composer document `gen/apple/AppIcon.icon` (`gen-ios-icon.mjs`). A full-bleed OPAQUE square. The system cuts the corners itself, and the App Store refuses
  *   a marketing icon with an alpha channel.
  * - desktop: the same drawing cut to a rounded square, transparent in the corners.
  *
@@ -25,14 +26,6 @@ import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const ICONS = path.join(ROOT, 'src-tauri', 'icons');
-const APPICONSET = path.join(
-  ROOT,
-  'src-tauri',
-  'gen',
-  'apple',
-  'Assets.xcassets',
-  'AppIcon.appiconset'
-);
 const SOURCE = 1024;
 
 /** One 1024 px source: the gradient cut to `mask`, the bird centred on it. */
@@ -91,7 +84,6 @@ async function main() {
     await copyAll(desktopOut, ICONS, (n) => !['android', 'ios'].includes(n));
     await stripAlpha(path.join(iosOut, 'ios'));
     await copyAll(path.join(iosOut, 'ios'), path.join(ICONS, 'ios'), (n) => n.endsWith('.png'));
-    await copyAll(path.join(iosOut, 'ios'), APPICONSET, (n) => n.endsWith('.png'));
     console.log('Desktop and iOS icons regenerated.');
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
