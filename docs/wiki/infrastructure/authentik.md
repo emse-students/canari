@@ -51,7 +51,8 @@ object the blueprints name, with relations replaced by natural names and secrets
 2026-09-30, a fresh instance built from the blueprints and production were compared field by field.
 They differed in ONE value: a trailing newline at the end of the `avatar` expression. That newline
 was written through the model on 2026-09-30, and no blueprint can write it, because the API
-serializer strips trailing whitespace. Re-take the proof after any hand edit:
+serializer strips trailing whitespace. The first `apply` on production, the same day, reported that
+1 change, and the dry run after it reported 0. Re-take the proof after any hand edit:
 
 ```sh
 AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh snapshot > prod.json

@@ -274,8 +274,10 @@ reads the verified id_token once at its callback and discards the rest
    and value is kept, so no behaviour changes. The proof: a fresh instance built from the files
    equals production field by field, with one exception, a trailing newline no blueprint can write
    ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
-   Before it merges, production's `.env` gains `MICONNECT_CAS_CONSUMER_SECRET` and the worker is
-   recreated. Until then, the pre-release dry-run it adds would fail every other session's release.
+   Production was prepared first, the same day. Its `.env` gained `MICONNECT_CAS_CONSUMER_SECRET`,
+   read from the database and never printed, and only the worker was recreated, so sign-in stayed
+   up. The dry run then reported exactly the predicted 1 change; `apply` wrote it, and a second dry
+   run reported 0.
 2. **WPA-2: the normalization**, as blueprint diffs:
    - the `miconnect-` names, each renamed by an entry conditioned on the old name still existing,
      so the hourly-safe blueprint never recreates a duplicate;

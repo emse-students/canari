@@ -18,9 +18,7 @@
  * Results: RUNS/insets-<mode>.ndjson and screenshots RUNS/ins/<mode>/ - outside the repo.
  */
 import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { client } from '../cross-client-harness/chat.mjs';
 import { evaluate, listTargets, connect } from '../cross-client-harness/cdp.mjs';
 import { armIfPhone, resolveDevice } from '../cross-client-harness/device.mjs';
 
@@ -124,7 +122,6 @@ async function closeOverlay() {
   await sleep(500);
 }
 
-const summary = [];
 const fromIdx = argv.indexOf('--from');
 const from = fromIdx >= 0 ? ROUTES.indexOf(argv[fromIdx + 1]) : 0;
 for (const route of ROUTES.slice(Math.max(from, 0)).filter((r) => r.startsWith(prefix))) {
