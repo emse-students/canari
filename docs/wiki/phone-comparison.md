@@ -192,7 +192,7 @@ oignons". Status is kept here until each item is merged; the release is cut only
 | U5 | Walk the rest of the app for other graphical defects. Seen, dev estate account with NO community: the Communautes tab is a 72 px rail with one "+" tile beside a list that only says "select or create" - the two-pane desktop layout with nothing in it; a phone wants one centred empty state with a create button. NOT fixed: it needs a look with real communities first (local bench build). Seen, fine: feed, chat list, dashboard, profile, settings. Still to walk: agenda, shop, associations, a community with channels, posts composer, calendar, settings sub-pages | OPEN |
 | U6 | The PIN sheet is cut on the iPhone (keypad's last row and options under the footer): full screen on phones, prose and key height trimmed under 800 px of height | WRITTEN - READ on the iPhone 2026-09-30: whole keypad and options visible |
 | U7 | Black band and rounded corner above the keyboard = the window's own black | WRITTEN (window ground follows the theme) - READ on the iPhone 2026-09-30: no band above the keyboard, composer sits on it |
-| U8 | The top reads as two bands: the status strip is the page ground, the header under it a lighter surface (both platforms) | iOS FIXED and READ on the iPhone 2026-09-30 (one white band): the SHELL paints its own top padding with the header's surface (`:root[data-phone-header]:not([data-banner-up]) .app-shell` in `app.css`; `MobileHeader` sets the first attribute while mounted, the layout's banner observer the second). A pseudo-element on the header cannot do it - the content column around it is `overflow-hidden` and clips it. While a banner is up the strip stays the page ground, which is what lies under the banner. ANDROID OPEN: the page reads `env(safe-area-inset-top) = 0` there, the strip is the activity's window, so it takes a native bridge |
+| U8 | The top reads as two bands: the status strip is the page ground, the header under it a lighter surface (both platforms) | iOS FIXED and READ on the iPhone 2026-09-30 (one white band): the SHELL paints its own top padding with the header's surface (`:root[data-phone-header]:not([data-banner-up]) .app-shell` in `app.css`; `MobileHeader` sets the first attribute while mounted, the layout's banner observer the second). A pseudo-element on the header cannot do it - the content column around it is `overflow-hidden` and clips it. While a banner is up the strip stays the page ground, which is what lies under the banner. ANDROID FIXED BY THE SAME RULE and READ on the Mi 9T 2026-09-30 (one grey band in dark): the WebView spans the whole screen (`uiautomator` bounds `[0,0][1080,2340]`), so the strip there is the shell's padding too. An earlier note here called it the activity's window and owed a native bridge - wrong, read off an APK that carried the clipped pseudo-element version |
 
 **The same walk on the Mi 9T (2026-09-30, debug APK from `d9944953b`, dark system theme, gesture bar):**
 the PIN sheet, the feed, the chat list, a conversation and the keyboard all hold - the glass header,
@@ -200,10 +200,10 @@ the "+" and the composer row are aligned, and Android already draws edge to edge
 and the gesture pill owning their strips. **One two-tone defect, candidate U8:** on the brand screens
 the status strip is the page's own ground (`#000` in dark) and the header under it is a lighter
 surface, so the top reads as two bands - the iPhone has the same thing in light (a grey strip over a
-white header). That is U8 above - fixed on iOS, open on Android.
+white header). That is U8 above - fixed on both.
 
 **What is left, scoped by the user on 2026-09-30:** U5 on the LOCAL stack with a bench build and an
-account that belongs to communities; Android gets the top band (native), 200 % font and three-button
+account that belongs to communities; Android gets the top band (done by U8, no native code), 200 % font and three-button
 navigation (the user flips that switch on the Mi 9T) - *"on peut accepter des differences, mais on
 peut apprecier les choses aussi"*, so Android is improved, not only made acceptable; lot 5 keeps
 Dynamic Type, landscape and iPad, the long-press and swipe overlays, and the admin pages. Then ONE
