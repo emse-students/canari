@@ -2069,6 +2069,7 @@
   "form_view_remind_me": "Remind me",
   "form_view_redirecting": "Redirecting…",
   "form_view_answer_placeholder": "Your answer…",
+  "form_view_unsupported_type": "Unsupported question type: {type}",
   "form_view_select_placeholder": "Choose an option…",
   "form_view_payment_mode_heading": "Payment method",
   "form_view_online_label": "Online",
