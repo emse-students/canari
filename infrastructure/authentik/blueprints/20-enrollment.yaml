@@ -78,7 +78,7 @@ entries:
       field_key: "attributes.formation"
       label: "Formation :"
       type: "radio-button-group"
-      placeholder: "return [\"ICM\", \"ISMIN\", \"FSSS\", \"Master\"]"
+      placeholder: "return [\"ICM\", \"ISMIN\", \"FSSS\", \"Autre\"]"
       order: 2
       placeholder_expression: true
   - model: authentik_stages_prompt.prompt
@@ -122,19 +122,32 @@ entries:
     identifiers:
       name: "miconnect-enrollment-merge-status"
     attrs:
+      # Copies the status into `school_status` AND builds the version-1 profile (WP1), by the rules
+      # infrastructure/authentik/migrate-profile.py applied to the existing accounts - D26's campus,
+      # D27's EMSE post, the capitals split for the explicit names. Bound to the CAS flow only: the
+      # alumni flow is rebuilt by WP2.
       expression: |-
-        # 1. On récupère l'utilisateur qui a été créé par le premier Write Stage
         prompt_data = request.context.get("prompt_data", {})
-
         attributes = prompt_data.get("attributes", {})
-
-        if "custom_statut" in prompt_data:
-            attributes["school_status"] = prompt_data["custom_statut"]
-
-            prompt_data["attributes"] = attributes
-            request.context["prompt_data"] = prompt_data
-
-        # On retourne True pour autoriser le Write Stage à s'exécuter
+        status = prompt_data.get("custom_statut")
+        if status is not None:
+            attributes["school_status"] = status
+        formation = attributes.get("formation")
+        promo = attributes.get("promo")
+        cursus = [{"formation": formation, "promo": int(promo)}] if status == "Elève" and formation and promo is not None else []
+        parts = (prompt_data.get("name") or "").strip().split()
+        last = [part for part in parts if part == part.upper() and len(part) > 1]
+        first = [part for part in parts if not (part == part.upper() and len(part) > 1)]
+        attributes["profile"] = {
+            "version": 1,
+            "campus": "gardanne" if formation == "ISMIN" else "saint-etienne",
+            "cursus": cursus,
+            "posts": [] if cursus else ["EMSE"],
+            "firstName": " ".join(first) or (parts[0] if parts else ""),
+            "lastName": " ".join(last),
+        }
+        prompt_data["attributes"] = attributes
+        request.context["prompt_data"] = prompt_data
         return True
   - model: authentik_flows.flow
     identifiers:

@@ -68,43 +68,21 @@ entries:
     identifiers:
       name: "miconnect-claim-name"
     attrs:
+      # The explicit names of the profile (WP1), which ended the capitals heuristic this mapping ran.
       expression: |-
-        # 1. On récupère le nom complet de l'utilisateur stocké dans Authentik
-        full_name = user.name or ""
-
-        # 2. On applique ta logique de découpage
-        parts = full_name.strip().split()
-
-        # Sécurité : si le champ est vide
-        if not parts:
-            return {
-                "name": full_name
-            }
-
-        last_name_parts = []
-        first_name_parts = []
-
-        for part in parts:
-            if part == part.upper() and len(part) > 1:
-                last_name_parts.append(part)
-            else:
-                first_name_parts.append(part)
-
-        first_name = " ".join(first_name_parts) or parts[0]
-        last_name = " ".join(last_name_parts)
-
-        # 3. On retourne les attributs (claims) standards OpenID Connect
-        return {
-            "firstName": first_name,  # Le prénom extrait
-            "lastName": last_name   # Le nom de famille extrait
-        }
+        profile = request.user.attributes.get("profile") or {}
+        return {"firstName": profile.get("firstName"), "lastName": profile.get("lastName")}
       scope_name: "name"
       description: "Gives the first and last names"
+  # COMPATIBILITY (WP1 -> WP9, docs/wiki/legacy-compatibility.md): `formation` and `promo` are the
+  # FIRST cursus of the profile, so every application reading them keeps working untouched.
   - model: authentik_providers_oauth2.scopemapping
     identifiers:
       name: "miconnect-claim-formation"
     attrs:
-      expression: "return {\"formation\": request.user.attributes.get(\"formation\")}"
+      expression: |-
+        cursus = (request.user.attributes.get("profile") or {}).get("cursus") or []
+        return {"formation": cursus[0]["formation"] if cursus else None}
       scope_name: "formation"
   - model: authentik_providers_oauth2.scopemapping
     identifiers:
@@ -116,7 +94,9 @@ entries:
     identifiers:
       name: "miconnect-claim-promo"
     attrs:
-      expression: "return {\"promo\": request.user.attributes.get(\"promo\")}"
+      expression: |-
+        cursus = (request.user.attributes.get("profile") or {}).get("cursus") or []
+        return {"promo": cursus[0]["promo"] if cursus else None}
       scope_name: "promo"
       description: "Année d'entrée à l'école"
   - model: authentik_providers_oauth2.scopemapping
@@ -139,6 +119,25 @@ entries:
     attrs:
       expression: "return {\"email\": f\"{request.user.username}@canari.emse.fr\"}"
       scope_name: "email"
+  # The profile itself (WP1): the campus, every cursus and every post, on every provider.
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-profile"
+    attrs:
+      expression: |-
+        profile = request.user.attributes.get("profile") or {}
+        return {"campus": profile.get("campus"), "cursus": profile.get("cursus") or [], "posts": profile.get("posts") or []}
+      scope_name: "profile"
+      description: "Gives the campus, the cursus and the posts"
+  # The account's stable identifier, on Canari's providers only: Canari is the editor of the profile
+  # (WP4), and the key it writes back through authentik's API is this uuid, never the `sub`.
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-uuid"
+    attrs:
+      expression: "return {\"miconnect_uuid\": str(request.user.uuid)}"
+      scope_name: "profile"
+      description: "Gives the MiConnect account uuid"
   - model: authentik_sources_oauth.oauthsourcepropertymapping
     identifiers:
       name: "miconnect-cas-identity"

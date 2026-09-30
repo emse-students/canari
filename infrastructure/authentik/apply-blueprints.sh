@@ -29,17 +29,9 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 2
 fi
 
-program='import sys; exec(sys.stdin.read())'
-# ssh hands its arguments to the REMOTE shell as one string, which strips one level of quoting.
-run_ak_shell() {
-  if [ -n "${AK_REMOTE:-}" ]; then
-    # AK_REMOTE is a command and its arguments, so it is split on purpose.
-    # shellcheck disable=SC2086
-    $AK_REMOTE docker exec -i "$container" ak shell -c "'$program'"
-  else
-    docker exec -i "$container" ak shell -c "$program"
-  fi
-}
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=ak-shell.sh
+. "$here/ak-shell.sh"
 
 {
   echo "import base64"
@@ -50,4 +42,4 @@ run_ak_shell() {
       "$(basename "$file")" "$(base64 -w0 "$file")"
   done
   cat "$here/apply-blueprints.py"
-} | run_ak_shell
+} | run_ak_shell "$container"

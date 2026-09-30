@@ -60,9 +60,11 @@ can sign in to all nine.
 | no CAS connection | 6 |
 
 Promo (entry year): 2026 177, 2025 158, 2024 140, 2023 70, 2022 39, then 2021 x2, 2020, 2007 and
-1816 - the validator accepts anything. **6 accounts have no all-capitals word in their name, so their
-`lastName` is empty** and every name-based match (Canari's legacy cotisations, Sky's record link, the
-Cercle's account reclaim) misses them.
+1816 - the validator accepts anything. 6 accounts have no all-capitals word in their name, so their
+`lastName` is empty - **and none of them is a person** (read 2026-09-30): authentik's
+`AnonymousUser`, a `service-account` and the four campaign accounts `canari-test-*`. Every real
+account splits. The `1816` was `les.roots`, an internal admin account the user DELETED as dead the
+same day.
 
 **What each application decides from those claims** - `formation = 'ICM'` is the real access
 criterion, hard-coded three times, and every admin flag is local:
@@ -321,6 +323,29 @@ reads the verified id_token once at its callback and discards the rest
   [legacy-compatibility](legacy-compatibility.md) with its removal condition (WP9).
 - The migration (D26, D27) is ONE idempotent `ak shell` script: a dry run printing every change,
   then the write; the old keys stay until WP9. Before it, the daily `authentik_db` dump is checked.
+
+**WP1 as built (2026-09-30)**, with two decisions the user took that day:
+
+- **`Master` becomes `Autre` EVERYWHERE, at once** - the profile AND the `formation` claim, so WP1
+  is NOT invisible for those 14 accounts. What reads the value: MiGallery grants 21 albums to
+  `formation = Master` and offers it as a choice (converted in the same minute, and its choice list
+  by its own PR); Canari has no form or product naming it; Sky reads `ICM` only; the Cercle already
+  has an `autre` bucket.
+- **The explicit names are the capitals split the name mapping made**, so no real account's
+  `firstName` / `lastName` changes. The accounts authentik owns - `AnonymousUser` and outpost service
+  accounts - get no profile.
+- `infrastructure/authentik/migrate-profile.sh dry-run|apply` writes a profile ONLY where there is
+  none, so a re-run never overwrites enrolment's or an admin's. Enrolment builds the same profile,
+  in `miconnect-enrollment-merge-status`, by the same rules; the enrolment choice `Master` is `Autre`.
+- `miconnect-claim-profile` (scope `profile`, every provider) emits `campus`, `cursus`, `posts`;
+  `miconnect-claim-uuid` (scope `profile`, Canari's three providers) emits `miconnect_uuid`.
+- **Proven before any write.** Locally: five accounts shaped like production's, the claims each
+  mapping emits, the enrolment policy on a student and a staff submission, a second migration
+  writing 0. On production, read-only: the claims today against the claims from the migrated
+  profile, for 607 accounts - the ONLY differences were 14 `Master -> Autre` and `les.roots`' `1816`.
+- **The order on production is forced**: the name, formation and promo claims read the profile
+  only, so the migration is written BEFORE the blueprints are applied, and run again after them
+  for anyone who enrolled in between.
 
 **WP2 - The enrolment flow (D11, D12, D7).** One flow bound to BOTH sources: campus (radio); "Je
 suis ou j'ai été élève" (checkbox) -> formation + entry year; "Je travaille pour" -> three checkboxes
