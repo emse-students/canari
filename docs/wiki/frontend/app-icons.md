@@ -25,6 +25,7 @@ drawn by hand per surface.
 | `gen-android-icons.mjs` | adaptive foreground and THEMED (monochrome) layers, legacy square and round icons, the gradient background drawable, the status-bar icon |
 | `gen-web-icons.mjs` | `apple-touch-icon.png` (opaque), `favicon.ico` |
 | `gen-native-icons.mjs` | the desktop set (`.icns`, `.ico`, Windows tiles) and the iOS `AppIcon` set, through `tauri icon` |
+| `gen-icon-layers.mjs` | `store/icons/`: the Play and App Store icons and the bird / background layers an icon editor takes |
 
 The Android files are NOT taken from `tauri icon`: it cannot express the gradient background, the
 themed layer or the status-bar icon. `appIcons.test.ts` measures the bird's width off the pixels of
