@@ -659,6 +659,77 @@ on hardware.
 - `aps-environment: production` for TestFlight/App Store
 - Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
 
+### A build for the phone on the bench
+
+**The iPhone joins the local test stack the way the Mi 9T does, and the route differs in exactly
+one place: it has no `adb reverse`**, so it reaches the workstation by its address on the Wi-Fi
+(`http://<LAN ip>:8081`) instead of `localhost`. Windows cannot compile Apple code, so a macOS runner
+does it - `ios.yml` dispatched with `local_url`:
+
+```sh
+gh workflow run ios.yml --ref <branch> -f local_url=http://192.168.1.32:8081 \
+  -f local_client_id="$(grep ^VITE_AUTHENTIK_CLIENT_ID= frontend/.env | cut -d= -f2-)"
+```
+
+What that mode does differently from a release, all gated on `env.LOCAL_URL`: it needs no
+distribution certificate or profile, writes the seven `VITE_*` origins as that address, sets NO
+`VITE_DEPLOY_ENVIRONMENT` (that variable IS the banner), adds `NSAllowsLocalNetworking` and
+`NSLocalNetworkUsageDescription` to THIS build's `Info.plist` only, merges the `local-estate`
+capability through `TAURI_CONFIG` (the build bypasses `tauri ios build`, so `--config` never
+applies), and builds UNSIGNED. **It refuses `publish`**, and the artefact (`ios-local-device`)
+lives three days.
+
+**THE OIDC CLIENT IS THE LOCAL STACK'S, NOT PRODUCTION'S (`local_client_id`, required).** The phone
+authorizes against Authentik, but the code comes back to the workstation's core service, which
+holds the secret of the `Canari Local` provider. A code issued to the production client is refused
+(`Invalid code: invalid client or code has expired` in `docker logs miconnect-server-1`, `401` on
+`/api/auth/oidc/callback`). The id is not a secret - it ships in every bundle - so it is an input,
+read from the workstation `frontend/.env`, exactly as the Android rig does.
+
+**THE LAN SCOPES ARE REGEXP GROUPS, AND `192.168.*` SILENTLY MATCHED NOTHING (2026-09-30).** A
+`URLPattern` canonicalises the literal text of a hostname as a hostname, and `192.168.` reads as an
+IPv4 address: `http://192.168.*:*` became hostname `192.0.0.168*` and `10.*` became `0.0.0.10*`.
+The Tauri http plugin then refused every request to the workstation before opening a socket. The
+WebView's own fetch kept working because it ignores that scope, which hid the defect: the sign-in
+(cookie-bearing, so routed to the WebView by `fetchRouting.ts`) passed, and the PIN salt (no
+cookie, so routed to the plugin) answered "server unreachable" with **nothing in nginx**. Text
+inside a regexp group is not canonicalised; the patterns in `local-estate.json` are
+`http://(192\.168\.[0-9]+\.[0-9]+):*`. Test a scope pattern offline with `new URLPattern(p).test(u)`
+before a 15-minute build.
+
+**A FRESH INSTALL ASKS TWO SYSTEM QUESTIONS, and only a normal launch shows the first.** "Local
+network" (`NSLocalNetworkUsageDescription`) and notifications. Settings > Privacy > Local Network
+counting 0 apps means nobody has asked yet. Install over an existing app keeps its data; **a build
+that cannot open the previous local store answers "your saved messages could not be opened", and
+its on-screen remedy (`PIN oublie ?`) resets the ACCOUNT's PIN** - the wrong tool to clear a phone.
+Uninstall then reinstall clears the local data and leaves the server's PIN alone.
+
+**Signing stays on the workstation, and that is the design**: the key of a certificate that installs
+on a real phone is not handed to a CI secret store to save one command. The team's development
+certificate, the phone's UDID and two development profiles (`fr.emse.canari`, `.notifications`) were
+created through the App Store Connect API, and `rcodesign` signs the appex first and the app second.
+
+**The iPhone counterpart of `adb` is `tools/ios-device/`**, and needs no Mac:
+
+| Script | What it is |
+| --- | --- |
+| `sign-install.mjs <unsigned.ipa>` | signs (appex, then app), stops the running app, installs |
+| `install.py <signed.ipa>` | AFC push to `/PublicStaging`, then the installation proxy. `pymobiledevice3 apps install` hung 25 minutes on the 45 MB archive |
+| `wda-daemon.py` | keeps the WebDriverAgent runner alive and forwards its port 8100 to `localhost` over usbmux; the runner lives exactly as long as the process that started it |
+| `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type`, `swipe`, `button`, `size` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them) |
+
+Four traps of driving it, each of which cost a wrong conclusion: `tap <text>` taps the FIRST element
+containing the text, which is often a paragraph rather than the button (find the `Button` by type);
+the PIN dialog moves when an error line appears, so a fixed coordinate can tick the checkbox under
+it; Authentik keeps a half-finished flow in its session, so a mistyped login comes back on the next
+attempt until "Pas vous ?" clears it; and WDA's `keys` can insert a stray character, so **read the
+field back before submitting** (the first login failed on `canari-test-alphah`, a user that does
+not exist, which Authentik reports as "invalid password").
+
+The Safari Web Inspector cannot see this app: a release archive is not inspectable, by design.
+Diagnose from `docker logs canari-local-nginx-1` (the plugin's user agent is
+`tauri-plugin-http`, the WebView's is the iPhone's) and `idevicesyslog`.
+
 ## Android specifics
 
 ### The process exists before the first unlock, and nothing in it may assume otherwise (WP-DIRECTBOOT-1)
