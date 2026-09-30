@@ -59,6 +59,18 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
+
+**Site:** the scope mappings `miconnect-claim-formation` and `miconnect-claim-promo` in
+`infrastructure/authentik/blueprints/10-mappings.yaml`; and the old attribute keys `formation`,
+`promo` and `school_status`, still written by enrolment and left in place by the migration.
+**Shim:** since WP1 (profile reform) the profile holds a LIST of cursus and posts
+([profiles-and-access](profiles-and-access.md)). Every application still reads one `formation` and
+one `promo`, so both claims are the FIRST cursus - a person with two cursus shows only the first.
+**Removal condition:** WP9 - every application reads `cursus` / `posts` / `campus` and no longer
+requests the `formation` or `promo` scope. Measured then on authentik's access log: no
+`/authorize` naming either scope for a week.
+
 ### No date yet - the Graine v1 reader: a salon row with no signature, under a session with no endorsement
 
 **Site:** `openChannelMessage` in `frontend/src/lib/utils/graine/channelSeal.ts`, the `openWithGraine`

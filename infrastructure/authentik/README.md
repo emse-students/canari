@@ -69,6 +69,11 @@ bash apply-blueprints.sh snapshot   # l etat normalise de chaque objet nomme, sa
 AK_REMOTE="ssh portail-etu-direct" bash apply-blueprints.sh dry-run
 ```
 
+Le profil des comptes (WP1, `docs/wiki/profiles-and-access.md`) s ecrit avec
+`migrate-profile.sh dry-run|apply`, meme transport (`ak-shell.sh`). Il n ecrit un profil
+que la ou il n y en a pas, donc on peut le relancer sans risque ; verifier le dump
+`authentik_db` du jour avant `apply`.
+
 | Qui | Quoi |
 | --- | --- |
 | la CI (`test-miconnect-blueprints`) | `test-blueprints.sh` : un Authentik VIERGE demarre avec ce `compose.yml`, les blueprints y sont appliques deux fois, et la seconde doit dire `0 change(s)` |
