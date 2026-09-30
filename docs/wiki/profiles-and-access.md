@@ -285,7 +285,8 @@ reads the verified id_token once at its callback and discards the rest
      name another system holds kept
      ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30));
    - PKCE `S256` on the CAS source: the CAS redirect carries `code_challenge_method=S256` since
-     the apply. **Owed: ONE human CAS sign-in**, since no gate here talks to the real CAS;
+     the apply, and **the user's own sign-in PROVED it** (MiGallery, 2026-09-30 19:18 UTC: the CAS
+     callback, `login`, then `/application/o/token/` `200`);
    - launch URLs on the names that answer: `cercle.emse.fr`, `mino.emse.fr` (and MinoWiki's
      `logout_uri`), `sky.emse.fr`. The old hosts `301` there. Archives and
      MiGallery keep theirs, having no final host yet;
