@@ -101,6 +101,23 @@ class Android(Phone):
                 out.append({"text": text, "fx": (x1 + x2) / 2 / self.w, "fy": (y1 + y2) / 2 / self.h, "type": n.get("class")})
         return out
 
+    def nodes(self):
+        """Every node of the UI dump, in DP, for the layout audit: text, class, clickable, rect."""
+        if not hasattr(self, "dp"):
+            self.dp = int(re.search(r"(\d+)", self.adb("shell", "wm", "density").decode().split(":")[-1]).group(1)) / 160
+        self.adb("shell", "uiautomator", "dump", "/sdcard/bench.xml")
+        xml = self.adb("exec-out", "cat", "/sdcard/bench.xml").decode("utf-8", "replace")
+        out = []
+        for n in ET.fromstring(xml).iter("node"):
+            m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds") or "")
+            if not m:
+                continue
+            x1, y1, x2, y2 = (int(v) / self.dp for v in m.groups())
+            out.append({"text": n.get("text") or n.get("content-desc") or "", "type": n.get("class").split(".")[-1],
+                        "click": n.get("clickable") == "true", "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                        "W": self.w / self.dp, "H": self.h / self.dp})
+        return out
+
     def launch(self, cold=False):
         if cold:
             self.adb("shell", "am", "force-stop", self.app)
@@ -109,6 +126,16 @@ class Android(Phone):
 
     def stop_app(self):
         self.adb("shell", "am", "force-stop", self.app)
+
+    def reference(self):
+        """A baseline frame for a STILL screen: screenrecord sends nothing while nothing moves, so a
+        capture started on a static page holds zero frames and has nothing to compare against. The
+        PNG is thumbnailed the way the stream's frames are, so the two compare."""
+        from PIL import Image
+
+        png = self.adb("exec-out", "screencap", "-p")
+        img = Image.open(io.BytesIO(png)).convert("L").resize((540, 1170))
+        return np.asarray(img)[::THUMB, ::THUMB].copy()
 
     def gfx_reset(self):
         self.adb("shell", "dumpsys", "gfxinfo", self.app, "reset")
@@ -239,6 +266,23 @@ class IOS(Phone):
 
         return walk(self._call("GET", f"/session/{self.sid}/source?format=json")["value"], [])
 
+    def nodes(self):
+        """Every node of the accessibility tree, in points, for the layout audit."""
+        def walk(n, out):
+            r = n.get("rect")
+            kind = n.get("type", "").replace("XCUIElementType", "")
+            if r:
+                text = " | ".join(dict.fromkeys(s for s in (n.get("label"), n.get("name"), n.get("value")) if isinstance(s, str) and s))
+                out.append({"text": text, "type": kind,
+                            "click": n.get("isEnabled") != "0" and kind in ("Button", "Link", "Switch", "Cell", "TextField", "SecureTextField", "Tab"),
+                            "x1": r["x"], "y1": r["y"], "x2": r["x"] + r["width"], "y2": r["y"] + r["height"],
+                            "W": self.w, "H": self.h, "visible": n.get("isVisible") != "0"})
+            for c in n.get("children") or []:
+                walk(c, out)
+            return out
+
+        return walk(self._call("GET", f"/session/{self.sid}/source?format=json")["value"], [])
+
     def launch(self, cold=False):
         if cold:
             self.stop_app()
@@ -308,7 +352,7 @@ def unlock_app(p):
     return True
 
 
-def settled_after(frames, t0, quiet=0.25, thr=0.6):
+def settled_after(frames, t0, quiet=0.25, thr=0.003, baseline=None):
     """(first_change, settled) in seconds after t0: the first frame that differs from the one before
     t0, and the start of the first `quiet` seconds with no frame differing from its predecessor by
     more than `thr` (mean grey level). None when nothing moved. Frames of different phones are
@@ -321,7 +365,7 @@ def settled_after(frames, t0, quiet=0.25, thr=0.6):
     first = None
     last = None
     for t, img in after:
-        d = float(np.mean(np.abs(img.astype(np.int16) - prev)))
+        d = float(np.mean(np.abs(img.astype(np.int16) - prev) > 10))  # share of pixels that changed visibly
         prev = img.astype(np.int16)
         if d > thr:
             if first is None:

@@ -60,12 +60,13 @@ def timed_action(p, action, window=1.6):
     """Runs `action` while capturing; returns (first_change_ms, settled_ms, dispatch_ms, capture)."""
     cap = p.start_capture()
     time.sleep(1.2)  # frames flowing, screen still
+    ref = p.reference() if isinstance(p, Android) and not cap.frames else None
     t0 = time.perf_counter()
     action()
     dispatch = time.perf_counter() - t0
     time.sleep(window)
     frames = cap.stop()
-    first, settled = settled_after(frames, t0)
+    first, settled = settled_after(frames, t0, baseline=ref)
     ms = lambda v: None if v is None else round(v * 1000)
     return ms(first), ms(settled), round(dispatch * 1000), frames, t0
 
