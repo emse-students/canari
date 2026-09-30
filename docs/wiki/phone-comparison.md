@@ -71,7 +71,7 @@ floating "liquid glass" bar is deliberate on iOS); the bar for each line is "wor
 | A | **The floating tab bar is drawn OVER the composer**, hiding its attachment row and the "Publier" button (a yellow edge shows through the glass). The action that matters on that screen is covered. | iPhone | composer |
 | B | **The composer's attachment row is cut on the right** ("Sondage"): it scrolls sideways with nothing saying so. | both | composer |
 | C | **The glass bar covers the bottom of long pages** (the last dashboard card "Formulaires", profile "Cotisations", settings "Code PIN") and the content shows through it. Reachable by scrolling, but unreadable at rest. | iPhone | dashboard, profile, settings |
-| D | **The iPhone renders everything ~1.25x larger** at the same ~390 pt viewport: fewer items per screen, more wrapping ("Decouvrez les associations de la communaute" on 3 lines). Cause unknown (iOS text size, `text-size-adjust`, viewport): check Settings > Display on that iPhone first. | iPhone | all |
+| D | **Not an iPhone defect - the Mi 9T draws SMALLER than standard.** The iPhone is at the standard display zoom (390 pt wide); the Mi 9T's WebView reports 436 CSS px instead of its nominal 393, because MIUI's "display size" is reduced on this phone. The iPhone's Dynamic Type setting could not be read from the Settings tree. | Mi 9T | all |
 | E | **The WebKit form accessory bar** (up/down arrows, OK) takes ~45 pt above the keyboard on every text field. | iPhone | search, composer |
 | F | Header icon buttons are 45 px and filter pills 32 px high: fine on iOS (44), under Material's 48. | Android | header, feed |
 | G | Fits everywhere else: no horizontal scroll, no visible scrollbar, no clipped text on agenda, shop, associations, forms, notifications, discussions, communities, the apps-grid popover. | both | - |
@@ -121,10 +121,10 @@ glass bar): the bar's rectangle contains the button, so the rule counted it as p
 the screenshot and on geometry (Publier sits at x = 0.80, exactly where the Dashboard tab is) and has NOT
 been confirmed by tapping it.
 
-**An embedded app is a screen too.** A post can embed MiGallery, and its "Plein ecran" opens that app
-full screen inside Canari - with its own header, "Deconnexion" and tab bar, and **no way back** through
-the app's controls (the tour had to relaunch Canari). Worth a decision: embed with a visible exit, or not
-full screen.
+**The fullscreen media viewer is fine - it was the tour.** The first feed post carries a SCREENSHOT of
+MiGallery (test data). Its "Plein ecran" opens `MediaLightbox`, which shows a Back button on every
+platform; a single tap on the image hides the controls (`chromeHidden`), and the tour's tap did exactly
+that - an empty tree, read as "no way out". Not a finding.
 
 ## What is covered, and what is not
 
@@ -143,7 +143,7 @@ Not covered, in order of what a user meets first:
 
 ## What to do next
 
-1. Decide on findings A-F above; A, B and the embedded-app exit are the ones a user hits.
+1. Decide on findings A-F above; A and B are the ones a user hits.
 2. Install a release-mode APK against the local stack and redo startup and scroll.
 3. Create the data for group 1 above and extend `tour.py` (`SCREENS`) and `overlays_ios.py`.
 4. Give the iPhone a way to read the renderer (the release WebView is not inspectable).
