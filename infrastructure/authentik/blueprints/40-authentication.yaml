@@ -9,6 +9,26 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "false"
 entries:
+  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # gives the object its new name before the entry that describes it by that name. It finds the
+  # object by PK, because authentik merges an entry's identifiers back into its attributes: found
+  # by its old name, it would write that old name straight back. So an instance
+  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
+  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
+  - model: authentik_flows.flow
+    conditions:
+      - !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
+    identifiers:
+      pk: !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
+    attrs:
+      slug: "miconnect-invalidation-mino"
+  - model: authentik_stages_redirect.redirectstage
+    conditions:
+      - !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+    identifiers:
+      pk: !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+    attrs:
+      name: "miconnect-logout-redirect-archives"
   - model: authentik_flows.flow
     identifiers:
       slug: "miconnect-auth"
@@ -34,9 +54,9 @@ entries:
       designation: "authentication"
   - model: authentik_flows.flow
     identifiers:
-      slug: "mino-provider-invalidation-flow"
+      slug: "miconnect-invalidation-mino"
     attrs:
-      name: "MINO provider invalidation"
+      name: "miconnect-invalidation-mino"
       title: "Tu es déconnecté de %(app)s."
       designation: "invalidation"
   - model: authentik_stages_identification.identificationstage
@@ -54,7 +74,7 @@ entries:
       deny_message: "La connexion n'a pas abouti. Ce n'est pas ton compte : le service d'authentification de l'école (CAS) est revenu sans réponse valide. Retourne dans l'application et relance la connexion, elle aboutit généralement à la deuxième tentative."
   - model: authentik_stages_redirect.redirectstage
     identifiers:
-      name: "Archives MINO logout redirect"
+      name: "miconnect-logout-redirect-archives"
     attrs:
       mode: "static"
       target_static: "https://archives.canari-emse.fr/s/memoires-des-mines/"
@@ -90,8 +110,8 @@ entries:
       order: 20
   - model: authentik_flows.flowstagebinding
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
-      stage: !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+      target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-archives"]]
       order: 10
     attrs:
       evaluate_on_plan: true

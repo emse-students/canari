@@ -278,17 +278,25 @@ reads the verified id_token once at its callback and discards the rest
    read from the database and never printed, and only the worker was recreated, so sign-in stayed
    up. The dry run then reported exactly the predicted 1 change; `apply` wrote it, and a second dry
    run reported 0.
-2. **WPA-2: the normalization**, as blueprint diffs:
-   - the `miconnect-` names, each renamed by an entry conditioned on the old name still existing,
-     so the hourly-safe blueprint never recreates a duplicate;
-   - PKCE `S256` on the CAS source;
-   - launch URLs on the final names;
-   - the grant types trimmed. Eight of the nine providers accept `password`, `client_credentials`,
-     `implicit`, `hybrid` and `device_code`, where every client uses `authorization_code` (and
-     `refresh_token`);
-   - the brand's unset `flow_user_settings` / `flow_invalidation`, decided;
-   - the brand CSS header, which still says "paste this into the admin UI";
-   - the OOBE instance back to `successful`.
+2. **WPA-2: the normalization**, as blueprint diffs (2026-09-30):
+   - the `miconnect-` names: 26 objects, each renamed IN PLACE by a conditioned entry, and every
+     name another system holds kept
+     ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30));
+   - PKCE `S256` on the CAS source. **Owed: ONE human CAS sign-in after the stable that applies
+     it**, since no gate here talks to the real CAS;
+   - launch URLs on the names that answer: `cercle.emse.fr`, `mino.emse.fr` (and MinoWiki's
+     `logout_uri`), `sky.emse.fr`, `portail-etu.emse.fr`. The old hosts `301` there. Archives and
+     MiGallery keep theirs, having no final host yet;
+   - every provider allows `authorization_code` and `refresh_token`, nothing else. The evidence,
+     read on production: every client that is code here sends `grant_type=authorization_code`; the
+     `/authorize` log holds 198 of 198 `response_type=code`; since 2026-03-05, no `login` event
+     carries a token/app-password method, and no device token exists;
+   - the brand's unset `flow_invalidation` / `flow_user_settings` STAY unset. authentik looks a
+     missing brand flow up by designation, measured: `/flows/-/default/invalidation/` answers
+     `302` to `default-invalidation-flow`. The settings flow is WP4's to decide;
+   - the brand CSS header no longer says "paste this into the admin UI";
+   - the OOBE instance: re-applying it changes no object (measured, rolled back), so the `error` is
+     a status only. **Owed to the user: one command resets it.**
 3. **WPA-3: the dev MiConnect**, fed the same blueprints, with the brand domain and the providers as
    context. It needs the DSI's second CAS client.
 

@@ -107,12 +107,36 @@ def entry_model(entry, blueprint):
     return apps.get_model(*entry.get_model(blueprint).split("."))
 
 
-def entry_object(entry, blueprint):
-    """The object an entry names, or None when it does not exist (yet)."""
+def rename_of(entry, blueprint):
+    """(model, key, old, new) when the entry is a RENAME - conditioned, found by `pk: !Find [model,
+    [key, old]]`, and giving that key a new value (the blueprints' RENAMES blocks) - else None. By pk
+    because authentik merges the identifiers back into the attributes: an entry found by `key: old`
+    would write the old value straight back."""
+    identifiers = entry.identifiers or {}
+    find = identifiers.get("pk")
+    if not entry.conditions or len(identifiers) != 1 or not isinstance(find, Find) or len(find.conditions) != 1:
+        return None
+    key, old = find.conditions[0]
+    new = (entry.attrs or {}).get(key)
+    if not isinstance(old, str) or not isinstance(new, str) or old == new:
+        return None
+    return entry_model(entry, blueprint)._meta.label_lower, key, old, new
+
+
+def entry_object(entry, blueprint, renames):
+    """The object an entry names, or None when it does not exist (yet). An object still under the
+    name a RENAME entry gives away is found by that old name, so the rename reads as a change."""
     identifiers = entry.get_identifiers(blueprint)
     if any(value is None for value in identifiers.values()):
         return None
-    return entry_model(entry, blueprint).objects.filter(**identifiers).first()
+    model = entry_model(entry, blueprint)
+    obj = model.objects.filter(**identifiers).first()
+    if obj is None and len(identifiers) == 1:
+        ((key, value),) = identifiers.items()
+        old = renames.get((model._meta.label_lower, key, value))
+        if old is not None:
+            obj = model.objects.filter(**{key: old}).first()
+    return obj
 
 
 def importers():
@@ -122,10 +146,19 @@ def importers():
 
 def snapshot():
     state = {}
-    for file_name, importer in importers():
+    loaded = list(importers())
+    renames = {}
+    for _, importer in loaded:
+        for entry in importer.blueprint.iter_entries():
+            rename = rename_of(entry, importer.blueprint)
+            if rename:
+                renames[rename[0], rename[1], rename[3]] = rename[2]
+    for file_name, importer in loaded:
         # Keyed by POSITION, so a renamed object reads as a change rather than as one gone and one new.
         for index, entry in enumerate(importer.blueprint.iter_entries()):
-            obj = entry_object(entry, importer.blueprint)
+            if rename_of(entry, importer.blueprint):
+                continue
+            obj = entry_object(entry, importer.blueprint, renames)
             key = f"{file_name}#{index:02d} {entry_model(entry, importer.blueprint)._meta.label_lower}"
             state[key] = {"_is": natural(obj), **normalized(obj)} if obj else None
     return state
@@ -191,12 +224,26 @@ def run():
             missing = []
             for file_name, importer in importers():
                 for entry in importer.blueprint.iter_entries():
+                    # A rename's own !Find names the OLD object, which is gone once it has run.
+                    if rename_of(entry, importer.blueprint):
+                        continue
                     missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.attrs, entry, importer.blueprint))
                     missing.extend(f"{file_name} {m}" for m in unresolved_tags(entry.identifiers, entry, importer.blueprint, "identifiers"))
             if missing:
                 for line in missing:
                     log(f"UNRESOLVED {line}")
                 raise RuntimeError(f"{len(missing)} tag(s) resolved to nothing")
+            # A rename that did not run leaves the old object AND a new one built beside it.
+            left = []
+            for file_name, importer in importers():
+                for entry in importer.blueprint.iter_entries():
+                    rename = rename_of(entry, importer.blueprint)
+                    if rename and entry_model(entry, importer.blueprint).objects.filter(**{rename[1]: rename[2]}).exists():
+                        left.append(f"{file_name} {rename[0]} {rename[1]}={rename[2]!r} still exists beside {rename[3]!r}")
+            if left:
+                for line in left:
+                    log(f"NOT RENAMED {line}")
+                raise RuntimeError(f"{len(left)} rename(s) left the old object")
             changes = diff(before, snapshot())
             for line in changes:
                 log(line)

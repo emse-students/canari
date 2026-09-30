@@ -42,7 +42,7 @@ is mounted into or copied onto the host.
 
 | Who | Mode | What it proves |
 | --- | --- | --- |
-| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice, on a FRESH authentik booted from the real `compose.yml` | every object can be BUILT, every `!Find`/`!Env` resolves, and the second apply reports `0 change(s)` |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 
@@ -75,6 +75,35 @@ declares it with `:?`, so a `.env` that lacks it fails the start instead of blan
 **An edit made in the admin UI is reverted by the next stable release.** Every release re-applies
 every entry, so a hand change is either written into the files in a pull request or it is lost.
 
+**A RENAME IS TWO ENTRIES, because an entry FINDS its object by the name it gives it** (WPA-2,
+2026-09-30). Changing the identifier alone would build a second object under the new name and leave
+the old one where it is. So each file opens with a `RENAMES` block: one entry per object, carrying
+`conditions: [!Find <the old name>]`, found by `pk: !Find <the old name>`, and setting only the new
+one. **By pk, never by `name: <old>`**: authentik merges an entry's identifiers back into its
+attributes (`always_merger.merge` in the importer), so an entry found by its old name writes the old
+name straight back - a rename that silently does nothing, caught by the upgrade test. A fresh
+instance skips it; production is renamed in place, and every reference follows, because references
+are rows and not names. The applier reads such an entry as a rename, so the diff says `CHANGED
+.name`, and it REFUSES a commit that leaves an old name standing. The block is dead once production
+has taken it, and is deleted then - so the names older pages quote are kept here:
+
+| Kind | Before WPA-2 | Since |
+| --- | --- | --- |
+| scope mappings | `First + Last Names`, `Formation`, `Personnel de l'école`, `Promotion`, `avatar`, `fake-email` | `miconnect-claim-name`, `-formation`, `-school-status`, `-promo`, `-avatar`, `-email` |
+| CAS source mapping | `CAS EMSE` | `miconnect-cas-identity` |
+| prompts | `Formation`, `Promotion`, `School Worker` | `miconnect-enrollment-prompt-formation`, `-promo`, `-status` |
+| policies | `Validate promo year`, `is-student`, `Merge attributes` | `miconnect-enrollment-validate-promo`, `-is-student`, `-merge-status` |
+| prompt stages | `Request School Status`, `Request Promo & Formation` | `miconnect-enrollment-ask-status`, `-ask-promo` |
+| redirect stage | `Archives MINO logout redirect` | `miconnect-logout-redirect-archives` |
+| flow (slug) | `mino-provider-invalidation-flow` | `miconnect-invalidation-mino` |
+| providers | `Archives MINO`, `Canari`, ..., `Provider for Sky` | `miconnect-<application slug>` |
+
+**What keeps its old name, deliberately: every name another system HOLDS.** The source slugs
+`cas-emse` and `alumni` are in the callback URLs registered at the CAS and the alumni IdP. The
+application slugs are in each client's issuer URL, a rename deferred with the OIDC issuer. The slug
+`password-login` is the test campaign's `PASSWORD_LOGIN_FLOW_SLUG`. Stage, prompt, policy, mapping and
+provider names are read by nothing outside authentik, and those are the ones renamed.
+
 Traps found while writing this, each measured on authentik 2026.8.0:
 
 - **`ak apply_blueprint` exits 0 when a blueprint FAILS to apply**: it ignores the return value of
@@ -84,7 +113,9 @@ Traps found while writing this, each measured on authentik 2026.8.0:
   else that applies it. Every file therefore carries `blueprints.goauthentik.io/instantiate: "false"`,
   and the script is the ONE applier. The same fact explains the `Default - Out-of-box-experience`
   instance: it has shown `error` since 2026-08-29, it validates cleanly today, and nothing re-applies
-  it until its file changes.
+  it until its file changes. Applied inside a rolled-back transaction on 2026-09-30, it changes NO
+  object, and `initial-setup` keeps its guard (`default-oobe-password-usable`), so re-applying it
+  only resets the status.
 - **`!Find`, `!Env` and `!File` resolve to null and carry on** when they match nothing. A mistyped
   name would silently clear a nullable reference, which is why the brand CSS is written inline rather
   than read through `!File`. The applier refuses any `!Find` or `!Env` that resolves to nothing,
@@ -464,8 +495,11 @@ printed in full (the rollback):**
   6 have a real one.
 - `miconnect-auth-fallback` is referenced by nothing inside authentik; its deny text describes the
   CAS failure below.
-- The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29 - the
-  `initial-setup` flow it manages was edited by hand. Harmless for sign-in, and it is noise.
+- The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29. Harmless
+  for sign-in, and it is noise. **Not a hand edit, as first read (refuted 2026-09-30)**: a FRESH
+  2026.8.0 instance booted with nothing of ours showed the same `error`, its worker having logged
+  "Applying blueprint due to changed file" for it twice, 1.3 s apart - two concurrent applies of one
+  file. Other fresh boots reached 31 of 31 `successful`, so it is a race at boot.
 - **`AUTHENTIK_LOG_LEVEL` was `debug`** in `compose.yml`: 63 % of the lines, and user e-mail addresses
   written into the log. The file now says `info` (the access log, `authentik.asgi`, is emitted at
   info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
@@ -475,9 +509,8 @@ printed in full (the rollback):**
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
-  provider has 5 min / 30 days. Each is decided in the "authentik as code" package
-  ([profiles-and-access](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)),
-  not patched one by one.
+  provider has 5 min / 30 days. **All settled by WPA-2 (2026-09-30)**, the Cercle's lifetimes KEPT by
+  the user ([profiles-and-access](../profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)).
 
 ## Database and backup
 
