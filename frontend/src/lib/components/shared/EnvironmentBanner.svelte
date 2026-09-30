@@ -59,7 +59,7 @@
     {#snippet action()}
       <button
         type="button"
-        class="-mr-2 grid size-8 shrink-0 place-items-center rounded-full pointer-coarse:size-11"
+        class="ui-icon-button -mr-2 shrink-0 rounded-full"
         aria-label={m.common_close_label()}
         onclick={dismiss}
       >
