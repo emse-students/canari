@@ -111,7 +111,7 @@
         <a
           href={item.href}
           onclick={() => (open = false)}
-          class="tap-target text-text-main hover:bg-cn-yellow/15 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors"
+          class="text-text-main hover:bg-cn-yellow/15 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors pointer-coarse:min-h-11"
         >
           <item.icon size={15} />
           {item.label}

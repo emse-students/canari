@@ -105,7 +105,7 @@
                 <a
                   href="#{section.id}"
                   aria-current={activeId === section.id ? 'true' : undefined}
-                  class="tap-target block border-l-2 py-1 pl-3 transition-colors {activeId ===
+                  class="block border-l-2 py-1 pl-3 transition-colors pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center {activeId ===
                   section.id
                     ? 'border-cn-yellow text-text-main font-semibold'
                     : 'text-text-muted hover:text-text-main border-transparent'}"
@@ -150,7 +150,14 @@
       <ul class="text-text-muted space-y-1 px-4 pb-4 text-sm">
         {#each sections as section (section.id)}
           <li>
-            <a href="#{section.id}" class="tap-target hover:text-text-main">{section.label}</a>
+            <!-- A stacked list takes a real 44px row on a touch screen, never `.tap-target`: at
+                 this 21px pitch each invisible hit box covered the centre of the entry above it,
+                 so a tap on section N opened N+1 (measured on the Mi 9T, 2026-09-30). -->
+            <a
+              href="#{section.id}"
+              class="hover:text-text-main pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              >{section.label}</a
+            >
           </li>
         {/each}
       </ul>

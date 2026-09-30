@@ -683,11 +683,18 @@ a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
 viewport audit in [phone-comparison](../phone-comparison.md)). It changes nothing visible: under
 `(pointer: coarse)` a centred `::before` extends the hit box to `max(100%, 2.75rem)` on each axis,
 so a 28px pill, a 20px inline link or a 32px avatar is tapped as a 44px target without its row
-growing. Seventeen controls carry it - the feed pills, the header's "Accueil", the navbar avatar,
-the legal back link and table of contents, the admin navigation, the sidebar channel rows, the
-notification filters and the profile photo badge. Both rules are held by `touchTargets.test.ts`.
-Two neighbours whose boxes would overlap must not both take it: the later one in the DOM wins the
-tap.
+growing. Twelve controls carry it - the feed pills, the header's "Accueil", the navbar avatar, the
+legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
+badge. Both rules are held by `touchTargets.test.ts`.
+
+**A STACKED LIST NEVER TAKES `.tap-target` - its rows take `pointer-coarse:min-h-11`.** Where two
+hit boxes overlap, the later element in the DOM wins, so in a column pitched under 44px each box
+swallows the lower part of the row above it. On the Mi 9T the legal table of contents (a 21px
+pitch) opened section N+1 on a tap on N's centre, 13 entries of 15 - found by `elementFromPoint`
+on the device, invisible to any size check since every box measured 44px. The legal lists, the
+sidebar channel rows and the admin menu items therefore got a real 44px row instead. The viewport
+audit's class `Z` (`tools/phone-bench/viewports.mjs`) probes each control's own drawing for a
+neighbour's hit box, so the next stack that takes the class is reported.
 
 ### The expanded rail clipped all eighteen of its texts
 
