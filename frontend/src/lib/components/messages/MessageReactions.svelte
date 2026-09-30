@@ -1,6 +1,7 @@
 <script lang="ts">
   import EmojiText from '../shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
+  import { reactorsTrigger } from '$lib/actions/reactorsTrigger';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -97,8 +98,10 @@
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
           onReact?.(emoji);
         }}
-        onmouseenter={(e) => openPanel(emoji, e.currentTarget as HTMLElement)}
-        onmouseleave={() => panel?.scheduleHide()}
+        use:reactorsTrigger={{
+          open: (anchor) => openPanel(emoji, anchor),
+          leave: () => panel?.scheduleHide(),
+        }}
         aria-pressed={hasReacted}
         aria-label={users.length === 1
           ? m.msg_reaction_aria_label_one({ emoji })

@@ -46,6 +46,7 @@ function render() {
       currentUserId: 'me',
     },
   });
+  flushSync(); // actions attach in an effect
   mounted.push(() => unmount(app, { outro: false }));
 
   const badges = [...target.querySelectorAll('button')];
@@ -68,7 +69,7 @@ describe('MessageReactions - who reacted with what', () => {
     const { badges } = render();
     expect(panel()).toBeNull();
 
-    badges[0].dispatchEvent(new MouseEvent('mouseenter'));
+    badges[0].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
 
     const rows = [...(panel()?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
@@ -78,7 +79,7 @@ describe('MessageReactions - who reacted with what', () => {
   it('names the OTHER badge s reactor when that one is opened, and only that one', () => {
     const { badges } = render();
 
-    badges[1].dispatchEvent(new MouseEvent('mouseenter'));
+    badges[1].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
 
     const rows = [...(panel()?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
@@ -94,7 +95,7 @@ describe('MessageReactions - who reacted with what', () => {
   it('portals the panel out of the row, so a bubble s overflow cannot clip it', () => {
     const { target, badges } = render();
 
-    badges[0].dispatchEvent(new MouseEvent('mouseenter'));
+    badges[0].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
 
     expect(panel()).not.toBeNull();
@@ -124,7 +125,7 @@ describe('MessageReactions - who reacted with what', () => {
     badge.getBoundingClientRect = () =>
       ({ left: 40, right: 80, top: 300, bottom: 328, width: 40, height: 28 }) as DOMRect;
 
-    badge.dispatchEvent(new MouseEvent('mouseenter'));
+    badge.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
     expect(reacted).toEqual([]);
 

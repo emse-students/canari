@@ -941,3 +941,7 @@ mounted is not a confirmation once that thing tears itself down as a matter of c
 every pick, here. Feedback for a one-shot action needs a home independent of the control that fired
 it. `copyPublicShareLink`'s rejection path was also a swallowed `void` with no log; it now logs
 through `Log.d`, same as `copyId`'s own clipboard refusal.
+
+## The "who reacted" list: hover or long press, never a tap (2026-09-30)
+
+Reported by the user: tapping a reaction badge opened the list of reactors. A touch screen synthesises `mouseenter` after a tap, so the badges (posts and chat) toggled AND disclosed. `actions/reactorsTrigger.ts` is now the one gesture for both: hover only for `pointerType === "mouse"`, a 450 ms hold for touch/pen (the click ending that hold is swallowed in capture, the native context menu is suppressed), and `ReactorsPanel` closes on any scroll instead of following it. Owed: one look on a phone.
