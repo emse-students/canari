@@ -31,6 +31,14 @@ export const NAVY = '#151B2C';
 export const NAVY_TOP = '#1E2742';
 export const NAVY_BOTTOM = '#0E1220';
 
+/**
+ * The gradient of the DEV / pre-release build, so a tester can tell it from production on the home
+ * screen: the same two-stop shape pulled from navy to a deep violet (user, 2026-09-30). The bird
+ * stays yellow - the tint says WHICH build, never which product.
+ */
+export const DEV_TOP = '#2E2152';
+export const DEV_BOTTOM = '#150E2E';
+
 /** The bird's yellow. NOT the app's `--cn-yellow`: the logo is the identity, the token is the UI. */
 export const BIRD_YELLOW = '#fac809';
 
@@ -39,8 +47,13 @@ export const BIRD_YELLOW = '#fac809';
  *
  * @param {number} size Edge in pixels.
  * @param {'square' | 'squircle' | 'circle'} [mask] Shape to cut it to; transparent outside it.
+ * @param {{ top: string, bottom: string }} [palette] The two stops; the brand navy by default.
  */
-export function gradientBackground(size, mask = 'square') {
+export function gradientBackground(
+  size,
+  mask = 'square',
+  palette = { top: NAVY_TOP, bottom: NAVY_BOTTOM }
+) {
   const shape = {
     square: `<rect width="${size}" height="${size}"/>`,
     squircle: `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.2)}"/>`,
@@ -49,7 +62,7 @@ export function gradientBackground(size, mask = 'square') {
   const svg =
     `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">` +
     `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">` +
-    `<stop offset="0" stop-color="${NAVY_TOP}"/><stop offset="1" stop-color="${NAVY_BOTTOM}"/>` +
+    `<stop offset="0" stop-color="${palette.top}"/><stop offset="1" stop-color="${palette.bottom}"/>` +
     `</linearGradient></defs><g fill="url(#g)">${shape}</g></svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }

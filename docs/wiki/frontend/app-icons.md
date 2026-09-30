@@ -18,6 +18,19 @@ drawn by hand per surface.
 - **The drawing is the old one, smoothed** (potrace over a 1 px blur of the hand tracing): same pose,
   open beak, wing groove. Redrawing the bird (shorter tail, bigger eye) was considered and declined.
 
+## Two marks, and where each lives (user, 2026-09-30)
+
+- **The LAUNCHER mark**: the bird alone on the gradient, half of what is seen. A system mask (Android
+  adaptive, iOS squircle) cuts whatever leaves the frame, so it is the only form those surfaces can carry.
+- **The PERCH mark**: the canary standing ON the bottom edge of a navy square, tail hanging out, on a
+  TRANSPARENT ground (`perch-logo.mjs`). It stays where it already was, and only there: the Play listing,
+  `og-canari.png` (link previews, JSON-LD), `src-tauri/icons/Canari.png`, the whole DESKTOP set (`.icns`,
+  `.ico`, Windows tiles) and Portail-etu's Canari tile. Its geometry is MEASURED on the original, not
+  chosen: square 67.9 percent of the canvas at the top right, bird 74.8 percent wide, feet 0.4 percent
+  BELOW the square's lower edge. **The feet must rest on that edge** - every first redraw floated them inside.
+- **The DEV mark**: the launcher mark with the gradient pulled from navy to violet (`DEV_TOP` /
+  `DEV_BOTTOM`), so a pre-release is told from production on a home screen. Constants only so far.
+
 ## Who writes what
 
 | Generator | Writes |
@@ -26,7 +39,7 @@ drawn by hand per surface.
 | `gen-web-icons.mjs` | `apple-touch-icon.png` (opaque), `favicon.ico` |
 | `gen-native-icons.mjs` | the desktop set (`.icns`, `.ico`, Windows tiles) and `src-tauri/icons/ios`, through `tauri icon` |
 | `gen-ios-icon.mjs` | `gen/apple/AppIcon.icon`, the Icon Composer document the app actually ships (the old `appiconset` is deleted) |
-| `gen-icon-layers.mjs` | `store/icons/`: the Play and App Store icons and the bird / background layers an icon editor takes |
+| `gen-icon-layers.mjs` | `store/icons/` (the store icons, the layers for an icon editor, the perch mark), `og-canari.png` and `src-tauri/icons/Canari.png` |
 
 The Android files are NOT taken from `tauri icon`: it cannot express the gradient background, the
 themed layer or the status-bar icon. `appIcons.test.ts` measures the bird's width off the pixels of

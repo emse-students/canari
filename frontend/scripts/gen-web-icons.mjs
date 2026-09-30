@@ -24,7 +24,7 @@ import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { renderBird, renderCanvas } from './logo-render.mjs';
+import { SVG, renderBird, renderCanvas } from './logo-render.mjs';
 import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,9 +98,26 @@ async function makeFaviconIco() {
   return out;
 }
 
+/**
+ * `favicon.png`: the bird alone, trimmed to its own box and filling the canvas. The interface puts
+ * it inside a navy tile of its own (header, login, QR badge), so it carries NO margin - unlike the
+ * vector, whose margin exists for the circular masks.
+ */
+async function makeFaviconPng() {
+  const out = path.join(STATIC, 'favicon.png');
+  const rendered = await sharp(SVG, { density: 1200 }).png().toBuffer();
+  const trimmed = await sharp(rendered).trim({ threshold: 0 }).toBuffer();
+  await sharp(trimmed)
+    .resize(337, 325, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toFile(out);
+  return out;
+}
+
 async function main() {
   console.log(`wrote ${await makeTouchIcon()}`);
   console.log(`wrote ${await makeFaviconIco()}`);
+  console.log(`wrote ${await makeFaviconPng()}`);
 }
 
 main().catch((e) => {

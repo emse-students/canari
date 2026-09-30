@@ -2,7 +2,8 @@
  * Write the store icons and the LAYERS an icon editor needs (Icon Composer, Liquid Composer) into
  * `store/icons/`, from `static/favicon.svg` and the rules in `icon-spec.mjs`.
  *
- * - `play-store-512.png`: the Google Play listing icon. Full-bleed and opaque; Play cuts the corners.
+ * - `play-store-512.png` and `perch-1024.png`: the PERCH composition on a transparent ground (see
+ *   `perch-logo.mjs`), which is also `static/og-canari.png` and `src-tauri/icons/Canari.png`.
  * - `app-store-1024.png`: the App Store icon, opaque (the store refuses an alpha channel).
  * - `layers/`: the bird alone on a transparent square (`bird.svg`, `bird-2048.png`), its flat
  *   one-colour silhouette for tinted/monochrome modes (`bird-mono-2048.png`), and the gradient
@@ -16,6 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SVG, renderBird } from './logo-render.mjs';
+import { perchLogo } from './perch-logo.mjs';
 import {
   BIRD_ICON_FILL,
   BIRD_YELLOW,
@@ -27,6 +29,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.resolve(__dirname, '..', '..', 'store', 'icons');
+const FRONTEND = path.resolve(__dirname, '..');
 const LAYERS = path.join(OUT, 'layers');
 
 /** The logo canvas, in the vector's own units (see `static/favicon.svg`). */
@@ -75,7 +78,14 @@ function backgroundSvg() {
 
 async function main() {
   await fs.mkdir(LAYERS, { recursive: true });
-  await fs.writeFile(path.join(OUT, 'play-store-512.png'), await composed(512));
+  // The Play listing and the brand tile other sites embed show the PERCH composition, transparent.
+  await fs.writeFile(path.join(OUT, 'play-store-512.png'), await perchLogo(512));
+  await fs.writeFile(path.join(OUT, 'perch-1024.png'), await perchLogo(1024));
+  await fs.writeFile(path.join(FRONTEND, 'static', 'og-canari.png'), await perchLogo(1080));
+  await fs.writeFile(
+    path.join(FRONTEND, 'src-tauri', 'icons', 'Canari.png'),
+    await perchLogo(1080)
+  );
   await fs.writeFile(path.join(OUT, 'app-store-1024.png'), await composed(1024));
 
   const svg = await birdSvg();

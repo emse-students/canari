@@ -7,7 +7,8 @@
  * - iOS: only `src-tauri/icons/ios`, the set `tauri ios init` reads. The icon the app ships is the
  *   Icon Composer document `gen/apple/AppIcon.icon` (`gen-ios-icon.mjs`). A full-bleed OPAQUE square. The system cuts the corners itself, and the App Store refuses
  *   a marketing icon with an alpha channel.
- * - desktop: the same drawing cut to a rounded square, transparent in the corners.
+ * - desktop: the PERCH composition (`perch-logo.mjs`), transparent around it - the desktop set
+ *   always showed it, and no system mask cuts a desktop icon.
  *
  * The Android files are not taken from `tauri icon`: they have layers it cannot express (the
  * gradient background, the themed layer, the status-bar icon) and come from `gen-android-icons.mjs`.
@@ -22,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderBird } from './logo-render.mjs';
 import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
+import { perchLogo } from './perch-logo.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -73,7 +75,7 @@ async function main() {
   try {
     const desktopSource = path.join(tmp, 'desktop.png');
     const iosSource = path.join(tmp, 'ios.png');
-    await makeSource('squircle', desktopSource, false);
+    await fs.writeFile(desktopSource, await perchLogo(SOURCE));
     await makeSource('square', iosSource, true);
 
     const desktopOut = path.join(tmp, 'desktop');
