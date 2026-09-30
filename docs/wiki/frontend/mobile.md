@@ -657,7 +657,14 @@ reads a class list's colour off a probe element, through a 1 px canvas because t
 `oklch()`. Measured in WebKit: both states, both themes, the four glyphs.
 
 **The plugin has no selected image, so that is the patch** - `TabItemArgs.selectedImage`, marked
-`CANARI PATCH` in `ios/Sources`, beside the removed keyboard guard (above). The crate is otherwise
+`CANARI PATCH` in `ios/Sources`, beside the removed keyboard guard (above). **AND IN `src/models.rs`,
+WHICH THE FIRST PATCH MISSED (found 2026-09-30, before any iPhone had looked):** Tauri runs a plugin's
+RUST command first (`webview/mod.rs`: the native plugin is called only when Rust handles nothing), so
+the arguments are deserialised into the Rust `TabItem` and serialised again for Swift - and a field
+Rust lacks is dropped without an error. The `v0.18.32-alpha.2` build therefore drew the selected tab
+in the resting colour. `systemComponentsPatch.test.ts` now reads both halves and fails on any field
+Swift decodes that the Rust struct in front of it does not carry; on its first run it also found
+upstream's `itemPositioning`, dropped the same way (unused here, carried now). The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar, and since the plugin REBUILDS its items on
 configuration - clearing every badge - the dot is sent again after each one.
