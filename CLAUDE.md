@@ -256,8 +256,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 15. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-16. **THE PHONE CAMPAIGN (Mi 9T vs iPhone 12, 2026-09-30): LOTS 1-3 MERGED, 4 AND 5 OPEN** - WebKit read every iOS safe area as 0, now fixed; the iPhone is readable from this PC by CDP and syslog ([phone-comparison](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30)).
-    **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
+16. **PHONE CAMPAIGN (2026-09-30): LOTS 1-3 MERGED, 4-5 OPEN** ([state](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30)). **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
     2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
     its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
     **#1223 (2026-09-29): the tab swipe SHOWS the page it goes to, a drifting tap no longer turns it, a reply swipe no longer closes the thread - every gate here is blind to the RESULT, owed ONE look on the reporting phone** ([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
