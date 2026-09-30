@@ -124,8 +124,9 @@ export function panelAddsNothing(
 export function submitterName(sub: {
   firstName: string | null;
   lastName: string | null;
-  userId: string;
+  userId: string | null;
 }): string {
   const real = [sub.firstName, sub.lastName].filter(Boolean).join(' ');
-  return real || getUserDisplayNameSync(sub.userId);
+  // An anonymous answer has no author to name; callers branch on the form before asking.
+  return real || (sub.userId ? getUserDisplayNameSync(sub.userId) : '');
 }

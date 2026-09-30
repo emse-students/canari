@@ -18,9 +18,10 @@ export class Submission {
   @Index()
   formId: string;
 
-  @Column({ type: 'varchar', length: 255 })
+  /** NULL on an anonymous form (`Form.anonymous`): the answer has no author by design. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
   @Index()
-  userId: string;
+  userId: string | null;
 
   @Column({ nullable: true })
   email: string;

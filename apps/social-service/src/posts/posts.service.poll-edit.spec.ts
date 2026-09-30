@@ -236,4 +236,97 @@ describe('PostsService keeps poll votes across an edit', () => {
     expect(Object.keys(poll.votesByUser)).toEqual(['u1', 'u3']);
     expect(Object.getPrototypeOf(poll.votesByUser)).toBe(Object.prototype);
   });
+
+  describe('an anonymous poll', () => {
+    const ANON = () => ({
+      id: 'poll-1',
+      question: 'On y va ?',
+      anonymous: true,
+      multipleChoice: false,
+      maxSelections: null,
+      endsAt: null,
+      options: [
+        { id: 'opt-a', label: 'Oui', votes: 2 },
+        { id: 'opt-b', label: 'Non', votes: 1 },
+      ],
+      voters: ['u1', 'u2', 'u3'],
+      votesByUser: {},
+    });
+
+    it('keeps its tally and its voters when the question is corrected', async () => {
+      const { service, post } = makeService([ANON()]);
+      await service.updatePost(
+        'post-1',
+        'author-1',
+        {
+          markdown: 'apres',
+          polls: [
+            {
+              id: 'poll-1',
+              question: 'On y va vraiment ?',
+              options: [
+                { id: 'opt-a', label: 'Oui' },
+                { id: 'opt-b', label: 'Non' },
+              ],
+            },
+          ],
+        },
+        true
+      );
+      const poll = (post.polls as Record<string, any>[])[0];
+      expect(poll.options.map((o: { votes: number }) => o.votes)).toEqual([2, 1]);
+      expect(poll.voters).toEqual(['u1', 'u2', 'u3']);
+      expect(poll.anonymous).toBe(true);
+    });
+
+    it('stays anonymous even if the edit asks for a named poll', async () => {
+      const { service, post } = makeService([ANON()]);
+      await service.updatePost(
+        'post-1',
+        'author-1',
+        {
+          markdown: 'apres',
+          polls: [
+            {
+              id: 'poll-1',
+              question: 'On y va ?',
+              anonymous: false,
+              options: [
+                { id: 'opt-a', label: 'Oui' },
+                { id: 'opt-b', label: 'Non' },
+              ],
+            },
+          ],
+        },
+        true
+      );
+      expect((post.polls as Record<string, any>[])[0].anonymous).toBe(true);
+    });
+
+    it('does not become anonymous by an edit asking for it', async () => {
+      const { service, post } = makeService([STORED_POLL()]);
+      await service.updatePost(
+        'post-1',
+        'author-1',
+        {
+          markdown: 'apres',
+          polls: [
+            {
+              id: 'poll-1',
+              question: 'On y va ?',
+              anonymous: true,
+              options: [
+                { id: 'opt-a', label: 'Oui' },
+                { id: 'opt-b', label: 'Non' },
+              ],
+            },
+          ],
+        },
+        true
+      );
+      const poll = (post.polls as Record<string, any>[])[0];
+      expect(poll.anonymous).not.toBe(true);
+      expect(poll.options[0].votes).toEqual(['u1', 'u2']);
+    });
+  });
 });

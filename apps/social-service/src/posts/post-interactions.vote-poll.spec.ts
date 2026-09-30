@@ -185,4 +185,45 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
       service.votePoll('post-1', 'p1', { userId: '__proto__', optionIds: ['a'] })
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  describe('an anonymous poll', () => {
+    const anonymousPoll = () =>
+      ({
+        id: 'p1',
+        anonymous: true,
+        multipleChoice: false,
+        options: [
+          { id: 'a', label: 'A', votes: 0 },
+          { id: 'b', label: 'B', votes: 0 },
+        ],
+        voters: [],
+        votesByUser: {},
+      }) as unknown as PollFixture;
+
+    it('counts the vote and answers with `voted`, never the voter list', async () => {
+      const { service, post } = makeService(anonymousPoll());
+      const res = await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
+      const stored = (post.polls as unknown as Record<string, any>[])[0];
+      expect(stored.options[0].votes).toBe(1);
+      const served = (res.polls as Record<string, any>[])[0];
+      expect(served.voted).toBe(true);
+      expect('voters' in served).toBe(false);
+      expect(JSON.stringify(res.polls)).not.toContain('u1');
+    });
+
+    it('refuses a second vote from the same account', async () => {
+      const { service } = makeService(anonymousPoll());
+      await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
+      await expect(
+        service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['b'] })
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses to retract, since there is no recorded choice to retract', async () => {
+      const { service } = makeService(anonymousPoll());
+      await expect(
+        service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: [] })
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });

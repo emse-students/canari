@@ -48,13 +48,25 @@
      * `pending` would infer as free, and a column must not appear the day somebody finally pays.
      */
     requiresPayment: boolean;
+    /**
+     * An anonymous form's rows have no author and only a DAY: the name column is not drawn (it would
+     * be one blank down the whole table) and the time is not shown (it was never stored).
+     */
+    anonymous?: boolean;
     submissions: Submission[];
     /** The submission currently being deleted, so its control can say so. */
     deletingId: string | null;
     onDelete: (sub: Submission) => void;
   }
 
-  let { items, requiresPayment, submissions, deletingId, onDelete }: Props = $props();
+  let {
+    items,
+    requiresPayment,
+    anonymous = false,
+    submissions,
+    deletingId,
+    onDelete,
+  }: Props = $props();
 
   const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
 
@@ -92,10 +104,11 @@
     else clippedCells.delete(key);
   }
 
-  /** Formats an ISO date string as "DD/MM/YYYY HH:MM". */
+  /** Formats an ISO date string as "DD/MM/YYYY HH:MM", or as a bare day on an anonymous form. */
   function formatDate(iso: string): string {
     const d = new Date(iso);
     const p = (n: number) => String(n).padStart(2, '0');
+    if (anonymous) return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
     return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
@@ -180,7 +193,9 @@
       >
         <th class="w-10 pb-2"><span class="sr-only">{m.form_list_answers_show()}</span></th>
         <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
-        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
+        {#if !anonymous}
+          <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
+        {/if}
         {#each columns as column (column.id)}
           <!-- The width lives on a DIV, not on the cell: `max-width` on a `<th>` or `<td>` is a
                suggestion under auto table layout and the browser widens it anyway, so the column was
@@ -204,7 +219,9 @@
           <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
             >{formatDate(sub.createdAt)}</td
           >
-          <td class="py-2 pr-4 whitespace-nowrap">{submitterName(sub)}</td>
+          {#if !anonymous}
+            <td class="py-2 pr-4 whitespace-nowrap">{submitterName(sub)}</td>
+          {/if}
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
             <td class="py-2 pr-4">
@@ -230,7 +247,7 @@
         {#if expanded[sub.id]}
           <tr>
             <td
-              colspan={columns.length + (requiresPayment ? 6 : 4)}
+              colspan={columns.length + (requiresPayment ? 6 : 4) - (anonymous ? 1 : 0)}
               class="bg-cn-border/10 px-3 py-3"
             >
               {@render answersPanel(sub)}
@@ -250,7 +267,9 @@
       <div class="flex items-start gap-2">
         <div class="min-w-0 flex-1">
           <p class="text-text-muted text-2xs font-mono">{formatDate(sub.createdAt)}</p>
-          <p class="text-text-main truncate font-semibold">{submitterName(sub)}</p>
+          {#if !anonymous}
+            <p class="text-text-main truncate font-semibold">{submitterName(sub)}</p>
+          {/if}
           {#if requiresPayment}
             <p class="mt-1 flex items-center gap-2">
               {@render statusPill(sub)}

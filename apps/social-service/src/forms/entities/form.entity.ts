@@ -102,6 +102,15 @@ export class Form {
   @Column({ length: 100, nullable: true })
   cotisationVariantKey: string | null;
 
+  /**
+   * When true, an answer is stored WITHOUT its author, its address or a precise time, and "this
+   * account has answered" lives in `form_respondents`, which knows no answer (migration 067).
+   * Free forms only, and fixed at creation: flipping it later would promise anonymity to answers
+   * that were already written with a name, or strip the name from answers nobody asked to forget.
+   */
+  @Column({ default: false })
+  anonymous: boolean;
+
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })
   allowMultipleSubmissions: boolean;

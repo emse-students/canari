@@ -231,6 +231,11 @@ export class CreateFormDto {
   @MaxLength(100)
   cotisationVariantKey?: string | null;
 
+  /** Store answers without their author. Free forms only, fixed at creation. */
+  @IsBoolean()
+  @IsOptional()
+  anonymous?: boolean;
+
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()
   @IsOptional()

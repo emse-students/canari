@@ -116,9 +116,12 @@
   }
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
-    const name = submitterName(sub);
+    // An anonymous answer is deleted by its content and its day alone: there is no one to name.
+    const prompt = sub.userId
+      ? m.form_list_delete_submission_confirm({ name: submitterName(sub) })
+      : m.form_list_delete_anonymous_submission_confirm();
     if (
-      !(await showConfirm(m.form_list_delete_submission_confirm({ name }), {
+      !(await showConfirm(prompt, {
         danger: true,
         confirmLabel: m.common_delete_button(),
       }))
@@ -312,6 +315,7 @@
                 <FormSubmissionsTable
                   items={form.items ?? []}
                   requiresPayment={form.requiresPayment ?? false}
+                  anonymous={form.anonymous ?? false}
                   submissions={subs}
                   deletingId={deletingSubmissionId}
                   onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}

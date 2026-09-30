@@ -22,12 +22,23 @@ export function applyPostPollVote(
   const polls = (post.polls ?? []).map((poll: Poll) => {
     if (poll.id !== pollId) return poll;
 
+    // An anonymous poll keeps a tally and no voters: the vote is counted, the reader is marked as
+    // having voted, and nothing records which option was theirs.
+    if (poll.anonymous) {
+      const options = (poll.options ?? []).map((option) =>
+        optionIds.includes(option.id)
+          ? { ...option, votes: (typeof option.votes === 'number' ? option.votes : 0) + 1 }
+          : option
+      );
+      return { ...poll, options, voted: true };
+    }
+
     const votesByUser = { ...poll.votesByUser };
     if (optionIds.length === 0) delete votesByUser[userId];
     else votesByUser[userId] = [...optionIds];
 
     const options = (poll.options ?? []).map((option) => {
-      const votes = Array.isArray(option.votes) ? option.votes : [];
+      const votes: string[] = Array.isArray(option.votes) ? option.votes : [];
       const had = votes.includes(userId);
       const has = optionIds.includes(option.id);
       if (had && !has) return { ...option, votes: votes.filter((v) => v !== userId) };

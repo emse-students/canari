@@ -88,6 +88,7 @@
   let pollMultipleChoice = $state(false);
   let pollMaxSelections = $state<number | null>(null);
   let pollEndsAt = $state('');
+  let pollAnonymous = $state(false);
   /** Which poll field the last refused publish was waiting on, shown inside the card. */
   let pollIssue = $state<PollDraftIssue | null>(null);
 
@@ -434,6 +435,7 @@
               pollMultipleChoice
             ),
             ...(pollEndsAt ? { endsAt: new Date(pollEndsAt).toISOString() } : {}),
+            ...(pollAnonymous ? { anonymous: true } : {}),
           },
         ];
       }
@@ -665,6 +667,7 @@
           bind:multipleChoice={pollMultipleChoice}
           bind:maxSelections={pollMaxSelections}
           bind:endsAt={pollEndsAt}
+          bind:anonymous={pollAnonymous}
           issue={pollIssue}
           onRemove={() => {
             includePoll = false;

@@ -12,6 +12,7 @@ import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
+import { isAnonymousPoll, recordAnonymousVote, servePolls } from './anonymous-poll';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import {
   reactionContent,
@@ -364,6 +365,17 @@ export class PostInteractionsService {
         if (selectedIds.length > allowed) {
           throw new BadRequestException('Too many options selected');
         }
+        // An anonymous poll cannot be changed or retracted - that needs the previous choice, which
+        // it does not keep - so it takes the vote once and is done (see `anonymous-poll.ts`).
+        if (isAnonymousPoll(poll)) {
+          try {
+            recordAnonymousVote(poll, data.userId, selectedIds);
+          } catch (e) {
+            throw new BadRequestException((e as Error).message);
+          }
+          updated = true;
+          continue;
+        }
         for (const opt of poll.options) {
           opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter(
             (v: string) => v !== data.userId
@@ -387,6 +399,8 @@ export class PostInteractionsService {
         result = post;
       }
     });
-    return result;
+    // The saved post carries the anonymous polls' voter lists; the caller is handed only its own
+    // `voted`, exactly as the feed serves it.
+    return { ...result, polls: servePolls(result.polls, data.userId) };
   }
 }
