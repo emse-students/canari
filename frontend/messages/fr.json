@@ -2012,6 +2012,7 @@
   "form_guest_answer_again": "Envoyer une autre réponse",
   "form_guest_footer": "Formulaire publié sur Canari",
   "form_guest_honeypot_label": "Laisser vide",
+  "form_guest_submit_failed": "Votre réponse n'a pas pu être envoyée. Vérifiez-la et réessayez dans un instant.",
   "form_payment_disabled_anonymous": "Indisponible sur un formulaire anonyme : payer identifie la personne.",
   "form_payment_disabled_public": "Indisponible sur un formulaire public : un invité n'a pas de compte à débiter.",
   "form_view_anonymous_notice": "Formulaire anonyme : vos réponses sont enregistrées sans votre nom. Le responsable saura seulement que vous avez répondu, jamais ce que vous avez répondu.",

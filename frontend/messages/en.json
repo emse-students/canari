@@ -1987,6 +1987,7 @@
   "form_guest_answer_again": "Send another answer",
   "form_guest_footer": "Form published on Canari",
   "form_guest_honeypot_label": "Leave empty",
+  "form_guest_submit_failed": "Your answer could not be sent. Check it and try again in a moment.",
   "form_payment_disabled_anonymous": "Unavailable on an anonymous form: paying identifies the person.",
   "form_payment_disabled_public": "Unavailable on a public form: a guest has no account to charge.",
   "form_view_anonymous_notice": "Anonymous form: your answers are stored without your name. The organiser will only know that you answered, never what you answered.",

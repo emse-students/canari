@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { PublicFormsController } from './public-forms.controller';
 
@@ -22,7 +23,6 @@ describe('PublicFormsController', () => {
 /** The throttle is only a throttle if two visitors are two buckets - the defect it replaced. */
 describe('ClientIpThrottlerGuard', () => {
   const guard = Object.create(ClientIpThrottlerGuard.prototype) as any;
-  guard.logger = { warn: jest.fn() };
 
   it('counts the visitor nginx names, not the nginx hop', async () => {
     const req = { ip: '172.25.0.1', headers: { 'x-real-ip': '203.0.113.7' } };
@@ -31,7 +31,9 @@ describe('ClientIpThrottlerGuard', () => {
 
   it('falls to the socket, loudly, when nothing named the visitor', async () => {
     const req = { ip: '127.0.0.1', headers: {}, method: 'POST', url: '/x' };
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     expect(await guard.getTracker(req)).toBe('127.0.0.1');
-    expect(guard.logger.warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

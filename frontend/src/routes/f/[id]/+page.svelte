@@ -92,7 +92,8 @@
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
-      error = e instanceof Error ? e.message : String(e);
+      // The server's sentence is English and for the log; the guest reads ours.
+      error = m.form_guest_submit_failed();
     } finally {
       submitting = false;
     }
