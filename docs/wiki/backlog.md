@@ -7025,6 +7025,24 @@ is where any measurement belongs.
 
 ## Payments
 
+### A PAID PUBLIC FORM (user, 2026-09-30) - PARKED BEHIND LYDIA, THE FREE HALF IS BUILT FIRST
+
+Asked for: a form anyone can open from a shared link, with no Canari account, that can take a single
+price. **The free half does not need a payment provider and is built on its own; the paid half waits
+for WP-LYDIA-1 below**, because Lydia does not work today and Stripe is leaving the app (user).
+
+What the paid half will need, found while scoping it (2026-09-30), so it is not re-derived:
+
+- **The payer's e-mail IS Lydia's `payerRecipient`** - the blocker listed below resolves itself for a
+  guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
+- **`social-service` calls `core-service`'s `create-checkout-session` with no credential** (a bare
+  `axios.post`), and that route sits behind `NginxAuthGuard`, which demands `X-User-Id`. Whether the
+  existing paid-form checkout works at all is NOT verified - read the two services' logs on dev
+  before building on it. A guest has no `X-User-Id` either, so it needs a dedicated internal route
+  guarded by the shared internal secret, as `internal/forms` is.
+- **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
+- A fixed price only (no grid, no cotisation grant, no cash), and a public submission rate limit.
+
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
 
 **The code is not the blocker - it is already written and tested.** `PaymentProvider` is an interface
