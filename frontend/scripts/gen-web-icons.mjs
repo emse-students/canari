@@ -25,41 +25,29 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { renderBird, renderCanvas } from './logo-render.mjs';
+import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const STATIC = path.join(ROOT, 'static');
 
-/** `--color-canvas` in `app.css`, and the `theme-color` in `app.html`. */
-const NAVY = { r: 0x15, g: 0x1b, b: 0x2c, alpha: 1 };
-
 /** Home-screen icon edge, in CSS pixels - the size every current iOS device asks for. */
 const TOUCH_ICON_SIZE = 180;
-
-/**
- * Fraction of the touch icon the bird occupies.
- *
- * iOS rounds the corners itself and applies no safe zone, so this is margin
- * rather than crop protection: at 1.0 the bird would touch the rounded edge.
- * It is a BIRD size, so `renderBird` adds the vector's own margin around it.
- */
-const TOUCH_ICON_BIRD_SCALE = 0.76;
 
 /** Sizes packed into `favicon.ico`, smallest first. */
 const ICO_SIZES = [16, 32, 48];
 
+/**
+ * iOS rounds the corners itself and applies no safe zone, so the bird is sized by the shared
+ * `BIRD_ICON_FILL` alone and the background is the square gradient, flattened to drop the alpha.
+ * It is a BIRD size, so `renderBird` adds the vector's own margin around it.
+ */
 async function makeTouchIcon() {
-  const bird = await renderBird(Math.round(TOUCH_ICON_SIZE * TOUCH_ICON_BIRD_SCALE));
+  const bird = await renderBird(Math.round(TOUCH_ICON_SIZE * BIRD_ICON_FILL));
   const out = path.join(STATIC, 'apple-touch-icon.png');
-  await sharp({
-    create: {
-      width: TOUCH_ICON_SIZE,
-      height: TOUCH_ICON_SIZE,
-      channels: 4,
-      background: NAVY,
-    },
-  })
+  await sharp(await gradientBackground(TOUCH_ICON_SIZE))
     .composite([{ input: bird, gravity: 'center' }])
+    .flatten()
     .png()
     .toFile(out);
   return out;
