@@ -322,7 +322,7 @@ the single truth edited from Canari by admins only, per-application access decid
 migration of the 600 accounts. **Thirty-two decisions, all on
 [profiles-and-access](profiles-and-access.md), the only copy** - with the production measurement they
 were taken against. **The technical plan is its section 4, eleven work packages, VALIDATED by the
-user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED 2026-09-30; WPA is next.
+user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED, WPA and WP1 LIVE on production (2026-09-30); WP2 is next.
 
 ## Open defects, in severity order
 

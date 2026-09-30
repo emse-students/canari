@@ -346,6 +346,13 @@ reads the verified id_token once at its callback and discards the rest
 - **The order on production is forced**: the name, formation and promo claims read the profile
   only, so the migration is written BEFORE the blueprints are applied, and run again after them
   for anyone who enrolled in between.
+- **Switched on production 2026-09-30, with the user's go**, in that order: 606 profiles written
+  (2 skipped: `AnonymousUser`, the outpost), the blueprints applied (15 changes), MiGallery's 21
+  `formation = Master` album grants turned `Autre` right after them, the second pass writing 0 and a
+  blueprint dry-run saying `0 change(s)`. Then, read-only, the claims every one of the 606 accounts
+  now receives against the claims it received before: the ONLY difference is 14 `Master -> Autre`.
+  **This was applied from the PR's branch, so a stable cut from a `main` without it would apply the
+  OLD mappings back** - the PR merged before any release.
 
 **WP2 - The enrolment flow (D11, D12, D7).** One flow bound to BOTH sources: campus (radio); "Je
 suis ou j'ai été élève" (checkbox) -> formation + entry year; "Je travaille pour" -> three checkboxes
