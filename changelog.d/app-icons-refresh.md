@@ -2,3 +2,5 @@
 
 The bird was 0.76 of the iOS icon and three quarters of the visible Android one; it is now half of
 what is seen everywhere, and Android gains a themed (monochrome) layer ([app-icons](docs/wiki/frontend/app-icons.md)).
+
+The iOS and Android launch screens now show the perch logo on a transparent ground.

@@ -56,5 +56,13 @@ the home-screen, adaptive and legacy icons, so a constant changed in one script 
   dumps the compiled appearances. **Not yet compiled on a runner.** Liquid Composer was tried and exports
   baked PNG previews, not a `.icon` - unusable as an App Store icon (transparent corners, relief drawn twice).
 - A distinct icon for **dev / pre-release builds** (tint or banner), so testers can tell them apart.
-- `og-canari.png`, the splash screen, and the store listing graphics.
+- The store listing graphics other than the icons above (screenshots, feature graphic).
 - Nothing above was looked at on a device: the gates are blind to how a launcher masks an icon.
+
+## Launch screens
+
+The perch composition on a transparent ground is the logo of the native launch screens, drawn over
+the screen's own background colour: `LaunchLogo.imageset` + `LaunchScreen.storyboard` on iOS,
+`drawable/launch_background.xml` (every version) and `windowSplashScreenAnimatedIcon` in
+`values-v31/themes.xml` on Android. `scripts/gen-splash-logo.mjs` writes them. The web splash in
+`app.html` (bird + name on black) is unchanged.

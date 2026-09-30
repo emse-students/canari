@@ -279,3 +279,39 @@ describe('the pre-release icon', () => {
     }
   });
 });
+
+describe('the launch-screen logo', () => {
+  const GEN = 'src-tauri/gen';
+  const RES = `${GEN}/android/app/src/main/res`;
+
+  it('is the perch composition on a transparent ground, at three iOS scales', async () => {
+    for (const scale of [1, 2, 3]) {
+      const meta = await sharp(
+        `${GEN}/apple/Assets.xcassets/LaunchLogo.imageset/launch-logo@${scale}x.png`
+      ).metadata();
+      expect({ scale, width: meta.width, alpha: meta.hasAlpha }).toEqual({
+        scale,
+        width: 160 * scale,
+        alpha: true,
+      });
+    }
+  });
+
+  it('is drawn by the iOS storyboard from the image the catalog holds', () => {
+    const storyboard = readFileSync(`${GEN}/apple/LaunchScreen.storyboard`, 'utf8');
+    expect(storyboard).toContain('image="LaunchLogo"');
+    expect(storyboard).toContain('<image name="LaunchLogo"');
+  });
+
+  it('is what Android shows behind the WebView and hands the 12+ system splash', () => {
+    expect(readFileSync(`${RES}/values/themes.xml`, 'utf8')).toContain(
+      '@drawable/launch_background'
+    );
+    expect(readFileSync(`${RES}/drawable/launch_background.xml`, 'utf8')).toContain(
+      '@drawable/splash_logo'
+    );
+    expect(readFileSync(`${RES}/values-v31/themes.xml`, 'utf8')).toContain(
+      'windowSplashScreenAnimatedIcon">@drawable/splash_logo'
+    );
+  });
+});
