@@ -297,14 +297,16 @@ button that then grows (as intended by the liquid glass design) to show the othe
   and Poll (channels). The chevron fold (`controlsCollapsed`) goes: a single button needs none. The
   text field, the microphone and Send stay where they are - and stay WEB on iOS too, since the
   plugin has no native text field.
-- **L3 - the same layout everywhere**, CSS glass where Liquid Glass does not exist (web, Android):
-  one layout to keep and to test, not two.
+- **L3 - OVERRULED THE SAME DAY: the PHONE APPS only** (user, 2026-09-30: *"only apply it on phone
+  finally, the design is good on web"*). iOS and Android wear it - native Liquid Glass on iOS (WP-G2),
+  CSS glass on Android; the website keeps its classic header and composer at every width, a phone's
+  browser included. One predicate decides it, `usesGlassChrome` (`lib/mobile/glassChrome.ts`).
 - **L4 (assumed, not asked) - phone width only.** The desktop header has no back button and room for
   its icons; it and the desktop composer are unchanged. Overrule here if wrong.
 
 **Order:**
-- **WP-G1 (web, every platform):** L1-L3 in HTML/CSS at the narrow chat layout, with the grow as a
-  CSS transition. Verifiable here, in Chromium, Firefox and WebKit.
+- **WP-G1 (the apps, in CSS):** L1-L3 in HTML/CSS at the narrow chat layout of the phone apps, with
+  the grow as a CSS transition - **its PR, 2026-09-30** ([chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)).
 - **WP-G2 (iOS native):** the same pieces as real Liquid Glass, their web counterparts hidden on iOS.
   What the plugin lacks and must be written in the vendored copy (`patches/tauri-plugin-system-components`):
   the GROWING capsule (`UIGlassContainerEffect` morph, none in the plugin today), and a composer "+"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
@@ -994,16 +995,53 @@
       scrollFrame = null;
     };
   });
+
+  /**
+   * The phone apps float the chrome over the thread (`usesGlassChrome`); the website keeps it in
+   * the flow. Read once: the platform does not change under a running app.
+   */
+  const glassChrome = usesGlassChrome();
+  /** The thread panel, where the chrome's height is published for its descendants' CSS. */
+  let threadPanel: HTMLElement | undefined = $state();
+  /** Header, search, polls and pinned - the layer that floats over the thread on a phone. */
+  let chromeSlot: HTMLDivElement | undefined = $state();
+
+  // `--chat-header-height`: what the floating chrome covers, re-measured as it grows (the search bar
+  // sliding in, a poll strip appearing). Read by `.chat-messages-scroll` and the sticky date pill.
+  $effect(() => {
+    const slot = chromeSlot;
+    const panel = threadPanel;
+    if (!slot || !panel) return;
+    const publish = () =>
+      panel.style.setProperty('--chat-header-height', `${slot.getBoundingClientRect().height}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(slot);
+    return () => {
+      observer.disconnect();
+      panel.style.removeProperty('--chat-header-height');
+    };
+  });
 </script>
 
 <section
-  class="chat-thread-panel relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
+  bind:this={threadPanel}
+  class="chat-thread-panel {glassChrome
+    ? 'chat-glass-chrome'
+    : ''} relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
   use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
 >
   {#if chatView}
-    <div>
+    <!--
+      THE CHROME ABOVE THE THREAD - header, search, polls, pinned - IN ONE LAYER THAT FLOATS OVER THE
+      MESSAGES IN THE PHONE APPS (`chat-glass-chrome`), so the thread scrolls under the header's glass (user, 2026-09-30: "only
+      static ui element, that are apart from content, should be liquid glass"). Its height is
+      published as `--chat-header-height`, which the list and the sticky date pill reserve, the way
+      the composer publishes `--chat-composer-height` at the bottom. In the flow on a desktop.
+    -->
+    <div bind:this={chromeSlot} class="chat-chrome-slot">
       <ChatHeader
         contactName={chatView?.contactName ?? ''}
         groupId={chatView?.conversation.id ?? ''}
@@ -1038,160 +1076,160 @@
         searchActive={showSearch}
         {onOpenMedia}
       />
-    </div>
 
-    {#if showSearch}
-      <div class="px-3 pt-2 pb-0.5 md:px-6" transition:slide={{ duration: 180 }}>
-        <div class="chat-search-panel">
-          <div class="chat-search-input-wrap">
-            <Search size={15} class="opacity-60" />
-            <input
-              type="text"
-              value={searchQuery}
-              oninput={(e) => (searchQuery = e.currentTarget.value)}
-              placeholder={m.chat_search_in_conversation_placeholder()}
-              class="chat-search-input"
-            />
-            {#if searchQuery}
-              <button
-                type="button"
-                onclick={() => {
-                  searchQuery = '';
-                  searchMatches = [];
-                  activeSearchIndex = -1;
-                  searchLimitedToLoaded = false;
-                }}
-                class="ui-icon-button chat-search-action"
-                aria-label={m.chat_clear_search_label()}
-              >
-                <X size={15} />
-              </button>
-            {/if}
-          </div>
-          <div class="chat-search-nav">
-            <span class="chat-search-count">
-              {searchMatches.length > 0 && activeSearchIndex >= 0
-                ? `${activeSearchIndex + 1}/${searchMatches.length}`
-                : '0/0'}
-            </span>
-            <button
-              type="button"
-              onclick={() => void jumpSearch(-1)}
-              class="ui-icon-button chat-search-action"
-              aria-label={m.chat_previous_match_label()}
-              disabled={searchMatches.length === 0}
-            >
-              <ChevronUp size={16} />
-            </button>
-            <button
-              type="button"
-              onclick={() => void jumpSearch(1)}
-              class="ui-icon-button chat-search-action"
-              aria-label={m.chat_next_match_label()}
-              disabled={searchMatches.length === 0}
-            >
-              <ChevronDown size={16} />
-            </button>
-          </div>
-        </div>
-        {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="text-text-muted text-2xs px-1 pt-1">
-            {m.chat_search_limited_loaded_warning()}
-          </p>
-        {/if}
-      </div>
-    {/if}
-
-    {#if activePolls.length > 0}
-      <div class="px-3 pt-1 md:px-6">
-        <button
-          type="button"
-          onclick={() => (showPolls = !showPolls)}
-          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <ChartColumn size={14} class="text-cn-yellow shrink-0" />
-          <span class="font-semibold"
-            >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
-          >
-          <ChevronDown
-            size={15}
-            class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}"
-          />
-        </button>
-        {#if showPolls}
-          <div
-            transition:slide={{ duration: 150 }}
-            class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
-          >
-            {#each activePolls as poll (poll.id)}
-              <button
-                type="button"
-                class="text-text-main truncate rounded-lg px-2 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5"
-                onclick={() => {
-                  showPolls = false;
-                  void navigateToMessageEnsureLoaded(poll.id);
-                }}
-              >
-                📊 {poll.question}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if pinnedIds.length > 0}
-      <div class="px-3 pt-1 md:px-6">
-        <button
-          type="button"
-          onclick={() => (showPinned = !showPinned)}
-          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <Pin size={14} class="shrink-0 text-amber-500" />
-          <span class="font-semibold"
-            >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
-          >
-          <ChevronDown
-            size={15}
-            class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}"
-          />
-        </button>
-        {#if showPinned}
-          <div
-            transition:slide={{ duration: 150 }}
-            class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
-          >
-            {#each pinnedIds as pid (pid)}
-              <div
-                class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/5"
-              >
+      {#if showSearch}
+        <div class="px-3 pt-2 pb-0.5 md:px-6" transition:slide={{ duration: 180 }}>
+          <div class="chat-search-panel">
+            <div class="chat-search-input-wrap">
+              <Search size={15} class="opacity-60" />
+              <input
+                type="text"
+                value={searchQuery}
+                oninput={(e) => (searchQuery = e.currentTarget.value)}
+                placeholder={m.chat_search_in_conversation_placeholder()}
+                class="chat-search-input"
+              />
+              {#if searchQuery}
                 <button
                   type="button"
-                  class="text-text-main min-w-0 flex-1 truncate text-left text-sm"
                   onclick={() => {
-                    showPinned = false;
-                    void navigateToMessageEnsureLoaded(pid);
+                    searchQuery = '';
+                    searchMatches = [];
+                    activeSearchIndex = -1;
+                    searchLimitedToLoaded = false;
+                  }}
+                  class="ui-icon-button chat-search-action"
+                  aria-label={m.chat_clear_search_label()}
+                >
+                  <X size={15} />
+                </button>
+              {/if}
+            </div>
+            <div class="chat-search-nav">
+              <span class="chat-search-count">
+                {searchMatches.length > 0 && activeSearchIndex >= 0
+                  ? `${activeSearchIndex + 1}/${searchMatches.length}`
+                  : '0/0'}
+              </span>
+              <button
+                type="button"
+                onclick={() => void jumpSearch(-1)}
+                class="ui-icon-button chat-search-action"
+                aria-label={m.chat_previous_match_label()}
+                disabled={searchMatches.length === 0}
+              >
+                <ChevronUp size={16} />
+              </button>
+              <button
+                type="button"
+                onclick={() => void jumpSearch(1)}
+                class="ui-icon-button chat-search-action"
+                aria-label={m.chat_next_match_label()}
+                disabled={searchMatches.length === 0}
+              >
+                <ChevronDown size={16} />
+              </button>
+            </div>
+          </div>
+          {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
+            <p class="text-text-muted text-2xs px-1 pt-1">
+              {m.chat_search_limited_loaded_warning()}
+            </p>
+          {/if}
+        </div>
+      {/if}
+
+      {#if activePolls.length > 0}
+        <div class="px-3 pt-1 md:px-6">
+          <button
+            type="button"
+            onclick={() => (showPolls = !showPolls)}
+            class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <ChartColumn size={14} class="text-cn-yellow shrink-0" />
+            <span class="font-semibold"
+              >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
+            >
+            <ChevronDown
+              size={15}
+              class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}"
+            />
+          </button>
+          {#if showPolls}
+            <div
+              transition:slide={{ duration: 150 }}
+              class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
+            >
+              {#each activePolls as poll (poll.id)}
+                <button
+                  type="button"
+                  class="text-text-main truncate rounded-lg px-2 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5"
+                  onclick={() => {
+                    showPolls = false;
+                    void navigateToMessageEnsureLoaded(poll.id);
                   }}
                 >
-                  <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
+                  📊 {poll.question}
                 </button>
-                {#if onTogglePin}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      {#if pinnedIds.length > 0}
+        <div class="px-3 pt-1 md:px-6">
+          <button
+            type="button"
+            onclick={() => (showPinned = !showPinned)}
+            class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <Pin size={14} class="shrink-0 text-amber-500" />
+            <span class="font-semibold"
+              >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
+            >
+            <ChevronDown
+              size={15}
+              class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}"
+            />
+          </button>
+          {#if showPinned}
+            <div
+              transition:slide={{ duration: 150 }}
+              class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
+            >
+              {#each pinnedIds as pid (pid)}
+                <div
+                  class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/5"
+                >
                   <button
                     type="button"
-                    onclick={() => onTogglePin?.(pid)}
-                    class="ui-icon-button text-text-muted rounded-lg hover:bg-red-500/10 hover:text-red-500"
-                    aria-label={m.chat_unpin_label()}
-                    title={m.chat_unpin_title()}
+                    class="text-text-main min-w-0 flex-1 truncate text-left text-sm"
+                    onclick={() => {
+                      showPinned = false;
+                      void navigateToMessageEnsureLoaded(pid);
+                    }}
                   >
-                    <X size={14} />
+                    <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
                   </button>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
+                  {#if onTogglePin}
+                    <button
+                      type="button"
+                      onclick={() => onTogglePin?.(pid)}
+                      class="ui-icon-button text-text-muted rounded-lg hover:bg-red-500/10 hover:text-red-500"
+                      aria-label={m.chat_unpin_label()}
+                      title={m.chat_unpin_title()}
+                    >
+                      <X size={14} />
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
 
     <!-- Messages (bottom padding so they scroll under the glass composer) -->
     <div class="relative flex min-h-0 flex-1 flex-col">
@@ -1200,7 +1238,9 @@
            <ChatHeader> - so anchored there they paint over the avatar and the contact name. -->
       <!-- One column, so two simultaneous banners STACK instead of hiding one another: both were
            `absolute top-0` and the amber one simply covered the sky one. -->
-      <div class="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col">
+      <div
+        class="chat-thread-banners pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col"
+      >
         {#if isCatchupAnnounced}
           <div
             class="bg-banner-warn text-text-main border-amber-warn/30 pointer-events-none flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium"

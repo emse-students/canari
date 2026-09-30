@@ -313,6 +313,10 @@
   --control-fill: #e4e6eb;
   --banner-bg: color-mix(in srgb, var(--cn-surface) 92%, var(--cn-dark) 8%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--amber-warn) 16%);
+  /* GLASS, FOR STATIC CHROME ONLY - see `.glass-chrome`. */
+  --glass-chrome-bg: color-mix(in srgb, var(--cn-surface) 64%, transparent);
+  --glass-chrome-edge: color-mix(in srgb, var(--cn-surface) 70%, transparent);
+  --glass-chrome-shadow: color-mix(in srgb, var(--cn-dark) 14%, transparent);
   --app-viewport-height: 100dvh;
   /* Ceiling for any media box that reserves an aspect ratio in a scrolling surface - the feed, a
      comment, a chat bubble. Without it a tall picture is as tall as it likes: the ratio clamp alone
@@ -406,6 +410,10 @@
      a near-white), so reusing the light recipe would have produced a pale strip in dark mode. */
   --banner-bg: color-mix(in srgb, var(--cn-surface) 88%, #ffffff 12%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 80%, var(--amber-warn) 20%);
+  /* Mixed towards white for the edge, as `--banner-bg` is: `cn-dark` is inverted in this theme. */
+  --glass-chrome-bg: color-mix(in srgb, var(--cn-surface) 58%, transparent);
+  --glass-chrome-edge: color-mix(in srgb, #ffffff 14%, transparent);
+  --glass-chrome-shadow: color-mix(in srgb, #000000 40%, transparent);
 }
 
 /* Theme transitions - scoped to elements that actually change theme colors.
@@ -1124,6 +1132,58 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
   padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
+}
+
+/* LIQUID GLASS, AND ONLY FOR CHROME THAT STAYS PUT WHILE CONTENT MOVES UNDER IT (user, 2026-09-30:
+   "only static ui element, that are apart from content, should be liquid glass"). The conversation's
+   floating header pieces and the composer's "+" wear it; a bubble, a card or a panel of content never
+   does - design-reference section 3 keeps every structural surface opaque, and this is the one
+   exception to it, decided rather than drifted into. On iOS the same pieces become native Liquid
+   Glass (WP-G2); this is what web and Android draw. `backdrop-filter` makes the element a containing
+   block for `position: fixed` descendants, so a panel it opens must be portalled out of it. */
+.glass-chrome {
+  background: var(--glass-chrome-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--glass-chrome-edge);
+  box-shadow: 0 4px 20px var(--glass-chrome-shadow);
+}
+
+/* THE DATE PILL SITS UNDER THE CHROME, EVERYWHERE. It is positioned against the whole thread panel,
+   header included, so at `top: 0.85rem` the header covered it on every width while it showed - on
+   the website as much as under the apps' floating glass. `--chat-header-height` is the chrome's
+   measured height (`ChatArea`), published in the flow and floating alike. Scoped to the panel, which
+   also outweighs the base rule further down this file. */
+.chat-thread-panel .chat-sticky-date-indicator {
+  top: calc(var(--chat-header-height, 0px) + 0.85rem);
+}
+
+/* THE CONVERSATION'S CHROME FLOATS OVER THE THREAD IN THE PHONE APPS (`ChatArea` puts
+   `.chat-glass-chrome` on the panel - `usesGlassChrome`; the website keeps it in the flow), so the
+   thread scrolls under the header's glass. The layer lets touches through except on its own
+   controls - the gaps between the glass pieces are the thread, and must stay the thread's. */
+@media (width < 48rem) {
+  .chat-glass-chrome .chat-chrome-slot {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .chat-glass-chrome .chat-chrome-slot :is(button, input, a, .chat-search-panel) {
+    pointer-events: auto;
+  }
+
+  .chat-glass-chrome .chat-messages-scroll {
+    padding-top: calc(var(--chat-header-height, 0px) + 0.75rem);
+    scroll-padding-top: calc(var(--chat-header-height, 0px) + 0.75rem);
+  }
+
+  /* The sync banners hang from the top of the message area, which now starts UNDER the chrome. */
+  .chat-glass-chrome .chat-thread-banners {
+    top: var(--chat-header-height, 0px);
+  }
 }
 
 /* Chat layout fills the full viewport - no page scroll behind the chat shell. */
