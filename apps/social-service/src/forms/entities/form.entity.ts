@@ -111,6 +111,14 @@ export class Form {
   @Column({ default: false })
   anonymous: boolean;
 
+  /**
+   * When true, anybody holding the link may answer WITHOUT an account (migration 068). A guest has
+   * no identity to charge, to grant to, to count once or to match a profile criterion against, so a
+   * public form is free, criteria-free and answerable more than once - `assertPublicConfigValid`.
+   */
+  @Column({ default: false })
+  isPublic: boolean;
+
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })
   allowMultipleSubmissions: boolean;

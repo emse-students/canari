@@ -76,6 +76,11 @@ export interface CreateFormPayload {
    * creation: the edit screen never sends it and shows it read-only.
    */
   anonymous?: boolean;
+  /**
+   * Answerable without an account from `/f/:id`. The server holds it to a free form with no
+   * audience criterion that takes several answers - a guest has no identity for any of those.
+   */
+  isPublic?: boolean;
   /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
@@ -120,12 +125,23 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 
+/**
+ * The server's own sentence for a refused call, or `fallback` when it gave none. A save refused
+ * for a reason the manager can fix - a public form with a price - must say that reason, not
+ * "failed". The validation pipe answers a LIST of sentences, joined here.
+ */
+async function refusal(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => ({}));
+  const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
+  return new Error(message || `${fallback} (${res.status})`);
+}
+
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Failed to create form');
+  if (!res.ok) throw await refusal(res, 'Failed to create form');
   return res.json();
 }
 
@@ -150,7 +166,7 @@ export async function updateForm(id: string, payload: CreateFormPayload): Promis
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Failed to update form');
+  if (!res.ok) throw await refusal(res, 'Failed to update form');
   return res.json();
 }
 
@@ -419,4 +435,47 @@ export async function submitForm(
     throw new Error(err.message || 'Submission failed');
   }
   return res.json();
+}
+
+/** What a guest on a public form's link is served: the questions, and nothing about its owner. */
+export type PublicForm = Pick<
+  Form,
+  'id' | 'title' | 'description' | 'imageUrl' | 'items' | 'opensAt' | 'anonymous'
+> & {
+  closedAt?: string | null;
+  formFull: boolean;
+};
+
+/** Why a public form could not be read: it is not there (or not public), or the call failed. */
+export class PublicFormUnavailableError extends Error {
+  constructor(readonly notFound: boolean) {
+    super(notFound ? 'Public form not found' : 'Public form could not be loaded');
+    this.name = 'PublicFormUnavailableError';
+  }
+}
+
+/**
+ * Reads a public form WITHOUT a session - plain `fetch`, never `apiFetch`, whose refresh-and-retry
+ * is for a signed-in caller and would send a guest's browser to a token endpoint for nothing.
+ */
+export async function getPublicForm(id: string): Promise<PublicForm> {
+  const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new PublicFormUnavailableError(res.status === 404 || res.status === 400);
+  return res.json();
+}
+
+/**
+ * Sends one guest answer. `website` is the honeypot the page hides from people; the server drops
+ * any answer that fills it. The server's own sentence is thrown.
+ */
+export async function submitPublicForm(
+  id: string,
+  payload: { answers: Record<string, unknown>; website: string }
+): Promise<void> {
+  const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw await refusal(res, 'Submission failed');
 }

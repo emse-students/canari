@@ -7,6 +7,7 @@ const SWIPE_NAV_EXCLUDED_PREFIXES = [
   '/associations',
   '/profile',
   '/forms',
+  '/f',
   '/events',
   '/admin',
   '/auth',

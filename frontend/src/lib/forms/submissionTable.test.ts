@@ -4,8 +4,10 @@ import {
   answeredItems,
   maxAnswerColumns,
   panelAddsNothing,
+  submitterName,
 } from './submissionTable';
 import type { FormItem } from './api';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * The layout one form's responses take. What is asserted is WHICH questions become columns and
@@ -136,5 +138,19 @@ describe('panelAddsNothing', () => {
   it('is true for a response that answered nothing, whatever is drawn', () => {
     expect(panelAddsNothing([], [], nothingClipped)).toBe(true);
     expect(panelAddsNothing([], [asso], everythingClipped)).toBe(true);
+  });
+});
+
+describe('submitterName', () => {
+  it('names a row with no account as a guest, never as a blank', () => {
+    expect(submitterName({ firstName: null, lastName: null, userId: null })).toBe(
+      m.form_submitter_guest()
+    );
+  });
+
+  it('prefers the stored name', () => {
+    expect(submitterName({ firstName: 'Ada', lastName: 'Lovelace', userId: 'u1' })).toBe(
+      'Ada Lovelace'
+    );
   });
 });

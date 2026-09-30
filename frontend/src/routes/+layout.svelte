@@ -73,7 +73,11 @@
   const pathname = $derived(page.url.pathname);
   /** Read once: the platform does not change under a running app. */
   const isIosApp = isIosTauriRuntime();
-  const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
+  // No app chrome on a page a visitor without an account reads: login, the legal pages, and a
+  // public form's guest page (`/f/`), whose sidebar and tabs would all lead to a login screen.
+  const isLoginPage = $derived(
+    pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
+  );
 
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();

@@ -13,10 +13,13 @@ export const ssr = false;
 export const load = async (event: LoadEvent) => {
   // Get user ID from local store and validate it against the server.
 
+  // `/f/` is a PUBLIC form's guest page: answered without an account, so a visitor with no
+  // session must reach it rather than be sent to the login screen.
   const isAuthRoute =
     event.url.pathname.startsWith('/login') ||
     event.url.pathname.startsWith('/auth') ||
-    event.url.pathname.startsWith('/legal');
+    event.url.pathname.startsWith('/legal') ||
+    event.url.pathname.startsWith('/f/');
 
   if (typeof window === 'undefined') return;
   if (isAuthRoute) return;

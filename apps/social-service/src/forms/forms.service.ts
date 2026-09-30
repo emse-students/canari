@@ -69,6 +69,31 @@ function formRequiresStripeReadyAssociation(input: {
   return !!cells && Object.values(cells).some((c) => (c ?? 0) > 0);
 }
 
+/**
+ * Whether a form takes money or grants something - the two things that need to know WHO answered.
+ * Both an anonymous and a public form refuse them, for that one reason.
+ */
+function takesMoneyOrGrants(input: CreateFormDto): boolean {
+  return (
+    input.requiresPayment === true ||
+    (input.basePrice ?? 0) > 0 ||
+    input.priceMatrix != null ||
+    input.allowCashPayment === true ||
+    input.grantsCotisation === true
+  );
+}
+
+/** Whether a question is shown or hidden by who the person IS - a promo, a formation, a cotisation. */
+function hasProfileCriterion(item: any): boolean {
+  const condition = normaliseCondition(item);
+  if (!condition) return false;
+  const { answer: _answer, ...profileOnly } = condition;
+  return Object.keys(profileOnly).length > 0;
+}
+
+/** Where a submission comes from: a signed-in member, or a guest on a public form's link. */
+export type SubmitOrigin = 'member' | 'guest';
+
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
 type FormItemLike = AnswerQuestion & { id: string; label: string };
@@ -111,14 +136,35 @@ export class FormsService {
    */
   private assertAnonymousConfigValid(input: CreateFormDto & { anonymous?: boolean }): void {
     if (input.anonymous !== true) return;
-    const takesMoney =
-      input.requiresPayment === true ||
-      (input.basePrice ?? 0) > 0 ||
-      input.priceMatrix != null ||
-      input.allowCashPayment === true;
-    if (takesMoney || input.grantsCotisation === true) {
+    if (takesMoneyOrGrants(input)) {
       throw new BadRequestException(
         'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
+      );
+    }
+  }
+
+  /**
+   * Refuses a public form that would need to know who a guest is. A guest has no account, so there
+   * is nobody to charge, to grant a cotisation to, to match a profile criterion against, or to count
+   * once - each is refused where it is chosen, rather than being a setting that quietly does
+   * nothing for the people the link reaches. Paying guests are parked behind Lydia (backlog).
+   */
+  private assertPublicConfigValid(input: CreateFormDto): void {
+    if (input.isPublic !== true) return;
+    if (takesMoneyOrGrants(input)) {
+      throw new BadRequestException(
+        'A public form must be free: a guest has no account to charge or to grant a cotisation to.'
+      );
+    }
+    if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
+      throw new BadRequestException(
+        'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
+          'against.'
+      );
+    }
+    if (input.allowMultipleSubmissions !== true) {
+      throw new BadRequestException(
+        'A public form must accept several answers: a guest cannot be recognised a second time.'
       );
     }
   }
@@ -290,6 +336,7 @@ export class FormsService {
       }
     }
     this.assertAnonymousConfigValid(input);
+    this.assertPublicConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -372,15 +419,46 @@ export class FormsService {
   async get(id: string) {
     const form = await this.formRepo.findOne({ where: { id } });
     if (!form) return null;
-    const submissionCount = await this.submissionRepo.count({
+    const submissionCount = await this.countActiveSubmissions(id);
+    return { ...form, submissionCount };
+  }
+
+  /** The submissions holding a place on the form: answered, paid, or waiting to be. */
+  private countActiveSubmissions(formId: string): Promise<number> {
+    return this.submissionRepo.count({
       where: [
-        { formId: id, paymentStatus: 'paid' },
-        { formId: id, paymentStatus: 'free' },
-        { formId: id, paymentStatus: 'pending' },
-        { formId: id, paymentStatus: 'pending_cash' },
+        { formId, paymentStatus: 'paid' },
+        { formId, paymentStatus: 'free' },
+        { formId, paymentStatus: 'pending' },
+        { formId, paymentStatus: 'pending_cash' },
       ],
     });
-    return { ...form, submissionCount };
+  }
+
+  /**
+   * What a guest on a public form's link may read: the questions and when it is open, and nothing
+   * about who made it or who answered. A form that is not public is reported as absent, so the
+   * public route cannot be used to learn which ids exist.
+   */
+  async getPublic(id: string) {
+    const form = await this.formRepo.findOne({ where: { id } });
+    if (!form?.isPublic) {
+      this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
+      throw new NotFoundException('Form not found');
+    }
+    const formFull =
+      !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
+    return {
+      id: form.id,
+      title: form.title,
+      description: form.description,
+      imageUrl: form.imageUrl,
+      items: form.items,
+      opensAt: form.opensAt,
+      closedAt: form.closedAt,
+      anonymous: form.anonymous,
+      formFull,
+    };
   }
 
   /**
@@ -441,6 +519,9 @@ export class FormsService {
       );
     }
     this.assertAnonymousConfigValid({ ...input, anonymous: form.anonymous });
+    // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
+    // the answers already stored. An absent value means "leave it", so the stored one is checked.
+    this.assertPublicConfigValid({ ...input, isPublic: input.isPublic ?? form.isPublic });
 
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
@@ -578,15 +659,7 @@ export class FormsService {
     // Check global capacity independently of per-user state
     let formFull = false;
     if (form.maxSubmissions) {
-      const count = await this.submissionRepo.count({
-        where: [
-          { formId, paymentStatus: 'paid' },
-          { formId, paymentStatus: 'free' },
-          { formId, paymentStatus: 'pending' },
-          { formId, paymentStatus: 'pending_cash' },
-        ],
-      });
-      formFull = count >= form.maxSubmissions;
+      formFull = (await this.countActiveSubmissions(formId)) >= form.maxSubmissions;
     }
 
     const facts = await this.factsFor(form, userId);
@@ -647,9 +720,11 @@ export class FormsService {
   }
 
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */
-  async submit(id: string, input: SubmitFormDto) {
+  async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
+    const guest = origin === 'guest';
     const form = await this.formRepo.findOne({ where: { id } });
-    if (!form) throw new NotFoundException('Form not found');
+    // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
+    if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
       throw new BadRequestException('The form is not open yet.');
@@ -765,17 +840,23 @@ export class FormsService {
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
 
-      if (form.anonymous) {
-        if (!input.userId) throw new BadRequestException('Sign in to answer this form.');
+      if (form.anonymous || guest) {
+        if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
         // An option supplement could still charge on a form saved free; a charge would need the
-        // payer, which is the one thing this branch refuses to keep.
+        // payer, which is the one thing this branch has none of - by promise, or because a guest
+        // has no account at all.
         if (totalCents > 0) {
-          throw new BadRequestException('An anonymous form cannot charge for an option.');
+          throw new BadRequestException(
+            guest
+              ? 'A public form cannot charge for an option.'
+              : 'An anonymous form cannot charge for an option.'
+          );
         }
         // The registry insert and the answer are ONE transaction, and the answer carries nothing
         // that names the respondent: no account, no address, and a time cut to the day, because a
-        // precise clock would re-join the two tables by order alone.
-        if (!form.allowMultipleSubmissions) {
+        // precise clock would re-join the two tables by order alone. A guest is never in the
+        // registry: a public form takes several answers, and there is no account to write.
+        if (!guest && !form.allowMultipleSubmissions) {
           const inserted: unknown[] = await manager.query(
             `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
              ON CONFLICT DO NOTHING RETURNING "formId"`,
@@ -785,6 +866,8 @@ export class FormsService {
             throw new BadRequestException('You have already answered this form.');
           }
         }
+        // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
+        // forgetting, and the answer carries no account for a clock to re-join.
         const day = new Date();
         day.setUTCHours(0, 0, 0, 0);
         savedSubmission = await manager.save(
@@ -797,8 +880,7 @@ export class FormsService {
             paymentStatus: 'free',
             paymentMethod: null,
             cashExpiresAt: null,
-            createdAt: day,
-            updatedAt: day,
+            ...(form.anonymous ? { createdAt: day, updatedAt: day } : {}),
           })
         );
         return;

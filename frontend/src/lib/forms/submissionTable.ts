@@ -1,6 +1,7 @@
 import { answerText } from './answerText';
 import type { FormItem } from './api';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * HOW ONE FORM'S RESPONSES LAY THEMSELVES OUT, which is a question about the FORM and not about the
@@ -127,6 +128,7 @@ export function submitterName(sub: {
   userId: string | null;
 }): string {
   const real = [sub.firstName, sub.lastName].filter(Boolean).join(' ');
-  // An anonymous answer has no author to name; callers branch on the form before asking.
-  return real || (sub.userId ? getUserDisplayNameSync(sub.userId) : '');
+  // An anonymous answer has no author to name; callers branch on the form before asking. So a row
+  // with no account HERE is a guest's, from a public form's link: said, rather than left blank.
+  return real || (sub.userId ? getUserDisplayNameSync(sub.userId) : m.form_submitter_guest());
 }

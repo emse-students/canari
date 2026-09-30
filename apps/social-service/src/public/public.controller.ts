@@ -12,7 +12,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import * as crypto from 'crypto';
 import type { Response } from 'express';
 import { AssociationsService } from '../associations/associations.service';
@@ -181,7 +181,7 @@ export class PublicController {
    * what a cache-busting query string can make this service do. The JSON preview beside it is a
    * database read and stays unthrottled, where a burst of unfurlers is exactly what is expected.
    */
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ClientIpThrottlerGuard)
   @Get('posts/:postId/preview-image')
   async getPostPreviewImage(@Param('postId') postId: string, @Res() res: Response): Promise<void> {
     const image = await this.postPreviews.readShareableImage(postId);
@@ -241,7 +241,7 @@ export class PublicController {
    * (this controller's other routes are intentionally unauthenticated - this one is not) and
    * throttled to guard against API-key brute-forcing.
    */
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ClientIpThrottlerGuard)
   @Get('cotisant-status')
   async getCotisantStatus(
     @Query('assoSlug') assoSlug: string,
