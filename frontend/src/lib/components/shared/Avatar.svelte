@@ -113,7 +113,7 @@
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
-    {initials}
+    <span class="text-zoom-exempt">{initials}</span>
   </div>
 {:else}
   <div
@@ -127,7 +127,7 @@
       <div
         class="bg-cn-ink text-cn-yellow absolute inset-0 flex items-center justify-center font-bold select-none"
       >
-        {initials}
+        <span class="text-zoom-exempt">{initials}</span>
       </div>
     {/if}
     <!-- `none` is already excluded by the branch above, so this only waits for the answer. -->

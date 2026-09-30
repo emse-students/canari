@@ -121,7 +121,7 @@
     title={name}
   >
     {#if initials}
-      {initials}
+      <span class="text-zoom-exempt">{initials}</span>
     {:else}
       <Users size={iconSize} />
     {/if}
