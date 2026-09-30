@@ -19,6 +19,7 @@
 
 - [The one-time key-package pool, measured](protocols/key-package-pool.md) - every count, every population, and every rule refuted against the pool nothing reclaims
 - [MLS protocol](protocols/mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync
+- [History reconciliation](protocols/history-reconciliation.md) — how a device works out it is missing messages and gets them: the replacement for the non-terminating `history_request` machinery, and the decisions taken
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
@@ -34,6 +35,7 @@
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
 - [media-service](services/media-service.md) — Encrypted blob storage (Garage)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
+- [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
 
@@ -41,6 +43,7 @@
 
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
+- [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
 - [The cold start, measured](frontend/cold-start.md) - every reading behind the under-1 s target, and every hypothesis refuted on the way
@@ -65,6 +68,7 @@
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
+- [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
@@ -82,6 +86,9 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
+- [Backlog](backlog.md) — the scheduled queue behind `CLAUDE.md`: the substance of every queue item, and the table of what only the user can do
+- [Open questions](open-questions.md) — questions parked deliberately, with no code until they are answered; an answer becomes a backlog entry or closes the question
+- [Legacy compatibility](legacy-compatibility.md) — every shim kept alive for older clients, and the date or condition at which each may be removed
 - [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist
 - [Ecosystem convergence](ecosystem-convergence.md) — The five projects measured side by side: tolerant search, outbound deadlines, the locale under SSR, the head, typed errors, the gates
 - [The search contract](search-contract.md) — What every search box in the ecosystem promises, the tolerance ladder, and the roster measurement that chose its numbers

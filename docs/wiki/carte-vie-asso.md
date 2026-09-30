@@ -137,8 +137,38 @@ read at ~9-10 pt on the printed sheet must be ~4.5 poster px AFTER every scale a
 
 The phasing below still says "A2" in places, and so do the comments in `layout.ts` and
 `PosterCanvas.svelte`: that was the target before the searchable-raster move and is not what the
-export does. The measured audit of the A0 output, and the open work it produced, are in
+export does. What the A0 audit still owes is in
 [backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build).
+
+### The 2026-09-27 audit - how it was measured, and the eighteen decisions it produced
+
+Built as #1143-#1149 and shipped in `v0.18.28`. **How it was measured, so it can be re-run**: the
+PDF was exported from the prod editor (31 associations) in a SEPARATE Chrome (own profile,
+`--remote-debugging-port`, driven over raw CDP from bun); text sizes came from `pymupdf`
+`get_text("dict")`, overlaps and per-unit sizes from `GET /api/public/carte`, which carries the same
+resolved geometry the poster draws. **Export with the tab in the FOREGROUND** - see "A capture cannot
+wait for an animation frame" below.
+
+| # | Decision (user, 2026-09-27) |
+| --- | --- |
+| D1 | The poster is printed on A0, and only A0; no format picker. |
+| D2 | Autosave stays; a badge says when the live map differs from the saved one, and only an explicit "Mettre à jour la version en ligne" republishes. |
+| D3 | Unpublishing is its own confirmed action ("Retirer du portail"); being live is a status. |
+| D4 | Member text leaves the unit's scale - superseded by D12/D13. |
+| D5 | The directory lists every member, without "(Membre)". |
+| D6 | The blob email stays, raised to the A0 floor. |
+| D7 | Overlaps are WARNED, never moved. |
+| D8 | The raster goes to ~150 dpi on A0 whatever the cost; the cost is measured, not re-decided. |
+| D9 | The PDF line-break fix shipped first, in its own PR, re-verified on all three exports. |
+| D10 | An association with no member stays on the poster, and the editor says so. |
+| D11 | One PR per group, a dev pre-release measured by the agent, then the user's look. |
+| D12 | Card text grows only as far as the crown clears; the smallest units reach ~7-8 pt, accepted. |
+| D13 | ONE name size per UNIT, not per poster and not per card. |
+| D14 | The published fingerprint covers the layout AND the content; the badge lighting up on a roster change is accepted. |
+| D15 | "Membre" is dropped in the directory and KEPT on a bureau card. |
+| D16 | The generic roles are exactly four: Membre, Member, Adherent, Adherente (case and accents ignored). |
+| D17 | An overlap is never raised at publish time. |
+| D18 | The dev pre-release was canari-64's to cut; the chantier cut none of its own. |
 
 ## The directory is ordered by FAMILY NAME, and that needs two columns
 

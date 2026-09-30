@@ -624,6 +624,40 @@ build, so the prune's reclaim is not observable here.
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
+## A WEB PROFILE HOLDS 1024 BUNDLES, ALL LIVE, AND THAT IS ACCRUAL CORRECT BY CONSTRUCTION (production consoles, 2026-09-16)
+
+The user's own browser on `0.18.4`, read three times the same day from the census line
+`load_or_create` prints once per load (so no `stat mls.bin` is ever needed - groups and bundles are
+separated by reading the log, not by dividing a file size):
+
+```
+07:58:04  KeyPackage  933 x 2 215 941 B   total 7 291 769 B   (then needed=50)
+08:10:19  KeyPackage  983 x 2 334 671 B   total 7 424 982 B   (then needed=30)
+08:10:21  KeyPackage 1013 x 2 405 882 B   total 7 496 207 B
+13:32     KeyPackage 1024 x 2 431 971 B   total 7 539 303 B
+          census - 1024 proven (1023 one-time, 1 last-resort); 0 expired, 0 undecodable;
+          29 mint instant(s), largest batch 50
+```
+
+- **~2 375 bytes a package, and the arithmetic is exact**: 933 + 50 = 983, + 30 = 1013. Nothing was
+  dropped; twelve minutes of use cost +80 packages. Two samples are one account on one morning, not a
+  rate law - the number that would generalise is this census line across several accounts.
+- **`0 expired` means none of the three reclaims applies.** Expiry has nothing to drop, no
+  server-confirmed purge happened, and there is exactly one fallback (`#458` holds on the web, not
+  the 269 the Mi 9T carried). 29 mint instants are 29 top-ups, each `50 - existing` against a pool
+  peers really drained. **There is no fourth fix hiding**; the steady state is wherever the mint rate
+  puts it at day 84.
+- The three accrual fixes this was checked against: the per-connection last-resort remint and the
+  purge that now returns what it deleted (`e0f2d825b`, #458, `v0.17.0`), and the mint bracketed by
+  `ForegroundCritical` (`6ff1143ca`, #432, `v0.16.6`). The web breakdown line itself is `62696fad4`
+  (#727, `v0.18.5`), with the clock passed in by the caller because `SystemTime::now()` panics on
+  `wasm32`.
+- The same export showed a round that minted NOTHING (`needed=0`) and still paid a full save, reload
+  and three checkpoints; that one is fixed and told in `CHANGELOG.md`.
+- The Mi 9T read the same day (`0.18.1`, `stat mls.bin` = 2 750 195 B against 19 548 753 on
+  2026-09-06) is NOT a reclaim: the 2026-09-14 release APK replaced the debug build and wiped the
+  blob (`firstInstallTime=2026-09-14 20:12:15`). The figure only dates that install.
+
 ## THE SERVER SERVED A DEAD LAST-RESORT PACKAGE TO 95% OF DEVICES, AND THE COLUMN THAT SHOULD HAVE STOPPED IT WAS NULL FOR ALL OF THEM
 
 **Found on 2026-09-18 in a console export the user took on their own browser**, on production

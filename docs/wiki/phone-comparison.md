@@ -1,7 +1,8 @@
 # Mi 9T vs iPhone 12 - first comparison (2026-09-30)
 
-Both phones ran a LOCAL build against the local stack, same account, same Wi-Fi. **Findings only:
-nothing here was fixed.** Screenshots are in the rig's state dir (`F:\Programmation\canari-harness\ios-bench\`),
+Both phones ran a LOCAL build against the local stack, same account, same Wi-Fi. **The first
+sections below are the FINDINGS of that comparison, written before any fix; what was then fixed, lot by
+lot, is in "The correction plan" and the sections after it.** Screenshots are in the rig's state dir (`F:\Programmation\canari-harness\ios-bench\`),
 not in the repo - they show a campaign account. The bench is [`tools/phone-bench/`](../../tools/phone-bench/bench.py)
 (`bench.py calibrate|tabs|scroll|startup|weight`, `crawl.py`); the iPhone side is driven by
 [`tools/ios-device/`](../../tools/ios-device/ios.mjs) ([mobile](frontend/mobile.md#a-build-for-the-phone-on-the-bench)).
@@ -17,8 +18,8 @@ not in the repo - they show a campaign account. The bench is [`tools/phone-bench
 - **Harness floor.** `adb input tap` returns in ~50 ms; a WDA tap blocks 0.5-1.7 s (it waits for the app to be
   idle). Both timings are "dispatch -> first changed frame on the host", so the iPhone's ~20 ms frame spacing
   and WDA's quiescence wait are inside them.
-- The per-element audit (`audit.py`) is too noisy to trust (the Android dump keeps pages hidden behind a modal); verdicts come from screenshots.
-  behind a modal, so the same 25 findings repeated on every screen. Verdicts below come from the screenshots.
+- The per-element audit (`audit.py`) is too noisy to trust (the Android dump keeps pages hidden behind a modal); verdicts come from screenshots (the Android dump keeps pages
+  hidden behind a modal, so the same 25 findings repeated on every screen).
 
 ## Weight
 
@@ -150,8 +151,8 @@ design differences between iOS and Android accepted, test data created on the LO
 | --- | --- | --- |
 | 1 | The native iOS tab bar hides while anything covers the screen; the composer's attachment row fades where it scrolls (findings A, B) | MERGED #1240, read on both phones |
 | 2 | iOS safe areas: WebKit read every `env(safe-area-inset-*)` as 0, so "Publier" sat in the home indicator (finding C was NOT a defect: the last card clears the bar) | MERGED #1242, read on the iPhone - [parity §1.1](frontend/android-ios-parity.md) |
-| 3 | 44 px touch targets; a stacked list takes a real 44 px row, never `.tap-target` | MERGED #1243, read on the Mi 9T, NOT on the iPhone |
-| 4 | Readability: the iOS keyboard accessory bar (finding E, ~45 pt above every keyboard) | OPEN - the user has not decided; removing it is offered, last |
+| 3 | 44 px touch targets; a stacked list takes a real 44 px row, never `.tap-target` | MERGED #1243, read on the Mi 9T; the iPhone was read in the user's pass below, not as a separate row |
+| 4 | Readability: the iOS keyboard accessory bar (finding E, ~45 pt above every keyboard) | DONE - removed (the user's U4, READ on the iPhone 2026-09-30: no bar, themed keyboard) |
 | 5 | Coverage: the screens that need data, admin pages, Dynamic Type, landscape, iPad, Android at 200 % font, long-press and swipe overlays, three-button mode after `profile` | OPEN |
 
 **Tools the campaign left, each one a measurement that used to be a guess:**
@@ -236,7 +237,8 @@ names truncate, the PIN sheet scrolls to every option. Two defects, both fixed o
 
 ## What to do next
 
+Lots 1-4 are merged and read on the phones; the user's U1-U8 list above carries the rest (U5 is still open).
+
 1. Lot 5, in the order of "What is covered" above: create the data on the local stack, extend `tour.py`
    (`SCREENS`) and `overlays_ios.py`, then read each new screen with `insets.mjs` on both phones.
-2. Lot 4 when the user decides.
-3. The release-mode APK once the user allows it, then redo startup and scroll.
+2. The release-mode APK once the user allows it, then redo startup and scroll.

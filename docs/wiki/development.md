@@ -313,6 +313,31 @@ summary, never only the test count: "2 failed | 197 passed" beside "1743 passed"
 never ran. The exit code is 1, so CI does catch it - a human skimming the tail does not. Same
 instrument as [testing-methodology rule 22](testing-methodology.md).
 
+### Windows workstation traps
+
+Four ways a Windows checkout silently does nothing, or changes bytes, with a green exit code. None is
+visible in the output; each is found by reading a value back.
+
+- **`bun run format` at the repo ROOT is not this project's formatter.** There is no root
+  `package.json`, so bun falls through to PATH, and on Windows it resolves `.bat` files: it can execute
+  an installed IDE's own `format.bat`, which may print a JVM stack trace and still exit 0 - a clean-looking
+  gate that formatted nothing (and, had the JVM started, would have reformatted files with the IDE's
+  rules). The gates are frontend scripts: `cd frontend && bun run check && bun run lint && bun run format`.
+- **Git Bash (MSYS) rewrites any argument that looks like an absolute POSIX path** before a native
+  program sees it. `gh variable set X --body /home/app/dir` stored a Windows path under the Git install
+  directory, and a `:` in `git show origin/main:path` was read as a path-list separator. Set
+  `MSYS_NO_PATHCONV=1` for arguments meant for a REMOTE machine or an API; but with it set, a native
+  `.exe` receives `/f/x` literally, so spell LOCAL paths `F:/...` (never `/f/...`) whenever a native
+  tool is involved. After setting anything through `gh`, read the value back.
+- **A heredoc written through the Bash tool can lose one backslash level, even when quoted** - a JS
+  `'\\s+'` landed in the file as `\s+`, then as a regex matching the letter "s". Never write a backslash
+  escape through a heredoc: put a placeholder token in it and replace it with the Edit tool (byte-exact),
+  or write the whole file with Write. Then read the bytes back (`grep -n` piped to `cat -A`).
+- **`core.hooksPath` can point at another machine's (or a deleted checkout's) path**, carried by a copied
+  `.git` from a handoff bundle or a restore; git then runs no hook and says nothing. Run
+  `git config core.hooksPath` after any clone or restore - it must print `.husky/_` (see
+  [`core.hooksPath` is shared by every worktree](#corehookspath-is-shared-by-every-worktree-and-must-stay-relative)).
+
 ### Compiling Android Rust from Windows
 
 `NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125`, put

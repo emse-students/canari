@@ -1,9 +1,9 @@
 # Backlog
 
-**Everything below is SCHEDULED** - the user's decision of 2026-08-18: the backlog and `CLAUDE.md`
-are both emptied before the campaign restarts. This file is no longer a parking area; it is the
-DETAIL for the queue in `CLAUDE.md`, which carries the order and one line per item. Read the order
-there, the substance here, and delete an entry from BOTH when it ships.
+**Everything below is SCHEDULED** - the user's decision of 2026-08-18: nothing is parked. This file
+is not a parking area; it is the DETAIL for the queue in `CLAUDE.md`, which carries the order and
+one line per item. Read the order there, the substance here, and delete an entry from BOTH when it
+ships.
 
 The exception is the handful that genuinely cannot be pulled forward - blocked upstream, blocked on
 an iPhone that does not exist, blocked on credentials somebody else owes, or post-campaign by the
@@ -39,7 +39,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | `/forms/success` no longer asks for a form called `success` | after the deploy, social-service logs no `invalid input syntax for type uuid: "success"` across a completed payment - the symptom fired once per payment, so ONE payment settles it. The unit test pins the derived set; only prod pins the silence |
 | the `apiFetch` fallback now names its cause | the next run's logs separate "a container is restarting", which needs nothing, from "refresh is broken", which needs everything - they were the identical line. If one cause dominates, its RATE wants measuring against the population before the name "transient" is believed |
 | the `[PENDING]` line that called a routine race "Non-recoverable" | the next run reports it in `notable` from an ANCHORED rule, not from the generic `epoch` rule matching words an error string happened to carry. **The two old spellings stay pinned** until A1 runs a build emitting the new line - an APK embeds its frontend and is not reached by a deploy |
-| the forms responses table shows the answers (shipped 2026-09-20, #884) | ONE PASS IN A BROWSER, on a form that has real submissions. The DOM is pinned by `FormSubmissionsTable.answers.svelte.test.ts` - a column arrives as header and cell, the panel opens, the `colspan` spans. What no test sees is the APPEARANCE: whether three answer columns at 1024px leave a short answer readable or truncate it, what a 200-character answer does to the panel's two-column grid, and whether the card layout below `sm` still reads as a list ([forms](frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)) **AND THE RIG CANNOT TAKE IT, MEASURED 2026-09-22**: the local estate holds **0 forms and 0 submissions**, so no harness device can reach one; dev holds 4 and 70, but the harness targets local only and a test credential may never be spelt on a command line (`accounts.mjs`). Closing this needs the harness to gain a dev target, or the local copy refreshed - not a browser session improvised around the rule. |
+| the forms responses table shows the answers (shipped 2026-09-20, #884) | ONE browser pass on a form with real submissions, for the APPEARANCE no test sees: three answer columns at 1024px, a 200-character answer in the panel's grid, the card layout below `sm` ([forms](frontend/modules/forms.md#the-responses-accordion-shows-the-answers-and-the-form-decides-its-own-layout-2026-09-20)). The rig cannot take it (measured 2026-09-22: the local estate holds 0 forms, the harness targets local only), so it needs a harness dev target or a refreshed local copy first |
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
@@ -48,11 +48,9 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
 | the row a push creates now carries the GROUP's name | HARDWARE, both platforms, and it has ONE case, not two: the rename-while-killed shortcut this row used to offer was REFUTED on 2026-09-15 - `groupRenamed` is a durable frame, so the device gets the name on reconnect through route one and discovery correctly says nothing. Only a push placeholder leaves a label no frame will fix, and that case needs an APK built from this tree, since an APK embeds its frontend and no deploy reaches it ([check C](device-verification.md#c-the-row-a-push-creates-carries-the-groups-name---owed-on-both-platforms)) |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
-| the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
-| a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
-| the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open. **A BREAK HAS BEEN REFUSED IN A REAL RUN, AND IT WAS NOT A MAJOR**: #431, `webrtc 0.17.2 -> 0.20.5`, refused by the `Dependency ceiling` job on 2026-09-07 and still open. Dependabot calls it `semver-minor` and Cargo does not - `^0.17` no longer matches `0.20` - so the ceiling's own label said "(minor)" about a bump that moved every module out of the crate. The label is fixed and self-tested; the MAJOR arm is still unexercised, which is what this row waits for |
+| a security advisory now has an ACTOR at all (`automated-security-fixes` enabled 2026-09-02) | the first security pull request Dependabot itself opens, for ANY directory. Alert 210 (`serde_with`) does not close it: it was fixed by hand in #357 on 2026-09-04, and the cargo-manifest refusal it met was fixed by `3b31e2ea9`. (verify: whether any Dependabot SECURITY update has opened since - its PR list does not say which of its PRs are security updates) |
+| the auto-merge ceiling refuses a major | the workflow logging `REFUSED` on a real major in its own run. A break was refused on 2026-09-07 (#431, `webrtc 0.17 -> 0.20`, which Dependabot calls minor; closed since), and the label that called it "(minor)" is fixed and self-tested. (verify: the NestJS 11 -> 12 majors #1204-#1206, opened 2026-09-28 and still open, show `Dependency ceiling` SUCCESS - read that run's log for `REFUSED` before believing the major arm unexercised) |
 | the release build no longer enables WebView debugging | **HARDWARE, AND NOT THE Mi 9T.** That phone is `ro.build.type=userdebug`, which makes EVERY app's WebView inspectable - shown on it by an APK holding zero occurrences of `setWebContentsDebuggingEnabled` in both its native library and its dex, inspectable anyway. It cannot separate the app's setting from the ROM's, in either direction. The binary comparison is what carries the fix (1 occurrence in the shipped `v0.18.21` library, 0 in the new one, same architecture and profile); what is owed is the same `/proc/net/unix` probe on a `user`-build device ([device-verification](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)) |
-| a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `bun tools/cold-start/launch-trace.mjs --heartbeat` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not** ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the community settings read as a panel on the phone they were reported from | **ANSWERED ON THE Mi 9T, 2026-09-17, AND THE ROW'S OWN BLOCKER WAS FALSE.** It said this waited on the phone being free because it *"carries the USER'S OWN account behind an encryption PIN that is theirs"*. The user corrected that on 2026-09-17 - the handset holds test accounts only - and `identity.mjs` then read `A1 expected owner / shows owner / acts as owner`, so the run was the rig's to take all along. **A row may not park a check behind a premise nobody re-measures.** Read off a debug APK built from this tree at **436 x 945 CSS px, the device's own width**, no override. **The portal from #802 holds on hardware**: `panel.parentElement === document.body`, the drawer paints full-bleed `0 -> 945` OVER the bottom bar rather than inside `<main>`, and the foot - `Quitter la communaute` ending at 713, `Supprimer la communaute` at 759 - clears the bar's top edge at **873 by 114 px**. That is the half the browser A/B only implied, and it passes. The permission matrix is a `<table>` 519 px wide inside its own `overflow-x-auto` card of 371, which is the correct shape: **`document.documentElement.scrollWidth` is 436, equal to the viewport, so the PAGE never scrolls sideways.** **TWO OBSERVATIONS, NEITHER A FAILURE, BOTH P3**: the tab strip is `overflow-x: auto` at 483 px against 436, so the third tab renders truncated mid-word (`Memb`) on first paint with no affordance - three tabs at the app's primary phone width is where a wrap or tighter padding would fit; and the two danger-zone buttons are 38 px tall where the close button is 44. The tabs also carry **no `role="tab"` and no `role="tablist"`** - they are plain buttons, so nothing announces the strip as a tab set. The A/B that justified the portal is not repeated here: `SidePanel.svelte`'s docblock owns it ([device-verification](device-verification.md)). |
 | the biometric cadence (every 12 h by default, or every time) | HARDWARE, both platforms, and a build from this tree - the APK embeds the frontend. Kotlin and Swift were compiled by nothing on the workstation that wrote them; the plugin's Rust half passed `cargo check --target aarch64-linux-android`. Check U, five steps, the decisive one being step 2 - a relaunch inside the window shows no sheet of either kind and still unlocks. **Android, 2026-09-28: every cadence decision PASSES on the Mi 9T with a seeded proof, and step 5 FAILS on a pre-existing P2 (below)**; owed there: a real finger and the Settings radio; all of iOS ([check U](device-verification.md#u-the-biometric-cadence-every-12-h-skips-the-sheet-every-time-keeps-it---owed-on-both-platforms)) |
@@ -91,115 +89,20 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
-Asked by the user on 2026-09-27: *"Fais moi une liste de ce que tu penses améliorable sur tout ce qui
-concerne la cartographie des associations [...] Exporte le PDF (avec les données prod), observe les
-tailles des éléments, des textes, potentiels chevauchement etc. Tout doit être lisible, beau et
-pratique."* Then: *"on part sur ce projet"*. Mechanism is on [carte-vie-asso](carte-vie-asso.md);
-this entry is the open work.
+**BUILT AND SHIPPED**: #1143-#1149 (migration 064 included) are in the `v0.18.28` stable, so the
+dev pre-release D18 waited for has been cut and production carries it. The eighteen decisions, the
+way the audit was measured and every mechanism are on
+[carte-vie-asso](carte-vie-asso.md#the-2026-09-27-audit---how-it-was-measured-and-the-eighteen-decisions-it-produced).
+Two costs were measured and accepted, not discovered: 9 of 107 cards LOST size (worst 2.11 pt), and
+the badge lights up whenever any roster changes (D14).
 
-**How it was measured, so it can be re-run.** The PDF was exported from the prod editor
-(`/admin/carte/a533b4f1-...`, 31 associations, `v0.18.27`) in a SEPARATE Chrome (own profile,
-`--remote-debugging-port`, driven over raw CDP from bun) because the chrome-devtools MCP browser was
-held by another session. The page is ONE A0 sheet, 1189 x 841 mm, a 4800 x 3393 raster under a vector
-text layer - 3370 pt / 1600 poster px = **2.106 pt per poster px**. Text sizes came from
-`pymupdf` `get_text("dict")`; overlaps and per-unit sizes from `GET /api/public/carte` (the published
-v2 document carries the same resolved geometry the poster draws). **Export with the tab in the
-FOREGROUND**: a hidden tab throttles `requestAnimationFrame`, the export took minutes instead of 10 s,
-and it captured the directory before its fit ran (C4).
-
-### Decided by the user, 2026-09-27 - eleven answers, nothing left to ask
-
-| # | Decision |
-| --- | --- |
-| D1 | **The poster is printed on A0, and only A0.** Every readability floor below is an A0 number; no format picker. The wiki's "A2" everywhere was stale - the code has exported A0 since the searchable-raster move. |
-| D2 | **Publishing: a badge and an explicit update.** Autosave stays; when the live `publication` differs from the saved layout, the editor shows "Modifications non publiées" and a "Mettre à jour la version en ligne" button. Nothing reaches the portail without a gesture - an autosave that republished would put half-arranged layouts online. |
-| D3 | **Unpublishing is its own action.** The green button becomes a non-clickable status ("En ligne depuis le ..."), and "Retirer du portail" moves to a menu with a confirmation. |
-| D4 | **Member text leaves the unit's scale.** Names and roles get ONE readable size across the whole poster, independent of `bubble.scale`; the card widens instead. Small units will take more room - accepted. |
-| D5 | **The directory lists EVERY member, without "(Membre)".** Only a real role goes in parentheses; the ~10 % it frees goes back into the font size. |
-| D6 | **The blob email stays, and becomes readable.** Shown where it is set, raised to the A0 floor - not dropped. |
-| D7 | **Overlaps are WARNED, never moved.** The editor highlights and lists units whose boxes intersect; nothing is nudged automatically, so a hand placement is never undone. |
-| D8 | **The raster goes to ~150 dpi on A0** (`rasterScale` ~4.5), whatever the cost - measure time, memory and size so the cost is known, but the decision is taken. |
-| D9 | **The PDF line-break fix (C1) ships FIRST, in its own PR**, re-verified on all three exports (carte, agenda, trombinoscope); the carte PRs build on it. |
-| D10 | **An association with no member stays on the poster, and the editor says so** ("aucun membre renseigné") so its bureau fills it in. |
-| D11 | **One PR per group** (A publishing, B card text, C PDF, D content), then a pre-release on `dev.canari-emse.fr`: the agent exports an A0 PDF there and measures it, **then the user looks at it before the stable.** |
-
-### Decided by the user, 2026-09-27, second round - the two questions the build could not answer
-
-The first eleven left two things that were written down rather than guessed at, because both are
-choices about how the poster should LOOK or what a column should MEAN. Eight answers settled them.
-
-| # | Decision |
-| --- | --- |
-| D12 | **The card text grows only as far as the crown clears** - "plancher partiel". Taking it fully out of the unit's scale would make the cards collide INSIDE the unit (at 0.46 the crown's levels are ~94 px apart for a card already ~82 px tall), and growing the crown with them was REFUSED: the units keep their footprint. The smallest units therefore reach ~7-8 pt rather than 9.5, and that is accepted. |
-| D13 | **ONE size per UNIT, not one per poster and not one per card.** D4's "one readable size across the whole poster" is superseded: a single poster-wide size would be the size the SMALLEST bubble can take, so one tiny unit would drag every card down. Inside a unit every name is the same size, which is also what closes B2 (4.6 px beside 6.4 px in one crown). |
-| D14 | **The published fingerprint covers the LAYOUT AND THE CONTENT.** The published document embeds the rosters, so a member joining an association really does make the live map stale - the badge lights up for that too, and the user accepted that it will light up often without them having touched anything. |
-| D15 | **"Membre" is dropped in the DIRECTORY and KEPT on a bureau card.** On a card it distinguishes the member with no function from the officers around them; in the directory, where the list itself says it, it was ~100 wasted characters per association. |
-| D16 | **The generic roles are exactly four**: Membre, Member, Adherent, Adherente (case and accents ignored). Nothing else is treated as empty. |
-| D17 | **An overlap is never raised at publish time.** The editor's panel is the whole of it: a deliberate overlap exists (a decorative blob behind another), so publishing neither warns nor refuses. |
-| D18 | **The dev pre-release is canari-64's to cut** - this chantier waits for it rather than publishing a version of its own. |
-
-### Findings, in the order to work them
-
-**A - publishing (D2, D3)** - A2, A3 and A4 merged 2026-09-27 (#1144): opening a project no longer
-writes it back (the autosave is armed by the state DIFFERING from the server's, which an open cannot
-do), a publish waits for the save in flight and abandons if it failed, and being live is a status
-with a separate confirmed "Retirer du portail". **A1/D2 closed in #1149**: migration 064 records a
-fingerprint of the document that went live, because no timestamp can answer that question
-([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
-
-**B - member-card text (D1, D4)**
-
-- **B1 - P2 - member names are unreadable on small units.** Smallest vector text 4.4 pt = 1.6 mm on
-  A0; median member name ~5.5 pt. Cause: card text is multiplied by `bubble.scale` (0.46 for AME,
-  DopaMines, Mines'ergies, L'Associflard...). The A0 floor to hold is ~9-10 pt, i.e. **~4.5 poster px
-  AFTER scale**. D4 removes the multiplication for card text.
-- **B2 - P2 - two sizes in one crown.** `memberCardMetrics`' length ladder goes BELOW
-  `MIN_NAME_SIZE` ("never UP"), so "Thomas DELLESTABLE" is 4.6 px beside a neighbour's 6.4 px in the
-  same unit. With D4, one size per poster; long names widen the card or wrap on spaces.
-- ~~**B3 - the contact email in the blob is 0.35 x the name** (down to ~3 pt)~~ - raised to the
-  poster floor in #1145; five of the 31 associations set one.
-- ~~**B4 - measured overlaps between neighbours**~~ - the six pairs are now LISTED in the editor
-  (#1145), worst first, and outlined on demand. Nothing is moved. D4 will enlarge small units, so
-  the list is what reports the cost.
-
-**C - the PDF differs from the preview** - C1 merged (#1143), the other three in #1146.
-
-- ~~**C1 - the vector text layer re-wraps every line itself**~~ - the exporter takes the browser's
-  own line boxes since #1143; shared by the agenda and trombinoscope exports, all three re-verified.
-- ~~**C2 - photos and logos print at ~102 dpi on A0**~~ - `RASTER_SCALE` 4.5 is 154 dpi (D8).
-  **OWED: the cost MEASURED** - time, memory and PDF size - on the dev pre-release, as D8 asks.
-- ~~**C3 - a hidden tab exports in minutes with nothing saying why**~~ - the editor says so while an
-  export runs.
-- ~~**C4 - the directory can overflow in the PDF**~~ - the fit is a function the exporter runs
-  itself before the capture, not an animation frame a hidden tab throttles. It printed the unfitted
-  13 px base and dropped MINO, Mines Space and Mines, Études et Projets off the page.
-
-**D - content** - both in #1146.
-
-- ~~**D-1 - the directory is noisy.**~~ "(Membre)" was printed ~100 times in 8,200 characters; only a
-  role that says something is printed now (D5), and the line is written ONCE rather than twice.
-- ~~**D-2 - EMSE Finance has no members on Canari**~~ - it keeps its place (D10) and the editor names
-  it. **OWED, and it is the USER's, not the code's: its bureau fills its roster in.**
-
-### The order to build it in (D9, D11)
-
-1. **C1 alone** - the shared PDF pipeline takes the browser's line boxes; agenda, trombinoscope and
-   carte exports re-verified.
-2. ~~**A** - publishing: A2, A3, the separate unpublish (D3), and D2's badge~~ - #1144 and #1149.
-3. ~~**B** - the email raised (D6), the overlap warning (D7)~~ - #1145; ~~**D4/B1/B2**~~ - group E
-   below. The median printed name went from 6.97 to 9.47 pt, 9 cards of 107 LOST size (worst 2.11
-   pt, a president now sharing his crown's size) and three crowded units stay under 7 pt - the D12
-   shortfall, measured rather than assumed
-   ([carte-vie-asso](carte-vie-asso.md#one-name-size-per-unit-grown-until-the-crown-stops-it)).
-4. ~~**C** - C4 (fit before capture), C2 at 150 dpi (D8), C3~~ - #1146. **D8 still owes the cost
-   measured** on the dev pre-release: time, memory, PDF size.
-5. ~~**D** - the directory without "(Membre)" (D5), the no-member notice (D10)~~ - #1146.
-6. ~~**E** - the card text, one size per unit, grown until the crown clears (D12, D13)~~ - #1148.
-7. ~~**F** - the published fingerprint and the "update the live version" button (D2, D14)~~ - #1149,
-   migration 064. **It is the FIRST carte change that needs a database migration**, so the dev
-   deploy is what proves it, not a green CI.
-8. Pre-release on dev - **canari-64's to cut** (D18) - an A0 export measured there, the user's look,
-   then the stable (D11). D8's cost is measured in the same run.
+**Still owed, and nothing else:**
+- **D8's cost MEASURED** - one A0 export from the production editor, timed, with its memory and PDF
+  size, re-reading the text sizes the way the audit did. D11 put this before the stable; the stable
+  went first, so the reading is now owed on production.
+- **The user's look at that export** (D11).
+- **EMSE Finance's roster** - the USER's, not the code's: its bureau fills it in (D10 names it in the
+  editor meanwhile).
 
 ## The composer and CanaReels chantier - compared on the Mi 9T 2026-09-29, every decision taken
 
@@ -208,22 +111,8 @@ un post [...] Note les differences avec la facon de faire de Canari, peu ergonom
 aussi regarder la facon de faire d'instagram [...] Les gens attendent les "CanaReels" avec
 impatience"*, then live streaming *"dans le futur"*.
 
-### What the three composers were measured to do (Mi 9T, 2026-09-29)
-
-| | Facebook | Instagram | Canari (`CreatePostForm.svelte`) |
-| --- | --- | --- | --- |
-| Frame | Full screen, one title | Full screen | A modal over the feed, THREE nested bordered boxes |
-| Header | "Nouvelle publication" | same | "Nouveau post" + "CREER UNE PUBLICATION" + an explanatory sentence - three titles for one thing |
-| Author | Avatar + name, one line | - | A full-width "PUBLIER EN TANT QUE" select |
-| Text area | The whole screen, borderless, no toolbar | - | ~250 px, boxed, behind 8 Markdown buttons on two rows |
-| Primary action | "Suivant", bottom right, disabled while empty | "Suivant", top right | "Publier" ABOVE the attachment bar, so it is met before anything is attached |
-| Attachments | Labelled chips (Musique, Personnes, Lieu, Humeur) + a pinned bottom bar (Galerie, GIF, Evenement, Direct) | Gallery grid, camera as the FIRST tile, multi-select | Four UNLABELLED icons (file, chart = poll, clipboard = form, clock = schedule); no event button although the subtitle promises one |
-| Adding a photo | Full-screen photo grid, camera top right | same | **Android's generic DocumentsUI** ("Recents", Audio, Documents...) |
-| Camera | From the gallery | `+`, or a swipe right from the feed straight into the camera; a PUBLIER / STORY / REEL / EN DIRECT switcher at the bottom | None |
-
-**The DocumentsUI has one cause**: the input's `accept` lists images, video, audio, PDF, Office and
-zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo picker. Photo/video and
-"Fichier" have to be two inputs.
+The composer comparison R1 was built from is on
+[posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29).
 
 ### What the video path is today, read from the code
 
@@ -259,16 +148,10 @@ zip together (`CreatePostForm.svelte:776`), so Android cannot offer its photo pi
 
 ### The order to build it in (C10)
 
-1. **R1 - the composer.** Full screen on a phone, one title, the author as an avatar line, the text
-   area taking the height, Markdown on demand (C1), labelled chips, a bar pinned above the keyboard
-   with Publier at the right; Photo/video (gallery + camera) split from Fichier; a vertical video
-   drawn at its own aspect ratio. **The composer MERGED (#1226)**; its first on-device review
-   (user, 2026-09-29) moved the captions behind a chip, took the halo off the chips and put the
-   identity and linked-event choices in the app's own `Picker` - its PR. Its second review
-   (2026-09-29) is the next PR: every other native `<select>` (35) and the six date inputs are the
-   app's own, and a feed video plays like Instagram's - vertical at its own shape, muted, one sound
-   button for every video ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
-   **Owed: the user's own look on the Mi 9T.**
+1. **R1 - the composer: MERGED** (#1226, its two review rounds #1227 and #1229), in the
+   `0.18.32` pre-releases and no stable yet
+   ([posts](frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+   **Owed: the stable, and the user's own look on the Mi 9T.**
 2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
    tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
    plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
@@ -303,14 +186,11 @@ button that then grows (as intended by the liquid glass design) to show the othe
 - **L4 (assumed, not asked) - phone width only.** The desktop header has no back button and room for
   its icons; it and the desktop composer are unchanged. Overrule here if wrong.
 
-**Order:**
-- **WP-G1 (the apps, in CSS):** L1-L3 in HTML/CSS at the narrow chat layout of the phone apps, with
-  the grow as a CSS transition - **its PR, 2026-09-30** ([chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)).
-- **WP-G2 (iOS native): its PR, 2026-09-30** - the same pieces as native glass buttons drawn at the
-  web pieces' rects, so the web layout keeps owning every position (the "+" follows the keyboard
-  because its web twin does); the grow is the system's `UIMenu`, no morph written
-  ([mobile](frontend/mobile.md#the-conversations-native-glass-chrome)). Owed on an iPhone: the
-  alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names.
+**Both halves MERGED 2026-09-30, in no release yet**: WP-G1, the apps in CSS (#1251,
+[chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)),
+and WP-G2, the iOS native glass drawn at the web pieces' rects (#1254,
+[mobile](frontend/mobile.md#the-conversations-native-glass-chrome)). **Owed on an iPhone, after a
+release**: the alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names.
 
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
 
@@ -1984,31 +1864,15 @@ is the app's own label for an envelope it deliberately summarises (a conversatio
 quote). **So `📷 Photo` inside a bubble always means a push row that was never upgraded** - if
 it is ever seen again, that is where to look, and it is a different bug from this one.
 
-**IT WAS SEEN AGAIN ON 2026-09-22, AND IT WAS INDEED A DIFFERENT BUG (fixed 2026-09-23).** The user
-reported two bubbles still reading `📷 Photo` hours later and across a relaunch - persisted, so
-not a boot-ordering artefact - plus a photo that never arrived at all on another member's phone.
-The cause is the FOURTH arrival order, the one the 2026-09-17 fix does not cover: the cache wins,
-the caption is merged in memory at login, and the queue drain - **a bulk ingest** - then dropped the
-real envelope as a duplicate and acked the frame anyway. Reproduced on the Mi 9T with
-`archive/photoprev.mjs --mode restored`, which is the only one of seven orders that produces it.
-Mechanism in [mob](frontend/mobile.md#fcm-message-cache), pinned by
-`useMessaging.bulkIngest.svelte.test.ts`.
-
-**VERIFIED ON THE Mi 9T, 2026-09-23, ON A DEBUG APK BUILT FROM THE FIX: ALL SEVEN MODES PASS.** The
-line that decided it is the one that used to read `Duplicate ignored`:
-`[FCM_CACHE] 1 message(s) merged in memory at login` (05:09:24), then
-`[ADD_MSG] Preview upgrade during a bulk ingest id=bbcda750 - taking the live path` and
-`[ADD_MSG] Message upgraded` (05:09:33), and only THEN `messageCallback -> true`. The pane is read
-twice per mode, the second time after a kill and a cold relaunch, so the picture it shows came off
-DISK: across the ladder the decoded count rises by exactly one per mode, 9 to 16, and the caption
-count never rises at all.
+**The fourth arrival order (a bulk ingest dropping the real envelope as a duplicate) was seen on
+2026-09-22 and FIXED 2026-09-23**, all seven `archive/photoprev.mjs` modes `PASS` on the Mi 9T -
+story in `CHANGELOG.md` ("une photo restait le texte de sa notification"), mechanism in
+[mob](frontend/mobile.md#fcm-message-cache).
 
 **WHAT IS LEFT IS A DECISION, NOT A MEASUREMENT: the rows ALREADY stuck.** No boot repairs one -
-the queue row is deleted and the replay's consumed ledger is durable - so the only copy left
-anywhere is a peer's. The phone still carries the two captions the pre-fix runs stranded on it, and
-they sat there unchanged through all seven passes; that is the fix's limit, measured rather than
-argued. The user's own two bubbles are in the same state, and repairing them would mean asking a
-member who still holds the envelope for a history bundle.
+the queue row is deleted and the replay's consumed ledger is durable - so the only copy left is a
+peer's. The user's own two bubbles (and the Mi 9T's two pre-fix captions) stay `📷 Photo`;
+repairing them means asking a member who still holds the envelope for a history bundle.
 
 ### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
 
@@ -2016,17 +1880,8 @@ Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une di
 possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
 enregistres directement dans la conversation."*
 
-**One correction to the report, measured**: audio has always landed under **Fichiers**, never under
-Medias - `aggregateSharedContent` routes only `image` and `video` to the grid. "Medias" is the name
-of the whole panel (`chat_media_links_files_title`), which is what was meant.
-
-Two claims, and **the second is the harder one and decides the first.** By the time it arrives, a
-voice note and an imported `.m4a` are the same bytes with the same mime type - no inspection
-separates them. So the sender declares it, at the one point where the gesture is known, and the
-declaration crosses four hops: the envelope, the protobuf `MediaMsg` (field 11, for channels), the
-outbox payload (for the MLS path, which re-encodes long after the composer is gone), and both
-decoders. **Absent is UNKNOWN and not "imported"**, so a `false` is dropped rather than written - a
-message from before this change keeps the behaviour it has always had. The mechanism is in
+**The in-app half SHIPPED** - the sender declares a voice note on the wire (protobuf `MediaMsg`
+field 11), both tabs exclude it; story in `CHANGELOG.md`, mechanism in
 [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell).
 
 **WHAT IS LEFT, AND IT IS NOT WHERE THIS ENTRY FIRST SAID IT WAS.** A voice note arriving on a
@@ -2070,11 +1925,8 @@ the Kotlin side pick a localised string it already knows how to pick. **That is 
 change with one consequence this entry cannot settle on its own**: `decrypted.text` is what the FCM
 cache persists and reads back as a message body, so emitting an empty text changes what the cache
 stores - the same seam the photo fix above is about. It is one design decision, not a translation
-chore, and it must not be started as if it were the latter.
-
-**They are also the strings `fix/une-photo-ne-redevient-pas-le-mot-photo` is about** - the same
-`📷 Photo` persisted by the FCM cache and read back as a message body. That branch fixes the
-PERSISTENCE; this one owns the strings themselves. Neither closes the other.
+chore, and it must not be started as if it were the latter. (The PERSISTENCE of `📷 Photo` as a
+message body is the photo entry above, fixed; this entry owns the strings themselves.)
 
 ### P2 - a post its own publisher could not delete, and ONE of the two ways that could happen is fixed (user, 2026-09-17)
 
@@ -2083,13 +1935,9 @@ since with *"Aucune corbeille dans le menu"*, published **au nom d'une asso**, *
 is drawn by `PostActionsMenu` under `{#if canManage}` and by nothing else, so the row that reached
 the screen carried `canManage: false`.
 
-**WHAT IS FIXED, AND IT IS A REAL DEFECT WHATEVER ELSE IS TRUE**: `PostsController.createPost`
-reads `x-global-admin` to ALLOW a post in an association's name - `canPostAs(..., { isGlobalAdmin })`
-is the only route for a platform admin who holds no membership - and then called
-`service.createPost` with `isGlobalAdmin` hardcoded `false`. The response was stamped for a reader
-the server had just decided was not the one it let write: `canManage: false`, `canPin: false`, on the
-publisher's own brand-new post. One request, one identity, two answers. Every other path that returns
-a post - the feed, `getById`, the update - passed the real flag.
+**WHAT IS FIXED (story in `CHANGELOG.md`)**: `PostsController.createPost` allowed a global admin to
+post as an association and then stamped the response with `isGlobalAdmin` hardcoded `false`, so the
+publisher's own new post came back `canManage: false`. Every other path passed the real flag.
 
 **AND WHY THAT MAY NOT BE THE SCREEN THE USER SAW**: `CreatePostForm` does `await createPost(payload)`
 and **discards the result**, then calls `onPostCreated()`, which refetches the feed through the path
@@ -2115,69 +1963,14 @@ Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible 
 post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
 establishing that is what this entry is for, so the next session does not re-run the same tests.
 
-**REFUTED BY MEASUREMENT, NOT BY READING** (2026-09-21, both on a full local copy of production):
-
-| hypothesis | how it died |
-| --- | --- |
-| it needs rights the member lacks | `PostsController.createPost` computes `anonymous = !!body.anonymous && !body.associationId` and never consults `isGlobalAdmin`; the composer offers "Anonyme" with no capability check; a non-admin account published anonymously with a `201` |
-| anonymous posting is broken in `0.18.17` | the same drive on A1, `versionName=0.18.17`, the exact build of the report, landed the row with `anonymous = t` |
-| the server refused it | no post creation has ever been refused in any window read - 7 days of prod logs hold exactly one `POST /api/posts`, a `201`, and it was the rig's own |
-
-The second row is the one that makes the rest evidence: a workstation browser is not what failed.
-
-**WHAT IS SHIPPED, AND IT IS NOT A FIX.** Seven stages shared one `catch` and one sentence, so the
-report could not name its own cause. `publishFailure.ts` now maps a typed error to the sentence that
-already existed for it, and the composer logs `[POST_COMPOSER] publish failed at <stage>`
-([posts](frontend/modules/posts.md#one-catch-said-seven-things)). The next occurrence arrives with
-the answer attached.
-
-**THE REPORTER RETRIED ON 2026-09-23 AND THE EDGE LOG NARROWED SEVEN STAGES TO TWO** - no phone, no
-DB, no rig: `docker logs infrastructure-frontend-1`, which is nginx (there is no `nginx` container),
-read entirely. The whole day holds **four** `GET /api/moderation/me/mute-status`, and
-`assertNotMuted` has exactly three callers - the composer's `publishPost`, and `PostCard`'s reaction
-and comment handlers - so **every one of them is a write about to be attempted, and each is followed
-by its write or by nothing.** Two were followed by a `201`. The other two are one device,
-`2a0d:e487:31ce:cb23::f6:df9f`, `tauri-plugin-http/2.6.0`, on **`0.18.14`** (the client stamps
-`POST /api/auth/refresh?clientVersion=`), at 19:12:32 and 20:03:07 UTC - and **that device sent no
-`POST /api/posts` all day.**
-
-Both are preceded by the composer mounting, which is visible as its two loads together:
-`GET /api/forms` **and** `GET /api/associations/me/list`, at 19:10:34 and 20:02:52. **Both answer
-`[]`** - 2 bytes - so this account owns no form and belongs to no association. The second tap came
-15 s after the mount, which is the draft restoring rather than anyone typing, and that is why it
-fails identically every time: the offending state is PERSISTED by `savePostComposerDraft`.
-
-| stage | how it died, from the wire alone |
-| --- | --- |
-| `moderation` | the response is `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
-| `content` | unreachable: the Publier button is `disabled={publishing \|\| (!markdown.trim() && selectedFiles.length === 0)}`, the same predicate as the throw |
-| `mediaToken` | `authToken` is already set at mount (`CreatePostForm` line 228), so the branch is skipped; and a refresh would have logged |
-| `mediaUpload` | no `/api/media` write from that device all day, and `compressImage` cannot throw - every failure is a typed passthrough (`decode-failed`, `threw`), so the upload would have been attempted and logged |
-| `createPost` | no `POST /api/posts` from that device, ever |
-
-**WHAT IS LEFT IS `poll` OR `form`, AND ONLY ONE OF THEM IS UNSATISFIABLE.** Both toggles are drawn
-with no guard (`CreatePostForm` lines 718 and 732), icon-only below `sm:`, and both are restored
-from the draft. `includePoll` throws only on an empty question, which the reader can fix once they
-see the card. `includeForm` throws on an empty `selectedFormId` - **and `GET /api/forms` returns `[]`
-for this account, so the picker it opens has nothing in it and the post can never be published while
-that toggle is on.** On `0.18.14` both say only "Impossible de publier le post".
-
-**THE REPORTER THEN NAMED THE BRANCH HIMSELF: HE WAS MAKING A SONDAGE.** So the stage is `poll`,
-`!pollQuestion.trim() || options.length < 2`, and the publish path is confirmed unbroken for the
-third time. **What the report was actually about is the two defects around it, and both are fixed**
-(`composerReadiness.ts`, [posts](frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)):
-the composer spent a `mute-status` round trip to reach a refusal it could speak instantly, and the
-error banner **erased itself after five seconds**, which is why the original report could not quote
-its own sentence. A clock decided when a reader had finished reading; on a phone the keyboard can
-still be over the banner when it goes.
-
-**AND THE SURFACE HE WAS USING WAS REBUILT THE SAME DAY.** The options were one newline-separated
-textarea, so `Oui, Non` was ONE option - a structure carried in a label, which is what he ran into.
-Both surfaces now mount the channel composer's per-option editor, with an identity on each row, a
-closing date and a cap on how many answers a voter may give; three defects that were only reachable
-once that code was read are fixed with it (an edit erased every vote, `votePoll` enforced nothing at
-all, and one flat selection array was shared by every poll on a card). See
-[posts](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
+**SETTLED, AND NOT TO BE RE-RUN**: three hypotheses refuted by measurement, the edge log narrowing
+seven stages to two, and the reporter naming the stage himself - `poll` (he was making a sondage).
+The typed failure sentence and stage log (`publishFailure.ts`), the two defects around it
+(`composerReadiness.ts`: a needless `mute-status` round trip, a banner that erased itself after 5 s)
+and the rebuilt per-option poll editor all SHIPPED. Every measurement is on
+[posts](frontend/modules/posts.md#one-catch-said-seven-things),
+[the edge-log reading](frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)
+and [the poll rebuild](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
 
 **WHAT IS LEFT OPEN, AND IT IS SMALL**: `includeForm` is still the one attachment an account can be
 unable to satisfy - this reporter's `GET /api/forms` answers `[]`, which now says so in its own
@@ -2230,25 +2023,9 @@ intended**; the shared HMAC verification can be lifted out first and on its own,
 really is three identical copies. `verifyInternalToken` is exported from `core-service` and imported
 by NOBODY outside its own file.
 
-**THE ROUTE THAT WAS TO BE CREATED DOES NOT NEED TO EXIST, AND THE BRANCH IS GONE (2026-09-18).**
-This paragraph asked for a local nginx `location /channels`, and the user answered *"Fais-le"* on
-2026-09-17. Executing it began by verifying the premise, and **the premise was false**:
-
-- `apps/social-service/src/main.ts:9` mounts `app.setGlobalPrefix('api')` over
-  `channels.controller.ts:48`'s `@Controller('channels')`. The service has therefore only ever
-  served `/api/channels/...`; a request for a bare `/channels` would have been **404'd by the
-  service the proxy rule pointed at**.
-- An exhaustive sweep of `frontend/src` finds **no line requesting a bare `/channels`** - every
-  caller already asks for `/api/channels/...`.
-- `infrastructure/local/Dockerfile.frontend` already carries a `location /api/channels` block, so
-  the routing gap this entry described was never open.
-
-So the vite rule aimed a path nobody requests at a service that would have refused it, and the
-"local dev without nginx" it was believed to serve does not exist. Deleting the rule and the branch
-it alone justified is therefore strictly better than building the route: the branch decided identity
-from an **unverified signature**, forwarding a decoded `sub` as `x-user-id`, and a deleted branch is
-the only kind that cannot be reached. Both deletions are asserted by
-`nginx-auth.guard.spec.ts`, which now refuses a well-formed Bearer token arriving on its own.
+**The bare-`/channels` vite rule and the unverified-Bearer branch it justified were DELETED
+2026-09-18** rather than given an nginx route (the premise was false - nothing requests a bare
+`/channels`); story in `CHANGELOG.md`, asserted by `nginx-auth.guard.spec.ts`.
 
 **WHAT IS STILL OWED HERE IS THE HMAC, AND IT IS THE REST OF THIS ENTRY.** Outside production the
 guard still trusts the `X-User-Id` the local nginx sets without asserting `X-Internal-Token`. That
@@ -3937,51 +3714,8 @@ One iPhone row; the Android row it was waiting for is done.
 
 ## MLS state, device healing and delivery - the defects the campaign measured
 
-These thirty-odd entries sat under a heading that named a superseded 2026-09-05 notification account,
-which is why the file read as unstructured: the heading described one investigation and the entries
-below it describe everything the cross-client campaign has found since 2026-08-26. Each is
-independent and carries its own measurement. Order inside this section is chronological rather than
-by severity - the queue in `CLAUDE.md` carries the priority.
-
-### P2 - a history repair still costs THREE MINUTES on a large mailbox; only the LOSS half of it was fixed (measured on the local estate 2026-09-05)
-
-**The loss is fixed and what is left is a duration.** HEAL-REVOKE-7 `--order last`, on the build
-carrying all three fixes:
-
-    23:47:34  W1 asks the returning device to describe its store for 31101692
-    23:50:43  the returning device answers - THREE MINUTES AND NINE SECONDS later
-    23:50:43  W1 sends the diff, 3 of 3, immediately
-
-Nothing is lost: the same run's reference device answered in **three seconds**, and the returning
-device does get its messages - after 189 s. The row's budget had to be raised twice in one evening,
-60 s to 180 s to 300 s, chasing a mechanism that works and is slow.
-
-**THE BARRIER IS GLOBAL WHERE THE QUESTION IS PER-GROUP.** `answerAfterMailboxDrained` waits on
-`waitForMessageQueueIdle`, which is idle only when the device has applied EVERYTHING - and a device
-that has just rejoined is applying twenty-nine external joins plus every frame queued behind them.
-The reason the barrier exists is sound and is written beside it: *"a digest computed while this
-device is still applying its own queue describes a store it is in the middle of completing"*. That
-is a claim about the frames of THE GROUP BEING DESCRIBED. Frames for twenty-eight other
-conversations cannot change this group's manifest, and waiting for them is a cost with no
-correctness behind it.
-
-**What the fix needs**: a barrier scoped to a group. `waitForMessageQueueIdle(reason, groupId)`
-already takes a group id, but it means *"the group whose catch-up session I am INSIDE"* - a
-different question, and passing this group there would claim a nesting that does not exist (the
-paragraph in `reconcileGroup` explains what that cost the last time). So this is a new capability on
-the queue, not a new argument: *are there frames pending for THIS group*.
-
-**DONE, 2026-09-06.** The scheduler was already per-group - `buckets` is a Map keyed by group with
-its own control/welcome/message tiers - so the capability was one method away rather than a
-redesign: `isGroupIdle` / `waitUntilGroupIdle`, woken after EVERY frame instead of only at the end of
-a drain, and `answerAfterMailboxDrained` now takes the group it is answering about. Three details
-carry the correctness: a frame that has been PICKED is out of its bucket and not yet applied, so the
-drain records which group it is inside; the UNTAGGED bucket is waited for too, because nothing in
-the scheduler can say whose an untagged frame is; and a handler that throws still clears the marker,
-or that group would never read idle again. Five tests on the barrier, one per claim.
-
-**The cost stays visible either way**: `reachedInMs` is recorded on every reading, so a repair that
-starts taking longer shows up as a number in the ledger instead of as a row that suddenly fails.
+Each entry is independent and carries its own measurement. Order inside this section is
+chronological rather than by severity - the queue in `CLAUDE.md` carries the priority.
 
 ### P3 - a browser report has no notion of a FOREIGN origin, so every row that logs in reads the identity provider's console as the application's (measured 2026-09-05)
 
@@ -4051,7 +3785,6 @@ the read watermark. **The rest were not touched, and they were not measured eith
 | `backgroundPausableInterval.ts:29,38` | pause timers while hidden | never pauses - battery, not correctness |
 | `ChatBackgroundService.svelte:881,953,1218,1237` | four guards around login and reconnection | unmeasured |
 | `MainChatPage.svelte:266` | a guard on a periodic refresh | unmeasured |
-| ~~`useMessaging.svelte.ts`~~ | the batch-notify log line | **FIXED 2026-09-24, and the row was wrong in BOTH directions** - see below |
 | `LoginPage.svelte:85` | a retry on becoming visible | unmeasured |
 
 **The first two are the ones worth measuring first**, and the first is the one that could cost
@@ -4063,296 +3796,54 @@ phone may well persist on another trigger, and **saying which needs one run, not
 runtime that has a working visibility API, so each site becomes one extra term and web and desktop
 keep their current behaviour exactly. What is NOT settled is which sites should change - a guard
 that is merely wasteful on mobile is not the same as one that loses state, and they want different
-urgency.
+urgency. (The batch-notify log line was an eleventh site; it only reports, so it was fixed without a
+run in `v0.18.23` - see `CHANGELOG.md`.)
 
-**ONE ROW NEEDED NO RUN, AND READING IT CORRECTED THE ROW ITSELF (2026-09-24).** The table said the
-batch-notify line *"says `visible` about a backgrounded phone in the log, which is misleading rather
-than wrong"*. It is neither. The line is GATED on `document.visibilityState !== 'visible'`, so on a
-phone the guard is permanently false and **the line never printed at all** - an absent report, not a
-misleading one, on the platform where a catch-up flush is the common case and where the notification
-behaviour of sixteen NOTIF rows is read from logs. It reports the one state nothing else can
-distinguish from the outside: a flush that added messages while the app was away and raised nothing
-has either seen only own/system rows, or LOST a real one to a predicate.
+### P2 - a cold start re-accuses frames it already read, because the ratchet advance is durable and its mark is not (TAB-3b `PASS-DIRTY`, measured 2026-09-08)
 
-It needed no measurement because it decides nothing - it only reports - so the entry's *"which sites
-should change"* judgement does not apply to it: a report that is dead on a platform is wrong on
-every reading of that question. **The predicate was already in this same file, twice** (`canSeeArrival`
-and the `away` label in `notifyInbound`, both routing mobile through `isAppInForeground` for exactly
-this reason); this guard was the one site that still read the document directly. Five tests in
-`useMessaging.mobileNotification.svelte.test.ts` pin both runtimes in both directions, and the guard
-and the label were mutated separately - each fails its own case alone.
+**What shipped is not repeated here.** The two silent decrypt paths that spent a generation without
+recording it (`noteFrameConsumed`, asserted by `historyFrameConsumptionSeam.test.ts`), the
+checkpoint-bound replay marks (`commitPendingHistoryMarks`) and the ack barrier that removed the
+drain/refetch duplicate (`announceAck` / `ackInFlight`) are all in `CHANGELOG.md`; the duplicate
+delivery that remains is its own entry, *the pull and the socket hand the SAME row in*. The run-by-run
+evidence is on the TAB-3b row of [cross-client-testing](cross-client-testing.md).
 
-**THE OTHER TEN ROWS ARE UNTOUCHED AND STILL WANT THE RUN**, the first two most of all: those decide
-something, and *saying which needs one run, not an argument* still holds for them.
+**What is left, measured 2026-09-08 with the cap and hydration both exonerated (`seenset.mjs`).**
+Each TAB-3b cold start still prints `[History] frame never read here and unreadable for good
+(secret-reuse)` for frames the device already decrypted, re-accuses every earlier one (the set grows
+by three generations per start, so the cost is QUADRATIC in cold starts), and fires a full
+`[HISTORY_RECONCILE]` each time. The accused fingerprints are ABSENT from every ledger on the client
+- never written, not written and lost - while the frame no longer decrypts (`SecretReuseError` at its
+own epoch). **So the advance IS durable and the mark is NOT.**
 
-### P2 - the false LOST-frame accusation is fixed and shipped, and the duplicate delivery inside this entry is still open (2026-09-07)
+**THE FIX IS ATOMICITY, NOT ORDERING, AND NO SMALLER FIX SHOULD BE ATTEMPTED.** Writing the mark
+eagerly is right for a ROW key (*"I walked this row"* has no ratchet to run ahead of) and the
+OPPOSITE defect for a FINGERPRINT: one written before its advance is durable tells the next replay to
+SKIP a frame nobody read - a silent real loss, strictly worse than a false accusation. The mark and
+the advance are one fact and must be one write: the mark belongs INSIDE the checkpoint, or *"have I
+already consumed this ciphertext"* should be answered FROM the MLS state rather than from a parallel
+ledger that can disagree with it.
 
-**WHAT IS STILL OPEN HERE, SO THIS ENTRY IS NOT A CLOSED ONE.** The false accusation has a cause
-and a fix, and that fix reached users in `v0.18.18` (2026-09-21). The OTHER half - `[QUEUE] delivery ... arrived
-twice`, which alone holds three cells at `PASS-DIRTY` and is forgiven on none of them - was refiled
-on 2026-09-08 with its own measurement as *the pull and the socket hand the SAME row in*. Read that
-one for the current account; what follows is the evidence trail that produced both.
+**Still unmeasured**: which path spends the generations - live delivery, the queue drain, or the
+archive replay's own successful pages. A console tailer cannot answer it (the row destroys the CDP
+target it would attach to); it needs a purpose-built reproduction that brings W1 down between a known
+send and a known decrypt.
 
-TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
-good (secret-reuse); will reconcile` - and the later runs re-printed **the same row keys** as the
-earlier ones (`row 1788591833954-0` appears in run 1 and again in run 2), alongside
-`Ciphertext generation out of bounds` and
-`MLS decryption failed at exactly its own epoch ... msg_epoch=12 group_epoch=12`.
+**Two growth hazards the same read surfaced:**
 
-**Same-epoch `SecretReuseError` means the generation was already consumed, which means this device
-already decrypted that frame.** So the verdict is a false alarm, and it is the loudest line the
-history replay has: the harness's severity rule fires on it, and its reader is being taught to skip
-the one line that would name a real loss.
+1. **The 5 000 cap is shared by two namespaces and the wrong one is winning.** Fingerprints (*"I
+   consumed this generation"*) and message ids (*"I walked this row"*) go into one array and
+   `saveSeenCipherHashes` keeps the LAST 5 000 - on the busiest conversation 2 762 message ids crowd
+   out 2 073 fingerprints, so the first thing evicted is the mark whose loss produces the accusation.
+2. **The cap is PER GROUP and nothing bounds the number of groups** - 169 ledgers, 247 kB on W1; at
+   the cap that is several megabytes against a 5-10 MB origin quota, and the failure is silent by
+   design (a caught write error, then a full history re-walk on every boot).
 
-**THE CAUSE IS TWO DECRYPT PATHS THAT SPEND A GENERATION AND RECORD NOTHING, and the ledger the
-entry suspected is innocent.** Measured on W1's own localStorage, 2026-09-07: the seen-ciphertext set
-for that group holds **3 491 entries - 1 800 row keys and 1 691 frame fingerprints** - and its stream
-cursor is past every accused row. The ledger persists, the thunk is reached, and
-`[WARN] History replay failed` appears nowhere (it is now `SEVERE` in `watch.mjs`, so a run cannot
-contain it invisibly again). What is missing is exact: **not one of the accused frames' fingerprints
-is in a set holding 1 691 of them.**
+**And the catch-up is a TIMER - worth a row of its own.** Five cold starts took 61 863 to 62 019 ms
+to show a message sent while the browser was down, a 156 ms spread: something waits about sixty
+seconds before an offline device is given a message the server already holds. `PHASE_STUCK_MS` is
+60 s but only REPORTS, so it is not that. On a phone this is a minute of an empty conversation.
 
-`setupMessageHandler` records consumption in a private `noteConsumed`, under a docblock stating
-"both call sites below reach here" - both call sites of ITSELF. **Four other places hand bytes to
-`processIncomingMessage`**, and two spend generations silently:
-
-- the **buffered-message replay** that runs when a Welcome lands (frames held from before the join);
-- **`attemptCommitReplay`**, which re-applies missed commits - and whose own comment says a commit
-  consumes its generation exactly like a message does.
-
-Both are frames the shared archive also holds, so the replay walks the row later, MLS refuses the
-spent generation, and the client reports a permanent loss and asks a peer to reconcile history it
-already has. `noteFrameConsumed` in `history.ts` is now the one gesture; the distribution-frame path
-records too (cheap insurance, and the direction it can be wrong in is the safe one).
-
-**THE OBLIGATION IS ASSERTED RATHER THAN REMEMBERED**, because "call this too" is exactly what
-produced it - the durable rule about a precondition applied to a helper's callers. `historyFrame
-ConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in the tree and fails
-unless each records or is listed with the reason it must not. Measured in both directions.
-
-**THE RE-RUN IS DONE (2026-09-07, `__sveltekit_19q322l`, source `6001eadefa09b125`) AND THE ROW IS
-STILL `PASS-DIRTY`.** The fix was necessary and is not sufficient, and the re-run narrows what is
-left far better than the first run did:
-
-- **The accusations ACCUMULATE by exactly two per run.** Run 3 accuses two rows, run 4 accuses those
-  two plus two more, run 5 accuses those four plus two more - exactly the pair of messages W2 sends
-  while W1 is down each time. Nothing forgets an accusation; every run re-makes all the earlier ones
-  and adds its own.
-- **The generations are consecutive and they are W2's**: `Ciphertext generation out of bounds` 11 and
-  12 (run 3), 13 and 14 (run 4), 15 and 16 (run 5), all at `msg_epoch=145 group_epoch=145`.
-- **W1's durable set holds all six accused ROW keys and NOT ONE of the six frame fingerprints.**
-  Read directly out of `localStorage` after the run: 3 511 entries, 1 696 of them fingerprints, the
-  six row keys sitting at the very end - written by the LAST run's own accusation, since a run that
-  is killed straight afterwards never commits its thunk.
-
-**AND INSERTION ORDER PROVES IT RATHER THAN SUGGESTING IT.** The set is serialised `[...set]`, so
-position IS insertion order, and all six accused rows sit at the very END - after entries from
-earlier in the same group's history. Had run 3 committed its two, they would appear earlier in the
-array, not beside run 5's. They do not. **So runs 3 and 4 wrote nothing durable at all**, while the
-generations they consumed stayed consumed - which is the whole claim: the ratchet advanced durably
-and the ledger did not. It also explains the missing fingerprints exactly. The six frames were
-decrypted SUCCESSFULLY by an earlier run's replay - that is where the generation went - and that
-run's marks died with it, so the only durable trace any run ever leaves for them is the row key its
-successor writes while accusing them.
-
-**So the cause is the ORDERING, not another silent call site.** The replay's marks become durable
-only in the commit thunk at the end of the walk, on purpose, so the ledger never runs ahead of the
-persisted ratchet. But the converse is unguarded: `flushEncryptedInternal` is NOT gated by
-`bulkIngestDepth` - only `persistNow` is - so any structural mutation during the walk lands a
-checkpoint that makes the ratchet durable while the marks are still in memory. Kill the page there
-and the ratchet is ahead of the ledger, which is the one direction that manufactures a false loss.
-**The fix has to bind the two: the marks belong to whatever writes the checkpoint, so that they
-become durable together in both directions.**
-
-**WRITTEN 2026-09-08.** `persistCheckpoint` is the single place this device's state becomes durable,
-so it is the single place that may DECLARE something durable - and it already did exactly this for
-the send ledger (`snapshotEmitted` / `commitPersisted`). The replay's marks now get the same
-declaration: the walk registers a group the moment it marks anything (`noteReplayMarksPending`, at
-the mark rather than at the top of the walk, so a checkpoint never rewrites a set nothing touched),
-and `commitPendingHistoryMarks` drains it right after the checkpoint write lands. The end-of-walk
-thunk is NOT replaced - it stays as the case where no checkpoint fired at all.
-
-**AFTER the write, never before, and the two orderings are not symmetric** - which is the part a
-later refactor would get wrong. A ledger ahead of a ratchet SKIPS a frame whose generation was never
-spent: a message lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read:
-noise, and a pointless reconcile ask. Only the second is survivable, so shrinking the window is the
-fix and inverting it would not be. The window that remains - a kill between the write returning and
-the declaration - is now microseconds rather than a whole archive walk, and it is the same window
-`commitPersisted` has always accepted, for the same reason.
-
-**Ten tests, two files, and the decisive one was PROVED to fail without the change** rather than
-assumed to: disarming the single registration call makes
-`history.checkpointBoundMarks.test.ts::ARE made durable by a checkpoint, with no thunk run at all`
-fail and leaves the other five green. `BaseMlsService.checkpointLedgers.test.ts` pins the seam
-itself - that the declaration happens, that it FOLLOWS the write, and that a write which THREW
-declares nothing.
-
-**AND THE MEASUREMENT IS IN: IT DID NOT CLOSE THE ROW.** TAB-3b re-run 2026-09-08 01:52 on
-`__sveltekit_1bh2y1p` (source `c74d156d347d`, the estate verified to be serving it), five cold starts
-on a swept estate: **`PASS-DIRTY`, and the accumulation is UNCHANGED** - run 2 accuses two rows, run 3
-those two plus two more, run 4 six, run 5 eight, generations 7 through 14 all at
-`msg_epoch=165 group_epoch=165`. The catch-up is 61 648 / 61 680 / 61 756 ms, a 108 ms spread, so the
-60-second timer is unchanged too and the board's 77.7 s outlier still does not reproduce
-(`reproducedTheOutlier: false`).
-
-**So the fix is NECESSARY AND NOT SUFFICIENT, and it must not be recorded as more than that.** What it
-closes is a real window - a checkpoint mid-walk no longer leaves the marks behind - and that window is
-evidently not the one this row falls into.
-
-**WHAT THE RE-RUN NARROWS, and it is a contradiction worth stating plainly.** A row already in the
-seen set is SKIPPED at the top of the walk (`if (seenCipherHashes.has(rowKey)) { advancePast; continue }`),
-and the accusation path adds exactly that row key before it warns. So run 5 re-accusing run 1's rows
-proves those marks are not durable when run 5's replay hydrates - **while the 2026-09-07 reading found
-all six accused row keys present in the durable set.** Both cannot hold, and only one of them was taken
-from a build carrying this change.
-
-**THE NEXT MEASUREMENT IS THAT SET, READ BETWEEN TWO COLD STARTS**, and it is the whole question: does
-the accusation's mark reach `localStorage` at all in this scenario? Two candidates, and they want
-opposite fixes:
-
-1. **no checkpoint fires between the accusation and the kill.** The page is idle for the whole 62 s
-   wait, and the checkpoint the arriving message triggers races the runner's kill two seconds later.
-   If so the mark needs a durability path that does not depend on a checkpoint at all - which is SAFE
-   for this mark specifically, because a row key on an UNREADABLE frame asserts *"I walked this row"*
-   and not *"I consumed its generation"*, so unlike a fingerprint it has no ratchet to run ahead of;
-2. **the write happens and the next start does not read it back.** Then the fault is in hydration or
-   in the 5 000-entry cap, and nothing about checkpoints would help.
-
-**A CDP probe of W1's `localStorage` HUNG twice while trying to settle this** - the same hang the
-harness has met before - so the read needs a route that is not `evaluate` on a live client. That is the
-next step, and no further code should be written for this row until it answers.
-
-**THE PROBE IS NO LONGER BLOCKED - THE READ WORKS AND IS AN ATOM (`seenset.mjs`, 2026-09-08).** The
-hang was in HOW it was asked, not in the client. `Runtime.evaluate` hands back a remote object handle
-for anything structured, and paging a 4 800-entry array through one is where the wait came from;
-returning `JSON.stringify(...)` from inside the page makes the answer a primitive that arrives whole
-in the first reply. Attaching with `focus: false` is the other half, so the read is safe to take while
-something else is being measured - which is the only time its answer is interesting. Three reads, no
-hang.
-
-**AND IT REFUTES THE CAP AS THE EXPLANATION, WHICH WAS CANDIDATE 2.** W1, group `2bd5add9`, read
-immediately after a TAB-3b run that had just accused three frames:
-
-```
-2bd5add9   4835 entries (2073 frames + 2762 rows) = 96.7% of the 5000 cap
-needle 7e:1kk0lis: ABSENT from every ledger on this client
-needle 5p:1xc4y4j: ABSENT from every ledger on this client
-needle 5p:1jxfhal: ABSENT from every ledger on this client
-```
-
-The set is BELOW the cap, so nothing was evicted, and hydration plainly works - 4 835 entries were
-read back. **The three accused fingerprints were never written at all.** That leaves candidate 1: the
-mark does not reach `localStorage` in this scenario, and the fix has to be a durability path that does
-not wait on a checkpoint. It does not say WHICH path spent the generations without recording them,
-and that is the next question rather than a settled one.
-
-**AND TAB-3b IS THE SAME DEFECT, MEASURED WITH A COUNTER THAT MAKES THE MECHANISM UNAMBIGUOUS
-(2026-09-08).** TAB-3b takes W1's window DOWN and UP - `down 2ms, up 316ms` in its own per-run line -
-so its five "reloads" are five COLD STARTS, which is this entry's scenario and not a page reload.
-Read across the five, the accusation set grows by exactly three generations per start and re-accuses
-every earlier one:
-
-```
-r2:  47,48        19
-r3:  47,48,49,50  19,20
-r4:  ...,51,52     ...,21
-r5:  ...,53,54     ...,22
-```
-
-Two sender leaves, two frames from one and one from the other per cycle - the shape of a peer's
-message plus its read receipt plus a third device's read watermark. **The accusations therefore grow
-QUADRATICALLY in cold starts**, and each pass fires `[HISTORY_RECONCILE] asked 2bd5add9... whether we
-hold the same history` - the loudest thing the app does, once per start, for frames it already holds.
-
-**THE INCONSISTENCY, STATED EXACTLY, BECAUSE IT IS NOT THE ONE THIS ENTRY ASSUMED.** If neither the
-mark nor the ratchet advance survived, the next cold start would restore a state where the generation
-is UNSPENT and the frame would decrypt. It does not decrypt - `SecretReuseError`, at its own epoch.
-**So the advance IS durable and the mark is NOT**, and that is the whole defect: the two are supposed
-to be tied to one checkpoint, and the mark's commit is a thunk the caller invokes AFTER the flush.
-Everything that dies in the window between them keeps a durable advance and loses the record of it.
-
-**WHY THE OBVIOUS FIX IS THE OPPOSITE DEFECT.** Writing the mark eagerly - which is right for a ROW
-key, as this entry already argues, because *"I walked this row"* has no ratchet to run ahead of -
-is wrong for a FINGERPRINT: a fingerprint asserts *"I consumed this generation"*, and one written
-before the advance is durable tells the next replay to SKIP a frame nobody has read. That trades a
-false accusation for a silent real loss, which is strictly worse.
-
-**SO THE ANSWER IS ARCHITECTURAL AND IT IS ATOMICITY, NOT ORDERING.** The mark and the advance are one
-fact and must be one write - the mark belongs INSIDE the checkpoint, or the question *"have I already
-consumed this ciphertext"* should be answered FROM the MLS state instead of from a parallel ledger
-that can disagree with it. A ledger beside the ratchet duplicates what the ratchet already knows, and
-every defect on this entry is the two copies drifting. **No smaller fix should be attempted**: this
-was measured with the cap and hydration both exonerated (`seenset.mjs`), so there is nothing cheaper
-left to try.
-
-**WHAT IS STILL UNMEASURED** is which path spends the three generations - live delivery, the queue
-drain, or the archive replay's own successful pages. A persistent console tailer CANNOT answer it: the
-row destroys the CDP target it would be attached to, which is how the cold-start reading above was
-found in the first place. It needs a purpose-built reproduction that brings W1 down between a known
-send and a known decrypt, not a tail of TAB-3b.
-
-**TWO GROWTH HAZARDS THE SAME READ SURFACED, NEITHER PREVIOUSLY MEASURED.**
-
-1. **The cap is shared by two namespaces and the wrong one is winning.** `frames` are ciphertext
-   fingerprints and mean *"I consumed this generation"*; the rest are message ids and mean *"I walked
-   this row"*. Both go into one array capped at 5 000 and `saveSeenCipherHashes` keeps the LAST 5 000
-   - so on the busiest conversation **2 762 message ids are crowding out 2 073 fingerprints**, and the
-   first thing evicted will be the marks whose loss produces exactly the accusation above. The other
-   168 groups on the same client hold 3 to 7 rows each, so this is a property of a long conversation,
-   not of the design being wrong everywhere.
-2. **The cap is PER GROUP and nothing bounds the number of groups.** 169 ledgers on W1, 247 kB. That
-   is comfortably inside the origin quota today and the arithmetic is the point: 169 groups at the cap
-   would be several megabytes, against a quota of 5-10 MB. **The failure is silent by design** -
-   `saveSeenCipherHashes` catches the write error and warns that *"this replay is repeated in full
-   next time"*, which is a permanent regression to re-walking history on every boot, reported once per
-   failed write at `warn`.
-
-**AND THE CATCH-UP IS A TIMER, WHICH IS A SECOND FINDING THE ROW WAS BUILT TO SURFACE.** Five cold
-starts took 61 863 / 61 865 / 61 889 / 61 930 / 62 019 ms to show a message sent while the browser
-was down - a **156 ms spread over five runs**. A duration that stable is not work, and the board's
-unexplained 77.7 s outlier did not reproduce. Something waits about sixty seconds before an offline
-device is given a message the server already holds; `PHASE_STUCK_MS` is 60 s but only REPORTS, so it
-is not that. Worth a row of its own: on a phone this is a minute of an empty conversation.
-
-The ledger that should prevent it is `seenCipherHashes` (`utils/chat/history.ts`), which IS durable -
-localStorage, capped at 5 000 - and the unreadable path does `seenCipherHashes.add(rowKey)` before
-warning. But the save is a THUNK returned to the caller and committed only "AFTER the encrypted
-checkpoint flush", deliberately, so the cursor never runs ahead of the persisted ratchet. **A session
-that ends before that flush keeps the accusation and loses the record of having made it**, which is
-exactly what five cold starts manufacture.
-
-**THE SECOND HALF IS ANSWERED AND FIXED, 2026-09-06.** The duplicate delivery is gone and its cause
-was not subtle once the population named it - the race is SCHEDULED, not incidental. `onDrainEnd`
-acknowledges the rows it just drained with a `void`ed `ackMessages(ackIds)`, and then, in the SAME
-TICK, `refetchFramesLeftBehind` calls `void this.fetchPendingMessages()` whenever a Welcome landed.
-The server has not recorded the ack yet, so it lists those rows again and the device meets its own
-frames a second time. **`HEAL-NEW-1` is what made it certain**: an equally empty store, the same
-pull, and no duplicate - because nothing was online to deliver anything, so there was no drain, no
-ack and no re-fetch.
-
-The fix deletes the overlap rather than tolerating it, which is what WP-DUPDELIVERY-1 did to the
-mirror-image race in 2026-08: every ack now goes through `announceAck`, which chains them and
-publishes `ackInFlight`, and `fetchPendingMessages` awaits it before pulling. **Fire-and-forget was
-never the problem and is kept** - a drain must not wait on a round trip - it was fire-and-forget
-*unannounced*. A FAILED ack deliberately does not hold the pull: the server really does still hold
-those rows, so a pull that lists them again is telling the truth. Asserted in
-`BaseMlsService.ackBarrier.test.ts` on the ORDER rather than on a count, since a count would pass on
-a sleep.
-
-One thing is still owed on the FIRST half: whether the thunk is reached at all on these runs -
-`[QUEUE] delivery ... arrived twice`
-(**seen four times on 2026-09-05, and the three new ones narrow it**: TAB-3b, then HEAL-REVOKE-9 and
-HEAL-REVOKE-2 on a device that had just been WIPED and logged back in, then HEAL-REVOKE-3 on a device
-FRESHLY MINTED and never revoked at all. So it is not the tab-leadership path TAB-3b exercises - one
-tab reproduces it - and it is not revocation either: **what the three have in common is a client with
-an EMPTY store pulling a backlog it has never acknowledged before**, which is where an ack still in
-flight has the most rows to race. On each of those three rows, once the row's own noise was named, it
-is the ONLY dirt left, so this one line alone holds three cells at `PASS-DIRTY`. **It is deliberately
-forgiven on none of them**: a row made clean by widening a needle is worse than one reporting
-honestly, and a defect costing three cells is easier to justify fixing than one nobody can see)
-recognises one class of duplicate and acknowledges it without decrypting, so this one took a
-different path. **A race that heals cleanly is still a defect**, and this one heals by asking the
-peer for history it already has.
 
 ### P2 - the MESSAGE store has the same stale device key the MLS persister just lost, and nothing has measured it (found 2026-09-07, NOT reproduced)
 
@@ -4458,89 +3949,33 @@ explanation is not a premise that has been restored. Two things are owed before 
 device sat amber here when it self-serves in 8 s on HEAL-NEW-1, and a re-run that shows the window is
 reliable rather than lucky. Until then the fixture described above is still the piece of work.
 
-**~~A SEPARATE AND SMALLER RIG DEFECT SAT UNDER `HEAL-NEW-2`~~ - FIXED, AND THE ROW PASSES
-(2026-09-07 19:14, `unmet: []`, 4 of 4 rows in the subset, all ready).** It was `INVALID` on `W2
-shares no group with this device's 0 row(s)`: the subset was `splitBySubset(before.tiles, ids)` with
-`before = await sidebar(cx)` read moments after the mint handed over - `rows: 0, tiles: []` - so the
-question *which of my rows can this responder serve* was asked of a device that had none yet and
-could only answer "none". **HEAL-NEW-12 was the control that proved it an ordering fault and not the
-account's membership**: same computation, same peer, 4 of 36 rows in the subset, because a LATE
-responder is measured after the device has enumerated. The subset is taken against what the device is
-OWED (`activeGroupIds`, the server's list), which answers the same before the first tile is painted
-as after the last. **The verdict was three days older than the fix, which is the reusable lesson: a
-row whose instrument changed is not a row that has been re-measured, and `rows.mjs` says which those
-are.** The four rows above are untouched by it - their premise is still gone.
-
 ### P1 - twelve of sixteen messages were FETCHED AND DROPPED, and the commit log has a PERMANENT HOLE at epoch 121 (measured on prod 2026-09-02)
 
-**Reported by the user as an impression - *"j'ai l'impression de n'avoir qu'une petite partie des
-messages qu'il m'envoie"* - and it is exact.** DM `7da231f8-119c-4ce2-884f-55f5c94c903f`, created
-2026-08-27, two members (`d82cd226...` / `0acc3ab9...`), not deleted, `activeEpoch` 130.
+**THE FOUR DEFECTS ARE FIXED AND IN `CHANGELOG.md`; WHAT IS LEFT IS THE RESIDUE.** DM `7da231f8`: of
+sixteen messages the peer sent, the Android phone fetched all sixteen and displayed four. The four
+causes - a best-effort commit-log insert outside the epoch-advance transaction, `getCommitsSince`
+blind to a hole in the middle (`gapAt`), a `pending` sender accepted and fanned out
+(`403 sender_not_active`), and application frames emitted between a device's own commit and its
+acceptance (`epochSendBarrier`) - were fixed 2026-09-02 and stop the NEXT loss; they recover none of
+these twelve. Still open:
 
-**What was sent, against what the phone shows** (Paris time; server rows are UTC + 2):
-
-| When | Sent by the peer | Displayed on the Android phone |
-| --- | --- | --- |
-| 30/08 15:11 | 1, from his iPhone | **0** |
-| 02/09 10:44 | 6, from a `pending` web device | **0** |
-| 02/09 11:28 | 2, from his iPhone | 1 |
-| 02/09 13:10-13:11 | 7, from his iPhone | 3 |
-| **total** | **16** | **4** |
-
-**Twelve is a FLOOR, not a total.** `queued_message` is a queue, so only sends still holding an
-undelivered copy on one of the four stale web sessions can be audited at all - nothing before 30/08
-is measurable. The phone FETCHED all sixteen: its queue for this group is empty, it is `active`, and
-it was still being fanned to in other groups at 11:16 the same day. **Every loss is therefore after
-the fetch.**
-
-**The ciphertexts are still on prod** (`proto` non-null, 3-4 copies each, in the web sessions'
-queues), and they are NOT recoverable through them: [group.rs](../../frontend/mls-core/src/group.rs)
-sets `max_past_epochs(2)`, so only the 13:10 batch (epochs 129/130) is still inside the phone's
-retention window and two further commits close it for good. The one path that recovers them is the
-diff against the peer's iPhone, which holds the plaintext.
-
-**FOUR DEFECTS, ALL FOUR FIXED 2026-09-02 - and the entry stays open, because the fixes stop the
-NEXT loss and recover none of these twelve.** (C) and (D) each lose messages on their own, (A)
-strands a device at an epoch nothing can ever refill, and (B) turned all three into a timeout instead
-of an answer:
-
-- **(A) THE CATCH-UP LOG IS BEST-EFFORT WHILE THE EPOCH ADVANCE IS AUTHORITATIVE, and that is why
-  epoch 121 does not exist.** `mls_commit_log` for this group runs 0..129 with **121 missing**:
-  epoch 120 committed 31/08 16:00:12, epoch 122 on 01/09 02:29:46. `IDX_mls_commit_log_group_epoch`
-  is UNIQUE on `(groupId, baseEpoch)`, so **nothing can ever fill it**, and any device stopped at 121
-  is stranded for the life of the group. The cause is the commit path in
-  [messaging.service.ts](../../apps/chat-delivery-service/src/services/messaging.service.ts): the
-  comment claims the insert happens "UNDER THE LOCK (atomic with the advance)", but it sits OUTSIDE
-  the `transaction(...)` that advanced `activeEpoch` four lines above, wrapped in `try`/`catch` ->
-  `logger.warn`, with the reasoning spelled out - *"Storing is best-effort: a failure must not undo
-  the accepted epoch advance."* **The inversion IS the defect**: the record that makes the advance
-  survivable for every other device is optional, while the advance is not. And `if (body.proto)` is a
-  SECOND path to the same hole - a commit carrying no `proto` advances the epoch and records nothing
-  at all, without even the warning.
-  **FIXED 2026-09-02.** The insert is inside the `transaction(...)`, so the advance and the record
-  that makes it survivable share one fate, and a commit carrying no `proto` is refused with a 400
-  before anything moves. A rejected commit costs the committer one round-trip, a lost one costs the
-  conversation. Two tests in `messaging.commit-log.spec.ts`: a rejecting insert fails the whole
-  commit and fans nothing out, and a protoless commit advances no epoch.
-
-- **(B) `getCommitsSince` ANSWERS "IS THE FLOOR TOO HIGH" AND IS ASKED "IS THIS REPLAY APPLICABLE".**
-  Same file. It computes `belowFloor` for a gap at the START and returns every row at or above
-  `sinceEpoch` untouched. A hole in the MIDDLE passes that check: a device at 120 receives
-  `[120, 122, 123, ...]`, `belowFloor` is `false`, and
-  [commitReplay.ts](../../frontend/src/lib/utils/chat/commitReplay.ts) applies 120, fails on 122,
-  breaks, and returns `healed=false`.
-  **This is NOT a permanent stranding and the first draft of this entry wrongly said it was**: the
-  group stays in the epoch-gap registry, and `sessionWatchdogs.ts` forces the forget + re-Welcome
-  once `STUCK_EPOCH_GAP_MS` has passed. So the hole is survivable - **by a CLOCK**, after a failed
-  decrypt, a wasted round-trip and a frozen outbox, when the server could have said so in the
-  response it was already writing. That is the rule about never learning by failing what a fact could
-  have told you, and a termination that is a budget rather than a proof.
-  **FIXED 2026-09-02.** `getCommitsSince` walks for contiguity from `sinceEpoch`, truncates at the
-  first hole and names it as `gapAt` - from either end, a hole in the span or a log stopping short of
-  `activeEpoch`. `belowFloor` suppresses it, PRUNING and a HOLE being different defects and only one
-  of them accusing anybody. `attemptCommitReplay` treats `gapAt` as terminating and applies nothing;
-  `setupMessageHandler` escalates to rung 2 on that proof instead of after `EPOCH_GAP_ESCALATION_MS`,
-  which is where the frames arriving during those 30 s were being ACKed and dropped.
+- **The twelve messages.** Their plaintext exists only on the peer's iPhone; the ciphertexts on prod
+  are past `max_past_epochs(2)`. A diff against that iPhone is the only recovery.
+- **The hole at epoch 121 is permanent by construction** (`(groupId, baseEpoch)` is UNIQUE) - now
+  survivable at once through `gapAt` rather than after a 30 s watchdog, never refillable.
+- **Which arm of `process_message` dropped the 13:10 four is not established**, and the logcat
+  cannot say retroactively (the app's own lines had already rotated out). Settling it needs a
+  reproduction with `clearLogcat()` first, through
+  [phone.mjs](../../tools/cross-client-harness/phone.mjs) and the `LOGCAT_TAGS` in
+  [verify-on-device.py](../../tools/android/verify-on-device.py). **Do not write a fix against a
+  suspected arm** - the candidates in [messaging.rs](../../frontend/mls-core/src/messaging.rs) are the
+  epoch-gap fast-fail, the past-epoch application arm and the same-epoch refusal, and they carry
+  different fixes.
+- **The UI asserts the opposite of the truth**: "Infos de la discussion" shows a green shield reading
+  "SÉCURISÉ & SYNC" on this conversation with twelve messages gone. A device that dropped an
+  application frame must say so there. (verify: not re-checked against the current conversation-info
+  panel on 2026-10-01)
+- **The report that would have named it without a user's impression** is the next entry.
 
 - **(C) A SEND FROM A `pending` DEVICE IS ACCEPTED AND FANNED OUT TO EVERYONE.** `status = 'active'`
   gates recipient resolution twice in that file, and nothing gates the SENDER. The peer's
@@ -6046,12 +5481,6 @@ victim asking with no cookie - the wipe working, which is this rung's subject.
 membership delete that matched no row. Harmless, but it means a caller believed in a row that was not
 there, and `affected=0` is the only place that shows.
 
-**THE THIRD SHAPE IS SHIPPED AND MEASURED, and only the two above are left here.** The gateway
-logged every read error at `ERROR`, so a browser reload - which sends no close frame - read as a
-protocol fault; it is classified on the error's TYPE since 2026-09-15 and production's ERROR channel
-measured **0** on 2026-09-22. The story, the after-count and the window that count could not have are
-on [chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it).
-
 **NOT changed here, deliberately.** Lowering a level or trimming a field changes what `srvlog.mjs`
 classifies, and doing that between two passes of a running campaign would make the next window
 incomparable with every window already recorded. It is a one-commit job for after the ladder.
@@ -6343,69 +5772,14 @@ voir si tout s'affiche bien a 100%...)"*. Every page, at 100 % zoom, and on a ph
 sample. **The scale to work to is [design-reference](frontend/design-reference.md) - seven
 `--text-*` steps and FOUR radii - and no raw hex or px enters any of these.**
 
-**ALL FOUR of the things the user happened to see on the way have SHIPPED** - the reaction bar, the
-GIF picker, the association tiles, and the association page's width with the partnership accent that
-came with it. Their stories are in `CHANGELOG.md`; they were never the scope, only the evidence that
-the scope is real, and **the pass itself is still owed**. Everything the sweeps THOSE fixes ran
-turned up has since closed too - the last of it was the layer gate's blind spot, shipped
-2026-09-14.
-
-**THE ROUTE SWEEP IS DONE (2026-09-14), AND WHAT IS LEFT IS BELOW IT.** Every route the app has was
-opened and measured with the same instrument: at 390px, and at 1280 and 1920 for the "100 %" half.
-**Nothing scrolls sideways and no element exceeds the viewport, at any of the three widths** - the
-13 `/admin/*` routes, the three `/legal/*` pages (signed out as well as signed in), `/login` in an
-isolated context, `/calendar` and `/calendar/export`, `/associations/*`, `/posts` and a post,
-`/lists` and a list, `/forms` and a form, `/communities`, `/chat` with a conversation open, and
-every other top-level page.
-
-It produced four defects, all truncation and all invisible at desktop width: a bottom-tab label
-that fitted until selecting it made it bold; a profile header that clipped the reader's own name;
-an account id shown where it could be neither read nor copied; and a comment box that cut its own
-invitation. The first three are shipped or merged, the fourth is in review. Three notes taken on
-the way did NOT survive being measured - the avatar 404, the `apple-mobile-web-app-capable`
-warning, and `/calendar/export`'s clamped event title, which is a fixed-size poster cell whose
-height `fitEventText` computes. The evidence against all three is in
-[design-reference](frontend/design-reference.md) sections 16 and 21, so that none is re-derived.
-
-**The truncation census's open half is CLOSED by measurement, not by a fix**: of its three `<h2>`
-bars only `ChatHeader` clips in practice, five conversations in eight at a ceiling near eleven
-characters - and the settings button in that same bar opens a panel showing the full name
-unclipped, so the census's own rule is satisfied. The arithmetic, and the two changes that would
-turn it into a defect, are in [design-reference](frontend/design-reference.md) section 20.
-
-**What the sweep could NOT reach, and is the remaining scope:**
-
-- **A community with many channels. The LONG-NAME half is answered (2026-09-14), by injection, and
-  it holds.** The estate has one channel per workspace, so the width was exercised by writing a
-  56-character name (`annonces-generales-et-tres-importantes-de-la-rentree-2026`) into the sidebar's
-  twelve text leaves through the DOM and re-measuring: at 1280 all twelve clip with an ellipsis, at
-  390 none of them does, and **at neither width does anything exceed its container or make the
-  document scroll sideways** - `scrollWidth - clientWidth` is 0 before AND after the injection, both
-  widths. The 390 result is the one the probe cannot read alone: "nothing clipped and nothing was
-  over-wide" is what a sidebar the phone layout does not render looks like too. What settles it is
-  the second surface measured the same way at 390, where six of eight leaves clipped; the two that
-  did not are an icon box carrying no text and one `text-sm font-medium` label, and neither was
-  over-wide. **So a long channel name truncates and never widens the page.**
-
-  **AND THE VERTICAL HALF IS ANSWERED TOO (2026-09-22), ON THE CHANNEL LIST ITSELF.** The surfaces
-  measured in September were the app rail and a second sidebar, not `MainChatPage`'s channel column;
-  this run cloned its one real row into 41 - the 56-character name among them - and measured
-  `/communities` at 1280 and at 390. At both widths the column's own height does not move (740px at
-  1280, 719 at 390), `scrollHeight` grows past it, the bottom is reachable by scrolling and the
-  DOCUMENT does not grow: `scrollWidth - clientWidth` is 0 and `document.body.scrollHeight` is
-  unchanged. No row exceeds its container at either width. **The long name clips with an ellipsis on
-  this surface at 390 as well** - 233px shown of the 446px it wants - which is the reading the
-  September probe could not take, because it never had this list in front of it. Rendered as well as
-  measured, at 390.
-
-  **WHAT IS STILL NOT ANSWERED IS THE SAME THING AS BEFORE: injection proves the LAYOUT holds, never
-  that real data is shaped this way**, and none of it is real hardware - see the bullet below.
-- **Real hardware.** All of the above is Chrome with a device-metrics override; the phone and the
-  iPhone render their own way, and three of three iOS defects were invisible to every gate here
-  ([device-verification](device-verification.md)). **The instrument now exists**:
-  `tools/cross-client-harness/sweep.mjs` runs the same three measurements against a real client over
-  CDP - A1, W1, or an iPhone once one is inspectable - so the sweep is repeatable rather than
-  retyped. It found the P1 below on its first run.
+**EVERYTHING BUT REAL HARDWARE IS DONE.** The route sweep (every route at 390, 1280 and 1920, nothing
+scrolls sideways), its four truncation defects, the truncation census and the many-channels /
+long-name halves are closed; the evidence is [design-reference](frontend/design-reference.md)
+sections 16, 17, 19-21 and 39, the stories in `CHANGELOG.md`. **What is left is REAL HARDWARE** - all
+of it was Chrome with a device-metrics override, and three of three iOS defects were invisible to
+every gate here ([device-verification](device-verification.md)). The instrument is
+`tools/cross-client-harness/sweep.mjs` (the same three measurements over CDP on A1, W1, or an
+iPhone once one is inspectable); CLAUDE.md queue item 16 carries it.
 
 ### ONE MEASUREMENT FROM THE 2026-09-14 HARDWARE SESSION IS SUSPENDED, NOT FILED
 
@@ -6482,11 +5856,9 @@ evidence it rests on, because "the emoji looked fine" is not an observation.
 12. **The composer on the iPhone**: its emoji keyboard, a paste, and an IME commit each turn into a
     picture with the caret after it, and Backspace removes the emoji whole (measured in Chromium only).
 
-#### Limits to state before anyone reports them as bugs
-
-- **The notification shade, the OS share sheet, the keyboard's own emoji panel, form fields and every
-  other native surface are drawn by the platform.** "The notification shows a different emoji" is
-  expected behaviour, not a regression.
+What the pictures do NOT change - the shade, the share sheet, form fields and every other native
+surface, drawn by the platform - is stated once, on
+[emoji](frontend/emoji.md#what-the-pictures-do-not-change).
 
 ## Storage and retention
 
@@ -6505,63 +5877,12 @@ MLS decryption failed at exactly its own epoch, so no redelivery can help:
 both sides, so this is not an epoch gap: a generation the peers had already consumed was re-issued.
 Both peers then paid a full history reconciliation to discover they already agreed.
 
-**THE DIAGNOSIS THIS ENTRY WAS FILED WITH WAS WRONG, AND THE CORRECTION MATTERS MORE THAN THE
-ENTRY** (2026-09-06). It quoted section 8's *"what is still owed... is a durable record of what the
-ratchet has already spent, written per send... and consulted at load"* and concluded **"that record
-has not been written."** It has. It was written and shipped on 2026-08-14, and every piece of it is
-in the tree:
-
-| piece | where |
-| --- | --- |
-| the counters | `src/lib/mls-client/sendRatchetLedger.ts` (+ its own test file) |
-| the pairing | `BaseMlsService.persistCheckpoint` |
-| the repair | `BaseMlsService.reconcileSendRatchets`, called from inside `init` |
-| the burn | `MlsManager::skip_send_generations` (`mls-core/src/messaging.rs`) |
-| the proof | `mls-core/tests/burn_spent_generations.rs`, `burn.mjs` on web AND native |
-
-The claim survived because section 8 states the debt in a paragraph that sits ABOVE the subsection
-recording its payment, and because the wiki gives the ledger's path as `services/` when it lives in
-`mls-client/` - so a grep for the file at the named path finds nothing and the prose above appears to
-confirm it. **This repository's own rule is that a claim of staleness must name the mechanism that
-would honour it and show that mechanism GONE**; this entry named it and never looked. Anyone acting
-on the old text would have rebuilt a shipped mechanism from scratch.
-
-**SO WHAT ACTUALLY REWOUND?** The ledger closes the JS load path: a client that sends, is reloaded
-before the checkpoint lands, and drains its queue in JS burns the deficit first. It does not cover
-every engine. On Android **four** engines advance the same ratchet - foreground Tauri, FCM JNI,
-Worker JNI, and the native outbox drain `send_messages_background_with_key` - and only the foreground
-consults `sendRatchetLedger`. The native drain loads `mls.bin`, encrypts each queued entry, saves
-once, and never asks whether the foreground has emitted frames that have not reached disk.
-
-Two things keep that from firing constantly, and the observed run is where both give out:
-
-- `background_write_mls_bin` refuses while `foreground_is_active()`, and the whole call fails, so no
-  ciphertext escapes. But that guard is **a 30-second deadline refreshed by heartbeat**, and it is
-  released deliberately on `hidden`. A backgrounded-but-ALIVE app - which is precisely what NOTIF-1b
-  asserts, *"process alive and still ACKing"* - has released the guard while its JS engine still
-  holds a live in-memory client.
-- `reloadStateFromDisk` is what re-syncs the foreground to a background advance, and its ONLY caller
-  is the `visibilitychange` **resume** branch in `ChatBackgroundService.svelte`. A phone that is
-  backgrounded and never resumed never runs it.
-- `reconcileOutboxSent` is likewise one-way and login/resume-only: the native side records what IT
-  delivered and the JS drains that file later. Nothing tells the native drain what the FOREGROUND
-  has already emitted.
-
-So the shape that fits the evidence is **two engines holding one ratchet with no reconciliation
-between them while the app is backgrounded and alive** - and the frame that was refused was the
-phone's read receipt for the warm-up message, sent around exactly that transition. **This is a
-hypothesis with a mechanism, not a measurement**, and it is written that way on purpose: the run's
-logs were not read for a `[BG_SEND]` line beside the rewind, and that single line is what would
-settle it. What is NOT a hypothesis is that the ledger exists and that the native drain does not
-consult it.
-
-**THE MEASUREMENT WAS TAKEN, 2026-09-08, AND IT REFUTES THE HYPOTHESIS ABOVE.** The window was
-captured in full (`adb logcat -v time` to a file, kept for the whole run) around two consecutive
-NOTIF-7 `bg` runs that both reproduced the error - same group `2bd5add9...`, same epoch 196,
-generations 35/36 then 43/44, so the fault is deterministic rather than a flake. **There is no
-`[BG_SEND]` line and no background `mls.bin` write anywhere in either capture.** By the branch this
-entry set itself, that closes the send-ratchet reading: the native outbox drain was not running, and
-nothing this entry blamed was involved.
+**REFUTED, NOT TO BE RE-OPENED.** The send ratchet ledger is NOT missing - it shipped 2026-08-14
+(`frontend/src/lib/mls-client/sendRatchetLedger.ts`, see
+[mls-desync-prevention](protocols/mls-desync-prevention.md)); and the "native outbox drain advances
+the ratchet while the app is backgrounded" hypothesis was refuted on 2026-09-08 by a full
+`adb logcat -v time` capture of two reproducing NOTIF-7 `bg` runs (group `2bd5add9...`, epoch 196)
+carrying no `[BG_SEND]` line and no background `mls.bin` write.
 
 **WHAT IS THERE INSTEAD IS A RECEIVE-SIDE DOUBLE-CONSUME, AND IT IS TWO DEFECTS, NOT ONE.** The four
 decryptions of the same two frames, one epoch, one sender leaf:
@@ -6573,27 +5894,17 @@ decryptions of the same two frames, one epoch, one sender leaf:
 | 3 | 09:33:30.647 | `recevoir_messages_batch group=2bd5add9... count=2` **again, 83 ms later** | 43, 44 | **`SecretReuseError`** |
 | 4 | 09:33:36.098 | `[PENDING] Fetched 2 pending` -> `[QUEUE] Drain` | 43, 44 | **OK AGAIN** |
 
-**DEFECT A IS FOUND, FIXED AND SHIPPED IN `v0.18.18` - THE BARRIER WAITED 0 ms ON PURPOSE.** The archive
+**DEFECT A IS FOUND, FIXED AND SHIPPED (`cfb20bcc5`, #435, first tagged `v0.16.6`) - THE BARRIER WAITED 0 ms ON PURPOSE.** The archive
 replay does take a barrier before it reads, and the barrier printed the session it was about to
 overrun: `[QUEUE] mailbox barrier for "archive replay" is waiting behind 1 catch-up session(s) on
 [2bd5add9...]`, then `waited 0ms`. `settleBarrier()` waits for the pull and for the scheduler's
 buckets, and a catch-up hands `decryptPage` straight to the engine - so while its batch is in flight
 the pull is done and every bucket is empty. **`isIdle` answers "is my queue empty" and was being read
 as "is the group quiet".** The gate that answers the second already existed and every send has
-awaited it since 2026-08-14; the barrier now calls `waitForCatchUpIdle()` before settling. The test
-named after this behaviour asserted the two `debug` lines' WORDING and passed on the defect - both it
-and its neighbour now assert the ordering. `CHANGELOG.md` carries the account. **Owed: the field
-re-measurement on a rebuilt APK** - the unit test proves the ordering, not the disappearance of the
-`E/` pair on the handset.
-
-**DEFECT A, AS IT WAS MEASURED - TWO CONCURRENT READERS OF ONE PENDING QUEUE (rows 2 and 3).** Two `recevoir_messages_batch`
-calls 83 ms apart carry the SAME two frames; the loser burns an `E/` pair through openmls per frame
-and pays a history reconciliation to discover it agrees. The product already knows: at 09:33:30.677
-it prints `[History] frame already read live while this page was decrypting - not a loss` once per
-frame. **That line is the reconciling ledger this repository's own rule forbids as a fix** - *a race
-that heals cleanly is still a defect... a ledger that reconciles them afterwards is a witness, never
-a fix*. The overlap is named in the message itself (*while this page was decrypting*), so what is
-owed is the deletion of the overlap: one owner drains a group's pending queue, decided by a fact.
+awaited it since 2026-08-14; the barrier now calls `waitForCatchUpIdle()` before settling.
+`CHANGELOG.md` carries the account ("the mailbox barrier named the sessions it was waiting out and
+waited 0 ms"). **Owed: the field re-measurement on a rebuilt APK** - the unit test proves the
+ordering, not the disappearance of the `E/` pair on the handset.
 
 **DEFECT B - THE RESUME RELOAD REWINDS THE RECEIVE RATCHET, AND THIS IS THE FIRST MEASUREMENT OF THE
 PREKEY ENTRY'S CANDIDATE 2.** Row 4 is the same two generations, already consumed twice, decrypting
@@ -6668,19 +5979,16 @@ processes routinely.
 
 **What is owed, in order.**
 
-1. **The spent-generation record**, as section 8 already specifies it: per send, a key/value write,
-   consulted at load, and the burn - which is already designed, shipped and safe by
-   `SenderRatchetConfiguration::new(2000, 2000)` - applied against the deficit it finds. Nothing new
-   needs inventing; it needs writing.
-2. ~~**The blob measurement above**, because it decides whether the window can be shrunk at all or
-   only survived.~~ **TAKEN, 2026-09-06, AND IT ANSWERS "ONLY SURVIVED" FOR NOW.** The blob is
-   dominated by accumulated key package bundles at 1 936 bytes each (~60% of a state that also holds
-   41 groups), and **sends themselves cost ~0 bytes** - so no amount of message history explains the
-   window, and shrinking it is not something this device's own use can achieve. The prune added the
-   same day BOUNDS growth at 84 days but reclaims nothing younger, so the seventeen seconds stand
-   until the two accrual paths are closed. **The spent-generation record is therefore not optional
-   and not deferrable**: it is the only thing that makes the window survivable, and item 1 no longer
-   has a cheaper alternative waiting behind a measurement.
+1. **Defect B's fix - no fix is written or designed yet.** The resume reload
+   (`TauriMlsService`, `mls.bin reloaded on resume (C2)`) must not install a secret tree behind the
+   live one; the epoch comparison in `swapClientMonotonic` cannot see a generation that moved inside
+   one epoch.
+2. **Defect A's field re-measurement** on a rebuilt APK (above).
+3. **The 2026-09-06 SEND-side rewind**, measured from the phone.
+
+The spent-generation record this list used to ask for is the ledger, shipped 2026-08-14 (see the
+REFUTED paragraph above); the blob measurement it waited on was taken 2026-09-06 (key package
+bundles dominate, sends cost ~0 bytes) and is on [key-package-pool](protocols/key-package-pool.md).
 
 **Do NOT "fix" this by awaiting the checkpoint.** That was measured and refuted in August at 1.7 s
 per send, and it would now cost seventeen. The invariant is not "the state is durable at send time"
@@ -6746,175 +6054,13 @@ per-process and deliberately not durable - the claim it supports is "this proces
 bytes". Packages minted in an EARLIER session are still purgeable, so a device whose keystore is
 emptied and then RESTARTED would run the loop again with nothing to refuse it.
 
-### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT NAMES THE REMEDY NOW REACHES THE WEB, SHIPPED IN `v0.18.18` (two production consoles, 2026-09-16)
+### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-09-22)
 
-**DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
-had failed while it was still working; that half is shipped. What remains is bounded growth with no
-visible symptom, which is correctness, not a broken user-facing path.
-
-**THE SHIPPED HALVES ARE NOT KEPT HERE.** Two of the three things this entry was opened for are done
-and their story is in `CHANGELOG.md` under `[0.16.4] - 2026-09-06`: the PIN gate no longer calls a
-slow unlock a failed one - the 10-second watchdog was a clock standing in for a proof, and the proof
-is observable - and the weight of a state was measured part by part. A one-time prekey bundle is
-**1 936 bytes**, not the ~400 its docblock claimed; fifty sends cost ~0, so message history was
-never the cause; and `MlsManager::prune_expired_key_packages` now bounds growth at
-(mint rate x 84 days) from one seam in `load_or_create`, on an elapsed `not_after` rather than on
-"the server no longer publishes it" - which would race a join and lose it. Weights in
-`mls-core/tests/state_weight.rs`, the rule in `tests/prune_expired_key_packages.rs`, the UI guard in
-`sessionExpiredRelease.test.ts`.
-
-**THE TWO ACCRUAL PATHS THIS ENTRY CALLED OPEN ARE BOTH SHIPPED, AND THE ENTRY WAS WRONG TO STILL
-LIST THEM.** Checked against the tree on 2026-09-16 rather than believed:
-
-1. **The per-connection last-resort remint is gone** - `generer_key_packages_et_persister` now calls
-   `existing_last_resort_key_package(now_secs)` and mints only when nothing valid is held, so the
-   cadence is the package's own 84-day lifetime instead of every socket. `e0f2d825b` (#458), first
-   tagged `v0.17.0`.
-2. **The purge endpoint returns what it deleted** - `deleteAllOneTimePrekeys()` is typed
-   `Promise<string[]>` and reads `data.keyPackages`, and `republishKeyMaterial` hands exactly that
-   list to `forgetPurgedPrekeys`, which drops those private bundles and nothing it worked out for
-   itself. That is precisely the discriminator this entry asked for. Same commit.
-
-A third cause was fixed earlier: a background engine writing back its older blob between the mint and
-the write deleted fifty private keys whose public halves had just been published - `ForegroundCritical`
-now brackets the mint rather than the write, `6ff1143ca` (#432), `v0.16.6`.
-
-**ALL THREE ARE IN `v0.18.1`**, verified with `git merge-base --is-ancestor`. So the open work this
-entry described no longer exists, and what replaces it is a question raised by a measurement.
-
-**THE MEASUREMENT, AND WHAT IT CANNOT YET SEPARATE.** On 2026-09-16 the Mi 9T ran `0.18.1` and
-`stat mls.bin` read **2 750 195 bytes**, against 19 548 753 on 2026-09-06. **That is not a reclaim
-and it is not a regression either.** `firstInstallTime=2026-09-14 20:12:15`: the 2026-09-14 hardware
-session installed the release APK over the debug build, which uninstalled it and wiped the blob (that
-session's own entry above says so). So this is a two-day-old install, and the prune's reclaim can no
-longer be observed on this handset at all.
-
-What is worth explaining is that a **two-day-old install on a build carrying all three fixes already
-weighs 2.75 MB**, four hours after first run - `mls.bin` has not been rewritten since 2026-09-15
-00:15, though the app ran again on 2026-09-15 18:21. The local store holds 4 conversations and 1 180
-messages. Sends are flat in `mls.bin` by measurement and history lives in SQLite, so the candidates
-are groups and bundles - **and nothing here separates them.** At the measured 5 330-byte group floor
-plus ~2 000 a member, four groups cost 0.45 MB at fifty members apiece and 1.6 MB at two hundred;
-**this install's membership was never counted**, so the residue is anywhere between ~600 and ~1 400
-bundles. A range that wide is not a finding.
-
-**AND THE INSTRUMENT I WAS ABOUT TO ASK FOR ALREADY EXISTS - IT PRINTS ONCE PER LOAD.**
-`load_or_create` calls `state_composition_summary()` and logs it at `info`, on the one seam every
-platform loads through, added precisely because two investigations had to INFER composition from
-synthetic states. A production console export from the USER's own browser, 2026-09-16 07:58:04 on
-`0.18.4`, carries it:
-
-```
-load_or_create: state composition - 7291769B total;
-  Tree 23x2536880B, MessageSecrets 23x2420376B, KeyPackage 933x2215941B
-```
-
-**933 key packages against a pool of fifty, on a WEB profile, on the current stable.** 2 215 941
-bytes of a 7 291 769-byte state - 30% of it - at ~2 375 bytes each. Tree and MessageSecrets are 23
-groups apiece and cost about the same again, which also settles the question the Mi 9T measurement
-could not: **groups and bundles are separable, and they are separated by reading the log rather than
-by dividing a file size.** No `stat mls.bin` was ever needed.
-
-**WHAT IS STILL MISSING IS THE SECOND LINE, AND ONLY ON WEB.** The breakdown that names a remedy -
-how many of those 933 are expired debt, how many superseded fallbacks, how many a revoked pool - is
-`#[cfg(not(target_arch = "wasm32"))]`, gated with the prune because the summary reads a clock and
-this crate must not. So the web says 933 and cannot say which of the three reclaims applies, and
-those three are reclaimed by three different mechanisms. **Passing the caller's
-`Date.now()/1000` the way `prune_key_packages_expired_at` already does would lift the gate without
-putting a clock in the crate** - the pattern is established one function above.
-
-**THE HANDSET MEASUREMENT IS THEREFORE SUPERSEDED, NOT PENDING.** `stat mls.bin` on the Mi 9T gave a
-file size and an argument about membership; one line of its own log would have given the census. The
-2026-09-16 figure stays recorded because it dates the install, and nothing more should be built on
-it.
-
-#### AND THEN THE SAME BROWSER WAS READ TWICE, TWELVE MINUTES APART, WHICH GIVES THE RATE AND NAMES THE MECHANISM
-
-A second console export from the same profile, 08:10 against 07:58 on the same day and the same
-build. Four census lines across the two loads, in order:
-
-```
-07:58:04  KeyPackage  933 x 2 215 941 B   total 7 291 769 B
-07:58:04  [MLS Worker] generateKeyPackage start needed=50
-08:10:19  KeyPackage  983 x 2 334 671 B   total 7 424 982 B
-08:10:21  [MLS Worker] generateKeyPackage start needed=30 -> generate_key_packages count=30
-08:10:21  KeyPackage 1013 x 2 405 882 B   total 7 496 207 B
-```
-
-**The arithmetic is exact and it leaves no room for a reclaim.** 933 + 50 = 983, 983 + 30 = 1013;
-118 730 bytes for the first fifty and 71 211 for the next thirty, both 2 374 - 2 375 bytes a package.
-**Nothing was dropped between the two loads, and nothing was dropped during either.** Twelve minutes
-of ordinary use cost this profile **+80 packages and +204 438 bytes, permanently.**
-
-**WHAT IT NAMES.** `needed = 50 - existing` is read against the SERVER's remaining pool, so the
-server had 0 left at 07:58 and 20 at 08:10 - peers consume prekeys, the client tops the pool back up
-by MINTING, and the private half of every package ever minted stays in the blob until its own
-`not_after` elapses. The 1013 is not a leak in the sense of a bug still to find: it is the
-**accumulated history of every top-up this profile has ever done**, which is exactly what the
-84-day-bounded prune leaves behind by design. The three accrual fixes above stopped the pathological
-multipliers; they were never going to stop this, and this entry should not be read as though a fourth
-fix were hiding.
-
-**WHAT IT DOES NOT ESTABLISH.** Two samples are not a rate law. How fast a profile accrues is how
-fast its peers claim prekeys, which is a function of how many devices are joining groups around it -
-so +80/12 min is this account, this morning, and nothing is owed to it beyond that. **The number that
-would generalise is the census line collected across several accounts**, and it costs one console
-export each.
-
-**THE SECOND LINE NOW REACHES THE WEB, AND IT IS THE THING TO SHIP.** The breakdown says how many
-of the 1013 are already past `not_after` and merely waiting for the next load to drop them. If that
-share is large, the steady state is far below 1013 and there is nothing to do; if it is near zero,
-the 84-day bound is not binding on this profile and the ceiling is higher than anyone has assumed.
-**One line separates those two worlds, and until 2026-09-16 it was gated off the only platform that
-produced this measurement.**
-
-**WHY IT WAS GATED, AND WHAT UNGATED IT.** Not an oversight: the breakdown compares each bundle's
-`not_after` against now, and `mls-core` must not read a clock on `wasm32` - `SystemTime::now()` is
-unimplemented there and PANICS rather than erroring, which took every web login down in v0.16.4.
-So the clock moved to the CALLER. `key_package_census_summary_at(now_secs)` takes the instant,
-`WasmMlsClient::key_package_census(now_secs)` passes `Date.now() / 1000`, and the native wrapper
-that reads its own clock stays `#[cfg(not(target_arch = "wasm32"))]`. The web prints it once MLS is
-ready rather than during `init()`: it deserialises every stored bundle, and a thousand of those do
-not belong in front of the connected badge.
-
-**WHAT IS OWED IS A CONSOLE EXPORT, NOT A FIX.** The line ships with the next release; after it, one
-reload on the user's own browser answers which of the three reclaims applies. **Nothing here should
-be acted on before that number exists** - a prune written against the wrong share would delete
-prekeys a peer is about to build a Welcome on, which is exactly the ambiguity the expiry-only prune
-was written to avoid.
-
-#### THE EXPORT ARRIVED, AND IT SAYS NONE OF THE THREE RECLAIMS APPLIES (production, 2026-09-16 13:32)
-
-```
-load_or_create: state composition - 7539303B total; Tree 24x2545493B, MessageSecrets 24x2438316B, KeyPackage 1024x2431971B
-[MLS] key package census - 1024 proven (1023 one-time, 1 last-resort); 0 expired, 0 undecodable; 29 mint instant(s), largest batch 50
-```
-
-**`0 expired` decides the question the entry above could not.** The 84-day bound is NOT binding on
-this profile: every one of the 1024 bundles has time left to run, so the prune would reclaim nothing
-today and the steady state is not below 1024 - it is wherever the mint rate puts it at day 84.
-`1 last-resort` also confirms #458 holds on the web: one fallback, not the 269 the Mi 9T carried.
-
-**SO THERE IS NO RECLAIM TO WRITE, AND THE ENTRY MUST NOT BE READ AS THOUGH THERE WERE.** The three
-mechanisms are expiry (nothing expired), a purge the server confirmed (`forget_key_packages`, wired,
-and no purge happened here) and a superseded fallback (there is one). What is left is accrual that
-is correct by construction: 29 mint instants are 29 top-ups, each of them `50 - existing` against a
-pool peers really did drain.
-
-**WHAT THE SAME EXPORT DID SHOW IS A DIFFERENT DEFECT, AND IT IS FIXED** - the round that mints
-NOTHING and pays for everything anyway. `[MLS Worker] generateKeyPackage start needed=0` on an
-ordinary F5, and around it a `save_state` of 7 539 303 B, a worker `load_or_create` over the whole
-state, a `reloadClientFromState` that decrypted it a second time, and three encrypted checkpoints
-(153 ms + 65 ms + 63 ms) - to publish a last-resort package the delivery service already held. See
-`CHANGELOG.md`; the discriminator is the round's own action, never a dirty bit.
-
-
-
-**This is invisible to every gate in this repository.** The desktop clients carry a small state and
-the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
-belongs with the other three iOS/Android defects that no green build could have caught.
-
-### P1 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO 677 DEVICES STAY UNJUDGEABLE (production, re-measured on the deployed fix 2026-09-18)
+**DOWNGRADED P1 -> P2 ON 2026-10-01.** Both client repairs below are REFUTED and the entry itself
+says it closes on the drain; what is owed is a re-measure and, only if the count floors, the
+server-decoder decision. The 1013-key-package web measurement that used to sit above this entry was
+closed (`0 expired`, accrual correct by construction) and its numbers are on
+[key-package-pool](protocols/key-package-pool.md#a-web-profile-holds-1024-bundles-all-live-and-that-is-accrual-correct-by-construction-production-consoles-2026-09-16).
 
 **The re-measurement this entry was waiting for happened, and it refuted the entry.** The server did
 NOT refuse expired last-resort packages: the guard tested `device.notAfter && ...`, that column is

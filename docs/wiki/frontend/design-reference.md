@@ -2889,3 +2889,16 @@ dismissed underneath it. Neither gesture knew the other existed.
 independently rather than by sharing the predicate, for the reason section 32 gives. **The bubble
 wins because it is the more specific target**: an edge-swipe-back has the rest of the strip, a reply
 swipe has nowhere else to happen.
+
+## 39. A community with many channels, and a channel with a long name - measured by injection (2026-09-14, 2026-09-22)
+
+The estate has one channel per workspace, so the graphical pass (user, 2026-09-13: every page at
+100 %) exercised both axes by INJECTION. **Width**: a 56-character name
+(`annonces-generales-et-tres-importantes-de-la-rentree-2026`) written into the sidebar's twelve text
+leaves clips with an ellipsis at 1280 and never widens anything - `scrollWidth - clientWidth` is 0
+before and after, at 1280 and at 390. **Height**: `MainChatPage`'s channel column, its one real row
+cloned into 41, keeps its own height (740px at 1280, 719 at 390), scrolls internally to the last row,
+and leaves `document.body.scrollHeight` unchanged; the long name clips there at 390 too (233px shown
+of 446). **Injection proves the layout holds, never that real data is shaped this way**, and all of
+it is Chrome with a device-metrics override - real hardware is read with
+`tools/cross-client-harness/sweep.mjs` over CDP.
