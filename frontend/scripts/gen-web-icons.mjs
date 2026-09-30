@@ -24,79 +24,35 @@ import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { renderBird, renderCanvas } from './logo-render.mjs';
+import { SVG, renderBird, renderCanvas } from './logo-render.mjs';
+import { BIRD_ICON_FILL, gradientBackground } from './icon-spec.mjs';
+import { packIco } from './ico.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const STATIC = path.join(ROOT, 'static');
 
-/** `--color-canvas` in `app.css`, and the `theme-color` in `app.html`. */
-const NAVY = { r: 0x15, g: 0x1b, b: 0x2c, alpha: 1 };
-
 /** Home-screen icon edge, in CSS pixels - the size every current iOS device asks for. */
 const TOUCH_ICON_SIZE = 180;
-
-/**
- * Fraction of the touch icon the bird occupies.
- *
- * iOS rounds the corners itself and applies no safe zone, so this is margin
- * rather than crop protection: at 1.0 the bird would touch the rounded edge.
- * It is a BIRD size, so `renderBird` adds the vector's own margin around it.
- */
-const TOUCH_ICON_BIRD_SCALE = 0.76;
 
 /** Sizes packed into `favicon.ico`, smallest first. */
 const ICO_SIZES = [16, 32, 48];
 
+/**
+ * iOS rounds the corners itself and applies no safe zone, so the bird is sized by the shared
+ * `BIRD_ICON_FILL` alone and the background is the square gradient, flattened to drop the alpha.
+ * It is a BIRD size, so `renderBird` adds the vector's own margin around it.
+ */
 async function makeTouchIcon() {
-  const bird = await renderBird(Math.round(TOUCH_ICON_SIZE * TOUCH_ICON_BIRD_SCALE));
+  const bird = await renderBird(Math.round(TOUCH_ICON_SIZE * BIRD_ICON_FILL));
   const out = path.join(STATIC, 'apple-touch-icon.png');
-  await sharp({
-    create: {
-      width: TOUCH_ICON_SIZE,
-      height: TOUCH_ICON_SIZE,
-      channels: 4,
-      background: NAVY,
-    },
-  })
+  await sharp(await gradientBackground(TOUCH_ICON_SIZE))
     .composite([{ input: bird, gravity: 'center' }])
+    .flatten()
+    .removeAlpha()
     .png()
     .toFile(out);
   return out;
-}
-
-/**
- * Packs already-encoded PNGs into an ICO container.
- *
- * The header is 6 bytes, then one 16-byte directory entry per image, then the
- * payloads. A dimension of 256 is written as 0, which is the format's own
- * convention - not a concern at these sizes, but writing the encoding rather
- * than the value keeps the function honest if a 256 is ever added.
- */
-function packIco(images) {
-  const HEADER_BYTES = 6;
-  const ENTRY_BYTES = 16;
-  const header = Buffer.alloc(HEADER_BYTES);
-  header.writeUInt16LE(0, 0); // reserved
-  header.writeUInt16LE(1, 2); // 1 = icon
-  header.writeUInt16LE(images.length, 4);
-
-  let offset = HEADER_BYTES + ENTRY_BYTES * images.length;
-  const entries = images.map(({ size, data }) => {
-    const entry = Buffer.alloc(ENTRY_BYTES);
-    entry.writeUInt8(size >= 256 ? 0 : size, 0);
-    entry.writeUInt8(size >= 256 ? 0 : size, 1);
-    entry.writeUInt8(0, 2); // palette colours - 0 for truecolour
-    entry.writeUInt8(0, 3); // reserved
-    entry.writeUInt16LE(1, 4); // colour planes
-    entry.writeUInt16LE(32, 6); // bits per pixel
-    entry.writeUInt32LE(data.length, 8);
-    entry.writeUInt32LE(offset, 12);
-    offset += data.length;
-    return entry;
-  });
-
-  return Buffer.concat([header, ...entries, ...images.map((i) => i.data)]);
 }
 
 async function makeFaviconIco() {
@@ -109,9 +65,26 @@ async function makeFaviconIco() {
   return out;
 }
 
+/**
+ * `favicon.png`: the bird alone, trimmed to its own box and filling the canvas. The interface puts
+ * it inside a navy tile of its own (header, login, QR badge), so it carries NO margin - unlike the
+ * vector, whose margin exists for the circular masks.
+ */
+async function makeFaviconPng() {
+  const out = path.join(STATIC, 'favicon.png');
+  const rendered = await sharp(SVG, { density: 1200 }).png().toBuffer();
+  const trimmed = await sharp(rendered).trim({ threshold: 0 }).toBuffer();
+  await sharp(trimmed)
+    .resize(337, 325, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toFile(out);
+  return out;
+}
+
 async function main() {
   console.log(`wrote ${await makeTouchIcon()}`);
   console.log(`wrote ${await makeFaviconIco()}`);
+  console.log(`wrote ${await makeFaviconPng()}`);
 }
 
 main().catch((e) => {

@@ -601,6 +601,13 @@ jobs:
           # THREE DAYS: it points at one workstation address and is worthless afterwards.
           retention-days: 3
 
+      # Same tint as android.yml, for the same reason: the Icon Composer document is rewritten in the
+      # working tree of this run, and the compile check (prerelease defaults to "true") exercises it.
+      - name: Tint the app icon for a pre-release
+        if: inputs.prerelease == 'true'
+        working-directory: frontend
+        run: bun scripts/gen-ios-icon.mjs --dev
+
       - name: Build iOS archive
         if: env.LOCAL_URL == ''
         working-directory: frontend
@@ -645,6 +652,23 @@ jobs:
           fi
 
           echo "Archive produced: ${ARCHIVE_PATH}"
+
+          # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
+          # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
+          # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
+          # is not there at all - a build that ships the default blank icon is green otherwise.
+          CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | head -1)"
+          if [ -z "$CAR" ]; then
+            echo "::error::the archive holds no Assets.car"
+            exit 1
+          fi
+          xcrun assetutil --info "$CAR" > "$RUNNER_TEMP/assets-info.json"
+          echo "Icon entries in Assets.car: $(grep -c '"Name" : "AppIcon' "$RUNNER_TEMP/assets-info.json" || true)"
+          grep -o '"Appearance" : "[^"]*"' "$RUNNER_TEMP/assets-info.json" | sort | uniq -c || true
+          if ! grep -q '"Name" : "AppIcon' "$RUNNER_TEMP/assets-info.json"; then
+            echo "::error::Assets.car carries no AppIcon - the Icon Composer document did not compile"
+            exit 1
+          fi
 
       - name: Export signed IPA
         if: env.LOCAL_URL == ''

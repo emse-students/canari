@@ -41,7 +41,15 @@ describe('Android window layout (anti-regression)', () => {
     // With no windowBackground of ours, that gap was the parent theme's grey colorBackground while
     // app_background sat defined in two configurations and referenced by nothing.
     const theme = readFileSync(resolve(ANDROID_MAIN, 'res/values/themes.xml'), 'utf8');
-    expect(theme).toContain('<item name="android:windowBackground">@color/app_background</item>');
+    // launch_background is app_background with the launch logo on top, so the gap still paints it.
+    expect(theme).toContain(
+      '<item name="android:windowBackground">@drawable/launch_background</item>'
+    );
+    const launch = readFileSync(
+      resolve(ANDROID_MAIN, 'res/drawable/launch_background.xml'),
+      'utf8'
+    );
+    expect(launch).toContain('<item android:drawable="@color/app_background"/>');
     for (const dir of ['values', 'values-night']) {
       const colors = readFileSync(resolve(ANDROID_MAIN, `res/${dir}/colors.xml`), 'utf8');
       expect(colors).toMatch(/<color name="app_background">#FF[0-9A-Fa-f]{6}<\/color>/);

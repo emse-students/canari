@@ -1,0 +1,9 @@
+<resources>
+    <!-- The Android 12+ system splash draws its own icon; it is handed the launch logo rather than
+         the launcher icon, which would be cut to a circle. -->
+    <style name="Theme.mines_app" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/app_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+    </style>
+</resources>

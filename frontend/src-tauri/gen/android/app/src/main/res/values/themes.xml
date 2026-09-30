@@ -16,6 +16,6 @@
       identical style would say nothing.
     -->
     <style name="Theme.mines_app" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
 </resources>

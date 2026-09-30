@@ -11,6 +11,7 @@
 		1D4E8B2981EA54B645EDA0E1 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 885364C76C1FDA259C6F0313 /* CoreGraphics.framework */; };
 		26BD361B270C7E72379225D2 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 44BFD48935174534B0CCE9BF /* LaunchScreen.storyboard */; };
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
+		DA10CA11E0000000000000C1 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000D1 /* AppIcon.icon */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		DA10CA11E0000000000000B1 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000A1 /* InfoPlist.strings */; };
 		DA10CA11E0000000000000B2 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000A2 /* Localizable.strings */; };
@@ -106,6 +107,7 @@
 		F6012345678ABCDEF0123 /* canari_push.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_push.mm; sourceTree = "<group>"; };
 		BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = KeyboardMediaBridge.mm; sourceTree = "<group>"; };
 		BDCC40C22FED454100576E31 /* KeyboardMediaBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = KeyboardMediaBridge.h; sourceTree = "<group>"; };
+		DA10CA11E0000000000000D1 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		FC45C8DC231D096C520FA226 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -221,6 +223,7 @@
 				BD49C863300FADEB000960D5 /* canari_NSE */,
 				686315A99C66DB3616192FD2 /* assets */,
 				FC45C8DC231D096C520FA226 /* Assets.xcassets */,
+				DA10CA11E0000000000000D1 /* AppIcon.icon */,
 				44BFD48935174534B0CCE9BF /* LaunchScreen.storyboard */,
 				E188CF9BB1D4023319234954 /* canari_iOS */,
 				AC8B5A6764A83C0B858D140E /* Externals */,
@@ -384,6 +387,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */,
+				DA10CA11E0000000000000C1 /* AppIcon.icon in Resources */,
 				26BD361B270C7E72379225D2 /* LaunchScreen.storyboard in Resources */,
 				EB4C666589AF7B0EDEBED1B6 /* assets in Resources */,
 				BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */,
