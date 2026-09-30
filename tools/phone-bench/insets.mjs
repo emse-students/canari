@@ -7,6 +7,7 @@
  *   adb shell cmd overlay enable-exclusive com.android.internal.systemui.navbar.threebutton (buttons)
  *   bun insets.mjs [route-prefix] --mode gestural|threebutton
  *   bun insets.mjs [route-prefix] --mode ios --ios   (the iPhone, over pymobiledevice3's CDP bridge)
+ *   add --deep to also open the first detail page each list route links to (a post, an event, a list)
  *
  * What it reports for each state (a route, or a dialog/sheet/menu opened from it):
  *   insets   env(safe-area-inset-*) and the visual viewport, so a mode change is visible as a number
@@ -44,6 +45,8 @@ const NEVER = /(supprimer|d[ée]connex|quitter|r[ée]voquer|r[ée]initial|envoye
 // `--ios` reads the iPhone instead, through `pymobiledevice3 webinspector cdp --port 9444` (a bench
 // build is inspectable, .github/workflows/ios.yml): same audit, so the two phones answer one question.
 const IOS = argv.includes('--ios');
+/** `--deep` also opens the first detail page each list route links to. */
+const DEEP = argv.includes('--deep');
 const dev = IOS ? { port: Number(process.env.IOS_CDP_PORT ?? 9444) } : resolveDevice(['--android']);
 if (!IOS) await armIfPhone(dev, 'insets');
 /** The WebView can list stale hidden pages next to the live one (a click that opened a window, a
@@ -163,6 +166,21 @@ for (const route of ROUTES.slice(Math.max(from, 0)).filter((r) => r.startsWith(p
   }
   const a = base.audit;
   console.log(`${route.padEnd(20)} ${MODE} insets t${base.probe.ins.t} b${base.probe.ins.b} H${base.probe.H} topGap ${a.topGap} botGap ${a.botGap} X${a.X.n} O${a.O.n} B${a.B.n} overlays ${opened}/${todo.length}`);
+  if (DEEP) {
+    // The detail page a list route links to (a post, an event, a list...): the screens the plain routes
+    // never reach, found in the data the local stack already holds instead of created. Same-origin
+    // relative links only, so nothing here can leave the app (an external link opened the iOS browser
+    // chooser once); `new` and `create` are forms, not details, and have routes of their own above.
+    const details = await evaluate(cx, `(() => { const base = '/${route}/'; return [...new Set([...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')).filter((h) => { if (!h || !h.startsWith(base)) return false; const seg = h.slice(base.length).split(/[/?#]/)[0]; return seg && seg !== 'new' && seg !== 'create'; }))].slice(0, 1); })()`);
+    for (const href of details) {
+      const landed = await go(href.slice(1));
+      const d = await snap(`${route}--detail`);
+      log({ route: href, state: 'detail', landed, ...d });
+      const b = d.audit;
+      console.log(`${('> ' + route + '/<id>').padEnd(20)} ${MODE} insets t${d.probe.ins.t} b${d.probe.ins.b} H${d.probe.H} topGap ${b.topGap} botGap ${b.botGap} X${b.X.n} O${b.O.n} B${b.B.n}`);
+    }
+    if (!details.length) console.log(`${('> ' + route + '/<id>').padEnd(20)} ${MODE} no detail link on the page`);
+  }
 }
 console.log('done', MODE);
 process.exit(0);
