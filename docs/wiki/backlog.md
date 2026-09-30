@@ -1851,14 +1851,31 @@ Two things outlive it:
    passes `('channel', 'channel_<hex>', 'general')`. A guardrail whose fixture contradicts the
    producers asserts a behaviour the app never exhibits.
 
-   **THE FIX HAS TWO SHAPES AND THEY DIFFER IN BLAST RADIUS, so it is not taken here.** Either the
-   channel builders write the qualified title into `contactName`, honouring the declared contract
-   and fixing every reader at once - but `contactName` may be looked up by other paths, which is
-   unenumerated; or the socket path mirrors the push exactly for a channel (`senderName` = the
-   qualified title, `groupName` = empty), which touches only the notification seam but needs the
-   workspace name where `useMessaging` does not have it. **One spelling of that title already
-   exists on four surfaces** and `channelPushFields.test.ts` holds them together, so whichever
-   shape is taken extracts it rather than adding a fifth.
+   **THE FIX SHAPE IS SETTLED, AND THE OBVIOUS ONE IS WRONG (enumerated 2026-09-23).** Writing the
+   qualified title into `contactName` - honouring the declared contract and fixing every reader at
+   once - **would break channel lookup**, because `contactName` is not only a label: it is a MAP
+   KEY. `conversations.get(contactName)` in `useConversations.svelte.ts` reads it as one, and four
+   sites match identity through `(convo.directPeerId ?? convo.contactName).toLowerCase()`. For a
+   channel `contactName` IS the conversation key, which is precisely why all three builders write
+   the id there - deliberate, not a slip. The field carries two jobs, and for a DM the peer's
+   username happens to satisfy both; for a channel the key and the label are different strings, and
+   the notification path picked the key.
+
+   **So the fix belongs at the notification seam**: the socket must title a channel exactly as the
+   push does (`senderName` = the qualified title, `groupName` = empty), and `notificationGroupName`
+   must stop returning `contactName` for a channel at all. **Agreement REQUIRES the workspace
+   name**, which no other shape avoids - the push has no human sender to fall back on, and a
+   builder that infers `isGroup` from `groupName != senderName` cannot be made to agree by naming
+   the salon alone. That name lives in `channelWorkspaces`, `$state` inside
+   `useChannelWorkspaces()`, so the work is plumbing it to where the notification is built. **One
+   spelling of that title already exists on four surfaces** and `channelPushFields.test.ts` holds
+   them together, so the fix extracts it rather than adding a fifth.
+
+   **AND THE SOCKET'S POST MAY BE REDUNDANT FOR A SALON, which would be a simpler fix if it holds.**
+   Across the eleven sends the push fired ELEVEN times and the socket twice - where the code's own
+   comment says a backgrounded app ACKs the frame so no push is sent. That reasoning is about DMs
+   and is not what a salon does. Eleven samples on ONE device is not enough to delete a path on,
+   and it is written here so the question is asked rather than assumed.
 
    **AND IT IS THE 2026-09-22 DEDUP THAT EXPOSED IT.** This row passed on 2026-09-08 with both
    titles correct, because the salon push carried no `sent_at` and the two triggers could not
