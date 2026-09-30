@@ -2817,6 +2817,29 @@ release waits on a cold navigation, and hiding that wait is exactly what the old
 animation was doing. The preload follows the current sign of the drag, since the direction can still
 flip under the finger.
 
+**AND THE PAGE NEVER STOPS BETWEEN THE RELEASE AND THE SLIDE (2026-09-30).** The user, after
+#1223: *"we can see the sudden stop at the middle when swiping fast"*. Between the release and
+`onNavigate` the router is still getting the destination ready, and the page used to HOLD the
+release position for that whole time - a still frame in the middle of a throw, longest on exactly
+the fast swipe, which locks and releases inside ~100ms and so leaves the preload the least time.
+Two changes, taken together without a measurement to split them (the user's choice):
+
+- **The page keeps moving.** `commitSwipeNav` puts a `swipeNavTransitionMs` ease-out transition on
+  the drag transform towards the edge, and `onNavigate` reads where it has GOT to
+  (`transformTranslateXPx` of the computed transform - measured mid-transition in WebKit and
+  Chromium, both report a `matrix()`), freezes it there, and starts the view transition from that
+  point, so the snapshot and `--swipe-nav-from` agree and the strip never halts.
+- **Both neighbours' CODE is fetched on arrival** (`preloadCode`), no longer at the lock. Their
+  DATA stays on the lock: `/posts` lists the feed over the network, and SvelteKit keeps ONE preload,
+  so preloading both neighbours at every touch would refetch on every tap and scroll.
+
+**What is NOT covered:** the browser still freezes the screen on the snapshot while the new route
+renders (`await navigation.complete` in the update callback) - inherent to a view transition, and
+as long as the destination's first render. If a stall is still visible, THAT is what is left, and
+it needs a measurement on the phone. The WebKit-before-18 path now clears the drag transform
+before its entrance plays; nothing did, so a page arriving there kept the drag's offset once the
+animation ended.
+
 **`::view-transition-old(root)` is hidden outright rather than animated.** The header and bottom bar
 are captured in `root`, and they must adopt the destination on the first frame: an active-tab
 indicator that lagged the page it indexes by 220ms is the same defect in a smaller place.

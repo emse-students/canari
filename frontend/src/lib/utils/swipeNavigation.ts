@@ -265,3 +265,18 @@ export function swipeNavSlideOriginPx(offsetPx: number): number {
 }
 
 export const swipeNavTransitionMs = 220;
+/**
+ * How far a computed `transform` moves its element sideways, as a magnitude in px.
+ *
+ * `getComputedStyle().transform` reports the value MID-TRANSITION - `matrix(a, b, c, d, tx, ty)` or
+ * `matrix3d(...)` with `tx` at index 12 - which is what the swipe needs: the released page keeps
+ * moving (`+layout.svelte`, `commitSwipeNav`), and the view transition must start from wherever it
+ * has got to, or the strip jumps back to the release point. `none` is no movement.
+ */
+export function transformTranslateXPx(transform: string): number {
+  const m = /^matrix(3d)?\(([^)]*)\)$/.exec(transform.trim());
+  if (!m) return 0;
+  const values = m[2].split(',').map((v) => Number.parseFloat(v));
+  const tx = values[m[1] ? 12 : 4];
+  return Number.isFinite(tx) ? Math.abs(tx) : 0;
+}
