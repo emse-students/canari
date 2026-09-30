@@ -22,11 +22,9 @@ entries:
       branding_custom_css: |-
         /* Canari branding for the Authentik login flow.
          *
-         * Not deployed automatically: paste this into the Authentik admin UI under
-         * System -> Brands -> (the Canari brand) -> "Custom CSS", then save. Kept here
-         * as the versioned source of truth - the field itself only lives in Authentik's
-         * Postgres DB (infrastructure/authentik/README.md), which is one lost backup
-         * away from losing this styling entirely.
+         * Written by every stable release from infrastructure/authentik/blueprints/70-brand.yaml,
+         * the only copy: an edit made in the admin UI is reverted by the next release, so change
+         * it there (infrastructure/authentik/README.md).
          */
 
         :root {

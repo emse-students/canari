@@ -1146,11 +1146,11 @@ jobs:
   # resolved, and a second apply must report `0 change(s)` - a field a blueprint keeps rewriting is
   # a field it would rewrite on 600 accounts' sign-in at every release. ~2 min, most of it the boot.
   test-miconnect-blueprints:
-    name: MiConnect blueprints (fresh instance)
+    name: MiConnect blueprints (fresh and upgraded)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-miconnect == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1158,6 +1158,12 @@ jobs:
 
       - name: Apply the blueprints to a fresh MiConnect, twice
         run: bash infrastructure/authentik/test-blueprints.sh
+
+      # Production is never fresh: it carries main's blueprints, and a rename entry only runs there.
+      - name: Apply them over main's blueprints, twice
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          PREVIOUS_REF=origin/main bash infrastructure/authentik/test-blueprints.sh
 
   ci-passed:
     name: CI passed

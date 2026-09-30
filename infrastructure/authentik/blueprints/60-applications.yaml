@@ -14,58 +14,59 @@ entries:
       slug: "archives"
     attrs:
       name: "Archives MINO"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-archives"]]
       meta_launch_url: "https://archives.canari-emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "canari"
     attrs:
       name: "Canari"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-canari"]]
       meta_launch_url: "https://canari.emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "canari-dev"
     attrs:
       name: "Canari (dev)"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-canari-dev"]]
   - model: authentik_core.application
     identifiers:
       slug: "canari-local"
     attrs:
       name: "Canari Local"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-canari-local"]]
   - model: authentik_core.application
     identifiers:
       slug: "cercle"
     attrs:
       name: "Cercle"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
-      meta_launch_url: "https://cercle.canari-emse.fr"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-cercle"]]
+      meta_launch_url: "https://cercle.emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "migallery"
     attrs:
       name: "MiGallery"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-migallery"]]
       meta_launch_url: "https://gallery.mitv.fr/"
   - model: authentik_core.application
     identifiers:
       slug: "mino-wiki"
     attrs:
       name: "MinoWiki"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
-      meta_launch_url: "https://wiki.canari-emse.fr"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-mino-wiki"]]
+      meta_launch_url: "https://mino.emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "portail-etu"
     attrs:
       name: "Portail Etu"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Portail Etu"]]
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-portail-etu"]]
+      meta_launch_url: "https://portail-etu.emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "sky"
     attrs:
       name: "Sky"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
-      meta_launch_url: "https://sky.mitv.fr"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-sky"]]
+      meta_launch_url: "https://sky.emse.fr"

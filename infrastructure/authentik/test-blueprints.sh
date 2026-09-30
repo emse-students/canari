@@ -3,6 +3,8 @@
 #   1. they apply to an empty authentik, every !Find and !Env resolving;
 #   2. applying them a SECOND time changes nothing (0 change(s)) - a blueprint that keeps rewriting
 #      a field would rewrite it on production at every release.
+# With PREVIOUS_REF=<git ref>, step 1 starts from that ref's blueprints instead of an empty instance,
+# so every RENAME entry actually runs, and the applier refuses one that leaves its old object.
 #
 # Run by CI (job `test-miconnect-blueprints`) and runnable on any machine with Docker. It uses the
 # real compose.yml under a throwaway project name, so the file production runs is what boots here,
@@ -50,7 +52,25 @@ while :; do
 done
 echo "  $state"
 
-echo "first apply: builds everything"
+if [ -n "${PREVIOUS_REF:-}" ]; then
+  # The UPGRADE path, which is the one production takes: build the instance from the blueprints at
+  # PREVIOUS_REF (CI passes main), then apply these over it. A fresh instance alone never runs a
+  # rename entry, since no old name exists on it.
+  mkdir -p "$work/previous/blueprints"
+  # From the repository ROOT: run inside a subdirectory, `git archive` prefixes even a `ref:path`
+  # tree with that subdirectory and extracts nothing.
+  root="$(git -C "$here" rev-parse --show-toplevel)"
+  git -C "$root" archive "$PREVIOUS_REF:infrastructure/authentik/blueprints" | tar -x -C "$work/previous/blueprints"
+  if ! compgen -G "$work/previous/blueprints/*.yaml" >/dev/null; then
+    echo "::error::$PREVIOUS_REF has no infrastructure/authentik/blueprints/*.yaml to upgrade from"
+    exit 1
+  fi
+  echo "previous apply: builds the instance from $PREVIOUS_REF's blueprints"
+  BLUEPRINTS_DIR="$work/previous/blueprints" bash "$here/apply-blueprints.sh" apply "$worker"
+  echo "first apply: upgrades it to these blueprints"
+else
+  echo "first apply: builds everything"
+fi
 bash "$here/apply-blueprints.sh" apply "$worker"
 
 echo "second apply: must change nothing"

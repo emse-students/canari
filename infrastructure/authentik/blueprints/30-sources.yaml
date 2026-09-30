@@ -18,12 +18,12 @@ entries:
       authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
       enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
       user_property_mappings:
-        - !Find [authentik_sources_oauth.oauthsourcepropertymapping, [name, "CAS EMSE"]]
+        - !Find [authentik_sources_oauth.oauthsourcepropertymapping, [name, "miconnect-cas-identity"]]
       user_path_template: "users"
       icon: "https://cas.emse.fr/cas/images/serv-num-2a0fdbe0a16dbb659e497f61b812568a.png"
       provider_type: "openidconnect"
-      # authentik's default is S256 and the CAS advertises it; this source was built with none.
-      pkce: "none"
+      # The CAS advertises S256 (its .well-known); the source was built with none until WPA-2.
+      pkce: "S256"
       request_token_url: null
       authorization_url: "https://cas.emse.fr/cas/oidc/oidcAuthorize"
       access_token_url: "https://cas.emse.fr/cas/oidc/oidcAccessToken"

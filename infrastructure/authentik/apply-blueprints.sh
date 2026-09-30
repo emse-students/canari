@@ -8,6 +8,8 @@
 #
 # From a workstation rather than on the host, prefix the transport:
 #   AK_REMOTE="ssh portail-etu-direct" apply-blueprints.sh snapshot
+#
+# BLUEPRINTS_DIR names another directory of blueprints - test-blueprints.sh applies main's first.
 set -euo pipefail
 
 mode="${1:?usage: apply-blueprints.sh dry-run|apply|snapshot [container]}"
@@ -20,9 +22,10 @@ esac
 
 here="$(cd "$(dirname "$0")" && pwd)"
 shopt -s nullglob
-files=("$here"/blueprints/*.yaml)
+dir="${BLUEPRINTS_DIR:-$here/blueprints}"
+files=("$dir"/*.yaml)
 if [ "${#files[@]}" -eq 0 ]; then
-  echo "no blueprint in $here/blueprints" >&2
+  echo "no blueprint in $dir" >&2
   exit 2
 fi
 
