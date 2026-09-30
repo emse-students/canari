@@ -38,6 +38,27 @@ describe('computeFixedPopoverPosition', () => {
     expect(pos.top).toBeLessThan(500);
   });
 
+  it('docks to the bottom of the viewport whatever the anchor, even one filling the screen', () => {
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 10,
+        bottom: 590,
+        left: 0,
+        right: 400,
+        width: 400,
+        height: 580,
+        x: 0,
+        y: 10,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 320, offsetHeight: 360 } as HTMLElement;
+
+    const pos = computeFixedPopoverPosition(anchor, panel, { dockBottom: true });
+    expect(pos.top + 360).toBe(600 - 8);
+    expect(pos.left).toBe(40);
+  });
+
   it('opens downward when there is room below', () => {
     const anchor = {
       getBoundingClientRect: () => ({

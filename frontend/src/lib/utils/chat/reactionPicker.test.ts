@@ -11,7 +11,7 @@
  * which is the only reason it can be pinned here at all.
  */
 import { describe, it, expect } from 'vitest';
-import { pickerAnchor, pickerAlignsToEnd } from './reactionPicker';
+import { pickerAnchor, pickerAlignsToEnd, pickerDocksToBottom } from './reactionPicker';
 
 const ROW = 'row';
 const STRIP = 'strip';
@@ -25,6 +25,7 @@ describe('pickerAnchor', () => {
     // The whole defect in one line: the strip is present in the DOM here too, and it is the wrong
     // answer anyway. Passing it in and still getting the row is the property that matters.
     expect(pickerAnchor('sheet', ROW, STRIP)).toBe(ROW);
+    expect([pickerDocksToBottom('sheet'), pickerDocksToBottom('toolbar')]).toEqual([true, false]);
   });
 
   it('has nothing to anchor when the panel is closed', () => {

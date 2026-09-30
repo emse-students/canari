@@ -30,6 +30,17 @@ export function pickerAnchor<T>(origin: MessagePickerOrigin, row: T | null, stri
 }
 
 /**
+ * Whether the panel rests on the bottom of the screen instead of hanging off its anchor.
+ *
+ * The long-press sheet - and its small reaction strip - is at the bottom, so the full picker it
+ * opens belongs there too. Anchored to the message, a long one (taller than the room around it)
+ * pushed the panel ABOVE the message, away from the strip the thumb had just used (Mi 9T, 2026-09-30).
+ */
+export function pickerDocksToBottom(origin: MessagePickerOrigin): boolean {
+  return origin === 'sheet';
+}
+
+/**
  * Whether the panel pins its RIGHT edge to the anchor's, rather than its left.
  *
  * Against the message ROW, an own message is right-aligned and so is its panel. Against the STRIP
