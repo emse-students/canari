@@ -48,6 +48,10 @@ on:
         required: false
         default: ''
         type: string
+      local_client_id:
+        required: false
+        default: ''
+        type: string
 
   # A COMPILE CHECK, and it ships nothing: `publish` defaults to false here and every publishing
   # step is gated on it. `sha` may be left empty, in which case the branch this is dispatched from
@@ -85,6 +89,16 @@ on:
         required: false
         default: ''
         type: string
+      # THE CLIENT THE LOCAL STACK'S CORE SERVICE EXCHANGES CODES WITH, not the production one: the
+      # bench phone authorizes against Authentik, but the code comes back to the workstation's core,
+      # which holds the `Canari Local` provider's secret. A code issued to another client is refused
+      # ("invalid client or code has expired"), which is what the first bench build met. Not a
+      # secret - it ships in every bundle - so it is an input, read from `frontend/.env` on the bench.
+      local_client_id:
+        description: 'Local-device build: the OIDC client id of the LOCAL stack (provider "Canari Local"), i.e. VITE_AUTHENTIK_CLIENT_ID in the workstation frontend/.env.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-ios:
@@ -97,6 +111,7 @@ jobs:
       # local-device-only one is `env.LOCAL_URL != ''`, and no step reads `inputs` for the choice
       # itself, so the two modes cannot disagree about which one this run is.
       LOCAL_URL: ${{ inputs.local_url }}
+      LOCAL_CLIENT_ID: ${{ inputs.local_client_id }}
 
     steps:
       - uses: actions/checkout@v7
@@ -174,7 +189,6 @@ jobs:
           PUBLISH: ${{ inputs.publish }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
-          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
           set -euo pipefail
           if [ "$PUBLISH" = "true" ]; then
@@ -185,12 +199,16 @@ jobs:
             http://*) ;;
             *) echo "::error::local_url must be an http:// origin the phone can reach, got '${LOCAL_URL}'"; exit 1 ;;
           esac
-          for key in GOOGLE_SERVICE_INFO_PLIST AUTHENTIK_URL AUTHENTIK_CLIENT_ID; do
+          for key in GOOGLE_SERVICE_INFO_PLIST AUTHENTIK_URL; do
             if [ -z "${!key}" ]; then
               echo "::error::Missing required GitHub secret: ${key}"
               exit 1
             fi
           done
+          if [ -z "$LOCAL_CLIENT_ID" ]; then
+            echo "::error::local_client_id is required with local_url - the production client cannot be exchanged by the local stack."
+            exit 1
+          fi
           echo "Local-device build for ${LOCAL_URL}"
 
       - name: Validate iOS release secrets
@@ -339,7 +357,6 @@ jobs:
         working-directory: frontend
         env:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
-          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           set -euo pipefail
@@ -352,7 +369,7 @@ jobs:
             echo "VITE_SOCIAL_URL=${LOCAL_URL}"
             echo "VITE_CORE_URL=${LOCAL_URL}"
             echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}"
-            echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}"
+            echo "VITE_AUTHENTIK_CLIENT_ID=${LOCAL_CLIENT_ID}"
             echo "VITE_CALL_E2E_ENCRYPTION=false"
           } > .env
           if [ -n "$KLIPY_API_KEY" ]; then
