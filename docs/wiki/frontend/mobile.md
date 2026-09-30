@@ -674,6 +674,52 @@ plugin (mocked); `ios.yml`'s dispatch compiles the Swift; how the bar LOOKS, whe
 lands on a notched phone, and the bar's place after a keyboard dismissal without the guard are owed
 on hardware.
 
+### The conversation's native glass chrome
+
+**WP-G2 (user, 2026-09-30): in the iOS app the conversation's header pieces and the composer's "+"
+are real Liquid Glass.** WP-G1 draws them in CSS glass in both phone apps
+([chat](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30));
+on iOS each piece is DOUBLED by a native UIButton in the glass configuration - which refracts the
+thread under it, where CSS can only blur it. Android keeps the CSS glass.
+
+| Concern | Where it lives |
+|---|---|
+| The action that doubles a web piece | `mobile/nativeGlassPiece.svelte.ts` (`use:nativeGlassPiece`), `usesNativeGlassChrome` = the iOS app |
+| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") |
+| The pill's picture | `mobile/avatarBitmap.ts`, reading the `[data-glass-avatar]` node the web draws |
+| What the plugin lacked | the patch: a button's `menu`, `hidden`, `accessibilityLabel`, `foreground`, `imageSide` |
+
+**THE WEB LAYOUT STAYS THE ONLY OWNER OF WHERE THINGS ARE.** The web piece is not removed: it stays
+laid out, `visibility: hidden`, and the native button is drawn at its rect (`anchor: 'absolute'`)
+and follows it - a `ResizeObserver` on the piece, `resize` on the window and the visual viewport.
+So the header's height, the pill's width and the "+" riding the keyboard are the web's answers, at
+every width, and nothing native decides a position. The backlog's first plan anchored the "+" to the
+keyboard natively; that would have been a second owner of the composer's place.
+
+**THE GROW IS THE SYSTEM'S.** A button with entries opens a native `UIMenu`
+(`showsMenuAsPrimaryAction`), which iOS 26 grows out of its glass button - the gesture the CSS panel
+imitates, so no `UIGlassContainerEffect` morph had to be written. Entries keep the web order
+(`preferredMenuElementOrder = .fixed`), a toggle (search, members) carries its checkmark, and the
+glyphs are the web's Lucide icons drawn as templates, so the menu colours them itself.
+
+**A pick runs the web entry SYNCHRONOUSLY in the event handler**, which is what lets "Photos" open
+a file input from a native tap: the plugin's events arrive through `evaluateJavaScript`, which
+WebKit runs as a user gesture. That is a reading of WebKit, not a measurement - **owed ONE look on an
+iPhone: "+" > Photos opens the picker.**
+
+**Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
+can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The
+pill's picture is the web avatar RASTERISED: the loaded photo, the channel glyph or the initials,
+and the presence dot with a transparent gap around it. A photo the page may not read (the avatar
+cache's `direct` answer: another origin, which would taint the canvas) is left out, and the pill
+shows the name alone. **A failed creation leaves the CSS piece visible, at error level.**
+
+**Verified here:** the action's contract (`nativeGlassPiece.svelte.test.ts`: placement, hiding,
+menus, clicks, cover, removal, a failed creation), the rasteriser's choices, and the patch's two
+halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift compiles in `ios.yml`.
+**Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
+without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
+
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:

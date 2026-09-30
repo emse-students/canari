@@ -307,11 +307,11 @@ button that then grows (as intended by the liquid glass design) to show the othe
 **Order:**
 - **WP-G1 (the apps, in CSS):** L1-L3 in HTML/CSS at the narrow chat layout of the phone apps, with
   the grow as a CSS transition - **its PR, 2026-09-30** ([chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)).
-- **WP-G2 (iOS native):** the same pieces as real Liquid Glass, their web counterparts hidden on iOS.
-  What the plugin lacks and must be written in the vendored copy (`patches/tauri-plugin-system-components`):
-  the GROWING capsule (`UIGlassContainerEffect` morph, none in the plugin today), and a composer "+"
-  that FOLLOWS THE KEYBOARD (the plugin anchors to screen edges; the composer rides the keyboard).
-  Verifiable only through `ios.yml`'s compile check and an iPhone.
+- **WP-G2 (iOS native): its PR, 2026-09-30** - the same pieces as native glass buttons drawn at the
+  web pieces' rects, so the web layout keeps owning every position (the "+" follows the keyboard
+  because its web twin does); the grow is the system's `UIMenu`, no morph written
+  ([mobile](frontend/mobile.md#the-conversations-native-glass-chrome)). Owed on an iPhone: the
+  alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names.
 
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
 
