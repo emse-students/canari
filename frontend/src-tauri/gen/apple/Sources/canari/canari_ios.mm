@@ -248,12 +248,33 @@ static void CanariApplyWebViewTransparency(void) {
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
 /// Re-read at every activation (a reload of the page loses the property) and after every keyboard
 /// resize; portrait only on iPhone, so there is no rotation to follow.
+/// Republishes the inset when a page finishes loading: a document that loads after the publish
+/// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
+/// end of the initial load - syslog showed 34 pt published and the page still read 0).
+@interface CanariLoadObserver : NSObject
+@end
+@implementation CanariLoadObserver
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary *)change
+                       context:(void *)context {
+  if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
+    CanariPublishBottomInset();
+  }
+}
+@end
+
 static void CanariPublishBottomInset(void) {
   static CGFloat published = -1;
+  static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
   UIWindow *window = webView.window;
   if (webView == nil || window == nil) {
     return;
+  }
+  if (loadObserver == nil) {
+    loadObserver = [CanariLoadObserver new];
+    [webView addObserver:loadObserver forKeyPath:@"loading" options:0 context:NULL];
   }
   CGRect inWindow = [webView.superview convertRect:webView.frame toView:nil];
   CGFloat unreached = MAX(0.0, CGRectGetHeight(window.bounds) - CGRectGetMaxY(inWindow));

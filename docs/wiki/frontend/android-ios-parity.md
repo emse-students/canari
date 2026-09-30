@@ -47,7 +47,11 @@ the status bar ("Retour" over the clock). Do not try it again.
 [`canari_ios.mm`](../../../frontend/src-tauri/gen/apple/Sources/canari/canari_ios.mm) instead tells
 the page the one number it lacks: the window's bottom safe area minus the part the WebView no longer
 reaches, written to `--safe-area-inset-bottom` (the variable `app.html` names as the single place
-this is decided) at every activation and after every keyboard resize. The top stays UIKit's. A
+this is decided) at every activation, after every keyboard resize and **whenever a page finishes
+loading** (a KVO on `WKWebView.loading`: a cold start publishes 34 pt at the first
+`didBecomeActive`, BEFORE the initial load ends, and the new document started without it - found in
+the syslog, which `pymobiledevice3 syslog live` reads with no Mac; `CanariIOS` lines are there).
+Checked by hand first: writing 34px into the variable over CDP moved "Publier" up by 34 pt. The top stays UIKit's. A
 WebView shrunk above the keyboard publishes 0, which is what §1.6 relied on UIKit and `env()` for.
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
