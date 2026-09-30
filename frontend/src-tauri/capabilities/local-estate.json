@@ -1,6 +1,6 @@
 {
   "identifier": "local-estate",
-  "description": "Reaches the LOCAL estate - http and ws on localhost or a private LAN address, ANY port - through the Tauri http and websocket plugins. It is OPT-IN: tauri.conf.json names only 'default', and src-tauri/tauri.local.conf.json (or the TAURI_CONFIG the iOS local-device build sets) is the only thing that adds this capability, so no release build can compile it. The port wildcards are mandatory, not decoration: an EMPTY port in a URLPattern means the protocol's DEFAULT port, so 'http://**' matches port 80 and nothing else - which is why the local estate on :8081 was refused while 'https://**' worked, 443 being https's default. The LAN patterns exist for the iPhone, which has no `adb reverse` and reaches the workstation by its address on the Wi-Fi; they are deliberately loose (10.*, 192.168.*) because only a build made by hand for a bench can carry them.",
+  "description": "Reaches the LOCAL estate - http and ws on localhost or a private LAN address, ANY port - through the Tauri http and websocket plugins. It is OPT-IN: tauri.conf.json names only 'default', and src-tauri/tauri.local.conf.json (or the TAURI_CONFIG the iOS local-device build sets) is the only thing that adds this capability, so no release build can compile it. The port wildcards are mandatory, not decoration: an EMPTY port in a URLPattern means the protocol's DEFAULT port, so 'http://**' matches port 80 and nothing else - which is why the local estate on :8081 was refused while 'https://**' worked, 443 being https's default. The LAN patterns exist for the iPhone, which has no `adb reverse` and reaches the workstation by its address on the Wi-Fi; they are deliberately loose (10.x, 192.168.x) because only a build made by hand for a bench can carry them. THEY ARE REGEXP GROUPS, NOT '192.168.*': a URLPattern canonicalises the literal text of a hostname as a hostname, and '192.168.' reads as an IPv4 address, so '192.168.*' silently became '192.0.0.168*' and '10.*' became '0.0.0.10*' - matching no LAN address at all, which refused every plugin request to the workstation (the PIN salt fetch) while the WebView's own fetch, which ignores this scope, kept working. The text inside a regexp group is not canonicalised.",
   "windows": ["main"],
   "permissions": [
     {
@@ -8,8 +8,8 @@
       "allow": [
         { "url": "ws://localhost:*" },
         { "url": "ws://127.0.0.1:*" },
-        { "url": "ws://192.168.*:*" },
-        { "url": "ws://10.*:*" },
+        { "url": "ws://(192\\.168\\.[0-9]+\\.[0-9]+):*" },
+        { "url": "ws://(10\\.[0-9]+\\.[0-9]+\\.[0-9]+):*" },
         { "url": "ws://*.local:*" }
       ]
     },
@@ -18,8 +18,8 @@
       "allow": [
         { "url": "http://localhost:*" },
         { "url": "http://127.0.0.1:*" },
-        { "url": "http://192.168.*:*" },
-        { "url": "http://10.*:*" },
+        { "url": "http://(192\\.168\\.[0-9]+\\.[0-9]+):*" },
+        { "url": "http://(10\\.[0-9]+\\.[0-9]+\\.[0-9]+):*" },
         { "url": "http://*.local:*" }
       ]
     }
