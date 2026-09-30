@@ -40,7 +40,7 @@
      the same height, and it wins by exactly the banner's height - a page that cannot be scrolled to
      the bottom on the one screen that has nothing to scroll. -->
 <div
-  class="flex min-h-full items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,var(--safe-area-inset-bottom,0px))] md:items-center"
+  class="flex min-h-full items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,var(--safe-area-inset-top,0px))] pb-[max(2.5rem,var(--safe-area-inset-bottom,0px))] md:items-center"
   in:fade
 >
   <!--

@@ -459,7 +459,7 @@
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
-    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-(--z-nav-drawer) pt-[env(safe-area-inset-top)] pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl md:hidden ' +
+    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-(--z-nav-drawer) pt-(--safe-area-inset-top) pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl md:hidden ' +
       (viewMode === 'communities' ? 'w-[95vw] max-w-md' : 'w-[88vw] max-w-sm')
     : viewMode === 'communities'
       ? 'w-full md:w-96'

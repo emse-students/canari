@@ -60,4 +60,18 @@ describe('themeStore', () => {
     expect(themeStore.preference).toBe('system');
     expect(themeStore.isDark).toBe(true);
   });
+
+  it('prévient le shell natif iOS du thème, quand il écoute', () => {
+    const postMessage = vi.fn();
+    (window as any).webkit = { messageHandlers: { canariTheme: { postMessage } } };
+    themeStore.setPreference('dark');
+    themeStore.setPreference('light');
+    expect(postMessage.mock.calls).toEqual([['dark'], ['light']]);
+    delete (window as any).webkit;
+  });
+
+  it('ne fait rien sans shell natif (Android, navigateur)', () => {
+    delete (window as any).webkit;
+    expect(() => themeStore.setPreference('dark')).not.toThrow();
+  });
 });

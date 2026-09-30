@@ -539,7 +539,7 @@
      unconditionally and non-passively, which is what cost every scroll in the app its compositor. -->
 <div
   bind:this={appShell}
-  class="flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
+  class="flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-(--safe-area-inset-top) pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
 >
   <!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
        at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply

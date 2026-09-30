@@ -131,7 +131,7 @@
   aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 z-(--z-nav-rail) hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-[width,background-color,color,border-color] duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
+  class="app-nav-rail bg-cn-surface fixed top-(--safe-area-inset-top) left-0 z-(--z-nav-rail) hidden h-[calc(var(--app-viewport-height,100dvh)-var(--safe-area-inset-top,0px))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-[width,background-color,color,border-color] duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
     ? 'w-[21rem]'
     : 'w-[4.5rem]'}"
 >

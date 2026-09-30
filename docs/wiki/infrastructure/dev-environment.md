@@ -19,7 +19,7 @@ nothing else. Four statements were taken together, and each answers a different 
 | `https://dev.canari-emse.fr/api/version` -> `build: "dev.6c94f20"` | the name reaches DEV, and the request went through the database |
 | `https://canari-emse.fr/api/version` -> `build: null` | production is untouched and still reports no build, by decision |
 | 11 of 11 containers up in project `canari-dev` | nothing is crash-looping behind the name |
-| the permanent "Environnement de test" banner renders on dev and NOT on production | a human cannot mistake one for the other, which matters because dev holds a real copy |
+| the "Environnement de test" banner renders on dev and NOT on production | a human cannot mistake one for the other, which matters because dev holds a real copy |
 
 `vars.DEV_ENVIRONMENT_ENABLED` is `true`, so every dev job runs and **a failed dev deploy blocks
 production's** - that is the ordering's whole point, and `gh variable set DEV_ENVIRONMENT_ENABLED
@@ -274,8 +274,7 @@ files, and asserts the ceiling's verdict agrees with the row.
 
 Two variables, and the split between them is deliberate.
 
-**`VITE_DEPLOY_ENVIRONMENT`** - build-time, frontend. `development` or `dev` renders a permanent,
-non-dismissible "test environment" banner
+**`VITE_DEPLOY_ENVIRONMENT`** - build-time, frontend. `development` or `dev` renders a "test environment" banner, closable for the session only
 ([`EnvironmentBanner.svelte`](../../../frontend/src/lib/components/shared/EnvironmentBanner.svelte)).
 It is build-time so the banner is up before the first request and stays up when the API is
 unreachable; it is not derived from the hostname because a hostname rule needs editing for every name
@@ -285,9 +284,11 @@ of a missing or misspelt variable is then a MISSING banner on a test box, which 
 it can see, rather than a banner shown to every member of production. An unrecognised label is never
 rendered raw, because the text is localised.
 
-The banner cannot be dismissed, and that is the point: dev carries a full copy of production, so it
-is indistinguishable from production on screen. A banner that could be closed would be closed in the
-first session and never seen again.
+The banner closes with an X **for the session only** (user, 2026-09-30, after walking the iPhone build: it
+cost ~180 px on every phone screen). It was permanent on purpose - dev carries a full copy of production, so
+it is indistinguishable from production on screen, and a banner closed for good would never be seen again.
+The dismissal lives in `sessionStorage`, so it returns at every launch of the app or tab; a blocked
+storage keeps it up.
 
 **`DEPLOY_BUILD`** - runtime, backend. Reported by `/api/version` as its own field, `build`, beside
 `version`. **It must never be folded into `version`.** Clients DECIDE on that field: `compareSemver`

@@ -159,12 +159,37 @@ design differences between iOS and Android accepted, test data created on the LO
   (run the bridge first; it needs a BENCH build - `ios.yml` with `local_url` adds `tauri/devtools`).
 - `pymobiledevice3 syslog live` reads the iPhone's native log with no Mac; `CanariIOS` lines are there.
 - `viewports.mjs` class `Z` reports a control whose drawing lands in a neighbour's `.tap-target` box.
+- **Signing in on a RELEASE IPA (no CDP), by WDA only** (2026-09-30, dev estate): the login card's
+  "Connexion externe (service-account)" opens the authentik form on `auth.canari-emse.fr` in a system
+  sheet (an iOS consent prompt comes first: "Continuer"). Type the login, press Return, type the
+  password, press Return - through `POST /session/{sid}/wda/keys`, values read from `accounts.mjs`
+  inside the script, never on a command line. **Tapping "Continuer" instead of pressing Return added
+  a character to the password each time and the form answered "Mot de passe invalide"**; clear the
+  field with `\b` keys and retype once. Never the CAS page.
+- **The dev estate does not share a campaign account's encryption state**: `canari-test-alpha` was
+  refused its campaign PIN there ("messages enregistres ... n'ont pas pu etre ouverts"), so on
+  2026-09-30 the user authorised "PIN oublie ? > Reinitialiser", a test account on the dev copy, and the
+  PIN was re-created as the SAME campaign PIN (`pin.mjs`) so nothing else moves. Its dev-estate
+  message history is gone; prod and the local stack are untouched.
 
 **Owed to the user, none blocking:** whether a RELEASE APK may be installed on the Mi 9T (a different
 keystore, so the uninstall loses the A1 MLS enrolment) - until then Android timings are debug-build
 timings; revoke the App Store Connect key `U7X7X373G5`; disable Web Inspector on the iPhone; the bench
 IP `192.168.1.32` comes from DHCP. **Two folders the OS will not delete** (`canari-wt-brace`,
 `canari-wt-lot3`, a locked `.node` file in `node_modules`) are safe to remove by hand.
+
+## The user's guided pass on the release IPA (2026-09-30) - the list, in the order given
+
+The user walked the iPhone build (dev estate) and dictated what to fix, for "a release aux petits
+oignons". Status is kept here until each item is merged; the release is cut only when all are.
+
+| # | What the user said / what was seen | State |
+| --- | --- | --- |
+| U1 | "Environnement de test" banner takes ~180 px on EVERY screen and cannot be closed: give it an X | WRITTEN - closes for the session only (it was permanent on purpose, [dev-environment](infrastructure/dev-environment.md)); not yet read on the phone |
+| U2 | Black bars top (status bar band, the page stops under it) and bottom (a black strip below the last card on the feed): "je veux une experience belle et immersive" - the page must draw under both and publish the top inset like the bottom one | WRITTEN (top inset, theme-following status bar) - the bottom strip seen on the feed was the PIN modal closing, to re-check; not yet read on the phone |
+| U3 | Conversation: the glass header is drawn OVER the banner, the name pill wraps onto two lines, the "+" floats alone above the composer row and is not aligned with the mic and the field | OPEN |
+| U4 | The bar above the keyboard (up/down arrows and a check) is iOS's form-navigation accessory bar; it is removable | WRITTEN - not yet read on the phone |
+| U5 | Walk the rest of the app for other graphical defects (seen so far: Communautes tab has its title and the "+" tile offset, profile shows a lone settings icon under the school chip) | OPEN |
 
 ## What to do next
 
