@@ -16,6 +16,7 @@ pipeline, which differs per phone and is measured by `bench.py calibrate`, never
 import io
 import json
 import os
+import queue
 import re
 import socket
 import subprocess
@@ -137,6 +138,12 @@ class Android(Phone):
         img = Image.open(io.BytesIO(png)).convert("L").resize((540, 1170))
         return np.asarray(img)[::THUMB, ::THUMB].copy()
 
+    def keyboard_up(self):
+        return b"mInputShown=true" in self.adb("shell", "dumpsys", "input_method")
+
+    def hide_keyboard(self):
+        self.back()
+
     def gfx_reset(self):
         self.adb("shell", "dumpsys", "gfxinfo", self.app, "reset")
 
@@ -171,17 +178,37 @@ class Android(Phone):
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_ENV,
         )
 
+        chunks = queue.Queue()
+
+        def pump():
+            while not cap._stop:
+                data = proc.stdout.read1(65536)
+                if not data:
+                    break
+                chunks.put((time.perf_counter(), data))
+
         def run():
             # No ffmpeg probing: screenrecord sends nothing while the screen is still, and the demuxer
             # waits for enough frames to "estimate the rate" for ever. A bare parser+decoder does not.
+            # The parser also holds the LAST frame until the next start code arrives, which on a screen
+            # that has just stopped moving is never: so after 40 ms of silence an access-unit delimiter
+            # is fed to release it. The frame keeps the arrival time of the bytes that completed it.
             codec = av.CodecContext.create("h264", "r")
+            aud = b"\x00\x00\x00\x01\x09\xf0"
+            last_t, pending = time.perf_counter(), False
             while not cap._stop:
-                chunk = proc.stdout.read1(65536)
-                if not chunk:
-                    break
-                for pkt in codec.parse(chunk):
+                try:
+                    last_t, data = chunks.get(timeout=0.04)
+                    pending = True
+                except queue.Empty:
+                    if not pending:
+                        continue
+                    data, pending = aud, False
+                for pkt in codec.parse(data):
                     for f in codec.decode(pkt):
-                        cap.frames.append((time.perf_counter(), f.to_ndarray(format="gray")[::THUMB, ::THUMB].copy()))
+                        cap.frames.append((last_t, f.to_ndarray(format="gray")[::THUMB, ::THUMB].copy()))
+
+        threading.Thread(target=pump, daemon=True).start()
 
         cap._thread = threading.Thread(target=run, daemon=True)
         cap._thread.start()
@@ -282,6 +309,16 @@ class IOS(Phone):
             return out
 
         return walk(self._call("GET", f"/session/{self.sid}/source?format=json")["value"], [])
+
+    def keyboard_up(self):
+        return any(n["type"] == "Keyboard" for n in self.nodes())
+
+    def hide_keyboard(self):
+        """The accessory bar above the keyboard has an OK button; there is no other way to close it."""
+        for n in self.nodes():
+            if n["type"] == "Button" and n["text"] == "OK" and 0.4 < (n["y1"] + n["y2"]) / 2 / n["H"] < 0.75:
+                self.tap((n["x1"] + n["x2"]) / 2 / n["W"], (n["y1"] + n["y2"]) / 2 / n["H"])
+                return
 
     def launch(self, cold=False):
         if cold:

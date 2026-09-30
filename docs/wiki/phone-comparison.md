@@ -17,7 +17,7 @@ not in the repo - they show a campaign account. The bench is [`tools/phone-bench
 - **Harness floor.** `adb input tap` returns in ~50 ms; a WDA tap blocks 0.5-1.7 s (it waits for the app to be
   idle). Both timings are "dispatch -> first changed frame on the host", so the iPhone's ~20 ms frame spacing
   and WDA's quiescence wait are inside them.
-- The per-element audit (`audit.py`) is **too noisy to trust**: the Android dump keeps the DOM of pages hidden
+- The per-element audit (`audit.py`) is too noisy to trust (the Android dump keeps pages hidden behind a modal); verdicts come from screenshots.
   behind a modal, so the same 25 findings repeated on every screen. Verdicts below come from the screenshots.
 
 ## Weight
@@ -28,40 +28,58 @@ not in the repo - they show a campaign account. The bench is [`tools/phone-bench
 | On this bench | APK 697 MB (debug, all in `base.apk`) | IPA 44.8 MB, binary 36 MB |
 | Memory (PSS, feed) | 247 MB | not measured yet |
 
-## Time, measured (median of 3, ms, tap -> first change / settled)
+## The tour: 15 screens, both phones, every step verified (`tour.py`)
 
-| Action | Mi 9T (debug) | iPhone 12 |
+Each row taps to the screen, then PROVES arrival (an expected text present, the root page's text gone).
+**15 of 15 reached on both phones.** `first` = tap -> first changed frame, `settled` = last changed frame,
+ms, one run each (the tab rows of `bench.py tabs` are medians of 3 and agree within ~40 ms).
+
+| Screen | Mi 9T first / settled | iPhone first / settled |
 | --- | --- | --- |
-| Switch tab: Communities | 229 / 633 | 244 / 621 |
-| Switch tab: Discussions | 219 / 621 | 237 / 617 |
-| Switch tab: Dashboard | 258 / 436 | 260 / 493 |
-| Open a dashboard page (Agenda, Boutique...) | 200-370 / 560-890 | 270-320 / 430-480 |
-| Open search | ~290 / 1800-1960 | 450-590 / 800-950 |
-| Open composer | ~260 / 600 | not reached |
-| Warm start | first 450-480 / settled 3.5-3.9 s | first 220-390 / settled 0.53-0.57 s |
-| Feed scroll, renderer | p50 16-17 ms, p99 29-42 ms, 8-9 janky of ~150 frames | capture only, 33 ms frame gap: smoothness NOT measurable |
+| Tab Communities | 240 / 439 | 244 / 623 |
+| Tab Discussions | 250 / 564 | 243 / 631 |
+| Tab Dashboard | 126 / 543 | 213 / 485 |
+| Profile (dashboard) | 217 / 541 | 289 / 462 |
+| Settings | 322 / 604 | 300 / 474 |
+| Agenda | 260 / 525 | 284 / 474 |
+| Shop | 248 / 514 | 287 / 475 |
+| Associations | 201 / 484 | 272 / 459 |
+| Forms | 199 / 484 | 324 / 486 |
+| Apps grid (popover) | 242 / 387 | 297 / 360 |
+| Notifications | (*) / 521 | 306 / 496 |
+| Composer | (*) / 577 | 341 / 467 |
+| Search | (*) / 1940 | 572 / 849 |
+| Profile (header) | (*) / 640 | (*) / 457 |
+| Tab Feed (first load after the PIN) | 322 / 2072 | 341 / 3435 |
 
-Tab and page navigation is a tie within the harness floor. Warm start and search are the two gaps, and the
-Android side is a debug build.
+(*) `first` under 20 ms comes from the feed still animating after the previous step, not from the tap: read
+`settled` only. **Navigation is a tie within the harness floor** (~250 ms first change, ~450-650 ms
+settled, on a debug Android). The two real gaps: search settles in 1.9 s on Android against 0.85 s on iPhone
+(Android's keyboard animation is inside it), and the first feed load is 2-3.4 s on both.
+
+Warm start (`bench.py startup`): Android first 450-480 ms / settled 3.5-3.9 s, iPhone 220-390 ms / 0.53-0.57 s -
+a debug Android build, not a verdict. Feed scroll renderer (Android, `gfxinfo`): p50 16-17 ms, p99 29-42 ms,
+about 8 janky frames of ~150; the iPhone stream (33 ms frame gap) cannot resolve smoothness.
 
 ## Layout - every screen fits, and what does not
 
-Read off side-by-side screenshots of the four tabs, the six dashboard pages, profile, notifications, search
-and the composer.
+Read off side-by-side screenshots of the 15 verified screens. **Design differences are accepted** (the
+floating "liquid glass" bar is deliberate on iOS); the bar for each line is "works, fluid, readable".
 
 | # | Finding | Phone | Screens |
 | --- | --- | --- | --- |
-| 1 | **The iPhone renders everything ~1.25x larger** at the same ~390 pt viewport: headings, cards, pills, body text. Fewer items per screen, more wrapping ("Decouvrez les associations de la communaute" on 3 lines, settings rows on 2). The cause is not established (iOS text-size setting, `text-size-adjust`, or the viewport) - check Settings > Display on that iPhone first. | iPhone | all |
-| 2 | **The floating tab bar covers content** and is translucent: the last card of the dashboard ("Formulaires"), the settings "Code PIN" card and the profile "Cotisations" card sit under it and show through. Android's bar is opaque and content stops above it. Nothing pads the page bottom for that bar. | iPhone | dashboard, profile, settings, shop, agenda |
-| 3 | **The composer's attachment row is clipped on the right** ("Sondage" cut) - it scrolls sideways with no hint. | both | composer |
-| 4 | **The WebKit form accessory bar** (up/down arrows + checkmark) sits above the keyboard and eats ~45 pt on every text field. | iPhone | search, composer |
-| 5 | Header icon buttons are 45 px and filter pills 32 px high: fine for iOS (44), under Material's 48. | Android | header, feed filters |
-| 6 | No horizontal page scroll and no visible scrollbar on any screen captured. | both | all |
-| 7 | The feed shows different content on the two phones (Android: an album embed; iPhone: the Associations filter) - **the filter state was not reset between runs**, so feed comparisons are not like for like. | both | feed |
+| A | **The floating tab bar is drawn OVER the composer**, hiding its attachment row and the "Publier" button (a yellow edge shows through the glass). The action that matters on that screen is covered. | iPhone | composer |
+| B | **The composer's attachment row is cut on the right** ("Sondage"): it scrolls sideways with nothing saying so. | both | composer |
+| C | **The glass bar covers the bottom of long pages** (the last dashboard card "Formulaires", profile "Cotisations", settings "Code PIN") and the content shows through it. Reachable by scrolling, but unreadable at rest. | iPhone | dashboard, profile, settings |
+| D | **The iPhone renders everything ~1.25x larger** at the same ~390 pt viewport: fewer items per screen, more wrapping ("Decouvrez les associations de la communaute" on 3 lines). Cause unknown (iOS text size, `text-size-adjust`, viewport): check Settings > Display on that iPhone first. | iPhone | all |
+| E | **The WebKit form accessory bar** (up/down arrows, OK) takes ~45 pt above the keyboard on every text field. | iPhone | search, composer |
+| F | Header icon buttons are 45 px and filter pills 32 px high: fine on iOS (44), under Material's 48. | Android | header, feed |
+| G | Fits everywhere else: no horizontal scroll, no visible scrollbar, no clipped text on agenda, shop, associations, forms, notifications, discussions, communities, the apps-grid popover. | both | - |
 
-Not reached (the tap by text failed, to redo): Formulaires on iPhone (under the bar, finding 2), "Nos autres
-sites", the composer on iPhone, every chat/DM/salon, events, lists, documents, directory, admin. The tour
-also does not yet cover modals beyond the composer and search.
+Test data, not a defect: the first feed post carries an embedded screenshot of another app.
+
+Not reached: chats and salons (need an open conversation), events, lists, documents, directory, admin
+(role), "Nos autres sites" beyond the popover. They need data created on the local stack first.
 
 ## What to do next
 
