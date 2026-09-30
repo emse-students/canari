@@ -33,10 +33,19 @@
   import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
-  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import FormHeader from '$lib/components/forms/FormHeader.svelte';
+  import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import {
+    firstMissingAnswer,
+    formatAmount as formatCurrency,
+    initialSelections,
+    isItemAnswered,
+    missingAnswerMessage,
+    visibleAnswers,
+    visibleItems as visibleItemsOf,
+  } from '$lib/forms/fillAnswers';
   import {
     ArrowLeft,
-    ClipboardList,
     Check,
     CalendarDays,
     Bell,
@@ -51,11 +60,8 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
-  import Picker from '$lib/components/ui/Picker.svelte';
-  import type { PickerOption } from '$lib/components/ui/picker';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -206,7 +212,7 @@
       }
       const f = await getForm(id);
       form = f;
-      initSelections(f.items);
+      selections = initialSelections(f.items);
 
       linkedAgendaEvent = null;
       agendaAssociationSlug = '';
@@ -279,31 +285,6 @@
     }
   });
 
-  function initSelections(items: FormItem[]) {
-    const initial: Record<string, any> = {};
-    for (const item of items) {
-      if (item.type === 'multiple_choice') {
-        initial[item.id] = [];
-      } else if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
-        initial[item.id] = {};
-        for (const row of item.rows ?? []) {
-          initial[item.id][row] = item.type === 'matrix_multiple' ? [] : '';
-        }
-      } else {
-        initial[item.id] = '';
-      }
-    }
-    selections = initial;
-  }
-
-  function formatCurrency(amountCents: number | undefined, currency = 'eur') {
-    if (amountCents === undefined) return '';
-    return new Intl.NumberFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      style: 'currency',
-      currency: currency.toUpperCase(),
-    }).format(amountCents / 100);
-  }
-
   /**
    * Questions that pass their display check.
    *
@@ -311,27 +292,11 @@
    * trusted with someone's cotisation or promo, and would have to be told them to evaluate it. What
    * is left is the answer half, which is what this page has always evaluated.
    */
-  const visibleItems = $derived.by(() => {
-    if (!form) return [];
-    // Nothing to fill in when the form is not open to this person - the questions would only invite
-    // an answer the server is going to refuse.
-    if (!maySubmit) return [];
-    const hidden = new Set(hiddenItemIds);
-    return form.items.filter((item) => {
-      if (hidden.has(item.id)) return false;
-      const condition = item.showIf?.answer
-        ? { questionId: item.showIf.answer.questionId, optionIds: item.showIf.answer.optionIds }
-        : item.dependsOn
-          ? { questionId: item.dependsOn, optionIds: [item.dependsValue ?? ''] }
-          : null;
-      if (!condition) return true;
-      if (hidden.has(condition.questionId)) return false;
-      const dep = selections[condition.questionId];
-      if (dep === undefined || dep === null || dep === '') return false;
-      if (Array.isArray(dep)) return (dep as string[]).some((v) => condition.optionIds.includes(v));
-      return condition.optionIds.includes(String(dep));
-    });
-  });
+  const visibleItems = $derived(
+    // Nothing to fill in when the form is not open to this person - the questions would only
+    // invite an answer the server is going to refuse.
+    form && maySubmit ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds)) : []
+  );
 
   /**
    * Which group of one answer criterion an answer falls in - `others` when it matches none.
@@ -446,25 +411,6 @@
     return !!opt.id && unavailableOptionIds.has(opt.id);
   }
 
-  /**
-   * A dropdown question's choices, each read as the option label plus what it changes: closed, or
-   * its supplement. An option saved without an id falls back to its label, as a `<select>` did.
-   */
-  function dropdownOptions(item: FormItem, currency: string | undefined): PickerOption[] {
-    return (item.options ?? []).map((opt) => {
-      const closed = optionClosed(opt);
-      const modifier = optionModifier(item, opt);
-      const suffix = closed
-        ? ` - ${m.form_grid_cell_unavailable()}`
-        : modifier > 0
-          ? ` (+${formatCurrency(modifier, currency)})`
-          : modifier < 0
-            ? ` (${formatCurrency(modifier, currency)})`
-            : '';
-      return { value: opt.id ?? opt.label, label: `${opt.label}${suffix}`, disabled: closed };
-    });
-  }
-
   function calculateTotal(): number {
     // Nothing to total on an unavailable combination: there is no price, and showing zero would
     // read as free on a form that is going to refuse the submission.
@@ -497,37 +443,10 @@
       return;
     }
 
-    // Validate only visible (non-conditional-hidden) questions
-    for (const item of visibleItems) {
-      const val = selections[item.id];
-      if (item.required) {
-        if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
-          if (!val) {
-            error = m.form_view_error_complete_matrix({ label: item.label });
-            return;
-          }
-          for (const row of item.rows ?? []) {
-            const rowVal = val[row];
-            if (
-              rowVal === undefined ||
-              rowVal === null ||
-              rowVal === '' ||
-              (Array.isArray(rowVal) && rowVal.length === 0)
-            ) {
-              error = m.form_view_error_complete_row({ row, label: item.label });
-              return;
-            }
-          }
-        } else if (Array.isArray(val)) {
-          if (val.length === 0) {
-            error = m.form_view_error_select_option({ label: item.label });
-            return;
-          }
-        } else if (!val) {
-          error = m.form_view_error_answer({ label: item.label });
-          return;
-        }
-      }
+    const missing = firstMissingAnswer(visibleItems, selections);
+    if (missing) {
+      error = missingAnswerMessage(missing);
+      return;
     }
 
     error = '';
@@ -535,14 +454,9 @@
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
       const total = calculateTotal();
-      // Only submit answers for visible questions
-      const visibleIds = new Set(visibleItems.map((i) => i.id));
-      const visibleAnswers = Object.fromEntries(
-        Object.entries(selections).filter(([id]) => visibleIds.has(id))
-      );
       const res = await submitFormService(form.id, {
         email: '',
-        answers: visibleAnswers,
+        answers: visibleAnswers(visibleItems, selections),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -607,32 +521,15 @@
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
-  /** Shared by the progress bar (all visible items) and `allRequiredAnswered` (required ones
-   * only) - the same "does this item have a value" check `handleSubmit`'s own validation loop
-   * uses per item, so the three never drift into disagreeing about what counts as answered. */
-  function isItemAnswered(item: FormItem): boolean {
-    const val = selections[item.id];
-    if (item.type === 'multiple_choice') return Array.isArray(val) && val.length > 0;
-    if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
-      if (!val || typeof val !== 'object') return false;
-      return (item.rows ?? []).every((row) => {
-        const rv = (val as Record<string, any>)[row];
-        return (
-          rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0)
-        );
-      });
-    }
-    return val !== '' && val !== undefined && val !== null;
-  }
   const totalCount = $derived(visibleItems.length);
   const answeredCount = $derived.by(() => {
     if (!form) return 0;
-    return visibleItems.filter(isItemAnswered).length;
+    return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
   /** What `reachedEnd` waits on: every visible REQUIRED question answered - optional ones do not
    * gate it, matching `handleSubmit`'s own validation, which only ever refuses on `item.required`. */
   const allRequiredAnswered = $derived(
-    visibleItems.every((item) => !item.required || isItemAnswered(item))
+    visibleItems.every((item) => !item.required || isItemAnswered(item, selections[item.id]))
   );
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 
@@ -748,70 +645,14 @@
     </div>
   {:else if form}
     <!-- ── Header ── -->
-    <div
-      class="border-cn-border mb-5 overflow-hidden rounded-3xl border bg-(--cn-surface) shadow-sm"
-    >
-      {#if form.imageUrl}
-        <div class="relative">
-          <img src={form.imageUrl} alt="" class="max-h-72 w-full object-cover" loading="lazy" />
-          <div
-            class="absolute inset-x-0 bottom-0 h-28 bg-linear-to-t from-black/60 to-transparent"
-          ></div>
-          <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
-            <div class="min-w-0 flex-1">
-              <h1 class="text-2xl leading-tight font-bold text-white">{form.title}</h1>
-              {#if !priceUnavailable && priceCents > 0}
-                <span
-                  class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
-                >
-                  {m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) })}
-                  {#if appliedPricingLabel}{appliedPricingLabel}{/if}
-                </span>
-              {/if}
-            </div>
-            {#if submitted}
-              <div class="shrink-0 rounded-xl bg-green-500 p-2 text-white">
-                <Check size={20} />
-              </div>
-            {/if}
-          </div>
-        </div>
-      {:else}
-        <div
-          class="from-cn-yellow/10 flex items-start gap-4 bg-linear-to-br via-transparent to-transparent px-6 pt-6 pb-4"
-        >
-          <div class="bg-cn-yellow/20 text-cn-dark shrink-0 rounded-2xl p-3">
-            <ClipboardList size={26} />
-          </div>
-          <div class="min-w-0 flex-1">
-            <h1 class="text-text-main text-2xl leading-tight font-bold">{form.title}</h1>
-            {#if !priceUnavailable && priceCents > 0}
-              <span
-                class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
-              >
-                {m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) })}
-                {#if appliedPricingLabel}{appliedPricingLabel}{/if}
-              </span>
-            {/if}
-          </div>
-          {#if submitted}
-            <div class="bg-green-ok/15 text-green-ok shrink-0 rounded-xl p-2">
-              <Check size={20} />
-            </div>
-          {/if}
-        </div>
-      {/if}
-      {#if form.description?.trim()}
-        <div class="border-cn-border/60 border-t px-6 py-4">
-          <ProfileBioMarkdown source={form.description} />
-        </div>
-      {/if}
-      {#if form.anonymous}
-        <p class="border-cn-border/60 text-text-muted border-t px-6 py-3 text-xs">
-          {m.form_view_anonymous_notice()}
-        </p>
-      {/if}
-    </div>
+    <FormHeader
+      {form}
+      priceLabel={!priceUnavailable && priceCents > 0
+        ? m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) }) +
+          appliedPricingLabel
+        : null}
+      {submitted}
+    />
 
     <!-- ── Progress bar ── -->
     {#if !submitted && totalCount > 0}
@@ -924,224 +765,16 @@
     <!-- ── Questions ── -->
     <div class="space-y-3">
       {#each visibleItems as item, qi (item.id)}
-        <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="mb-1.5 flex items-start gap-2">
-            <span
-              class="text-text-muted bg-cn-border/50 text-2xs mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
-            >
-              {qi + 1}
-            </span>
-            <span class="text-text-main text-sm leading-snug font-bold">
-              {item.label}
-              {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
-            </span>
-          </label>
-
-          {#if item.description}
-            <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
-          {/if}
-
-          {#if item.imageUrl}
-            <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
-              <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
-            </div>
-          {/if}
-
-          {#if item.type === 'short_text'}
-            <input
-              type="text"
-              class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-              bind:value={selections[item.id]}
-              placeholder={m.form_view_answer_placeholder()}
-              disabled={submitted || isNotOpenYet}
-            />
-          {:else if item.type === 'long_text'}
-            <textarea
-              rows="4"
-              class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-              bind:value={selections[item.id]}
-              placeholder={m.form_view_answer_placeholder()}
-              disabled={submitted || isNotOpenYet}></textarea>
-          {:else if item.type === 'dropdown' || item.type === 'single'}
-            <Picker
-              value={selections[item.id] ?? ''}
-              options={dropdownOptions(item, form.currency)}
-              label={item.label}
-              placeholder={m.form_view_select_placeholder()}
-              disabled={submitted || isNotOpenYet}
-              triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-cn-yellow flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-              onValueChange={(v) => (selections[item.id] = v)}
-            />
-          {:else if item.type === 'single_choice'}
-            <div class="space-y-2">
-              {#each item.options ?? [] as opt (opt.id)}
-                <label
-                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selections[
-                    item.id
-                  ] === opt.id
-                    ? 'border-cn-yellow bg-cn-yellow/8'
-                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {submitted ||
-                  isNotOpenYet ||
-                  optionClosed(opt)
-                    ? 'cursor-not-allowed opacity-60'
-                    : ''}"
-                >
-                  <input
-                    type="radio"
-                    name={`radio-${form.id}-${item.id}`}
-                    value={opt.id}
-                    bind:group={selections[item.id]}
-                    class="accent-cn-yellow h-4 w-4 shrink-0"
-                    disabled={submitted || isNotOpenYet || optionClosed(opt)}
-                  />
-                  <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionClosed(opt)}
-                    <!-- Shown rather than hidden: an option that vanishes reads as a bug, and the
-                         person needs to see the choice exists but is closed to them. -->
-                    <span
-                      class="text-text-muted bg-cn-border/50 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold"
-                    >
-                      <Ban size={11} />{m.form_grid_cell_unavailable()}
-                    </span>
-                  {:else if optionModifier(item, opt) !== 0}
-                    <span
-                      class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
-                    >
-                      {optionModifier(item, opt) > 0 ? '+' : ''}{formatCurrency(
-                        optionModifier(item, opt),
-                        form.currency
-                      )}
-                    </span>
-                  {/if}
-                </label>
-              {/each}
-            </div>
-          {:else if item.type === 'multiple_choice'}
-            <div class="space-y-2">
-              {#each item.options ?? [] as opt (opt.id)}
-                <label
-                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {(
-                    selections[item.id] ?? []
-                  ).includes(opt.id)
-                    ? 'border-cn-yellow bg-cn-yellow/8'
-                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {submitted ||
-                  isNotOpenYet ||
-                  optionClosed(opt)
-                    ? 'cursor-not-allowed opacity-60'
-                    : ''}"
-                >
-                  <input
-                    type="checkbox"
-                    value={opt.id}
-                    bind:group={selections[item.id]}
-                    class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
-                    disabled={submitted || isNotOpenYet || optionClosed(opt)}
-                  />
-                  <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionClosed(opt)}
-                    <!-- Shown rather than hidden: an option that vanishes reads as a bug, and the
-                         person needs to see the choice exists but is closed to them. -->
-                    <span
-                      class="text-text-muted bg-cn-border/50 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold"
-                    >
-                      <Ban size={11} />{m.form_grid_cell_unavailable()}
-                    </span>
-                  {:else if optionModifier(item, opt) !== 0}
-                    <span
-                      class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
-                    >
-                      {optionModifier(item, opt) > 0 ? '+' : ''}{formatCurrency(
-                        optionModifier(item, opt),
-                        form.currency
-                      )}
-                    </span>
-                  {/if}
-                </label>
-              {/each}
-            </div>
-          {:else if item.type === 'linear_scale'}
-            <div>
-              <div class="text-text-muted mb-2 flex justify-between px-1 text-xs font-semibold">
-                <span>{item.scale?.minLabel || item.scale?.min}</span>
-                <span>{item.scale?.maxLabel || item.scale?.max}</span>
-              </div>
-              <div
-                class="border-cn-border bg-cn-bg flex items-stretch gap-1 overflow-hidden rounded-2xl border-2"
-              >
-                {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
-                  <label
-                    class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
- {selections[item.id] === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
- {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
-                  >
-                    <input
-                      type="radio"
-                      name={`scale-${form.id}-${item.id}`}
-                      value={val}
-                      bind:group={selections[item.id]}
-                      class="accent-cn-yellow h-4 w-4"
-                      disabled={submitted || isNotOpenYet}
-                    />
-                    <span class="text-text-muted text-xs font-bold">{val}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
-            <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
-              <table class="w-full border-separate border-spacing-0 text-sm">
-                <thead>
-                  <tr class="bg-cn-border/20">
-                    <th class="sticky left-0 z-10 w-1/3 min-w-30 bg-(--cn-surface) p-3"></th>
-                    {#each item.options ?? [] as col (col.id)}
-                      <th
-                        class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
-                        >{col.label}</th
-                      >
-                    {/each}
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each item.rows ?? [] as row (row)}
-                    <tr class="hover:bg-cn-border/10 transition-colors">
-                      <td
-                        class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
-                        >{row}</td
-                      >
-                      {#each item.options ?? [] as col (col.id)}
-                        <td class="border-cn-border border-t py-3 text-center">
-                          {#if item.type === 'matrix_single'}
-                            <input
-                              type="radio"
-                              name={`matrix-${form.id}-${item.id}-${row}`}
-                              value={col.id}
-                              bind:group={selections[item.id][row]}
-                              class="accent-cn-yellow h-4 w-4"
-                              disabled={submitted || isNotOpenYet}
-                            />
-                          {:else}
-                            <input
-                              type="checkbox"
-                              value={col.id}
-                              bind:group={selections[item.id][row]}
-                              class="accent-cn-yellow h-4 w-4"
-                              disabled={submitted || isNotOpenYet}
-                            />
-                          {/if}
-                        </td>
-                      {/each}
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else}
-            <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
-              Unsupported type: <strong>{item.type}</strong>
-            </div>
-          {/if}
-        </div>
+        <FormQuestion
+          {item}
+          index={qi}
+          bind:value={selections[item.id]}
+          disabled={submitted || isNotOpenYet}
+          formId={form.id}
+          currency={form.currency}
+          {optionModifier}
+          {optionClosed}
+        />
       {/each}
     </div>
 

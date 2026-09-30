@@ -2094,6 +2094,7 @@
   "form_view_remind_me": "Me prévenir",
   "form_view_redirecting": "Redirection en cours…",
   "form_view_answer_placeholder": "Votre réponse…",
+  "form_view_unsupported_type": "Type de question non pris en charge : {type}",
   "form_view_select_placeholder": "Choisir une option…",
   "form_view_payment_mode_heading": "Mode de paiement",
   "form_view_online_label": "En ligne",

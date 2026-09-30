@@ -1,8 +1,8 @@
 # Forms module
 
 **Routes**: `src/routes/forms/[id]/` (fill), `src/routes/forms/create/` + `src/routes/forms/[id]/edit/` (admin)
-**Components**: `src/lib/components/forms/`
-**Shared logic**: `src/lib/forms/` (`cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
+**Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
+**Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
 
 ## Responsibilities
 
@@ -30,6 +30,27 @@ If cash payment:
   -> Submit marked as "pending cash"
   -> Association admin validates/cancels via EditFormsTab
 ```
+
+## The fill page is three reusable pieces and its own payment logic (2026-09-30)
+
+`routes/forms/[id]/+page.svelte` was ~1300 lines holding everything; what any page filling a form
+needs is now outside it, so a second fill page (a form opened without an account) reuses rather
+than copies it:
+
+| Piece | What it owns |
+|---|---|
+| `forms/fillAnswers.ts` | The empty selection per type, "is this answered", the first required question left empty (and its sentence), which questions an answer reveals, the answers actually sent, the amount formatter |
+| `forms/FormQuestion.svelte` | One question card: label, help, image, and the input its type calls for, bound to the answer. Pricing arrives as two callbacks (`optionModifier`, `optionClosed`), because only the page holds the grid slice |
+| `forms/FormHeader.svelte` | Title, banner, the price badge (once, for both layouts), description, the anonymity notice |
+
+What stays in the page is what only a signed-in submission has: the pricing slice, saved cards,
+cash, the reminder, and the sticky submit bar.
+
+**One defect closed by the extraction**: validation said `!val` where the progress bar said
+`val !== ''`, so a required linear scale starting at 0 counted as answered on the bar and was
+refused by the button. `isItemAnswered` and `firstMissingAnswer` now share one predicate
+(`fillAnswers.test.ts`). `FormQuestion.svelte.test.ts` mounts the card and asserts that each input
+type hands its answer back to the PARENT - the one thing moving it behind a `$bindable` could break.
 
 ## Payment methods
 
