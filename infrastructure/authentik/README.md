@@ -2,7 +2,7 @@
 
 Fournisseur d identite OIDC de Canari.
 
-## Ou elle tourne, et par quoi elle est deployee : PAR RIEN
+## Ou elle tourne, et par quoi elle est deployee : la stack a la main, sa configuration par la release
 
 **Cette stack a rejoint l hote mutualise le 2026-09-24** : elle tourne dans
 `/srv/miconnect/` sur `193.49.175.67`, publiee sur `127.0.0.1:9000`, et le nginx
@@ -48,6 +48,41 @@ faire reculer le schema de six versions. Une reference qui ne peut pas etre
 lancee est inutile ; une reference qui peut etre lancee et casse la base est
 pire.
 
+## La configuration est dans `blueprints/`, et c est la release qui l applique
+
+Depuis le 2026-09-30, tout ce qui avait ete construit a la main dans l admin
+(flows, stages, prompts, policies, mappings, sources, providers, applications,
+la brand et sa CSS) est decrit par les sept blueprints de `blueprints/`, numerotes
+dans l ordre de leurs dependances. **Une modification faite dans l admin est
+ecrasee a la release stable suivante** : elle se fait dans ces fichiers, par une
+pull request.
+
+`apply-blueprints.sh` les applique depuis la machine ou tourne le conteneur. Les
+blueprints voyagent sur stdin avec `apply-blueprints.py`, donc rien n est monte ni
+copie dans `/srv/miconnect` :
+
+```sh
+bash apply-blueprints.sh dry-run    # applique dans une transaction, affiche le diff, annule
+bash apply-blueprints.sh apply      # la meme chose, et valide
+bash apply-blueprints.sh snapshot   # l etat normalise de chaque objet nomme, sans rien changer
+# depuis un poste de travail :
+AK_REMOTE="ssh portail-etu-direct" bash apply-blueprints.sh dry-run
+```
+
+| Qui | Quoi |
+| --- | --- |
+| la CI (`test-miconnect-blueprints`) | `test-blueprints.sh` : un Authentik VIERGE demarre avec ce `compose.yml`, les blueprints y sont appliques deux fois, et la seconde doit dire `0 change(s)` |
+| un pre-release (`serve-dev.yml`) | `dry-run` contre la prod : le diff que la stable appliquera, rien d ecrit (le dev se connecte au MiConnect de prod) |
+| une release stable (`serve-prod.yml`) | `apply`, en une transaction : un echec laisse MiConnect intact et fait echouer le job |
+
+**Ce qui n y est PAS, volontairement** : les utilisateurs et les groupes (la
+population, pas la configuration), les secrets clients des providers (un champ
+qu un blueprint ne nomme pas n est pas touche, donc ils ne quittent jamais la base
+et n entrent jamais dans ce depot public), le certificat de signature (cree au
+demarrage), et les objets par defaut d Authentik. La sauvegarde de la base reste
+ce qui les restaure. Le pourquoi de chaque choix, et les pieges d Authentik
+trouves en l ecrivant, sont dans le [wiki](../../docs/wiki/infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30).
+
 ## Deux choses retirees le 2026-09-24, avant le demenagement
 
 **Le socket Docker n est plus monte dans le worker.** Authentik ne s en sert que
@@ -86,6 +121,8 @@ machine a l autre : `sha256:7421753c...` des deux cotes pour `2026.8.0`.
 | --- | --- |
 | `PG_PASS` | mot de passe PostgreSQL Authentik |
 | `AUTHENTIK_SECRET_KEY` | cle secrete Authentik |
+| `MIGALLERY_AVATAR_SIGNING_KEY` | signe l URL d avatar du mapping `avatar` - la meme valeur que le secret `AVATAR_SIGNING_KEY` de MiGallery |
+| `MICONNECT_CAS_CONSUMER_SECRET` | secret du client OIDC `miconnect` cree par la DSI sur le CAS, lu par `blueprints/30-sources.yaml` |
 
 Elles vivent dans le `.env` de la boite, a cote du `compose.yml`.
 
@@ -122,3 +159,8 @@ cible - ce qui est la seule preuve qu ils l ont ete.
    les deux chemins successifs finissaient par `miconnect`, par chance.
 3. Restaurer : `./infrastructure/backup/restore.sh --latest-from-mitv --yes`,
    qui s arrete et donne la commande a jouer sur la boite Authentik.
+4. `bash apply-blueprints.sh dry-run`, puis `apply` : la base restauree et ce
+   depot doivent dire la meme chose, et le diff montre ce qui a change depuis la
+   sauvegarde. Sans sauvegarde, `apply` reconstruit toute la configuration sur une
+   instance vierge. Il faut alors redonner a chaque application le nouveau secret
+   de son provider, parce que ces secrets ne sont pas dans les blueprints.

@@ -282,6 +282,18 @@ jobs:
               ;;
           esac
 
+      # MICONNECT'S CONFIGURATION IS THE BLUEPRINTS IN THIS TREE, applied on every stable release.
+      # The runner lives on the host MiConnect runs on, so it reaches the worker container directly;
+      # the blueprints travel on stdin, so nothing is copied into /srv/miconnect. ONE transaction:
+      # a blueprint that fails leaves MiConnect exactly as it was, and fails this job - so
+      # `prod-released` below does not move. Re-applying every release is also what reverts an edit
+      # made by hand in the admin UI. The pre-release ran the same thing as a dry run first.
+      - name: Apply MiConnect's blueprints
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/apply-blueprints.sh apply
+
       # WHICH COMMIT PRODUCTION IS SERVING, recorded by the thing that made it true. `prod-deployed`
       # was this tag's old name and the change detector's INPUT; the detector reads the previous
       # release now (user's decision, 2026-09-03), so the name changed with the job to stop the next

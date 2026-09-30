@@ -28,7 +28,7 @@ export async function wda(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
     headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(60_000),
   });
   const text = await res.text();

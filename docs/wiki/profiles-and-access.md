@@ -268,6 +268,30 @@ reads the verified id_token once at its callback and discards the rest
 (`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
 `akadmin` is KEPT with its password, as the break-glass account if the CAS is down.
 
+**WPA is three pull requests, in this order (2026-09-30).**
+
+1. **WPA-1: the blueprints describe production as it IS, and a release applies them.** Every name
+   and value is kept, so no behaviour changes. The proof: a fresh instance built from the files
+   equals production field by field, with one exception, a trailing newline no blueprint can write
+   ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+   Production was prepared first, the same day. Its `.env` gained `MICONNECT_CAS_CONSUMER_SECRET`,
+   read from the database and never printed, and only the worker was recreated, so sign-in stayed
+   up. The dry run then reported exactly the predicted 1 change; `apply` wrote it, and a second dry
+   run reported 0.
+2. **WPA-2: the normalization**, as blueprint diffs:
+   - the `miconnect-` names, each renamed by an entry conditioned on the old name still existing,
+     so the hourly-safe blueprint never recreates a duplicate;
+   - PKCE `S256` on the CAS source;
+   - launch URLs on the final names;
+   - the grant types trimmed. Eight of the nine providers accept `password`, `client_credentials`,
+     `implicit`, `hybrid` and `device_code`, where every client uses `authorization_code` (and
+     `refresh_token`);
+   - the brand's unset `flow_user_settings` / `flow_invalidation`, decided;
+   - the brand CSS header, which still says "paste this into the admin UI";
+   - the OOBE instance back to `successful`.
+3. **WPA-3: the dev MiConnect**, fed the same blueprints, with the brand domain and the providers as
+   context. It needs the DSI's second CAS client.
+
 **WP1 - Authentik holds the profile; nothing observable changes.**
 
 - `attributes.profile = {version: 1, campus: "saint-etienne" | "gardanne", cursus: [{formation,

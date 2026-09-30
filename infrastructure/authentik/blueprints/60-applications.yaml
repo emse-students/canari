@@ -1,0 +1,71 @@
+# The application each provider is attached to, and its launch URL.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-applications
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_core.application
+    identifiers:
+      slug: "archives"
+    attrs:
+      name: "Archives MINO"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Archives MINO"]]
+      meta_launch_url: "https://archives.canari-emse.fr"
+  - model: authentik_core.application
+    identifiers:
+      slug: "canari"
+    attrs:
+      name: "Canari"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari"]]
+      meta_launch_url: "https://canari.emse.fr"
+  - model: authentik_core.application
+    identifiers:
+      slug: "canari-dev"
+    attrs:
+      name: "Canari (dev)"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Dev"]]
+  - model: authentik_core.application
+    identifiers:
+      slug: "canari-local"
+    attrs:
+      name: "Canari Local"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Canari Local"]]
+  - model: authentik_core.application
+    identifiers:
+      slug: "cercle"
+    attrs:
+      name: "Cercle"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Cercle"]]
+      meta_launch_url: "https://cercle.canari-emse.fr"
+  - model: authentik_core.application
+    identifiers:
+      slug: "migallery"
+    attrs:
+      name: "MiGallery"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "MiGallery"]]
+      meta_launch_url: "https://gallery.mitv.fr/"
+  - model: authentik_core.application
+    identifiers:
+      slug: "mino-wiki"
+    attrs:
+      name: "MinoWiki"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "MinoWiki"]]
+      meta_launch_url: "https://wiki.canari-emse.fr"
+  - model: authentik_core.application
+    identifiers:
+      slug: "portail-etu"
+    attrs:
+      name: "Portail Etu"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Portail Etu"]]
+  - model: authentik_core.application
+    identifiers:
+      slug: "sky"
+    attrs:
+      name: "Sky"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "Provider for Sky"]]
+      meta_launch_url: "https://sky.mitv.fr"

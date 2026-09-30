@@ -1,0 +1,98 @@
+# Signing in (miconnect-auth, CAS only), its failure page, the password flow the test campaign uses, and the MINO logout redirect.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+version: 1
+metadata:
+  name: miconnect-authentication
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-auth"
+    attrs:
+      name: "miconnect-auth"
+      title: "Connexion à MiConnect"
+      designation: "authentication"
+      background: "no_background.png"
+      denied_action: "continue"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-auth-fallback"
+    attrs:
+      name: "miconnect-auth-fallback"
+      title: "Connexion à MiConnect (secours)"
+      designation: "authentication"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "password-login"
+    attrs:
+      name: "password-login"
+      title: "Connexion par mot de passe"
+      designation: "authentication"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "mino-provider-invalidation-flow"
+    attrs:
+      name: "MINO provider invalidation"
+      title: "Tu es déconnecté de %(app)s."
+      designation: "invalidation"
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: "miconnect-identification"
+    attrs:
+      user_fields: []
+      sources:
+        - !Find [authentik_sources_oauth.oauthsource, [slug, "cas-emse"]]
+      show_source_labels: true
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-auth-failed"
+    attrs:
+      deny_message: "La connexion n'a pas abouti. Ce n'est pas ton compte : le service d'authentification de l'école (CAS) est revenu sans réponse valide. Retourne dans l'application et relance la connexion, elle aboutit généralement à la deuxième tentative."
+  - model: authentik_stages_redirect.redirectstage
+    identifiers:
+      name: "Archives MINO logout redirect"
+    attrs:
+      mode: "static"
+      target_static: "https://archives.canari-emse.fr/s/memoires-des-mines/"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, "miconnect-identification"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
+      order: 40
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth-fallback"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-auth-failed"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, "default-authentication-identification"]]
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_password.passwordstage, [name, "default-authentication-password"]]
+      order: 15
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "password-login"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "default-source-authentication-login"]]
+      order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false

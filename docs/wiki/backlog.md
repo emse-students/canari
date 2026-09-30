@@ -495,12 +495,11 @@ SIDE BY SIDE (measured at 393 px on `default-source-authentication`: header 31 p
 footer 48 px), which already shifts the ordinary card ~17 px off centre. When the header and footer
 carry content, the row outgrows the viewport, centring overflows both edges and `overflow: hidden`
 clips the left one. **Fixed in the file by #1098** (the `display` override is gone, Authentik's grid
-centres the card; `overflow: hidden` stays, it clips the blobs). Open until it is PASTED into the
-Brand and seen on the Mi 9T on the error page, the source-authentication page and the consent page. Same audit, two smaller items on the same
+centres the card; `overflow: hidden` stays, it clips the blobs), live since 2026-09-25. The CSS is
+`blueprints/70-brand.yaml` since 2026-09-30, so a change to it ships with a stable release. Same audit, two smaller items on the same
 pages: the default title **"Welcome to authentik!"** (English, on a French flow) is still shown, and
 the error states raw Authentik vocabulary ("Le flux ne s'applique pas") to someone who merely
-opened the page while signed in. The #1081 fixes are still unpasted, so the paste owed there should
-carry this one too ([authentik](infrastructure/authentik.md#login-page-branding)).
+opened the page while signed in ([authentik](infrastructure/authentik.md#login-page-branding)).
 
 
 ### P3 - Canari's web login shows developer vocabulary and a glow under the sign-in button (measured on the Mi 9T, 2026-09-25)

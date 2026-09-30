@@ -24,13 +24,78 @@ one `status 400` carrying `tauri://localhost/auth/callback` from a user agent ca
 
 ## Deployment
 
-**No pipeline deploys this stack.** It runs from `/srv/miconnect/` on the Portail-etu host, its
-`.env` written by hand beside `infrastructure/authentik/compose.yml`, which is a RECONSTRUCTION
-REFERENCE: the live file was compared on 2026-09-29 and differs from it by comments only. The
-history, and the job `deploy-to-server` this section described until then (it does not exist), are
-in [the stack's README](../../../infrastructure/authentik/README.md). A change to `compose.yml`
-reaches production only when someone copies it there and runs `docker compose up -d` in
-`/srv/miconnect/`, which recreates `server` and `worker`: sign-in is down for the restart.
+**Two halves, deployed differently.** The STACK (`compose.yml`, `.env`) is deployed by hand: it runs
+from `/srv/miconnect/` on the Portail-etu host, and a change reaches production only when someone
+copies the file there and runs `docker compose up -d`, which recreates the containers whose
+configuration changed - sign-in is down while `server` restarts. The history, and the job
+`deploy-to-server` this section described until 2026-09-24 (it never existed), are in
+[the stack's README](../../../infrastructure/authentik/README.md). **The CONFIGURATION - flows,
+stages, prompts, policies, mappings, sources, providers, applications, the brand - is code since
+2026-09-30**, and every stable release applies it: [below](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30).
+
+## The configuration is code: `infrastructure/authentik/blueprints/` (2026-09-30)
+
+Seven authentik blueprints, numbered in dependency order, name every object that was built by hand
+(63 of them). `apply-blueprints.sh dry-run|apply|snapshot` applies them from the machine the
+container runs on. It sends the blueprints on stdin together with `apply-blueprints.py`, so nothing
+is mounted into or copied onto the host.
+
+| Who | Mode | What it proves |
+| --- | --- | --- |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice, on a FRESH authentik booted from the real `compose.yml` | every object can be BUILT, every `!Find`/`!Env` resolves, and the second apply reports `0 change(s)` |
+| a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
+| a stable release (`serve-prod.yml`, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
+
+**THE PROOF THAT THE FILES DESCRIBE PRODUCTION, and how to take it again.** `snapshot` prints every
+object the blueprints name, with relations replaced by natural names and secrets by a digest. On
+2026-09-30, a fresh instance built from the blueprints and production were compared field by field.
+They differed in ONE value: a trailing newline at the end of the `avatar` expression. That newline
+was written through the model on 2026-09-30, and no blueprint can write it, because the API
+serializer strips trailing whitespace. The first `apply` on production, the same day, reported that
+1 change, and the dry run after it reported 0. Re-take the proof after any hand edit:
+
+```sh
+AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh snapshot > prod.json
+bash infrastructure/authentik/test-blueprints.sh   # or snapshot a local instance built from the files
+```
+
+**What is NOT in the blueprints, deliberately:**
+
+- **Users and groups**: they are the population, not the configuration.
+- **The providers' client secrets**: an entry that does not name a field leaves it untouched, so the
+  live secrets never reach this public repository. On a fresh instance they are generated. The
+  database backup is what restores them ([below](#database-and-backup)).
+- **The signing certificate**: authentik creates it at bootstrap.
+- **The default objects**: they are authentik's own blueprints' business, and ours `!Find` them.
+
+**The CAS client secret IS in them**, as `!Env MICONNECT_CAS_CONSUMER_SECRET`, because authentik
+refuses to create an OAuth source without one. It lives in `/srv/miconnect/.env`, and `compose.yml`
+declares it with `:?`, so a `.env` that lacks it fails the start instead of blanking the secret.
+
+**An edit made in the admin UI is reverted by the next stable release.** Every release re-applies
+every entry, so a hand change is either written into the files in a pull request or it is lost.
+
+Traps found while writing this, each measured on authentik 2026.8.0:
+
+- **`ak apply_blueprint` exits 0 when a blueprint FAILS to apply**: it ignores the return value of
+  `Importer.apply()`. `apply-blueprints.py` checks that value, exits non-zero on failure, and prints
+  authentik's log lines.
+- **The worker's own discovery applies a file only when its hash changes**, concurrently with anything
+  else that applies it. Every file therefore carries `blueprints.goauthentik.io/instantiate: "false"`,
+  and the script is the ONE applier. The same fact explains the `Default - Out-of-box-experience`
+  instance: it has shown `error` since 2026-08-29, it validates cleanly today, and nothing re-applies
+  it until its file changes.
+- **`!Find`, `!Env` and `!File` resolve to null and carry on** when they match nothing. A mistyped
+  name would silently clear a nullable reference, which is why the brand CSS is written inline rather
+  than read through `!File`. The applier refuses any `!Find` or `!Env` that resolves to nothing,
+  before it commits.
+- **A policy bound to a stage binding targets its `pbm_uuid`**, while `!Find` returns `.pk`, the
+  child's own key. The target is therefore found on `authentik_policies.policybindingmodel`, through
+  `flowstagebinding__...` lookups.
+- **The brand is identified by `default: true`, not by its domain**: it IS the `authentik-default`
+  brand, renamed, and authentik refuses a second default.
+- **`oidc_jwks` is a cache** of the CAS's keys, refreshed from `oidc_jwks_url`, so it is left out.
+  Freezing it would rewrite stale keys at every release.
 
 ## OIDC flow
 
@@ -71,12 +136,10 @@ Every protected request goes through `auth_request /internal/auth/verify`:
 
 ### Authentik-side setup
 
-The following must be configured in the Authentik admin UI (not automated via CD):
-
-- **Application**: Canari (OIDC provider, authorization code flow with PKCE)
-- **Scopes**: `openid`, `profile`, `email`
-- **Redirect URIs**: `https://<domain>/auth/callback`
-- **Users**: managed in Authentik; synced to Canari's `users` table on first login
+Every provider, application, redirect URI and scope mapping is in
+`infrastructure/authentik/blueprints/` since 2026-09-30, and a change to one is a pull request
+there, never an edit in the admin UI ([above](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+Users are managed in Authentik and synced to Canari's `users` table at each sign-in.
 
 ### The three Canari providers, and what each one lets a client come back to
 
@@ -248,11 +311,12 @@ brand happens to point at.
 
 ## Login page branding
 
-`infrastructure/authentik/custom-login.css` is the versioned source of truth for the login flow's
-custom CSS. Authentik has no mechanism to load this from a file or a repo path - it must be pasted
-manually into the admin UI (System -> Brands -> the Canari brand -> "Custom CSS") after any edit,
-and the field itself lives only in Authentik's Postgres DB, so a change made only there and never
-copied back here is one lost/stale backup away from disappearing silently.
+**The login CSS is `branding_custom_css` in `infrastructure/authentik/blueprints/70-brand.yaml`, the
+ONLY copy since 2026-09-30.** It was `infrastructure/authentik/custom-login.css`, pasted into the
+Brand by hand or through `ak shell`. That file was deleted the day the brand became a blueprint: it
+was byte-identical to the live field (13164 characters), and the next stable release applies any
+edit. The paragraphs below keep the procedures that are still true (preview over CDP) and the
+history of each rule.
 
 Two failure modes worth knowing before touching it again: a `z-index: -1` decorative element needs
 its parent to actually establish a stacking context (`isolation: isolate`, not just
@@ -283,7 +347,6 @@ rule was gated on `input[type='text'|'password'|'email']`, so a field with no `t
 `type` this list didn't name never got it even though it did inherit the dark background from
 `.pf-c-form-control`. Fixed by matching `input`/`textarea`/`select` by tag rather than by `type`,
 the same "stop scoping, cover the whole flow" fix already applied to the submit button above.
-**Not yet pasted into the live Brand** - it needs the same manual admin-UI step as any edit here.
 
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
 phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turned `ak-locale-select`,
@@ -293,10 +356,10 @@ viewport and `overflow: hidden` cut the card's left edge. Removed by #1098 and L
 stacked. The #1081 fixes this page called unpasted were already live: the live CSS read back that day
 differed from the file by the #1098 lines only.
 
-**Applying the file to the Brand needs no admin UI.** It was done on 2026-09-25 through `ak shell`
-in `miconnect-server-1`: read `Brand.objects.get(default=True).branding_custom_css` back first (keep
-it - it is the rollback), write the file's content, save, read the length back. Then check a flow page
-on a phone before calling it done. **A layout change is previewed BEFORE it is applied**: swap the
+**Applying a CSS change is a release**, since 2026-09-30: edit `70-brand.yaml`; the pre-release
+dry-run prints the change, and the stable release applies it. Then check a flow page on a phone
+before calling it done. Until that day it was done through `ak shell` in `miconnect-server-1`. **A
+layout change is previewed BEFORE it is applied**: swap the
 page's brand stylesheet in a real browser over CDP (`adoptedStyleSheets` / the `<style>` holding
 `--rootz-cyan` or `--mc-surface`, `replaceSync` with the new file) - nothing on the server moves,
 and the flat redesign of that day was iterated that way on the Mi 9T.
