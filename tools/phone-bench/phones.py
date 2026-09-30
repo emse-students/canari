@@ -22,6 +22,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -239,11 +240,19 @@ class IOS(Phone):
         self.base = wda
         self.mjpeg = mjpeg
         self.sid = self._call("GET", "/status").get("sessionId")
+        size = None
+        if self.sid:
+            try:
+                size = self._call("GET", f"/session/{self.sid}/window/size")["value"]
+            except urllib.error.HTTPError:
+                # /status keeps reporting the id of a session that died with the app (a reinstall, a
+                # crash): a stale id answers 404 on every call, so it is replaced, not retried.
+                self.sid = None
         if not self.sid:
             caps = {"bundleId": self.app}
             r = self._call("POST", "/session", {"capabilities": {"alwaysMatch": caps}, "desiredCapabilities": caps})
             self.sid = r.get("sessionId") or r["value"]["sessionId"]
-        size = self._call("GET", f"/session/{self.sid}/window/size")["value"]
+            size = self._call("GET", f"/session/{self.sid}/window/size")["value"]
         self.w, self.h = size["width"], size["height"]  # points
         self._call("POST", f"/session/{self.sid}/appium/settings",
                    {"settings": {"mjpegServerFramerate": 60, "mjpegServerScreenshotQuality": 25, "mjpegScalingFactor": 25}})
@@ -314,11 +323,15 @@ class IOS(Phone):
         return any(n["type"] == "Keyboard" for n in self.nodes())
 
     def hide_keyboard(self):
-        """The accessory bar above the keyboard has an OK button; there is no other way to close it."""
+        """Closes the keyboard. A build that still draws the accessory bar has an OK button on it and
+        that is tapped; a build without the bar (the app removes it since lot 4) has none, so WDA's
+        own dismissal is asked instead."""
         for n in self.nodes():
             if n["type"] == "Button" and n["text"] == "OK" and 0.4 < (n["y1"] + n["y2"]) / 2 / n["H"] < 0.75:
                 self.tap((n["x1"] + n["x2"]) / 2 / n["W"], (n["y1"] + n["y2"]) / 2 / n["H"])
                 return
+        if self.keyboard_up():
+            self._call("POST", f"/session/{self.sid}/wda/keyboard/dismiss", {})
 
     def launch(self, cold=False):
         if cold:

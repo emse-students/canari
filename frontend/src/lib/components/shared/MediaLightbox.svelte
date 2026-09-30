@@ -785,7 +785,7 @@
           role="presentation"
         >
           <div
-            class="flex items-center justify-between px-4 pt-3 pb-1 md:pt-[max(0.75rem,env(safe-area-inset-top,0.75rem))]"
+            class="flex items-center justify-between px-4 pt-3 pb-1 md:pt-[max(0.75rem,var(--safe-area-inset-top,0.75rem))]"
           >
             <h2 class="text-lg font-semibold">{m.media_viewer_info()}</h2>
             <button

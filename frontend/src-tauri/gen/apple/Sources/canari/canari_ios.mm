@@ -8,6 +8,7 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 
 static volatile bool g_isInForeground = false;
 
@@ -154,7 +155,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 #endif
 }
 
-static void CanariPublishBottomInset(void);
+static void CanariPublishSafeAreaInsets(void);
 
 /// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
 /// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
@@ -211,7 +212,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                      webView.frame = target;
                    }
                    completion:^(__unused BOOL finished) {
-                     CanariPublishBottomInset();
+                     CanariPublishSafeAreaInsets();
                    }];
 }
 
@@ -229,6 +230,81 @@ static void CanariApplyWebViewTransparency(void) {
   webView.opaque = NO;
   webView.backgroundColor = [UIColor clearColor];
   webView.scrollView.backgroundColor = [UIColor clearColor];
+}
+
+/// Makes the page draw edge to edge, UNDER the status bar - what Android already does and what
+/// `Info.plist` has declared since 2026-08-28 (docs/wiki/frontend/android-ios-parity.md#1.1).
+///
+/// By default UIKit insets the WKWebView's scroll view by the status bar, so the page stopped 47 pt
+/// below the top and the strip above it showed the window's black: a black bar over a light app
+/// (user, 2026-09-30: "je veux une experience belle et immersive"). `.never` lets the page reach the
+/// top, and the inset it then owes the layout is published as `--safe-area-inset-top` beside the
+/// bottom one (WebKit reports `env(safe-area-inset-*)` as 0 here, so nothing else can tell the page).
+/// Measured on its own this was a defect - the page drew under the clock with no inset to avoid it -
+/// which is why the two halves ship together and the top consumers read the variable, not env().
+static void CanariApplyEdgeToEdge(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+}
+
+/// Makes the system chrome follow the APP's theme, not the phone's. The status bar is
+/// `UIStatusBarStyleDefault` (Info.plist), which picks dark or light content from the window's
+/// trait collection - so with the page now behind it, a light Canari on a dark-mode phone would show
+/// a white clock on a pale header. Overriding the window's interface style also themes the keyboard,
+/// the native tab bar and every alert, which is wanted. `theme` is `"dark"` or `"light"`, the value of
+/// `html[data-theme]`; anything else is logged and ignored.
+static void CanariApplyTheme(NSString *theme) {
+  WKWebView *webView = CanariFindWebView();
+  UIWindow *window = webView.window;
+  if (window == nil) {
+    return;
+  }
+  UIUserInterfaceStyle style;
+  if ([theme isEqualToString:@"dark"]) {
+    style = UIUserInterfaceStyleDark;
+  } else if ([theme isEqualToString:@"light"]) {
+    style = UIUserInterfaceStyleLight;
+  } else {
+    NSLog(@"[CanariIOS] theme ignored, unknown value: %@", theme);
+    return;
+  }
+  if (window.overrideUserInterfaceStyle != style) {
+    window.overrideUserInterfaceStyle = style;
+    NSLog(@"[CanariIOS] interface style follows the app theme: %@", theme);
+  }
+  // THE WINDOW'S OWN GROUND, in the app's: it shows wherever the WebView is not - the band between a
+  // keyboard-shrunk page and the keyboard, and the keyboard's rounded top corners (user, 2026-09-30:
+  // "la barre noire au dessus [du clavier] avec le coin"). These are `app.html`'s two literals.
+  UIColor *ground = style == UIUserInterfaceStyleDark
+                        ? [UIColor blackColor]
+                        : [UIColor colorWithRed:240.0 / 255.0 green:242.0 / 255.0 blue:245.0 / 255.0 alpha:1.0];
+  window.backgroundColor = ground;
+  window.rootViewController.view.backgroundColor = ground;
+}
+
+/// The page tells native its theme through `webkit.messageHandlers.canariTheme.postMessage(...)`
+/// (`themeStore.svelte.ts`), at startup and at every change.
+@interface CanariThemeHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariThemeHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  CanariApplyTheme([message.body isKindOfClass:[NSString class]] ? message.body : @"");
+}
+@end
+
+static void CanariObserveTheme(void) {
+  static CanariThemeHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariThemeHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariTheme"];
+  NSLog(@"[CanariIOS] listening for the app theme");
 }
 
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
@@ -259,12 +335,12 @@ static void CanariApplyWebViewTransparency(void) {
                         change:(NSDictionary *)change
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
-    CanariPublishBottomInset();
+    CanariPublishSafeAreaInsets();
   }
 }
 @end
 
-static void CanariPublishBottomInset(void) {
+static void CanariPublishSafeAreaInsets(void) {
   static CGFloat published = -1;
   static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
@@ -279,13 +355,74 @@ static void CanariPublishBottomInset(void) {
   CGRect inWindow = [webView.superview convertRect:webView.frame toView:nil];
   CGFloat unreached = MAX(0.0, CGRectGetHeight(window.bounds) - CGRectGetMaxY(inWindow));
   CGFloat inset = MAX(0.0, window.safeAreaInsets.bottom - unreached);
+  // The top mirrors the bottom: the window's top safe area minus the part the WebView's frame
+  // starts below. With the page edge to edge (CanariApplyEdgeToEdge) the frame starts at the screen's
+  // top, so that is the status bar's whole height.
+  CGFloat top = MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)));
   NSString *js = [NSString
-      stringWithFormat:@"document.documentElement.style.setProperty('--safe-area-inset-bottom', '%.0fpx')",
-                       inset];
-  [webView evaluateJavaScript:js completionHandler:nil];
+      stringWithFormat:@"document.documentElement.style.setProperty('--safe-area-inset-bottom', '%.0fpx');"
+                        "document.documentElement.style.setProperty('--safe-area-inset-top', '%.0fpx');"
+                        "(document.documentElement.dataset.theme || '')",
+                       inset, top];
+  [webView evaluateJavaScript:js
+            completionHandler:^(id result, NSError *error) {
+              // The same round trip reads the theme the page started with: a page that loads after
+              // the handler was registered posted nothing native could hear.
+              if ([result isKindOfClass:[NSString class]] && [(NSString *)result length] > 0) {
+                CanariApplyTheme(result);
+              }
+            }];
   if (inset != published) {
     published = inset;
-    NSLog(@"[CanariIOS] bottom safe area published to the page: %.0f pt", inset);
+    NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
+  }
+}
+
+/// Removes the form accessory bar WebKit draws above the keyboard on every text field - the up and
+/// down arrows and "OK", about 45 pt that the composer, the search box and every form lose while
+/// typing (finding E of docs/wiki/phone-comparison.md). Canari has no use for field-to-field
+/// navigation, and Android's keyboard carries no such bar, so the two phones now type in the same
+/// space.
+///
+/// The bar is the WebView's content view's `inputAccessoryView`. WKWebView exposes no switch for it, so
+/// that one object is given a subclass answering nil - the shape every iOS app that hides this bar
+/// uses. `WKContentView` is WebKit's own class and is found by its name PREFIX, not imported; when a
+/// future iOS renames it the bar comes back, which is a cosmetic regression and is LOGGED rather than
+/// hidden. Idempotent, like the transparency above, and applied on every activation because the
+/// content view only exists once the page has been created.
+static void CanariHideKeyboardAccessoryBar(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  UIView *content = nil;
+  for (UIView *candidate in webView.scrollView.subviews) {
+    if ([NSStringFromClass([candidate class]) hasPrefix:@"WKContent"]) {
+      content = candidate;
+      break;
+    }
+  }
+  if (content == nil) {
+    NSLog(@"[CanariIOS] keyboard accessory bar NOT removed: no WKContent view under the WebView's scroll view");
+    return;
+  }
+  static const char *kSubclassName = "CanariNoInputAccessoryContentView";
+  Class subclass = NSClassFromString([NSString stringWithUTF8String:kSubclassName]);
+  if (subclass == nil) {
+    subclass = objc_allocateClassPair([content class], kSubclassName, 0);
+    if (subclass == Nil) {
+      NSLog(@"[CanariIOS] keyboard accessory bar NOT removed: could not derive a subclass of %@", [content class]);
+      return;
+    }
+    IMP noAccessory = imp_implementationWithBlock(^id(__unused id self) {
+      return nil;
+    });
+    class_addMethod(subclass, @selector(inputAccessoryView), noAccessory, "@@:");
+    objc_registerClassPair(subclass);
+  }
+  if (![content isMemberOfClass:subclass]) {
+    object_setClass(content, subclass);
+    NSLog(@"[CanariIOS] keyboard accessory bar removed from %@", NSStringFromClass([content class]));
   }
 }
 
@@ -293,7 +430,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
-  CanariPublishBottomInset();
+  CanariApplyEdgeToEdge();
+  CanariObserveTheme();
+  CanariHideKeyboardAccessoryBar();
+  CanariPublishSafeAreaInsets();
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();

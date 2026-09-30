@@ -58,7 +58,7 @@ function keyboardOpenThresholdPx(): number {
  * left untouched (see the desktop-zoom / iOS-keyboard white-gap bug).
  * `viewportHeight` is deliberately the raw visual-viewport height, not shell-relative: the app
  * shell's own top offset (status-bar inset) is already subtracted exactly once, structurally,
- * by the shell's own ancestor padding (`env(safe-area-inset-top)`) - see WP-KBD-1 in
+ * by the shell's own ancestor padding (`var(--safe-area-inset-top)`) - see WP-KBD-1 in
  * docs/wiki/frontend/mobile.md. Subtracting it again here double-counts it.
  */
 export function computeSnapshot(

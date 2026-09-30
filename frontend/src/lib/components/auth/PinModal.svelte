@@ -161,9 +161,16 @@
   {open}
   title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
   dismissible={false}
+  phoneFullScreen
   onClose={onClose ?? (() => {})}
 >
   <!--
+    FULL SCREEN ON A PHONE, AND LIGHTER ON A SHORT ONE (user, 2026-09-30, on the iPhone 12: the sheet
+    was "tres coupe" - the keypad's last row and the options sat under the footer). `phoneFullScreen`
+    lets the panel fill the screen; below 800 px of height the explanatory prose and the stay-signed-in
+    description are dropped and the keys lose 8 px, because the task on this screen is the dots and
+    the keypad - the wording is on the website and on a tall phone. Nothing is hidden on a desktop.
+
     `space-y-4`, NOT `space-y-6`, AND THE 48 PX IS THE POINT.
 
     Six gaps separate this form's blocks, so the rhythm alone is worth 144 px at 24 px and 96 px at
@@ -172,142 +179,145 @@
     its own one-line hint buys nothing a reader notices. Measured 2026-09-15: at 360 x 640 the
     keypad's last row was cut by 5 px at 24 px of rhythm and clears at 16 px.
   -->
-  <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-4 p-1">
-    {#if isFirstSetup}
-      <div class="border-cn-yellow/30 bg-cn-yellow/10 space-y-1.5 rounded-xl border px-4 py-3">
-        <p class="text-cn-yellow text-sm font-semibold">
-          {m.auth_pin_first_heading()}
-        </p>
-        <p class="text-text-muted text-sm leading-relaxed">
-          {m.auth_pin_setup_p1()}<strong class="text-text-main">{m.auth_pin_never_sent()}</strong
-          >{m.auth_pin_setup_p2()}<br />
-          <strong class="text-text-main">{m.auth_pin_keep_safe()}</strong>
-        </p>
-      </div>
-    {:else}
-      <p class="text-text-muted text-center text-sm leading-relaxed">
-        {m.auth_pin_unlock_desc()}
-      </p>
-    {/if}
-
-    {#if showBiometricButton && onBiometricRequest}
-      <button
-        type="button"
-        onclick={onBiometricRequest}
-        disabled={isLoading}
-        class="border-cn-border/60 text-text-main flex w-full items-center justify-center gap-2 rounded-xl border bg-white/5 py-3 text-sm font-semibold transition-all hover:bg-white/10 disabled:opacity-50 dark:bg-black/20 dark:hover:bg-black/30"
-      >
-        <FingerprintPattern size={18} />
-        {m.auth_pin_use_fingerprint()}
-      </button>
-
-      <div class="flex items-center gap-3">
-        <hr class="border-cn-border/40 flex-1" />
-        <span class="text-text-muted text-xs">{m.auth_pin_or_enter()}</span>
-        <hr class="border-cn-border/40 flex-1" />
-      </div>
-    {/if}
-
-    {#if useNumpad}
-      <!-- PIN dot display -->
-      <div class="flex items-center justify-center gap-3 py-2">
-        {#each Array(Math.max(pin.length, 4)) as _, i (i)}
-          <span
-            class="h-3.5 w-3.5 rounded-full transition-all duration-150 {i < pin.length
-              ? 'bg-cn-yellow scale-110'
-              : 'bg-black/15 dark:bg-white/20'}"
-          ></span>
-        {/each}
-      </div>
-
-      {#if displayError}
-        <p role="alert" class="-mt-1 text-center text-sm font-medium text-red-500">
-          {displayError}
+  <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-2 pb-3 sm:px-6">
+    <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-4 p-1">
+      {#if isFirstSetup}
+        <div class="border-cn-yellow/30 bg-cn-yellow/10 space-y-1.5 rounded-xl border px-4 py-3">
+          <p class="text-cn-yellow text-sm font-semibold">
+            {m.auth_pin_first_heading()}
+          </p>
+          <p class="text-text-muted text-sm leading-relaxed [@media(max-height:800px)]:hidden">
+            {m.auth_pin_setup_p1()}<strong class="text-text-main">{m.auth_pin_never_sent()}</strong
+            >{m.auth_pin_setup_p2()}<br />
+            <strong class="text-text-main">{m.auth_pin_keep_safe()}</strong>
+          </p>
+        </div>
+      {:else}
+        <p
+          class="text-text-muted text-center text-sm leading-relaxed [@media(max-height:800px)]:hidden"
+        >
+          {m.auth_pin_unlock_desc()}
         </p>
       {/if}
 
-      <!-- Numeric keypad -->
-      <div class="grid grid-cols-3 gap-2.5" aria-label={m.auth_pin_numeric_keypad()}>
-        {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'] as key (key)}
-          {#if key === ''}
-            <span></span>
-          {:else}
-            <button
-              type="button"
-              disabled={isLoading}
-              onclick={() => {
-                internalError = '';
-                if (key === '⌫') {
-                  pin = pin.slice(0, -1);
-                } else {
-                  pin = pin + key;
-                }
-              }}
-              class="text-text-main h-14 rounded-2xl text-xl font-semibold transition-all active:scale-95 disabled:opacity-50
- {key === '⌫'
-                ? 'bg-black/5 text-base dark:bg-white/10'
-                : 'bg-black/5 hover:bg-black/10 dark:bg-white/8 dark:hover:bg-white/15'}"
-            >
-              {key}
-            </button>
-          {/if}
-        {/each}
-      </div>
-
-      <p class="text-text-muted text-center text-xs">
-        {isFirstSetup ? m.auth_pin_hint_setup_short() : m.auth_pin_hint_returning()}
+      {#if showBiometricButton && onBiometricRequest}
         <button
           type="button"
-          onclick={() => {
-            pin = '';
-            useNumpad = false;
-          }}
-          class="hover:text-text-main ml-1 underline transition-colors"
-          >{m.auth_pin_manual_entry()}</button
-        >
-      </p>
-    {:else}
-      <!-- Text input fallback (alphanumeric PINs) -->
-      <div class="space-y-2">
-        <label for="encryption-pin" class="sr-only">{m.auth_pin_label()}</label>
-        <input
-          id="encryption-pin"
-          type="password"
-          autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
-          inputmode={isFirstSetup ? 'numeric' : undefined}
-          bind:value={pin}
-          oninput={() => {
-            internalError = '';
-          }}
+          onclick={onBiometricRequest}
           disabled={isLoading}
-          placeholder="••••••"
-          class="border-cn-border/60 focus:border-cn-yellow focus:ring-cn-yellow/30 placeholder:text-text-muted/50 w-full rounded-xl border bg-white/5 px-4 py-3.5 text-center font-mono text-2xl tracking-[0.4em] transition-all placeholder:tracking-normal focus:ring-2 focus:outline-none disabled:opacity-50 dark:bg-black/20"
-        />
+          class="border-cn-border/60 text-text-main flex w-full items-center justify-center gap-2 rounded-xl border bg-white/5 py-3 text-sm font-semibold transition-all hover:bg-white/10 disabled:opacity-50 dark:bg-black/20 dark:hover:bg-black/30"
+        >
+          <FingerprintPattern size={18} />
+          {m.auth_pin_use_fingerprint()}
+        </button>
+
+        <div class="flex items-center gap-3">
+          <hr class="border-cn-border/40 flex-1" />
+          <span class="text-text-muted text-xs">{m.auth_pin_or_enter()}</span>
+          <hr class="border-cn-border/40 flex-1" />
+        </div>
+      {/if}
+
+      {#if useNumpad}
+        <!-- PIN dot display -->
+        <div class="flex items-center justify-center gap-3 py-2">
+          {#each Array(Math.max(pin.length, 4)) as _, i (i)}
+            <span
+              class="h-3.5 w-3.5 rounded-full transition-all duration-150 {i < pin.length
+                ? 'bg-cn-yellow scale-110'
+                : 'bg-black/15 dark:bg-white/20'}"
+            ></span>
+          {/each}
+        </div>
+
+        {#if displayError}
+          <p role="alert" class="-mt-1 text-center text-sm font-medium text-red-500">
+            {displayError}
+          </p>
+        {/if}
+
+        <!-- Numeric keypad -->
+        <div class="grid grid-cols-3 gap-2.5" aria-label={m.auth_pin_numeric_keypad()}>
+          {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'] as key (key)}
+            {#if key === ''}
+              <span></span>
+            {:else}
+              <button
+                type="button"
+                disabled={isLoading}
+                onclick={() => {
+                  internalError = '';
+                  if (key === '⌫') {
+                    pin = pin.slice(0, -1);
+                  } else {
+                    pin = pin + key;
+                  }
+                }}
+                class="text-text-main h-14 rounded-2xl text-xl font-semibold transition-all active:scale-95 disabled:opacity-50 [@media(max-height:800px)]:h-12
+ {key === '⌫'
+                  ? 'bg-black/5 text-base dark:bg-white/10'
+                  : 'bg-black/5 hover:bg-black/10 dark:bg-white/8 dark:hover:bg-white/15'}"
+              >
+                {key}
+              </button>
+            {/if}
+          {/each}
+        </div>
+
         <p class="text-text-muted text-center text-xs">
-          {isFirstSetup ? m.auth_pin_hint_setup_long() : m.auth_pin_hint_returning()}
+          {isFirstSetup ? m.auth_pin_hint_setup_short() : m.auth_pin_hint_returning()}
           <button
             type="button"
             onclick={() => {
               pin = '';
-              useNumpad = true;
+              useNumpad = false;
             }}
             class="hover:text-text-main ml-1 underline transition-colors"
-            >{m.auth_pin_numeric_keypad()}</button
+            >{m.auth_pin_manual_entry()}</button
           >
         </p>
-        {#if displayError}
-          <p role="alert" class="text-center text-sm font-medium text-red-500">{displayError}</p>
-        {/if}
-      </div>
-    {/if}
+      {:else}
+        <!-- Text input fallback (alphanumeric PINs) -->
+        <div class="space-y-2">
+          <label for="encryption-pin" class="sr-only">{m.auth_pin_label()}</label>
+          <input
+            id="encryption-pin"
+            type="password"
+            autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
+            inputmode={isFirstSetup ? 'numeric' : undefined}
+            bind:value={pin}
+            oninput={() => {
+              internalError = '';
+            }}
+            disabled={isLoading}
+            placeholder="••••••"
+            class="border-cn-border/60 focus:border-cn-yellow focus:ring-cn-yellow/30 placeholder:text-text-muted/50 w-full rounded-xl border bg-white/5 px-4 py-3.5 text-center font-mono text-2xl tracking-[0.4em] transition-all placeholder:tracking-normal focus:ring-2 focus:outline-none disabled:opacity-50 dark:bg-black/20"
+          />
+          <p class="text-text-muted text-center text-xs">
+            {isFirstSetup ? m.auth_pin_hint_setup_long() : m.auth_pin_hint_returning()}
+            <button
+              type="button"
+              onclick={() => {
+                pin = '';
+                useNumpad = true;
+              }}
+              class="hover:text-text-main ml-1 underline transition-colors"
+              >{m.auth_pin_numeric_keypad()}</button
+            >
+          </p>
+          {#if displayError}
+            <p role="alert" class="text-center text-sm font-medium text-red-500">{displayError}</p>
+          {/if}
+        </div>
+      {/if}
 
-    {#if showStaySignedIn}
-      <label
-        class="flex cursor-pointer items-start gap-2.5 px-0.5 text-left select-none {isLoading
-          ? 'pointer-events-none opacity-50'
-          : ''}"
-      >
-        <!--
+      {#if showStaySignedIn}
+        <label
+          class="flex cursor-pointer items-start gap-2.5 px-0.5 text-left select-none {isLoading
+            ? 'pointer-events-none opacity-50'
+            : ''}"
+        >
+          <!--
           `data-stay-signed-in` is a test handle, and it is here for the same reason the change-PIN
           button carries one: this checkbox has no accessible name of its own (the label's text sits
           in a sibling `<span>`, and it is a Paraglide message that may be reworded in either
@@ -315,110 +325,113 @@
           document - which is a POSITION, and would silently move to another box the day the modal
           grows a second one.
         -->
-        <input
-          type="checkbox"
-          data-stay-signed-in
-          bind:checked={staySignedIn}
-          disabled={isLoading}
-          class="border-cn-border/60 accent-cn-yellow mt-0.5 h-4 w-4 shrink-0 rounded"
-        />
-        <span class="text-text-muted text-xs leading-relaxed">
-          <span class="text-text-main font-semibold">{m.auth_pin_stay_signed_in()}</span><br />
-          {m.auth_pin_stay_signed_in_desc()}
-        </span>
-      </label>
-    {/if}
+          <input
+            type="checkbox"
+            data-stay-signed-in
+            bind:checked={staySignedIn}
+            disabled={isLoading}
+            class="border-cn-border/60 accent-cn-yellow mt-0.5 h-4 w-4 shrink-0 rounded"
+          />
+          <span class="text-text-muted text-xs leading-relaxed">
+            <span class="text-text-main font-semibold">{m.auth_pin_stay_signed_in()}</span>
+            <span class="[@media(max-height:800px)]:hidden"
+              ><br />{m.auth_pin_stay_signed_in_desc()}</span
+            >
+          </span>
+        </label>
+      {/if}
 
-    <!-- PIN changed on another device → recover messages (shown only when applicable) -->
-    {#if !isFirstSetup && onRecoverPin && displayError}
-      <button
-        type="button"
-        disabled={isLoading}
-        onclick={() => onRecoverPin?.()}
-        class="text-cn-yellow w-full text-center text-xs font-semibold hover:underline disabled:opacity-50"
-      >
-        {m.auth_pin_recover_link()}
-      </button>
-    {/if}
-
-    <!-- Forgot PIN section (only for returning users) -->
-    {#if !isFirstSetup}
-      <div class="border-cn-border/30 border-t pt-4">
+      <!-- PIN changed on another device → recover messages (shown only when applicable) -->
+      {#if !isFirstSetup && onRecoverPin && displayError}
         <button
           type="button"
-          onclick={() => (showForgotPin = !showForgotPin)}
-          class="text-text-muted hover:text-text-main w-full text-center text-xs transition-colors"
+          disabled={isLoading}
+          onclick={() => onRecoverPin?.()}
+          class="text-cn-yellow w-full text-center text-xs font-semibold hover:underline disabled:opacity-50"
         >
-          {m.auth_pin_forgot()}
+          {m.auth_pin_recover_link()}
         </button>
+      {/if}
 
-        {#if showForgotPin}
-          <div class="mt-3 space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
-            <div class="flex items-start gap-2">
-              <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
-              <p class="text-text-muted text-xs leading-relaxed">
-                {m.auth_pin_forgot_p1()}<strong class="text-text-main"
-                  >{m.auth_pin_forgot_never_stored()}</strong
-                >{m.auth_pin_forgot_p2()}
-              </p>
-            </div>
+      <!-- Forgot PIN section (only for returning users) -->
+      {#if !isFirstSetup}
+        <div class="border-cn-border/30 border-t pt-4">
+          <button
+            type="button"
+            onclick={() => (showForgotPin = !showForgotPin)}
+            class="text-text-muted hover:text-text-main w-full text-center text-xs transition-colors"
+          >
+            {m.auth_pin_forgot()}
+          </button>
 
-            {#if onForgotPinReset}
-              <p class="text-text-muted text-xs leading-relaxed">
-                <strong class="text-text-main">{m.auth_pin_reset_strong1()}</strong
-                >{m.auth_pin_reset_mid()}<strong class="text-text-main"
-                  >{m.auth_pin_reset_strong2()}</strong
-                >{m.auth_pin_reset_end()}
-              </p>
-              {#if confirmReset}
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onclick={() => {
-                    confirmReset = false;
-                    onForgotPinReset?.();
-                  }}
-                  class="block w-full rounded-lg bg-red-500 py-2 text-center text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
-                >
-                  {m.auth_pin_reset_confirm()}
-                </button>
-              {:else}
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onclick={() => (confirmReset = true)}
-                  class="block w-full rounded-lg border border-red-500/30 py-1.5 text-center text-xs font-semibold text-red-500 transition-colors hover:border-red-400/40 hover:bg-red-500/5 hover:text-red-400 disabled:opacity-50"
-                >
-                  {m.auth_pin_reset_button()}
-                </button>
+          {#if showForgotPin}
+            <div class="mt-3 space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
+              <div class="flex items-start gap-2">
+                <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
+                <p class="text-text-muted text-xs leading-relaxed">
+                  {m.auth_pin_forgot_p1()}<strong class="text-text-main"
+                    >{m.auth_pin_forgot_never_stored()}</strong
+                  >{m.auth_pin_forgot_p2()}
+                </p>
+              </div>
+
+              {#if onForgotPinReset}
+                <p class="text-text-muted text-xs leading-relaxed">
+                  <strong class="text-text-main">{m.auth_pin_reset_strong1()}</strong
+                  >{m.auth_pin_reset_mid()}<strong class="text-text-main"
+                    >{m.auth_pin_reset_strong2()}</strong
+                  >{m.auth_pin_reset_end()}
+                </p>
+                {#if confirmReset}
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onclick={() => {
+                      confirmReset = false;
+                      onForgotPinReset?.();
+                    }}
+                    class="block w-full rounded-lg bg-red-500 py-2 text-center text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                  >
+                    {m.auth_pin_reset_confirm()}
+                  </button>
+                {:else}
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onclick={() => (confirmReset = true)}
+                    class="block w-full rounded-lg border border-red-500/30 py-1.5 text-center text-xs font-semibold text-red-500 transition-colors hover:border-red-400/40 hover:bg-red-500/5 hover:text-red-400 disabled:opacity-50"
+                  >
+                    {m.auth_pin_reset_button()}
+                  </button>
+                {/if}
               {/if}
-            {/if}
 
-            <a
-              href="/profile"
-              onclick={() => onClose?.()}
-              class="text-text-muted hover:text-text-main block w-full py-1.5 text-center text-xs font-medium transition-colors"
-            >
-              {m.auth_pin_delete_account_link()}
-            </a>
-          </div>
-        {/if}
-      </div>
-    {/if}
+              <a
+                href="/profile"
+                onclick={() => onClose?.()}
+                class="text-text-muted hover:text-text-main block w-full py-1.5 text-center text-xs font-medium transition-colors"
+              >
+                {m.auth_pin_delete_account_link()}
+              </a>
+            </div>
+          {/if}
+        </div>
+      {/if}
 
-    <!--
+      <!--
       The sign-out explanation stays in the SCROLLING body while its button is pinned in the footer
       below. That split is deliberate: the control is what must never be scrolled to, and giving the
       footer this paragraph as well costs about 32 px of permanent height that the numeric keypad
       needs more - at 360 x 640 the keypad ends 405 px into the form, against a scrollport already
       shortened by everything the footer holds. Prose above its own control still reads as one block.
     -->
-    <p
-      class="text-text-muted border-cn-border/30 border-t pt-4 text-center text-xs leading-relaxed"
-    >
-      {m.auth_pin_sign_out_desc()}
-    </p>
-  </form>
+      <p
+        class="text-text-muted border-cn-border/30 border-t pt-4 text-center text-xs leading-relaxed"
+      >
+        {m.auth_pin_sign_out_desc()}
+      </p>
+    </form>
+  </div>
 
   <!--
     THE TWO WAYS PAST THIS GATE DO NOT SCROLL, AND THAT IS THE WHOLE POINT OF THE SNIPPET.

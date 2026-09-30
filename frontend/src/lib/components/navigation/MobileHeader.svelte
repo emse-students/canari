@@ -9,6 +9,12 @@
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
 
+  // While mounted, `app.css` paints the status strip above the header with its surface (U8).
+  $effect(() => {
+    document.documentElement.setAttribute('data-phone-header', '');
+    return () => document.documentElement.removeAttribute('data-phone-header');
+  });
+
   /**
    * Whether the three feed controls belong on this route.
    *

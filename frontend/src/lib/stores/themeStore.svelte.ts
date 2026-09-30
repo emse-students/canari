@@ -33,9 +33,26 @@ function resolveIsDark(pref: ThemePreference): boolean {
   return pref === 'system' ? osPrefersDark() : pref === 'dark';
 }
 
+/**
+ * The iOS shell themes the status bar, the keyboard and the native tab bar from the WINDOW's
+ * interface style, which follows the phone and not the app - so the theme is posted to the
+ * `canariTheme` message handler `canari_ios.mm` registers. Absent everywhere else (Android, the
+ * browser, a build without the handler), where this is a no-op by design, not a fallback.
+ */
+function postThemeToNative(theme: 'dark' | 'light'): void {
+  const handlers = (
+    window as unknown as {
+      webkit?: { messageHandlers?: { canariTheme?: { postMessage: (m: string) => void } } };
+    }
+  ).webkit?.messageHandlers;
+  handlers?.canariTheme?.postMessage(theme);
+}
+
 function applyToDocument(dark: boolean): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const theme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme;
+  postThemeToNative(theme);
 }
 
 let preference = $state<ThemePreference>('system');

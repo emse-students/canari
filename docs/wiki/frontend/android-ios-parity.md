@@ -51,8 +51,27 @@ this is decided) at every activation, after every keyboard resize and **whenever
 loading** (a KVO on `WKWebView.loading`: a cold start publishes 34 pt at the first
 `didBecomeActive`, BEFORE the initial load ends, and the new document started without it - found in
 the syslog, which `pymobiledevice3 syslog live` reads with no Mac; `CanariIOS` lines are there).
-Checked by hand first: writing 34px into the variable over CDP moved "Publier" up by 34 pt. The top stays UIKit's. A
+Checked by hand first: writing 34px into the variable over CDP moved "Publier" up by 34 pt. A
 WebView shrunk above the keyboard publishes 0, which is what §1.6 relied on UIKit and `env()` for.
+
+**THE TOP, 2026-09-30 - the same day's "do not try it again" was half right.** The user walked the
+iPhone build and asked for an immersive app: the page stopped 47 pt below the top and the strip above
+it was the window's black, a black bar over a light app. `.never` alone IS wrong (the page draws under
+the clock with nothing telling it to keep out), so it now ships WITH its other half:
+`CanariApplyEdgeToEdge` sets it, `CanariPublishSafeAreaInsets` also writes `--safe-area-inset-top`
+(`:root` defaults it to `env()`, so Android and browsers are untouched), and the nine top consumers
+read the variable instead of `env()`. **The status bar's colour then needs the APP's theme**, not the
+phone's (a light Canari on a dark-mode phone would show a white clock on a pale header): `themeStore`
+posts the theme to a `canariTheme` script message handler and native sets
+`window.overrideUserInterfaceStyle`, which also themes the keyboard, the tab bar and alerts - and it
+sets the window's own background to the app's ground (`#f0f2f5` / `#000`, `app.html`'s literals),
+because that is what shows in the band above a keyboard and in its rounded top corners (black, until then).
+**OWED: one reading of the result on the iPhone** - every gate here is blind to it.
+
+**The form accessory bar is removed** (up/down arrows and a check, ~45 pt above every keyboard):
+`CanariHideKeyboardAccessoryBar` swaps the WebKit content view's class for a subclass whose
+`inputAccessoryView` is nil. If a future iOS renames `WKContentView` the bar returns and the syslog
+says so (`keyboard accessory bar NOT removed`).
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
 reading their insets: `enableEdgeToEdge()` in
