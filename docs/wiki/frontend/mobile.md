@@ -629,6 +629,18 @@ keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem`
   viewport left short after the keyboard leaves - is `CanariApplyKeyboardLayout`'s to hold, and is
   owed ONE look on an iPhone: dismiss the keyboard and the bottom bar must sit on the screen's edge.
 
+**NO MODAL CAN COVER IT, SO IT HIDES UNDER EVERY ONE (2026-09-30).** The web bar sits in the page's
+stacking order, so a modal's `z-index` paints over it; the native bar is drawn ABOVE the whole
+WebView, and no web layer can reach it. On the bench iPhone it stayed on top of the post composer,
+hiding "Publier" and the attachment row, and it stayed TAPPABLE over every dialog - a tab could
+navigate away from under one. Every surface that covers the screen now declares it with
+`use:coversScreen` (`$lib/actions/coversScreen.svelte.ts`) on its backdrop - `Modal`, `ModalOverlay`,
+`SidePanel`'s scrim, `FullScreenViewer`, `MessageMobileActions`, `EventFormModal`, `PaymentModal`, the
+expanded `CallOverlay`, the sidebar drawer, `FloatingSurface`'s sheet, the carte editor's full page -
+and the layout adds `!screenCover.covered` to the bar's `visible`. **A new overlay that skips the
+action brings the defect back**, and nothing but an iPhone would show it: put it on the backdrop, the
+one layer mounted exactly as long as the surface is open.
+
 **A failed setup hands the bottom back to the web bar, at error level** - an app with no navigation
 is worse than the wrong bar, and the line accuses the build that was meant to have it.
 

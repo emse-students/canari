@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { scrollFades } from '$lib/actions/scrollFades';
   import type { Snippet } from 'svelte';
   import {
     Camera,
@@ -118,7 +119,10 @@
     {#if formatting}
       <MarkdownComposerToolbar row {onFormat} class="w-full" />
     {:else}
-      <div class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1">
+      <div
+        use:scrollFades
+        class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1"
+      >
         <label class="{chipClass} {idleChip}">
           <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
           {m.post_composer_photo_video()}

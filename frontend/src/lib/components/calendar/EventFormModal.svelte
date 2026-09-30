@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X, ImagePlus, Link2 } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
@@ -144,6 +145,7 @@
 {#if open}
   <div use:portal>
     <div
+      use:coversScreen
       data-keyboard-aware-overlay
       class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"

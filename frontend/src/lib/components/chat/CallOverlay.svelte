@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { CallService, type CallParticipant } from '$lib/services/CallService';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
@@ -545,6 +546,7 @@
 {:else}
   <!-- Expanded / full-screen call view -->
   <div
+    use:coversScreen
     class="fixed inset-0 z-(--z-critical) flex flex-col items-center justify-center bg-black/90 select-none {isMobileRtc
       ? 'p-0'
       : 'p-4 sm:p-6'}"
