@@ -58,8 +58,13 @@ permissions:
 # already armed, so the loser reports a failure for a state that is in fact correct.
 # `cancel-in-progress: true` because the older of two armings of the SAME pull request has nothing
 # the newer one does not.
+# THE DRAFT FLAG IS IN THE GROUP, because "the newer run" is only a superset when both saw the same
+# pull request. A push and `gh pr ready` in the same second raise a `synchronize` that still reads
+# `draft: true` and a `ready_for_review`; one group let the draft run - which skips - cancel the one
+# that would have armed, and #1259 sat green and unarmed (2026-09-30). A draft run now shares a
+# group only with draft runs, so it can never cancel an arming.
 concurrency:
-  group: arm-auto-merge-${{ github.event.pull_request.number }}
+  group: arm-auto-merge-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 jobs:

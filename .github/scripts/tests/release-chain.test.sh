@@ -431,6 +431,16 @@ if [ -r "$AM" ]; then
     fail 'arm-auto-merge.yml has no live collaborator-permission check - #709 (a private-membership admin skipped every time) has no fix without it'
   fi
 
+  # THE CONCURRENCY GROUP CARRIES THE DRAFT FLAG. Measured on #1259: a push and `gh pr ready` in the
+  # same second queued a `synchronize` still reading `draft: true` and a `ready_for_review` in ONE
+  # group; `cancel-in-progress` let the draft run - which skips - cancel the arming, and the pull
+  # request sat green with nothing armed.
+  if grep -q 'group: arm-auto-merge-.*pull_request\.draft' <<<"$AM_CODE"; then
+    pass 'a draft run shares its concurrency group only with draft runs, so it cannot cancel an arming'
+  else
+    fail 'the arm-auto-merge concurrency group does not carry the draft flag - a draft run can cancel the ready_for_review arming, the #1259 regression'
+  fi
+
   # THE MERGE STEP MUST READ THE PERMISSION CHECK'S OWN OUTPUT, not repeat the decision inline -
   # one authorisation, asked once, is the whole point of making it a step instead of an `if:` nobody
   # could query with an API call.
