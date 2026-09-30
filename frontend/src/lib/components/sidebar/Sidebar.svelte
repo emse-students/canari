@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
@@ -439,6 +440,7 @@
   <button
     type="button"
     class="fixed inset-0 z-(--z-nav-drawer-scrim) bg-black/30 md:hidden"
+    use:coversScreen
     onclick={() => onCloseDrawer?.()}
     aria-label={m.sidebar_close_panel_aria()}
   ></button>

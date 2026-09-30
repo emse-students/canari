@@ -41,6 +41,7 @@
   a phone, where there is no Escape key.
 -->
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
@@ -118,6 +119,7 @@
     -->
     <div
       role="presentation"
+      use:coversScreen
       class="fixed inset-0 {LAYER_CLASS[
         layer
       ]} flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim

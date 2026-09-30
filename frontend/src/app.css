@@ -702,6 +702,28 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   display: none;
 }
 
+/* A horizontal row that scrolls fades the edge that still has content (`scrollFades` in
+   `$lib/actions/scrollFades.ts` sets the attributes). A mask, not an overlay: it fades whatever the
+   row sits on, in both themes, and cannot catch a tap. */
+.scroll-fades {
+  --scroll-fade: 2rem;
+}
+.scroll-fades[data-fade-end] {
+  mask-image: linear-gradient(to right, black calc(100% - var(--scroll-fade)), transparent);
+}
+.scroll-fades[data-fade-start] {
+  mask-image: linear-gradient(to left, black calc(100% - var(--scroll-fade)), transparent);
+}
+.scroll-fades[data-fade-start][data-fade-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--scroll-fade),
+    black calc(100% - var(--scroll-fade)),
+    transparent
+  );
+}
+
 .ui-textarea {
   width: 100%;
   max-width: 100%;

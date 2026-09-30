@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
@@ -194,6 +195,7 @@
   <div use:portal>
     <div
       role="presentation"
+      use:coversScreen
       data-keyboard-aware-overlay
       class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'

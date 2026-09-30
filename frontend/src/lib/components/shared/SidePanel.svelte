@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
@@ -107,6 +108,7 @@
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
     use:escapesThePage
+    use:coversScreen
     transition:fade={{ duration: 180 }}
   ></button>
 
