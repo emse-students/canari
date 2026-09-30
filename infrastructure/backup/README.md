@@ -177,6 +177,16 @@ sauvegarde dedupliquee change tout. Le modele chiffre est dans
 applique une retention 14 jours / 8 semaines / 6 mois, verifie l integrite du depot, puis
 miroite le depot sur `mitv`. Planifie a **04:00**, apres le tar.
 
+**L etape `backup` lit en root, et elle seule** (2026-09-30) : Garage ecrit
+`garage_meta/node_key` en `root:root 0600`, aucun instantane ne l avait jamais contenu, et
+l echec de lecture arretait le script avant son miroir offsite. Le depot est rendu au compte
+juste apres. La configuration commune aux quatre scripts est `backup-config.sh`.
+
+**Ce qui le signale : `backup-report.sh`**, chaque matin via le job `backups` de
+`scheduled.yml` - l archive et l instantane de la nuit, entiers et hors site, lus sur les
+artefacts et jamais sur un code de sortie. Le detail est dans le
+[wiki](../../docs/wiki/infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30).
+
 **Le backend objet a migre de MinIO vers Garage le 2026-08-14** (MinIO n est plus maintenu en
 amont) - voir [docker](../../docs/wiki/infrastructure/docker.md). Le depot restic continue le
 meme historique de sauvegarde ; seuls les chemins montes ont change (`/data/minio` ->

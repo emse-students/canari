@@ -29,8 +29,8 @@ Each nightly run produces one timestamped archive (`canari-backup-YYYYMMDD-HHMMS
 | `authentik_db.sql.gz` | Authentik PostgreSQL | `pg_dump` in the Authentik container (skipped if absent) |
 | `MANIFEST.txt` | - | Timestamp, git commit, content description, and where the media are |
 
-Plus, at 04:00, `backup-objects.sh` (`infrastructure_garage_data` + `infrastructure_garage_meta` +
-`infrastructure_media_meta` into restic, 14d/8w/6m, `restic check`, rsync mirror to `mitv`).
+Plus, at 04:00, `backup-objects.sh` (`canari-prod_garage_data` + `canari-prod_garage_meta` +
+`canari-prod_media_meta` into restic, its `backup` step reading as root for `node_key`, 14d/8w/6m, `restic check`, rsync mirror to `mitv`).
 The object storage backend migrated from MinIO to Garage on 2026-08-14 (MinIO is no longer
 maintained upstream) - see [docker](docker.md). Snapshots taken before that date are in the old
 `infrastructure_minio_data` format; see the comment at the top of `restore.sh`.
@@ -105,9 +105,26 @@ default was the alias) nor the `.env`, which is read after the environment.
 (`authentik_db.sql.gz` 29 MB with the user table, `postgres_auth_db.sql.gz` 31 MB) and copied it
 offsite.
 
-**What is NOT fixed: nothing reported it.** Five failed nights reached no one; a missing archive was
-found by hand, by a session that happened to look. That is the P1 left open in
-[backlog](../backlog.md).
+**The media backup had failed the same five nights, and differently.** Its snapshots of 09-24 and
+09-25 were of EMPTY volumes (`infrastructure_*`, a compose project this host never ran). From 09-26
+it read the right ones, but Garage writes `garage_meta/node_key` `root:root 0600`: restic, running
+as the account, skipped it, exited 3, and `set -e` stopped the run before retention, check and the
+offsite mirror. So mitv's newest real media snapshot was the OLD box's of 09-23, and **no snapshot,
+on either machine, had ever held `node_key`** - without it a restored Garage comes back as a
+different node, absent from its own layout. Mirrored by hand the same night (30 snapshots, checked
+first); since then the `backup` step alone reads as root and hands the repository back to the
+account before its exit status is looked at (decided by the user, 2026-09-30). **A snapshot taken
+before that has no `node_key`**: the key has not changed since 2026-08-14, so restore one with the
+key taken from any later snapshot.
+
+**What reports it now: `backup-report.sh`**, the `backups` job of `scheduled.yml` (daily, 07:30 UTC,
+on the production runner, which is the account that owns the backups). It reads the ARTEFACTS, never
+an exit code - a cron line that vanished produces no exit code at all - and asks what a restore
+would: is the newest archive later than the last run the crontab schedules, does it hold every
+member with pg_dump's closing line, is it offsite at the same size, is the newest snapshot later
+than its run, does it hold garage_data files and `node_key`, is it in the offsite mirror. A red run
+is the report. Its verdict is tested against the shapes above (`backup-report.test.sh`). The
+configuration the four scripts share is `backup-config.sh`, three copies until then.
 
 ## Restore
 

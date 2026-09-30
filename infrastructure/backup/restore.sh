@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 #
 # Restauration d une sauvegarde produite par backup.sh.
 #
@@ -38,23 +39,10 @@ INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$INFRA_DIR/docker-compose.prod.yml"
 ENV_FILE="$INFRA_DIR/.env"
 
-BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
-BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
-MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
-# Alias ~/.ssh/config, et non un user@hote : cf backup.sh, meme raison.
-MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-}"
-# Le nom du projet compose (docker-compose.prod.yml's `name:`) : les volumes cibles
-# ci-dessous sont montes par un `docker run` brut, en dehors de `docker compose`, donc
-# rien ne le resout pour nous a partir du fichier.
-CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
-
-# Depot restic des blobs medias. Doit rester aligne sur backup-objects.sh : un chemin
-# qui diverge ne casse pas la sauvegarde, il casse la restauration - c est-a-dire le
-# jour ou personne n a le temps de chercher pourquoi.
-BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
-RESTIC_REPO_DIR="${RESTIC_REPO_DIR:-${BACKUP_DIR}/restic-objects}"
-RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/home/canari/.config/canari/restic-password}"
-RESTIC_IMAGE="${RESTIC_IMAGE:-restic/restic:latest}"
+# La configuration commune a backup.sh et backup-objects.sh : un chemin qui diverge
+# ne casse pas la sauvegarde, il casse la restauration. Commentee dans backup-config.sh.
+# shellcheck source=backup-config.sh
+. "$SCRIPT_DIR/backup-config.sh"
 # Par defaut le dernier instantane. Surchargeable pour remonter avant une corruption :
 #   RESTIC_SNAPSHOT=<id> ./restore.sh <archive> --yes
 RESTIC_SNAPSHOT="${RESTIC_SNAPSHOT:-latest}"

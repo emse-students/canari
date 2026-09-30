@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 #
 # Deduplicated backup of the object volumes (Garage blobs + media-service metadata) via restic.
 #
@@ -33,27 +34,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$INFRA_DIR/.env"
 
-BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
-RESTIC_REPO_DIR="${RESTIC_REPO_DIR:-${BACKUP_DIR}/restic-objects}"
-RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/home/canari/.cache/restic}"
-# The repository password is deliberately NOT in infrastructure/.env: the CD regenerates
-# that file from the GitHub secrets on every deploy, and a restic repository whose password
-# changes is unreadable forever. It therefore lives outside the deployment cycle, and must
-# be backed up off this machine (see infrastructure/MIGRATION.md).
-RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/home/canari/.config/canari/restic-password}"
-RESTIC_IMAGE="${RESTIC_IMAGE:-restic/restic:latest}"
-# The compose project's name (docker-compose.prod.yml's `name:`): the volumes below are
-# mounted by a raw `docker run`, outside `docker compose`, so nothing resolves it for us.
-CANARI_COMPOSE_PROJECT="${CANARI_COMPOSE_PROJECT:-canari-prod}"
+# Paths, the restic repository and the offsite host: shared with backup.sh and restore.sh.
+# shellcheck source=backup-config.sh
+. "$SCRIPT_DIR/backup-config.sh"
 
 # Retention: 14 full days (aligned with the tar), then one point per week and per month so a
 # corruption discovered late is still recoverable.
 KEEP_DAILY="${RESTIC_KEEP_DAILY:-14}"
 KEEP_WEEKLY="${RESTIC_KEEP_WEEKLY:-8}"
 KEEP_MONTHLY="${RESTIC_KEEP_MONTHLY:-6}"
-
-BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
-BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 
 log() { printf '[backup-objects] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 fail() { printf '[backup-objects] ERROR %s\n' "$*" >&2; exit 1; }
@@ -72,12 +61,16 @@ fi
 
 mkdir -p "$RESTIC_REPO_DIR" "$RESTIC_CACHE_DIR"
 
-# restic runs as the calling UID, so the repository belongs to canari and the offsite rsync
-# (which runs as canari) can read it. Garage's own files are 0644, so they stay readable
-# without root.
-restic() {
+# restic runs as the calling UID, so the repository belongs to the backup account and the
+# offsite rsync (which runs as that account) can read it - EXCEPT for the backup step, below.
+OWNER="$(id -u):$(id -g)"
+
+# `restic_as USER ARGS...` runs restic as USER; `restic ARGS...` runs it as the owner.
+restic_as() {
+  local user="$1"
+  shift
   docker run --rm \
-    --user "$(id -u):$(id -g)" \
+    --user "$user" \
     -v "${CANARI_COMPOSE_PROJECT}_garage_data":/data/garage_data:ro \
     -v "${CANARI_COMPOSE_PROJECT}_garage_meta":/data/garage_meta:ro \
     -v "${CANARI_COMPOSE_PROJECT}_media_meta":/data/media_meta:ro \
@@ -89,6 +82,7 @@ restic() {
     -e RESTIC_REPOSITORY=/repo \
     "$RESTIC_IMAGE" "$@"
 }
+restic() { restic_as "$OWNER" "$@"; }
 
 # ── 1. Repository ─────────────────────────────────────────────────────────────
 if restic cat config >/dev/null 2>&1; then
@@ -99,11 +93,25 @@ else
 fi
 
 # ── 2. Backup ─────────────────────────────────────────────────────────────────
+# THE BACKUP STEP READS AS ROOT, because Garage writes `garage_meta/node_key` root:root 0600 and
+# nothing else can open it. Read as the owner, restic skipped it and exited 3 every night, which
+# `set -e` turned into a run that never reached retention, check or the offsite mirror - from
+# 2026-09-26 to 2026-09-30, with no snapshot on either machine EVER holding that key
+# (docs/wiki/infrastructure/backup.md). Without it a restored Garage comes back as a different
+# node, absent from its own layout. The files root writes into the repository and the cache are
+# handed back to the owner before the exit status is looked at, so a failed backup cannot leave
+# the next night's run unable to write.
 log "Backing up the object volumes…"
-restic backup /data/garage_data /data/garage_meta /data/media_meta \
+backup_status=0
+restic_as 0:0 backup /data/garage_data /data/garage_meta /data/media_meta \
   --host canari \
   --tag objects \
-  --exclude-caches
+  --exclude-caches || backup_status=$?
+docker run --rm --user 0:0 \
+  -v "$RESTIC_REPO_DIR":/repo \
+  -v "$RESTIC_CACHE_DIR":/cache \
+  --entrypoint chown "$RESTIC_IMAGE" -R "$OWNER" /repo /cache
+[ "$backup_status" -eq 0 ] || fail "restic backup exited $backup_status - an unreadable source file is a hole in the backup, not a warning"
 
 # ── 3. Retention + prune ──────────────────────────────────────────────────────
 log "Applying retention (${KEEP_DAILY}d / ${KEEP_WEEKLY}w / ${KEEP_MONTHLY}m)…"
