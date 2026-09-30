@@ -1,5 +1,6 @@
 <script lang="ts">
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
+  import { nativeGlassPiece } from '$lib/mobile/nativeGlassPiece.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Send,
@@ -883,7 +884,19 @@
             </button>
           </div>
         {:else}
-          <GlassMenuButton icon={Plus} label={m.chat_composer_add_label()} items={addMenuItems} />
+          <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`); the spinner
+               above stays web, since an upload is short and cannot be picked from. -->
+          <span
+            class="inline-flex shrink-0"
+            use:nativeGlassPiece={{
+              id: 'chat-add',
+              label: m.chat_composer_add_label(),
+              icon: Plus,
+              items: addMenuItems,
+            }}
+          >
+            <GlassMenuButton icon={Plus} label={m.chat_composer_add_label()} items={addMenuItems} />
+          </span>
         {/if}
       {/if}
 

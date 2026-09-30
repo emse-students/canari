@@ -32,6 +32,7 @@ const PAIRS: Record<string, string> = {
   UpdateComponentArgs: 'UpdateComponentOptions',
   UpdateComponentsArgs: 'UpdateComponentsOptions',
   RemoveComponentArgs: 'RemoveComponentOptions',
+  MenuItemArgs: 'ComponentMenuItem',
 };
 
 /** The body of a top-level declaration: from its opening line to the first `}` in column 0. */

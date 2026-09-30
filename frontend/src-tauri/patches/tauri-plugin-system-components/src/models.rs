@@ -251,6 +251,22 @@ pub struct ComponentProps {
     /// Corner radius for `glass` panels.
     pub corner_radius: Option<f64>,
 
+    // ── CANARI PATCH: the conversation's native glass chrome ─────────────
+    /// A button's entries: set, the button OPENS THIS MENU on a tap (`showsMenuAsPrimaryAction`)
+    /// and reports the chosen entry as a `menu` event whose `detail` is its `id`. On iOS 26 the
+    /// system grows the menu out of the glass button itself.
+    pub menu: Option<Vec<ComponentMenuItem>>,
+    /// Hide the mounted view without removing it (`isHidden`) - a modal covering the screen, or a
+    /// DOM twin with no box at this width.
+    pub hidden: Option<bool>,
+    /// VoiceOver's name for a control with no visible title (an icon-only button).
+    pub accessibility_label: Option<String>,
+    /// Hex `#RRGGBB[AA]` for a button's title and template glyphs. Unset, a glass button draws them
+    /// in the system tint, which is blue.
+    pub foreground: Option<String>,
+    /// The side, in points, of a button's bitmap `image` (default 20).
+    pub image_side: Option<f64>,
+
     // ── `container` layout ───────────────────────────────────────────────
     /// `horizontal` (a bar) or `vertical` (a sidebar). Default `horizontal`.
     pub axis: Option<String>,
@@ -270,6 +286,23 @@ pub struct ComponentProps {
     /// CANARI PATCH: `fill` | `centered` | `automatic`, which Swift's `ComponentPropsArgs` reads and
     /// upstream never carried here - so it was dropped before Swift saw it (see `TabItem`).
     pub item_positioning: Option<String>,
+}
+
+/// CANARI PATCH: one entry of a button's `menu`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentMenuItem {
+    /// Reported back as the `detail` of the button's `menu` event.
+    pub id: String,
+    /// The entry's visible - and accessible - name.
+    pub title: String,
+    /// Glyph as base64 (raw or `data:` URL), drawn as a TEMPLATE so the menu colours it like its
+    /// text in either appearance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// A toggle's state: `true` draws the checkmark, `false` none, unset means not a toggle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

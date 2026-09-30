@@ -16,6 +16,7 @@
     type GlassMenuItem,
   } from '$lib/components/shared/GlassMenuButton.svelte';
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
+  import { nativeGlassPiece } from '$lib/mobile/nativeGlassPiece.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
@@ -219,6 +220,12 @@
         onclick={onBack}
         aria-label={m.chat_back_label()}
         title={m.chat_back_label()}
+        use:nativeGlassPiece={{
+          id: 'chat-back',
+          label: m.chat_back_label(),
+          icon: ChevronLeft,
+          onClick: onBack,
+        }}
         class="glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
       >
         <ChevronLeft size={22} strokeWidth={2.25} />
@@ -230,21 +237,35 @@
         type="button"
         onclick={() => onOpenSettings?.()}
         aria-label={settingsLabel}
+        use:nativeGlassPiece={{
+          id: 'chat-title',
+          label: settingsLabel,
+          title: effectiveDisplayName,
+          avatar: true,
+          onClick: () => onOpenSettings?.(),
+        }}
         class="glass-chrome flex max-w-full min-w-0 items-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
       >
         {#if isChannel}
-          <span class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">
+          <span
+            data-glass-avatar
+            class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center"
+          >
             <Hash size={18} strokeWidth={2.5} />
           </span>
         {:else if isGroupConversation}
-          <span class="flex h-8 w-8 shrink-0 items-center justify-center">
+          <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
             <GroupAvatar {imageMediaId} name={displayName} variant="group" size="md" />
           </span>
         {:else}
-          <span class="relative flex h-8 w-8 shrink-0 items-center justify-center">
+          <span
+            data-glass-avatar
+            class="relative flex h-8 w-8 shrink-0 items-center justify-center"
+          >
             <Avatar userId={contactName} size="md" fallbackLabel={effectiveDisplayName} />
             {#if isOnline}
               <span
+                data-presence-dot
                 class="absolute right-0 bottom-0 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-white dark:ring-zinc-900"
               ></span>
             {/if}
@@ -256,12 +277,22 @@
       </button>
     </div>
 
-    <GlassMenuButton
-      icon={Ellipsis}
-      label={m.chat_more_actions_label()}
-      items={menuItems}
-      alignEnd
-    />
+    <span
+      class="inline-flex shrink-0"
+      use:nativeGlassPiece={{
+        id: 'chat-menu',
+        label: m.chat_more_actions_label(),
+        icon: Ellipsis,
+        items: menuItems,
+      }}
+    >
+      <GlassMenuButton
+        icon={Ellipsis}
+        label={m.chat_more_actions_label()}
+        items={menuItems}
+        alignEnd
+      />
+    </span>
   </div>
 {/if}
 

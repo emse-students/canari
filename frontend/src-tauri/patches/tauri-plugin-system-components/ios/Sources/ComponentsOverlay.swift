@@ -41,6 +41,8 @@ final class ComponentsOverlayController: UIViewController {
         guard let container = build(args) else { return }
 
         let props = args.props
+        // CANARI PATCH: a component may be created hidden (see `update`).
+        container.isHidden = props?.hidden ?? false
         let anchor = args.anchor ?? "topTrailing"
         if args.below ?? false, let webView {
             // Below the webview: make the webview transparent so unpainted DOM
@@ -128,6 +130,9 @@ final class ComponentsOverlayController: UIViewController {
             if let y = props.y { frame.origin.y = CGFloat(y) }
             entry.container.frame = frame
         }
+        // CANARI PATCH: shown and hidden in place, so a modal can cover the chrome
+        // without the chrome being rebuilt.
+        if let hidden = props.hidden { entry.container.isHidden = hidden }
         ComponentRegistry.update(entry.control, kind: entry.kind, props: props)
         return true
     }
