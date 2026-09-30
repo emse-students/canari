@@ -192,7 +192,7 @@ oignons". Status is kept here until each item is merged; the release is cut only
 | U5 | Walk the rest of the app for other graphical defects. Seen, dev estate account with NO community: the Communautes tab is a 72 px rail with one "+" tile beside a list that only says "select or create" - the two-pane desktop layout with nothing in it; a phone wants one centred empty state with a create button. NOT fixed: it needs a look with real communities first (local bench build). Seen, fine: feed, chat list, dashboard, profile, settings. Still to walk: agenda, shop, associations, a community with channels, posts composer, calendar, settings sub-pages | OPEN |
 | U6 | The PIN sheet is cut on the iPhone (keypad's last row and options under the footer): full screen on phones, prose and key height trimmed under 800 px of height | WRITTEN - READ on the iPhone 2026-09-30: whole keypad and options visible |
 | U7 | Black band and rounded corner above the keyboard = the window's own black | WRITTEN (window ground follows the theme) - READ on the iPhone 2026-09-30: no band above the keyboard, composer sits on it |
-| U8 | The top reads as two bands: the status strip is the page ground, the header under it a lighter surface (both platforms) | iOS FIXED and READ on the iPhone 2026-09-30 (one white band): the SHELL paints its own top padding with the header's surface (`:root[data-phone-header]:not([data-banner-up]) .app-shell` in `app.css`; `MobileHeader` sets the first attribute while mounted, the layout's banner observer the second). A pseudo-element on the header cannot do it - the content column around it is `overflow-hidden` and clips it. While a banner is up the strip stays the page ground, which is what lies under the banner. ANDROID OPEN: the page reads `env(safe-area-inset-top) = 0` there, the strip is the activity's window, so it takes a native bridge |
+| U8 | The top reads as two bands: the status strip is the page ground, the header under it a lighter surface (both platforms) | iOS FIXED and READ on the iPhone 2026-09-30 (one white band): the SHELL paints its own top padding with the header's surface (`:root[data-phone-header]:not([data-banner-up]) .app-shell` in `app.css`; `MobileHeader` sets the first attribute while mounted, the layout's banner observer the second). A pseudo-element on the header cannot do it - the content column around it is `overflow-hidden` and clips it. While a banner is up the strip stays the page ground, which is what lies under the banner. ANDROID FIXED BY THE SAME RULE and READ on the Mi 9T 2026-09-30 (one grey band in dark): the WebView spans the whole screen (`uiautomator` bounds `[0,0][1080,2340]`), so the strip there is the shell's padding too. An earlier note here called it the activity's window and owed a native bridge - wrong, read off an APK that carried the clipped pseudo-element version |
 
 **The same walk on the Mi 9T (2026-09-30, debug APK from `d9944953b`, dark system theme, gesture bar):**
 the PIN sheet, the feed, the chat list, a conversation and the keyboard all hold - the glass header,
@@ -200,17 +200,37 @@ the "+" and the composer row are aligned, and Android already draws edge to edge
 and the gesture pill owning their strips. **One two-tone defect, candidate U8:** on the brand screens
 the status strip is the page's own ground (`#000` in dark) and the header under it is a lighter
 surface, so the top reads as two bands - the iPhone has the same thing in light (a grey strip over a
-white header). That is U8 above - fixed on iOS, open on Android.
+white header). That is U8 above - fixed on both.
 
 **What is left, scoped by the user on 2026-09-30:** U5 on the LOCAL stack with a bench build and an
-account that belongs to communities; Android gets the top band (native), 200 % font and three-button
+account that belongs to communities; Android gets the top band (done by U8, no native code), 200 % font and three-button
 navigation (the user flips that switch on the Mi 9T) - *"on peut accepter des differences, mais on
 peut apprecier les choses aussi"*, so Android is improved, not only made acceptable; lot 5 keeps
 Dynamic Type, landscape and iPad, the long-press and swipe overlays, and the admin pages. Then ONE
 pre-release carrying all of it, read on both phones before the stable.
 **Not covered:** three-button navigation - `settings put global force_fsg_nav_bar 0` left the phone in
 gesture mode on this MIUI (restored with `settings delete`, the key was unset), so it needs the
-switch in the phone's own settings; and Android at 200 % font.
+switch in the phone's own settings.
+
+**Android at 200 % text (Mi 9T, `settings put system font_scale 2.0`, 2026-09-30).** The PIN sheet,
+the feed, the chat list, the communities rail and the dashboard all REFLOW - the filters wrap, long
+names truncate, the PIN sheet scrolls to every option. Two defects, both fixed on
+`fix/android-large-text` and read on the phone at 200 %:
+
+- **The WebView scales font sizes and leaves lengths alone** - measured through CDP: root font
+  `32px`, a `1rem` box `16px` wide, a `20px` declaration computing to `40px`, and
+  `text-size-adjust: none` changing nothing. Anything whose BOX is in `rem` while its TEXT is not
+  is overrun, and no CSS opts a node out of the multiplication.
+- **The header wordmark ran over the `+`**: `CanariBrand`'s `fitContainer` was a container query at
+  `8rem` (the name's width at 100 %), still "true" for a name grown to 146px. It now MEASURES: bird
+  + gap + the name's width against its parent, the name laid out `invisible absolute` when it does
+  not fit so its width is always readable. At 200 % the feed shows the bird alone, the chat list
+  (fewer controls) the whole name.
+- **Avatar initials came out twice the size of their circle** and were cut. `publishTextZoom`
+  (`lib/utils/textZoom.ts`) publishes `--text-zoom` = root font size over the width of a `1rem`
+  box (2 here, 1 on a desktop whose default font was raised, since both grow there), and
+  `.text-zoom-exempt` undoes it with `zoom` on the glyph alone - Avatar, GroupAvatar,
+  AssociationAvatar. Reading text is never exempt.
 
 **Bench traps met on the way:** the PIN sheet KEEPS the digits typed on the unlock keypad when it switches to "choose a PIN" after a reset (6 + 6 = a 12-digit PIN that then matches nothing) - clear with the backspace key first and read the dots; the test banner is 4 lines on a phone, so its detail text should go on narrow screens.
 

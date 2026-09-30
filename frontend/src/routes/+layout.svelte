@@ -66,6 +66,7 @@
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
+  import { publishTextZoom } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -109,6 +110,7 @@
   onMount(() => {
     themeStore.init();
     startTabIndicator();
+    publishTextZoom();
 
     // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
     // tick() ensures SvelteKit has completed its initial render before we fade out.

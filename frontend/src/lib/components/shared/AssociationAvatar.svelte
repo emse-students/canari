@@ -89,6 +89,6 @@
     title={name}
     aria-label={`Logo de ${name}`}
   >
-    {initials}
+    <span class="text-zoom-exempt">{initials}</span>
   </div>
 {/if}
