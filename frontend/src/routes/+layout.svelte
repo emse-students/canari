@@ -1,7 +1,14 @@
 <script lang="ts">
   import '../app.css';
   import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
-  import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
+  import {
+    afterNavigate,
+    beforeNavigate,
+    goto,
+    onNavigate,
+    preloadCode,
+    preloadData,
+  } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
@@ -41,6 +48,7 @@
     isSwipeNavViewport,
     shouldIgnoreSwipeTarget,
     swipeDragResistancePx,
+    transformTranslateXPx,
     swipeNavSlideOriginPx,
     swipeNavTargetHref,
     swipeNavTransitionMs,
@@ -218,7 +226,7 @@
    * `$state`: nothing renders from it, it is read once by the hook it was written for and cleared
    * there, and a reactive read would tie the hook to a render it does not run inside.
    */
-  let swipeNavSlide: { direction: SwipeNavDirection; fromPx: number } | null = null;
+  let swipeNavSlide: { direction: SwipeNavDirection } | null = null;
 
   /**
    * The neighbour asked for as soon as the gesture locks horizontal, so the page has its data by
@@ -241,6 +249,23 @@
 
   /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
   const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
+
+  // BOTH NEIGHBOURS' CODE IS FETCHED ON ARRIVAL, not at the horizontal lock. A fast swipe locks and
+  // releases inside ~100ms, and the route's JS imported in that window was part of what the finger
+  // waited on at the middle of the screen (user, 2026-09-30: "the sudden stop at the middle when
+  // swiping fast"). Code only: data is a network call on some tabs (`/posts` lists the feed) and
+  // SvelteKit caches one preload, so two neighbours would evict each other - data stays on the lock.
+  $effect(() => {
+    if (!swipeNavArmed) return;
+    for (const direction of ['next', 'prev'] as const) {
+      const href = swipeNavTargetHref(pathname, direction);
+      if (href) {
+        void preloadCode(href).catch((err) =>
+          console.warn('[SwipeNav] code preload failed:', href, err)
+        );
+      }
+    }
+  });
 
   function swipeNavContext() {
     return {
@@ -325,21 +350,26 @@
    * "the next page does not come" (user, 2026-09-29): nothing was wrong with the gesture, the two
    * pages simply never existed at the same time.
    *
-   * `onNavigate` below is what puts them there. All this function does is declare the geometry the
-   * transition needs - which way, and where the finger left the page - and hand the router the
-   * destination it already preloaded.
+   * `onNavigate` below is what puts them there. All this function does is keep the page moving
+   * the way it was going, record which way, and hand the router the destination it already
+   * preloaded - `onNavigate` reads how far the page has got when it takes over.
    */
-  function commitSwipeNav(direction: SwipeNavDirection, releaseOffsetPx: number) {
+  function commitSwipeNav(direction: SwipeNavDirection) {
     const href = swipeNavTargetHref(pathname, direction);
     if (!href || !pageScrollWrap) {
       snapSwipeBack();
       return;
     }
 
-    // The inline drag transform STAYS until the view transition has captured it: the snapshot is
-    // what carries the finger's position into the animation, so clearing it here would snap the
-    // page back to zero for however many frames the navigation takes to start.
-    swipeNavSlide = { direction, fromPx: swipeNavSlideOriginPx(releaseOffsetPx) };
+    // THE PAGE KEEPS MOVING WHILE THE ROUTER GETS READY. It used to hold the release position until
+    // `onNavigate` - a still frame in the middle of a fast throw, for as long as the destination's
+    // load took (user, 2026-09-30). It now carries on towards the edge at the transition's own pace;
+    // `onNavigate` reads where it has got to and the view transition takes over from THERE, so the
+    // strip never stops. The inline transform is what the snapshot captures, so it is not cleared.
+    const width = window.innerWidth;
+    pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
+    pageScrollWrap.style.transform = `translate3d(${direction === 'next' ? -width : width}px, 0, 0)`;
+    swipeNavSlide = { direction };
     void goto(href).catch((err) => {
       console.error('[SwipeNav] navigation failed:', href, err);
       swipeNavSlide = null;
@@ -375,13 +405,21 @@
     const wrap = pageScrollWrap;
     const startViewTransition = document.startViewTransition?.bind(document);
     if (!wrap || !startViewTransition) {
+      // The drag transform is cleared here: nothing captures it on this path, and left in place it
+      // would shift the NEW page by the drag distance once the entrance animation ended.
+      clearSwipeTransform(wrap);
       swipeEnterClass =
         slide.direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
       return;
     }
 
+    // Where the page has got to since the release - it has been moving (`commitSwipeNav`) - frozen
+    // there so the snapshot and `--swipe-nav-from` agree, and the slide continues from that point.
+    const travelled = transformTranslateXPx(getComputedStyle(wrap).transform);
+    wrap.style.transition = 'none';
+    wrap.style.transform = `translate3d(${slide.direction === 'next' ? -travelled : travelled}px, 0, 0)`;
     const root = document.documentElement;
-    root.style.setProperty('--swipe-nav-from', `${slide.fromPx}px`);
+    root.style.setProperty('--swipe-nav-from', `${swipeNavSlideOriginPx(travelled)}px`);
     root.dataset.swipeNav = slide.direction;
     wrap.classList.add('swipe-nav-capture-out');
 
@@ -429,9 +467,7 @@
       return;
     }
 
-    const canNext = swipeNavTargetHref(pathname, 'next') !== null;
-    const canPrev = swipeNavTargetHref(pathname, 'prev') !== null;
-    commitSwipeNav(direction, swipeDragResistancePx(dx, null, canNext, canPrev));
+    commitSwipeNav(direction);
   }
 
   function handleTouchCancel() {

@@ -8,6 +8,7 @@ import {
   swipeNavSlideOriginPx,
   swipeNavTargetHref,
   updateSwipeNavGesture,
+  transformTranslateXPx,
 } from './swipeNavigation';
 
 describe('isSwipeNavRoute', () => {
@@ -153,5 +154,23 @@ describe('swipeNavSlideOriginPx', () => {
 describe('resolveSwipeNavIndex', () => {
   it('maps nested post route to posts index', () => {
     expect(resolveSwipeNavIndex('/posts/x')).toBe(0);
+  });
+});
+
+describe('transformTranslateXPx', () => {
+  // The released page keeps moving; the view transition must start where it has GOT to, read off
+  // the computed transform mid-transition (user, 2026-09-30: the stop in the middle of a fast swipe).
+  it('reads the horizontal translation of a 2D and a 3D matrix, as a magnitude', () => {
+    expect(transformTranslateXPx('matrix(1, 0, 0, 1, -142.5, 0)')).toBe(142.5);
+    expect(transformTranslateXPx('matrix(1, 0, 0, 1, 90, 0)')).toBe(90);
+    expect(
+      transformTranslateXPx('matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -210, 0, 0, 1)')
+    ).toBe(210);
+  });
+
+  it('reads no movement for no transform, or one it cannot parse', () => {
+    expect(transformTranslateXPx('none')).toBe(0);
+    expect(transformTranslateXPx('')).toBe(0);
+    expect(transformTranslateXPx('translateX(20px)')).toBe(0);
   });
 });
