@@ -22,6 +22,12 @@ pub struct TabItem {
     /// Optional badge text (e.g. "3"). `None` shows no badge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<String>,
+    /// CANARI PATCH: the bitmap drawn while this tab is selected (`TabItemArgs.selectedImage` in
+    /// Swift). It has to be HERE as well: a plugin command reaches Swift through this struct, which
+    /// is deserialised and serialised again, so a field Swift reads and Rust lacks is dropped on
+    /// the way without an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_image: Option<String>,
 }
 
 /// A standalone account button floated beside the bar (Apple Music
@@ -261,6 +267,9 @@ pub struct ComponentProps {
     pub items: Option<Vec<TabItem>>,
     /// Initially-selected tab id (defaults to the first).
     pub selected_id: Option<String>,
+    /// CANARI PATCH: `fill` | `centered` | `automatic`, which Swift's `ComponentPropsArgs` reads and
+    /// upstream never carried here - so it was dropped before Swift saw it (see `TabItem`).
+    pub item_positioning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

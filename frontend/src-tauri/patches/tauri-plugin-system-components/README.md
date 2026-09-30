@@ -1,6 +1,7 @@
 > **CANARI'S COPY OF 0.1.8, PATCHED - read this before the upstream text below.** Two changes,
-> each marked `CANARI PATCH` in `ios/Sources`: a tab item's `selectedImage` (the bitmap drawn while
-> the tab is selected, so the app colours both states itself and no tint is needed), and NO keyboard guard - `KeyboardViewportGuard.swift` is deleted, so the
+> each marked `CANARI PATCH` in `ios/Sources` (and `src/models.rs`): a tab item's `selectedImage` (the bitmap drawn while
+> the tab is selected, so the app colours both states itself and no tint is needed - carried by `src/models.rs` too,
+> since a command crosses the Rust struct before Swift sees it), and NO keyboard guard - `KeyboardViewportGuard.swift` is deleted, so the
 > "the plugin repairs the keyboard's layout-viewport shrink" caveat below does NOT hold here.
 > Canari's own `CanariApplyKeyboardLayout` owns the WebView frame. Why: `docs/wiki/frontend/mobile.md#the-native-ios-tab-bar`.
 
