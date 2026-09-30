@@ -6,6 +6,7 @@
  *   adb shell cmd overlay enable-exclusive com.android.internal.systemui.navbar.gestural    (gestures)
  *   adb shell cmd overlay enable-exclusive com.android.internal.systemui.navbar.threebutton (buttons)
  *   bun insets.mjs [route-prefix] --mode gestural|threebutton
+ *   bun insets.mjs [route-prefix] --mode ios --ios   (the iPhone, over pymobiledevice3's CDP bridge)
  *
  * What it reports for each state (a route, or a dialog/sheet/menu opened from it):
  *   insets   env(safe-area-inset-*) and the visual viewport, so a mode change is visible as a number
@@ -42,8 +43,11 @@ const ROUTES = [
 const OPENS = /(plus d.actions|menu|filtr|param|r[ée]glage|nouveau|nouvelle|ajouter|cr[ée]er|voir|g[ée]rer|r[ée]agi|r[ée]action|partager|modifier|rechercher|profil|notifs|autres sites|commenter|r[ée]pondre|d[ée]tails|options|emoji|pi[èe]ce|joindre|publier$|photo|canal)/i;
 const NEVER = /(supprimer|d[ée]connex|quitter|r[ée]voquer|r[ée]initial|envoyer|confirmer|valider|enregistrer|payer|acheter|pin|effacer|bloquer|signaler|retirer|bannir)/i;
 
-const dev = resolveDevice(['--android']);
-await armIfPhone(dev, 'insets');
+// `--ios` reads the iPhone instead, through `pymobiledevice3 webinspector cdp --port 9444` (a bench
+// build is inspectable, .github/workflows/ios.yml): same audit, so the two phones answer one question.
+const IOS = argv.includes('--ios');
+const dev = IOS ? { port: Number(process.env.IOS_CDP_PORT ?? 9444) } : resolveDevice(['--android']);
+if (!IOS) await armIfPhone(dev, 'insets');
 /** The WebView can list stale hidden pages next to the live one (a click that opened a window, a
  * prerender): attach to the VISIBLE page and close the rest, or every later call talks to a page nobody sees. */
 async function attach() {
@@ -106,8 +110,13 @@ async function snap(label) {
   const probe = await evaluate(cx, PROBE);
   const audit = await evaluate(cx, AUDIT);
   const file = join(RUNS, 'ins', MODE, label.replace(/[^\w-]+/g, '_').slice(0, 90) + '.png');
-  const png = await cx.send('Page.captureScreenshot', { format: 'png' });
-  writeFileSync(file, Buffer.from(png.data, 'base64'));
+  // WebKit's inspector bridge may not implement the capture: the numbers are the result, the picture is a convenience.
+  try {
+    const png = await cx.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(file, Buffer.from(png.data, 'base64'));
+  } catch (err) {
+    console.warn(`[insets] no screenshot for ${label}: ${err.message}`);
+  }
   return { probe, audit };
 }
 
