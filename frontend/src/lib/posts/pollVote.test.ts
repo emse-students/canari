@@ -25,8 +25,40 @@ const poll = (options: Array<[string, string[]]>, votesByUser: Record<string, st
 
 const post = (polls: Poll[]): PostEntity => ({ id: 'post1', polls }) as PostEntity;
 
-const optionVotes = (result: PostEntity, optionId: string): string[] =>
-  result.polls[0].options.find((o) => o.id === optionId)?.votes ?? [];
+const optionVotes = (result: PostEntity, optionId: string): string[] => {
+  const votes = result.polls[0].options.find((o) => o.id === optionId)?.votes;
+  return Array.isArray(votes) ? votes : [];
+};
+
+describe('applyPostPollVote on an anonymous poll', () => {
+  const anonymous = (): Poll => ({
+    id: 'p1',
+    question: 'q',
+    multipleChoice: false,
+    anonymous: true,
+    options: [
+      { id: 'a', label: 'a', votes: 2 },
+      { id: 'b', label: 'b', votes: 0 },
+    ],
+    votesByUser: {},
+  });
+
+  it('counts the vote and marks the reader as having voted, recording no choice', () => {
+    const result = applyPostPollVote(post([anonymous()]), 'p1', 'u1', ['a']);
+    const [p] = result.polls;
+    expect(p.options.map((o) => o.votes)).toEqual([3, 0]);
+    expect(p.voted).toBe(true);
+    expect(p.votesByUser).toEqual({});
+    expect(JSON.stringify(result)).not.toContain('u1');
+  });
+
+  it('leaves the poll it was given untouched, so a refused vote can roll back', () => {
+    const before = post([anonymous()]);
+    applyPostPollVote(before, 'p1', 'u1', ['a']);
+    expect(before.polls[0].options.map((o) => o.votes)).toEqual([2, 0]);
+    expect(before.polls[0].voted).toBeUndefined();
+  });
+});
 
 describe('applyPostPollVote', () => {
   it('adds the voter to the chosen option and records the choice', () => {

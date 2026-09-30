@@ -806,6 +806,11 @@
           <ProfileBioMarkdown source={form.description} />
         </div>
       {/if}
+      {#if form.anonymous}
+        <p class="border-cn-border/60 text-text-muted border-t px-6 py-3 text-xs">
+          {m.form_view_anonymous_notice()}
+        </p>
+      {/if}
     </div>
 
     <!-- ── Progress bar ── -->

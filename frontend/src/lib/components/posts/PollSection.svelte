@@ -41,6 +41,10 @@
     maxSelections: number | null;
     /** `datetime-local` value at which the poll closes, or `''`. Bindable. */
     endsAt: string;
+    /** Whether votes are stored without their voter, and final. Bindable. */
+    anonymous: boolean;
+    /** True when editing: anonymity is fixed at creation, so it is shown and not offered. */
+    anonymousFixed?: boolean;
     /** What this draft is still missing, or `null` - shown beside the field it concerns. */
     issue?: PollDraftIssue | null;
     /** Called when the user clicks the remove (X) button. */
@@ -53,6 +57,8 @@
     multipleChoice = $bindable(),
     maxSelections = $bindable(),
     endsAt = $bindable(),
+    anonymous = $bindable(),
+    anonymousFixed = false,
     issue = null,
     onRemove,
   }: Props = $props();
@@ -136,6 +142,37 @@
       <span class="text-text-main text-sm font-semibold">{m.post_poll_allow_multiple_label()}</span>
       <div class="relative flex items-center">
         <input type="checkbox" bind:checked={multipleChoice} class="peer sr-only" />
+        <div
+          class="peer-checked:bg-cn-yellow h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
+        ></div>
+        <div
+          class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
+        ></div>
+      </div>
+    </label>
+
+    <!-- Anonymity is a promise about what is STORED, so it is chosen once and never flipped later:
+         turning it on after votes exist would promise it to votes already recorded with a name. -->
+    <label
+      class="bg-cn-surface hover:bg-cn-border/30 flex items-center justify-between gap-3 rounded-xl px-4 py-3 transition-colors select-none dark:hover:bg-white/10 {anonymousFixed
+        ? 'cursor-not-allowed opacity-60'
+        : 'cursor-pointer'}"
+    >
+      <span class="min-w-0">
+        <span class="text-text-main block text-sm font-semibold">
+          {m.post_poll_anonymous_label()}
+        </span>
+        <span class="text-text-muted block text-xs">
+          {anonymousFixed ? m.post_poll_anonymous_fixed_hint() : m.post_poll_anonymous_hint()}
+        </span>
+      </span>
+      <div class="relative flex shrink-0 items-center">
+        <input
+          type="checkbox"
+          bind:checked={anonymous}
+          disabled={anonymousFixed}
+          class="peer sr-only"
+        />
         <div
           class="peer-checked:bg-cn-yellow h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 dark:bg-white/20"
         ></div>

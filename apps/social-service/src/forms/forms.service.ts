@@ -13,6 +13,7 @@ import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
@@ -84,7 +85,8 @@ export class FormsService {
     private readonly associationsService: AssociationsService,
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
-    private readonly pricingFacts: PricingFactsService
+    private readonly pricingFacts: PricingFactsService,
+    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>
   ) {}
 
   /**
@@ -100,6 +102,25 @@ export class FormsService {
   }): Promise<void> {
     if (!formRequiresStripeReadyAssociation(input)) return;
     await this.associationsService.assertPaymentsReady(input.associationId!.trim());
+  }
+
+  /**
+   * Refuses an anonymous form that also takes money or grants something. A payment names its payer
+   * to the processor and to the submission, and a cotisation is granted TO an account, so each is
+   * the identity the form promised not to keep - refused where it is chosen, not dropped silently.
+   */
+  private assertAnonymousConfigValid(input: CreateFormDto & { anonymous?: boolean }): void {
+    if (input.anonymous !== true) return;
+    const takesMoney =
+      input.requiresPayment === true ||
+      (input.basePrice ?? 0) > 0 ||
+      input.priceMatrix != null ||
+      input.allowCashPayment === true;
+    if (takesMoney || input.grantsCotisation === true) {
+      throw new BadRequestException(
+        'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
+      );
+    }
   }
 
   /**
@@ -268,6 +289,7 @@ export class FormsService {
         throw new ForbiddenException('You are not a member of this association.');
       }
     }
+    this.assertAnonymousConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -409,6 +431,17 @@ export class FormsService {
       }
     }
 
+    // ANONYMITY IS FIXED AT CREATION for the same reason the association link is: turning it on
+    // would promise anonymity to answers already stored with a name, and turning it off would
+    // quietly start naming people who were told they were not. A present, different value is
+    // refused; an absent one means "leave it".
+    if (input.anonymous !== undefined && input.anonymous !== form.anonymous) {
+      throw new BadRequestException(
+        'A form stays anonymous, or not, as it was created. Create a new form to change it.'
+      );
+    }
+    this.assertAnonymousConfigValid({ ...input, anonymous: form.anonymous });
+
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
       { ...input, associationId: form.associationId },
@@ -419,6 +452,7 @@ export class FormsService {
       closedAt: closedAtRaw,
       ownerId: _ownerId,
       associationId: _associationId,
+      anonymous: _anonymous,
       ...rest
     } = input;
     Object.assign(form, {
@@ -579,6 +613,20 @@ export class FormsService {
     if (form.allowMultipleSubmissions)
       return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };
 
+    // An anonymous form's answers know no author, so "has this account answered" is read from the
+    // registry that knows no answer. The status is always `free`: an anonymous form takes no money.
+    if (form.anonymous) {
+      const answered = await this.respondentRepo.count({ where: { formId, userId } });
+      return {
+        hasSubmitted: answered > 0,
+        paymentStatus: answered > 0 ? 'free' : undefined,
+        formFull,
+        pricing,
+        hiddenItemIds,
+        maySubmit,
+      };
+    }
+
     const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
@@ -715,6 +763,45 @@ export class FormsService {
           ],
         });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+      }
+
+      if (form.anonymous) {
+        if (!input.userId) throw new BadRequestException('Sign in to answer this form.');
+        // An option supplement could still charge on a form saved free; a charge would need the
+        // payer, which is the one thing this branch refuses to keep.
+        if (totalCents > 0) {
+          throw new BadRequestException('An anonymous form cannot charge for an option.');
+        }
+        // The registry insert and the answer are ONE transaction, and the answer carries nothing
+        // that names the respondent: no account, no address, and a time cut to the day, because a
+        // precise clock would re-join the two tables by order alone.
+        if (!form.allowMultipleSubmissions) {
+          const inserted: unknown[] = await manager.query(
+            `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
+             ON CONFLICT DO NOTHING RETURNING "formId"`,
+            [id, input.userId]
+          );
+          if (inserted.length === 0) {
+            throw new BadRequestException('You have already answered this form.');
+          }
+        }
+        const day = new Date();
+        day.setUTCHours(0, 0, 0, 0);
+        savedSubmission = await manager.save(
+          manager.create(Submission, {
+            formId: id,
+            userId: null,
+            email: undefined,
+            answers: input.answers,
+            totalPaid: 0,
+            paymentStatus: 'free',
+            paymentMethod: null,
+            cashExpiresAt: null,
+            createdAt: day,
+            updatedAt: day,
+          })
+        );
+        return;
       }
 
       // Reuse an existing pending submission to avoid double-charge, unless multiple
@@ -1138,9 +1225,12 @@ export class FormsService {
 
   /** Returns all submissions for a form enriched with the submitter's first/last name. */
   async getSubmissions(formId: string) {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
+    // is a clock the day-precision `createdAt` was cut to hide.
     const subs = await this.submissionRepo.find({
       where: { formId },
-      order: { createdAt: 'DESC' },
+      order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
     });
     const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
@@ -1180,7 +1270,7 @@ export class FormsService {
 
     const submissions = await this.submissionRepo.find({
       where: { formId },
-      order: { createdAt: 'DESC' },
+      order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
     });
 
     // Batch-fetch first/last names for all submitters
@@ -1200,11 +1290,19 @@ export class FormsService {
     const sheetName = form.title.slice(0, 31);
     const sheet = workbook.addWorksheet(sheetName);
 
+    // An anonymous form's sheet has no name columns and only a DAY: the time was never stored.
     const headers: Partial<ExcelJS.Column>[] = [
-      { header: labels.date, key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
-      { header: labels.firstName, key: 'firstName', width: 20 },
-      { header: labels.lastName, key: 'lastName', width: 20 },
+      {
+        header: labels.date,
+        key: 'date',
+        width: 22,
+        style: { numFmt: form.anonymous ? 'dd/mm/yyyy' : 'dd/mm/yyyy hh:mm:ss' },
+      },
     ];
+    if (!form.anonymous) {
+      headers.push({ header: labels.firstName, key: 'firstName', width: 20 });
+      headers.push({ header: labels.lastName, key: 'lastName', width: 20 });
+    }
     if (form.requiresPayment) {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
       headers.push({ header: labels.status, key: 'status', width: 14 });
@@ -1217,12 +1315,14 @@ export class FormsService {
     sheet.columns = headers;
 
     submissions.forEach((sub) => {
-      const names = nameMap.get(sub.userId) ?? { firstName: null, lastName: null };
+      const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
-        firstName: names.firstName ?? '',
-        lastName: names.lastName ?? '',
       };
+      if (!form.anonymous) {
+        row.firstName = names.firstName ?? '';
+        row.lastName = names.lastName ?? '';
+      }
       if (form.requiresPayment) {
         row.total = (sub.totalPaid || 0) / 100;
         // A status the client had no word for is written AS STORED and accused in the log: the file

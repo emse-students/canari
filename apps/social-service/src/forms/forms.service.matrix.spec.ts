@@ -95,7 +95,8 @@ describe('FormsService pricing, through submit', () => {
       { isMember: jest.fn(), assertPaymentsReady: jest.fn(), callerHasFlag: jest.fn() } as any,
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       { create: jest.fn() } as any,
-      pricingFacts
+      pricingFacts,
+      {} as any
     );
     return { service, pricingFacts, saved };
   }

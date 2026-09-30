@@ -6,6 +6,7 @@ import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { FormRespondent } from './entities/form-respondent.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 import { PushService } from '../push/push.service';
@@ -16,7 +17,7 @@ import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Form, Submission, FormReminder]),
+    TypeOrmModule.forFeature([Form, Submission, FormReminder, FormRespondent]),
     ConfigModule,
     AssociationsModule,
     PostsModule,

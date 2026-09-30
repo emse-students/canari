@@ -108,6 +108,8 @@
     _initialPoll?.endsAt ? toDatetimeLocalValue(_initialPoll.endsAt) : ''
   );
   let pollEndsAt = $state(_initialEndsAt);
+  // Fixed at creation: shown read-only and never sent, the server keeps the stored value.
+  let pollAnonymous = $state(untrack(() => _initialPoll?.anonymous === true));
   /** Which poll field the last refused save was waiting on, shown inside the card. */
   let pollIssue = $state<PollDraftIssue | null>(null);
 
@@ -466,6 +468,8 @@
           bind:multipleChoice={pollMultipleChoice}
           bind:maxSelections={pollMaxSelections}
           bind:endsAt={pollEndsAt}
+          bind:anonymous={pollAnonymous}
+          anonymousFixed
           issue={pollIssue}
           onRemove={() => {
             includePoll = false;

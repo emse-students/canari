@@ -110,6 +110,14 @@ export class PollInputDto {
   @IsDateString()
   @IsOptional()
   endsAt?: string;
+
+  /**
+   * Store votes without their voter: a tally and a list of who voted, never joined. FIXED at
+   * creation - the stored value wins on an edit - and final for the voter (see `anonymous-poll.ts`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  anonymous?: boolean;
 }
 
 export class FormOptionInputDto {

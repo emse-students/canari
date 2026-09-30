@@ -28,6 +28,7 @@ import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cac
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
+import { isAnonymousPoll, servePolls } from './anonymous-poll';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -244,8 +245,9 @@ export class PostsService {
   /** Strip publisher identity and attach association display for API responses. */
   private shapeListRow(p: any, viewer: PostViewerContext): any {
     const capabilities = this.viewerCapabilities(p, viewer);
+    const polls = servePolls(p.polls, viewer.viewerId);
     if (!p.associationId) {
-      const out: any = { ...p, ...capabilities };
+      const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
       if (this.mustHideAnonymousAuthor(p, viewer)) {
         delete out.authorId;
         delete out.authorDisplayName;
@@ -254,7 +256,7 @@ export class PostsService {
       }
       return out;
     }
-    const out: any = { ...p, ...capabilities };
+    const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
     delete out.authorId;
     delete out.authorDisplayName;
     delete out.authorFirstName;
@@ -285,6 +287,7 @@ export class PostsService {
       raw.images = raw.media;
     }
     Object.assign(raw, this.viewerCapabilities(post, viewer));
+    if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (!raw.associationId) {
       if (this.mustHideAnonymousAuthor(post, viewer)) {
         delete raw.authorId;
@@ -353,6 +356,28 @@ export class PostsService {
   private normalizePolls(incoming: any[], existing: any[] = []): any[] {
     return incoming.map((poll: any) => {
       const previous = existing.find((p: any) => p?.id && p.id === poll.id);
+      // ANONYMITY IS THE STORED POLL'S, NEVER THE REQUEST'S: an edit that flipped it would promise
+      // anonymity to votes already recorded with a name, or strip the name from votes whose casters
+      // were told it was kept.
+      const anonymous = previous ? isAnonymousPoll(previous) : poll.anonymous === true;
+      if (anonymous) {
+        const options = (poll.options || []).map((opt: any) => {
+          const id = opt.id || crypto.randomUUID();
+          const previousVotes = previous?.options?.find((o: any) => o.id === id)?.votes;
+          return { ...opt, id, votes: typeof previousVotes === 'number' ? previousVotes : 0 };
+        });
+        return {
+          ...poll,
+          id: poll.id || crypto.randomUUID(),
+          anonymous: true,
+          multipleChoice: poll.multipleChoice ?? false,
+          maxSelections: poll.maxSelections ?? null,
+          endsAt: poll.endsAt ?? null,
+          voters: Array.isArray(previous?.voters) ? [...previous.voters] : [],
+          votesByUser: {},
+          options,
+        };
+      }
       const options = (poll.options || []).map((opt: any) => {
         const id = opt.id || crypto.randomUUID();
         const previousVotes = previous?.options?.find((o: any) => o.id === id)?.votes;
@@ -377,6 +402,8 @@ export class PostsService {
       return {
         ...poll,
         id: poll.id || crypto.randomUUID(),
+        // Spelled out so a request saying `true` cannot ride in on the spread above.
+        anonymous: false,
         multipleChoice: poll.multipleChoice ?? false,
         // A cap that no longer fits the votes already cast is not rewritten: those votes are
         // history, and the cap only ever decides what the NEXT voter may do.

@@ -35,6 +35,8 @@
   interface Props {
     /** Whether the form charges anything. */
     requiresPayment: boolean;
+    /** An anonymous form cannot charge: a payment names its payer. */
+    anonymous: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
     /** Whether cash is accepted alongside the card. */
@@ -57,6 +59,7 @@
 
   let {
     requiresPayment = $bindable(),
+    anonymous,
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
     cashPaymentExpiryDays = $bindable(),
@@ -85,7 +88,12 @@
 </script>
 
 <FormSection title={m.form_section_payment()} icon={CreditCard}>
-  <Toggle bind:checked={requiresPayment} label={m.form_requires_payment_label()} />
+  <Toggle
+    bind:checked={requiresPayment}
+    disabled={anonymous}
+    label={m.form_requires_payment_label()}
+    hint={anonymous ? m.form_payment_disabled_anonymous() : undefined}
+  />
 
   {#if requiresPayment}
     {#if paymentBlocker}

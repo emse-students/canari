@@ -60,6 +60,7 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  let anonymous = $state(false);
 
   // Payment
   let basePrice = $state(0);
@@ -151,6 +152,7 @@
       opensAt = isoToDatetimeLocal(f.opensAt);
       allowCashPayment = f.allowCashPayment ?? false;
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
+      anonymous = f.anonymous ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       imageUrl = f.imageUrl ?? null;
       items = fromFormItems(f.items ?? [], requiresPayment);
@@ -376,6 +378,7 @@
     <!-- 2. Money -->
     <FormPaymentSection
       bind:requiresPayment
+      {anonymous}
       bind:basePrice
       bind:allowCashPayment
       bind:cashPaymentExpiryDays
@@ -404,6 +407,9 @@
     <FormAdvancedSettings
       bind:maxSubmissions
       bind:allowMultipleSubmissions
+      bind:anonymous
+      anonymousFixed
+      {requiresPayment}
       bind:opensAt
       bind:submitCondition
       bind:settings={cotisation}

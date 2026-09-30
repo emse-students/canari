@@ -43,6 +43,7 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  let anonymous = $state(false);
 
   // Payment
   let basePrice = $state(0);
@@ -189,6 +190,7 @@
         items: toFormItemsPayload(items),
         maxSubmissions,
         allowMultipleSubmissions,
+        ...(anonymous ? { anonymous } : {}),
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
@@ -271,6 +273,7 @@
   <!-- 2. Money -->
   <FormPaymentSection
     bind:requiresPayment
+    {anonymous}
     bind:basePrice
     bind:allowCashPayment
     bind:cashPaymentExpiryDays
@@ -289,6 +292,9 @@
   <FormAdvancedSettings
     bind:maxSubmissions
     bind:allowMultipleSubmissions
+    bind:anonymous
+    anonymousFixed={false}
+    {requiresPayment}
     bind:opensAt
     bind:submitCondition
     bind:settings={cotisation}

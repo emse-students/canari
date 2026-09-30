@@ -35,6 +35,12 @@
     maxSubmissions: number | undefined;
     /** Whether one person may answer more than once. */
     allowMultipleSubmissions: boolean;
+    /** Whether answers are stored without their author. */
+    anonymous: boolean;
+    /** True once the form exists: anonymity is fixed at creation and shown, not offered. */
+    anonymousFixed: boolean;
+    /** A paid form cannot be anonymous: a payment names its payer. */
+    requiresPayment: boolean;
     /** Opening date, as a `datetime-local` string. Empty when the form is open at once. */
     opensAt: string;
     /** Who may answer at all; null means anybody. */
@@ -54,6 +60,9 @@
   let {
     maxSubmissions = $bindable(),
     allowMultipleSubmissions = $bindable(),
+    anonymous = $bindable(),
+    anonymousFixed,
+    requiresPayment,
     opensAt = $bindable(),
     submitCondition = $bindable(),
     settings = $bindable(),
@@ -67,6 +76,7 @@
   const activeCount = $derived(
     (maxSubmissions != null && maxSubmissions > 0 ? 1 : 0) +
       (allowMultipleSubmissions ? 1 : 0) +
+      (anonymous ? 1 : 0) +
       (opensAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0)
   );
@@ -101,6 +111,19 @@
       bind:checked={allowMultipleSubmissions}
       label={m.form_allow_multiple_label()}
       hint={m.form_allow_multiple_hint()}
+    />
+
+    <!-- Anonymity is a promise about what is STORED, so it is chosen once: turning it on later would
+         promise it to answers already written with a name. Said in the hint, not left to a refusal. -->
+    <Toggle
+      bind:checked={anonymous}
+      disabled={anonymousFixed || (requiresPayment && !anonymous)}
+      label={m.form_anonymous_label()}
+      hint={anonymousFixed
+        ? m.form_anonymous_hint_fixed()
+        : requiresPayment
+          ? m.form_anonymous_hint_paid()
+          : m.form_anonymous_hint()}
     />
 
     <div>

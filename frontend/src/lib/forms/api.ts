@@ -71,6 +71,11 @@ export interface CreateFormPayload {
   paymentMethods?: string[];
   /** Allow the same user to submit multiple times (e.g. product orders). */
   allowMultipleSubmissions?: boolean;
+  /**
+   * Answers are stored without their author, address or exact time. Free forms only and fixed at
+   * creation: the edit screen never sends it and shows it read-only.
+   */
+  anonymous?: boolean;
   /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
@@ -264,7 +269,8 @@ export async function checkSubmission(formId: string): Promise<{
 export interface Submission {
   id: string;
   formId: string;
-  userId: string;
+  /** Null on an anonymous form: the answer has no author by design. */
+  userId: string | null;
   firstName: string | null;
   lastName: string | null;
   email: string | null;

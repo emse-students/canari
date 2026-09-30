@@ -11,7 +11,11 @@ export type PostImageRef = PostMediaRef;
 export interface PollOption {
   id: string;
   label: string;
-  votes: string[];
+  /**
+   * The voters' ids on a named poll, or just the TALLY on an anonymous one - which never reveals
+   * who voted for what (`Poll.anonymous`).
+   */
+  votes: string[] | number;
 }
 
 /**
@@ -38,6 +42,8 @@ export interface PollPayload {
    * field, and a cleared input is a decision rather than an absence.
    */
   endsAt?: string | null;
+  /** Votes are stored without their voter and are final. Fixed at creation; the server keeps the stored value on an edit. */
+  anonymous?: boolean;
 }
 
 export interface Poll {
@@ -54,6 +60,13 @@ export interface Poll {
   maxSelections?: number | null;
   endsAt?: string;
   votesByUser: Record<string, string[]>;
+  /**
+   * Votes carry no voter and cannot be changed or retracted. Options then hold a TALLY, not a voter
+   * list, and `votesByUser` is empty: the server does not know who chose what.
+   */
+  anonymous?: boolean;
+  /** Anonymous polls only: whether THIS reader has voted. All the server can still say about them. */
+  voted?: boolean;
 }
 
 export interface PostForm {

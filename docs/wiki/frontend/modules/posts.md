@@ -22,6 +22,24 @@
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
+## An anonymous poll stores a tally and no voters (2026-09-30)
+
+A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creation like a form's
+(`normalizePolls` keeps the STORED value on an edit, so a request cannot flip it either way).
+`apps/social-service/src/posts/anonymous-poll.ts` is the whole mechanism:
+
+- **Stored**: `option.votes` is a NUMBER, and `poll.voters` is the list of accounts that voted, with
+  no choice attached and **sorted**, so the list is not the order of arrival. `votesByUser` is `{}`.
+- **Served**: `servePolls` drops `voters` and adds `voted` for THAT reader. It runs at the two
+  points every served post goes through (`shapeListRow`, `toPublicPostFromEntity`) and on the vote
+  response, so a participant list is never sent to anybody - not the author, not a moderator.
+- **Final**: one vote, no change, no retraction. Changing a vote needs the previous choice, which is
+  exactly what was not kept. The card therefore does not send an anonymous single-choice vote on the
+  tap: it waits for the "Voter" button, as a multiple-choice poll does.
+
+The price, stated: after a reload an anonymous voter sees THAT they voted and the results, but not
+which option they picked - the server does not know.
+
 ## Post creation (EditPostForm.svelte)
 
 - Markdown content editor.

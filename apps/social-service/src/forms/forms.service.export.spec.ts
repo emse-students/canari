@@ -48,6 +48,7 @@ describe('FormsService.exportSubmissions', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
   }

@@ -244,10 +244,14 @@
     // A closed poll is a fact this card holds. Sending the vote to find out would be answered with
     // a 400 since 2026-09-23, and before that it was RECORDED - which is why the buttons say so.
     if (pollIsOver(poll)) return;
+    // An anonymous vote is final, so there is nothing left to select once it has been cast.
+    if (poll.anonymous && poll.voted) return;
     const mine = selectionIn(poll);
     const others = selectedOptions.filter((id) => !mine.includes(id));
     selectedOptions = [...others, ...nextPollSelection(mine, optionId, poll)];
-    if (!poll.multipleChoice) void submitVote(poll.id, true);
+    // An anonymous single-choice vote is NOT sent on the tap: it cannot be taken back, so it waits
+    // for the explicit button like a multiple-choice one.
+    if (!poll.multipleChoice && !poll.anonymous) void submitVote(poll.id, true);
   }
 
   /** Submits this poll's selection to the API and updates the local vote counts on success. */

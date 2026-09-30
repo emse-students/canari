@@ -113,7 +113,13 @@
   }
 
   function hasVoted(poll: Poll): boolean {
-    return poll.options.some((opt) => selectedOptions.includes(opt.id));
+    // An anonymous poll cannot say WHICH option was chosen, only that this reader voted.
+    return poll.voted === true || poll.options.some((opt) => selectedOptions.includes(opt.id));
+  }
+
+  /** An anonymous vote is final: once cast, the poll takes no more from this reader. */
+  function locked(poll: Poll): boolean {
+    return poll.anonymous === true && poll.voted === true;
   }
 
   /**
@@ -171,6 +177,14 @@
                   ⏱ {over ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
                 </span>
               {/if}
+              {#if poll.anonymous}
+                <span
+                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
+                  title={m.post_poll_anonymous_final_hint()}
+                >
+                  {m.post_poll_anonymous_badge()}
+                </span>
+              {/if}
               {#if hasVoted(poll)}
                 <span
                   class="text-2xs inline-flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400"
@@ -186,7 +200,7 @@
         <div class="space-y-2.5">
           {#each poll.options as option (option.id)}
             {@const isSelected = selectedOptions.includes(option.id)}
-            {@const refuses = over || (full && !isSelected)}
+            {@const refuses = over || locked(poll) || (full && !isSelected)}
             {@const percentage = getPercentage(option.votes, totalVotes)}
             {@const voteCount = getVoteCount(option.votes)}
             {@const voterIds = getVoterIds(option.votes)}
@@ -298,7 +312,11 @@
             <span class="text-text-muted text-xs font-bold opacity-60"
               >{m.post_poll_ended_full_label()}</span
             >
-          {:else if poll.multipleChoice}
+          {:else if locked(poll)}
+            <span class="text-text-muted text-xs font-bold opacity-60">
+              {m.post_poll_anonymous_locked()}
+            </span>
+          {:else if poll.multipleChoice || poll.anonymous}
             {#if full}
               <span class="text-text-muted text-xs font-bold opacity-70">
                 {m.post_poll_selection_full_hint({ count: poll.maxSelections ?? 0 })}

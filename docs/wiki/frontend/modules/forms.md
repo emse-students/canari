@@ -368,6 +368,39 @@ roster. `assertCotisationConfigValid` now takes the caller and refuses the setti
 Dividing a price grid on a cotisation tier is deliberately NOT gated: charging existing cotisants a
 different amount grants nothing and changes no one's membership.
 
+## An anonymous form keeps no author (2026-09-30)
+
+A manager can mark a form **anonymous** at creation (`forms.anonymous`, migration 067). It is the
+promise *"the server cannot tell you who answered what"*, and it is kept by what is STORED, not by
+what is displayed:
+
+| | Named form | Anonymous form |
+|---|---|---|
+| `submissions.userId` / `email` | the submitter | **NULL** |
+| `submissions.createdAt` | the instant | **cut to the UTC day** - a precise clock would re-join the two tables by order alone |
+| "has this account answered" | a `submissions` row | `form_respondents (formId, userId)`, which names **no answer and no time** |
+| Responses list and XLSX | newest first, name columns | **random-id order**, no name column, date without time |
+
+The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING ... RETURNING` is
+what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
+registers nobody.
+
+**Free only, refused where it is chosen** (`assertAnonymousConfigValid`): a payment names its payer
+to Stripe and to the submission, and a cotisation is granted TO an account. A price grid, cash, a
+cotisation grant and an option supplement are all refused; the create screen disables the payment
+toggle and the anonymity toggle against each other, with the reason as the hint.
+
+**Fixed at creation**, exactly like the association link: turning it on later would promise
+anonymity to answers already stored with a name, and turning it off would quietly start naming
+people who were told they were not. `update` refuses a present, different value; the edit screen
+shows the toggle read-only.
+
+What it does NOT hide, stated so nobody over-reads it: an audience restriction (`submitCondition`,
+`showIf`) is still judged against the submitter's profile at submit time, and a question that asks
+for a promo or a formation on a small group re-identifies its answerer by itself. The fill page says
+only what is stored, not more. Database history (WAL, backups) taken while the answer was written is
+outside this mechanism.
+
 ## A form's association is chosen once, at creation
 
 A form is either personal or an association's, and `update` refuses any change to `associationId`

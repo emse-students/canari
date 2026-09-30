@@ -49,6 +49,7 @@ describe('FormsService.list', () => {
       {} as any,
       // The list never prices anything, so no facts are ever built. Present because the
       // constructor requires it, and deliberately not a stub that would hide a call.
+      {} as any,
       {} as any
     );
     return { service, associationsService };
