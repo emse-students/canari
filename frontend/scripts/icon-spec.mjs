@@ -51,6 +51,7 @@ export const DEV_BOTTOM = '#150E2E';
 /** The two palettes a launcher icon is built in, and the flag that picks one (`--dev`). */
 export const BRAND_PALETTE = { top: NAVY_TOP, bottom: NAVY_BOTTOM };
 export const DEV_PALETTE = { top: DEV_TOP, bottom: DEV_BOTTOM };
+/** @param {string[]} argv */
 export const paletteFor = (argv) => (argv.includes('--dev') ? DEV_PALETTE : BRAND_PALETTE);
 
 /** The bird's yellow. NOT the app's `--cn-yellow`: the logo is the identity, the token is the UI. */
