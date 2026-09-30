@@ -10,7 +10,12 @@
     Video,
     Images,
     Hash,
+    Ellipsis,
   } from '@lucide/svelte';
+  import GlassMenuButton, {
+    type GlassMenuItem,
+  } from '$lib/components/shared/GlassMenuButton.svelte';
+  import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
@@ -103,6 +108,75 @@
     Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && isReady)
   );
 
+  /** The phone apps draw the glass header; the website keeps the classic one (`usesGlassChrome`). */
+  const glass = usesGlassChrome();
+
+  const settingsLabel = $derived(
+    isChannel
+      ? m.chat_channel_settings_label()
+      : isGroupConversation
+        ? m.chat_group_settings_label()
+        : m.chat_dm_settings_label()
+  );
+
+  /**
+   * THE ACTIONS THE PHONE HEADER'S MENU GROWS INTO - the same ones, under the same conditions, as the
+   * desktop header's row of icons below, so the two cannot offer different things (user, 2026-09-30:
+   * a back and a menu button that grows to show the other options).
+   */
+  const menuItems = $derived.by((): GlassMenuItem[] => {
+    const items: GlassMenuItem[] = [];
+    if (showCallButtons && onStartAudioCall) {
+      items.push({
+        id: 'audio',
+        label: m.chat_audio_call_label(),
+        icon: Phone,
+        onSelect: onStartAudioCall,
+      });
+    }
+    if (showCallButtons && onStartVideoCall) {
+      items.push({
+        id: 'video',
+        label: m.chat_video_call_label(),
+        icon: Video,
+        onSelect: onStartVideoCall,
+      });
+    }
+    if (onOpenMembers) {
+      items.push({
+        id: 'members',
+        label: m.common_members_label(),
+        icon: Users,
+        onSelect: onOpenMembers,
+        active: membersActive,
+      });
+    }
+    if (onOpenMedia) {
+      items.push({
+        id: 'media',
+        label: m.chat_media_links_files_label(),
+        icon: Images,
+        onSelect: onOpenMedia,
+      });
+    }
+    if (onToggleSearch) {
+      items.push({
+        id: 'search',
+        label: m.chat_search_title(),
+        icon: Search,
+        onSelect: onToggleSearch,
+        active: searchActive,
+      });
+    }
+    items.push({
+      id: 'settings',
+      label: m.chat_settings_title(),
+      icon: Settings,
+      onSelect: () => onOpenSettings?.(),
+    });
+    return items;
+  });
+
   let isOnline = $derived($presenceMap[contactName] || false);
   let resolvedContactDisplayName = $state('');
 
@@ -131,9 +205,71 @@
   });
 </script>
 
-<!-- Main header -->
+<!--
+  IN THE PHONE APPS THE HEADER IS THREE PIECES OF GLASS FLOATING OVER THE CONVERSATION (user,
+  2026-09-30) - back, the conversation in a centre pill, and a menu that grows into the actions. It
+  draws no bar of its own: `ChatArea` floats it over the messages and reserves its height, so the
+  thread scrolls under the glass. The website keeps the header below, at every width.
+-->
+{#if glass}
+  <div class="chat-header-phone flex items-center gap-2 px-3 py-2 md:hidden">
+    {#if onBack}
+      <button
+        type="button"
+        onclick={onBack}
+        aria-label={m.chat_back_label()}
+        title={m.chat_back_label()}
+        class="glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+      >
+        <ChevronLeft size={22} strokeWidth={2.25} />
+      </button>
+    {/if}
+
+    <div class="flex min-w-0 flex-1 justify-center">
+      <button
+        type="button"
+        onclick={() => onOpenSettings?.()}
+        aria-label={settingsLabel}
+        class="glass-chrome flex max-w-full min-w-0 items-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
+      >
+        {#if isChannel}
+          <span class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">
+            <Hash size={18} strokeWidth={2.5} />
+          </span>
+        {:else if isGroupConversation}
+          <span class="flex h-8 w-8 shrink-0 items-center justify-center">
+            <GroupAvatar {imageMediaId} name={displayName} variant="group" size="md" />
+          </span>
+        {:else}
+          <span class="relative flex h-8 w-8 shrink-0 items-center justify-center">
+            <Avatar userId={contactName} size="md" fallbackLabel={effectiveDisplayName} />
+            {#if isOnline}
+              <span
+                class="absolute right-0 bottom-0 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-white dark:ring-zinc-900"
+              ></span>
+            {/if}
+          </span>
+        {/if}
+        <span class="text-text-main min-w-0 truncate text-sm font-bold">
+          <EmojiText text={effectiveDisplayName} />
+        </span>
+      </button>
+    </div>
+
+    <GlassMenuButton
+      icon={Ellipsis}
+      label={m.chat_more_actions_label()}
+      items={menuItems}
+      alignEnd
+    />
+  </div>
+{/if}
+
+<!-- The classic header: the website at every width, and the apps from `md` up. -->
 <header
-  class="bg-cn-surface relative z-20 flex items-center gap-3 border-b border-black/5 px-3 py-3 md:gap-4 md:px-6 dark:border-white/10"
+  class="bg-cn-surface relative z-20 items-center gap-3 border-b border-black/5 px-3 py-3 md:flex md:gap-4 md:px-6 dark:border-white/10 {glass
+    ? 'hidden'
+    : 'flex'}"
 >
   <!-- Back button (mobile) - fixed width so the avatar stays centered -->
   <div class="flex w-8 shrink-0 items-center justify-start md:hidden">

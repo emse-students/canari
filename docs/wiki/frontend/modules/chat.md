@@ -27,6 +27,51 @@ The chat module is split across three composables:
 
 Conversation state lives in a `SvelteMap<string, Conversation>` local to the composables (not a global Svelte store). Both `MainChatPage.svelte` and `ChatBackgroundService.svelte` instantiate their own instance.
 
+## The conversation's chrome in the phone apps - glass floating over the thread (2026-09-30)
+
+**The user's rule:** *"only static ui element, that are apart from content, should be liquid glass"*,
+and for the conversation: *"replace the bar on top of messages with just a back and menu button
+that then grows ... to show the other options ... and do the same for the composer"* - then, the
+same day, *"only apply it on phone finally, the design is good on web"*. Decisions L1-L4 are in the
+[backlog](../../backlog.md#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2).
+This is WP-G1: the PHONE APPS (iOS and Android) at the narrow chat layout, in CSS glass; WP-G2 makes
+the same pieces native Liquid Glass on iOS. **The website keeps its classic header and composer at
+every width**, a phone's browser included. ONE predicate decides it, `usesGlassChrome`
+(`lib/mobile/glassChrome.ts`, `isMobileTauriRuntime`), read by `ChatHeader`, `ChatArea` and
+`ChatComposer`.
+
+- **The header is three pieces of glass** (`ChatHeader`, `.chat-header-phone`): back, the
+  conversation in a CENTRE PILL (avatar, name - tap opens its settings), and `GlassMenuButton`
+  ("Plus d'actions") growing into the SAME actions as the classic row, under the same conditions -
+  calls when their handlers are given, a channel's members first, media, search, settings.
+  `ChatHeader.phoneMenu.svelte.test.ts` holds that parity, and that the website draws none of it.
+- **It floats over the thread.** `ChatArea` puts header, search, polls and pinned into one layer,
+  `.chat-chrome-slot`, and publishes its height as `--chat-header-height`, the way the composer
+  publishes `--chat-composer-height`. In the apps (`.chat-glass-chrome` on the panel) the layer is
+  `position: absolute` and the list (`padding-top`) and the sync banners (`.chat-thread-banners`)
+  reserve it; it is `pointer-events: none` except on its controls, since the gaps between the glass
+  pieces are the thread. On the website it stays in the flow.
+- **The date pill sits under the chrome EVERYWHERE** - a defect found on the way, on every width: the
+  pill is positioned against the whole panel, header included, so at `top: 0.85rem` the header
+  covered it while it showed. It now reads `--chat-header-height` too.
+- **The apps' composer is ONE "+"** (`ChatComposer`, `addMenuItems`): photos and videos, all files,
+  GIF, poll - each under its classic button's condition. No paperclip, poll or GIF button and no
+  CHEVRON FOLD there: one button needs none. The microphone still gives way to Send while typing. The
+  website keeps all of it: the paperclip (a phone browser's opens the same photos / files menu,
+  `attachMenuItems`), poll, GIF and the fold.
+- **`GlassMenuButton`** (`components/shared`) is the growing menu: a round `glass-chrome` button whose
+  panel scales out of the button's own corner (`data-popover-side` picks the origin), portalled -
+  `backdrop-filter` would otherwise confine a fixed panel to the button - and positioned with
+  `bindFixedPopover`'s new `stayAnchored`, since a panel that grows OUT OF its button must not be
+  centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
+  paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
+
+**Measured** on the real `ChatArea` with a stand-in group at 390x780, Chromium, light and dark: in
+the glass mode the thread scrolls under the three pieces, the menu hangs from the "..." (right edges
+at 378), the search bar floats under the header, the "+" menu opens above the "+", and typing swaps
+the microphone for Send; on the website the same page draws no glass at all. **Not measured:** the
+apps themselves (no WebView here), a real account, and the keyboard on a phone.
+
 ## Key components
 
 | Component | Role |

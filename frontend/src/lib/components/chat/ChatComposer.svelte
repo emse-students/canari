@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
     Send,
@@ -12,7 +13,12 @@
     SmilePlus,
     Images,
     FolderOpen,
+    ImagePlay,
+    Plus,
   } from '@lucide/svelte';
+  import GlassMenuButton, {
+    type GlassMenuItem,
+  } from '$lib/components/shared/GlassMenuButton.svelte';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
@@ -135,38 +141,63 @@
    * audio, PDFs and archives at once is a document request, and Android answers it with the file
    * browser. `image/*,video/*` alone is a media request - the system's photo grid where the phone
    * has one, the photo library on iOS - and needs no gallery permission, which Google Play only
-   * grants to apps whose core purpose is photos. Opened from {@link attachMenuOpen} on a phone; a
+   * grants to apps whose core purpose is photos. Offered by the phone's "+" ({@link addMenuItems}); a
    * desktop keeps the one file dialog it always had.
    */
   let mediaInput: HTMLInputElement | undefined = $state();
-  /** The attach menu (phone only): photos, or every file. */
-  let attachMenuOpen = $state(false);
-  let attachButtonEl: HTMLButtonElement | undefined = $state();
-  let attachMenuEl: HTMLDivElement | undefined = $state();
 
-  $effect(() => {
-    if (!attachMenuOpen || !attachMenuEl || !attachButtonEl) return;
-    const anchor = attachButtonEl;
-    return bindFixedPopover(attachMenuEl, { anchor: () => anchor, offset: 4 });
-  });
-
-  /** The paperclip: a choice on a phone, the file dialog on a desktop. */
-  function onAttachClick() {
-    if (!isMobileViewport) {
-      fileInput?.click();
-      return;
-    }
-    attachMenuOpen = !attachMenuOpen;
-  }
-
-  /** Opens one of the two pickers from the menu. Synchronous: a picker opens only inside the tap. */
+  /** Opens one of the two pickers. Synchronous: a picker opens only inside the tap that asked. */
   function openPicker(input: HTMLInputElement | undefined, kind: 'media' | 'files') {
-    attachMenuOpen = false;
-    Log.d('ChatComposer', `attach menu: ${kind}`);
+    Log.d('ChatComposer', `attach: ${kind}`);
     input?.click();
   }
   let isDragOver = $state(false);
   let showGifPicker = $state(false);
+
+  /**
+   * IN THE PHONE APPS THE COMPOSER'S ACTIONS ARE ONE "+" THAT GROWS INTO THEM (user, 2026-09-30:
+   * "do the same for the composer") - photos, files, GIF, poll, each under the condition its button
+   * keeps elsewhere. One button needs no fold, so the chevron and its fold stay the website's, which
+   * keeps its classic composer at every width (`usesGlassChrome`).
+   */
+  const glassChrome = usesGlassChrome();
+  /** Photos, or every file - the website's phone paperclip, and the first two of the apps' "+". */
+  const attachMenuItems: GlassMenuItem[] = [
+    {
+      id: 'media',
+      label: m.chat_attach_menu_media(),
+      icon: Images,
+      onSelect: () => openPicker(mediaInput, 'media'),
+    },
+    {
+      id: 'files',
+      label: m.chat_attach_menu_files(),
+      icon: FolderOpen,
+      onSelect: () => openPicker(fileInput, 'files'),
+    },
+  ];
+
+  const addMenuItems = $derived.by((): GlassMenuItem[] => {
+    const items: GlassMenuItem[] = [...attachMenuItems];
+    if (hasGifPicker && onSendGif) {
+      items.push({
+        id: 'gif',
+        label: m.chat_send_gif_label(),
+        icon: ImagePlay,
+        onSelect: () => (showGifPicker = true),
+      });
+    }
+    if (onCreatePoll) {
+      const create = onCreatePoll;
+      items.push({
+        id: 'poll',
+        label: m.chat_create_poll_label(),
+        icon: ChartColumn,
+        onSelect: () => create(),
+      });
+    }
+    return items;
+  });
   /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
   const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
   let showEmojiPicker = $state(false);
@@ -201,6 +232,8 @@
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
   let isMobileViewport = $state(false);
+  /** The phone apps' composer: one glass "+" and no fold (see `addMenuItems`). */
+  const appChrome = $derived(isMobileViewport && glassChrome);
   /** True as soon as the user has typed something: used to free up composer width. */
   const isComposing = $derived(messageText.trim().length > 0);
 
@@ -821,7 +854,7 @@
       {/if}
 
       <!-- The chevron that brings the folded group back. Takes the group's place, never adds to it. -->
-      {#if controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -836,20 +869,41 @@
         </div>
       {/if}
 
-      <!-- Attachment button. -->
-      {#if !controlsCollapsed && !isVoiceActive}
-        <div
-          class="shrink-0"
-          use:clickOutside={{ enabled: attachMenuOpen, callback: () => (attachMenuOpen = false) }}
-        >
+      <!-- The phone apps' "+": every action, growing out of one glass button (see `addMenuItems`). -->
+      {#if appChrome && !isVoiceActive}
+        {#if isUploading}
+          <div class="shrink-0">
+            <button
+              type="button"
+              disabled
+              aria-label={m.chat_attach_file_label()}
+              class="glass-chrome ui-icon-button rounded-full"
+            >
+              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
+            </button>
+          </div>
+        {:else}
+          <GlassMenuButton icon={Plus} label={m.chat_composer_add_label()} items={addMenuItems} />
+        {/if}
+      {/if}
+
+      <!-- The website's paperclip: a phone browser gets the photos / files menu (`attachMenuItems`),
+           a desktop the file dialog, directly. -->
+      {#if !appChrome && isMobileViewport && !controlsCollapsed && !isVoiceActive}
+        <GlassMenuButton
+          variant="plain"
+          icon={Paperclip}
+          label={m.chat_attach_file_label()}
+          items={attachMenuItems}
+        />
+      {/if}
+      {#if !isMobileViewport && !controlsCollapsed && !isVoiceActive}
+        <div class="shrink-0">
           <button
-            bind:this={attachButtonEl}
-            onclick={onAttachClick}
+            onclick={() => openPicker(fileInput, 'files')}
             disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
-            aria-haspopup={isMobileViewport ? 'menu' : undefined}
-            aria-expanded={isMobileViewport ? attachMenuOpen : undefined}
             class="ui-icon-button chat-composer-icon-button"
           >
             {#if isUploading}
@@ -858,43 +912,11 @@
               <Paperclip size={20} strokeWidth={2} />
             {/if}
           </button>
-          {#if attachMenuOpen}
-            <div
-              bind:this={attachMenuEl}
-              use:portal
-              role="menu"
-              tabindex="-1"
-              class="bg-surface-elevated border-cn-border fixed z-(--z-popover) flex w-max flex-col gap-0.5 rounded-xl border p-1.5 shadow-lg"
-              transition:fade={{ duration: 120 }}
-              onkeydown={(e) => {
-                if (e.key === 'Escape') attachMenuOpen = false;
-              }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => openPicker(mediaInput, 'media')}
-                class="text-text-main flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10"
-              >
-                <Images size={18} strokeWidth={2} aria-hidden="true" />
-                {m.chat_attach_menu_media()}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => openPicker(fileInput, 'files')}
-                class="text-text-main flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10"
-              >
-                <FolderOpen size={18} strokeWidth={2} aria-hidden="true" />
-                {m.chat_attach_menu_files()}
-              </button>
-            </div>
-          {/if}
         </div>
       {/if}
 
       <!-- Poll button (communities only: parent provides onCreatePoll). -->
-      {#if onCreatePoll && !controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && onCreatePoll && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -909,7 +931,7 @@
       {/if}
 
       <!-- GIF button (shown when KLIPY is configured). -->
-      {#if hasGifPicker && onSendGif && !controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && hasGifPicker && onSendGif && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"

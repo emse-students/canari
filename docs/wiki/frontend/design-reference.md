@@ -65,6 +65,16 @@ an opaque parent - never the surface itself. This is the measured justification 
 Canari's glassmorphism: the reference does not use translucency to build surfaces at all, it uses it
 to signal that a pointer is over something.
 
+**ONE EXCEPTION, DECIDED (user, 2026-09-30): STATIC CHROME THAT FLOATS OVER CONTENT IS GLASS.** *"Only
+static ui element, that are apart from content, should be liquid glass"* - the iOS tab bar, and IN THE
+PHONE APPS (not the website) the conversation's header pieces and the composer's "+", which content
+scrolls UNDER. Nothing
+that IS content - a bubble, a card, a panel, a list - and no structural surface: this section still
+holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhere it is
+`.glass-chrome` in `app.css` (translucent `--glass-chrome-bg`, `backdrop-filter: blur(18px)
+saturate(180%)`, a light edge and a soft shadow), the one place the app builds a surface from
+translucency. The layout and the reasons are in [chat](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30).
+
 ## 4. The reference radii
 
 | value | count (MSG / FB) | what has it |

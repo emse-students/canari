@@ -14,6 +14,12 @@ export interface FixedPopoverLayoutOptions {
    * anchored to an input needs, since `w-full` no longer resolves once it is portalled out.
    */
   matchAnchorWidth?: boolean;
+  /**
+   * Keep the panel's edge on the anchor's even when it is wide - never centred. For a panel that
+   * GROWS OUT OF its button (`GlassMenuButton`), the attachment is the whole point: centred, it
+   * would appear from nowhere. It is still clamped into the viewport.
+   */
+  stayAnchored?: boolean;
 }
 
 export interface FixedPopoverOptions extends FixedPopoverLayoutOptions {
@@ -95,7 +101,8 @@ export function computeFixedPopoverPosition(
   // Nothing changes on a wide window, and that is checkable rather than hoped: at 1280px the same
   // panel is 352px against a 640px half, so the second condition is false and the anchor decides,
   // as it did before.
-  const fillsTheScreen = panelWidth > window.innerWidth / 2 && panelWidth > anchorRect.width;
+  const fillsTheScreen =
+    !options.stayAnchored && panelWidth > window.innerWidth / 2 && panelWidth > anchorRect.width;
   let left = fillsTheScreen
     ? (window.innerWidth - panelWidth) / 2
     : options.alignEnd
