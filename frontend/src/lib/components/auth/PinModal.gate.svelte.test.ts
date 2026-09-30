@@ -203,3 +203,56 @@ describe('PinModal - the refusal is announced', () => {
     expect(alerts()).toHaveLength(0);
   });
 });
+
+/**
+ * THE REDESIGNED SHEET'S OWN INTERACTIONS (2026-10-01): the stay-signed-in explanation is behind an
+ * info toggle instead of four lines of small print, and the keypad types and erases digits.
+ */
+describe('PinModal - the lock-screen sheet', () => {
+  const info = () =>
+    document.querySelector<HTMLButtonElement>(`button[aria-label="${m.auth_pin_info_toggle()}"]`);
+
+  it('keeps the stay-signed-in explanation closed until the info button is pressed', () => {
+    raiseGate({ showStaySignedIn: true });
+    expect(document.body.textContent).not.toContain(m.auth_pin_stay_signed_in_desc());
+    expect(info()!.getAttribute('aria-expanded')).toBe('false');
+
+    info()!.click();
+    flushSync();
+
+    expect(info()!.getAttribute('aria-expanded')).toBe('true');
+    expect(document.body.textContent).toContain(m.auth_pin_stay_signed_in_desc());
+  });
+
+  it('neither submits nor toggles the checkbox when the info button is pressed', () => {
+    const onSubmit = vi.fn();
+    raiseGate({ showStaySignedIn: true, onSubmit });
+    info()!.click();
+    flushSync();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLInputElement>('[data-stay-signed-in]')!.checked).toBe(true);
+  });
+
+  it('types digits on the keypad and erases them with the backspace key', () => {
+    // happy-dom opens the manual shape (no coarse pointer); the toggle reaches the keypad the way a
+    // person does.
+    raiseGate();
+    buttons()
+      .find((b) => b.text.includes(m.auth_pin_numeric_keypad()))!
+      .el.click();
+    flushSync();
+
+    const key = (d: string) => buttons().find((b) => b.text.trim() === d)!.el;
+    const filled = () => document.querySelectorAll('.bg-cn-yellow.scale-110').length;
+    key('1').click();
+    key('2').click();
+    flushSync();
+    expect(filled()).toBe(2);
+
+    document
+      .querySelector<HTMLButtonElement>(`button[aria-label="${m.auth_pin_delete_digit()}"]`)!
+      .click();
+    flushSync();
+    expect(filled()).toBe(1);
+  });
+});
