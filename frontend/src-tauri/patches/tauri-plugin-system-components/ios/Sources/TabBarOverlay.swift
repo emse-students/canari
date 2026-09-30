@@ -286,14 +286,18 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
                     side: Self.imageSide,
                     circular: item.circular ?? false
                 )
-                // CANARI PATCH: see `TabItemArgs.template`.
-                if item.template == true {
-                    image = image?.withRenderingMode(.alwaysTemplate)
-                }
             } else if let symbol = item.sfSymbol {
                 image = UIImage(systemName: symbol)
             }
             let barItem = UITabBarItem(title: item.title, image: image, tag: index)
+            // CANARI PATCH: see `TabItemArgs.selectedImage`.
+            if let b64 = item.selectedImage, let decoded = ImageUtil.decode(b64) {
+                barItem.selectedImage = ImageUtil.icon(
+                    decoded,
+                    side: Self.imageSide,
+                    circular: item.circular ?? false
+                )
+            }
             barItem.badgeValue = item.badge
             return barItem
         }

@@ -23,7 +23,7 @@
   import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
-  import { activeTabTint, lucideIconPng } from '$lib/mobile/nativeTabIcons';
+  import { classColorHex, lucideIconPng, TAB_ICON_CLASSES } from '$lib/mobile/nativeTabIcons';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
 
@@ -31,10 +31,11 @@
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
    *
    * It replaces `BottomNav` in the iOS app and offers the same four places (`MOBILE_NAV_PLACES`),
-   * the same GLYPHS (`PLACE_ICONS`, rasterised - user, 2026-09-30), the selected one in the web
-   * bar's yellow, the same unread dot (`placeBadge`), and appears under the same conditions the
-   * layout already applies to the web bar, which it receives as `visible`. The web bar is `md:hidden`, so this one
-   * hides at the same width.
+   * the same GLYPHS (`PLACE_ICONS`, rasterised - user, 2026-09-30) in the text colour, the selected
+   * one in the web bar's yellow, and NO tint on the bar itself (both states are drawn coloured). It
+   * carries the same unread dot (`placeBadge`), and appears under the same conditions the layout
+   * already applies to the web bar, which it receives as `visible`. The web bar is `md:hidden`, so
+   * this one hides at the same width.
    *
    * ICONS ONLY, AND VOICEOVER NAMES NOTHING - A DECISION, NOT AN OVERSIGHT. The plugin's item title is
    * at once the visible label and the accessible one, and the web bar draws no text; the user chose
@@ -46,7 +47,10 @@
    * floating iOS 26 pill and the classic bar are not the web bar's `4rem`.
    */
   interface Props {
-    /** The layout's own rule for the bottom bar: not with the keyboard up, not in an open conversation. The login page does not mount this at all. */
+    /**
+     * The layout's own rule for the bottom bar: not with the keyboard up, not in an open
+     * conversation. The login page does not mount this at all.
+     */
     visible: boolean;
   }
 
@@ -58,8 +62,28 @@
   let destroyed = false;
   /** The last badge value sent per place, so a re-render that changes nothing sends nothing. */
   let sentBadges: Record<string, string | undefined> = {};
-  /** The rasterised glyphs, drawn once. */
-  let icons: Record<string, string> = {};
+  /** The rasterised glyphs per place, both states, for the theme they were drawn in. */
+  let icons: Record<string, { normal: string; selected: string }> = {};
+  let iconsForDark: boolean | null = null;
+
+  /** Draws both states of every glyph in the current theme's colours - once per theme. */
+  async function drawIcons() {
+    const dark = themeStore.isDark;
+    if (iconsForDark === dark) return;
+    const normal = classColorHex(TAB_ICON_CLASSES.normal);
+    const selected = classColorHex(TAB_ICON_CLASSES.selected);
+    const drawn: typeof icons = {};
+    for (const place of MOBILE_NAV_PLACES) {
+      const glyph = PLACE_ICONS[place.icon];
+      drawn[place.id] = {
+        normal: await lucideIconPng(glyph, normal),
+        selected: await lucideIconPng(glyph, selected),
+      };
+    }
+    icons = drawn;
+    iconsForDark = dark;
+  }
+
   /**
    * Bumped on every configuration. The plugin REBUILDS its items when configured, which clears
    * every badge on them - so the badge effect reads this and sends them all again.
@@ -67,23 +91,24 @@
   let configurations = $state(0);
 
   /**
-   * (Re)configures the bar: the places, their glyphs as templates, the tint for the CURRENT theme,
-   * and the current selection. Idempotent on the plugin side - it updates the mounted bar in place.
+   * (Re)configures the bar: the places, both states of their glyphs in the CURRENT theme's colours,
+   * and the current selection - and no `tint`, so the bar's glass keeps its own colour. Idempotent
+   * on the plugin side - it updates the mounted bar in place.
    */
   async function configure() {
+    await drawIcons();
     const active = activePlaceId;
     await configureTabBar({
       items: MOBILE_NAV_PLACES.map((p) => ({
         id: p.id,
         title: '',
-        image: icons[p.id],
-        // The Canari patch (`patches/tauri-plugin-system-components`): tint the bitmap like a symbol.
-        template: true,
+        image: icons[p.id].normal,
+        // The Canari patch (`patches/tauri-plugin-system-components`): the selected state's bitmap.
+        selectedImage: icons[p.id].selected,
       })),
       selectedId: MOBILE_NAV_PLACES.some((p) => p.id === active)
         ? (active ?? undefined)
         : undefined,
-      tint: activeTabTint(),
     });
     sentBadges = {};
     configurations++;
@@ -110,9 +135,6 @@
 
     void (async () => {
       try {
-        for (const place of MOBILE_NAV_PLACES) {
-          icons[place.id] = await lucideIconPng(PLACE_ICONS[place.icon]);
-        }
         await configure();
         listener = await onTabSelected(({ id }) => {
           const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
@@ -168,8 +190,8 @@
     void selectTab(active).catch(logFailure('select'));
   });
 
-  // The theme decides the yellow (`amber-600`, or `amber-400` in dark), so a theme change
-  // reconfigures the bar with the new tint. The first run is the mount's own configuration.
+  // The theme decides both colours (the text colour, and `amber-600` / `amber-400`), so a theme
+  // change redraws the glyphs and reconfigures the bar. The first run is the mount's own.
   let tintedForDark: boolean | null = null;
   $effect(() => {
     const dark = themeStore.isDark;
@@ -180,7 +202,7 @@
     }
     if (tintedForDark === dark) return;
     tintedForDark = dark;
-    void configure().catch(logFailure('re-tint'));
+    void configure().catch(logFailure('re-colour'));
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.
