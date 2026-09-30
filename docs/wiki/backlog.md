@@ -7026,11 +7026,16 @@ is where any measurement belongs.
 
 ## Payments
 
-### A PAID PUBLIC FORM (user, 2026-09-30) - PARKED BEHIND LYDIA, THE FREE HALF IS BUILT FIRST
+### A PAID PUBLIC FORM (user, 2026-09-30) - PARKED BEHIND LYDIA, THE FREE HALF IS BUILT
 
 Asked for: a form anyone can open from a shared link, with no Canari account, that can take a single
-price. **The free half does not need a payment provider and is built on its own; the paid half waits
-for WP-LYDIA-1 below**, because Lydia does not work today and Stripe is leaving the app (user).
+price. **The free half is BUILT** (`/f/:id`, migration 068,
+[forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)) and rides
+the next release with 067; **owed after the dev pre-release: one guest answer sent from a private
+window on `dev.canari-emse.fr`, and the `canari-dev-frontend-1` log showing a real client address
+rather than the Docker gateway** - the `real_ip` change it carries is what makes every per-IP
+throttle a throttle. **The paid half waits for WP-LYDIA-1 below**, because Lydia does not work
+today and Stripe is leaving the app (user).
 
 What the paid half will need, found while scoping it (2026-09-30), so it is not re-derived:
 
@@ -7042,7 +7047,8 @@ What the paid half will need, found while scoping it (2026-09-30), so it is not 
   before building on it. A guest has no `X-User-Id` either, so it needs a dedicated internal route
   guarded by the shared internal secret, as `internal/forms` is.
 - **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
-- A fixed price only (no grid, no cotisation grant, no cash), and a public submission rate limit.
+- A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
+  free half added (`PublicFormsController`) already cover the submission.
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
 

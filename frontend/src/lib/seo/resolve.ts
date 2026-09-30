@@ -215,6 +215,17 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     };
   }
 
+  // A public form's guest link unfurls like the form, and stays out of the index as an invite link
+  // does: previewing for whoever holds the link is the point, being searchable is not.
+  if (path.startsWith('/f/')) {
+    return {
+      title: 'Formulaire',
+      description: 'Formulaire Canari : répondez en ligne, sans compte.',
+      path,
+      noindex: true,
+    };
+  }
+
   if (path.startsWith('/forms/')) {
     return {
       title: 'Formulaire',

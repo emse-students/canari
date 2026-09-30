@@ -179,8 +179,12 @@
     }
   }
 
-  /** The one place this screen says where the form lives, shared by both share controls. */
-  const formPath = $derived(`/forms/${formId}`);
+  /**
+   * The one place this screen says where the form lives, shared by both share controls. A public
+   * form is shared by its GUEST address, the one that opens without an account; a member opening
+   * that link is sent back here.
+   */
+  const formPath = $derived(form?.isPublic ? `/f/${formId}` : `/forms/${formId}`);
   let qrOpen = $state(false);
 
   function copyFormLink() {
@@ -206,7 +210,7 @@
     try {
       const id = formId;
       if (!id) {
-        error = 'Form not found.';
+        error = m.form_view_not_found();
         loading = false;
         return;
       }
@@ -279,7 +283,7 @@
         }
       }
     } catch (e: any) {
-      error = e.message || 'Unable to load the form.';
+      error = e.message || m.form_view_load_error();
     } finally {
       loading = false;
     }

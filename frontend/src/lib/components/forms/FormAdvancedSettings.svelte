@@ -39,6 +39,11 @@
     anonymous: boolean;
     /** True once the form exists: anonymity is fixed at creation and shown, not offered. */
     anonymousFixed: boolean;
+    /**
+     * Answerable without an account from a shared link. A guest has no identity, so this forces
+     * repeat answers on and cannot sit beside a payment or an audience restriction.
+     */
+    isPublic: boolean;
     /** A paid form cannot be anonymous: a payment names its payer. */
     requiresPayment: boolean;
     /** Opening date, as a `datetime-local` string. Empty when the form is open at once. */
@@ -62,6 +67,7 @@
     allowMultipleSubmissions = $bindable(),
     anonymous = $bindable(),
     anonymousFixed,
+    isPublic = $bindable(),
     requiresPayment,
     opensAt = $bindable(),
     submitCondition = $bindable(),
@@ -77,6 +83,7 @@
     (maxSubmissions != null && maxSubmissions > 0 ? 1 : 0) +
       (allowMultipleSubmissions ? 1 : 0) +
       (anonymous ? 1 : 0) +
+      (isPublic ? 1 : 0) +
       (opensAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0)
   );
@@ -109,8 +116,9 @@
 
     <Toggle
       bind:checked={allowMultipleSubmissions}
+      disabled={isPublic}
       label={m.form_allow_multiple_label()}
-      hint={m.form_allow_multiple_hint()}
+      hint={isPublic ? m.form_allow_multiple_hint_public() : m.form_allow_multiple_hint()}
     />
 
     <!-- Anonymity is a promise about what is STORED, so it is chosen once: turning it on later would
@@ -124,6 +132,24 @@
         : requiresPayment
           ? m.form_anonymous_hint_paid()
           : m.form_anonymous_hint()}
+    />
+
+    <!-- A guest is nobody the server can recognise, charge or match against a criterion, so the
+         switch turns repeats on with it and stays shut beside a payment or an audience: the same
+         three refusals the server makes, said before a save rather than after one. -->
+    <Toggle
+      bind:checked={
+        () => isPublic,
+        (on) => {
+          isPublic = on;
+          if (on) allowMultipleSubmissions = true;
+        }
+      }
+      disabled={!isPublic && (requiresPayment || submitCondition != null)}
+      label={m.form_public_label()}
+      hint={!isPublic && (requiresPayment || submitCondition != null)
+        ? m.form_public_hint_blocked()
+        : m.form_public_hint()}
     />
 
     <div>
@@ -147,7 +173,10 @@
          predicate, so a form reserved to one promo and a price for that promo cannot disagree. -->
     <Toggle
       label={m.form_audience_toggle()}
-      hint={m.form_audience_toggle_hint()}
+      disabled={isPublic && submitCondition == null}
+      hint={isPublic && submitCondition == null
+        ? m.form_audience_blocked_public()
+        : m.form_audience_toggle_hint()}
       bind:checked={
         () => submitCondition != null,
         (on) => {

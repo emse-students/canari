@@ -1,6 +1,6 @@
 # Forms module
 
-**Routes**: `src/routes/forms/[id]/` (fill), `src/routes/forms/create/` + `src/routes/forms/[id]/edit/` (admin)
+**Routes**: `src/routes/forms/[id]/` (fill), `src/routes/f/[id]/` (a public form, answered without an account), `src/routes/forms/create/` + `src/routes/forms/[id]/edit/` (admin)
 **Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
 **Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
 
@@ -421,6 +421,42 @@ What it does NOT hide, stated so nobody over-reads it: an audience restriction (
 for a promo or a formation on a small group re-identifies its answerer by itself. The fill page says
 only what is stored, not more. Database history (WAL, backups) taken while the answer was written is
 outside this mechanism.
+
+## A public form is answered without an account (2026-09-30)
+
+A manager can make a form **public** (`forms.isPublic`, migration 068, switch in "Paramètres
+avancés"). Anybody holding its link answers at **`/f/:id`** - no session, no app chrome, no login
+redirect (`+layout.ts` lets `/f/` through as it does `/legal`). A member who opens that link is sent
+to `/forms/:id`, where the form knows who they are; the share button and the QR code of a public form
+hand out the `/f/` address.
+
+**Everything follows from a guest having no identity** (`assertPublicConfigValid`, refused at save
+time with the sentence shown on the save bar):
+
+| A guest has no... | so a public form... |
+|---|---|
+| account to charge or to grant to | is free: no price, grid, cash, cotisation grant, and an option supplement is refused at submit |
+| profile to match | has no `submitCondition` and no question shown by promo, formation or cotisation (an ANSWER condition is fine) |
+| identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests with a "Nom prénom" question |
+
+A guest's answer is a `submissions` row with `userId` NULL and its real time (cut to the day when the
+form is ALSO anonymous); the responses table names it "Invité". The two routes live in
+`PublicFormsController` under `/api/public/forms/` - nginx strips every identity header there - and
+the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retry is for a session.
+
+**No captcha**: the edge that offered one is gone. Two guards instead:
+
+- **A throttle of 30 answers per minute per visitor** (`ClientIpThrottlerGuard`). Building it found
+  that no per-IP throttle here had ever been one: the container nginx overwrote `X-Real-IP` with the
+  Docker gateway, so prod logged `172.25.0.1` for every visitor and the existing "20/min per IP" on
+  `/api/public/` was 20/min for everybody. The container now takes the client from the host proxy
+  (`set_real_ip_from` the private ranges, `real_ip_header X-Real-IP`) and the guard keys on that
+  header. A room of guests behind ONE NAT (a school network at an event) shares an address, which is
+  why the limit is far above what one person types.
+- **A honeypot** field (`website`), off-screen and out of the tab order. A filled one is answered
+  `{ ok: true }` like a real answer, stored nowhere, and logged.
+
+Paying guests are **parked behind Lydia** ([backlog](../../backlog.md)).
 
 ## A form's association is chosen once, at creation
 

@@ -37,6 +37,8 @@
     requiresPayment: boolean;
     /** An anonymous form cannot charge: a payment names its payer. */
     anonymous: boolean;
+    /** A public form cannot charge either: a guest has no account to charge (parked behind Lydia). */
+    isPublic: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
     /** Whether cash is accepted alongside the card. */
@@ -60,6 +62,7 @@
   let {
     requiresPayment = $bindable(),
     anonymous,
+    isPublic,
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
     cashPaymentExpiryDays = $bindable(),
@@ -90,9 +93,13 @@
 <FormSection title={m.form_section_payment()} icon={CreditCard}>
   <Toggle
     bind:checked={requiresPayment}
-    disabled={anonymous}
+    disabled={anonymous || isPublic}
     label={m.form_requires_payment_label()}
-    hint={anonymous ? m.form_payment_disabled_anonymous() : undefined}
+    hint={anonymous
+      ? m.form_payment_disabled_anonymous()
+      : isPublic
+        ? m.form_payment_disabled_public()
+        : undefined}
   />
 
   {#if requiresPayment}

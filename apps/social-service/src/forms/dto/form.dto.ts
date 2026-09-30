@@ -236,6 +236,11 @@ export class CreateFormDto {
   @IsOptional()
   anonymous?: boolean;
 
+  /** Answerable without an account, from a shared link. Free, criteria-free, repeatable. */
+  @IsBoolean()
+  @IsOptional()
+  isPublic?: boolean;
+
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()
   @IsOptional()
@@ -254,6 +259,21 @@ export class CreateFormDto {
 }
 
 export class UpdateFormDto extends CreateFormDto {}
+
+/** A guest's answer to a public form: the answers, and nothing that could name or charge anyone. */
+export class GuestSubmitFormDto {
+  @IsValidAnswers()
+  answers: Record<string, string | string[] | number>;
+
+  /**
+   * A HONEYPOT: a field the page hides from people, which a form-filling bot fills. Anything in it
+   * and the answer is dropped - see `PublicFormsController.submit`.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  website?: string;
+}
 
 export class SubmitFormDto {
   @IsString()

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FormsController } from './forms.controller';
+import { PublicFormsController } from './public-forms.controller';
 import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
@@ -25,7 +26,7 @@ import { PricingModule } from '../pricing/pricing.module';
     PurchaseRecordModule,
     PricingModule,
   ],
-  controllers: [FormsController],
+  controllers: [FormsController, PublicFormsController],
   providers: [FormsService, FormReminderScheduler, PushService],
   exports: [FormsService],
 })

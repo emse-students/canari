@@ -66,6 +66,15 @@ RUN printf 'server {\n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     resolver 127.0.0.11 valid=10s ipv6=off;\n\
+    # EVERY VISITOR ARRIVES FROM THE DOCKER GATEWAY, SO $remote_addr NAMED NOBODY.\n\
+    # The host proxy in front of this container sets X-Real-IP to the real client\n\
+    # (after its own real_ip), and until 2026-09-30 every location overwrote it with\n\
+    # the gateway: prod logged 172.25.0.1 for all traffic, and a per-IP throttle\n\
+    # upstream was ONE bucket for everybody. Only a private hop may name the client.\n\
+    set_real_ip_from 127.0.0.1;\n\
+    set_real_ip_from 172.16.0.0/12;\n\
+    set_real_ip_from 10.0.0.0/8;\n\
+    real_ip_header X-Real-IP;\n\
     # A CLIENT MAY SEND ANY HEADER IT LIKES, AND nginx FORWARDS THE ONES NOBODY OVERRODE.\n\
     # These four names are what the services READ to decide who is calling, so they are\n\
     # emptied here and re-set from the auth sub-request in each guarded location. The list\n\

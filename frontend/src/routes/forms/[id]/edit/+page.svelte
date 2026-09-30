@@ -61,6 +61,7 @@
   let opensAt = $state('');
   let allowMultipleSubmissions = $state(false);
   let anonymous = $state(false);
+  let isPublic = $state(false);
 
   // Payment
   let basePrice = $state(0);
@@ -153,6 +154,7 @@
       allowCashPayment = f.allowCashPayment ?? false;
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       anonymous = f.anonymous ?? false;
+      isPublic = f.isPublic ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       imageUrl = f.imageUrl ?? null;
       items = fromFormItems(f.items ?? [], requiresPayment);
@@ -218,6 +220,7 @@
         items: toFormItemsPayload(items),
         maxSubmissions,
         allowMultipleSubmissions,
+        isPublic,
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
@@ -379,6 +382,7 @@
     <FormPaymentSection
       bind:requiresPayment
       {anonymous}
+      {isPublic}
       bind:basePrice
       bind:allowCashPayment
       bind:cashPaymentExpiryDays
@@ -409,6 +413,7 @@
       bind:allowMultipleSubmissions
       bind:anonymous
       anonymousFixed
+      bind:isPublic
       {requiresPayment}
       bind:opensAt
       bind:submitCondition
