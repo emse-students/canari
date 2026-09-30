@@ -45,6 +45,16 @@
     return bindFixedPopover(panelEl, { anchor: () => anchor, offset: 6, estimatedHeight: 200 });
   });
 
+  /**
+   * A SCROLL DISMISSES THE PANEL rather than dragging it along over posts or messages it says nothing
+   * about. Capture, because `scroll` does not bubble and the lists scroll in their own containers.
+   */
+  $effect(() => {
+    if (!emoji) return;
+    window.addEventListener('scroll', close, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', close, { capture: true });
+  });
+
   $effect(() => () => {
     if (hideTimer) clearTimeout(hideTimer);
   });

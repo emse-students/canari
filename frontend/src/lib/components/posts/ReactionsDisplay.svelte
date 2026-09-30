@@ -1,6 +1,7 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
+  import { reactorsTrigger } from '$lib/actions/reactorsTrigger';
 
   interface Props {
     /** Aggregated count of each reaction type across all users. */
@@ -11,7 +12,7 @@
     userReaction: string | null;
     /** Full catalogue of available reaction types with their display emoji. */
     reactionList: ReadonlyArray<{ type: string; emoji: string }>;
-    /** Called when the user clicks a reaction badge to toggle their own reaction of the same type. */
+    /** Called when the user taps a reaction badge to toggle their own reaction of the same type. */
     onReactionClick: (reactionType: string) => void;
   }
 
@@ -27,7 +28,7 @@
       .map(([uid]) => uid)
   );
 
-  function onBadgeEnter(reactionType: string, anchor: HTMLElement) {
+  function openPopup(reactionType: string, anchor: HTMLElement) {
     anchorEl = anchor;
     popupReactionType = reactionType;
   }
@@ -59,8 +60,10 @@
       <button
         type="button"
         onclick={() => onReactionClick(reactionType)}
-        onmouseenter={(e) => onBadgeEnter(reactionType, e.currentTarget as HTMLElement)}
-        onmouseleave={() => panel?.scheduleHide()}
+        use:reactorsTrigger={{
+          open: (anchor) => openPopup(reactionType, anchor),
+          leave: () => panel?.scheduleHide(),
+        }}
         class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
           ? 'bg-cn-yellow/15'
