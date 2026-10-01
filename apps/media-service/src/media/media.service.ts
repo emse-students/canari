@@ -308,6 +308,11 @@ export class MediaService {
     );
     if (!stream) return { status: 'not_found' };
     const data = await this.readStreamToBuffer(stream);
+    // The one outcome of a ranged read that said nothing: its two siblings above log, and this line
+    // is what shows a reader walking a blob segment by segment, in order, from the server's side.
+    this.logger.debug(
+      `media ${mediaId}: bytes ${requested.start}-${requested.end}/${size} served as a part`
+    );
     if (requested.start === 0) {
       this.setAccess(mediaId, Date.now());
       await this.persistMetadata();
