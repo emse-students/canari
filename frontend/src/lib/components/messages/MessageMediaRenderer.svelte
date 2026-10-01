@@ -56,6 +56,13 @@
      * has exactly one whenever there is media at all.
      */
     onNear?: () => void;
+    /**
+     * The picture or video fills the top of its bubble edge to edge, and the caption sits under it
+     * in the same bubble (Messenger's and WhatsApp's). Set by `MessageBubble` for a photo or a video
+     * that carries text: the bubble clips the media's corners, so this only cancels the bubble's own
+     * padding around it and the media's own rounding.
+     */
+    bleed?: boolean;
     /** Who sent the message, for the viewer's information panel. */
     senderId?: string;
     /** When the message was sent: the viewer's title and its information panel. */
@@ -72,6 +79,7 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    bleed = false,
     senderId,
     sentAt,
   }: Props = $props();
@@ -126,11 +134,14 @@
   <!-- THE ROW'S ONE ELEMENT THAT ALWAYS EXISTS WHEN THERE IS MEDIA, which is why the viewport
        hook lives here and the download it gates lives in `MessageBubble`: that component renders
        a dozen mutually exclusive branches and has no root of its own to observe. -->
-  <div class="overflow-hidden rounded-3xl" use:nearViewport={{ onnear: () => onNear?.() }}>
+  <div
+    class="overflow-hidden {bleed ? '-mx-3 -mt-2' : 'rounded-3xl'}"
+    use:nearViewport={{ onnear: () => onNear?.() }}
+  >
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
-        <div class="group/media relative inline-block">
+        <div class="group/media relative {bleed ? 'block' : 'inline-block'}">
           <!--
             `w-56 max-w-full`, never `w-full`: the wrapper is `inline-block`, so its width comes from
             its content, and a percentage width inside it has nothing definite to resolve against -
@@ -144,7 +155,9 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label={m.msg_open_image_fullscreen_label()}
-            class="block w-56 max-w-full overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
+            class="block max-w-full overflow-hidden bg-black/5 dark:bg-white/5 {bleed
+              ? 'w-68'
+              : 'w-56 rounded-3xl'}"
             style={imageAspectStyle}
           >
             <img
@@ -200,8 +213,14 @@
              feed left on 2026-09-29 (Android's grey bar over the clip). A conversation's video now
              plays like the feed's: by itself while on screen, muted by the app's one sound answer,
              a tap opening the viewer, whose player carries the controls and the download. -->
+        <!-- ITS OWN SHAPE, NEVER CROPPED (user, 2026-10-02: the chat cut a video down to 16:9 and
+             "il faut cliquer dessus pour tout afficher"). The box reserves the clip's real aspect
+             ratio and the video is CONTAINED in it, so past the height ceiling it letterboxes on
+             the black rather than losing its edges. -->
         <div
-          class="w-56 max-w-full overflow-hidden rounded-3xl bg-black shadow-sm"
+          class="max-w-full overflow-hidden bg-black shadow-sm {bleed
+            ? 'w-68'
+            : 'w-56 rounded-3xl'}"
           style={mediaAspectStyle(mediaRef.width, mediaRef.height, 16 / 9)}
         >
           <InlineVideo
@@ -209,7 +228,7 @@
             onOpen={() => (showLightbox = true)}
             openLabel={m.msg_open_video_fullscreen_label()}
             class="h-full w-full"
-            videoClass="h-full w-full object-cover object-center"
+            videoClass="h-full w-full object-contain object-center"
           />
         </div>
       {:else if failure}
@@ -396,7 +415,14 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text">
+    <!-- Under a bleeding media the bubble is exactly the media's width (`w-68`, 17rem): a width in
+         PERCENT would resolve against a bubble that is itself sized by its content and balloon it
+         over the whole row, so the caption wraps at that width less the bubble's side padding. -->
+    <p
+      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text {bleed
+        ? 'mt-1.5 w-[calc(17rem-1.5rem)] max-w-full'
+        : 'mt-2'}"
+    >
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />

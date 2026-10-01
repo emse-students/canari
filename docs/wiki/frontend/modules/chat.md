@@ -91,6 +91,31 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
+
+**Two reports from the user.** *"message avec texte + image -> l'image est au dessus de la bulle,
+comme si elle etait envoyee seule avant le texte, pas dans la bulle"*, and *"video -> conserver le
+format (actuellement les videos sont crop dans le chat, il faut cliquer dessus pour tout afficher)"*.
+
+- **Bleed.** A photo or video that carries a caption (and no quoted reply, which stacks its own
+  bubble above) now fills the TOP of its bubble edge to edge, with the caption under it in the same
+  bubble - Messenger's and WhatsApp's layout. It used to sit as a framed, rounded thumbnail inside the
+  bubble's padding, which read as a card laid on the bubble. `MessageBubble` computes `bleedsMedia`,
+  adds `overflow-hidden` to the bubble (it clips the corners, so the media draws none of its own) and
+  passes `bleed` to `MessageMediaRenderer`, which cancels the padding with `-mx-3 -mt-2`.
+- **THE WIDTH IS FIXED, NOT A PERCENTAGE.** The first attempt gave the media `w-full`: the bubble is
+  `w-fit`, sized by its content, so a percentage width had nothing definite to resolve against and the
+  bubble ballooned over the whole row. The media is `w-68` (17rem) and the caption `calc(17rem - 1.5rem)`,
+  so a captioned media is always one width - the same lesson as the `w-56` note on the image branch.
+- **A video keeps its own shape.** The box reserved the clip's ratio but the video was drawn
+  `object-cover`, which cut a portrait clip down to the 16:9 fallback's crop. It is now `object-contain`
+  in a box of the clip's real aspect ratio (`mediaAspectStyle`), so past the height ceiling it
+  letterboxes on black instead of losing its edges.
+
+Verified in Chromium on the real renderer inside a bubble of the bubble's own classes (landscape and
+portrait, a caption shorter and longer than the media). `MessageMediaRenderer.image.svelte.test.ts`
+pins the ratio, `object-contain`, the bleed and the rounded frame kept when there is no caption.
+
 ### Every photo in a conversation went to a `<video>` (#1229, shipped in `v0.18.32`; fixed 2026-10-01)
 
 #1229 made a FEED video play inline (`InlineVideo`), and its edit to `MessageMediaRenderer` replaced

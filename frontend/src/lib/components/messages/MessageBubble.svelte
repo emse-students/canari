@@ -223,6 +223,17 @@
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
+  // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
+  // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
+  // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A quoted reply stacks its own
+  // bubble above, so it keeps the padded layout.
+  const bleedsMedia = $derived(
+    !!mediaRef &&
+      (mediaRef.type === 'image' || mediaRef.type === 'video') &&
+      !!textContent &&
+      !effectiveReplyTo &&
+      !isDeleted
+  );
 
   // Poll message: rendered as a self-contained card (no bubble chrome). The live
   // tally comes from the poll store (keyed by message id); falls back to an empty
@@ -754,7 +765,9 @@
           }}
           class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
             ? 'p-0'
-            : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
+            : 'px-3 py-2'} {bleedsMedia
+            ? 'overflow-hidden'
+            : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
             ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
             : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
             ? ''
@@ -787,6 +800,7 @@
               {textContent}
               {isOwn}
               {textSegments}
+              bleed={bleedsMedia}
               {senderId}
               sentAt={timestamp}
               onNear={() => (isNearViewport = true)}
