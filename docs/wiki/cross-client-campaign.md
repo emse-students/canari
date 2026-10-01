@@ -10,6 +10,9 @@ page asks whether a native path works **on hardware at all** (one device, one ch
 asks whether the system stays correct when **several clients, several lifecycles and a damaged
 store** meet.
 
+The same ladder on the iPhone - which rows run with the adapter, which need a new observable, and
+which test something iOS does not have - is [cross-client-ios](cross-client-ios.md).
+
 ## Where it runs, and what may never leave it
 
 **TARGET IS THE LOCAL ESTATE** (`http://localhost:8081`), since 2026-09-03. Dedicated accounts,

@@ -12,17 +12,23 @@
  * questions - which named device, on which devtools port, as which account, and is it a phone - and
  * arms the phone when it is one. Nothing else belongs here: a gesture is not a device.
  *
- * **A DEVICE NAME CARRIES ITS PLATFORM.** `W1`/`W2`/`W3` are Chrome profiles, `A1`/`A2` are Android.
+ * **A DEVICE NAME CARRIES ITS PLATFORM.** `W1`/`W2`/`W3` are Chrome profiles, `A1`/`A2` are Android,
+ * `I1` is the iPhone (`phone-ios.mjs`).
  * It is a convention rather than a probe on purpose: which client a run is about must be decidable
  * BEFORE anything is plugged in or woken, and asking adb what is attached cannot answer a question
  * about intent.
  */
 import { APP_TAB } from './chat.mjs';
 import { ACCOUNT_OF, PORTS } from './names.mjs';
-import { ensure, useDevice } from './phone.mjs';
+import * as androidPhone from './phone.mjs';
+import * as iosPhone from './phone-ios.mjs';
+import { isIosName } from './phone-platform.mjs';
 
-/** `A1`, `A2`, ... - the rig's spelling for "this client is an Android app". */
-export const isPhoneName = (name) => /^A\d+$/.test(name ?? '');
+/**
+ * `A1`, `A2`, ... (Android) and `I1`, ... (the iPhone) - the rig's spelling for "this client is a
+ * phone app". Which phone module arms it follows the same letter, in {@link armIfPhone}.
+ */
+export const isPhoneName = (name) => /^A\d+$/.test(name ?? '') || isIosName(name);
 
 /**
  * WHICH DEVTOOLS TARGET TO ATTACH TO, for a client that may be a phone.
@@ -170,6 +176,7 @@ export function resolveDevices(argv, { fallback = [] } = {}) {
  */
 export async function armIfPhone({ device, port, isPhone }, label) {
   if (!isPhone) return null;
+  const { ensure, useDevice } = isIosName(device) ? iosPhone : androidPhone;
   const bound = useDevice(device);
   console.log(`[${label}] device ${device} -> ${bound}`);
   const up = await ensure({ port, timeoutMs: 10_000 });

@@ -19,6 +19,7 @@ import {
   originOfUrl,
 } from './consoleorigin.mjs';
 import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
+import { fromWebKit, isWebKitAgent } from './webkit-console.mjs';
 
 /**
  * A console line without the stamp the app writes in front of it.
@@ -1213,7 +1214,14 @@ const NOTABLE = [
  */
 export async function watch(cx, label) {
   await cx.send('Runtime.enable');
-  await cx.send('Log.enable');
+  // THE iPHONE'S WEBVIEW SPEAKS WEBKIT'S PROTOCOL, which has no `Log` domain: its console arrives as
+  // `Console.messageAdded`, translated at the read by `fromWebKit`. Asked of the PAGE, not of a port
+  // or a device name, because the page is what knows which engine it runs on.
+  const ua = await evaluate(cx, 'navigator.userAgent').catch((err) => {
+    console.log(`[watch] ${label}: user agent unreadable (${String(err?.message ?? err).slice(0, 120)}) - attaching as Chromium`);
+    return '';
+  });
+  await cx.send(isWebKitAgent(ua) ? 'Console.enable' : 'Log.enable');
   await cx.send('Network.enable');
   await cx.send('Page.enable');
   cx.events.length = 0;
@@ -1247,6 +1255,7 @@ export async function watch(cx, label) {
  */
 export function consoleLines(cx) {
   return (cx.consumed ?? []).concat(cx.events)
+    .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       (e.method === 'Log.entryAdded'
@@ -1296,7 +1305,9 @@ export async function report(w) {
   /** Top-level documents replaced during the window - i.e. navigations. See {@link ignoringNavigation}. */
   let documentsReplaced = 0;
 
-  for (const e of cx.events) {
+  for (const raw of cx.events) {
+    // The iPhone's console line, in the shape every case below reads (`webkit-console.mjs`).
+    const e = fromWebKit(raw);
     const p = e.params;
     switch (e.method) {
       case 'Page.frameNavigated':

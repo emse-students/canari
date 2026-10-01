@@ -15,6 +15,7 @@ import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
 // to add the serial to. This is the trap `estate.mjs` records paying for once already.
 import * as NAMES from './names.mjs';
 import { classifyNativePaths } from './native-residue.mjs';
+import { GENERIC_BODIES } from './notif-bodies.mjs';
 
 /**
  * WHICH PHONE, RE-EXPORTED FROM THE ONE RESOLVER. `a1apk.mjs` and `archive/fwd345.mjs` import
@@ -25,7 +26,7 @@ import { classifyNativePaths } from './native-residue.mjs';
  * `serial.mjs` for the measurement.
  */
 import { attached, serial } from './serial.mjs';
-import { requireScript } from './scriptpath.mjs';
+import { spawnPin } from './pinspawn.mjs';
 
 export { attached, serial };
 
@@ -74,6 +75,12 @@ export let SERIAL = (() => {
   }
 })();
 export const PKG = 'fr.emse.canari';
+/**
+ * A substring of the app WebView's URL, which is how a devtools target is picked. Android's WebView
+ * serves the app from `http://tauri.localhost`; the iPhone's is `tauri://localhost`, which this does
+ * NOT match - so a row asks the phone module rather than spelling either.
+ */
+export const WEBVIEW_MATCH = 'tauri.localhost';
 
 // `dumpsys notification --noredact` on this phone is over a megabyte, which is exactly Node's
 // default `maxBuffer` - so the call THROWS ENOBUFS and the check dies with a stack trace instead of
@@ -703,52 +710,13 @@ export async function kill() {
  *
  * @returns {Promise<{deadInMs: number, stateAtKill: string|null}>}
  */
-/** This directory - `pin.mjs` is SPAWNED from here, never imported. */
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
-
 /**
  * Unlocks the encryption PIN if the modal is up; returns what happened, never throws on "no modal".
- *
- * SPAWNED RATHER THAN IMPORTED, deliberately: the PIN is read by `pin.mjs` from `test-accounts.json`
- * and must never become an argument that a check could log, print or record.
- *
- * NOTIF-10 needed this and did not have it: cutting the radios for ten minutes restarts the app when
- * they come back, and a restarted app re-locks the PIN. The whole chat then sits behind the modal,
- * so `openConversation` cannot find anything and the check refused a verdict. EVERY PHASE THAT
- * RELAUNCHES THE APP MUST UNLOCK BEFORE IT NAVIGATES - which is why this is here and not in the
- * three runners that each carried their own copy of it.
- *
- * A FAILURE CARRIES THE REASON IT FAILED FOR, and this used to carry the 200 first characters of
- * STDOUT - the one stream that says nothing about why. `pin.mjs` has three distinct failures and
- * writes all three to stderr: exit 1 = the product REFUSED the PIN (and names which refusal), a
- * throw out of `assertLocalEstate` = the app is pointing at an estate that is not the local one,
- * and anything else = the CDP context died mid-answer. DEL-7 recorded
- * `pin.mjs failed: ...[pin] after:` on 2026-09-05 - a truncation ending on an EMPTY `after:`, which
- * is the most interesting line in the run and the one thing the record could not explain. Exit code
- * and stderr are what separate the three, so both are reported and the stdout TAIL keeps its place
- * as context rather than as the message.
+ * EVERY PHASE THAT RELAUNCHES THE APP MUST UNLOCK BEFORE IT NAVIGATES - the why, and what a failure
+ * carries, are in `pinspawn.mjs`, which the iPhone's `unlockPin` shares.
  */
 export function unlockPin(port = PORTS.A1) {
-  try {
-    return execFileSync(
-      process.execPath,
-      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
-      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
-    )
-      .trim()
-      .split('\n')
-      .pop();
-  } catch (e) {
-    if (e.status === 2) return 'no modal';
-    const why = String(e.stderr || e.message)
-      .trim()
-      .replace(/\s+/g, ' ');
-    const lastOut = String(e.stdout || '')
-      .trim()
-      .split('\n')
-      .pop();
-    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)} [last stdout: ${lastOut}]`;
-  }
+  return spawnPin({ port, account: ACCOUNT_OF.A1, match: WEBVIEW_MATCH });
 }
 
 export async function killAndProveDead(timeoutMs = 20_000) {
@@ -889,21 +857,8 @@ export function notifications() {
  */
 export const bodyIsDrawn = (n) => !(/InboxStyle/.test(n.template) && n.inboxLines === 0);
 
-/**
- * The exact bodies `CanariFirebaseMessagingService` renders when it could NOT decrypt.
- *
- * A NOTIFICATION THAT ARRIVED IS NOT A NOTIFICATION THAT WORKED, and no check here could tell the
- * two apart: NOTIF-4/9/10 all asked `full.includes(marker)`, so a shade full of "Nouveau message de
- * X" simply made the marker absent, which reads as "the notification has not arrived yet" and then
- * as a timeout - a completely different diagnosis from "background MLS decryption failed". The user
- * saw the generic form on the phone during a run this file called `PASS`.
- *
- * Kept as literals rather than a loose pattern because they are literals in the Kotlin
- * (`buildFallbackText`, `buildChannelFallbackText`) and in `push-payload.ts` for the APNs side. A
- * pattern would drift from them silently; a literal that stops matching is a rename, which is a
- * change to go and look at.
- */
-export const GENERIC_BODIES = [/^Nouveau message de /, /^Nouveau message dans #/, /^Vous avez re.u un message chiffr/, /^Nouveau message$/];
+/** The bodies a notification carries when it could NOT decrypt - shared with the iPhone, see `notif-bodies.mjs`. */
+export { GENERIC_BODIES };
 
 /**
  * Every notification currently in the shade that this app raised WITHOUT decrypting the message.

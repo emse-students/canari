@@ -12,6 +12,12 @@
  *   bun tools/ios-device/ios.mjs swipe x1 y1 x2 y2 [s]  drag, in POINTS (see `size`)
  *   bun tools/ios-device/ios.mjs button <home|volumeUp|volumeDown>
  *   bun tools/ios-device/ios.mjs size                   window size in points
+ *   bun tools/ios-device/ios.mjs state [bundle]         1 not running, 2 suspended, 3 background, 4 foreground
+ *   bun tools/ios-device/ios.mjs active                 the foreground app: { pid, bundleId, name }
+ *   bun tools/ios-device/ios.mjs terminate [bundle]     end the process (an OS death, not a user swipe)
+ *   bun tools/ios-device/ios.mjs locked                 whether the device lock screen is up
+ *   bun tools/ios-device/ios.mjs unlock                 screen on + swipe up (raises the passcode if one is set)
+ *   bun tools/ios-device/ios.mjs flat                   the visible tree as one JSON array
  *
  * Coordinates are POINTS, not pixels: the iPhone 12 is 390x844 points for 1170x2532 pixels, so a
  * screenshot pixel divided by 3 is the point to tap. It is the one unit difference from adb.
@@ -53,7 +59,9 @@ export async function wda(method, path, body) {
 export async function session(bundle = DEFAULT_APP) {
   const status = await wda('GET', '/status');
   if (status.sessionId) return status.sessionId;
-  const caps = { bundleId: bundle };
+  // `null` attaches to whatever is on screen and launches nothing - what a question about the app's
+  // STATE needs, since a session created with a bundle id would resurrect the app it asks about.
+  const caps = bundle ? { bundleId: bundle } : {};
   const created = await wda('POST', '/session', { capabilities: { alwaysMatch: caps }, desiredCapabilities: caps });
   return created.sessionId ?? created.value.sessionId;
 }
@@ -141,10 +149,71 @@ export async function button(sid, name) {
   await wda('POST', `/session/${sid}/wda/pressButton`, { name });
 }
 
+/**
+ * The app's lifecycle state as XCTest names it: 1 not running, 2 suspended in the background,
+ * 3 running in the background, 4 in the foreground. The iPhone's counterpart of `pidof` plus
+ * `dumpsys activity processes`, and the one process fact WDA can read for an app that is NOT in front.
+ */
+export async function appState(sid, bundle = DEFAULT_APP) {
+  return (await wda('POST', `/session/${sid}/wda/apps/state`, { bundleId: bundle })).value;
+}
+
+/** The app in the foreground: `{ pid, bundleId, name }`. SpringBoard when the home screen or a system sheet is up. */
+export async function activeApp(sid) {
+  return (await wda('GET', `/session/${sid}/wda/activeAppInfo`)).value;
+}
+
+/**
+ * Ends the app's process through XCTest, which the OS treats as a process death and NOT as the user
+ * swiping it out of the app switcher - the iPhone's `am kill`, not its `am force-stop`.
+ */
+export async function terminate(sid, bundle = DEFAULT_APP) {
+  return (await wda('POST', `/session/${sid}/wda/apps/terminate`, { bundleId: bundle })).value;
+}
+
+/** Whether the device's own lock screen is up. Unscoped on WDA. */
+export async function locked() {
+  return (await wda('GET', '/wda/locked')).value;
+}
+
+/** A finger held still on one point for `ms`, in POINTS: the long press a notification's actions need. */
+export async function longPressAt(sid, x, y, ms = 900) {
+  await wda('POST', `/session/${sid}/actions`, {
+    actions: [
+      {
+        type: 'pointer',
+        id: 'finger1',
+        parameters: { pointerType: 'touch' },
+        actions: [
+          { type: 'pointerMove', duration: 0, x, y },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pause', duration: ms },
+          { type: 'pointerUp', button: 0 },
+        ],
+      },
+    ],
+  });
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
-  if (!cmd) throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size> ...');
-  const sid = await session(cmd === 'launch' && args[0] ? args[0] : DEFAULT_APP);
+  if (!cmd) throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size|state|active|terminate|locked|unlock|flat> ...');
+  if (cmd === 'locked') {
+    // Unscoped: asking whether the phone is locked must not create a session, which launches the app.
+    console.log(JSON.stringify(await locked()));
+    return;
+  }
+  if (cmd === 'unlock') {
+    // WDA's own wake: screen on and the swipe-up. It clears a lock screen with no passcode and
+    // RAISES the passcode prompt otherwise - the credential is a human's, as on the Android bench.
+    await wda('POST', '/wda/unlock');
+    return;
+  }
+  // The commands that ask about the app, or act on whatever screen is up (Notification Center, the
+  // home screen), never launch it (see `session`): a killed app must stay killed while a row reads
+  // the notification it is waiting for.
+  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size'].includes(cmd);
+  const sid = await session(cmd === 'launch' && args[0] ? args[0] : observing ? null : DEFAULT_APP);
   switch (cmd) {
     case 'launch':
       await launch(sid, args[0] ?? DEFAULT_APP);
@@ -179,6 +248,20 @@ async function main() {
       break;
     case 'size':
       console.log(JSON.stringify(await size(sid)));
+      break;
+    case 'state':
+      console.log(await appState(sid, args[0] ?? DEFAULT_APP));
+      break;
+    case 'active':
+      console.log(JSON.stringify(await activeApp(sid)));
+      break;
+    case 'terminate':
+      console.log(JSON.stringify(await terminate(sid, args[0] ?? DEFAULT_APP)));
+      break;
+    case 'flat':
+      // The visible tree as ONE JSON array, for a caller that needs it synchronously
+      // (`phone-ios.mjs` spawns this, because the phone interface it mirrors is synchronous).
+      console.log(JSON.stringify(flatten(await tree(sid))));
       break;
     default:
       throw new Error(`unknown command ${cmd}`);
