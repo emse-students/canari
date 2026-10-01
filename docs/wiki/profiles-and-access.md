@@ -1,8 +1,7 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
 **Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
-TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 to WP9 are PLANNED, NOT BUILT** (the next
-one is WP3, Canari reads the profile). Every answer below was given by the user on
+TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 is BUILT (backend, backfill, directory), WP4 to WP9 are PLANNED**. Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
 VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE WP0/WP1: read them as the
 starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
@@ -398,6 +397,31 @@ has moved (WP6). Backfill: a script run in `ak shell` emits `{uid, uuid, profile
 imported into `auth_db` in one transaction - the only way to reach users who will never sign in
 again. Profile and directory show campus, cursus and posts; the directory gains campus and post
 filters.
+
+**WP3 as built (2026-10-01).**
+
+- Migration `apps/core-service/src/migrations/008_user_miconnect_profile.sql`: `miconnectUuid`
+  (unique where set), `campus`, `cursus` jsonb NOT NULL default `[]`, `posts` text[] NOT NULL default
+  `{}`. Idempotent; run twice on a throwaway Postgres.
+- `users/miconnect-profile.ts` parses the claims (`parseProfileClaims`): an absent or malformed claim is
+  the EMPTY value, an unknown campus/post or a malformed cursus entry is dropped with a warning. `findOrCreateFromOidc`
+  takes that profile, REPLACES the columns, derives `promo`/`formation` from `cursus[0]` (a person
+  with no cursus now has them cleared - before, a claim that vanished was kept) and writes only when
+  something changed. The legacy `promo`/`formation` claims are no longer read: WP1 derives them from the
+  same profile, so reading both was two sources for one fact.
+- Backfill: `infrastructure/authentik/backfill-canari-profiles.sh dry-run|apply` exports
+  `{uid, uuid, profile}` through `ak shell` (`export-profiles.py`, read-only; `uid` is the
+  `hashed_user_id` that `users.id` holds) and runs ONE transaction against `auth_db` (container
+  chosen by compose label). `dry-run` rolls back and prints updated / exported / users. Tried
+  end to end against a throwaway Postgres with a stubbed export: dry-run left 0 rows, apply wrote them,
+  a second apply was identical, a row the export did not name was untouched.
+  **Prod: apply it AFTER the migration has run (the next deploy), with the user's go.**
+- API: `PublicUserDto` and the directory row carry `campus`, `cursus`, `posts`; `/users/directory`
+  takes `campus` and `post` filters (either alone is a valid filter). `miconnectUuid` is never public.
+- Frontend: the directory shows each cursus entry, the posts and the campus, and filters on campus
+  and post (Paraglide keys `directory_label_campus`, `directory_label_post`, `profile_campus_*`,
+  `profile_post_*`). **Not yet**: the profile page itself, which still reads `promo`/`formation`.
+- **Not observed**: a real sign-in writing the columns on dev/prod.
 
 **WP4 - Editing from Canari (D9, D10).**
 

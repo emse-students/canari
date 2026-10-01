@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -9,6 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { CAMPUSES, POSTS, type Campus, type CursusEntry, type Post } from '../miconnect-profile';
 
 /** Strips control/format chars and applies NFKC normalization to prevent homoglyph attacks. */
 const NormalizeText = () =>
@@ -130,6 +132,12 @@ export class PublicUserDto {
   promo?: number | null;
   /** EMSE formation / track. */
   formation?: string | null;
+  /** MiConnect campus. */
+  campus?: Campus | null;
+  /** MiConnect cursus: every formation the person follows or followed, with its entry year. */
+  cursus?: CursusEntry[];
+  /** MiConnect posts (EMSE, ME, ALUMNI). */
+  posts?: Post[];
   /** Short biography. */
   bio?: string | null;
   /** Account creation timestamp. */
@@ -159,6 +167,16 @@ export class DirectoryQueryDto {
   @MaxLength(120)
   formation?: string;
 
+  /** Filter by MiConnect campus. */
+  @IsIn(CAMPUSES)
+  @IsOptional()
+  campus?: Campus;
+
+  /** Filter by MiConnect post. */
+  @IsIn(POSTS)
+  @IsOptional()
+  post?: Post;
+
   /** Limit results to members of this association (social-service lookup). */
   @IsUUID()
   @IsOptional()
@@ -184,6 +202,9 @@ export interface DirectoryUserRow {
   displayName: string | null;
   promo: number | null;
   formation: string | null;
+  campus: Campus | null;
+  cursus: CursusEntry[];
+  posts: Post[];
   bio: string | null;
 }
 
