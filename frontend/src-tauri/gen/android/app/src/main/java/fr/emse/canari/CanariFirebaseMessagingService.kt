@@ -1492,6 +1492,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         sentAt = sentAt,
                         // The WebView already decided this reader cannot see the message land.
                         suppressInForeground = false,
+                        namesEachSender = true,
                     )
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
@@ -1516,6 +1517,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val safeId = userId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(40)
             return File(filesDir, "avatar_$safeId.jpg")
         }
+
+        /**
+         * The empty file that records "the server ANSWERED that there is no picture" for [cacheFile]
+         * (`avatar_<id>.absent` beside `avatar_<id>.jpg`), its mtime the instant of that answer.
+         *
+         * A CACHE THAT ONLY REMEMBERS SUCCESSES AMPLIFIES EVERY FAILURE (durable-rules): most bench
+         * and many real accounts have no photo, and before this every notification from one of them
+         * asked the network again - in the FCM process, before the post. Only a 404 writes it, the
+         * one status that is an answer about the picture; a 200 deletes it. It lives on the same
+         * [AVATAR_CACHE_MAX_AGE_MS] clock as the image itself, so a newly added photo reaches the
+         * shade no later than a CHANGED photo already did.
+         */
+        private fun absentMarkerFile(cacheFile: File): File =
+            File(cacheFile.parentFile, "${cacheFile.nameWithoutExtension}.absent")
 
         /**
          * Edge length Android draws a notification large icon at, on THIS screen's density.
@@ -1564,7 +1579,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Downloads the sender's avatar, with a 24h file cache.
+         * Downloads the sender's avatar, with a 24h file cache - of the picture, and of the answer
+         * that there is none ([absentMarkerFile]).
          * The cache avoids the HTTP request when the app is in the background and
          * the network is slow or PushSecretKeystore.retrieve() is unstable.
          */
@@ -1607,6 +1623,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     return circleCrop(bmp, target)
                 }
             }
+            // THE ABSENCE IS REMEMBERED TOO - see [absentMarkerFile]. Asked AFTER the image, so a
+            // photo that arrived since (a 200 deletes the marker, but a foreground write may not
+            // have) always wins over an older "none".
+            val absent = absentMarkerFile(cacheFile)
+            if (absent.exists() && (now - absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
+                Log.d(TAG, "$label: no picture for ${subject.take(8)} (answered ${(now - absent.lastModified()) / 1_000}s ago) -> initials, no request")
+                return null
+            }
             val (url, authorization) = request() ?: return null
             return try {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -1623,12 +1647,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // Save to cache for the next notifications
                         try {
                             cacheFile.writeBytes(bytes)
+                            if (absent.exists() && !absent.delete()) {
+                                Log.w(TAG, "$label: could not delete the stale no-picture marker for ${subject.take(8)}")
+                            }
                             Log.d(TAG, "$label: cached for ${subject.take(8)}")
                         } catch (e: Exception) {
                             Log.w(TAG, "$label: unable to save the cache: ${e.message}")
                         }
                         decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
                             ?.let { circleCrop(it, target) }
+                    } else if (code == 404) {
+                        // AN ANSWER ABOUT THE PICTURE, AND THE ONLY ONE: core-service answers 404
+                        // for "this user has no photo" (and for an estate with no provider, which
+                        // is the same fact for every face), and the proxy forwards it as it is.
+                        // Remembered, so the next notification from this person costs no request.
+                        try {
+                            absent.writeBytes(ByteArray(0))
+                            if (cacheFile.exists() && !cacheFile.delete()) {
+                                Log.w(TAG, "$label: could not delete the withdrawn picture for ${subject.take(8)}")
+                            }
+                            Log.d(TAG, "$label: HTTP 404 for ${subject.take(8)} -> no picture, remembered for ${AVATAR_CACHE_MAX_AGE_MS / 3_600_000}h")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "$label: HTTP 404 for ${subject.take(8)}, and the no-picture marker could not be saved: ${e.message}")
+                        }
+                        null
                     } else {
                         // 401/403 is NOT "this user has no avatar": it is our push secret being
                         // rejected, and the same credential guards the media proxy and the
@@ -1636,10 +1678,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // the visible tip of something that costs a MESSAGE elsewhere. It used to be
                         // logged at debug level alongside the ordinary misses, which is how it went
                         // unnoticed until a user remarked the picture was missing (WP-DIRECTBOOT-1).
+                        //
+                        // NOTHING HERE IS REMEMBERED: a 502 (the gallery did not answer), a 503 (core
+                        // did not) or a refusal is not an answer about the picture, and caching it
+                        // would turn one bad minute into a day of initials.
                         if (code == 401 || code == 403) {
                             Log.e(TAG, "$label: HTTP $code - push secret REJECTED, background auth is broken in this process")
                         } else {
-                            Log.d(TAG, "$label: HTTP $code for $subject -> initials fallback")
+                            Log.d(TAG, "$label: HTTP $code for $subject -> initials fallback, not remembered")
                         }
                         null
                     }
@@ -1647,7 +1693,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "$label: ${e.message} -> initials fallback")
+                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either.
+                Log.d(TAG, "$label: ${e.message} -> initials fallback, not remembered")
                 null
             }
         }
@@ -1758,6 +1805,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * `alreadyPosted` comment below already learned the hard way.
              */
             supersedes: Long = 0L,
+            /**
+             * Whether this notification is a conversation between PEOPLE, so every message carries
+             * its author's name - the other person's above theirs, [R.string.notif_sender_self]
+             * above ours - under the conversation's title, as a group already did.
+             *
+             * TRUE from the two MESSAGE triggers only. A direct message used to be posted in
+             * Android's one-to-one shape, which names nobody above the other person's text (their
+             * name is the title) and names US above our own reply: the user read that asymmetry as
+             * a defect (2026-10-01). FALSE - the old shape, unchanged - for a reaction, whose line is
+             * a sentence about the actor and not a message by them, and for a salon, whose "sender"
+             * is the salon's own title: naming either above its line would print the title twice.
+             */
+            namesEachSender: Boolean = false,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
@@ -1820,8 +1880,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
             val style = NotificationCompat.MessagingStyle(selfPerson)
-            if (isGroup) {
-                style.conversationTitle = groupName
+            // THE GROUP SHAPE IS WHAT NAMES EVERY MESSAGE. From API 28 the platform decides
+            // one-to-one from `isGroupConversation` alone, and a one-to-one thread hides the other
+            // person's name above their lines. A direct message therefore takes the group shape
+            // too, titled with the person it is with - which is what its conversation is called.
+            val conversationTitle = when {
+                isGroup -> groupName
+                namesEachSender -> senderName.ifEmpty { null }
+                else -> null
+            }
+            if (conversationTitle != null) {
+                style.conversationTitle = conversationTitle
                 style.isGroupConversation = true
             }
             // Re-inject the previous (bounded) messages, then add the new one.
@@ -1934,7 +2003,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val notif = notifBuilder.build()
 
-            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
+            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=${conversationTitle != null}")
             manager.notify(notifId, notif)
 
             // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
@@ -2577,7 +2646,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
         showMessageNotification(
             senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-            channel, sentAt = decrypted?.sentAt ?: 0L,
+            channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
         )
 
         // Woken by this incoming message: try to send our own pending outgoing messages

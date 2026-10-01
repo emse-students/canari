@@ -20,7 +20,7 @@
 
     <string name="notif_outbox_pending_body">You may have messages waiting to be sent - open the app to send them.</string>
 
-    <string name="notif_sender_self">Me</string>
+    <string name="notif_sender_self">You</string>
     <string name="notif_channel_unnamed">Channel</string>
 
     <string name="notif_channel_new_message">New message in #%1$s</string>
