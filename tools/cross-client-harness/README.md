@@ -90,6 +90,12 @@ derives it from the running pid every time and refuses to report success until C
 7. `bun unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
    re-locks the encryption PIN, and a locked client does not fail honestly - it renders, answers, and
    reports on an empty store.
+8. `bun seed-bench.mjs` tops the estate up with what the verification rows look at: 40 feed posts
+   (enough to scroll `/posts`), one encrypted video post, six upcoming validated events on the
+   `banc-essai` association, and the `banc-defilement` salon in the venue at 100 messages. Every
+   count is a target read from the table first, so a second run is reads alone; `--dry` says what is
+   owed, `--only` picks parts. Posts and events go through `/api` from the client's own page, the
+   salon through W1's composer, because its messages are end-to-end encrypted.
 
 ## Running it
 
