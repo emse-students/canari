@@ -31,7 +31,8 @@
 import { listTargets, connect, evaluate } from './cdp.mjs';
 import { roleForSubject } from './accounts.mjs';
 import { PORTS, ORIGIN, ACCOUNT_OF } from './names.mjs';
-import { subjectOfToken, describeIdentity, wrongIdentities } from './subject.mjs';
+import { redis } from './estate.mjs';
+import { subjectOfToken, subjectsOfDeviceSocket, describeIdentity, wrongIdentities } from './subject.mjs';
 
 // Re-exported so a caller reaches the whole vocabulary in one import, as `atoms.mjs` asks.
 export { subjectOfToken, wrongIdentities };
@@ -45,12 +46,28 @@ export { subjectOfToken, wrongIdentities };
  */
 export async function identityOf(cx, expected = null) {
   const saved = await evaluate(cx, `localStorage.getItem('canari_saved_user')`);
-  const cookie = await evaluate(
-    cx,
-    `(document.cookie.split('; ').find((c) => c.startsWith('canari_ws_token=')) || '').slice('canari_ws_token='.length)`
-  );
-  const tokenSub = subjectOfToken(cookie ? decodeURIComponent(cookie) : null);
-  return describeIdentity({ saved, tokenSub, expected, roleOf: roleForSubject });
+  const protocol = await evaluate(cx, `location.protocol`);
+  if (protocol === 'http:' || protocol === 'https:') {
+    const cookie = await evaluate(
+      cx,
+      `(document.cookie.split('; ').find((c) => c.startsWith('canari_ws_token=')) || '').slice('canari_ws_token='.length)`
+    );
+    const tokenSub = subjectOfToken(cookie ? decodeURIComponent(cookie) : null);
+    return { ...describeIdentity({ saved, tokenSub, expected, roleOf: roleForSubject }), via: 'cookie' };
+  }
+  // No cookie jar on this origin (`tauri://localhost`, the iOS app): ask the server which subject it
+  // keyed this device's live socket by - see `subjectsOfDeviceSocket`.
+  const deviceId = saved ? await evaluate(cx, `localStorage.getItem('mls_device_id_' + ${JSON.stringify(saved)})`) : null;
+  if (!deviceId || !/^[A-Za-z0-9_-]+$/.test(deviceId)) {
+    console.log(`[identity] ${protocol} keeps no cookie and the page names no device id - acts-as unreadable`);
+    return { ...describeIdentity({ saved, tokenSub: null, expected, roleOf: roleForSubject }), via: 'socket' };
+  }
+  const subs = subjectsOfDeviceSocket(redis(`--scan --pattern 'user:online:*:${deviceId}'`), deviceId);
+  if (subs.length !== 1) {
+    console.log(`[identity] device ${deviceId.slice(0, 16)}... has ${subs.length} live socket subject(s) - acts-as unreadable (is the app in front?)`);
+  }
+  const tokenSub = subs.length === 1 ? subs[0] : null;
+  return { ...describeIdentity({ saved, tokenSub, expected, roleOf: roleForSubject }), via: 'socket' };
 }
 
 /**
@@ -95,7 +112,7 @@ if (import.meta.main) {
     }
     const verdict = r.correct ? (r.agrees ? 'ok' : 'SHOWS/ACTS DISAGREE') : 'WRONG ACCOUNT';
     console.log(
-      `${r.device.padEnd(3)} expected ${String(r.expected).padEnd(6)} shows ${String(r.shows).padEnd(6)} acts as ${String(r.actsAs).padEnd(6)} ${verdict}`
+      `${r.device.padEnd(3)} expected ${String(r.expected).padEnd(6)} shows ${String(r.shows).padEnd(6)} acts as ${String(r.actsAs).padEnd(6)} (${r.via}) ${verdict}`
     );
   }
   const bad = wrongIdentities(rows);

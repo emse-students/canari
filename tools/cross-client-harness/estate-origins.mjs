@@ -51,6 +51,33 @@ export function estateOriginsAmong(contacted) {
 }
 
 /**
+ * The other names THIS machine answers a local `site` under: the same port on each of its own IPv4
+ * addresses.
+ *
+ * WHY. The iPhone has no `adb reverse`, so its bench build (`ios.yml` `local_url`) reaches the
+ * workstation's nginx by the LAN address, `http://<LAN ip>:8081` - the SAME estate as
+ * `http://localhost:8081`. Measured 2026-10-01: `pin.mjs` refused I1 with "THIS CLIENT IS NOT ON THE
+ * LOCAL ESTATE: it called http://192.168.1.32:8081". An address is an alias only when the machine
+ * HOLDS it, read from its interfaces - never a range, so a phone built against another workstation
+ * is still a stranger. A non-local `site` has no aliases.
+ *
+ * @param {string} site the estate the rig reports on
+ * @param {Record<string, Array<{family: string|number, address: string}>>} interfaces `os.networkInterfaces()`
+ * @returns {string[]} origins equivalent to `site`
+ */
+export function localAliases(site, interfaces) {
+  const u = new URL(site);
+  if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return [];
+  const out = [];
+  for (const list of Object.values(interfaces ?? {})) {
+    for (const a of list ?? []) {
+      if (a.family === 'IPv4' || a.family === 4) out.push(`${u.protocol}//${a.address}${u.port ? `:${u.port}` : ''}`);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Whether a client that contacted `contacted` is on `site`, and why not when it is not.
  *
  * AN EMPTY SET IS A REFUSAL, not a pass. "Contacted nothing" is not "contacted the right thing",
@@ -60,11 +87,12 @@ export function estateOriginsAmong(contacted) {
  *
  * @param {string[]} contacted every origin the client has fetched from
  * @param {string} site the estate the rig reports on
+ * @param {string[]} aliases other origins that ARE `site` (see `localAliases`)
  * @returns {{ ok: boolean, estates: string[], strangers: string[], reason: 'ok'|'silent'|'strangers' }}
  */
-export function estateVerdict(contacted, site) {
+export function estateVerdict(contacted, site, aliases = []) {
   const estates = estateOriginsAmong(contacted);
-  const strangers = estates.filter((o) => o !== site);
+  const strangers = estates.filter((o) => o !== site && !aliases.includes(o));
   if (!estates.length) return { ok: false, estates, strangers, reason: 'silent' };
   if (strangers.length) return { ok: false, estates, strangers, reason: 'strangers' };
   return { ok: true, estates, strangers, reason: 'ok' };
