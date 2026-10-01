@@ -364,9 +364,17 @@ this branch.
 | Segmented, codecs named -> stream               | PASS: 20 ranges, all `206`, contiguous and in order; first frame (`loadeddata`) at 676 ms with 2 of 20 segments in hand, last byte at 4837 ms | PASS: same 20 `206`s in order; first frame 539 ms, last byte 5686 ms |
 | Same blob, `video/mp4` (no codecs) -> whole     | PASS: one `200` of 20.9 MB, plays at 2204 ms (`read whole (no-codecs)` logged)                                                                | PASS: one `200`, plays at 4845 ms                                    |
 | Legacy single block (fresh post)                | PASS: one `200`, no `Range`, plays                                                                                                            | PASS: one `200`, no `Range`, plays                                   |
-| One bit flipped in segment 3                    | REFUSED: `segment-auth`, index 3, after segments 0-2 played; card shows "Impossible de charger le media"                                      | REFUSED: same                                                        |
+| One bit flipped in segment 3                    | REFUSED: `segment-auth`, index 3, after segments 0-2 played; cause `corrupt` (#1309): "Ce media est endommage", with Reessayer                | REFUSED: same                                                        |
 | Last segment dropped, header intact             | REFUSED: the 20th range answers `416`, `length` fault on segment 19                                                                           | REFUSED: same                                                        |
 | Last segment dropped, header rewritten to match | REFUSED: `segment-auth` on segment 0 - the header is every segment's AAD                                                                      | REFUSED: same                                                        |
+
+**Since #1309, a refusal speaks the renderers' causes** (re-read on the Mi 9T after the rebase,
+same day): a segment whose tag fails or a blob cut short is `corrupt` - wrapped as
+`MediaDecryptError` by the whole-blob reader, read raw from the stream by `mediaFailureCause` - so
+the card says the media is damaged and offers "Reessayer", which re-opens the stream and is refused
+again at the same segment. An encoding or header version a NEWER client wrote
+(`isWrittenByNewerClient`) is `other`, never damage, and its cached bytes are kept. A failed range
+read throws the whole download's types (unreachable, 404, 410, status).
 
 What the table means for the flip: **a refused stream has already PLAYED its authentic prefix** - by
 construction, since each segment is verified on its own; what it never plays is a byte that failed
