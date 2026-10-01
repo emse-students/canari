@@ -67,9 +67,16 @@
       onOpen();
     }}
   ></button>
+  <!-- THE APP'S AMBER, NOT THE PICTURE'S COLOUR (user, 2026-10-01, Mi 9T: green). The button was
+       55 % black over a blurred backdrop, so it took the hue of whatever frame was under it - on a
+       green clip, green. It is now a near-opaque scrim with no blur, carrying the theme's `--cn-yellow` glyph while
+       muted, and a solid `--cn-yellow` disc once the sound is on, so its colour says the state and
+       nothing else. -->
   <button
     type="button"
-    class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+    class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {videoSound.muted
+      ? 'bg-cn-scrim/90 text-cn-yellow'
+      : 'bg-cn-yellow text-cn-ink'}"
     aria-label={m.video_sound_label()}
     aria-pressed={!videoSound.muted}
     onclick={toggleSound}

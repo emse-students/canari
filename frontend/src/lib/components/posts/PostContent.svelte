@@ -147,17 +147,22 @@
 {/if}
 
 {#if postMedia.length > 0 && authToken}
-  <div class="mt-1 w-full">
+  <div class="mt-1 mb-1 w-full px-3">
     {#if postMedia.length === 1}
       {@const media = postMedia[0]}
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
       <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
-        <!-- An image is deliberately full-bleed; a document card is not, so it
-           lines up with the post text (px-5) instead of touching the edges. -->
+        <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
+             edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
+             `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also
+             the scale's card corner. The inset is PADDING on the block, never a margin on the box:
+             the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
+             video shrinks its width to fit the ceiling instead of being cropped by it. A document
+             card adds `px-2`, which lands it on the post text's 20 px. -->
         <div
           class="relative overflow-hidden {reserved
-            ? 'w-full bg-black/5 dark:bg-white/5'
-            : 'w-full px-5 pb-1'}"
+            ? 'w-full rounded-lg bg-black/5 dark:bg-white/5'
+            : 'w-full px-2 pb-1'}"
           style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
         >
           <!-- Single attachment: PostMedia handles its own lightbox/download -->
@@ -170,12 +175,14 @@
           />
         </div>
         {#if media.caption}
-          <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>
+          <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
         {/if}
       </div>
     {:else}
       <!-- Multi-media gallery: centralized lightbox with navigation for image/video -->
-      <div class="grid grid-cols-2 gap-0.5 bg-white/20 sm:gap-1 dark:bg-black/20">
+      <div
+        class="grid grid-cols-2 gap-0.5 overflow-hidden rounded-lg bg-white/20 sm:gap-1 dark:bg-black/20"
+      >
         {#each postMedia as media (media.mediaId)}
           {@const lightboxIdx = lightboxMedia.indexOf(media)}
           <div

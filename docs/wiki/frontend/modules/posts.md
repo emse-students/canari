@@ -349,6 +349,30 @@ collapsing mobile URL bar does not re-lay-out the feed under the reader's finger
 started typing. Because the ceiling lives in the shared helper, the feed, the gallery cells, a
 comment image and a chat bubble are bounded by one decision instead of four local patches.
 
+### The card's spacing, read on the Mi 9T (2026-10-01)
+
+Four changes from one reading of the feed on the phone, each measured at 436 px in Chromium first:
+
+- **An empty comment section is a composer and nothing else.** Opened on a post with no comments,
+  the input sat 45 px under the action row: the section's `py-4` (16), the EMPTY list's `mb-4` (16)
+  and the input area's `pt-3` (12) - spacing between a list and the composer, drawn with no list.
+  Now the list element exists only when it holds something, the section pads `pt-2 pb-3`, and the
+  input pill dropped from 58 px to 50 (its 44 px send target sets the height). Measured after: 9 px.
+  `PostComments.empty.svelte.test.ts` pins the cause, since happy-dom lays nothing out.
+- **One separator, not two.** `PostActions` carried a `border-b` that sat one pixel above the
+  comment section's `border-t`; it is gone, and the row's first glyph lands on the text's 20 px.
+- **The picture is inset and rounded.** The media block pads `px-3` and the box is `rounded-lg`:
+  18 px card corner, 12 px inset, 8 px media corner - the concentric pair, and the scale's card
+  corner. **It is padding on the block, never a margin on the box**: the box's width would then come
+  from `aspect-ratio` under the `max-height` ceiling, and a portrait video SHRANK to 270 px wide
+  instead of being cropped (seen in the first draft).
+- **The card stands off the page**: `shadow-md` at 8 % in light; in dark mode, where a shadow has
+  nothing to fall on, the edge goes from 10 % to 15 % white.
+
+**The video sound button was green** while the app is amber. It was 55 % black over a backdrop
+blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
+`--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
+
 The gallery lightbox holds `lightboxMedia`, which is the attachment list **compacted** to
 image/video. A grid position is therefore not a lightbox index: each cell resolves its own index
 via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one

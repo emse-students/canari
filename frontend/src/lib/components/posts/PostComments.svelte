@@ -404,7 +404,7 @@
             {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="post-markdown text-text-main text-sm leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
+              class="post-markdown text-text-main text-sm leading-snug wrap-break-word [&_p]:m-0 [&_p]:inline {isLong &&
               !isExpanded
                 ? 'line-clamp-5'
                 : ''}"
@@ -429,7 +429,7 @@
             {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
             <div
               class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
-                ? 'max-w-[14rem] bg-black/5 dark:bg-white/5'
+                ? 'max-w-56 bg-black/5 dark:bg-white/5'
                 : 'max-w-[20rem]'}"
               style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
             >
@@ -529,10 +529,17 @@
   So `showComments` is now the only thing that opens it, and the placeholder still says "be the
   first" when the post has no comments - the invitation was worth keeping, the permanent field was
   not.
+
+  OPENED FROM ZERO, THE COMPOSER SITS 8 PX UNDER THE ACTION ROW, and it sat 45 px under it. Measured
+  at 436 px (the Mi 9T's width) on 2026-10-01, three paddings stacked above an input with nothing
+  between them: this section's own `py-4` (16), the EMPTY list's `mb-4` (16) and the input area's
+  `pt-3` (12) - spacing that separates a list from the composer, drawn when there is no list. The
+  user read it on the phone as ~100 px of dead space under the icons. The list and its gap now
+  exist only when there are comments, and the section pads itself like the row above it.
 -->
 {#if comments.length > 0 || showComments}
   <div
-    class="border-t border-black/5 bg-white/30 px-4 py-4 sm:px-5 dark:border-white/10 dark:bg-black/10"
+    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10"
   >
     <!--
       Controls: show/hide + sort. Both are about a LIST, so neither is drawn for a post with no
@@ -585,11 +592,13 @@
     {/if}
 
     <!-- Comment list. -->
-    <div class="mb-4 space-y-1">
-      {#each visibleComments as comment (comment.id)}
-        {@render commentNode(comment, false)}
-      {/each}
-    </div>
+    {#if visibleComments.length > 0}
+      <div class="mb-3 space-y-1">
+        {#each visibleComments as comment (comment.id)}
+          {@render commentNode(comment, false)}
+        {/each}
+      </div>
+    {/if}
 
     <!-- Load all comments (if the backend returns more). -->
     {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
@@ -604,7 +613,7 @@
     {/if}
 
     <!-- Input area. -->
-    <div class="flex flex-col gap-2 pt-3">
+    <div class="flex flex-col gap-2">
       {#if replyingToId}
         <div
           class="animate-in fade-in slide-in-from-bottom-1 text-2xs ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 font-bold text-amber-700 dark:text-amber-400"
@@ -636,7 +645,7 @@
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
     {#if pendingPreviewUrl || uploadingMedia}
-      <div class="mb-2 ml-[2.125rem] flex items-center gap-2">
+      <div class="mb-2 ml-8.5 flex items-center gap-2">
         <div
           class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
           style={pendingMedia?.width && pendingMedia?.height
@@ -676,7 +685,7 @@
            the GIF button's `self-center` and the send icon's `mt-0.5` - a nudge kept once the
            thing it compensated for is gone is how the next offset gets built. -->
       <div
-        class="flex min-w-0 flex-1 items-center rounded-2xl border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
+        class="flex min-w-0 flex-1 items-center rounded-2xl border border-black/5 bg-black/5 py-0.5 pr-0.5 pl-3.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
         onfocusin={() => (commentInputFocused = true)}
         onfocusout={() => (commentInputFocused = false)}
       >
