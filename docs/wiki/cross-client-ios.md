@@ -28,6 +28,8 @@ the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-benc
 | `webkit-input.mjs` (C1) | the WebView's input: under `CANARI_PHONE=ios`, the connection `cdp.mjs`'s `connect()` opens on `PORTS.I1` performs every `Input.*` frame as a WDA touch or key - see [C1](#c1---the-input-seam-done) |
 | `phone-ios.mjs`, second half | the WDA-only observables O3, O6-O11 below, each ending in a proof read back from the device |
 | `login.mjs --device I1` | the launcher click through C1, then `signInThroughSheet` (O9); the proof is the app holding a session, as on every other client |
+| `iosbench.mjs` | the app asked about its own native stores (O5, O15) - spawned, so `phone-ios.mjs`'s readers stay synchronous |
+| `webkit-files.mjs` | a fixture into the composer on WebKit (O14), used by `chat.mjs attachFiles` |
 
 **The bench before a run**: a BENCH build (`ios.yml` with `local_url` - it adds `tauri/devtools`, so the
 WKWebView is inspectable; a store build is not), `python tools/ios-device/wda-daemon.py`,
@@ -80,8 +82,8 @@ run re-pins them.
 | O1 | the console | `webkit-console.mjs` | DONE |
 | O2 | the shade | Notification Center through WDA | DONE |
 | O3 | network conditions on the phone | `setAirplaneMode(on)`: Control Center, airplane AND Wi-Fi read back (iOS restores a Wi-Fi turned on inside airplane mode, and Wi-Fi is the estate's network); `setLinkConditioner(profile \| null)`: Settings > Developer > Network Link Conditioner, its Enable switch read back - `Network.emulateNetworkConditions` does not exist in WebKit | DONE, fixtures only; the profile row is tapped, not proven |
-| O4 | APNs delivered | per row: the server's `[PUSH_SEND] ... platform=ios` line + `apnsReceipts()` (syslog `apsd`); replaces `requireFreshFcmLink`, since APNs has no socket to renew - `fcmlink.mjs` needs the iOS branch | half: `apnsReceipts` DONE |
-| O5 | the native stores | the MLS state and the Graine mirror are in the App Group container `group.fr.emse.canari`, which no lockdown service vends - a BENCH-only app command reporting counts (and taking/restoring/damaging a snapshot) through the WebView | owed, product code |
+| O4 | APNs delivered | `requireFreshFcmLink` under `CANARI_PHONE=ios` proves the receipt WITNESS instead (the syslog capture running and receiving, else `SETUP-FAILED`); after the wait the row records `apnsEvidence(since)` (`apsd` lines naming the app) beside the server's `[PUSH_SEND] ... platform=ios` | DONE, unrun |
+| O5 | the native stores | `bench_native_store`, a command compiled into the BENCH build only, asked through the WebView (`iosbench.mjs`): `nativeResidue`, `nativeFootprint`, `graineMirrorSessions`, `forgetGraineMirror` answer as on Android, plus `mlsStateIdentity`, `snapshotMlsState`, `restoreMlsState`, `damageMlsState('truncate' \| 'flip')` | DONE, unrun |
 | O6 | user force-quit | `forceQuit()`: the app switcher (slow drag from the bottom edge, held) and the card flicked off, then PROVEN dead - on iOS it stops background pushes, so it is LIFE-3's subject, not `forceStop` | DONE, fixtures only |
 | O7 | system settings | `openSettings(path)` from the ROOT (Settings ended first), `openAppSettings()` (Apps > Canari on iOS 18, Canari on the root before), `setNotificationsAllowed(on)` read back | DONE, fixtures only |
 | O8 | reboot | `reboot()`: `pymobiledevice3 diagnostics restart`, usbmux SEEN losing the phone (a restart not taken is refused) and finding it again; stops at Before First Unlock - the first unlock is a human's, then `wda-daemon.py` | DONE, fixtures only |
@@ -89,9 +91,49 @@ run re-pins them.
 | O10 | a cold deep link | `openDeepLink(url)`: WDA `POST /session/:id/url` with NOTHING launched first (`cold` reported), Safari's "Ouvrir" answered, done when the app is in front | DONE, fixtures only |
 | O11 | notification actions | `notificationAction(needle, 'reply' \| 'mark_read', { text })`: long press in Notification Center, the action by the title in the app's own `Localizable.strings`, a reply typed and sent; taken = the button gone | DONE, fixtures only |
 | O12 | calls | CallKit's UI and the mic/camera alerts through WDA; the server's `[apns-voip]` lines | owed (calls are held off) |
-| O13 | how a notification is filed | the NSE's `interruptionLevel` (iOS has no channels) - a syslog line from the NSE | owed |
-| O14 | a file into the composer | WDA through the system picker with fixtures in Photos/Files | owed |
-| O15 | the refresh credential | `tauri://localhost` carries it in `X-Canari-Refresh`, not a cookie ([sessions](sessions.md)) - cleared through the WebView / O5 | owed |
+| O13 | how a notification is filed | `interruptionLevels(since)`: the `filed interruptionLevel=` line the extension (`by: 'nse'`) and the app's own poster (`by: 'app'`) write on a BENCH build - `timeSensitive` for a mention, `active` for a message, iOS having no channels | DONE, unrun |
+| O14 | a file into the composer | `chat.mjs attachFiles` on a WebKit page: the page builds the `File`s and fires `change` on the composer input (`webkit-files.mjs`) - the app's path from the pick on; the system picker itself still needs WDA | DONE, unrun |
+| O15 | the refresh credential | `clearRefreshCredential()`: `tauri://localhost` keeps it in `auth-native.json`, not a cookie ([sessions](sessions.md)); erased through the store plugin's LIVE instance, so the running app reads it gone | DONE, unrun |
+
+### The bench observables: what they are, and why a store build cannot carry them
+
+O5, O13 and O15 are product code, so they are **compiled in, never switched on**. A `local_url`
+dispatch of `ios.yml` - the bench build, which already adds `tauri/devtools` and refuses `publish` -
+adds the Cargo feature `bench-observables` (the `bench_native_store` command,
+`src-tauri/src/commands/bench.rs`) and the build condition `CANARI_BENCH` (the filing lines, in
+`NotificationService.swift` and `canari_push.mm`). No release path sets either.
+`.github/scripts/bench-observables.sh` then reads the BUNDLE: every store archive must contain none
+of the three markers, and every bench build must contain all three - the second half is what stops
+the first from passing by searching the wrong place. O14 needs no product code; its gate is that
+only a bench build is inspectable at all.
+
+**What the app's answers cost, and Android's do not.** `run-as` reads a dead app's files; here the
+APP answers, so every native reader needs the app **running, in front, with the bridge up**, and
+answers `{ error }` otherwise - it never launches the app to ask, since a launch re-mirrors the
+stores it is reading. `graineMirrorSessions` counts the App Group's copy, the one the extension opens
+a push against; `forgetGraineMirror` removes both copies, because the app re-mirrors its own into the
+App Group at its next resign-active. `damageMlsState` is refused by the app without a snapshot.
+A damage or restore changes the FILE: the row then `forceStop()`s and relaunches, and reads
+`mlsStateIdentity()` to prove the reload took it.
+
+**What the first live session must confirm** (each shape below is the expected one, pinned by
+`phone-ios-selftest.mjs`, never yet read off the device):
+
+1. The bridge answers `/json/list` with a `tauri://localhost` page and `iosbench.mjs` gets a value
+   back (the call is started and polled through `window.__canariBench`, so it does not depend on
+   whether the bridge forwards `awaitPromise`).
+2. `nativeStore('list')` names a non-null `group` - the App Group path through the Objective-C
+   runtime - and `nativeResidue()` on a signed-in phone is non-zero.
+3. After `damageMlsState('flip')`, `forceStop()`, `launch()`, `mlsStateIdentity()` still shows the
+   damaged digest: nothing in the dying app wrote `mls.bin` back first.
+4. A mention and a plain message each produce one `filed interruptionLevel=` line in `syslogSince`,
+   under the extension's process name, and NOTIF-16's two levels differ.
+5. `attachFiles` on the iPhone stages the fixture (the composer shows its tray): WebKit accepts
+   `input.files = dataTransfer.files`.
+6. `clearRefreshCredential()` answers `{ had: true, present: false }` and the next refresh is a
+   clean re-login (TAB-6).
+7. `syslogWitness()` grows within its 10 s on an idle phone, and `apnsEvidence` counts the `apsd`
+   line of a delivered push - the `apsd` wording itself is still the expected one.
 
 **What the first live session must confirm before any row's verdict is believed** - each is a shape
 the fixtures assume:
@@ -113,7 +155,8 @@ the fixtures assume:
 ## Every row
 
 `a` = runs with the adapter (once C1 lands), `b` = needs the observable named, `c` = what the row
-tests does not exist on iOS.
+tests does not exist on iOS. A `b` row whose observables are all `DONE` above is ported like an `a`
+row once C1 lands and the live confirmations above hold; its class here stays `b` until then.
 
 | Rows | Class | On the iPhone |
 | --- | --- | --- |

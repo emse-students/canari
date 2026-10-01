@@ -531,8 +531,13 @@ jobs:
           # off the iPhone's DOM (a safe-area inset, a hit box) and is left inferring them from
           # screenshots. A store build never reaches this branch - local_url and publish are
           # refused together above.
+          #
+          # And `bench-observables`: the `bench_native_store` command through which the cross-client
+          # rig counts, snapshots and damages the native stores (docs/wiki/cross-client-ios.md, O5
+          # and O15). Same mode, same reason a store build can never carry it - and the archive of a
+          # store build is asserted to carry none of it after it is built.
           FEATURES=tauri/custom-protocol
-          if [ -n "$LOCAL_URL" ]; then FEATURES="$FEATURES,tauri/devtools"; fi
+          if [ -n "$LOCAL_URL" ]; then FEATURES="$FEATURES,tauri/devtools,bench-observables"; fi
           echo "cargo features: $FEATURES"
           rustup target add aarch64-apple-ios
           cargo build --lib --release --target aarch64-apple-ios --features "$FEATURES"
@@ -561,6 +566,8 @@ jobs:
 
           ARCHIVE="src-tauri/gen/apple/build/canari_iOS.xcarchive"
           rm -rf "$ARCHIVE"
+          # `CANARI_BENCH`, for the Swift extension and the Objective-C app alike: the notification
+          # filing lines the rig reads (O13). `$(inherited)` keeps every target's own definitions.
           xcodebuild archive \
             -project src-tauri/gen/apple/canari.xcodeproj \
             -scheme canari_iOS \
@@ -571,7 +578,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+            'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) CANARI_BENCH=1' \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) CANARI_BENCH'
 
           APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
           if [ -z "$APP" ]; then
@@ -582,6 +591,9 @@ jobs:
             echo "::error::the app carries no notification extension - a local build must keep it"
             exit 1
           fi
+          # Every bench observable IS in this bundle - which is what makes the store build's
+          # "absent" below a measurement rather than a search that cannot find anything.
+          bash ../.github/scripts/bench-observables.sh "$APP" present
 
           rm -rf "$RUNNER_TEMP/payload"
           mkdir -p "$RUNNER_TEMP/payload/Payload"
@@ -650,6 +662,10 @@ jobs:
           fi
 
           echo "Archive produced: ${ARCHIVE_PATH}"
+
+          # A STORE ARCHIVE CARRIES NONE OF THE BENCH RIG'S OBSERVABLES - asserted on the binaries
+          # that would ship, not on the flags meant to produce them (bench-observables.sh).
+          bash ../.github/scripts/bench-observables.sh "$ARCHIVE_PATH/Products/Applications" absent
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
           # that normally authors it, and nothing but Xcode 26 can say whether it means what it was

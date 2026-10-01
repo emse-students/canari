@@ -787,7 +787,9 @@ distribution certificate or profile, writes the seven `VITE_*` origins as that a
 `NSLocalNetworkUsageDescription` to THIS build's `Info.plist` only, merges the `local-estate`
 capability through `TAURI_CONFIG` (the build bypasses `tauri ios build`, so `--config` never
 applies), and builds UNSIGNED. **It refuses `publish`**, and the artefact (`ios-local-device`)
-lives three days.
+lives three days. It is also the only build carrying the cross-client rig's bench observables (the
+`bench-observables` Cargo feature and the `CANARI_BENCH` build condition), and every store archive is
+asserted to carry none of them ([cross-client-ios](../cross-client-ios.md#the-bench-observables-what-they-are-and-why-a-store-build-cannot-carry-them)).
 
 **THE OIDC CLIENT IS THE LOCAL STACK'S, NOT PRODUCTION'S (`local_client_id`, required).** The phone
 authorizes against Authentik, but the code comes back to the workstation's core service, which

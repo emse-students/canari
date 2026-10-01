@@ -8,8 +8,11 @@
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { GATE_EXPR } from './gate-probe.mjs';
+import { isWebKitAgent } from './webkit-console.mjs';
+import { contentTypeOf, fileInjectionExpression } from './webkit-files.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
 import { PORTS, SITE, VENUE } from './names.mjs';
@@ -2421,6 +2424,15 @@ export async function attachFiles(cx, files) {
         `can be uploaded: ${missing.join(', ')}. This is a MISSING FIXTURE, not an app defect - ` +
         `check that the file is committed and that no ignore rule swallows it.`
     );
+  }
+  // THE iPHONE'S WEBVIEW HAS NO `DOM.setFileInputFiles` (O14): the page builds the files itself
+  // (`webkit-files.mjs`). Asked of the PAGE's engine, as `watch()` does, never of a port or a name.
+  const ua = await evaluate(cx, 'navigator.userAgent');
+  if (isWebKitAgent(ua)) {
+    const payload = files.map((f) => ({ name: basename(f), type: contentTypeOf(f), b64: readFileSync(f).toString('base64') }));
+    const held = await evaluate(cx, fileInjectionExpression(payload));
+    if (held !== files.length) throw new Error(`attachFiles (WebKit): the composer input holds ${JSON.stringify(held)}, wanted ${files.length}`);
+    return files.length;
   }
   await cx.send('DOM.enable');
   const { root } = await cx.send('DOM.getDocument', { depth: -1 });

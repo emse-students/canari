@@ -71,6 +71,17 @@ tauri-plugin-system-components = { path = "patches/tauri-plugin-system-component
 # `[patch.crates-io]` above.
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-system-components = "=0.1.8"
+# The App Group path for the BENCH command (`commands::bench`), asked of Foundation through the
+# Objective-C runtime. Optional, and pulled in only by `bench-observables`: a store build links
+# nothing of it. Already in the tree through wry, so this names a version the lock carries.
+objc2 = { version = "0.6", optional = true }
+
+# A BENCH build for the phone on the bench (`ios.yml` with `local_url`), and NOTHING else: the
+# `bench_native_store` command the cross-client rig asks the iPhone's native stores through
+# (docs/wiki/cross-client-ios.md, O5/O15). No release path enables it, and every store archive is
+# asserted to carry none of it (`.github/scripts/bench-observables.sh`).
+[features]
+bench-observables = ["dep:objc2"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }
