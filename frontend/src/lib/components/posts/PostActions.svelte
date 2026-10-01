@@ -48,7 +48,7 @@
    * the same fact only competes with the post.
    */
   const ACTION =
-    'flex h-11 items-center gap-1.5 rounded-lg px-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
+    'flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
 <!--
@@ -73,8 +73,15 @@
   know where its element starts cannot keep it on screen. `left-3 right-3` pins it to this row's
   content box, so the eight share whatever width the card has and the bar can never be wider than the
   thing it belongs to; from 640px up it shrinks back to its own content.
+
+  NO RULE UNDER THE ROW, AND TIGHTER INSETS (user, 2026-10-01, Mi 9T). Its `border-b` drew a line
+  that, with the comment section's own `border-t` under it, was two hairlines one pixel apart, and a
+  line closing the card's last row when the section is shut. The section's top border is the one
+  separator that means something. The first glyph now starts on the text column - `px-2` here plus
+  a 20 px icon centred in a 44 px target lands it at 20 px, the post text's `px-5` - and the two
+  buttons touch instead of floating 4 px apart; each target stays 44 px.
 -->
-<div class="border-cn-border/40 relative flex items-center gap-1 border-b px-3">
+<div class="relative flex items-center px-2">
   <button
     type="button"
     onclick={onToggleReactionPicker}
