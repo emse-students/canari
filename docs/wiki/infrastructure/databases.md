@@ -86,6 +86,14 @@ Rules, all of them load-bearing:
   re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
   forward; keep backfills narrowly conditioned anyway.
 
+**A DATABASE WITH NO LEDGER MUST NEVER BE HANDED THE LOOP.** The local estate runs
+`NODE_ENV=development`, so `synchronize` builds its schema from the entities on every boot and it
+carries no `schema_migrations` table at all. Sourcing `infrastructure/lib/migrations.sh` against it
+(2026-10-01) treated all 98 files as unapplied and REPLAYED the one-shot data migrations with them:
+`042_the_cut_communities.sql` deleted every community, salon, member and message, and chat-delivery's
+015/016 tombstoned their distribution groups. The local venue was rebuilt with `bun venue.mjs`. On a
+ledger-less local database the schema is already the entities'; there is nothing to apply.
+
 The file set is a **patch set, not a schema**. It assumes a database that TypeORM already created;
 migration 001 starts with `ALTER TABLE users`. A brand-new production database is bootstrapped from a
 backup restore (see `backup.md`), never by replaying migrations.
