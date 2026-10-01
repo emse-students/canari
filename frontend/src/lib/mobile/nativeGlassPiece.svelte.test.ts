@@ -134,8 +134,28 @@ describe('nativeGlassPiece', () => {
     await settle();
     const created = lastCreate();
     expect(created.props.label).toBe('Alice');
+    expect(created.props.titleSize).toBeUndefined();
     plugin.emit!({ id: created.id, event: 'click' });
     expect(onClick).toHaveBeenCalledTimes(1);
+    action.destroy?.();
+  });
+
+  it("sets the native title at the web title's size, so the pill keeps one line", async () => {
+    const node = piece();
+    const title = document.createElement('span');
+    title.setAttribute('data-glass-title', '');
+    title.style.fontSize = '14px';
+    title.textContent = 'Canari Test Beta';
+    node.appendChild(title);
+    const action = nativeGlassPiece(node, {
+      id: 'chat-title',
+      label: 'Settings',
+      title: 'Canari Test Beta',
+    });
+    await settle();
+    const created = lastCreate();
+    expect(created.props.titleSize).toBe(14);
+    expect(created.props.circular).toBeUndefined();
     action.destroy?.();
   });
 
@@ -160,6 +180,27 @@ describe('nativeGlassPiece', () => {
       id,
       expect.objectContaining({ hidden: false })
     );
+    action.destroy?.();
+  });
+
+  it('follows a move made by the root inset alone, with no resize anywhere', async () => {
+    // iOS: native publishes --safe-area-inset-bottom when the keyboard animation ENDS, after the
+    // window resize was read; the composer floor moves the "+" 22 pt and nothing resizes.
+    const rect = { left: 330, top: 487, width: 44, height: 44 };
+    const node = piece(rect);
+    const action = nativeGlassPiece(node, { id: 'chat-add', label: 'Add', icon: Images });
+    await settle();
+    const id = lastCreate().id;
+    plugin.updateComponent.mockClear();
+
+    rect.top = 465;
+    document.documentElement.style.setProperty('--safe-area-inset-bottom', '0px');
+    await settle();
+    expect(plugin.updateComponent).toHaveBeenLastCalledWith(
+      id,
+      expect.objectContaining({ y: 465 })
+    );
+    document.documentElement.style.removeProperty('--safe-area-inset-bottom');
     action.destroy?.();
   });
 

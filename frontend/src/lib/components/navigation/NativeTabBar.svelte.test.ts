@@ -148,6 +148,36 @@ describe('NativeTabBar', () => {
     expect(plugin.setBadge).toHaveBeenCalledWith('chat', '');
   });
 
+  it('redraws for light after a dark start the store learnt only after the first draw', async () => {
+    // The phone: app.html sets data-theme="dark" before paint, this bar's onMount runs before the
+    // layout's themeStore.init(), so the first glyphs are drawn dark while the store still says light.
+    icons.classColorHex.mockImplementation(
+      (cls: string) => `${cls}@${document.documentElement.dataset.theme}`
+    );
+    document.documentElement.dataset.theme = 'dark';
+    let initialised = false;
+    icons.lucideIconPng.mockImplementation(async (icon: unknown, color: string) => {
+      if (!initialised) {
+        initialised = true;
+        themeStore.setPreference('dark'); // the layout's init, landing mid-setup
+      }
+      const name = Object.entries(PLACE_ICONS).find(([, c]) => c === icon)?.[0];
+      return `png:${name}:${color}`;
+    });
+    await mountBar({ visible: true });
+    expect(plugin.configureTabBar.mock.calls[0][0].items[0].image).toBe(
+      `png:${MOBILE_NAV_PLACES[0].icon}:text-class@dark`
+    );
+
+    themeStore.setPreference('light');
+    for (let i = 0; i < 6; i++) {
+      await tick();
+      await Promise.resolve();
+    }
+    const last = plugin.configureTabBar.mock.calls.at(-1)![0];
+    expect(last.items[0].image).toBe(`png:${MOBILE_NAV_PLACES[0].icon}:text-class@light`);
+  });
+
   it('navigates to the place a tab names', async () => {
     await mountBar({ visible: true });
     selectTabHandler!({ id: 'chat' });

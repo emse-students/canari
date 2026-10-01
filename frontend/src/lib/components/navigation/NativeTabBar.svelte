@@ -62,16 +62,25 @@
   let destroyed = false;
   /** The last badge value sent per place, so a re-render that changes nothing sends nothing. */
   let sentBadges: Record<string, string | undefined> = {};
-  /** The rasterised glyphs per place, both states, for the theme they were drawn in. */
+  /** The rasterised glyphs per place, both states, and the two colours they were drawn in. */
   let icons: Record<string, { normal: string; selected: string }> = {};
-  let iconsForDark: boolean | null = null;
+  let iconsDrawnIn: string | null = null;
 
-  /** Draws both states of every glyph in the current theme's colours - once per theme. */
+  /**
+   * Draws both states of every glyph in the current theme's colours - once per pair of colours.
+   *
+   * KEYED ON THE COLOURS, NOT ON `themeStore.isDark`: the colours are read off the DOM
+   * (`data-theme`, which `app.html` sets before first paint), and this component's `onMount` runs
+   * BEFORE the root layout's, so before `themeStore.init()`. On a phone in dark mode the store still
+   * said light while the DOM said dark, the dark glyphs were filed as light, and switching to light
+   * found "light" already drawn and redrew nothing - the resting glyphs stayed `#e4e6eb` on the light
+   * bar until a relaunch (iPhone 12, 2026-10-01). Light -> dark worked because both agreed.
+   */
   async function drawIcons() {
-    const dark = themeStore.isDark;
-    if (iconsForDark === dark) return;
     const normal = classColorHex(TAB_ICON_CLASSES.normal);
     const selected = classColorHex(TAB_ICON_CLASSES.selected);
+    const colours = `${normal}/${selected}`;
+    if (iconsDrawnIn === colours) return;
     const drawn: typeof icons = {};
     for (const place of MOBILE_NAV_PLACES) {
       const glyph = PLACE_ICONS[place.icon];
@@ -81,7 +90,7 @@
       };
     }
     icons = drawn;
-    iconsForDark = dark;
+    iconsDrawnIn = colours;
   }
 
   /**

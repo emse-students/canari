@@ -98,6 +98,7 @@ interface PatchedProps extends ComponentProps {
   accessibilityLabel?: string;
   foreground?: string;
   imageSide?: number;
+  titleSize?: number;
 }
 
 /** A glyph rasterised once per colour - the menus redraw on every open-state change. */
@@ -167,6 +168,10 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       : p.icon
         ? await glyphPng(p.icon, foreground)
         : undefined;
+    // The title's size is the web title's own (`[data-glass-title]`), so the two pills set the same
+    // type; native draws it bold on one line, truncated like the web's `truncate`.
+    const titleNode = p.title ? node.querySelector<HTMLElement>('[data-glass-title]') : null;
+    const titleSize = titleNode ? parseFloat(getComputedStyle(titleNode).fontSize) : NaN;
     const menu = p.items
       ? await Promise.all(
           p.items.map(async (item) => ({
@@ -181,8 +186,10 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       label: p.title,
       accessibilityLabel: p.label,
       image,
-      circular: avatarNode ? true : undefined,
+      // NOT `circular`: the rasteriser already draws the disc round, and the presence dot sits on
+      // the disc's edge, PAST the inscribed circle - the plugin's second circular clip cut it.
       imageSide: avatarNode ? AVATAR_POINTS : undefined,
+      titleSize: Number.isFinite(titleSize) ? titleSize : undefined,
       foreground,
       menu,
     };
@@ -253,6 +260,17 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   resizes.observe(node);
   window.addEventListener('resize', remeasure);
   window.visualViewport?.addEventListener('resize', remeasure);
+  // THE ROOT'S STYLE AND CLASS MOVE A PIECE WITHOUT RESIZING IT OR THE WINDOW. Native writes
+  // `--safe-area-inset-bottom` on `<html>` when the keyboard's animation ENDS (canari_ios.mm), after
+  // the window's `resize` was already read, and the composer's floor is
+  // `max(0.75rem, var(--safe-area-inset-bottom))` - so the "+" moved by 34 - 12 = 22 pt with no event
+  // here and its native twin stayed 22 pt off (iPhone 12, 2026-10-01). `keyboard-open` and
+  // `--app-viewport-height` land on the same element. Those writes ARE the geometry change.
+  const rootChanges = new MutationObserver(remeasure);
+  rootChanges.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['style', 'class'],
+  });
 
   // A photo that loads, an initial or a presence dot that changes: the pill's picture is redrawn.
   // The whole node is watched, since the avatar itself is swapped when the conversation's kind
@@ -275,6 +293,7 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       status = 'destroyed';
       stopEffects();
       resizes.disconnect();
+      rootChanges.disconnect();
       avatarChanges.disconnect();
       node.removeEventListener('load', onAvatarLoad, true);
       window.removeEventListener('resize', remeasure);

@@ -266,6 +266,9 @@ pub struct ComponentProps {
     pub foreground: Option<String>,
     /// The side, in points, of a button's bitmap `image` (default 20).
     pub image_side: Option<f64>,
+    /// The point size of a button's title, drawn bold on ONE line and truncated at its tail. Unset,
+    /// the configuration's own font, which wraps.
+    pub title_size: Option<f64>,
 
     // ── `container` layout ───────────────────────────────────────────────
     /// `horizontal` (a bar) or `vertical` (a sidebar). Default `horizontal`.

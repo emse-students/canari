@@ -71,6 +71,22 @@ describe('renderedAvatarPng', () => {
     expect(calls).toContain('fillText(AB)');
   });
 
+  it('paints the disc of the avatar when the initials sit in a transparent span inside it', async () => {
+    // `Avatar`: the disc on a div, the initials in a `text-zoom-exempt` span with no background.
+    const root = document.createElement('span');
+    const disc = document.createElement('div');
+    disc.style.backgroundColor = 'rgb(16, 24, 48)';
+    disc.style.color = 'rgb(255, 204, 0)';
+    const initials = document.createElement('span');
+    initials.textContent = 'CT';
+    disc.appendChild(initials);
+    root.appendChild(disc);
+    document.body.appendChild(root);
+    await renderedAvatarPng(root);
+    expect(calls).toContain('fillStyle=rgb(16, 24, 48)');
+    expect(calls).toContain('fillText(CT)');
+  });
+
   it('adds the presence dot when the web shows one', async () => {
     const root = document.createElement('span');
     const initials = document.createElement('div');

@@ -59,6 +59,7 @@ enum ButtonComponent: ComponentBuilder {
                 : UIButton.Configuration.gray()
             #endif
             config.title = props?.label
+            applyTitleSize(&config, props)
             if let b64 = props?.image, let decoded = ImageUtil.decode(b64) {
                 config.image = ImageUtil.icon(
                     decoded, side: imageSide(props), circular: props?.circular ?? false)
@@ -105,6 +106,22 @@ enum ButtonComponent: ComponentBuilder {
         CGFloat(props?.imageSide ?? 20)
     }
 
+    /// CANARI PATCH: a title at the web's size, bold, on ONE line truncated at its tail. The
+    /// configuration's own font is 17 pt and its title wraps, so the conversation pill broke
+    /// "Canari Test Beta" onto two lines in a 178 pt button whose web twin draws 14 pt bold on one
+    /// (iPhone 12, 2026-10-01). Unset `titleSize` leaves the configuration's font alone.
+    @available(iOS 15.0, *)
+    static func applyTitleSize(_ config: inout UIButton.Configuration, _ props: ComponentPropsArgs?) {
+        guard let size = props?.titleSize else { return }
+        let font = UIFont.systemFont(ofSize: CGFloat(size), weight: .bold)
+        config.titleLineBreakMode = .byTruncatingTail
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = font
+            return outgoing
+        }
+    }
+
     /// CANARI PATCH: a button's `menu` as a UIMenu, in the order given (the web
     /// menu's order, wherever the button sits). Each glyph is a TEMPLATE, so the
     /// menu draws it in its own text colour, light or dark.
@@ -125,6 +142,7 @@ enum ButtonComponent: ComponentBuilder {
         if #available(iOS 15.0, *) {
             var config = button.configuration
             if let label = props.label { config?.title = label }
+            if config != nil { applyTitleSize(&config!, props) }
             if let b64 = props.image, let decoded = ImageUtil.decode(b64) {
                 config?.image = ImageUtil.icon(
                     decoded, side: imageSide(props), circular: props.circular ?? false)
