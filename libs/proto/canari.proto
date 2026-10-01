@@ -279,6 +279,18 @@ message MediaMsg {
   // indistinguishable from an old import, and guessing between them is exactly what this field
   // exists to stop.
   bool      voice_note = 11;
+  // How the blob is sealed (CanaReels R2, `frontend/src/lib/mediaSegmented.ts`). DECLARED BY THE
+  // WRITER, because the bytes cannot say it unambiguously: a legacy blob is raw GCM ciphertext.
+  //
+  // Absent (0) on every message written before it, and 0 IS the single-block format - one AES-GCM
+  // operation under `iv` - read for ever. A value a reader does not know is REFUSED, never read as a
+  // single block: that would turn "written by a newer client" into "corrupt".
+  MediaEncoding encoding = 12;
+}
+
+enum MediaEncoding {
+  MEDIA_ENCODING_SINGLE_BLOCK = 0; // one AES-256-GCM block under `iv` - every blob before R2
+  MEDIA_ENCODING_SEGMENTED_V1 = 1; // STREAM: 1 MiB segments, a nonce per segment (index + last flag)
 }
 
 // ── System / group-management events ────────────────────────────────────

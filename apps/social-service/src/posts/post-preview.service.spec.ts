@@ -142,6 +142,14 @@ describe('pickPreviewMedia', () => {
     expect(pickPreviewMedia(huge)).toBeNull();
   });
 
+  it('skips a segmented image by its encoding field - it never tries to decrypt one', () => {
+    const picked = pickPreviewMedia([
+      { mediaId: 's', key: 'a', iv: 'b', mimeType: 'image/webp', encoding: 'segmented-v1' },
+      { mediaId: 'i1', key: 'a', iv: 'b', mimeType: 'image/webp' },
+    ]);
+    expect(picked?.mediaId).toBe('i1');
+  });
+
   it('answers null for a post with no media at all', () => {
     expect(pickPreviewMedia([])).toBeNull();
     expect(pickPreviewMedia(undefined)).toBeNull();

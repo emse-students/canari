@@ -41,7 +41,7 @@ export const SYSTEM_SENDER_ID = 'system';
 export function isSystemSender(senderId: string): boolean {
   return senderId.toLowerCase() === SYSTEM_SENDER_ID;
 }
-import { mediaKindToType, type IAppMessage } from '$lib/proto/codec';
+import { mediaEncodingFromProto, mediaKindToType, type IAppMessage } from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
 import type { AddMessageToChatOptions, ChatMessage, MessageReference } from '$lib/types';
 
@@ -209,6 +209,8 @@ export function appMsgToEnvelope(
             // protobuf gives an absent bool as `false`, and `false` here would be a claim the
             // sender never made - so only a true reaches the envelope.
             ...(msg.media.voiceNote ? { voiceNote: true } : {}),
+            // Absent for the single block, so a legacy message stays the envelope it always was.
+            ...(msg.media.encoding ? { encoding: mediaEncodingFromProto(msg.media.encoding) } : {}),
           },
           msg.media.caption || undefined
         )

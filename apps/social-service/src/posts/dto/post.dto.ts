@@ -57,6 +57,22 @@ export class PostMediaDto {
   @IsOptional()
   @Min(1)
   height?: number;
+
+  /**
+   * How the blob is sealed (CanaReels R2, `frontend/src/lib/mediaSegmented.ts`): absent for the
+   * single AES-GCM block every post was written with until then, `'segmented-v1'` for the STREAM
+   * format a video can be played from while it downloads.
+   *
+   * DECLARED HERE IN THE READER RELEASE, BEFORE ANY CLIENT WRITES IT: `whitelist: true` deletes an
+   * undeclared field, and a segmented blob stored without its encoding would be read by every
+   * client as a single block and refused - the post's video lost, silently, at the first save.
+   * A value outside the list is a 400, never stored: the server cannot read the bytes either way,
+   * but it can refuse to record a format no client knows.
+   */
+  @IsString()
+  @IsOptional()
+  @IsIn(['segmented-v1'])
+  encoding?: string;
 }
 
 export class PollOptionInputDto {

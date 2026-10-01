@@ -65,6 +65,8 @@ interface StoredPostMedia {
   size?: number;
   width?: number;
   height?: number;
+  /** Absent for the single AES-GCM block - the only format {@link decryptPostMedia} reads. */
+  encoding?: string;
 }
 
 /**
@@ -124,6 +126,9 @@ export function pickPreviewMedia(media: unknown): StoredPostMedia | null {
   for (const entry of media as StoredPostMedia[]) {
     if (!entry?.mediaId || !entry.key || !entry.iv) continue;
     if (!entry.mimeType?.startsWith('image/')) continue;
+    // A segmented blob (CanaReels R2) is skipped by the field that SAYS so, never by failing to
+    // decrypt it. The writer segments only video, so an image here should never carry it.
+    if (entry.encoding !== undefined) continue;
     if (typeof entry.size === 'number' && entry.size > MAX_PREVIEW_IMAGE_BYTES) continue;
     return entry;
   }

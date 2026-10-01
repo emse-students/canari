@@ -5,6 +5,8 @@ import {
   mkSystem,
   mkMedia,
   MediaKind,
+  mediaEncodingFromProto,
+  mediaEncodingProtoField,
 } from '$lib/proto/codec';
 import { parseEnvelope } from '$lib/envelope';
 import {
@@ -227,5 +229,53 @@ describe('the voice-note declaration crosses the wire', () => {
     // `undefined`, not `false`: the sender said nothing, and a message written before the field
     // existed must read the same as one whose sender picked the file from disk.
     expect(roundTrip(false)?.voiceNote).toBeUndefined();
+  });
+});
+
+/*
+ * HOW A BLOB IS SEALED CROSSES THE WIRE TOO (CanaReels R2). A segmented blob whose ref arrived
+ * without its `encoding` would be read as a single AES-GCM block and refused, so the field must
+ * survive proto -> envelope -> JSON, a legacy message must stay exactly what it was, and a format
+ * this client cannot name must be KEPT (so the reader refuses it by name) rather than dropped.
+ */
+describe('the media encoding crosses the wire', () => {
+  const media = {
+    kind: MediaKind.MEDIA_KIND_VIDEO,
+    mediaId: 'vid1',
+    key: new Uint8Array(32),
+    iv: new Uint8Array(12),
+    mimeType: 'video/mp4',
+    size: 12,
+  };
+
+  function roundTrip(encodingField: { encoding?: number }) {
+    const bytes = encodeAppMessage({
+      ...mkMedia({ ...media, ...encodingField }),
+      messageId: 'm1',
+      sentAt: 1,
+    });
+    const built = appMsgToEnvelope(decodeAppMessage(bytes)!);
+    const env = parseEnvelope(built!.content);
+    return env.kind === 'media' ? env.media : null;
+  }
+
+  it('keeps a segmented blob segmented', () => {
+    expect(roundTrip(mediaEncodingProtoField('segmented-v1'))?.encoding).toBe('segmented-v1');
+  });
+
+  it('leaves a single-block message with no encoding at all', () => {
+    expect(mediaEncodingProtoField(undefined)).toEqual({});
+    expect(roundTrip({})?.encoding).toBeUndefined();
+  });
+
+  it('keeps an encoding it cannot name, and a forward writes the same number back', () => {
+    const unknown = roundTrip({ encoding: 9 })?.encoding;
+    expect(unknown).toBe('proto-9');
+    expect(mediaEncodingProtoField(unknown)).toEqual({ encoding: 9 });
+    expect(mediaEncodingFromProto(9)).toBe('proto-9');
+  });
+
+  it('refuses to send a name no proto value spells, rather than sending it as a single block', () => {
+    expect(() => mediaEncodingProtoField('segmented-v9')).toThrow();
   });
 });
