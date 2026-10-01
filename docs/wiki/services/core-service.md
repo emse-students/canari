@@ -191,6 +191,15 @@ the element used to be handed back the same URL and ask the server again for the
 `direct` is what keeps the native clients working, where the API is a different origin and `fetch`
 can be refused while an `<img>` is not.
 
+**The edge caches it since 2026-09-16, and batching the avatars is REFUTED.** Cloudflare decides
+default caching by file extension, so this extensionless path answered `DYNAMIC` - twenty-four round
+trips to Saint-Etienne per cold load, 846-946 ms each - until a Cache Rule covered it; a real avatar
+now answers `HIT` with an `Age` (re-read 2026-09-22), an absent one `404` + `max-age=600`. Measured
+over one reused connection: 17-37 ms each, multiplexed over HTTP/3 in a browser. **Batching would now
+be a REGRESSION**: twenty images in one JSON answer means base64 and one cache entry keyed on twenty
+ids that almost no two renders share, where twenty stable URLs are twenty entries every render hits.
+"Twenty requests" was a proxy for "twenty round trips", and the rule cut the thing it stood for.
+
 ##### One lifetime, and the server states it (2026-08-17)
 
 **The `max-age` above is honoured by the browser's HTTP cache and by nothing else.** The client used

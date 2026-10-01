@@ -1044,7 +1044,10 @@ Settings radio was not driven. Measured:
 **Step 5 failed because a failed launch unlock forgot who the user is.** The catch of `loginImpl`
 called `clearUserLocally()` on every failure, `keystore_empty` included, so the button that follows
 found `currentUserId()` null and stopped before any read - with an English, non-Paraglide error.
-Fixed the same day ([backlog](backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).
+Fixed the same day and shipped in `v0.18.28`: the catch forgets the identity on
+`SessionExpiredError` only (a revoked device is already forgotten by `wipeRevokedDevice`), `mls-core`
+throws a typed `KEYSTORE_KEY_UNAVAILABLE` instead of the sentence two call sites matched by regex,
+and the English error became `auth_biometric_no_user`.
 Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
 iOS.
 

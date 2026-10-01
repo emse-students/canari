@@ -57,11 +57,21 @@ which option they picked - the server does not know.
 
 ### The composer's layout: full screen, the text taking the height, the actions under the thumb (2026-09-29)
 
-Compared on the Mi 9T with Facebook's and Instagram's composers (the measurements and the user's
-decisions are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+Compared on the Mi 9T with Facebook's and Instagram's composers (the user's decisions C1-C10, and
+the stages still open, are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
 What it was: a modal over the feed holding three nested bordered boxes, three titles saying the
 same thing, a full-width "Publier en tant que" select, eight Markdown buttons on two rows above an
-empty field, four unlabelled icons, and "Publier" ABOVE them.
+empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it was taken from:
+
+| | Facebook | Instagram | Canari before R1 |
+| --- | --- | --- | --- |
+| Frame | Full screen, one title | Full screen | A modal over the feed, three nested bordered boxes |
+| Author | Avatar + name, one line | - | A full-width "PUBLIER EN TANT QUE" select |
+| Text area | The whole screen, borderless, no toolbar | - | ~250 px, boxed, behind 8 Markdown buttons on two rows |
+| Primary action | "Suivant", bottom right, disabled while empty | "Suivant", top right | "Publier" ABOVE the attachment bar |
+| Attachments | Labelled chips + a pinned bottom bar | Gallery grid, camera as the first tile | Four UNLABELLED icons |
+| Adding a photo | Full-screen photo grid | same | Android's generic DocumentsUI, because one input's `accept` listed images, video, audio, PDF, Office and zip together - hence Photo/video and Fichier are two inputs now |
+| Camera | From the gallery | `+`, or a swipe right from the feed | None |
 
 - **`Modal`'s `phoneFullScreen`**. Below `sm` the panel covers the screen edge to edge and the body
   is handed over unpadded and unscrolled. The overlay already follows the visual viewport, so a

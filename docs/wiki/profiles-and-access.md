@@ -1,8 +1,10 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
-**Status: DECIDED AND PLANNED, NOT BUILT.** Every answer below was given by the user on 2026-09-29, one question
-at a time. The technical plan that turns them into work packages is section 4, VALIDATED the
-same day. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
+**Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 to WP9 are
+PLANNED, NOT BUILT** (the next one is WP2, the enrolment flow). Every answer below was given by the user on
+2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
+VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE WP0/WP1: read them as the
+starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 

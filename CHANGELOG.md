@@ -468,7 +468,7 @@ buttons and the tab strip are visible at phone width ([social-service](docs/wiki
 A failed unlock no longer forgets who is signed in unless the session is dead, and an empty keystore
 is a typed `mls-core` error rather than a sentence two call sites matched; the biometric cadence
 passed check U on Android on the way
-([backlog](docs/wiki/backlog.md#p2---after-a-failed-biometric-launch-unlock-the-pin-modals-biometric-button-does-nothing-measured-on-the-mi-9t-2026-09-28)).
+([device-verification](docs/wiki/device-verification.md#u-the-biometric-cadence-every-12-h-skips-the-sheet-every-time-keeps-it---owed-on-both-platforms)).
 
 ### Fixed - adding someone to a community, or granting a private salon, now Welcomes their devices into its key group
 
@@ -815,7 +815,7 @@ Re-verified against the live host: `canari.emse.fr` serves the identical `Cache-
 to begin with. What is genuinely gone is the shared edge cache itself, with no `cf-cache-status`
 header at all on the new hostname; the nginx substitute for it was proposed and then refuted by
 measurement
-([backlog](docs/wiki/backlog.md#refuted---an-nginx-proxy_cache-substitute-for-the-lost-cloudflare-edge-cache-buys-3-ms-of-a-80-ms-path-measured-2026-09-25)).
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#refuted---an-nginx-proxy_cache-substitute-for-the-lost-edge-cache-buys-3-ms-of-an-80-ms-path)).
 
 ### Changed - `canari.emse.fr` is now claimed everywhere `canari-emse.fr` is
 
@@ -1228,7 +1228,7 @@ run both estates stably. The target is the only copy from this point on
 Timed on the host: the origin answers the SSR shell in 2.6-5.2 ms and an immutable asset in under
 1.2 ms, so a cache sitting one hop above it removes milliseconds of local work rather than the
 network path Cloudflare's edge actually shortened
-([backlog](docs/wiki/backlog.md#refuted---an-nginx-proxy_cache-substitute-for-the-lost-cloudflare-edge-cache-buys-3-ms-of-a-80-ms-path-measured-2026-09-25)).
+([estate-migration](docs/wiki/infrastructure/estate-migration.md#refuted---an-nginx-proxy_cache-substitute-for-the-lost-edge-cache-buys-3-ms-of-an-80-ms-path)).
 
 ### Added - quel conteneur publie quoi, et un port que Canari ne pourra pas garder
 

@@ -873,3 +873,27 @@ snapshot, within minutes. They establish the SHAPE of a boot, that the target is
 the MLS cost is small and stable. They establish no distribution, nothing about a phone, and nothing
 about a first-ever load on a device with no snapshot to decrypt - which is the boot `recovered:
 false` has never been observed against.
+
+## The revocation gate stays IN FRONT of the prompt, and the launch's console noise is explained (Pixel 6a, 2026-09-15)
+
+**`isDeviceRevoked` is asked BEFORE anything prompts, and moving it behind `init()` was written and
+REVERTED.** It looks exactly like the version probe, whose verdict an overlay enforces afterwards, so
+reading a cache loses nothing there. The revocation verdict's consequence is a **local wipe**, and
+the check preceding the prompt is what makes that wipe happen UNATTENDED: a lost or stolen device
+wipes itself at the next launch whether or not anybody passes the fingerprint. Behind the prompt, the
+wipe would depend on a prompt a thief never answers - the one population it exists for. **Not to be
+re-opened without a design that wipes without a prompt.** It also cannot be "issued early" beside
+the refresh: it builds its header from `getToken()`, whose refresh IS the first round trip, and
+`/api/auth/verify` reads the Bearer header and nothing else - the two are causally serial.
+
+**The seven console lines of a cold start are dispositioned, and neither kind is to be "fixed".**
+Five `404`s are `GET /api/users/<id>/avatar` for members with no photo: `absent` is a real answer and
+is cached (`max-age=600`), where `unavailable` is a 502 marked `no-store`, and every response is
+bodyless because a JSON error body on an `<img>` request cost THREE console lines per miss. On a cold
+start each reports `transferSize: 0`. Two `415`s are `LinkPreviewCard`'s favicon probes: a candidate
+that does not decode IS the probe's answer, and the proxy refuses SVG on purpose; since 2026-09-23 the
+chain is walked only when the favicon is what the card would draw
+([chat-delivery](../services/chat-delivery.md#the-cards-illustration-is-a-cascade-and-it-has-to-come-back-down-2026-09-23)).
+**The resource timeline holds 250 entries and a cold start fills it**, so anything after ~+4.5 s is
+dropped unless `setResourceTimingBufferSize` is raised the moment the debugger attaches - only a CDP
+`Network` capture armed at attach named the 415s.

@@ -407,6 +407,25 @@ Both associations are `lifetime`, which is what makes a historical list meaningf
 carries no academic year and does not expire. 1175 of Le Cercle's 1194 legacy buyers paid exactly
 once, which is the same fact from the other side.
 
+**Three rows were refused and STAY EXCLUDED - decided by the user 2026-09-22** (*"Elles restent
+exclues, ferme la ligne"*). One had an empty `Cotisation` cell between filled neighbours, two carried
+accents no directory entry resolves; the import refused to guess on all three. No hand-added row is
+owed: if one of the three ever pays, the ordinary shop path serves them.
+
+**Both assumptions behind the key are measured (2026-09-11).** The promo conventions of Authentik,
+the Cercle legacy base and the directory export agree at offset 0 - 206 accounts match the directory
+and 119 a Cercle cotisant, against 12 and 2 at offset +1 and nothing beyond; a graduation year where
+the legacy stores an entry year would have made every key wrong by 3 with nothing to report it.
+`promo.csv`, which the 141 accent repairs rest on, is an export dated 2025-11-13 covering 2016-2025,
+and covers 962 of the 1019 undamaged Cercle cotisants (94%). The decisive test simulated the failure
+mode - corrupt an accented name, REMOVE its true owner from the reference, run the real repair: 599
+simulations, 599 refusals, zero wrong person accepted; with the owner present, 599 of 599 named
+correctly.
+
+**The promo-2026 cohort is unserved by design and it is the LARGEST** - 153 of production's 396
+accounts on 2026-09-11, 1A who arrived after both lists were frozen. They must pay through the shop,
+and the membership products' `isActive = false` is deliberate (user, 2026-09-11).
+
 ### Loading a DEPLOYED estate - `--emit-sql`, because there is no connection to open
 
 Dropping the `--dry-run` connects with `DB_*`, which works locally and nowhere else: neither
