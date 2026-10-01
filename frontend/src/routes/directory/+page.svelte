@@ -13,11 +13,29 @@
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
+  import {
+    CAMPUSES,
+    POSTS,
+    campusLabel,
+    postLabel,
+    type Campus,
+    type Post,
+  } from '$lib/profile/miconnectProfile';
 
   let query = $state('');
   let promoFilter = $state<number | ''>('');
   let formationFilter = $state('');
   let associationFilter = $state('');
+  let campusFilter = $state<Campus | ''>('');
+  let postFilter = $state<Post | ''>('');
+  const campusOptions = $derived<PickerOption[]>([
+    { value: '', label: m.directory_filter_any() },
+    ...CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) })),
+  ]);
+  const postOptions = $derived<PickerOption[]>([
+    { value: '', label: m.directory_filter_any() },
+    ...POSTS.map((p) => ({ value: p, label: postLabel(p) })),
+  ]);
   let associations = $state<Association[]>([]);
   const associationOptions = $derived<PickerOption[]>([
     { value: '', label: m.directory_asso_all() },
@@ -52,6 +70,8 @@
         q: query.trim() || undefined,
         promo: promoFilter !== '' ? Number(promoFilter) : undefined,
         formation: formationFilter.trim() || undefined,
+        campus: campusFilter || undefined,
+        post: postFilter || undefined,
         associationId: associationFilter || undefined,
         limit: 30,
       });
@@ -137,6 +157,35 @@
         </div>
       </div>
 
+      <div class="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label for="dir-campus" class="text-text-muted mb-1 block text-xs font-semibold"
+            >{m.directory_label_campus()}</label
+          >
+          <Picker
+            id="dir-campus"
+            value={campusFilter}
+            options={campusOptions}
+            label={m.directory_label_campus()}
+            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+            onValueChange={(v) => (campusFilter = v as Campus | '')}
+          />
+        </div>
+        <div>
+          <label for="dir-post" class="text-text-muted mb-1 block text-xs font-semibold"
+            >{m.directory_label_post()}</label
+          >
+          <Picker
+            id="dir-post"
+            value={postFilter}
+            options={postOptions}
+            label={m.directory_label_post()}
+            triggerClass="border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm"
+            onValueChange={(v) => (postFilter = v as Post | '')}
+          />
+        </div>
+      </div>
+
       <button
         type="submit"
         disabled={loading}
@@ -185,14 +234,18 @@
                   <p
                     class="text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
                   >
-                    {#if user.promo != null}
+                    {#each user.cursus as entry (entry.formation + entry.promo)}
                       <span class="inline-flex items-center gap-1">
                         <GraduationCap size={12} />
-                        {m.directory_user_promo({ year: user.promo })}
+                        {entry.formation}
+                        {m.directory_user_promo({ year: entry.promo })}
                       </span>
-                    {/if}
-                    {#if user.formation}
-                      <span>{user.formation}</span>
+                    {/each}
+                    {#each user.posts as post (post)}
+                      <span>{postLabel(post)}</span>
+                    {/each}
+                    {#if user.campus}
+                      <span>{campusLabel(user.campus)}</span>
                     {/if}
                   </p>
                   {#if user.bio?.trim()}

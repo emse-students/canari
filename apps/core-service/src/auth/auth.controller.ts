@@ -20,6 +20,7 @@ import {
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
+import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
 import { UsersService } from '../users/users.service';
 import { PlatformService } from '../platform/platform.service';
 import {
@@ -365,25 +366,21 @@ export class AuthController {
     const userinfo = (await userinfoRes.json()) as {
       sub: string;
       name?: string;
-      promo?: number;
       firstName?: string;
       lastName?: string;
-      formation?: string;
-    };
+    } & MiconnectClaims;
 
     if (!userinfo.sub) {
       throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
 
     // 3. Upsert local user
-    const promo = typeof userinfo.promo === 'number' ? userinfo.promo : null;
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
       userinfo.name || null,
       userinfo.firstName || null,
       userinfo.lastName || null,
-      promo,
-      userinfo.formation || null
+      parseProfileClaims(userinfo)
     );
 
     const platformConfig = await this.platformService.getConfig();

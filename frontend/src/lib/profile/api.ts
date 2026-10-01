@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { coreUrl } from '$lib/utils/apiUrl';
+import type { Campus, CursusEntry, Post } from './miconnectProfile';
 
 /** Current membership row on a user profile. */
 export interface UserMembershipRow {
@@ -37,6 +38,9 @@ export interface DirectoryUserRow {
   displayName: string | null;
   promo: number | null;
   formation: string | null;
+  campus: Campus | null;
+  cursus: CursusEntry[];
+  posts: Post[];
   bio: string | null;
 }
 
@@ -150,6 +154,8 @@ export async function searchDirectory(params: {
   q?: string;
   promo?: number;
   formation?: string;
+  campus?: Campus;
+  post?: Post;
   associationId?: string;
   limit?: number;
   offset?: number;
@@ -158,6 +164,8 @@ export async function searchDirectory(params: {
   if (params.q?.trim()) p.set('q', params.q.trim());
   if (params.promo != null && !Number.isNaN(params.promo)) p.set('promo', String(params.promo));
   if (params.formation?.trim()) p.set('formation', params.formation.trim());
+  if (params.campus) p.set('campus', params.campus);
+  if (params.post) p.set('post', params.post);
   if (params.associationId?.trim()) p.set('associationId', params.associationId.trim());
   if (params.limit != null) p.set('limit', String(params.limit));
   if (params.offset != null) p.set('offset', String(params.offset));
