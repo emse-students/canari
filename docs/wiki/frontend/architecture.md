@@ -32,6 +32,27 @@ Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` conta
 container is down it falls back to the prerendered `app-shell.html`, so the SPA still boots — see
 [../infrastructure/nginx.md](../infrastructure/nginx.md).
 
+### A tab open across a deploy: its lazy modules are gone, and a reload is OFFERED
+
+Every `import()` asks for a hashed chunk of the build the tab booted on, and a deploy deletes them.
+Measured on production 2026-09-27: a tab loaded on `0.18.26` three minutes before `v0.18.27` landed,
+then the carte's PDF export failed with a bare "Erreur" - `Failed to fetch dynamically imported
+module`, the chunk a 404 on the new build. SvelteKit covers its OWN route chunks (a failed navigation
+checks `version.json` and falls back to a full page load); the app's own `import()`s had nothing.
+
+`src/lib/utils/staleBuild.ts`, wired in `hooks.client.ts` (web only - Tauri embeds its frontend):
+
+| Rule | Why |
+|---|---|
+| Triggered by Vite's `vite:preloadError` event, never by an error's text | the distinction is typed at the throw; the build's preload helper wraps every dynamic import |
+| Reads `/_app/version.json` (`no-store`) against `$app/environment`'s `version` | a missing chunk is a symptom shared by a deploy and a dead network; only a DIFFERENT served build is a reason to reload. Same build or unreadable: logged, nothing offered |
+| OFFERS the reload (`showConfirm`), never forces it, never retries the chunk | the chunk is gone, not slow; a forced reload would discard what the reader was doing |
+| Records the build a reload was accepted FOR in `sessionStorage` before reloading | if the reloaded page still runs the old build (a cached shell), the next failure finds it recorded and says so at ERROR instead of offering the same reload for ever. Durable state, no clock; a newer deploy is a new build and is offered again |
+| One decision in flight | a chunk and its dependencies fail together; the reader is asked once |
+
+The listener does not `preventDefault`, so the failing import still rejects and its caller still
+reports it. Pinned by `staleBuild.test.ts`.
+
 ### The same response declares its stylesheets twice, and only one of the two is useful
 
 `resolve(event, { ... })` in `src/hooks.server.ts` takes a `preload` predicate alongside

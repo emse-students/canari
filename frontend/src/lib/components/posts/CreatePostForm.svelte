@@ -25,9 +25,11 @@
     buildCreateFormHref,
     clearPostComposerDraft,
     emptyPostComposerDraft,
+    isPostComposerDraftWorthKeeping,
     loadPostComposerDraft,
     POST_NEW_FORM_ID_KEY,
     savePostComposerDraft,
+    withoutAbandonedAttachments,
     type PostComposerDraft,
   } from '$lib/posts/postComposerDraft';
   import {
@@ -220,7 +222,7 @@
     let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
     draftSaveTimer = setTimeout(() => {
       const snap = snapshotComposerDraft();
-      if (snap.markdown.trim() || snap.includePoll || snap.includeForm) {
+      if (isPostComposerDraftWorthKeeping(withoutAbandonedAttachments(snap))) {
         savePostComposerDraft(snap);
         draftSaved = true;
         feedbackTimer = setTimeout(() => {

@@ -44,29 +44,22 @@
   in:fade
 >
   <!--
-    Effet Glassmorphism accentué :
-    - Fond très transparent (bg-white/20 ou bg-black/40)
-    - Flou arrière très fort ()
-    - Bordure blanche semi-transparente pour l'éclat du verre
-    - Ombre diffuse (shadow-2xl)
+    FLAT, LIKE EVERY COMPONENT IN THE ECOSYSTEM: no glow, no blur shadow, no drop-shadow. The card
+    is separated by its border and its tonal surface; the identity lives in the page background.
+    The checklist and its measurement (2 glows here, 0 on the references) are in
+    docs/wiki/ecosystem-convergence.md section 12.
   -->
   <div
-    class="w-full max-w-sm rounded-3xl border border-zinc-200 bg-white p-10 text-center shadow-2xl dark:border-white/10 dark:bg-zinc-900"
+    class="w-full max-w-sm rounded-3xl border border-zinc-200 bg-white p-10 text-center dark:border-white/10 dark:bg-zinc-900"
   >
     <!-- Logo -->
     <div class="mb-10">
       <div
-        class="bg-cn-ink mx-auto mb-6 flex h-24 w-24 transform items-center justify-center rounded-lg border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-transform duration-300 hover:scale-105"
+        class="bg-cn-ink mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-lg border border-white/10"
       >
-        <img
-          src="/favicon.png"
-          alt="Canari Logo"
-          class="h-2/3 w-2/3 object-contain drop-shadow-md"
-        />
+        <img src="/favicon.png" alt="Canari Logo" class="h-2/3 w-2/3 object-contain" />
       </div>
-      <h1 class="font-brand text-text-main text-5xl font-bold tracking-wide drop-shadow-sm">
-        Canari
-      </h1>
+      <h1 class="font-brand text-text-main text-5xl font-bold tracking-wide">Canari</h1>
       <p class="text-text-muted mt-3 text-base font-medium">{m.auth_brand_subtitle()}</p>
     </div>
 
@@ -84,7 +77,7 @@
       <button
         onclick={onLogin}
         disabled={isLoggingIn || loginDisabled}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 w-full rounded-2xl py-4 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-wait disabled:opacity-70"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-2xl py-4 text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-70"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">

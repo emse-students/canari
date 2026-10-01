@@ -188,11 +188,19 @@ are first-party constants, not attacker-reachable content, so the Safe Browsing 
 login page.
 
 Each anchor wraps the OFFICIAL badge artwork, fetched from Apple's and Google's own brand pages
-rather than redrawn by hand: `frontend/static/app-store-badge.svg` (developer.apple.com) and
-`google-play-badge.png` (play.google.com). Google's PNG ships 41px of transparent margin on
-every side that Apple's SVG does not; it is cropped to its real content so both badges share one
-visual height side by side (`h-10` on both `<img>` tags - a naive equal-height crop from the
-untouched PNG would have left Google's noticeably shorter).
+rather than redrawn by hand, and in FRENCH since 2026-10-01 (the English "Download on the App
+Store" / "GET IT ON Google Play" were flagged by the 2026-09-25 login audit, both stores publishing
+French ones): `frontend/static/app-store-badge.svg` (Apple's marketing toolbox, `fr-fr`, "Télécharger
+dans l'App Store") and `google-play-badge.png` (play.google.com, `fr_badge_web_generic.png`,
+"DISPONIBLE SUR Google Play"). Google's PNG ships transparent margin that Apple's SVG does not
+(29px above and below on the French one); it is cropped to its real content so both badges share
+one visual height side by side (`h-10` on both `<img>` tags).
+
+**The card is FLAT** (same audit, checklist line 1 of
+[ecosystem-convergence §12](../../ecosystem-convergence.md#12-the-interface-bar---one-checklist-for-every-site-each-rule-tied-to-a-measurement-2026-09-25)):
+the sign-in button's yellow glow, the logo tile's 32px shadow, the card's `shadow-2xl` and the
+drop-shadows on the logo and title are gone; `LoginForm.flat.test.ts` fails on any shadow utility in
+the markup. "Connexion externe (service-account)" stays word for word (user, 2026-09-25).
 
 ## Auth store
 

@@ -2679,6 +2679,8 @@
   "update_reload_button": "Recharger l'application",
   "update_opening_label": "Ouverture…",
   "update_required_title": "Mise à jour obligatoire",
+  "update_stale_build_prompt": "Canari a été mis à jour pendant que cette page était ouverte, et cette action a besoin de la nouvelle version. Rechargez pour continuer.",
+  "update_later_button": "Plus tard",
   "settings_about_heading": "À propos",
   "settings_about_desc": "Version de Canari installée. Les mises à jour sont gérées par le store ; vous n'avez à intervenir que si une version n'est plus supportée.",
   "settings_about_version_label": "Version de Canari",
