@@ -145,6 +145,38 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('MessageBubble - a text selection owns the finger', () => {
+  const selecting = { rangeCount: 1, isCollapsed: false, toString: () => 'copy me' };
+
+  it('does not reply when the drag starts on a live selection', () => {
+    const h = mountBubble();
+    vi.spyOn(window, 'getSelection').mockReturnValue(selecting as unknown as Selection);
+    swipeWithPointer(100, 100 + REPLY_SWIPE_TRIGGER_PX + 20);
+
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+
+  it('abandons a reply swipe the moment a selection appears mid-drag, bubble back at rest', () => {
+    const h = mountBubble();
+    const spy = vi.spyOn(window, 'getSelection');
+    const el = bubble();
+    el.dispatchEvent(pointer('pointerdown', 100, 200));
+    flushSync();
+    el.dispatchEvent(pointer('pointermove', 140, 200));
+    flushSync();
+    expect(dragged().getAttribute('style') ?? '').toContain('translate3d(');
+
+    spy.mockReturnValue(selecting as unknown as Selection);
+    el.dispatchEvent(pointer('pointermove', 100 + REPLY_SWIPE_TRIGGER_PX + 20, 200));
+    flushSync();
+    el.dispatchEvent(pointer('pointerup', 100 + REPLY_SWIPE_TRIGGER_PX + 20, 200));
+    flushSync();
+
+    expect(h.reply).not.toHaveBeenCalled();
+    expect(dragged().getAttribute('style') ?? '').not.toMatch(/translate3d\([1-9]/);
+  });
+});
+
 describe('MessageBubble - the swipe reaches onReply', () => {
   it('REPLIES on a drag toward the centre of the thread, which is what was dead until 2026-09-20', () => {
     const h = mountBubble();

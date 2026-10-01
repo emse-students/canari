@@ -1,3 +1,5 @@
+import { hasActiveTextSelection } from '$lib/utils/textSelection';
+
 /**
  * Svelte action that adds an edge-swipe-to-go-back gesture (iOS-style).
  * Activates only when the touch starts within `edgeZonePx` from the left edge.
@@ -62,6 +64,8 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     // this gesture's own 90px commit threshold.
     if (startsOnInteractiveElement(e.target)) return;
     if (startsOnCompetingGesture(e.target)) return;
+    // A touch on a live text selection is dragging a selection handle, never going back.
+    if (hasActiveTextSelection()) return;
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;
@@ -73,6 +77,11 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
 
   function onTouchMove(e: TouchEvent) {
     if (!tracking) return;
+    if (hasActiveTextSelection()) {
+      tracking = false;
+      node.style.removeProperty('transform');
+      return;
+    }
     const t = e.touches[0];
     const dx = t.clientX - startX;
     const dy = Math.abs(t.clientY - startY);

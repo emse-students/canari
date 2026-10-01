@@ -2901,3 +2901,28 @@ and leaves `document.body.scrollHeight` unchanged; the long name clips there at 
 of 446). **Injection proves the layout holds, never that real data is shaped this way**, and all of
 it is Chrome with a device-metrics override - real hardware is read with
 `tools/cross-client-harness/sweep.mjs` over CDP.
+
+## 39. A selection being dragged is not a swipe (iPhone 1.0.0, 2026-10-01)
+
+Post text is selectable on a phone (`.post-markdown`, [posts](modules/posts.md#a-posts-text-could-not-be-copied-on-a-phone-because-nothing-marked-it-as-content-2026-09-29)),
+and the stroke that moves a selection is a horizontal drag. Reported from the iPhone: while the
+selection handles were dragged on a feed post, the whole page slid toward the neighbouring tab.
+
+**Mechanism.** The tab swipe (`+layout.svelte`, `swipeNavigation.ts`) locks to `horizontal` after 12px
+and calls `preventDefault` on `touchmove`. On iOS the long press that starts a selection hands its own
+finger on to the selection, and the native handles keep delivering `touchmove` to the page. The
+gesture had been created at `touchstart`, BEFORE any range existed, and nothing asked again, so the
+selection drag was classified as a swipe. `touch-action` cannot help: it is a scroller hint and the
+handles are not asked. The reply swipe on a message bubble and the edge swipe back had the same flaw.
+
+**Fix, one predicate** (`utils/textSelection.ts`): `hasActiveTextSelection()` (a non-collapsed,
+non-empty range) and `onTextSelectionActive()` (`selectionchange`). The tab swipe refuses to start
+while a range is selected, abandons an engaged swipe on `touchmove` and on `selectionchange` (snap
+back, gesture `ignored` so its release cannot navigate); `MessageBubble` and `swipeBack` ask the same
+predicate at start and on every move. No timer and no distance heuristic. A swipe attempted while a
+range still lingers is refused until a tap clears it - the intended trade.
+
+**Not covered by any gate here:** WebKit's handles are native chrome, so the unit tests drive the
+predicate and the two abort paths with a stubbed `getSelection`; whether the real handle drag stops
+moving the page is read on hardware only. Image viewers, PDF and the colour picker carry no text
+selection and are untouched.

@@ -57,6 +57,7 @@
     type SwipeNavDirection,
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
+  import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
@@ -296,9 +297,22 @@
     );
   }
 
+  /**
+   * A SELECTION IN PROGRESS ABANDONS AN ENGAGED SWIPE - IT DOES NOT PAUSE IT. The finger now belongs
+   * to the selection (`textSelection.ts` says why), so the page snaps back and the gesture is
+   * `ignored` for the rest of the touch: its release can no longer navigate.
+   */
+  function abandonSwipeForSelection() {
+    if (!swipeGesture || swipeGesture.phase === 'ignored') return;
+    console.debug('[SwipeNav] abandoned: a text selection took the touch');
+    swipeGesture = { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
+    pageScrollWrap?.classList.remove('swipe-nav-dragging');
+    snapSwipeBack();
+  }
+
   function handleTouchStart(e: TouchEvent) {
     if (!isSwipeNavActive(swipeNavContext())) return;
-    if (shouldIgnoreSwipeTarget(e.target)) {
+    if (shouldIgnoreSwipeTarget(e.target) || hasActiveTextSelection()) {
       swipeGesture = { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
       return;
     }
@@ -313,6 +327,10 @@
   function handleTouchMove(e: TouchEvent) {
     if (!swipeGesture || swipeGesture.phase === 'ignored' || !pageScrollWrap) return;
     if (!isSwipeNavActive(swipeNavContext())) return;
+    if (hasActiveTextSelection()) {
+      abandonSwipeForSelection();
+      return;
+    }
 
     const updated = updateSwipeNavGesture(swipeGesture, e.touches[0].clientX, e.touches[0].clientY);
     swipeGesture = updated;
@@ -519,8 +537,10 @@
     node.addEventListener('touchmove', handleTouchMove, { passive: false });
     node.addEventListener('touchend', handleTouchEnd, { passive: true });
     node.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+    const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
+      stopSelectionWatch();
       node.removeEventListener('touchstart', handleTouchStart);
       node.removeEventListener('touchmove', handleTouchMove);
       node.removeEventListener('touchend', handleTouchEnd);
