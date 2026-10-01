@@ -14,9 +14,36 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  Validate,
   ValidateIf,
   ValidateNested,
+  ValidatorConstraint,
+  type ValidationArguments,
+  type ValidatorConstraintInterface,
 } from 'class-validator';
+
+/**
+ * A post needs a body OR a media entry - the rule the composer's Publier button already applies
+ * (`hasContent` in `frontend/src/lib/posts/composerReadiness.ts`, the client's one spelling).
+ *
+ * The body was `@IsNotEmpty()` alone, so a photo or a video posted without a caption - which the
+ * composer enables and which a reel is by default - went through the whole publish (preparation,
+ * encryption, upload) and was then refused here with a 400, the uploaded blob left behind. Found on
+ * the Mi 9T on 2026-10-02 (`markdown should not be empty`). Whitespace counts as empty, as it does
+ * on the client.
+ */
+@ValidatorConstraint({ name: 'postBodyOrMedia', async: false })
+export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
+  validate(markdown: unknown, args: ValidationArguments): boolean {
+    if (typeof markdown === 'string' && markdown.trim().length > 0) return true;
+    const post = args.object as { media?: unknown[]; images?: unknown[] };
+    return (post.media?.length ?? 0) + (post.images?.length ?? 0) > 0;
+  }
+
+  defaultMessage(): string {
+    return 'markdown should not be empty unless the post carries media';
+  }
+}
 
 export class PostMediaDto {
   @IsString()
@@ -217,7 +244,7 @@ export class CreatePostDto {
   authorId?: string;
 
   @IsString()
-  @IsNotEmpty()
+  @Validate(PostBodyOrMediaConstraint)
   @MaxLength(50_000)
   markdown: string;
 
@@ -354,7 +381,7 @@ export class EditCommentDto {
 
 export class UpdatePostDto {
   @IsString()
-  @IsNotEmpty()
+  @Validate(PostBodyOrMediaConstraint)
   @MaxLength(50_000)
   markdown: string;
 
