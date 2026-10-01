@@ -185,6 +185,22 @@ The notification shade, the OS share sheet, the keyboard's own emoji panel and e
 surface are drawn by the platform, as are form fields (`<textarea>`, `<input>`) and attributes
 (`title`, `aria-label`): "the notification shows a different emoji" is expected, not a regression.
 
+## A hold on an emoji picture opened iOS's image menu (2026-10-01)
+
+Reported on the iPhone (1.0.0): a hold on a reaction badge - the app's own "who reacted" gesture
+(`reactorsTrigger`) - and on a picture in the picker opened WebKit's native image menu (Partager /
+Enregistrer dans Photos / Copier le sujet / Chercher) over the heart blown up. An emoji is an `<img>`
+since the pictures replaced the font, and WebKit offers that menu on any `<img>`; `draggable="false"`
+does not touch it, the callout is its own property. `-webkit-touch-callout: none` is now set ONCE in
+`app.css` for `img.emoji` and `img[src^='/emoji/']` (the picker classes its own pictures, so the source
+is what they share). Pinned by `src/emojiCallout.test.ts`, a SOURCE pin: no gate here runs the callout.
+Chat bubbles already carried the property on their mobile container (`MessageBubble`).
+
+**A long press on a post's text selects it, on purpose**: `.post-markdown` opts back in under
+`@media (pointer: coarse)` because the user asked to copy post text (2026-09-29,
+[posts](modules/posts.md#a-posts-text-could-not-be-copied-on-a-phone-because-nothing-marked-it-as-content-2026-09-29)).
+A post has no long-press action of its own, so the selection is not winning against anything.
+
 ## History - the bundled font, 2026-08-23 to 2026-09-25
 
 The first answer was a font: Noto Color Emoji merged by `nanoemoji`'s `maximum_color` into ONE file

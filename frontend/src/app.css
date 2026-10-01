@@ -495,6 +495,23 @@ img.emoji {
   user-select: text;
 }
 
+/*
+ * AN EMOJI PICTURE IS NEVER AN IMAGE THE READER ASKED TO SAVE. iOS opens its native image menu
+ * (Partager / Enregistrer dans Photos / Copier le sujet / Chercher, over the picture blown up) on a
+ * long press on ANY `<img>`, and an emoji is an `<img>` since Noto's SVGs replaced the font - so a
+ * hold on a reaction badge, which is the app's own "who reacted" gesture, got Apple's menu on a
+ * giant pixelated heart instead (user, 2026-10-01, iPhone). `draggable="false"` does not touch it:
+ * the callout is a separate WebKit property. It is set HERE, for every emoji picture, by what they
+ * all share: the `.emoji` class (text runs, reaction badges, inline HTML) and the `/emoji/` source
+ * (the picker grid, which sizes its own pictures). `user-select` stays `text` above so a copied
+ * selection still carries the emoji. `-webkit-touch-callout` inherits, so it is not repeated on the
+ * badge; no call site needs to know.
+ */
+img.emoji,
+img[src^='/emoji/'] {
+  -webkit-touch-callout: none;
+}
+
 @keyframes riseIn {
   from {
     opacity: 0;
