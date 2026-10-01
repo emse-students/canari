@@ -89,7 +89,47 @@ Every output's `type` was `video/mp4; codecs="avc1.64001f, mp4a.40.2"`. Progress
 times per run, first at 0, last at 1. The Mi 9T's encoder OVERSHOOTS the asked bitrate by ~19 % on
 synthetic test patterns (2.97 against 2.5 Mb/s); at that rate a 90 s reel is ~35 MB, still under the
 50 MB ceiling, and `too-large` is what holds the line if a source ever beats the budget share.
-**Real camera clips, cancel and the in-app progress are read with the composer wiring** (below).
+
+**Real camera clips, recorded on each phone's own camera app** (a dark scene, which is why they
+come out small - the bitrate is VARIABLE and black costs nothing; the synthetic rows above are the
+bitrate measurement): Mi 9T, 24.5 s H.264 Baseline 1080p, rotation -90, 7.0 MB; iPhone 12, 25.5 s
+HEVC Main 10 (HDR) 1920x1080, rotation -90, plus Apple's metadata tracks, 30.7 MB.
+
+| Source -> phone | Took | Output | Plays / seeks | MSE |
+| --- | --- | --- | --- | --- |
+| iPhone clip -> iPhone 12 | 15.7 s | 2.7 MB, 720x1280, 25.47 s | yes / to 12.7 s | 3 appends, buffered 0.02-25.53 s |
+| Mi 9T clip -> iPhone 12 | 19.1 s | 0.67 MB, 720x1280, 24.51 s | yes / to 12.3 s | buffered 0.02-24.57 s |
+| iPhone clip -> Mi 9T | 17.1 s | 0.66 MB, 720x1280, 25.47 s | yes / to 12.7 s | buffered 0-25.49 s |
+| Mi 9T clip -> Mi 9T | 12.6 s | 0.53 MB, 720x1280, 24.51 s | yes / to 12.3 s | buffered 0-24.53 s |
+| iPhone clip -> Mi 9T, aborted at 30 % | 5.1 s | `VideoPrepareError` `aborted` | - | - |
+
+Apple's metadata tracks are discarded without a refusal; the HDR source is tone-mapped to 8-bit
+H.264 by the decoder, and its COLOURS have not been compared by eye.
+
+### In the app, with the writer ON (bench build, 2026-10-02)
+
+The composer wiring on an APK and an iOS build carrying `SEGMENTED_MEDIA_WRITER_ENABLED = true`
+(never merged), against the local estate, the clip handed to the composer's own file input:
+
+- **Post composer, both phones**: the progress line counts 0 -> 100 % (~100 distinct values) while
+  `[video-prep] plan: 720x1280, 2500 kb/s, 25.47 s` ... `done in 16459 ms: 30729927 -> 662654
+  bytes` logs, then `[media-seg] encrypt: ... in N segment(s)`, `POST /api/media/upload 201`,
+  `POST /api/posts 201`. A 7.8 MB output went up as 8 segments.
+- **Streaming, both directions**: the Mi 9T's 8-segment post opened on the iPhone as eight
+  `GET /api/media/:id` -> `206` (`1048612`, six `1048592`, `436748` bytes), and on the Mi 9T itself
+  through `[media-seg] stream ... through MediaSource` -> `8 segment(s) appended`; each sought to
+  15 s and played on.
+- **Cancel, both phones**: the cross at 30 % logs `cancelled by the member` -> `aborted` ->
+  `[POST_COMPOSER] publish stopped: video preparation cancelled`; the composer keeps its text and
+  its video, no banner, Publish enabled.
+- **Typed refusal, both phones**: 300 kB of random bytes named `.mp4` -> `[video-prep] refused:
+  video/mp4 is no readable container`, `publish failed at mediaPrepare VideoPrepareError`, banner
+  *"Cette video ne peut pas etre lue."*
+- **Chat composer, both phones**: the line runs at PICK time, the file joins the pending strip
+  prepared; sent segmented; the other phone and the desktop recipient read it WHOLE (`200`, chat
+  bubbles do not stream - [media-service](../services/media-service.md#who-reads-it-and-how)) and
+  it plays and seeks on the other phone (iPhone's 25.55 s clip on the Mi 9T, Mi 9T's 20 s on the
+  iPhone).
 
 ## Who calls it
 

@@ -300,9 +300,12 @@ WebCrypto throws.
 
 **Why the stream is chosen only on a codecs-bearing type.** MSE appends only a fragmented container
 (WebM, fragmented MP4) described with its codecs, and fails HALF-WAY on an ordinary MP4 from a
-phone's camera. A picked file's `file.type` never names codecs; a `MediaRecorder` output does and is
-appendable by construction - which is what R3's capture will put in the ref. So today EVERY
-segmented ref would take the whole-blob path, and that is the fact-based choice, not a fallback.
+phone's camera. A picked file's `file.type` never names codecs - but no picked video reaches the
+upload as picked any more: every composer hands it to `prepareVideoForUpload`, whose output is a
+fragmented MP4 whose `type` names `avc1` + `mp4a` ([video-preparation](../frontend/video-preparation.md)),
+so every video written segmented is streamable by construction. A ref without codecs (an image, a
+file, a video from a client older than the composer wiring) takes the whole-blob path, and that is
+the fact-based choice, not a fallback.
 **Seeking ahead of the download waits for it**: segments are appended in order; the reader can fetch
 any one segment (`segmentForOffset`), but mapping a TIME to a byte needs the container's index,
 which belongs with the capture (R3). A streamed video is not written to the ciphertext cache.
