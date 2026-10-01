@@ -2,9 +2,9 @@
 
 The camera tab, the capture screen, publishing, the full-screen viewer and save-to-gallery. The
 decisions are the user's ([backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken));
-the server contract is `docs/wiki/services/reels.md` (the server PR's page); the one format a video
-is brought to before upload is the on-device preparation (`lib/video/prepareVideoForUpload.ts`, the
-compression PR). This page owns what the PHONE does.
+the server contract is [reels (server)](../../services/reels.md); the one format a video is brought
+to before upload is the on-device preparation (`lib/video/prepareVideoForUpload.ts`). This page owns
+what the PHONE does.
 
 ## The first camera open, read on both phones (2026-10-01, before anything was built on it)
 
