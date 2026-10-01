@@ -29,10 +29,10 @@
  *   any one segment (`SegmentedMediaReader.segmentForOffset`), but mapping a TIME to a byte offset
  *   needs the container's index (a WebM `Cues`, an MP4 `sidx`), and that belongs with the capture
  *   that writes the container (R3).
- * - Nothing here has played on a phone: the reader release writes no segmented blob, and no
- *   recorder writes a codecs-bearing ref yet. Whether `ManagedMediaSource` is exposed inside the iOS
- *   app's WKWebView is UNVERIFIED - when it is not, the iPhone takes the whole-blob path by the same
- *   fact-based choice, and plays at the end as it does today.
+ * - No recorder writes a codecs-bearing ref yet. The path was READ on both phones (2026-10-01) with
+ *   a blob sealed by `encryptSegmentedMedia`: the Mi 9T streams through `MediaSource`, the iPhone's
+ *   WKWebView exposes `ManagedMediaSource` and streams through it - first frame with 2 of 20
+ *   segments in hand on both (docs/wiki/services/media-service.md, "Read on both phones").
  */
 
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';

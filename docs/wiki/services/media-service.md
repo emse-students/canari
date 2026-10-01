@@ -341,11 +341,40 @@ header and every tag to ONE GCM decrypt and show a broken video. The flip is one
 | **reader before this release** | reads                      | FAILS (one GCM over header and tags) - why the flip waits for `minClientVersion` |
 | **reader from this release**   | reads, unchanged, for ever | reads whole everywhere; streams where the facts allow                            |
 
-**Nothing here has run on a phone.** The writer is off and no recorder writes a codecs-bearing ref
-yet, so the stream path is exercised only by `segmentedMediaStream.test.ts` against a fake
-`MediaSource`. Whether `ManagedMediaSource` is exposed inside the iOS app's WKWebView is UNVERIFIED;
-if it is not, the iPhone takes the whole-blob path by the same choice and plays at the end, as
-today. The native change is compile- and `cargo test`-verified only.
+### Read on both phones (2026-10-01) - and the defect only a phone could show
+
+**The first phone run found that NO segmented post had ever streamed**: `InlineVideo` appended
+`#t=0.1` to every `src`, and an MSE object URL with a fragment names no `MediaSource`, so the Android
+WebView refused it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`, and the
+post sat on a dead player with no request sent. `segmentedMediaStream.test.ts`'s fake `MediaSource`
+cannot see a URL, so every gate was green. Fixed in the same pull request: a streamed `src` reaches
+the element exactly as minted (`streamed`, pinned in `InlineVideo.svelte.test.ts`).
+
+**How it was driven, with the writer off.** The PR's own `encryptSegmentedMedia` sealed a 20.9 MB
+fragmented MP4 (H.264 Main + AAC, `video/mp4; codecs="avc1.4D4028, mp4a.40.2"`, 20 segments) under
+bun; the blob went up through `/api/media/upload` with the owner's refreshed token, and a post on the
+LOCAL estate carried the ref with `encoding: 'segmented-v1'` (the social service stored it). Each case
+was opened in the app by a SvelteKit link click (no reload), with the page's own `fetch` and `<video>`
+events timed in its clock, the app's console read (logcat on Android, the WebKit inspector on iOS) and
+`docker logs` of the media service and nginx kept. Builds: a debug APK and an `ios.yml` bench build of
+this branch.
+
+| Case                                            | Mi 9T (Android 16 WebView 152, `MediaSource`)                                                                                                 | iPhone 12 (WKWebView, `ManagedMediaSource`)                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Segmented, codecs named -> stream               | PASS: 20 ranges, all `206`, contiguous and in order; first frame (`loadeddata`) at 676 ms with 2 of 20 segments in hand, last byte at 4837 ms | PASS: same 20 `206`s in order; first frame 539 ms, last byte 5686 ms |
+| Same blob, `video/mp4` (no codecs) -> whole     | PASS: one `200` of 20.9 MB, plays at 2204 ms (`read whole (no-codecs)` logged)                                                                | PASS: one `200`, plays at 4845 ms                                    |
+| Legacy single block (fresh post)                | PASS: one `200`, no `Range`, plays                                                                                                            | PASS: one `200`, no `Range`, plays                                   |
+| One bit flipped in segment 3                    | REFUSED: `segment-auth`, index 3, after segments 0-2 played; card shows "Impossible de charger le media"                                      | REFUSED: same                                                        |
+| Last segment dropped, header intact             | REFUSED: the 20th range answers `416`, `length` fault on segment 19                                                                           | REFUSED: same                                                        |
+| Last segment dropped, header rewritten to match | REFUSED: `segment-auth` on segment 0 - the header is every segment's AAD                                                                      | REFUSED: same                                                        |
+
+What the table means for the flip: **a refused stream has already PLAYED its authentic prefix** - by
+construction, since each segment is verified on its own; what it never plays is a byte that failed
+its tag. The reader fetches one segment at a time, so its throughput is one round trip per MiB
+(~4.5 MB/s over the local link here); on a phone network the round trip dominates less than the
+bandwidth, and pipelining is a later choice, not a defect. The native push-thumbnail change is still
+compile- and `cargo test`-verified only. Evidence (JSON timelines, logs, screenshots) is kept
+machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 
 ## Environment variables
 
