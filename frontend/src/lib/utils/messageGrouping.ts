@@ -1,16 +1,14 @@
 import type { ChatMessage } from '$lib/types';
-import {
-  formatLongDateFr,
-  formatTime24,
-  isToday,
-  isYesterday,
-  toValidDate,
-} from '$lib/utils/dates';
+import { formatDayLabel, formatTime24, toValidDate } from '$lib/utils/dates';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
 
 /**
  * A discriminated union representing one visual row in the message list.
- * - `date_separator`: a full-width label showing the day (e.g. "Aujourd'hui", "Hier", "lundi 5 mai 2025").
+ * - `date_separator`: a full-width label showing the day, in its shortest honest form
+ *   ("Aujourd'hui", "Hier", "Mercredi", "23 septembre", "5 mai 2025" - see `formatDayLabel`). The
+ *   floating pill reads the same text off the separator, so the two can never disagree.
  * - `time_separator`: a subtle timestamp shown when there is a 15+ minute gap between messages.
  * - `message`: an actual chat message.
  */
@@ -27,12 +25,6 @@ export type MessageGroupMessageRow = Extract<MessageGroup, { type: 'message' }>;
  */
 export function isMessageGroupRow(g: MessageGroup | null | undefined): g is MessageGroupMessageRow {
   return g != null && g.type === 'message';
-}
-
-function formatDateSeparator(date: Date): string {
-  if (isToday(date)) return "Aujourd'hui";
-  if (isYesterday(date)) return 'Hier';
-  return formatLongDateFr(date);
 }
 
 /** Returns true if `msgs` is already in ascending message order. O(n) - avoids the O(n log n) sort in the common case where messages arrive in order. */
@@ -53,9 +45,11 @@ function isAlreadySorted(msgs: ChatMessage[]): boolean {
  * The sort is skipped when the array is already ordered (the common case),
  * cutting O(n log n) work on every new message in long conversations.
  */
-export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
+export function groupMessages(messages: ChatMessage[], now: Date = new Date()): MessageGroup[] {
   if (messages.length === 0) return [];
 
+  const locale = getLocale();
+  const dayLabels = { today: m.chat_day_today(), yesterday: m.chat_day_yesterday() };
   const sorted = isAlreadySorted(messages) ? messages : [...messages].sort(compareMessageOrder);
   const groups: MessageGroup[] = [];
   let lastDate: string | null = null;
@@ -71,7 +65,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     if (lastDate !== msgDate) {
       groups.push({
         type: 'date_separator',
-        date: formatDateSeparator(d),
+        date: formatDayLabel(d, locale, dayLabels, now),
       });
       lastDate = msgDate;
       lastTimestamp = null; // Reset time gap check for new day

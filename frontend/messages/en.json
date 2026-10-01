@@ -209,6 +209,8 @@
   "chat_no_conversation_selected_title": "No conversation selected",
   "chat_mls_protection_description": "Canari protects your communications with the MLS protocol.",
   "chat_scroll_to_bottom_label": "Scroll to bottom of conversation",
+  "chat_day_today": "Today",
+  "chat_day_yesterday": "Yesterday",
   "chat_scroll_to_bottom_title": "Scroll down",
   "chat_search_in_conversation_placeholder": "Search in conversation",
   "chat_clear_search_label": "Clear search",

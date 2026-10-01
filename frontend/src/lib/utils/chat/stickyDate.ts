@@ -37,3 +37,33 @@ export function stickyDateIndex(
   }
   return found;
 }
+
+/** A separator's vertical box, in pixels relative to the top of the visible pane. */
+export interface SeparatorBox {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Which separator the floating pill should name, or `null` when it should not show at all.
+ *
+ * THE PILL IS A STAND-IN FOR A SEPARATOR THE READER CAN NO LONGER SEE, so it is withheld while the
+ * one it would name is still on screen below whatever covers the top of the pane. Shown anyway it
+ * drew a second copy of the same day right over the first one - two pills stacked, one partly
+ * hiding the other - and, measured against the panel rather than the visible pane, it named the
+ * PREVIOUS day over a separator that had just come into view under the header.
+ *
+ * @param count how many separators there are; the caller guarantees it is at least 1
+ * @param boxAt the separator's box, relative to the top of the visible pane (under the header)
+ * @param covered how much of the pane's top is hidden by a banner, in pixels
+ * @param zone how tall the pill's own band is below `covered`; a separator within it counts as passed
+ */
+export function floatingDateIndex(
+  count: number,
+  boxAt: (index: number) => SeparatorBox,
+  covered = 0,
+  zone = 40
+): number | null {
+  const index = stickyDateIndex(count, (i) => boxAt(i).top, covered + zone);
+  return boxAt(index).bottom > covered ? null : index;
+}

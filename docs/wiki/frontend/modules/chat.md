@@ -2147,7 +2147,8 @@ can attribute.
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.
-- **Sticky date**: current date label stays visible during scroll.
+- **Sticky date**: current date label stays visible during scroll - see
+  [The day label and its floating pill](#the-day-label-and-its-floating-pill-2026-10-01).
 - **Search**: in-chat search with prev/next navigation and highlight.
 - **Lightbox**: full-screen image/video with pinch-zoom and download.
 - **Radial menu** (mobile): long-press message -> circular action menu
@@ -2390,6 +2391,41 @@ EXISTENCE, so it stays permanent with the `{#if}` inside it, and `archive/type.m
 `innerText`, so the localized prose is still RENDERED - `sr-only` clips it, it does not remove it.
 The permanent wrapper is also what makes the `role="status"` announce reliably: assistive technology
 has to be observing a live region BEFORE the mutation that fills it.
+
+### The day label and its floating pill (2026-10-01)
+
+Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
+centred. Three defects behind one report, each fixed at its one place.
+
+**The label is the shortest honest name of the day** - `formatDayLabel` in `utils/dates.ts`, the
+only implementation, called by `groupMessages` (`utils/messageGrouping.ts`) for every
+`date_separator`. "Aujourd'hui" / "Hier" (`m.chat_day_today` / `m.chat_day_yesterday`), then the
+weekday alone up to six calendar days back ("Mercredi"), then day and month ("23 septembre"), and the
+year only when it is not the current one. `Intl` in the Paraglide locale, so English reads "Monday",
+"September 23", "May 5, 2025". A day in the future (a skewed clock) never gets a bare weekday. The
+floating pill reads its text off the separator's `data-chat-date-separator`, so the two cannot
+disagree. Days are counted by `calendarDay`, shared with the media viewer's title.
+
+**The pill is the last row of `.chat-thread-banners`, not a box positioned over the panel.** It was
+`absolute; left: 50%; translateX(-50%)`: shrink-to-fit could only use the half of the panel right of
+centre, so a long day (or a 200 % system font) wrapped onto two LEFT-aligned lines - the off-centre
+pill. And at its own `top` it slid under the catch-up banner (z-40 over its 35). In the column it is
+centred by `align-self`, capped at the thread width minus a gutter, stacks under any banner, and starts
+under the header in both the floating (phone) and the in-flow (website) chrome because the column
+already does. `--z-page-sticky` had no other user and is gone.
+
+**It is shown only when the separator it names is out of sight** (`floatingDateIndex`,
+`utils/chat/stickyDate.ts`). Measured from the scroller's box, the pill named the previous day over a
+separator that had just come into view under the floating header, and drew the same day twice, one
+pill over the other. It now measures from the top of the VISIBLE thread (the banner column's top),
+treats a separator behind the catch-up banner as hidden, and stays hidden while the one it would
+name is still on screen. Where it does float over a bubble, a halo in the page colour (`--cn-bg`)
+fades the letters either side of it instead of leaving them cut hard against its edge.
+
+Audited at 390 and 1280 (a preview of the thread's real structure, headless Chrome): nothing else
+draws text over text while scrolling - the scroll-to-bottom button and the send-error alert sit at
+`bottom: 10rem`, the composer reserves its own height, reactions are in flow under their bubble, and
+there is no unread divider in the list to collide with.
 
 ## Routes
 
