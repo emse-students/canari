@@ -26,6 +26,8 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+#[cfg(feature = "bench-observables")]
+use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
@@ -1095,7 +1097,10 @@ pub fn run() {
             forget_graine_sessions,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
-            notifier_message_natif
+            notifier_message_natif,
+            // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
+            #[cfg(feature = "bench-observables")]
+            bench_native_store
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

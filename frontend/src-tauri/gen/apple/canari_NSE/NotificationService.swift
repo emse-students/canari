@@ -322,6 +322,7 @@ class NotificationService: UNNotificationServiceExtension {
     // we got there, otherwise the server fallback) rather than losing the notification.
     NSLog("[CanariNSE] time expired - delivering best attempt")
     if let handler = contentHandler, let content = bestAttemptContent {
+      Self.logFiling(content, via: "expired")
       handler(content)
     }
   }
@@ -330,7 +331,31 @@ class NotificationService: UNNotificationServiceExtension {
   private func finish() {
     guard let handler = contentHandler, let content = bestAttemptContent else { return }
     contentHandler = nil
+    Self.logFiling(content, via: "finish")
     handler(content)
+  }
+
+  /// HOW THE NOTIFICATION IS FILED, for the cross-client rig on a BENCH build only (observable O13,
+  /// docs/wiki/cross-client-ios.md): iOS has no channels, so a mention and a plain message differ by
+  /// `interruptionLevel`, which nothing outside the process can read off a delivered notification.
+  /// `CANARI_BENCH` is set by `ios.yml` for a `local_url` build and never for a store one, which
+  /// `.github/scripts/bench-observables.sh` asserts on the archive. Twin: `CanariShowLocalNotification`.
+  private static func logFiling(_ content: UNNotificationContent, via: String) {
+    #if CANARI_BENCH
+      var level = "unavailable"
+      if #available(iOS 15.0, *) {
+        switch content.interruptionLevel {
+        case .passive: level = "passive"
+        case .active: level = "active"
+        case .timeSensitive: level = "timeSensitive"
+        case .critical: level = "critical"
+        @unknown default: level = "unknown(\(content.interruptionLevel.rawValue))"
+        }
+      }
+      NSLog(
+        "[CanariNSE] filed interruptionLevel=\(level) thread=\(content.threadIdentifier.prefix(8)) via=\(via)"
+      )
+    #endif
   }
 
   // MARK: - MLS (direct message / group) --------------------------------------

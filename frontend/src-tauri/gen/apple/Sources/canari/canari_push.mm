@@ -1158,6 +1158,23 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
          if (error != nil) {
            NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
          } else {
+#if CANARI_BENCH
+           // HOW IT WAS FILED, for the cross-client rig on a BENCH build only (O13): the in-app
+           // twin of the extension's `logFiling`, so a row reads both transports the same way.
+           NSString *level = @"unavailable";
+           if (@available(iOS 15.0, *)) {
+             switch (content.interruptionLevel) {
+               case UNNotificationInterruptionLevelPassive: level = @"passive"; break;
+               case UNNotificationInterruptionLevelActive: level = @"active"; break;
+               case UNNotificationInterruptionLevelTimeSensitive: level = @"timeSensitive"; break;
+               case UNNotificationInterruptionLevelCritical: level = @"critical"; break;
+               default:
+                 level = [NSString stringWithFormat:@"unknown(%lu)", (unsigned long)content.interruptionLevel];
+             }
+           }
+           NSLog(@"[CanariPush] filed interruptionLevel=%@ thread=%@ via=app", level,
+                 [threadId substringToIndex:MIN((NSUInteger)8, threadId.length)]);
+#endif
            // Refresh the launcher badge (WP-XP-2) after ANY chat notification is posted.
            // The badge counts distinct delivered conversations, not just the old flat thread.
            CanariUpdateAppBadge();

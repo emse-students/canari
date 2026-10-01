@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-76 scripts.
+78 scripts.
 
 | script | what it is |
 |---|---|
@@ -52,6 +52,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
+| `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
 | `launch.mjs` | Launching and killing the two test browsers. |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
@@ -97,6 +98,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `verdicts.mjs` | THE VERDICT VOCABULARY, IN ONE PLACE, BECAUSE TWO COPIES DRIFTED TWICE. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
 | `webkit-console.mjs` | THE iPHONE'S CONSOLE IN THE SHAPE THE CLASSIFIER READS - WebKit's `Console.messageAdded` as CDP's |
+| `webkit-files.mjs` | A FILE INTO THE COMPOSER ON THE iPHONE (O14) - what `DOM.setFileInputFiles` does on Chromium, done |
 | `webkit-input.mjs` | THE iPHONE'S INPUT LAYER - CDP's `Input` domain performed as WebDriverAgent touches and keystrokes, |
 
 ## Primitives that carry their own row
@@ -298,4 +300,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-237 scripts in total.
+239 scripts in total.

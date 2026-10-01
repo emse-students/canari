@@ -257,7 +257,144 @@ for (const name of ['sh', 'adb', 'killAdbServer', 'fcmSocket']) {
   await ios.refreshFcmLink().catch((e) => (err = e));
   check('refreshFcmLink: NotOnIos, pointing at the per-row APNs proof', err instanceof ios.NotOnIos && /PUSH_SEND/.test(err.equivalent));
 }
-check('the native readers report a BLIND instrument, never an empty device', ['nativeResidue', 'nativeFootprint', 'graineMirrorSessions', 'forgetGraineMirror'].every((n) => /App Group/.test(ios[n]('x')?.error ?? '')));
+// --- 6b. The native stores, asked of the app (O5, O15) ---------------------------------------------
+
+{
+  /** A scripted `iosbench.mjs`: answers by op, records the argv it was given. */
+  const calls = [];
+  const answers = {};
+  const restore = ios.__setIo({
+    inspectorPort: () => 9444,
+    bench(args) {
+      calls.push(args.join(' '));
+      const op = args[args.indexOf('--op') + 1];
+      const a = answers[op];
+      return typeof a === 'string' ? a : `${JSON.stringify(a)}\n`;
+    },
+  });
+
+  check('readBenchAnswer: { ok } is the value', JSON.stringify(ios.readBenchAnswer('{"ok":{"bytes":3}}')) === '{"bytes":3}');
+  check('readBenchAnswer: { error } stays an error', ios.readBenchAnswer('noise\n{"error":"x"}').error === 'x');
+  check('readBenchAnswer: no JSON is an instrument error, never a value', /no JSON/.test(ios.readBenchAnswer('Segmentation fault').error ?? ''));
+
+  // Not a bench build: Tauri's own refusal reaches the row VERBATIM - nothing classifies its wording.
+  answers.list = { error: 'Command bench_native_store not found' };
+  answers.graine = answers.list;
+  const blind = ios.nativeResidue();
+  check('a store build: the reader says the app could not be asked, never an empty device', blind.error === 'Command bench_native_store not found' && !('residue' in blind));
+  check('the port reaches iosbench, and the op', calls.at(-1) === '--port 9444 --op list', calls.at(-1));
+
+  answers.list = {
+    ok: {
+      app: ['mls.bin', 'logs', 'logs/Canari.log', 'canari_0123456789abcdef0123.db', 'WebKit'],
+      group: ['.com.apple.mobile_container_manager.metadata.plist', 'Library', 'Library/Caches', 'mls.bin', 'graine_seeds.json', 'graine_seeds.lock', 'push_secret.txt'],
+      groupError: null,
+    },
+  };
+  const r = ios.nativeResidue();
+  check('nativeResidue: both containers, the App Group by OWNERSHIP', r.residue === 5, JSON.stringify(r));
+  check('nativeResidue: App Group paths are marked, identifiers shortened', r.paths.includes('group:push_secret.txt') && r.paths.includes('canari_01234567.db'), JSON.stringify(r.paths));
+  check('nativeResidue: the system skeleton and an empty lock are not account state', !r.paths.some((p) => /Library|metadata|\.lock/.test(p)));
+  check('nativeResidue: what a running app rewrites stays a separate list', JSON.stringify(r.rewritten) === JSON.stringify(['logs/Canari.log']));
+  answers.list = { ok: { app: [], group: null, groupError: 'the App Group container is unavailable' } };
+  check('nativeResidue: an unreadable App Group VOIDS the readout - half a device is not a clean one', /App Group could not be read/.test(ios.nativeResidue().error ?? ''));
+
+  answers.graine = { ok: { app: 3, group: 2, groupError: null } };
+  check('graineMirrorSessions: the count the PUSH PATH reads (the App Group copy)', ios.graineMirrorSessions('chan-1') === 2);
+  check('graineMirrorSessions: the channel reaches the command', calls.at(-1) === '--port 9444 --op graine --channel chan-1', calls.at(-1));
+  answers.graine = { ok: { app: null, group: null, groupError: null } };
+  check('graineMirrorSessions: no mirror is null, as on Android', ios.graineMirrorSessions('chan-1') === null);
+
+  answers.forget_graine = { ok: { removed: true, appHad: true, groupHad: true, groupError: null } };
+  check('forgetGraineMirror: removed is the app saying BOTH are gone', ios.forgetGraineMirror().removed === true);
+  answers.forget_graine = { ok: { removed: false, appHad: true, groupHad: null, groupError: 'unavailable' } };
+  check('forgetGraineMirror: an App Group it could not reach is an error, not a removal', /App Group/.test(ios.forgetGraineMirror().error ?? ''));
+
+  answers.footprint = { ok: { files: 10, bytes: 1000, appGroup: { files: 2, bytes: 50 }, groupError: null } };
+  const fp = ios.nativeFootprint();
+  check('nativeFootprint: both containers summed, the App Group kept apart', fp.files === 12 && fp.bytes === 1050 && fp.appGroup.files === 2, JSON.stringify(fp));
+
+  answers.damage = { error: 'refused: no snapshot of mls.bin - take one first, so the state can be given back' };
+  check("damageMlsState: the app's refusal without a snapshot reaches the row", /refused/.test(ios.damageMlsState('flip').error ?? ''));
+  check('damageMlsState: the mode reaches the command', calls.at(-1) === '--port 9444 --op damage --mode flip', calls.at(-1));
+  answers.clear_refresh = { ok: { had: true, present: false } };
+  check('clearRefreshCredential: had it, holds it no more', JSON.stringify(ios.clearRefreshCredential()) === '{"had":true,"present":false}');
+  restore();
+}
+{
+  const restore = ios.__setIo({
+    bench() {
+      throw new Error('spawn ENOENT');
+    },
+  });
+  check('nativeStore: a child that never ran is an error, never a value', /did not run/.test(ios.nativeStore('mls', { port: 9444 }).error ?? ''));
+  restore();
+}
+
+// --- 6c. iosbench: the call started and collected without awaitPromise -----------------------------
+
+{
+  const { kickoffExpression, pollExpression, commandArgs } = await import('../iosbench.mjs');
+  /** Evaluates an expression the way the bridge would, against a stub `window`. */
+  const run = (expr, window) => new Function('window', `return ${expr};`)(window);
+  const invoked = [];
+  const win = {
+    __TAURI_INTERNALS__: {
+      invoke: (cmd, args) => {
+        invoked.push([cmd, args]);
+        return args.op === 'boom' ? Promise.reject(new Error('Command bench_native_store not found')) : Promise.resolve({ bytes: 7 });
+      },
+    },
+  };
+  check('commandArgs: only what was given', JSON.stringify(commandArgs({ op: 'graine', channel: 'c' })) === '{"op":"graine","channelId":"c"}');
+  check('kickoff: returns at once, before the promise settles', run(kickoffExpression('a', { op: 'mls' }), win) === 'started');
+  check('poll: nothing yet is null, not an answer', run(pollExpression('a'), win) === null);
+  await Promise.resolve();
+  check('poll: the parked outcome, once', run(pollExpression('a'), win) === '{"ok":{"bytes":7}}' && run(pollExpression('a'), win) === null);
+  check('kickoff: the command and its arguments', invoked[0][0] === 'bench_native_store' && invoked[0][1].op === 'mls');
+  run(kickoffExpression('b', { op: 'boom' }), win);
+  await new Promise((r) => setTimeout(r, 0));
+  check('poll: a rejected invoke is { error } with its own words', JSON.parse(run(pollExpression('b'), win)).error === 'Command bench_native_store not found');
+  const bare = {};
+  run(kickoffExpression('c', { op: 'mls' }), bare);
+  check('kickoff: a page with no Tauri runtime answers at once, never a wait', JSON.parse(run(pollExpression('c'), bare)).error === 'no Tauri runtime on this page');
+}
+
+// --- 6d. A file into the composer, on WebKit (O14) --------------------------------------------------
+
+{
+  const { contentTypeOf, fileInjectionExpression } = await import('../webkit-files.mjs');
+  check('contentTypeOf: from the extension', contentTypeOf('a/msg4-image.PNG') === 'image/png' && contentTypeOf('x.pdf') === 'application/pdf' && contentTypeOf('x.bin') === '');
+  const fired = [];
+  const input = { files: null, dispatchEvent: (e) => fired.push(e) };
+  class DataTransfer {
+    constructor() {
+      const list = [];
+      this.items = { add: (f) => list.push(f) };
+      this.files = list;
+    }
+  }
+  class FakeFile {
+    constructor(parts, name, opts) {
+      this.bytes = parts[0];
+      this.name = name;
+      this.type = opts.type;
+    }
+  }
+  class FakeEvent {
+    constructor(type, opts) {
+      this.type = type;
+      this.bubbles = opts?.bubbles;
+    }
+  }
+  const document = { querySelector: (s) => (s === 'input[type=file]' ? input : null) };
+  const expr = fileInjectionExpression([{ name: 'a.png', type: 'image/png', b64: Buffer.from([1, 2, 255]).toString('base64') }]);
+  const held = new Function('document', 'DataTransfer', 'File', 'Event', 'atob', `return ${expr};`)(document, DataTransfer, FakeFile, FakeEvent, (s) => Buffer.from(s, 'base64').toString('latin1'));
+  check('fileInjection: the input holds the file, bytes intact', held === 1 && input.files[0].name === 'a.png' && [...input.files[0].bytes].join() === '1,2,255', JSON.stringify(input.files));
+  check('fileInjection: a BUBBLING change, which is what the app listens to', fired.length === 1 && fired[0].type === 'change' && fired[0].bubbles === true);
+  const none = new Function('document', 'DataTransfer', 'File', 'Event', 'atob', `return ${fileInjectionExpression([], 'input.absent')};`)(document, DataTransfer, FakeFile, FakeEvent, () => '');
+  check('fileInjection: no input is a reason, never a count', typeof none === 'string' && /no file input/.test(none));
+}
 
 // --- 7. The syslog --------------------------------------------------------------------------------
 
@@ -281,6 +418,43 @@ check('the native readers report a BLIND instrument, never an empty device', ['n
     "2026-10-01 10:00:08.000000 apsd[90] <Notice>: Received message for enabled topic 'fr.emse.canari'\n2026-10-01 10:00:08.500000 apsd[90] <Notice>: Received message for enabled topic 'com.apple.news'\n",
   );
   check('apnsReceipts: apsd lines about THIS app only', ios.apnsReceipts(new Date('2026-10-01T10:00:07').getTime()).length === 1);
+  restore();
+}
+
+// --- 7b. How a notification was filed (O13), and the APNs witness (O4) ------------------------------
+
+{
+  check('parseFilingLine: the extension, a mention', JSON.stringify(ios.parseFilingLine('[CanariNSE] filed interruptionLevel=timeSensitive thread=1a2b3c4d via=finish')) === '{"by":"nse","level":"timeSensitive","thread":"1a2b3c4d","via":"finish"}');
+  check('parseFilingLine: the app, a plain message', ios.parseFilingLine('[CanariPush] filed interruptionLevel=active thread=channel_ via=app')?.by === 'app');
+  check('parseFilingLine: any other line is null', ios.parseFilingLine('[CanariNSE] didReceive type=message') === null);
+  const { restore } = fakePhone();
+  ios.clearLogcat();
+  appendFileSync(
+    process.env.IOS_SYSLOG_FILE,
+    '2026-10-01 11:00:00.000000 canari_NSE(Foundation)[401] <Notice>: [CanariNSE] filed interruptionLevel=passive thread=old via=finish\n' +
+      '2026-10-01 11:00:10.000000 canari_NSE(Foundation)[402] <Notice>: [CanariNSE] filed interruptionLevel=timeSensitive thread=9f8e7d6c via=expired\n' +
+      '2026-10-01 11:00:11.000000 canari(Foundation)[812] <Notice>: [CanariPush] filed interruptionLevel=active thread=channel_ via=app\n',
+  );
+  const levels = ios.interruptionLevels(new Date('2026-10-01T11:00:05').getTime());
+  check('interruptionLevels: since the floor, both transports, with their instants', levels.length === 2 && levels[0].level === 'timeSensitive' && levels[0].via === 'expired' && levels[1].by === 'app', JSON.stringify(levels));
+  restore();
+}
+{
+  const { s, restore } = fakePhone();
+  // A live capture: the device writes while the witness waits.
+  ios.__setIo({
+    alive: () => true,
+    sleep: async (ms) => {
+      s.clock += ms;
+      appendFileSync(process.env.IOS_SYSLOG_FILE, '2026-10-01 11:01:00.000000 kernel[0] <Notice>: tick\n');
+    },
+  });
+  const live = await ios.syslogWitness(5_000);
+  check('syslogWitness: a capture that grows is believed', live.alive && live.grewBy > 0 && ios.syslogWitnessRefusal(live) === null, JSON.stringify(live));
+  ios.__setIo({ sleep: async (ms) => void (s.clock += ms) });
+  const deaf = await ios.syslogWitness(2_000);
+  check('syslogWitness: a capture that hears nothing is REFUSED, never read as "apsd delivered nothing"', /received nothing/.test(ios.syslogWitnessRefusal(deaf) ?? ''), JSON.stringify(deaf));
+  check('syslogWitnessRefusal: a dead capture is refused', /not running/.test(ios.syslogWitnessRefusal({ capturePid: 1, alive: false, grewBy: 9, tookMs: 1 }) ?? ''));
   restore();
 }
 

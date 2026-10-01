@@ -14,13 +14,15 @@
  * | `uiautomator` + `input tap` on a row      | the same tree's rectangle + a W3C touch, in POINTS        |
  * | `logcat`                                  | `pymobiledevice3 syslog live`, captured to a file by {@link startSyslog} |
  * | `dumpsys trust` (keyguard)                | WDA `/wda/locked`                                        |
+ * | `run-as` (the native stores)            | the app ITSELF, through its WebView: `bench_native_store`, a BENCH build only (`iosbench.mjs`) |
  *
  * WHAT HAS NO COUNTERPART, AND SAYS SO: the raw-shell escapes (`sh`, `adb`, `killAdbServer`) and the
  * FCM socket (`fcmSocket`, `refreshFcmLink`) THROW {@link NotOnIos} naming the iPhone's observable, so
  * a row that reaches for one fails at the call with the port it owes rather than measuring nothing.
- * The native-store readers return `{ error }`, which `phone.mjs` already uses for "the instrument
- * cannot see this" - the app's MLS state and Graine mirror live in the App Group container
- * (`group.fr.emse.canari`), which no lockdown service vends.
+ * The native-store readers answer `{ error }` when the app cannot be asked (not a bench build, not
+ * running in front), which `phone.mjs` already uses for "the instrument cannot see this" - the
+ * app's MLS state and Graine mirror live in its own container and the App Group
+ * (`group.fr.emse.canari`), which no lockdown service vends, so only the app can report on them.
  *
  * WHAT ONLY THE iPHONE NEEDS, at the end of the file: the system screens a row drives through WDA
  * - Control Center (`setAirplaneMode`), the Network Link Conditioner (`setLinkConditioner`), the
@@ -44,6 +46,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyAppGroupPaths, classifyNativePaths } from './native-residue.mjs';
 import { GENERIC_BODIES } from './notif-bodies.mjs';
 import { spawnPin } from './pinspawn.mjs';
 
@@ -107,6 +110,18 @@ const io = {
     const script = `const r = await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(${timeout}) }); process.stdout.write(await r.text());`;
     const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: timeout + 5_000 });
     return r.status === 0 ? String(r.stdout) : null;
+  },
+  /** The inspector bridge's port, `PORTS.I1` in the out-of-tree names.mjs. */
+  inspectorPort() {
+    const p = names().PORTS?.I1;
+    if (!p) throw new Error('no PORTS.I1 in names.mjs - the inspector bridge port (names.example.mjs)');
+    return p;
+  },
+  /** One `iosbench.mjs` run - the app asked about its native stores; its stdout. */
+  bench(args, timeout = 90_000) {
+    const r = spawnSync(process.execPath, [join(HERE, 'iosbench.mjs'), ...args.map(String)], { encoding: 'utf8', timeout });
+    if (r.error) throw r.error;
+    return String(r.stdout);
   },
   /** One `pymobiledevice3` command's stdout, or throws. */
   pymd(args, timeout = 30_000) {
@@ -208,18 +223,131 @@ export function killAdbServer() {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The native stores - in the App Group container, which nothing outside the app can list.
+// The native stores - asked of the app itself (O5, O15), because nothing outside it can list them.
 // ---------------------------------------------------------------------------------------------------
 
-const APP_GROUP_BLIND =
-  'iOS: the native stores live in the App Group container group.fr.emse.canari, which no lockdown ' +
-  'service (house_arrest included) vends - the observable owed is the app reporting COUNTS of it ' +
-  'through its own WebView (docs/wiki/cross-client-ios.md)';
+/**
+ * One `bench_native_store` answer from the app, synchronously: the value, or `{ error }`.
+ *
+ * WHAT IT NEEDS THAT ANDROID'S `run-as` DOES NOT: a BENCH build (the command is compiled into a
+ * `local_url` build only - any other answers Tauri's own "not found", carried verbatim) and the app
+ * RUNNING, IN FRONT, with the inspector bridge up - it is the app that answers. So a reader never
+ * launches the app to ask: on a killed app it reports that it could not ask, and the row decides.
+ *
+ * @param {string} op `list` | `footprint` | `graine` | `forget_graine` | `mls` | `snapshot` |
+ *   `restore` | `damage` | `clear_refresh` (see `src-tauri/src/commands/bench.rs`)
+ * @param {{ channelId?: string, mode?: 'truncate' | 'flip', port?: number }} [opts]
+ */
+export function nativeStore(op, { channelId, mode, port } = {}) {
+  let out;
+  try {
+    const args = ['--port', iosPort(port), '--op', op];
+    if (channelId) args.push('--channel', channelId);
+    if (mode) args.push('--mode', mode);
+    out = io.bench(args);
+  } catch (e) {
+    return { error: `iosbench.mjs did not run: ${String(e.message || e).slice(0, 200)}` };
+  }
+  return readBenchAnswer(out);
+}
 
-export const nativeResidue = () => ({ error: APP_GROUP_BLIND });
-export const nativeFootprint = () => ({ error: APP_GROUP_BLIND });
-export const graineMirrorSessions = () => ({ error: APP_GROUP_BLIND });
-export const forgetGraineMirror = () => ({ error: APP_GROUP_BLIND });
+/** The last JSON line `iosbench.mjs` printed, as the command's value or `{ error }`; never throws. */
+export function readBenchAnswer(stdout) {
+  const last = String(stdout ?? '').trim().split(/\r?\n/).pop() ?? '';
+  try {
+    const parsed = JSON.parse(last);
+    if (parsed && typeof parsed === 'object' && 'ok' in parsed) return parsed.ok;
+    if (parsed && typeof parsed.error === 'string') return { error: parsed.error };
+  } catch {
+    /* reported below */
+  }
+  return { error: `iosbench.mjs answered no JSON: ${last.slice(0, 200)}` };
+}
+
+/**
+ * WHAT of the account is still on the native side - Android's readout, both containers in one: the
+ * app's data directory classified as Android's is (`classifyNativePaths`), and the App Group, every
+ * file of which exists because the app or its extension wrote it (`classifyAppGroupPaths`), its
+ * paths prefixed `group:`. An unreadable App Group VOIDS the readout (`{ error }`): half a device
+ * read as clean is the lie `residueVerdict` exists to refuse.
+ */
+export function nativeResidue() {
+  const r = nativeStore('list');
+  if (r.error) return { error: r.error };
+  if (r.groupError) return { error: `the App Group could not be read: ${r.groupError}` };
+  const own = classifyNativePaths(r.app ?? []);
+  const group = classifyAppGroupPaths(r.group ?? []);
+  return {
+    residue: own.residue + group.residue,
+    paths: [...own.paths, ...group.paths.map((p) => `group:${p}`)],
+    rewritten: own.rewritten,
+  };
+}
+
+/** Files and bytes of the app's data container plus the App Group - `{ files, bytes, appGroup }`, or `{ error }`. */
+export function nativeFootprint() {
+  const r = nativeStore('footprint');
+  if (r.error) return { error: r.error };
+  const g = r.appGroup ?? { files: 0, bytes: 0 };
+  return { files: r.files + g.files, bytes: r.bytes + g.bytes, appGroup: r.appGroup ?? null, groupError: r.groupError ?? null };
+}
+
+/**
+ * How many Graine sessions the mirror THE PUSH PATH READS holds for one channel, or null when there
+ * is none. On the iPhone that is the App Group's copy: the extension opens a salon push against it
+ * and writes the seeds it finds into it (`canari_native_store_graine_seeds`). The app's own copy is
+ * in the raw answer, `nativeStore('graine', { channelId })`, beside it.
+ *
+ * @returns {number | null | { error: string }}
+ */
+export function graineMirrorSessions(channelId) {
+  const r = nativeStore('graine', { channelId });
+  if (r.error) return { error: r.error };
+  if (r.groupError) return { error: `the App Group could not be read: ${r.groupError}` };
+  return r.group ?? null;
+}
+
+/**
+ * Removes BOTH seed mirrors - the state of an iPhone whose seed push never woke anything, which on
+ * iOS is every silent frame. Both, because the app re-mirrors its own copy into the App Group at its
+ * next resign-active: removing only the extension's would be undone by the app before the row sent.
+ *
+ * @returns {{ removed: boolean, appHad?: boolean, groupHad?: boolean } | { error: string }}
+ */
+export function forgetGraineMirror() {
+  const r = nativeStore('forget_graine');
+  if (r.error) return { error: r.error };
+  if (r.groupError) return { error: `the App Group could not be read: ${r.groupError}` };
+  return { removed: r.removed === true, appHad: r.appHad, groupHad: r.groupHad };
+}
+
+/**
+ * The iPhone's `mls.bin` - size and a truncated digest - so a row proves the state the app RELOADED
+ * is the one it damaged or restored. `{ bytes: null }` when there is none.
+ */
+export const mlsStateIdentity = () => nativeStore('mls');
+
+/**
+ * Copies `mls.bin` aside (the snapshot HEAL-W*, PIN-*, CORRUPT-* restore from). The app holds the
+ * state in memory too, so a row that RESTORES or DAMAGES then ends the process (`forceStop`) and
+ * relaunches it, and reads `mlsStateIdentity()` to prove the reload took the file it wrote.
+ */
+export const snapshotMlsState = () => nativeStore('snapshot');
+/** Puts the snapshot back over `mls.bin`. See {@link snapshotMlsState} for the relaunch it needs. */
+export const restoreMlsState = () => nativeStore('restore');
+/**
+ * Damages `mls.bin`: `truncate` (to half, CORRUPT-1) or `flip` (one byte at the midpoint, CORRUPT-2).
+ * REFUSED by the app unless a snapshot exists, so the state can always be given back.
+ */
+export const damageMlsState = (mode) => nativeStore('damage', { mode });
+
+/**
+ * Erases the refresh credential (O15) - TAB-6's "delete the refresh cookie" on the iPhone, where it
+ * is no cookie: `tauri://localhost` carries it in `X-Canari-Refresh` and keeps it in the store file
+ * `auth-native.json`, edited through the store plugin's LIVE instance so the running app reads it
+ * gone. `{ had, present }` - `present: false` is the precondition the row then acts on.
+ */
+export const clearRefreshCredential = () => nativeStore('clear_refresh');
 
 // ---------------------------------------------------------------------------------------------------
 // The process.
@@ -377,12 +505,7 @@ export function forwardIdpBrowser(port) {
   };
 }
 
-const iosPort = (port) => {
-  if (port) return port;
-  const p = names().PORTS?.I1;
-  if (!p) throw new Error('no PORTS.I1 in names.mjs - the inspector bridge port (names.example.mjs)');
-  return p;
-};
+const iosPort = (port) => port || io.inspectorPort();
 
 /**
  * Brings the iPhone to a state a check can measure, or explains why it cannot - never throws for
@@ -680,6 +803,67 @@ export function apnsReceipts(sinceMs) {
     const p = parseSyslogLine(l);
     return p?.process === 'apsd' && p.message.includes(PKG);
   });
+}
+
+/**
+ * IS THE RECEIPT INSTRUMENT ALIVE - the iPhone's half of `requireFreshFcmLink` (O4).
+ *
+ * APNs has no socket to renew, so the precondition a push row can establish is a different one: that
+ * the syslog capture {@link apnsReceipts} reads is RUNNING AND RECEIVING. A dead capture reads
+ * exactly like "apsd delivered nothing", which is the false verdict `fcmlink.mjs` was written after,
+ * one layer over. The device's syslog is never quiet for long, so a capture that does not grow
+ * within `waitMs` is not listening.
+ *
+ * @returns {Promise<{ capturePid: number, alive: boolean, grewBy: number, tookMs: number }>}
+ */
+export async function syslogWitness(waitMs = 10_000) {
+  const capturePid = startSyslog();
+  const sizeNow = () => (existsSync(SYSLOG_FILE) ? statSync(SYSLOG_FILE).size : 0);
+  const before = sizeNow();
+  const t0 = io.now();
+  let grewBy = 0;
+  while (io.now() - t0 < waitMs) {
+    await io.sleep(500);
+    grewBy = sizeNow() - before;
+    if (grewBy > 0) break;
+  }
+  return { capturePid, alive: io.alive(capturePid), grewBy, tookMs: io.now() - t0 };
+}
+
+/** The pure verdict on a {@link syslogWitness} reading: a reason to refuse, or null when it may be believed. */
+export function syslogWitnessRefusal(w) {
+  if (!w?.alive) return `the syslog capture (pid ${w?.capturePid}) is not running - apnsReceipts would read every delivery as missing`;
+  if (!(w.grewBy > 0)) return `the syslog capture received nothing in ${w.tookMs}ms - it is not listening to the device`;
+  return null;
+}
+
+/** `[CanariNSE] filed interruptionLevel=<level> thread=<8> via=<finish|expired>` and the app's `[CanariPush]` twin (`via=app`). */
+const FILED = /\[Canari(NSE|Push)\] filed interruptionLevel=(\S+) thread=(\S*) via=(\w+)/;
+
+/**
+ * One filing line, or null - what the bench build logs at the moment a notification is handed to
+ * iOS (O13). `by` is `nse` for an APNs alert the extension rewrote, `app` for one the running app
+ * posted from a websocket or silent frame - NOTIF-16's two transports.
+ */
+export function parseFilingLine(message) {
+  const m = FILED.exec(String(message ?? ''));
+  return m ? { by: m[1] === 'NSE' ? 'nse' : 'app', level: m[2], thread: m[3], via: m[4] } : null;
+}
+
+/**
+ * HOW EACH NOTIFICATION SINCE `sinceMs` WAS FILED (O13) - iOS has no channels, so the Android row's
+ * "`canari_mentions` vs `canari_messages`" is `timeSensitive` vs `active` here. Read off the syslog;
+ * the lines exist on a BENCH build only (`CANARI_BENCH`), so an empty list on another build means
+ * the instrument is absent, not that nothing was filed.
+ */
+export function interruptionLevels(sinceMs) {
+  return syslogSince(sinceMs)
+    .map((l) => {
+      const p = parseSyslogLine(l);
+      const f = p && parseFilingLine(p.message);
+      return f ? { ...f, at: p.at } : null;
+    })
+    .filter(Boolean);
 }
 
 /** Forgets what was captured so far (by MARKING the file, never truncating a file another process appends to). */

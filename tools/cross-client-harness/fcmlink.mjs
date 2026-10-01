@@ -33,22 +33,34 @@
  * This repairs the BENCH and never the product: Canari does not own this transport, and the repair
  * is RECORDED (`fcmLinkMs`) so that a phase whose every row needed one is saying something about the
  * handset that no PASS would otherwise carry.
+ *
+ * ## On the iPhone (`CANARI_PHONE=ios`) there is no link, and the precondition is the WITNESS
+ *
+ * APNs is held by `apsd` and exposes no socket to renew (O4, docs/wiki/cross-client-ios.md). What a
+ * push row can establish first is that the instrument which will SAY whether Apple delivered is
+ * listening: the syslog capture `apnsReceipts` reads. A dead capture would record "apsd never
+ * received it" for every message - this file's original defect, one layer over - so it refuses the
+ * row the same way. After the wait, {@link apnsEvidence} is what the row records beside the server's
+ * `[PUSH_SEND] ... platform=ios` line: the device half of "was it delivered".
  */
-import { refreshFcmLink } from './phone.mjs';
+import phone from './phone-any.mjs';
+import { phonePlatform } from './phone-platform.mjs';
 import { record, exitOnRecorded } from './results.mjs';
 
 /**
  * Renews the phone's FCM link and proves it new, or records `SETUP-FAILED` for `rowId` and exits.
+ * On the iPhone: proves the APNs receipt witness is listening instead (see the file's last section).
  *
  * @param {string} rowId the row about to be measured - the one whose verdict a dead link would have
  *   falsified, and therefore the one the refusal is written against
  * @param {(s: string) => void} [stage] the runner's own progress reporter
- * @returns {Promise<{before: string|null, after: string|null, tookMs: number}>} on success only;
- *   the failing path does not return
+ * @returns {Promise<{before: string|null, after: string|null, tookMs: number} | {platform: 'ios', since: number, witness: object}>}
+ *   on success only; the failing path does not return
  */
 export async function requireFreshFcmLink(rowId, stage = () => {}) {
+  if (phonePlatform() === 'ios') return requireApnsWitness(rowId, stage);
   stage('renewing the phone FCM link - a push row cannot measure the app over a dead one');
-  const link = await refreshFcmLink();
+  const link = await phone.refreshFcmLink();
   if (!link.failed) {
     stage(`FCM link renewed in ${link.tookMs}ms (${link.before ?? 'none'} -> ${link.after})`);
     return link;
@@ -59,4 +71,36 @@ export async function requireFreshFcmLink(rowId, stage = () => {}) {
   // Unreachable: `exitOnRecorded` calls `process.exit`. Named so a reader does not look for a path
   // in which this function returns a link it could not get.
   throw new Error('unreachable');
+}
+
+/**
+ * The iPhone's precondition: the syslog capture is running and receiving, or `SETUP-FAILED`.
+ * `since` is the floor the row hands {@link apnsEvidence} after its wait.
+ */
+async function requireApnsWitness(rowId, stage) {
+  stage('iPhone: APNs has no link to renew - proving the apsd receipt witness (syslog capture) is listening');
+  const since = Date.now();
+  const witness = await phone.syslogWitness();
+  const refusal = phone.syslogWitnessRefusal(witness);
+  if (!refusal) {
+    stage(`syslog capture pid ${witness.capturePid} received ${witness.grewBy} bytes in ${witness.tookMs}ms`);
+    return { platform: 'ios', since, witness };
+  }
+  stage(`THE APNs WITNESS IS DEAD (${refusal}) - refusing to measure`);
+  record(rowId, 'SETUP-FAILED', { apnsWitness: witness, reason: refusal });
+  exitOnRecorded();
+  throw new Error('unreachable');
+}
+
+/**
+ * What the DEVICE says about delivery since `sinceMs`, for the row's record: on the iPhone, how many
+ * `apsd` lines named the app (`apnsReceipts`) - zero beside a server `[PUSH_SEND] ... platform=ios`
+ * separates "Apple did not deliver" from "the app did not notify". `null` on Android, whose renewed
+ * link is the evidence already recorded.
+ *
+ * @returns {{ platform: 'ios', apnsReceipts: number } | null}
+ */
+export function apnsEvidence(sinceMs) {
+  if (phonePlatform() !== 'ios') return null;
+  return { platform: 'ios', apnsReceipts: phone.apnsReceipts(sinceMs).length };
 }

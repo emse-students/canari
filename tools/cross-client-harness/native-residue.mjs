@@ -69,6 +69,31 @@ export function classifyNativePaths(relative) {
   return { residue: residue.length, paths: residue.sort(), rewritten: rewritten.sort() };
 }
 
+/**
+ * What the system puts in EVERY App Group container, whoever owns it: the container manager's
+ * metadata file and the `Library/` skeleton. Neither exists because an account was signed in. And
+ * an empty lock file (`graine_seeds.lock`), which carries nothing - Android's list does not name its
+ * lock either.
+ */
+const SYSTEM_IN_APP_GROUP = [/^[.]com[.]apple[.]/, /^Library(\/|$)/, /[.]lock$/];
+
+/**
+ * The iPhone's second native half: paths RELATIVE to the App Group container `group.fr.emse.canari`
+ * (the bench command's `list`), split the same way.
+ *
+ * AN ALLOWLIST BY OWNERSHIP, NOT BY NAME. Nothing but Canari and its notification extension can
+ * write into this container, so every FILE in it - the `mls.bin`, `push_context.json` and
+ * `graine_seeds.json` mirrors, `push_secret.txt`, the extension's `fcm_message_cache.ndjson`, and
+ * whatever store is added next - is account state, and a list of names would be the constant a new
+ * mirror gets forgotten in. Only what the system creates in every container is excluded.
+ *
+ * @param relative - paths with the container's own path stripped
+ */
+export function classifyAppGroupPaths(relative) {
+  const ours = relative.filter((r) => !SYSTEM_IN_APP_GROUP.some((re) => re.test(r))).map(shorten);
+  return { residue: ours.length, paths: ours.sort(), rewritten: [] };
+}
+
 
 /**
  * THE VERDICT FOR A WHOLE DEVICE, both halves, in ONE place.

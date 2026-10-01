@@ -307,7 +307,7 @@ pub(crate) fn read_outbox_mirror(app: tauri::AppHandle) -> Vec<serde_json::Value
 /// carried one, and the Rust error went to no logger (NOTIF-20 RED, 2026-09-27). Windows keeps
 /// std's, which is implemented there and is what a host `cargo test` runs.
 #[cfg(unix)]
-fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+pub(crate) fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
     // SAFETY: the descriptor is owned by `file`, which outlives the call.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
@@ -318,7 +318,7 @@ fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+pub(crate) fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
     file.lock()
 }
 
