@@ -1224,9 +1224,10 @@ Two locations:
   every installed iOS app; `/_app/`, `/fonts/` and `/emoji/` are what a tab ALREADY OPEN on the old
   name lazy-loads - a module script across origins needs CORS headers the canonical host does not
   send, so redirecting them would break a live session mid-use instead of at its next navigation.
-- `location /` - **`302` to `https://canari.emse.fr$request_uri`, with `Cache-Control: no-store`**.
-  Path and query are kept. Not a `301`: a 301 is cached by every browser that sees it and by the
-  edge, and cannot be recalled if the redirect turns out wrong.
+- `location /` - **`302` to `https://canari.emse.fr$request_uri`, with `Cache-Control: no-store`**,
+  as armed on 2026-09-25 (a `301` since, see below). Path and query are kept. Not a `301` at first: a
+  301 is cached by every browser that sees it and by the edge, and cannot be recalled if the
+  redirect turns out wrong.
 
 Measured through Cloudflare the same hour: `/`, `/posts?x=1` and `/auth/callback` answer `302` to
 the same path on the new name; `/api/version`, the calendar `feed.ics`, both association files, a
@@ -1235,9 +1236,10 @@ handshake `401`, both from the backend. The native OIDC callback is `fr.emse.can
 custom scheme, so redirecting `/auth/callback` on the old name touches no app login. The web build
 has no service worker, so no cached shell can pin a browser to the old origin.
 
-**OWED: promote it to `301`**, once it has been seen in use. A `302` tells a search engine the move is
-temporary, so it transfers no ranking - the prudence has an SEO price and must stay short. Then the
-user declares the change of address in Google Search Console (both names verified in one account),
+**PROMOTED TO `301` - measured 2026-10-01**: `/` and `/posts` on the old name answer `301` to the
+same path on `canari.emse.fr`, still with `Cache-Control: no-store`. A `302` told a search engine the
+move was temporary and transferred no ranking, which is why the prudence had to stay short. What is
+left is the user's change of address in Google Search Console (both names verified in one account),
 a one-off gesture the [SEO item](../backlog.md) carries.
 
 **What stays true, and what does not.** The IndexedDB measurement above is unchanged: a browser

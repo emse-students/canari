@@ -1,8 +1,9 @@
 /**
  * The single classification of "this media is gone for good".
  *
- * Media are garbage-collected server-side after 30 days without an access, so a download can
- * fail for a reason no retry, no reload and no other device can repair. That is a DIFFERENT
+ * Chat media (retention class `ephemeral`) are garbage-collected server-side after 90 days without
+ * an access - every other class, and an object with none, is kept (media-service `isSweepable`) -
+ * so a download can fail for a reason no retry, no reload and no other device can repair. That is a DIFFERENT
  * fact from "the download failed", and every surface that renders media has to be able to tell
  * them apart - otherwise a permanent absence is displayed as a transient error, which is a lie
  * the user acts on (they retry, they blame the network, they ask the sender to resend).

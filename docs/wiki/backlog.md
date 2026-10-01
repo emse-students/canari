@@ -6,7 +6,8 @@ one line per item. Read the order there, the substance here, and delete an entry
 ships.
 
 The exception is the handful that genuinely cannot be pulled forward - blocked upstream, blocked on
-an iPhone that does not exist, blocked on credentials somebody else owes, or post-campaign by the
+hardware (an iPhone 12 is on the bench since 2026-09-30, so an iOS row now waits on a SESSION, not on
+a device), blocked on credentials somebody else owes, or post-campaign by the
 user's own decision. Each says which it is, and `CLAUDE.md` lists them together at the end of the
 queue so that "not scheduled" never has to be inferred.
 
@@ -53,6 +54,13 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the release build no longer enables WebView debugging | HARDWARE, and NOT the Mi 9T, whose `userdebug` ROM makes every WebView inspectable: the `/proc/net/unix` probe on a `user`-build device. The binary comparison carries the fix until then ([device-verification](device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android)) |
 | launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, a build from this tree: `bun tools/cold-start/launch-trace.mjs --heartbeat` against the release WebView, the offset of `BiometricService/handleAuthenticate` in `logcat` ([tools/cold-start](../../tools/cold-start/README.md)). Four causes fixed, one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target **under 1 s all-in** (user, 2026-09-15): this row closes on a NUMBER |
 | the biometric cadence (every 12 h by default, or every time) | HARDWARE, a build from this tree (the APK embeds the frontend). Check U: Android PASSES every cadence decision on the Mi 9T (2026-09-28); owed there: a real finger, the Settings radio, and step 5 - "use biometrics" after a failed launch unlock, whose defect was fixed in `v0.18.28`; all of iOS ([check U](device-verification.md#u-the-biometric-cadence-every-12-h-skips-the-sheet-every-time-keeps-it---owed-on-both-platforms)) |
+| the Mi 9T hardware pass D1-D6 (2026-10-01: #1280 a salon re-fetched after a stream gap, #1281 a shade reply not re-announced and the read watermark merged on resume, #1282 the outbox worker, #1283 a tap processed once) | HARDWARE, a build carrying them (`v0.18.33-alpha.1` on the tester track, or `a1apk.mjs`): each PR's "Owed on the phone" paragraph, re-read on the Mi 9T, then the Pixel - one `drainOutboxBackground` "sent id=" line per quick reply, `[hooks] Processing URL` once per tap, a `GET /api/channels/:id/messages` after a reconnect ([mobile](frontend/mobile.md)) |
+| the iOS glass defects (#1289: the "+" on its twin, the pill on one line, the tab bar following a switch to light) | the iPhone 12, a build carrying `v0.18.33-alpha.1` or later. **And the launch logo**: delete the app, RESTART the phone, reinstall, cold-launch - a logo means the launch-snapshot cache, nothing to fix ([app-icons](frontend/app-icons.md#launch-screens)) |
+| the calendar subscribe button on phones (#1288) and the floating day label (#1287) | one press on each phone (Mi 9T: the "no app" notice; iPhone: Calendar's subscription prompt), and one long-conversation scroll on each ([calendar](frontend/modules/calendar.md)) |
+| an association document is never swept (#1292, the 410 on a vault download) | ships with the next STABLE (in `v0.18.33-alpha.1` on dev, not on production): then `/admin/storage` lists `association*` on its own line and no vault download answers 410 for a live document ([media-service](services/media-service.md#the-sweep-is-an-allowlist-an-associations-document-was-swept-2026-10-01)) |
+| a tab open across a deploy offers a reload instead of "Erreur" (#1278) | ships with the next STABLE: a tab left open across that deploy shows the reload offer on its next lazy import, and no `Failed to fetch dynamically imported module` reaches a user |
+| the iOS rig adapter (#1284-#1286, #1290, #1291), never yet run on the iPhone | the first live session: C1's origin, keys and long press, the system-screen labels, and the seven bench confirmations, in the order [cross-client-ios](cross-client-ios.md#what-is-owed) lists them - including the `syslogSince` line format. No iOS row's verdict is believed before |
+| the iOS push rows (O4, TAB-1, HEAL-NEW-5) | run against the PRODUCTION Firebase project: the bench build signs `aps-environment` = `development`, and an APNs `.p8` auth key is per Apple team and serves sandbox AND production, so no new credential is expected. **The "sandbox credential missing" claim is UNVERIFIED** - what settles it is whether Firebase holds a `.p8` key (covers both) or a production-only `.p12` certificate (would not) |
 | a withheld product releases itself when an association's payments become ready | an OBSERVATION, not a click: the next association to finish onboarding sees its products go on sale with nobody touching them (`activationWithheld`). Four associations have no payment account; the BDE tier is off sale deliberately (user, 2026-09-17) |
 
 ---
@@ -67,13 +75,11 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **dismiss code-scanning alert 2521 as a false positive** - `js/user-controlled-bypass` on the refresh endpoint's own 401; the flagged condition is the REFUSAL, and the sensitive path behind it is verified three ways. A judgement about an auth path is not an agent's to record unilaterally | 1 click, Security tab | [P3 - ONE HIGH-SEVERITY ALERT IS A FALSE POSITIVE](#p3---one-high-severity-code-scanning-alert-is-a-false-positive-and-only-a-click-closes-it) |
 | **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [mobile](frontend/mobile.md#fcm-message-cache) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
-| **declare `canari-emse.fr` -> `canari.emse.fr` in Google Search Console** ("Change of address"), once the redirect is a `301` - both names verified in one account | 1 click | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
+| **verify `canari.emse.fr` in Google Search Console, then declare `canari-emse.fr` -> `canari.emse.fr`** ("Change of address") - the redirect is a `301` (measured 2026-10-01) and the ownership file `googlea035227b58453615.html` is on `main` (#1296), served once a STABLE carries it; both names verified in one account | 2 clicks, after the next stable | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
 | **say whether MiGallery should be indexed at all** - a private gallery, whose default is `noindex` | decision | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
-| delete the remote branch `perf/le-blob-ne-traverse-plus-le-pont` (#825, merged 2026-09-17). It is left standing on purpose as the evidence for the row beside it; its content is in `main` and nothing depends on it | 1 click | [P3 - a merged branch that is still there](#p3---a-merged-branch-that-is-still-there-was-not-left-behind-it-was-pushed-back-measured-2026-09-22) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 | **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
 | **send the DSI the one request that carries every name at once - IT IS WRITTEN OUT, copy it** - three records to create, `canari.emse.fr` to reassign, the certificates, the INBOUND firewall confirmation, the OUTBOUND opening of port 7844 that a Cloudflare tunnel needs and that is measured BLOCKED upstream, and the account question. The certificate question that used to block it was ANSWERED by measurement on 2026-09-24 and removed from the request. Every name costs a ticket, so a second request is a second wait | 1 message | [estate-migration](infrastructure/estate-migration.md#the-request-written-out---copy-it-do-not-rewrite-it) |
@@ -150,7 +156,10 @@ The composer comparison R1 was built from is on
 2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
    tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
    plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
-   readable. On-device compression (C3).
+   readable. On-device compression (C3). **The READER half is #1295, a DRAFT held on purpose**
+   (2026-10-01): it reads the segmented format and writes nothing in it
+   (`SEGMENTED_MEDIA_WRITER_ENABLED = false`); the writer follows once `minClientVersion` is that
+   reader and both stores serve it - the Graine v2 order.
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
    save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the
@@ -298,18 +307,6 @@ One pull request per package, in this order. R1 = G2-0 to G2-4, R2 = G2-5. **R1 
 
 **What v2 does not close**: the server can still admit a device it controls or publish a false
 device key - BasicCredential's limit, stated in §21.
-
-### P2 - a tab open across a deploy can no longer load any lazy module, and says only "Erreur" (measured on production 2026-09-27)
-
-Met while auditing the carte: a tab loaded on `0.18.26` at ~15:22, the production deploy of
-`v0.18.27` landed at ~15:25 (a burst of 502s on `/api/auth/refresh` and `/api/channels/...` while the
-containers restarted), and the carte's PDF export then failed with the generic "Erreur" -
-`Failed to fetch dynamically imported module: .../chunks/C5NZgUUs.js`, a chunk the new build no
-longer serves (404, as is the chunk that references it). **Every `import()` in the app is exposed**,
-not only this export. Nothing in `frontend/` listens for `vite:preloadError` or checks
-`/_app/version.json` (SvelteKit's `version.pollInterval` is unset). The fix is to know the build
-changed, from the version file, and to offer a reload at a safe point - never to retry a chunk that is
-gone.
 
 ### P1 - a member who comes back to a community never gets its past, because every seed request is addressed to someone who is OFFLINE (measured on production 2026-09-24, `v0.18.22`)
 
@@ -1709,8 +1706,9 @@ back, which is the sentence that line was missing.
 
 **What retires this row:** it is a practice, not a defect, so nothing here can gate it - the push is
 legitimate git against a branch the remote is happy to have. Delete the row when a month of merges
-leaves no merged branch standing. **The specimen is left in place deliberately**; it is the evidence,
-and it costs one click to remove once this is read (see the table at the top of this file).
+leaves no merged branch standing. The specimen was deleted on 2026-10-01; its numbers above are the
+evidence. That day the remote held no branch of a MERGED pull request; `feat/ios-icon-composer`
+(last commit 2026-09-30) has no pull request at all.
 
 **NOT an occurrence:** `fix/rig-classifier-blind-to-ms-stamp` is also on the remote, and its #909 was
 CLOSED without merging. `delete_branch_on_merge` is about merges and says nothing about that one.
@@ -5107,10 +5105,11 @@ What each site answered on 2026-09-25, before any of it:
 | `gallery.mitv.fr` | 200 | 404 | itself | first decide whether it is indexed at all |
 
 **Canari, now - three gestures, in order.** (1) `v0.18.25` moved the canonical to the new name, done.
-(2) Promote the legacy name's redirect from `302` to `301` once it has been seen in use: a `302`
-transfers no ranking, which is the price of arming it cautiously
+(2) The legacy name's redirect is a `301`, done (measured 2026-10-01: `/` and `/posts` answer `301`
+to the same path on `canari.emse.fr`)
 ([estate-migration](infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)).
-(3) The user declares the change of address in Google Search Console, with both names verified in
+(3) The ownership file is on `main` (#1296) and is served once a stable carries it; then the user
+verifies and declares the change of address in Google Search Console, with both names verified in
 one account - a one-off, [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 Most of Canari sits behind a sign-in, so what can rank is the public surface only: the landing page,
 public association and post pages, and the calendar feed.
@@ -5483,34 +5482,18 @@ estate and the stores do not need the same lock.
 
 ## Code scanning
 
-### P3 - one high-severity code-scanning alert is a FALSE POSITIVE, and only a click closes it
+### P3 - no gate lists a STANDING code-scanning alert, so one sits until somebody lists them by hand
 
-**Alert 2521, `js/user-controlled-bypass`, `apps/core-service/src/auth/auth.controller.ts:456`, open
-since 2026-08-27, never dismissed, named by no page here until 2026-09-23.** It fails no gate: the
-`CodeQL` check only refuses a pull request that introduces a NEW alert, so a standing one is
-invisible to every run and was found only by listing the repository's open alerts by hand. That is
-the whole reason this entry exists - **a correct mechanism with no report is found by hand, a day
-late**, and this one was four weeks late.
+The `CodeQL` check refuses only a pull request that introduces a NEW alert, so a standing one is
+invisible to every run. Alert 2521 (`js/user-controlled-bypass` on the refresh endpoint's own 401, a
+false positive) stood four weeks that way, named by no page until it was found by listing the open
+alerts by hand; the user dismissed it on 2026-10-01. **A correct mechanism with no report is found
+by hand, a day late.**
 
-The flagged line is `if (!refresh_token)` in `refreshToken`. CodeQL reads it as "a user-provided
-value controls a condition guarding a sensitive action", which is the right SHAPE and the wrong
-reading: the branch it controls is the REFUSAL. An absent credential logs the discriminated 401 and
-throws; the sensitive path is the fall-through, and nothing reaches it that has not passed
-`jwt.verify` with `HS256`, a `payload.type !== 'refresh'` check, and the stored-session match that
-makes `logout` and replay detection possible. A caller who controls `refresh_token` controls only
-whether they are refused early or refused late.
-
-**What is owed is a dismissal with a reason, in the Security tab** - one click, on a console the
-user owns, and a judgement about an auth path is not an agent's to record unilaterally. Nothing in
-the repository changes. The alternative - rewriting a correct refusal so a scanner reads it
-differently - is the shape this repo refuses everywhere else, and #1010 is the counter-example worth
-holding beside it: there the guard really was invisible to the scanner AND deletable by the next
-reader, so the code changed. Here neither is true.
-
-**The second half of this entry is the gap it exposes.** No gate lists standing alerts, so a second
-one could sit for four weeks in exactly this way. `gh api repos/emse-students/canari/code-scanning/alerts?state=open`
-is the whole measurement; whether `scheduled.yml` should carry it, and against what threshold, is
-not settled here.
+**It is not hypothetical today**: re-read 2026-10-01, alert **2544** (`js/incomplete-multi-character-sanitization`,
+high, `frontend/src/lib/components/auth/LoginForm.flat.test.ts:14`, opened by #1278's merge) is open
+and fails nothing. `gh api repos/emse-students/canari/code-scanning/alerts?state=open` is the whole
+measurement; whether `scheduled.yml` should carry it, and against what threshold, is not settled here.
 
 ## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE STILL OWED A READING
 
