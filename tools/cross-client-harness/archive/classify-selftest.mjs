@@ -301,7 +301,7 @@ const CASES = [
   // Same event, same bucket - and pinning the pair is what stops the halves drifting apart again.
   [
     'log',
-    '[01:40:12] [BUFFER] welcome_request sent for unknown group b6a425af…',
+    '[01:40:12] [BUFFER] recovery started for unknown group b6a425af…',
     'notable',
   ],
   [

@@ -257,11 +257,9 @@ jobs:
           # since 2026-09-24 and `canari-emse.fr` still answers for apps already installed, so a
           # build baked against either one IS a production build. `dev.` is matched first because
           # it is a substring of the legacy apex.
-          case "$APP_URL" in
-            *"dev.canari-emse.fr"*) URL_ENVIRONMENT=dev ;;
-            *"canari.emse.fr"* | *"canari-emse.fr"*) URL_ENVIRONMENT=production ;;
-            *) URL_ENVIRONMENT=unknown ;;
-          esac
+          # The names live in ONE function, shared with `build.yml` and `ios.yml`.
+          source ../.github/scripts/lib/backend-url.sh
+          URL_ENVIRONMENT="$(classify_backend_url "$APP_URL")"
           if [ "$IS_PRERELEASE" = "true" ] && [ "$URL_ENVIRONMENT" != "dev" ]; then
             echo "::error::This is a PRE-RELEASE but its backend URL resolves to '${URL_ENVIRONMENT}', not ${EXPECTED_HOST}. Refusing to ship an alpha pointing anywhere else to the tester programme."
             exit 1

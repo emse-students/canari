@@ -338,6 +338,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
+	@bash .github/scripts/tests/backend-url.test.sh
 	@bash .github/scripts/tests/release-chain.test.sh
 	@bash .github/scripts/tests/release-notes-body.test.sh
 	@bash .github/scripts/tests/scheduled.test.sh

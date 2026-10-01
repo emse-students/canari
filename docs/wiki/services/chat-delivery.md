@@ -205,7 +205,8 @@ hold, asks for a Welcome (`welcome_request`) that no peer will answer, keeps the
 meets it again on the next connection - for ever, because nothing in the loop consumes the frame.
 Measured on prod 2026-08-21: 7 `queued_message` rows for W1's own device, addressed to a distribution
 group tombstoned five hours earlier, redelivered on every connection since, and visible from the
-client as `[BUFFER] welcome_request sent for unknown group b0192801`.
+client as `[BUFFER] welcome_request sent for unknown group b0192801` (worded `recovery started for
+unknown group` since 2026-10-01: the old sentence announced a send that had not happened).
 
 The call now returns two named sets, and the distinction is not cosmetic - the two causes accuse
 different code:
