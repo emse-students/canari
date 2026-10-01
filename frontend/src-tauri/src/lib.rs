@@ -41,7 +41,7 @@ use crate::commands::mls::{
     retirer_membres, retirer_membres_par_appareil, sauvegarder_mls_et_persister,
     skip_send_generations, trailer_welcome,
 };
-use crate::commands::notifications::notifier_message_natif;
+use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
     get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
@@ -1098,6 +1098,7 @@ pub fn run() {
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
             notifier_message_natif,
+            store_avatar_mirror,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store

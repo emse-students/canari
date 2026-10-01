@@ -20,6 +20,9 @@ import {
   releaseUserAvatarDisplayUrl,
   purgeRetiredAvatarCache,
 } from './userAvatarCache';
+import { mirrorAvatarToNative } from './avatarMirror';
+
+vi.mock('./avatarMirror', () => ({ mirrorAvatarToNative: vi.fn(async () => {}) }));
 
 /** A fresh URL per test: the module holds live blobs keyed by URL, so tests must not share one. */
 let urlCounter = 0;
@@ -45,6 +48,31 @@ beforeEach(() => {
 });
 
 describe('resolveUserAvatarDisplayUrl', () => {
+  it('hands the bytes of a load to the notification cache once, under the id it was given', async () => {
+    const mirror = vi.mocked(mirrorAvatarToNative);
+    mirror.mockClear();
+    const url = nextUrl();
+    vi.stubGlobal('fetch', async () => new Response(new Blob(['img']), { status: 200 }));
+
+    await Promise.all([
+      resolveUserAvatarDisplayUrl(url, 'user-7'),
+      resolveUserAvatarDisplayUrl(url, 'user-7'),
+    ]);
+    expect(mirror).toHaveBeenCalledTimes(1);
+    expect(mirror.mock.calls[0][0]).toBe('user-7');
+    releaseUserAvatarDisplayUrl(url);
+    releaseUserAvatarDisplayUrl(url);
+
+    // An absence is not a face, and a caller that names nobody mirrors nothing.
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }));
+    await resolveUserAvatarDisplayUrl(nextUrl(), 'user-8');
+    vi.stubGlobal('fetch', async () => new Response(new Blob(['img']), { status: 200 }));
+    const anonymous = nextUrl();
+    await resolveUserAvatarDisplayUrl(anonymous);
+    releaseUserAvatarDisplayUrl(anonymous);
+    expect(mirror).toHaveBeenCalledTimes(1);
+  });
+
   it('asks once and reports `none` when the server says there is no avatar', async () => {
     const url = nextUrl();
     const fetchSpy = vi.fn(async () => new Response(null, { status: 404 }));

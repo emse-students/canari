@@ -76,7 +76,7 @@
       return;
     }
     let cancelled = false;
-    const pending = resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
+    const pending = resolveUserAvatarDisplayUrl(httpUrl, userId).then((resolved) => {
       if (cancelled) return;
       display = resolved;
       // Bytes already held locally: there is no round trip to wait for, so the initials placeholder

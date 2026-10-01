@@ -140,3 +140,163 @@ pub(crate) fn notifier_message_natif(
         false
     }
 }
+
+// --- The foreground's faces, handed to the notification's cache ---------------------------------
+
+/// The file name `CanariFirebaseMessagingService.avatarCacheFile` reads for `user_id`, without its
+/// extension. **Both spellings must agree byte for byte** - every character outside
+/// `[A-Za-z0-9_-]` becomes `_`, then the first 40 are kept, behind the `avatar_` prefix the device
+/// wipe (`storage.rs`) erases by - or the mirror writes a file nobody reads.
+/// `avatarMirror.test.ts` holds the Kotlin spelling and this one together.
+///
+/// Compiled where its reader exists (Android) and under test - the same `cfg` as the two below.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn avatar_cache_stem(user_id: &str) -> String {
+    let safe: String = user_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(40)
+        .collect();
+    format!("avatar_{safe}")
+}
+
+/// Whether `bytes` open like one of the image formats the avatar route serves. A body the WebView
+/// read as `ok` is not proof of a picture - a proxy's HTML page is `200` too - and a file that is
+/// not one would sit in the notification's cache for a day being refused by its decoder.
+#[cfg(any(target_os = "android", test))]
+fn looks_like_an_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
+        || bytes.starts_with(b"GIF8")
+        || (bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+}
+
+/// Writes one face into the notification's avatar cache, `{data_dir}/files/avatar_<id>.jpg`, and
+/// drops any "no picture" marker beside it (`avatar_<id>.absent`).
+///
+/// **ONE CACHE, ONE READER.** The FCM service reads that file before it asks the network, so a
+/// contact the app has drawn never depends on the network for the notification - the bad Wi-Fi of
+/// 2026-10-01 drew initials for two faces the app had shown minutes earlier. The write is atomic
+/// (a sibling, then a rename) because the reader is another thread that may run at any instant.
+///
+/// The file's mtime is the moment of THIS write, and that is the decision: the app only holds
+/// these bytes because the server vouched for them within its own 24 h `max-age`, so the native
+/// 24 h clock now measures "since the app last drew this face" - a contact seen daily never ages
+/// out, and a changed photo is at most two days stale in the shade, against one before. No ETag is
+/// carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
+/// nobody sends, and the reader would have nothing to compare it with before asking the network,
+/// which is the one thing it must not need.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn write_avatar_mirror(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if user_id.trim().is_empty() {
+        return Err("no user id".into());
+    }
+    if !looks_like_an_image(bytes) {
+        return Err(format!("{} bytes that are not an image", bytes.len()));
+    }
+    let dir = data_dir.join("files");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let stem = avatar_cache_stem(user_id);
+    let target = dir.join(format!("{stem}.jpg"));
+    let staging = dir.join(format!("{stem}.jpg.part"));
+    std::fs::write(&staging, bytes).map_err(|e| format!("write {}: {e}", staging.display()))?;
+    std::fs::rename(&staging, &target).map_err(|e| format!("rename {}: {e}", target.display()))?;
+    let absent = dir.join(format!("{stem}.absent"));
+    match std::fs::remove_file(&absent) {
+        Ok(()) => log::debug!("[AVATAR_MIRROR] {stem}: the stale no-picture marker is gone"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("[AVATAR_MIRROR] {stem}: could not delete the no-picture marker: {e}"),
+    }
+    log::debug!("[AVATAR_MIRROR] {stem}: {} bytes mirrored", bytes.len());
+    Ok(())
+}
+
+/// Hands the bytes of a face the WebView has just drawn to the notification's cache (Android).
+///
+/// `data` is the image as a byte array, the shape `save_mls_state` already takes. **NOT a raw
+/// invoke body**: the first version read `tauri::ipc::Request` and the Mi 9T refused every call
+/// with "the body is not raw bytes" - Android's IPC delivers a typed array as JSON, whatever the
+/// caller passed. Off Android it refuses: the iOS extension reads its own app-group container,
+/// which this does not write, and the caller checks the platform before it calls.
+#[tauri::command]
+pub(crate) fn store_avatar_mirror(
+    app: tauri::AppHandle,
+    user_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        write_avatar_mirror(&data_dir, &user_id, &data).inspect_err(|e| {
+            log::warn!(
+                "[AVATAR_MIRROR] {} not mirrored: {e}",
+                avatar_cache_stem(&user_id)
+            );
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, data);
+        log::warn!("[AVATAR_MIRROR] refused off Android for {user_id}: no reader here");
+        Err("android only".into())
+    }
+}
+
+#[cfg(test)]
+mod avatar_mirror_tests {
+    use super::{avatar_cache_stem, write_avatar_mirror};
+
+    const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10];
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-avatar-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn spells_the_name_the_kotlin_reader_reads() {
+        assert_eq!(avatar_cache_stem("c71e1a5b-0f"), "avatar_c71e1a5b-0f");
+        assert_eq!(avatar_cache_stem("a.b/c@d"), "avatar_a_b_c_d");
+        assert_eq!(
+            avatar_cache_stem(&"x".repeat(64)).len(),
+            "avatar_".len() + 40
+        );
+    }
+
+    #[test]
+    fn writes_the_face_and_drops_the_no_picture_marker() {
+        let dir = temp_dir("write");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files/avatar_u1.absent"), b"").unwrap();
+        write_avatar_mirror(&dir, "u1", JPEG).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join("files/avatar_u1.jpg")).unwrap(),
+            JPEG
+        );
+        assert!(!dir.join("files/avatar_u1.absent").exists());
+        assert!(!dir.join("files/avatar_u1.jpg.part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_what_is_not_a_picture_and_a_face_with_no_owner() {
+        let dir = temp_dir("refuse");
+        assert!(write_avatar_mirror(&dir, "u1", b"<html>").is_err());
+        assert!(write_avatar_mirror(&dir, " ", JPEG).is_err());
+        assert!(!dir.join("files/avatar_u1.jpg").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

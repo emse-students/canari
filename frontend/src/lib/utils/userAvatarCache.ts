@@ -1,5 +1,6 @@
 import { Log } from '$lib/utils/Log';
 import { BlobUrlPool } from '$lib/utils/blobUrlPool';
+import { mirrorAvatarToNative } from '$lib/utils/avatarMirror';
 
 /**
  * The Cache Storage bucket this module used to write, kept ONLY so it can be deleted.
@@ -50,7 +51,7 @@ export type AvatarDisplay =
  * Refcounting is deliberately NOT done here: this promise is shared between every caller that
  * asked for the same face while it was in flight, and each of them retains the result separately.
  */
-async function loadAvatar(url: string): Promise<AvatarDisplay> {
+async function loadAvatar(url: string, subjectUserId: string | undefined): Promise<AvatarDisplay> {
   try {
     const fetched = await fetch(url, { credentials: 'include', mode: 'cors' });
     // A RESPONSE THAT IS NOT OK IS STILL AN ANSWER. Handing the same URL to an `<img>` would ask
@@ -59,6 +60,9 @@ async function loadAvatar(url: string): Promise<AvatarDisplay> {
     if (!fetched.ok) return { kind: 'none' };
     const blob = await fetched.blob();
     if (!blob.size) return { kind: 'none' };
+    // Once per LOAD, not per mount: the notification's cache wants these bytes, and a list of
+    // twenty mounts of one face shares this single load.
+    if (subjectUserId) void mirrorAvatarToNative(subjectUserId, blob);
     return { kind: 'blob', url: URL.createObjectURL(blob) };
   } catch (e) {
     // WE NEVER GOT AN ANSWER - not the same thing as being told there is none. A cross-origin
@@ -80,8 +84,15 @@ async function loadAvatar(url: string): Promise<AvatarDisplay> {
  * because a second store would need a second lifetime, and the one it used to keep had none at all
  * (see `RETIRED_CACHE_NAME`). What it does keep is a blob for the CURRENT mounts of one face, so a
  * directory listing the same person twenty times costs one request and one decode, not twenty.
+ *
+ * @param subjectUserId whose face `httpUrl` is, when the caller knows it. Given, the bytes are
+ *   also handed to the Android notification's avatar cache ({@link mirrorAvatarToNative}) - the
+ *   id is carried from where it is KNOWN, never parsed back out of the URL.
  */
-export async function resolveUserAvatarDisplayUrl(httpUrl: string | null): Promise<AvatarDisplay> {
+export async function resolveUserAvatarDisplayUrl(
+  httpUrl: string | null,
+  subjectUserId?: string
+): Promise<AvatarDisplay> {
   if (!httpUrl?.trim()) return { kind: 'none' };
   const url = httpUrl.trim();
 
@@ -93,7 +104,7 @@ export async function resolveUserAvatarDisplayUrl(httpUrl: string | null): Promi
   // itself once per occurrence, and the HTTP cache cannot coalesce requests already in flight.
   let pending = inFlightByUrl.get(url);
   if (!pending) {
-    pending = loadAvatar(url);
+    pending = loadAvatar(url, subjectUserId);
     inFlightByUrl.set(url, pending);
     void pending.finally(() => inFlightByUrl.delete(url));
   }
