@@ -9,10 +9,14 @@ pub enum Error {
     #[cfg(mobile)]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
-    #[error("the video was not sent as raw bytes")]
-    NotRawBody,
-    #[error("the x-gallery-name header is missing or names a path")]
+    #[error("the file name is empty or names a path")]
     BadName,
+    #[error("the staging session is not a plain token")]
+    BadSession,
+    #[error("a chunk of the video is not base64")]
+    BadChunk,
+    #[error("a chunk starts at {offset} but {staged} bytes are staged")]
+    OutOfOrder { offset: u64, staged: u64 },
     #[error("the temporary copy could not be written: {0}")]
     Io(#[from] std::io::Error),
     #[error("the app cache directory is unknown: {0}")]

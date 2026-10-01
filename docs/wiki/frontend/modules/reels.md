@@ -206,13 +206,24 @@ media cache with the key `my-reels` handed over, and gives it to:
 | Web, desktop | `saveBlobAs` - the download, or the save dialog | none |
 
 The file is the fragmented H.264/AAC MP4 every reel was prepared into (C3), which both Photos and
-Android's gallery play, named `canari-reel-<day>-<id8>.mp4`. **The bytes cross the IPC as a RAW
-body** (`invoke(cmd, Uint8Array, {headers})`), never JSON - a 90 s reel is tens of MB, and a JSON
-array of numbers would be several times that. The Rust side writes them to the app's cache, hands
-the native side a PATH, and removes the copy afterwards; the native copy runs off the main thread.
-The name travels in the `x-gallery-name` header, and a missing one is a typed `BadName` refusal,
-never a default. The command names, the header and the capability are pinned on both sides by
-`services/galleryCommands.test.ts`, which reads the Rust sources.
+Android's gallery play, named `canari-reel-<day>-<id8>.mp4`.
+
+**The bytes are STAGED in base64 chunks, never sent whole** (`reels/gallery.ts`). The first
+design sent them as a raw IPC body, and the Mi 9T refused it (2026-10-02): on Android every Tauri
+call travels through `postMessage` as JSON - Tauri's own script never uses the custom-protocol
+transport there, because the WebView cannot read a request body - so a `Uint8Array` arrives as a
+JSON array of numbers, several times the video's size in one string. So `append_video_chunk` takes
+768 KiB at a time, read by the engine (`FileReader.readAsDataURL` on a `Blob` slice), each tagged
+with its OFFSET: `0` creates the staged file in the app cache, any other offset must equal the
+bytes already staged or the chunk is refused (`OutOfOrder`) rather than writing a video with a
+hole in it. `save_video` hands the native side the staged PATH and removes it on every outcome;
+`discard_video` removes it when a failure stops the save before that, and the plugin sweeps any
+`gallery-*` file left in the cache at start-up, when no save can be in flight - a decrypted reel
+does not outlive its save by more than one launch. The session is a `crypto.randomUUID()` and the
+name a plain file name; anything that looks like a path is a typed refusal (`BadSession`,
+`BadName`), never a default. The native copy runs off the main thread. The command names, their
+arguments and the capability are pinned on both sides by `services/galleryCommands.test.ts`, which
+reads the Rust sources.
 
 **A refusal is an outcome, not a failure**: `denied` swaps the save button for "Open settings",
 which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,

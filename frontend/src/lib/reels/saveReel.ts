@@ -24,7 +24,7 @@ export interface SaveReelDeps {
   release: (ref: MediaRef) => void;
   readBlob: (url: string) => Promise<Blob>;
   hasNativeGallery: () => boolean;
-  saveToGallery: (bytes: Uint8Array, name: string) => Promise<'saved' | 'denied'>;
+  saveToGallery: (video: Blob, name: string) => Promise<'saved' | 'denied'>;
   saveBlobAs: (blob: Blob, name: string) => Promise<boolean>;
 }
 
@@ -56,7 +56,7 @@ export async function saveReel(
   try {
     const blob = await deps.readBlob(url);
     if (deps.hasNativeGallery()) {
-      return await deps.saveToGallery(new Uint8Array(await blob.arrayBuffer()), name);
+      return await deps.saveToGallery(blob, name);
     }
     return (await deps.saveBlobAs(blob, name)) ? 'downloaded' : 'cancelled';
   } finally {

@@ -38,14 +38,13 @@ function deps(native: boolean): SaveReelDeps {
 }
 
 describe('saveReel', () => {
-  it('gives a phone build the bytes for its gallery, under the reel name', async () => {
+  it('gives a phone build the video for its gallery, under the reel name', async () => {
     const d = deps(true);
     expect(await saveReel(reel, d)).toBe('saved');
     expect(d.acquire).toHaveBeenCalledWith(video, 'https://media.test');
-    expect(d.saveToGallery).toHaveBeenCalledWith(
-      new Uint8Array([1, 2, 3]),
-      'canari-reel-2026-10-01-01234567.mp4'
-    );
+    const [given, name] = vi.mocked(d.saveToGallery).mock.calls[0];
+    expect(new Uint8Array(await given.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(name).toBe('canari-reel-2026-10-01-01234567.mp4');
     expect(d.release).toHaveBeenCalledWith(video);
   });
 

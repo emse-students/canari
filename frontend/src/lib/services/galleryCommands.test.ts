@@ -1,11 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import {
-  GALLERY_COMMAND_NAMES,
-  GALLERY_NAME_HEADER,
-  GALLERY_PLUGIN,
-  galleryCommand,
-} from './galleryCommands';
+import { GALLERY_COMMAND_NAMES, GALLERY_PLUGIN, galleryCommand } from './galleryCommands';
 
 /**
  * Cross-language contract guard, the same shape as `customTabsCommands.test.ts`: a
@@ -43,8 +38,12 @@ describe('gallery command contract', () => {
     }
   });
 
-  it('reads the file name from the header the client sends', () => {
-    expect(commandsRs).toContain(`"${GALLERY_NAME_HEADER}"`);
+  it('takes the arguments the client sends, by name', () => {
+    expect(commandsRs).toMatch(
+      /fn append_video_chunk[\s\S]*?session: String,\s*offset: u64,\s*data: String/
+    );
+    expect(commandsRs).toMatch(/fn save_video[\s\S]*?session: String,\s*name: String/);
+    expect(commandsRs).toMatch(/fn discard_video[\s\S]*?session: String/);
   });
 
   it('is granted to the app and registered on mobile', () => {

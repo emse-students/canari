@@ -16,6 +16,7 @@ tauri = { version = "2" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 log = "0.4"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

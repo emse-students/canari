@@ -13,12 +13,11 @@ export const GALLERY_PLUGIN = 'gallery';
 
 /** Rust command names (snake_case, as declared in the plugin's `generate_handler!`). */
 export const GALLERY_COMMAND_NAMES = {
+  appendVideoChunk: 'append_video_chunk',
   saveVideo: 'save_video',
+  discardVideo: 'discard_video',
   openAppSettings: 'open_app_settings',
 } as const;
-
-/** The header `save_video` reads the file name from - its body is the video itself. */
-export const GALLERY_NAME_HEADER = 'x-gallery-name';
 
 /** Fully-qualified `invoke()` identifier for a gallery command. */
 export function galleryCommand(name: keyof typeof GALLERY_COMMAND_NAMES): string {
