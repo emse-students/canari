@@ -1,0 +1,3 @@
+### Fixed - a tab open across a deploy offers a reload; the web login is flat and French; an abandoned poll or form toggle no longer comes back
+
+A failed lazy import reads `version.json` and offers ONE reload per served build instead of a bare "Erreur" ([architecture](docs/wiki/frontend/architecture.md#a-tab-open-across-a-deploy-its-lazy-modules-are-gone-and-a-reload-is-offered)); the login card loses its glows and gets the French store badges ([auth](docs/wiki/frontend/modules/auth.md)); a composer toggle left empty is neither saved nor restored ([posts](docs/wiki/frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)).

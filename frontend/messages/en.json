@@ -2654,6 +2654,8 @@
   "update_reload_button": "Reload the app",
   "update_opening_label": "Opening…",
   "update_required_title": "Update required",
+  "update_stale_build_prompt": "Canari was updated while this page was open, and this action needs the new version. Reload to continue.",
+  "update_later_button": "Later",
   "settings_about_heading": "About",
   "settings_about_desc": "Installed version of Canari. Updates are handled by the app store; you only need to act when a version is no longer supported.",
   "settings_about_version_label": "Canari version",

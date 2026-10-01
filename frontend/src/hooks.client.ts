@@ -7,7 +7,11 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
+import { version } from '$app/environment';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { m } from '$lib/paraglide/messages';
+import { showConfirm } from '$lib/stores/confirm.svelte';
+import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
 import { installBootBenchDevTools, markBoot } from '$lib/mls-client/bootBenchmark';
 import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
@@ -59,6 +63,39 @@ export function init(): void {}
 // `mls-wasm-stub` plugin replaces the loader outright in those builds, so calling it would throw.
 if (!isTauriRuntime()) {
   prefetchMlsWasmAtBoot();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// A TAB OPEN ACROSS A DEPLOY - OFFER A RELOAD WHEN A LAZY MODULE IS GONE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// A deploy deletes the chunks this tab's `import()`s point at; `staleBuild` carries the measurement,
+// why the served build is READ rather than inferred, and why the reload is offered once per build.
+// Web only: Tauri embeds its frontend, so a deploy never reaches it. The listener does NOT call
+// `preventDefault`, so the failing import still rejects and its caller still reports it.
+if (!isTauriRuntime()) {
+  const staleBuildRecovery = createStaleBuildRecovery({
+    runningVersion: version,
+    // The web build is served from the origin root (`paths.relative` is off for it).
+    versionUrl: '/_app/version.json',
+    fetchFn: (input, init) => window.fetch(input, init),
+    storage: (() => {
+      try {
+        return window.sessionStorage;
+      } catch {
+        return null;
+      }
+    })(),
+    confirmReload: () =>
+      showConfirm(m.update_stale_build_prompt(), {
+        confirmLabel: m.common_reload_button(),
+        cancelLabel: m.update_later_button(),
+      }),
+    reload: () => window.location.reload(),
+  });
+  window.addEventListener('vite:preloadError', (event) => {
+    void staleBuildRecovery.onPreloadError((event as Event & { payload?: unknown }).payload);
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -76,7 +76,7 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
         if (!selectedAssociationId && parsed.anonymous === true) {
           selectedAssociationId = ANONYMOUS_POST_IDENTITY;
         }
-        return {
+        const draft = withoutAbandonedAttachments({
           version: 1,
           markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
           imageCaptions: Array.isArray(parsed.imageCaptions)
@@ -97,7 +97,10 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
               : '',
-        };
+        });
+        if (isPostComposerDraftWorthKeeping(draft)) return draft;
+        console.log('[POST_COMPOSER] stored draft held only abandoned attachments - not restored');
+        return null;
       }
     } catch {
       /* fall through */
@@ -108,6 +111,34 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
     return emptyPostComposerDraft(legacyMarkdown);
   }
   return null;
+}
+
+/**
+ * The draft without the attachment toggles that hold nothing.
+ *
+ * A toggle is part of the draft, so one switched on and abandoned used to come back SILENTLY at the
+ * next composer open - and a form toggle on an account with no form at all can never be satisfied,
+ * so it refused every publish until the reader found and closed a card they did not remember
+ * opening (the 2026-09-23 report, docs/wiki/frontend/modules/posts.md). An attachment is restored
+ * when the reader put something IN it: a poll with a question or an option, a form with a choice.
+ */
+export function withoutAbandonedAttachments(draft: PostComposerDraft): PostComposerDraft {
+  const pollHasContent =
+    draft.pollQuestion.trim().length > 0 ||
+    draft.pollOptions.some((option) => option.label.trim().length > 0);
+  return {
+    ...draft,
+    includePoll: draft.includePoll && pollHasContent,
+    includeForm: draft.includeForm && draft.selectedFormId.length > 0,
+  };
+}
+
+/**
+ * Whether a draft holds anything worth saving or restoring - the ONE spelling of that rule, for
+ * the composer's auto-save and for the restore alike.
+ */
+export function isPostComposerDraftWorthKeeping(draft: PostComposerDraft): boolean {
+  return draft.markdown.trim().length > 0 || draft.includePoll || draft.includeForm;
 }
 
 export function clearPostComposerDraft(): void {

@@ -793,10 +793,15 @@ still be covering the banner when it goes - leaving a composer that does not pub
 nothing, which is the whole of what a member is then able to report. It is now cleared by the reader
 (a dismiss button) or by the next attempt, never by a clock.
 
-**WHAT THIS DOES NOT CLOSE**: `includeForm` remains the one attachment an account can be unable to
-satisfy - this reporter's `GET /api/forms` answered `[]`, so a picker with nothing in it - and both
-toggles are restored from the draft, so an abandoned one comes back. The refusal now names itself
-instantly, which is what made that survivable rather than silent.
+**AN ABANDONED TOGGLE NO LONGER COMES BACK (2026-10-01).** `includeForm` is still the one attachment
+an account can be unable to satisfy - this reporter's `GET /api/forms` answered `[]`, and the card
+then says so and offers "create a form" - but it used to be PERSISTED: both toggles were restored from
+the draft, so a card opened and left empty returned silently at the next composer open and, for the
+form on an account with none, refused every publish. `withoutAbandonedAttachments`
+(`posts/postComposerDraft.ts`) keeps a toggle only when the reader put something in it - a poll with a
+question or an option, a form with a choice - and `isPostComposerDraftWorthKeeping` is the ONE rule
+for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
+restored. Pinned by `postComposerDraft.test.ts`.
 
 ## The blocks preflight erases
 
