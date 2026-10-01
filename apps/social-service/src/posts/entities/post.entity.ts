@@ -6,6 +6,7 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
+import type { PostKind } from '../reel.constants';
 
 /** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')
@@ -82,6 +83,26 @@ export class Post {
    */
   @Column({ type: 'timestamptz', nullable: true, default: null })
   feedNotifiedAt: Date | null;
+
+  /**
+   * `'post'` for every row that predates CanaReels, `'reel'` for a short video that expires.
+   * Fixed at creation. The three reel columns are one fact (migration 069's CHECK): a reel has a
+   * `durationMs` and an `expiresAt`, a post has neither.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'post' })
+  kind: PostKind;
+
+  /** The length the CLIENT declared for a reel, 1..`REEL_MAX_DURATION_MS`; null on a post. Never verified server-side - the video is ciphertext. */
+  @Column({ type: 'integer', nullable: true, default: null })
+  durationMs: number | null;
+
+  /**
+   * When `ReelRetentionScheduler` deletes this reel: `createdAt` + `REEL_RETENTION_DAYS`, set ONCE
+   * at creation. Null on a post. A reel past it is invisible to every read before the worker has
+   * reached it.
+   */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  expiresAt: Date | null;
 
   @CreateDateColumn()
   @Index()

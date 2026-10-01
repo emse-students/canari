@@ -867,6 +867,8 @@
   "admin_storage_media_public": "{count} objects ({size}) are public assets, exempt from retention.",
   "admin_storage_media_archive": "{count} objects ({size}) are feed media (posts, comments, avatars), kept indefinitely.",
   "admin_storage_media_association": "{count} objects ({size}) are association documents, kept indefinitely, even after the uploader's account is deleted.",
+  "admin_storage_media_reel": "{count} objects ({size}) are CanaReels videos, deleted with their reel one month after publication.",
+  "admin_storage_reels": "{live} reels alive, {overdue} overdue for deletion (an overdue reel is still there after its month: the hourly worker has not removed it).",
   "admin_storage_media_unclassified": "{count} objects ({size}) carry no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches them.",
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "What the database and the cache above are made of. Numbers only: nothing here warns, classifies or acts.",

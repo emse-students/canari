@@ -37,6 +37,9 @@ export interface MediaBucketUsage {
   archiveBytes: number;
   associationCount: number;
   associationBytes: number;
+  /** CanaReels' videos: kept until their post expires, then reaped with it by social-service. */
+  reelCount: number;
+  reelBytes: number;
   unclassifiedCount: number;
   unclassifiedBytes: number;
   retentionMs: number;
@@ -123,6 +126,27 @@ export interface RedisKeyspaceUsage {
   byPrefix: { prefix: string; keys: number }[];
 }
 
+/**
+ * CanaReels, as the `posts` table sees them - the worker's verdict on itself.
+ *
+ * `overdue` is reels whose `expiresAt` has passed and whose row is STILL there: the worker runs
+ * hourly, so a figure that is non-zero for a moment is the window between expiry and the tick, and
+ * one that stays non-zero across ticks (`oldestOverdueMs` past an hour) is a worker that has
+ * stopped or a blob the media service will not delete. Zero is the expected answer and is shown:
+ * the same reasoning as the media sweep's own `overdueCount`. Display only, no alert, like
+ * everything else on this panel. The "about to expire" window is deliberately NOT here - it is
+ * social-service's constant, served to clients by `GET /api/posts/reel-limits`, and a second copy
+ * in this service is how two numbers come to differ.
+ */
+export interface ReelUsage {
+  /** Reels still within their month. */
+  live: number;
+  /** Reels past their expiry whose row the worker has not removed. */
+  overdue: number;
+  /** Age of the longest-overdue reel, in ms; null when none is overdue. */
+  oldestOverdueMs: number | null;
+}
+
 export interface MlsUsage {
   tables: MlsTableUsage[];
   queue: MlsQueueUsage | null;
@@ -140,6 +164,8 @@ export interface BackendStorageUsage {
    * the panel cannot end up showing a size and a breakdown that disagree.
    */
   media: MediaBucketUsage | null;
+  /** CanaReels' retention worker, as the database sees it. `null` when the measurement failed. */
+  reels: ReelUsage | null;
   /**
    * The MLS half. `null` only when the whole block failed; inside it, each measurement fails on its
    * own, exactly like the four above.
@@ -173,11 +199,12 @@ export class AdminStorageController {
   ): Promise<BackendStorageUsage> {
     this.assertGlobalAdmin(headerGlobalAdmin);
 
-    const [disk, postgresBytes, redisBytes, media, mls] = await Promise.all([
+    const [disk, postgresBytes, redisBytes, media, reels, mls] = await Promise.all([
       this.measureDisk(),
       this.measurePostgres(),
       this.measureRedis(),
       this.measureMedia(),
+      this.measureReels(),
       this.measureMls(),
     ]);
 
@@ -187,8 +214,39 @@ export class AdminStorageController {
       postgresBytes,
       redisBytes,
       media,
+      reels,
       mls,
     };
+  }
+
+  /**
+   * How many reels are alive and how many are overdue for deletion - one `COUNT ... FILTER` over
+   * the partial index migration 069 built for exactly this predicate.
+   *
+   * Independent like every measurement here: a database that cannot answer yields `null` and a
+   * `warn`, never a blank panel.
+   */
+  private async measureReels(): Promise<ReelUsage | null> {
+    try {
+      const [row]: { live: string; overdue: string; oldest: string | null }[] =
+        await this.dataSource.query(
+          `SELECT COUNT(*) FILTER (WHERE "expiresAt" > NOW()) AS live,
+                  COUNT(*) FILTER (WHERE "expiresAt" <= NOW()) AS overdue,
+                  EXTRACT(EPOCH FROM (NOW() - MIN("expiresAt") FILTER (WHERE "expiresAt" <= NOW()))) * 1000 AS oldest
+             FROM posts WHERE kind = 'reel'`
+        );
+      return {
+        live: Number(row?.live ?? 0),
+        overdue: Number(row?.overdue ?? 0),
+        oldestOverdueMs:
+          row?.oldest === null || row?.oldest === undefined ? null : Number(row.oldest),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `[STORAGE] reel measurement failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return null;
+    }
   }
 
   /**

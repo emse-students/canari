@@ -14,6 +14,7 @@ import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote, servePolls } from './anonymous-poll';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
+import { isExpiredReel } from './reel.constants';
 import {
   reactionContent,
   commentContent,
@@ -58,7 +59,9 @@ export class PostInteractionsService {
       throw new BadRequestException('Invalid userId');
     }
     const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
+    // A reel past its expiry is dead to every reader until the worker removes it; a reaction on it
+    // would be content nobody can ever see.
+    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
     const reactions = this.sanitizeReactions(post.reactions);
     const isNew = !reactions[userId];
     reactions[userId] = reactionType;
@@ -118,7 +121,7 @@ export class PostInteractionsService {
     data: { userId: string; text?: string; parentId?: string; media?: any }
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
+    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
 
     let displayName: string | null = null;
     let firstName: string | null = null;

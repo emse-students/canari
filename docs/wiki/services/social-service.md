@@ -110,8 +110,10 @@ The numbers and what they imply are in
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/posts` | List paginated posts (feed types: all / followed) |
-| POST | `/api/posts` | Create post (Markdown, optional poll or form, optional payment) |
+| GET | `/api/posts` | List paginated posts (feed types: all / followed; `kind=reel\|post` optional; an expired reel is never served) |
+| GET | `/api/posts/reel-limits` | CanaReels numbers: max duration, retention, warning window ([reels](reels.md)) |
+| GET | `/api/posts/my-reels` | The caller's live reels with `expiringSoon` and `serverNow` ([reels](reels.md)) |
+| POST | `/api/posts` | Create post (Markdown, optional poll or form, optional payment; `kind: "reel"` + `durationMs` publishes a CanaReel, see [reels](reels.md)) |
 | GET | `/api/posts/:postId` | Get single post |
 | PATCH | `/api/posts/:postId` | Update post (author only) |
 | DELETE | `/api/posts/:postId` | Delete post (author or admin) |

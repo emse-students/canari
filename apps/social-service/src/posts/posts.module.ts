@@ -10,6 +10,7 @@ import { PostPreviewService } from './post-preview.service';
 import { FeedAudienceGuard } from './feed-audience.guard';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import { PostMediaRetentionService } from './post-media-retention.service';
+import { ReelRetentionScheduler } from './reel-retention.scheduler';
 import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
 import { AssociationsModule } from '../associations/associations.module';
@@ -37,6 +38,7 @@ import { ModerationModule } from '../moderation/moderation.module';
     PostPreviewService,
     PostAnnounceScheduler,
     PostMediaRetentionService,
+    ReelRetentionScheduler,
     PushService,
   ],
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview

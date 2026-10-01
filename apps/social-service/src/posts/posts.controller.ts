@@ -17,6 +17,8 @@ import {
 import { FeedAudienceGuard } from './feed-audience.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
+import { assertCreateKindShape } from './reel-rules';
+import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
@@ -78,6 +80,24 @@ export class PostsController {
     return this.service.getMyScheduledPosts(xUserId);
   }
 
+  /**
+   * The CanaReels numbers (longest reel, retention, "about to expire" window), so no client is
+   * built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
+   * segment here.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('reel-limits')
+  getReelLimits() {
+    return reelLimits();
+  }
+
+  /** The caller's own live reels, soonest expiry first, flagged when they are about to expire. */
+  @UseGuards(NginxAuthGuard)
+  @Get('my-reels')
+  getMyReels(@Headers('x-user-id') xUserId: string) {
+    return this.service.getMyReels(xUserId);
+  }
+
   /** Returns all posts currently hidden by moderation, with their pending report count. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Get('hidden')
@@ -127,6 +147,7 @@ export class PostsController {
       isAdmin: xGlobalAdmin === 'true',
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
+      kind: query.kind,
     });
   }
 
@@ -165,6 +186,8 @@ export class PostsController {
     @Body() body: CreatePostDto
   ) {
     await this.assertNotMuted(xUserId);
+    // The shape of the request first - a malformed reel is refused before anything is claimed.
+    assertCreateKindShape(body);
     const isGlobalAdmin = xGlobalAdmin === 'true';
     if (body.associationId) {
       const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {

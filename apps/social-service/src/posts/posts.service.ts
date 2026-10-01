@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -22,8 +24,17 @@ import {
 import {
   PostMediaRetentionService,
   commentMediaIds,
+  commentMediaOwners,
   postMediaIds,
 } from './post-media-retention.service';
+import {
+  DAY_MS,
+  REEL_EXPIRY_WARNING_DAYS,
+  REEL_RETENTION_DAYS,
+  isExpiredReel,
+  type PostKind,
+} from './reel.constants';
+import { assertReelEditShape } from './reel-rules';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
@@ -102,9 +113,32 @@ export class PostsService {
     promo: number | undefined,
     formation: string | undefined,
     limit: number,
-    offset: number
+    offset: number,
+    kind: PostKind | undefined
   ) {
-    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}`;
+    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}:${kind ?? '-'}`;
+  }
+
+  /**
+   * Excludes a reel whose month is up, in EVERY read that serves posts.
+   *
+   * The worker deletes an expired reel at its next hourly tick, and one whose blob will not delete
+   * waits longer; neither may ever be on screen. So the rule that a reel is dead past `expiresAt`
+   * is a clause of the query, not a thing the worker's timing makes true. A post has a NULL
+   * `expiresAt` and the first branch keeps it.
+   */
+  private liveReelFilterSql(): string {
+    return `AND (posts.kind <> 'reel' OR posts."expiresAt" > NOW())`;
+  }
+
+  /**
+   * The `kind` the caller restricted the page to; ABSENT MEANS BOTH. The value is matched against
+   * the two literals rather than interpolated, so nothing a client sends reaches the SQL text.
+   */
+  private kindFilterSql(kind: PostKind | undefined): string {
+    if (kind === 'reel') return `AND posts.kind = 'reel'`;
+    if (kind === 'post') return `AND posts.kind = 'post'`;
+    return '';
   }
 
   /**
@@ -415,6 +449,35 @@ export class PostsService {
     });
   }
 
+  /**
+   * Proves, through the media service, that every blob a reel cites is the author's own.
+   *
+   * Not optional hygiene: the later purge deletes what the row names, and an id is not a secret. A
+   * `refused` id (not theirs, unknown, already deleted) is a `400`; the media service being
+   * unreachable is a `503` - a reel is never stored on trust, and never silently without a check.
+   */
+  private async claimReelBlob(authorId: string, mediaIds: string[]): Promise<void> {
+    let refused: string[];
+    try {
+      ({ refused } = await this.mediaRetention.claimReelFor(authorId, mediaIds));
+    } catch (e) {
+      this.logger.warn(
+        `[REEL] claim could not be confirmed for author ${authorId.slice(0, 8)}: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+      throw new ServiceUnavailableException('The reel video could not be verified, try again');
+    }
+    if (refused.length > 0) {
+      this.logger.warn(
+        `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, or gone`
+      );
+      throw new BadRequestException(
+        "a reel's video must be a file you uploaded (with retentionClass 'reel') and that still exists"
+      );
+    }
+  }
+
   async createPost(data: any, isGlobalAdmin: boolean) {
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
@@ -443,8 +506,29 @@ export class PostsService {
     }
     delete data.images;
 
+    // THE KIND IS DECIDED HERE AND NOWHERE ELSE. The controller has already refused a malformed
+    // reel (`assertCreateKindShape`); this stamps the three columns that stand or fall together and
+    // proves the blob is the author's.
+    let reelMediaIds: string[] = [];
+    if (data.kind === 'reel') {
+      reelMediaIds = postMediaIds({ media: data.media });
+      await this.claimReelBlob(authorId, reelMediaIds);
+      data.expiresAt = new Date(Date.now() + REEL_RETENTION_DAYS * DAY_MS);
+    } else {
+      data.kind = 'post';
+      delete data.durationMs;
+    }
+
     const post = this.postRepo.create(data);
-    const saved = await this.postRepo.save(post);
+    let saved;
+    try {
+      saved = await this.postRepo.save(post);
+    } catch (e) {
+      // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
+      // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
+      if (reelMediaIds.length > 0) await this.mediaRetention.release(reelMediaIds);
+      throw e;
+    }
     await this.invalidateListCache();
     const entity = Array.isArray(saved) ? saved[0] : saved;
 
@@ -533,6 +617,7 @@ export class PostsService {
        WHERE (posts.markdown ILIKE $3 OR assoc.name ILIKE $3)
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${this.hiddenFilterSql(isAdmin)}
+         ${this.liveReelFilterSql()}
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
@@ -631,6 +716,7 @@ export class PostsService {
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
+         posts.kind, posts."durationMs", posts."expiresAt",
          ${commentCount} AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -703,11 +789,21 @@ export class PostsService {
     isAdmin?: boolean;
     promo?: number;
     formation?: string;
+    /** Restricts the page to one kind; absent means posts AND reels. */
+    kind?: PostKind;
   }) {
-    const { feed, viewerUserId, isAdmin, promo, formation } = params;
+    const { feed, viewerUserId, isAdmin, promo, formation, kind } = params;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
-    const cacheKey = this.listPostsCacheKey(feed, viewerUserId, promo, formation, limit, offset);
+    const cacheKey = this.listPostsCacheKey(
+      feed,
+      viewerUserId,
+      promo,
+      formation,
+      limit,
+      offset,
+      kind
+    );
 
     try {
       const cached = await Promise.race([
@@ -760,6 +856,8 @@ export class PostsService {
     const formationParam = formation === undefined || formation === '' ? null : formation;
 
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
+    // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
+    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind)}`;
     const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
 
     if (feed === 'associations') {
@@ -775,6 +873,7 @@ export class PostsService {
        WHERE posts."associationId" IS NOT NULL
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${reelFilters}
          ${serviceAccountFilter}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
@@ -790,6 +889,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${reelFilters}
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
@@ -815,6 +915,7 @@ export class PostsService {
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${reelFilters}
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
@@ -843,6 +944,7 @@ export class PostsService {
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${reelFilters}
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
@@ -1023,6 +1125,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
          AND NOT COALESCE(posts."hiddenByModeration", false)
+         ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
        ORDER BY posts."createdAt" DESC
        LIMIT 1`,
@@ -1040,6 +1143,12 @@ export class PostsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
+    // A reel past its month is gone for everyone, a moderator and the author included: the worker
+    // has only not reached it yet, and what it will delete is not worth opening.
+    if (isExpiredReel(post)) {
+      this.logger.debug(`getById ${id} withheld: reel expired at ${String(post.expiresAt)}`);
+      throw new NotFoundException('Post not found');
+    }
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
     }
@@ -1124,6 +1233,18 @@ export class PostsService {
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayManage(post, userId, isGlobalAdmin);
 
+    // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
+    if (post.kind === 'reel') {
+      if (isExpiredReel(post)) throw new NotFoundException('Post not found');
+      assertReelEditShape(data);
+      post.markdown = data.markdown;
+      const saved = await this.postRepo.save(post);
+      await this.invalidateListCache();
+      return this.toPublicPostFromEntity(
+        saved,
+        await this.viewerContext([saved], userId, isGlobalAdmin)
+      );
+    }
     post.markdown = data.markdown;
 
     if (data.media !== undefined) {
@@ -1203,8 +1324,78 @@ export class PostsService {
     // After the delete has committed, and never gating it. The post is gone either way; the worst
     // a failure here costs is objects kept past the moment they stopped being referenced, which
     // the next `release` or a manual sweep still reaches.
-    await this.mediaRetention.release(orphanedMedia);
+    if (post.kind === 'reel') {
+      await this.discardReelBlobs(post, orphanedMedia);
+    } else {
+      await this.mediaRetention.release(orphanedMedia);
+    }
     return { ok: true };
+  }
+
+  /**
+   * The blobs of a reel that was just deleted by hand: deleted NOW, as the worker would at expiry,
+   * because a reel's storage is the whole reason it expires.
+   *
+   * Whatever is not confirmed gone (`failed`, or an unreachable media service) falls back to the
+   * idle clock through `release` - the row no longer exists, so the worker will never come back for
+   * it, and an object left in class `reel` would be exempt from the sweep for ever. `refused` is a
+   * blob that was not the uploader's: left alone on purpose and logged.
+   */
+  private async discardReelBlobs(post: Post, allMediaIds: string[]): Promise<void> {
+    const items = [
+      ...postMediaIds(post).map((mediaId) => ({ mediaId, ownerId: post.authorId })),
+      ...commentMediaOwners(post.comments),
+    ];
+    try {
+      const results = await this.mediaRetention.purgeReelBlobs(items);
+      const notGone = items
+        .filter(({ mediaId }) => (results[mediaId] ?? 'failed') === 'failed')
+        .map(({ mediaId }) => mediaId);
+      if (notGone.length > 0) {
+        this.logger.warn(
+          `[REEL] delete of ${post.id}: ${notGone.length} blob(s) not deleted, released to the idle clock`
+        );
+        await this.mediaRetention.release(notGone);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[REEL] delete of ${post.id}: the media service was unreachable (${
+          e instanceof Error ? e.message : String(e)
+        }), blobs released to the idle clock`
+      );
+      await this.mediaRetention.release(allMediaIds);
+    }
+  }
+
+  /**
+   * The caller's OWN live reels, soonest expiry first, with the signal that tells the client which
+   * ones to offer "save to the gallery" for (decision C6).
+   *
+   * `serverNow` travels with the answer so a phone with a skewed clock draws the right countdown,
+   * and `expiringSoon` is decided HERE from the server's clock, so the one definition of "about to
+   * expire" is `REEL_EXPIRY_WARNING_DAYS` and not a number each client chose. The row carries the
+   * media key and IV - which is why this is the author's route and no one else's: it is what a
+   * client needs to decrypt and save the video before the worker deletes it. Association and
+   * anonymous reels are included, they are the caller's. A reel past its expiry is not listed.
+   */
+  async getMyReels(userId: string) {
+    // ONE clock for both questions: the database's. `expiringSoon` and the row filter are computed
+    // by it, so `serverNow` must be too, or a reel could read "soon" against a different instant.
+    const [{ now }]: Array<{ now: Date }> =
+      await this.postRepo.manager.query(`SELECT NOW() AS now`);
+    const reels: Array<Record<string, unknown>> = await this.postRepo.manager.query(
+      `SELECT id, "createdAt", "expiresAt", "durationMs", markdown, images AS media,
+              (("expiresAt" - $3::timestamptz) <= make_interval(days => $2)) AS "expiringSoon"
+         FROM posts
+        WHERE "authorId" = $1 AND kind = 'reel' AND "expiresAt" > $3::timestamptz
+        ORDER BY "expiresAt" ASC`,
+      [userId, REEL_EXPIRY_WARNING_DAYS, now]
+    );
+    return {
+      serverNow: new Date(now).toISOString(),
+      warningWindowDays: REEL_EXPIRY_WARNING_DAYS,
+      reels,
+    };
   }
 
   /** Pins or unpins a post (global admin only). Pinned posts always sort first in feeds. */

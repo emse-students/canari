@@ -9,6 +9,8 @@
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
+ *   POST /media/internal/reel-claim - claim a CanaReel's blob for its author (X-Internal-Secret)
+ *   POST /media/internal/reel-purge - delete expired reels' blobs, per owner (X-Internal-Secret)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
  * The token carries `sub` (userId). Deletion additionally requires the shared
@@ -46,6 +48,7 @@ import {
   MediaService,
   isRetentionClass,
   type MediaStorageStats,
+  type ReelPurgeOutcome,
   type RetentionClass,
 } from './media.service';
 import { assertInternalSecret } from './internal-secret.util';
@@ -383,6 +386,13 @@ export class MediaController {
       );
     }
     const retentionClass: RetentionClass = body.retentionClass;
+    // `reel` is claimed THROUGH ITS OWNER (`internal/reel-claim`), never set on an id alone: the
+    // class is what a reel's purge is attached to, and this route has no idea whose object it names.
+    if (retentionClass === 'reel') {
+      throw new BadRequestException(
+        "class 'reel' is set by POST internal/reel-claim, with an owner"
+      );
+    }
 
     const changed = await this.mediaService.setRetentionClass(
       ids.filter((id): id is string => typeof id === 'string'),
@@ -392,6 +402,83 @@ export class MediaController {
       this.logger.log(`Retention class ${retentionClass} applied to ${changed} object(s)`);
     }
     return { changed };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/reel-claim - a reel's blob is claimed for its author
+  // ---------------------------------------------------------------------------
+  /**
+   * Classifies blobs `reel` on behalf of the member who is publishing a CanaReel.
+   *
+   * Sole consumer: social-service's `createPost` for `kind: 'reel'`. It exists to PROVE, from the
+   * entry's recorded uploader, that the blob a reel cites is the author's - the property the later
+   * purge's safety rests on. See {@link MediaService.claimReels}. Same fail-closed secret gate as
+   * every internal route; no user JWT, because the caller is a service acting after authenticating
+   * the member itself.
+   */
+  @Post('internal/reel-claim')
+  async claimReels(
+    @Body() body: { mediaIds?: unknown; ownerId?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    return this.mediaService.claimReels(ids, body.ownerId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/reel-purge - delete the blobs of expired or deleted reels
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes blobs on their owner's say-so and answers one outcome per id. Sole consumer:
+   * social-service's `ReelRetentionScheduler` and the delete of a reel. The allowlist (ownership,
+   * never a class) and the meaning of each outcome are on {@link MediaService.purgeReels}.
+   */
+  @Post('internal/reel-purge')
+  async purgeReels(
+    @Body() body: { items?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
+    assertInternalSecret(internalSecret);
+    const raw = body?.items;
+    if (!Array.isArray(raw)) {
+      throw new BadRequestException('items must be an array');
+    }
+    if (raw.length > RETENTION_CLASS_MAX_IDS) {
+      throw new BadRequestException(`items must hold at most ${RETENTION_CLASS_MAX_IDS} entries`);
+    }
+    const items = raw.map((item) => {
+      const { mediaId, ownerId } = (item ?? {}) as { mediaId?: unknown; ownerId?: unknown };
+      if (typeof mediaId !== 'string' || typeof ownerId !== 'string') {
+        throw new BadRequestException('each item needs a string mediaId and ownerId');
+      }
+      return { mediaId, ownerId };
+    });
+    const results = await this.mediaService.purgeReels(items);
+    const counts = { deleted: 0, absent: 0, refused: 0, failed: 0 };
+    for (const outcome of Object.values(results)) counts[outcome] += 1;
+    if (counts.deleted + counts.refused + counts.failed > 0) {
+      this.logger.log(
+        `Reel purge: ${counts.deleted} deleted, ${counts.absent} absent, ${counts.refused} refused, ${counts.failed} failed`
+      );
+    }
+    return { results };
+  }
+
+  /** A string array bounded like every internal batch, ids that are not strings dropped. */
+  private boundedIds(value: unknown, field: string): string[] {
+    if (!Array.isArray(value)) {
+      throw new BadRequestException(`${field} must be an array`);
+    }
+    if (value.length > RETENTION_CLASS_MAX_IDS) {
+      throw new BadRequestException(
+        `${field} must hold at most ${RETENTION_CLASS_MAX_IDS} entries`
+      );
+    }
+    return value.filter((id): id is string => typeof id === 'string');
   }
 
   // ---------------------------------------------------------------------------
