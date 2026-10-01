@@ -614,7 +614,7 @@ export class WebMlsService extends BaseMlsService {
     }
     if (msg.type === 'epoch_rejected') {
       console.warn(
-        `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
+        `[WS RCV] Epoch rejected for group ${sanitizeForLog(String(msg.groupId))} (server epoch: ${sanitizeForLog(String(msg.currentEpoch))})`
       );
       // Notify via channel event so connection.ts can trigger recovery
       if (this.onChannelEvent) {

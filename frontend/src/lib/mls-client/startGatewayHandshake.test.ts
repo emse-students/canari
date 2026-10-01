@@ -12,6 +12,8 @@
  *    same state, same re-throw, same return value - or the boot and the reconnect have quietly
  *    become two different code paths.
  */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
 const getTokenMock = vi.hoisted(() => vi.fn(() => Promise.resolve('jwt-access-token')));
 const getIsTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 
@@ -26,7 +28,6 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
   getTabLeaderElectionIdForTests: vi.fn(() => 'test-id'),
 }));
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { startGatewayHandshake, openGatewayConnection } from './initializeConnection';
 import type { ConnectionDeps } from './initializeConnection';
 import type { IMlsService } from './IMlsService';
