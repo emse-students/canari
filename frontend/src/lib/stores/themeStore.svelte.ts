@@ -40,18 +40,22 @@ function resolveIsDark(pref: ThemePreference): boolean {
 }
 
 /**
- * The iOS shell themes the status bar, the keyboard and the native tab bar from the WINDOW's
- * interface style, which follows the phone and not the app - so the theme is posted to the
- * `canariTheme` message handler `canari_ios.mm` registers. Absent everywhere else (Android, the
- * browser, a build without the handler), where this is a no-op by design, not a fallback.
+ * The native shells theme the status bar (and on iOS the keyboard and the tab bar) from the
+ * WINDOW, which follows the phone and not the page - so the resolved theme is handed over:
+ *
+ * - iOS: the `canariTheme` message handler `canari_ios.mm` registers.
+ * - Android: the `canariTheme` JavaScript interface `MainActivity` registers. `enableEdgeToEdge()`
+ *   chooses the bar icons once and a live OS switch never re-runs it (white icons on a white page).
+ *
+ * Absent in the browser, where this is a no-op by design, not a fallback.
  */
 function postThemeToNative(theme: 'dark' | 'light'): void {
-  const handlers = (
-    window as unknown as {
-      webkit?: { messageHandlers?: { canariTheme?: { postMessage: (m: string) => void } } };
-    }
-  ).webkit?.messageHandlers;
-  handlers?.canariTheme?.postMessage(theme);
+  const w = window as unknown as {
+    webkit?: { messageHandlers?: { canariTheme?: { postMessage: (m: string) => void } } };
+    canariTheme?: { set?: (m: string) => void };
+  };
+  w.webkit?.messageHandlers?.canariTheme?.postMessage(theme);
+  w.canariTheme?.set?.(theme);
 }
 
 function applyToDocument(dark: boolean): void {
