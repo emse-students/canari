@@ -180,3 +180,41 @@ the first frame is there. A reel is never fetched twice: if it becomes current b
 has finished, the preload is ABORTED and the player fetches (or streams) it alone. One cost is
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
+
+## Saving before the deletion, and the days left (C6)
+
+**What says a reel is the member's own is the server's list**, `GET /api/posts/my-reels`
+(`reels/myReels.svelte.ts`), never `authorId`: a reel published as an association or anonymously
+carries no author for anybody, its author included, and is still theirs to save. The list is asked
+once, held FOR THE ACCOUNT THAT ASKED (another account signing in on the same device sees none of
+it), and asked again only when a reel being drawn was created AFTER the list's `serverNow` and is
+absent from it - a fact, never a timer.
+
+**The days left are counted on the server's clock** (`serverNow`), rounded up, so a phone set a day
+wrong does not announce the wrong date. The chip (`ReelExpiryChip`) sits on the member's own reels
+only - top-left of the feed card, over the caption in the viewer - and turns amber once the server
+says `expiringSoon` (its warning window).
+
+**The save** (`ReelSaveButton`, the member's own reel, in the viewer) reads the video out of the
+media cache with the key `my-reels` handed over, and gives it to:
+
+| Where | Path | Permission |
+| --- | --- | --- |
+| Android 10+ | `tauri-plugin-gallery`: a pending `MediaStore` row in `Movies/Canari`, the bytes, then the row published (a failed write deletes the row) | none - ADDING to the shared collection needs none |
+| Android 9 (`minSdk` 28) | the plugin copies into the public `Movies/Canari` and scans it | `WRITE_EXTERNAL_STORAGE`, declared `maxSdkVersion 28`, asked at the save |
+| iOS | the plugin: `PHPhotoLibrary.requestAuthorization(for: .addOnly)`, then `PHAssetCreationRequest` | ADD-ONLY (`NSPhotoLibraryAddUsageDescription`): Canari can read nothing back |
+| Web, desktop | `saveBlobAs` - the download, or the save dialog | none |
+
+The file is the fragmented H.264/AAC MP4 every reel was prepared into (C3), which both Photos and
+Android's gallery play, named `canari-reel-<day>-<id8>.mp4`. **The bytes cross the IPC as a RAW
+body** (`invoke(cmd, Uint8Array, {headers})`), never JSON - a 90 s reel is tens of MB, and a JSON
+array of numbers would be several times that. The Rust side writes them to the app's cache, hands
+the native side a PATH, and removes the copy afterwards; the native copy runs off the main thread.
+The name travels in the `x-gallery-name` header, and a missing one is a typed `BadName` refusal,
+never a default. The command names, the header and the capability are pinned on both sides by
+`services/galleryCommands.test.ts`, which reads the Rust sources.
+
+**A refusal is an outcome, not a failure**: `denied` swaps the save button for "Open settings",
+which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,
+`UIApplication.openSettingsURLString`). The camera screen's refused state carries the same button in
+the app, since a refused camera on iOS stays refused until Settings.

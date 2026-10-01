@@ -16,6 +16,9 @@
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { markdownToPlainText } from '$lib/seo/text';
+  import { myReels } from '$lib/reels/myReels.svelte';
+  import ReelExpiryChip from './ReelExpiryChip.svelte';
+  import ReelSaveButton from './ReelSaveButton.svelte';
 
   interface Props {
     post: PostEntity;
@@ -30,6 +33,12 @@
 
   const video = $derived((post.media ?? post.images ?? [])[0]);
   const caption = $derived(markdownToPlainText(post.markdown ?? ''));
+
+  /** The member's own reel, with its expiry and its key - `undefined` for anybody else's. */
+  const mine = $derived(myReels.find(post.id));
+  $effect(() => {
+    if (active) myReels.ensure(post);
+  });
 
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
@@ -50,9 +59,19 @@
   <div
     class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
   >
+    {#if mine}
+      <div class="mb-2"><ReelExpiryChip reel={mine} /></div>
+    {/if}
     <p class="text-sm font-bold">{postAuthorName(post)}</p>
     {#if caption}
       <p class="mt-1 line-clamp-3 text-sm leading-snug opacity-90">{caption}</p>
     {/if}
   </div>
+
+  {#if mine && active}
+    <!-- The author's save, right of the caption where Instagram puts a reel's actions. -->
+    <div class="absolute right-3 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)]">
+      <ReelSaveButton reel={mine} />
+    </div>
+  {/if}
 </div>

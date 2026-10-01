@@ -7,7 +7,17 @@
    */
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
-  import { Camera, CameraOff, RefreshCcw, SwitchCamera, X, Zap, ZapOff } from '@lucide/svelte';
+  import {
+    Camera,
+    CameraOff,
+    RefreshCcw,
+    Settings,
+    SwitchCamera,
+    X,
+    Zap,
+    ZapOff,
+  } from '@lucide/svelte';
+  import { hasNativeGallery, openAppSettings } from '$lib/reels/gallery';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import type { CameraFault } from '$lib/reels/cameraAccess';
   import { m } from '$lib/paraglide/messages';
@@ -110,6 +120,21 @@
     unavailable: { title: m.reels_camera_unavailable_title, body: m.reels_camera_unavailable_body },
     busy: { title: m.reels_camera_busy_title, body: m.reels_camera_busy_body },
   };
+
+  /**
+   * THE DENIED STATE NAMES THE PHONE'S SETTINGS, SO IT OFFERS THEM. On the phone apps a refused
+   * camera or microphone is given back on the app's page in the system settings, and a retry alone
+   * would only meet the same refusal (iOS never asks twice). The web has no such page to open.
+   */
+  const canOpenSettings = hasNativeGallery();
+
+  async function openSettings() {
+    try {
+      await openAppSettings();
+    } catch (err) {
+      console.error('[camera] the settings page did not open', err);
+    }
+  }
 </script>
 
 <section
@@ -155,6 +180,17 @@
         <RefreshCcw size={16} strokeWidth={2.5} />
         {m.reels_camera_retry()}
       </button>
+      {#if session.fault === 'denied' && canOpenSettings}
+        <button
+          type="button"
+          class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+          onclick={() => void openSettings()}
+          data-camera-open-settings
+        >
+          <Settings size={16} strokeWidth={2.5} />
+          {m.reels_open_settings()}
+        </button>
+      {/if}
     </div>
   {/if}
 

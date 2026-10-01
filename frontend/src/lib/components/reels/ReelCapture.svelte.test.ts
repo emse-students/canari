@@ -18,7 +18,10 @@ afterAll(adoptTransitionAnimations());
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
-vi.mock('$lib/utils/appVersion', () => ({ isIosTauriRuntime: () => false }));
+vi.mock('$lib/utils/appVersion', () => ({
+  isIosTauriRuntime: () => false,
+  isMobileTauriRuntime: () => false,
+}));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
