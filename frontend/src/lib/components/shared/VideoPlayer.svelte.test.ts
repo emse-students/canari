@@ -163,3 +163,89 @@ it('says when the engine refuses the video, instead of a black box', () => {
   flushSync();
   expect(target.textContent).toContain(m.video_unplayable());
 });
+
+/** A pointer event of the given kind; happy-dom's own PointerEvent is skipped by Svelte's handlers. */
+const pointer = (type: string, pointerType: string) =>
+  Object.assign(new Event(type, { bubbles: true }), { pointerType });
+
+/**
+ * ANY MOUSE MOVEMENT SHOWS THE CONTROLS, A FINGER'S DRAG DOES NOT (user, 2026-10-02: *"sur web,
+ * afficher les controles lors de tout mouvement de souris"*). A touch `pointermove` is a swipe in the
+ * viewer or a seek on the bar and must never raise anything by itself.
+ */
+it('a mouse moving anywhere over the player brings the faded controls back', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+
+  root.dispatchEvent(pointer('pointermove', 'mouse'));
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+
+  // ... and they fade again once the mouse is still.
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+});
+
+it('keeps the controls up for as long as the mouse keeps moving', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  for (let i = 0; i < 4; i++) {
+    vi.advanceTimersByTime(CONTROLS_FADE_MS - 500);
+    root.dispatchEvent(pointer('pointermove', 'mouse'));
+    flushSync();
+  }
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('a finger moving over the player shows nothing by itself', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+
+  root.dispatchEvent(pointer('pointermove', 'touch'));
+  root.dispatchEvent(pointer('pointermove', 'pen'));
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+});
+
+/**
+ * A TAP ANYWHERE ON THE PLAYER TOGGLES THE CONTROLS (user, 2026-10-02: *"un appui n'importe ou sur
+ * l'ecran de la video ouverte en grand"*). The listener was on the `<video>`, so a tap on the black
+ * around a letterboxed clip - most of a phone's screen for a landscape clip - did nothing.
+ */
+it('a tap on the black around the picture toggles the controls, both ways', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  expect(bar.className).toContain('opacity-100');
+
+  root.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+
+  root.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('a tap on a control is the control s, and does not toggle the bar away', () => {
+  vi.useFakeTimers();
+  const { target, video, bar } = mountPlayer();
+  startPlaying(video);
+  target.querySelector<HTMLButtonElement>('[data-video-controls] button')!.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('marks its box, which is what the viewer reads to leave the tap to it', () => {
+  const { root } = mountPlayer();
+  expect(root.hasAttribute('data-video-player')).toBe(true);
+});

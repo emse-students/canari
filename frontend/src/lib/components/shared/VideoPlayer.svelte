@@ -22,8 +22,12 @@
    * every engine: play/pause, a seek bar showing what is buffered, elapsed/duration, the app's ONE
    * sound answer (`followVideoSound`) and full screen where the engine offers it.
    *
-   * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on a
-   * tap on the picture, a key, or a pause. A paused video keeps them: there is nothing to watch.
+   * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on
+   * ANY mouse movement over the player, a tap ANYWHERE on it, a key, or a pause (user, 2026-10-02:
+   * *"sur web, afficher les controles lors de tout mouvement de souris, sur mobile un appui
+   * n'importe ou sur l'ecran de la video ouverte en grand est un toggle des controles"*). Anywhere
+   * means the black around a letterboxed clip too, which a tap listener on the `<video>` alone never
+   * reached. A paused video keeps them: there is nothing to watch.
    *
    * NO NATIVE POSTER, EVER: `poster` stays `TRANSPARENT_VIDEO_POSTER` (the Android WebView would
    * otherwise draw its grey play button), and `VideoPoster` covers the box until `loadeddata` says
@@ -196,7 +200,20 @@
     if ((e.target as HTMLElement).matches(':focus-visible')) showControls();
   }
 
-  /** A tap on the picture brings the controls back, or hides them when they are up. */
+  /**
+   * A MOUSE MOVING OVER THE PLAYER BRINGS THE CONTROLS UP, wherever it is on it. Mouse only: a
+   * finger's `pointermove` is a drag - a swipe in the viewer around, a seek on the bar - and must not
+   * show anything by itself.
+   */
+  function onPointerMove(e: PointerEvent) {
+    if (e.pointerType === 'mouse') showControls();
+  }
+
+  /**
+   * A tap anywhere on the player - the picture or the black around it - brings the controls back, or
+   * hides them when they are up. Controls, the play button and the seek bar stop their own clicks, so
+   * only a tap that is nobody else's gets here.
+   */
   function onPictureTap(e: MouseEvent) {
     e.stopPropagation();
     if (controlsVisible && !paused) controlsVisible = false;
@@ -256,8 +273,11 @@
   role="group"
   aria-label={m.video_player_label()}
   tabindex="0"
+  data-video-player
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
+  onpointermove={onPointerMove}
+  onclick={onPictureTap}
 >
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -272,7 +292,6 @@
     disableremoteplayback={disableRemotePlayback || undefined}
     use:followVideoSound
     class={videoClass}
-    onclick={onPictureTap}
     onloadedmetadata={sync}
     onloadeddata={() => {
       frameReady = true;
