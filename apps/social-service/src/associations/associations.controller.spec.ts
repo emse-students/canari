@@ -285,3 +285,52 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.deleteCalendarEvent).not.toHaveBeenCalled();
   });
 });
+
+describe('AssociationsController feed.ics eventId', () => {
+  const rows = [1, 2].map((n) => ({
+    id: `ev${n}`,
+    title: `Soiree ${n}`,
+    description: null,
+    startsAt: '2026-11-05T18:00:00.000Z',
+    endsAt: null,
+    associationName: 'BDE',
+    associationSlug: 'bde',
+  }));
+
+  function makeController() {
+    const service = { listAggregatedCalendarFeed: jest.fn(() => Promise.resolve(rows)) };
+    return new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+  }
+  const res = { setHeader: jest.fn() } as never;
+
+  it('keeps only the named event, so a phone can add ONE evening to its calendar', async () => {
+    const body = await makeController().aggregatedCalendarFeedIcs(
+      undefined,
+      undefined,
+      undefined,
+      'ev2',
+      res
+    );
+    expect(body).toContain('UID:ev2@canari');
+    expect(body).not.toContain('UID:ev1@canari');
+  });
+
+  it('serves the whole window without an eventId', async () => {
+    const body = await makeController().aggregatedCalendarFeedIcs(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      res
+    );
+    expect(body).toContain('UID:ev1@canari');
+    expect(body).toContain('UID:ev2@canari');
+  });
+});

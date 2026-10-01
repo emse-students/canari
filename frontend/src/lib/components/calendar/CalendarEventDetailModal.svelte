@@ -5,6 +5,7 @@
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import {
     associationLogoSrc,
+    eventIcsAbsoluteUrl,
     getPostLinkedToCalendarEvent,
     type AssociationCalendarFeedEvent,
     type LinkedPostSummary,
@@ -96,6 +97,7 @@
       sourceUrl: origin
         ? `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
         : undefined,
+      icsUrl: ev.status === 'validated' ? eventIcsAbsoluteUrl(ev.id, ev.startsAt) : undefined,
     };
   }
 </script>
