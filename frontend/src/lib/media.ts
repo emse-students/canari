@@ -39,14 +39,19 @@
 export type MediaType = 'image' | 'video' | 'audio' | 'file';
 
 /**
- * Which retention the media service applies to an uploaded object.
+ * Which retention the media service applies to an uploaded object. The server stores ciphertext
+ * and has no way to tell surfaces apart, which is why the caller says so.
  *
- * Omitting it is the chat default: the object is deleted once nobody has opened it for the idle
- * window. `'archive'` is the feed - a post, a post comment or an avatar - where a permanent row
- * cites the object, so an idle window would rot the row's body rather than reclaim anything. The
- * server stores ciphertext and has no way to tell the two apart, which is why the caller says so.
+ * The media service's idle sweep is an ALLOWLIST: it deletes `'ephemeral'` and nothing else.
+ * - `'ephemeral'` - chat and channel media, deleted once nobody has opened them for the window.
+ * - `'archive'` - the feed (a post, a post comment, an avatar): a permanent row cites the object.
+ * - `'association'` - an association's vault document: kept for ever, and it survives the
+ *   uploader's account deletion because it belongs to the association.
+ *
+ * An object with no class is KEPT. It used to be the other way round, and an association vault
+ * document - uploaded with no class - was swept on production in 2026-09.
  */
-export type MediaRetentionClass = 'archive';
+export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association';
 
 export interface MediaRef {
   type: MediaType;
@@ -484,16 +489,16 @@ export class MediaService {
    * @param dimensions     Intrinsic width/height, so a feed can reserve the box before it lands.
    * @param retentionClass Which retention the object gets. The server holds only ciphertext and
    *                       cannot tell a post photo from a chat photo, so the surface says it here,
-   *                       where it is already known. Omitted (chat) means the idle sweep applies;
-   *                       `'archive'` means a permanent row cites it and it is never swept.
+   *                       where it is already known. REQUIRED, so no new call site can forget it:
+   *                       `'ephemeral'` (chat) is the only class the idle sweep may take.
    * @returns              A `MediaRef` ready to be JSON-serialised and embedded
    *                       inside the MLS application message.
    */
   async encryptAndUpload(
     file: File,
     authToken: string,
-    dimensions?: Partial<ImageDimensions>,
-    retentionClass?: MediaRetentionClass
+    dimensions: Partial<ImageDimensions> | undefined,
+    retentionClass: MediaRetentionClass
   ): Promise<MediaRef> {
     const plaintext = await file.arrayBuffer();
     const { ciphertext, keyHex, ivHex } = await encryptMediaBuffer(plaintext);
@@ -550,9 +555,9 @@ export class MediaService {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${authToken}`,
-            ...(retentionClass ? { 'Content-Type': 'application/json' } : {}),
+            'Content-Type': 'application/json',
           },
-          ...(retentionClass ? { body: JSON.stringify({ retentionClass }) } : {}),
+          body: JSON.stringify({ retentionClass }),
         }
       );
       if (!completeRes.ok) {
@@ -573,7 +578,7 @@ export class MediaService {
       );
       // A plain text part alongside the blob. Multer parses the whole body before the handler
       // runs, so it reaches `@Body()` whichever order the parts are in.
-      if (retentionClass) formData.append('retentionClass', retentionClass);
+      formData.append('retentionClass', retentionClass);
 
       const res = await fetch(`${this.baseUrl}/api/media/upload`, {
         method: 'POST',

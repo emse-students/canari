@@ -33,6 +33,12 @@ export interface MediaBucketUsage {
   /** Feed media (posts, post comments, avatars) exempt from the idle sweep and kept for ever. */
   archiveCount: number;
   archiveBytes: number;
+  /** Association vault documents, kept for ever and surviving their uploader's account. */
+  associationCount: number;
+  associationBytes: number;
+  /** Live objects with no retention class: the allowlisted sweep never touches them. */
+  unclassifiedCount: number;
+  unclassifiedBytes: number;
   retentionMs: number;
   sweepIntervalMs: number;
 }

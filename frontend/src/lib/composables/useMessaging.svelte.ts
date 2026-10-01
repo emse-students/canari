@@ -1106,10 +1106,12 @@ export function useMessaging() {
               authToken = await getToken();
               ctx.setAuthToken(authToken);
             }
-            const mediaRef = await mediaService.encryptAndUpload(entry.file, authToken, {
-              width: entry.width,
-              height: entry.height,
-            });
+            const mediaRef = await mediaService.encryptAndUpload(
+              entry.file,
+              authToken,
+              { width: entry.width, height: entry.height },
+              'ephemeral'
+            );
             const protoBytes = encodeAppMessage({
               ...mkMedia({
                 kind: mediaKindFromEnvelope(mediaRef.type),

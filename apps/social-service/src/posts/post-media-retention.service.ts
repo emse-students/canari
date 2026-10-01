@@ -2,12 +2,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { firstValueFrom } from 'rxjs';
 import { Post } from './entities/post.entity';
-import { mediaUrl } from '../internal/service-urls';
-
-/** Matches the media service's own bound on one `internal/retention-class` batch. */
-const BATCH_SIZE = 500;
+import { applyMediaRetentionClass } from '../internal/media-retention-class';
 
 /**
  * Keeps the media service's retention class in step with what the feed actually references.
@@ -51,7 +47,7 @@ export class PostMediaRetentionService implements OnModuleInit {
       this.logger.log('Media retention backfill: the feed references no media');
       return;
     }
-    const changed = await this.apply(ids, 'archive');
+    const changed = await applyMediaRetentionClass(this.httpService, this.logger, ids, 'archive');
     // The two outcomes are worth distinguishing: 0 is the steady state, anything else means the
     // index had lost a classification and this is the repair that put it back.
     this.logger.log(
@@ -63,18 +59,23 @@ export class PostMediaRetentionService implements OnModuleInit {
 
   /** Marks media as archived, so the idle sweep never takes them. */
   async classify(mediaIds: string[]): Promise<void> {
-    if (mediaIds.length > 0) await this.apply(mediaIds, 'archive');
+    if (mediaIds.length > 0) {
+      await applyMediaRetentionClass(this.httpService, this.logger, mediaIds, 'archive');
+    }
   }
 
   /**
-   * Drops media back to the ordinary idle window, so the sweep reclaims them in its own time.
+   * Moves media onto the idle window (`ephemeral`), so the sweep reclaims them in its own time.
    *
    * Deliberately not an immediate delete. An edit that merely removes an image reaches here too,
-   * and the honest answer to "this row no longer cites it" is to restore the default clock rather
-   * than to destroy the object on the spot.
+   * and the honest answer to "this row no longer cites it" is the idle clock rather than destroying
+   * the object on the spot. It names `ephemeral` explicitly because the sweep is an allowlist: an
+   * object with no class is one it never takes.
    */
   async release(mediaIds: string[]): Promise<void> {
-    if (mediaIds.length > 0) await this.apply(mediaIds, null);
+    if (mediaIds.length > 0) {
+      await applyMediaRetentionClass(this.httpService, this.logger, mediaIds, 'ephemeral');
+    }
   }
 
   /**
@@ -95,42 +96,6 @@ export class PostMediaRetentionService implements OnModuleInit {
          AND jsonb_typeof(c->'media') = 'object'
     `);
     return rows.map((row) => row.mediaId).filter((id): id is string => typeof id === 'string');
-  }
-
-  /**
-   * Sends one class change to the media service, in batches it accepts.
-   *
-   * @returns the number of entries the service actually changed, or `null` if a batch failed.
-   */
-  private async apply(
-    mediaIds: string[],
-    retentionClass: 'archive' | null
-  ): Promise<number | null> {
-    const unique = [...new Set(mediaIds)];
-    let changed = 0;
-
-    for (let i = 0; i < unique.length; i += BATCH_SIZE) {
-      const batch = unique.slice(i, i + BATCH_SIZE);
-      try {
-        const res = await firstValueFrom(
-          this.httpService.post<{ changed: number }>(
-            mediaUrl('media/internal/retention-class'),
-            { mediaIds: batch, retentionClass },
-            { headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' } }
-          )
-        );
-        changed += res.data?.changed ?? 0;
-      } catch (err) {
-        this.logger.warn(
-          `Retention class '${retentionClass ?? 'cleared'}' failed for ${batch.length} object(s): ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-        return null;
-      }
-    }
-
-    return changed;
   }
 }
 

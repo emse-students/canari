@@ -7,7 +7,7 @@
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
- *   POST /media/internal/retention-class - classify/release objects (X-Internal-Secret)
+ *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
  * The token carries `sub` (userId). Deletion additionally requires the shared
@@ -196,13 +196,14 @@ export class MediaController {
     }
 
     // The client names the surface it uploaded from, because it is the only party that knows.
-    // Unrecognised values are ignored rather than refused: the field is a retention HINT, an old
-    // client sends none at all, and failing an upload over it would break posting outright.
+    // Unrecognised values are ignored rather than refused: an old client sends none at all, and
+    // failing an upload over it would break posting outright. An object with no class is KEPT -
+    // the sweep is an allowlist of `ephemeral` - so a missing hint costs storage, never a file.
     const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
 
     const mediaId = await this.mediaService.upload(upload.buffer, ownerId, retentionClass);
     this.logger.log(
-      `Stored encrypted blob: ${mediaId} (${upload.size} bytes, retention=${retentionClass ?? 'idle'})`
+      `Stored encrypted blob: ${mediaId} (${upload.size} bytes, retention=${retentionClass ?? 'unclassified'})`
     );
     return { mediaId };
   }
@@ -300,7 +301,7 @@ export class MediaController {
       retentionClass
     );
     this.logger.log(
-      `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'idle'})`
+      `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'unclassified'})`
     );
     return { mediaId };
   }
@@ -342,11 +343,12 @@ export class MediaController {
   // POST /media/internal/retention-class - classify or release existing objects
   // ---------------------------------------------------------------------------
   /**
-   * Sets (`'archive'`) or clears (`null`) the retention class of objects that already exist.
+   * Sets the retention class (`'ephemeral'`, `'archive'`, `'association'`) of objects that
+   * already exist.
    *
-   * Sole consumer: social-service, which owns the post rows and is therefore the only party that
-   * can say an object is still cited by one. It classifies what was uploaded before the class
-   * existed, and releases what a deleted post no longer references.
+   * Sole consumer: social-service, which owns the post and vault-document rows and is therefore
+   * the only party that can say an object is still cited by one. It classifies what was uploaded
+   * before the class existed, and releases (`'ephemeral'`) what a deleted post no longer references.
    *
    * X-Internal-Secret and NO user JWT, unlike `POST /media/touch`: the backfill runs at boot with
    * no user in sight, and unlike a touch this can also REMOVE a reason to keep an object - so it
@@ -371,24 +373,22 @@ export class MediaController {
       );
     }
 
-    // Null is the RELEASE and has to stay distinguishable from an absent field, so it is checked
-    // rather than defaulted: a body that forgot the key must not silently unclassify a batch.
-    let retentionClass: RetentionClass | null = null;
-    if (body?.retentionClass != null) {
-      if (!isRetentionClass(body.retentionClass)) {
-        throw new BadRequestException("retentionClass must be 'archive' or null");
-      }
-      retentionClass = body.retentionClass;
+    // A class is REQUIRED, and there is no null: the release is `ephemeral` itself. This used to
+    // read an absent key as `null`, the release - so a body that forgot the field silently moved a
+    // batch onto the idle clock, the opposite of what its comment promised.
+    if (!isRetentionClass(body?.retentionClass)) {
+      throw new BadRequestException(
+        "retentionClass must be one of 'ephemeral', 'archive', 'association'"
+      );
     }
+    const retentionClass: RetentionClass = body.retentionClass;
 
     const changed = await this.mediaService.setRetentionClass(
       ids.filter((id): id is string => typeof id === 'string'),
       retentionClass
     );
     if (changed > 0) {
-      this.logger.log(
-        `Retention class ${retentionClass ?? 'cleared'} applied to ${changed} object(s)`
-      );
+      this.logger.log(`Retention class ${retentionClass} applied to ${changed} object(s)`);
     }
     return { changed };
   }

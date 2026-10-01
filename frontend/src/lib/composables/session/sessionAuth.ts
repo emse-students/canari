@@ -233,10 +233,12 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
         type: media.mimeType,
       });
-      return new MediaService().encryptAndUpload(file, token, {
-        width: media.width,
-        height: media.height,
-      });
+      return new MediaService().encryptAndUpload(
+        file,
+        token,
+        { width: media.width, height: media.height },
+        'ephemeral'
+      );
     },
   };
 }

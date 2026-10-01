@@ -16,6 +16,7 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
+import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import { Association } from './entities/association.entity';
 import {
   AssociationMember,
@@ -2176,6 +2177,11 @@ ${rejectionReason}`
     this.logger.debug(
       `Vault document "${sanitizeLog(saved.name)}" (${sanitizeLog(saved.id)}) created for asso ${sanitizeLog(associationId)}`
     );
+    // The row is what makes the blob durable, so the row's creation says so to the media service:
+    // an installed client too old to send `association` at upload left a vault document on the
+    // idle sweep, which is how one was lost on production in 2026-09. Best-effort and logged by the
+    // helper - the boot backfill (`AssociationDocumentRetentionService`) re-applies it if it fails.
+    await applyMediaRetentionClass(this.httpService, this.logger, [saved.mediaId], 'association');
     return { ...saved, size: Number(saved.size) };
   }
 

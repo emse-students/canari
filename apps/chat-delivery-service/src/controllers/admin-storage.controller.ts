@@ -35,6 +35,10 @@ export interface MediaBucketUsage {
   publicAssetBytes: number;
   archiveCount: number;
   archiveBytes: number;
+  associationCount: number;
+  associationBytes: number;
+  unclassifiedCount: number;
+  unclassifiedBytes: number;
   retentionMs: number;
   sweepIntervalMs: number;
 }
