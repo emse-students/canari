@@ -1395,6 +1395,32 @@ Two decisions inside it are easy to get wrong:
   explicitly, and on iOS that is why the name is a PARAMETER of the shared notification function:
   only the call site knows what the letter should stand for.
 
+**"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
+`cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench
+account, and many real ones - cost a request on EVERY notification, in the FCM process, before the
+post ([durable-rules](../durable-rules.md): a cache that only remembers successes amplifies every
+failure). A `404` now writes an empty `avatar_<id>.absent` beside `avatar_<id>.jpg`: core-service
+answers `404` for "this user has no photo" and for an estate with no provider, and the push proxy
+forwards it unchanged, so it is the one status that is an answer about the picture. **A `502`, a
+`503`, a `401/403` or a transport failure writes nothing** - the bad Wi-Fi of 2026-10-01 drew the
+initials once and the faces on the next notification, which is right. Image first, marker second,
+both on `AVATAR_CACHE_MAX_AGE_MS`: a `200` deletes the marker and a `404` deletes the image, and a
+newly added photo reaches the shade no later than a CHANGED photo already did. The `avatar_` prefix
+keeps the marker inside the device wipe (`storage.rs`). **iOS (`cachedRemoteFile` in the NSE) is
+unchanged** - it still asks on every miss, and stays so until it can be read on the iPhone bench
+build. Pinned by `messageNotificationShape.test.ts`.
+
+**A conversation names every author, a direct message included (user, 2026-10-01).** A DM was posted
+in Android's one-to-one `MessagingStyle` shape, which from API 28 is decided by `isGroupConversation`
+alone: the other person's name is the title and appears above none of their lines, while our own
+reply carried "Moi". The user read that as lopsided. The two MESSAGE triggers (the push and the
+WebSocket frame) now pass `namesEachSender = true`, so a DM takes the group shape, titled with the
+person, and our own lines say **"Vous" / "You"** (`notif_sender_self`; the NSE composes no thread and
+has no such string). A reaction and a salon keep the old shape on purpose: a reaction line is a
+sentence about its actor, and a salon's "sender" IS its title, so naming either would print the
+title twice. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
+`repostReplyPending` copies the title and the group flag from what is in the shade.
+
 **Reaction notifications are at parity across the two platforms, and this is the list - do not
 re-derive it.** Both take the MESSAGE path rather than the social one, both use the stable
 per-conversation id and thread so a reaction replaces itself instead of stacking, both suppress
