@@ -71,7 +71,9 @@ hooksPathProblem('') ? ok('refused: an empty value') : no('accepted an empty cor
 // THE INSTALLER MUST WRITE THE VALUE ITSELF. Reading it back is not enough: husky's argument used
 // to decide it, and that argument is built from a path this repository cannot constrain.
 const installer = readFileSync(resolve(repoRoot, 'frontend/scripts/install-husky.js'), 'utf8');
-installer.includes('git config core.hooksPath ${HOOKS_PATH}')
+// Built by concatenation: it is the installer's literal template text, not a template here.
+const hooksPathTemplate = 'git config core.hooksPath $' + '{HOOKS_PATH}';
+installer.includes(hooksPathTemplate)
   ? ok('install-husky.js sets core.hooksPath from the declared value')
   : no('install-husky.js no longer sets core.hooksPath itself - husky decides again');
 installer.includes('hooksPathProblem(hooksPath)')

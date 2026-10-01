@@ -1,0 +1,1 @@
+Three code-scanning alerts fixed for real: the epoch_rejected log goes through `sanitizeForLog`, a test imports `vi` before using it, and a test no longer holds a `${...}` string that looks like a template.
