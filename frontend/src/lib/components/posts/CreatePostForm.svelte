@@ -60,6 +60,9 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import { linkableEventPickerOptions } from '$lib/utils/time';
+  import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
+  import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
 
   /**
    * Full-featured post creation form. Supports:
@@ -169,6 +172,8 @@
   // --- UI state ---
   let publishing = $state(false);
   let errorMessage = $state('');
+  /** A picked video being re-encoded on the device during publish (decision C3). */
+  const videoPreparation = new VideoPreparationState();
   let authToken = $state('');
   // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
@@ -406,11 +411,17 @@
         }
       }
 
-      // Compress images, upload other files as-is; collect the resulting refs.
-      stage = 'mediaUpload';
+      // Compress images, re-encode videos on the device, upload the rest as-is; collect the refs.
       const media = [];
+      const limits = selectedFiles.length > 0 ? await mediaService.uploadLimits() : null;
       for (let i = 0; i < selectedFiles.length; i++) {
-        const { file, dims } = await preparePostMedia(selectedFiles[i]);
+        stage = 'mediaPrepare';
+        const { file, dims } = await preparePostMedia(
+          selectedFiles[i],
+          videoPreparation.optionsFor(limits?.maxPlaintextBytes)
+        );
+        videoPreparation.finish();
+        stage = 'mediaUpload';
         const ref = await mediaService.encryptAndUpload(file, authToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
@@ -473,12 +484,18 @@
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
+      if (isVideoPrepareError(err) && err.fault === 'aborted') {
+        // The member pressed the cross on the progress line: the composer stays as it was.
+        Log.d('POST_COMPOSER', 'publish stopped: video preparation cancelled');
+        return;
+      }
       // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. This was `Log.d` - debug level - in a file
       // that already logged `console.error` for a dropdown that would not load, so the one failure
       // a reader reports was the quietest line in it.
       console.error(`[POST_COMPOSER] publish failed at ${stage}`, err);
       errorMessage = publishFailureMessage(err, m.post_create_publish_error());
     } finally {
+      videoPreparation.finish();
       publishing = false;
     }
   }
@@ -711,6 +728,13 @@
       </div>
     {/if}
 
+    {#if videoPreparation.fraction !== null}
+      <VideoPreparationProgress
+        fraction={videoPreparation.fraction}
+        oncancel={() => videoPreparation.cancel()}
+      />
+    {/if}
+
     <PostComposerBar
       onFiles={addFiles}
       onFormat={(type) => editorField?.format(type)}
@@ -724,7 +748,7 @@
       {#snippet action()}
         <Button
           type="button"
-          class="shrink-0 px-5 py-2 text-sm !font-bold"
+          class="shrink-0 px-5 py-2 text-sm font-bold!"
           disabled={publishing || !hasContent(markdown, selectedFiles.length)}
           loading={publishing}
           onclick={publishPost}

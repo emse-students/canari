@@ -30,6 +30,8 @@ import { m } from '$lib/paraglide/messages';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { localizedMessage } from '$lib/utils/localizedError';
+import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 
 /**
  * The step the composer had reached, so a failure names WHERE and not only THAT.
@@ -41,6 +43,7 @@ export type PublishStage =
   | 'moderation'
   | 'content'
   | 'mediaToken'
+  | 'mediaPrepare'
   | 'mediaUpload'
   | 'poll'
   | 'form'
@@ -64,5 +67,9 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // can act on. The sentence is `auth_`-prefixed for historical reasons and says nothing about
   // auth; a second key carrying the same French line would be a second thing to translate.
   if (isTransportFailure(error)) return m.auth_server_unreachable();
+  // A video the device could not prepare names its own cause (`videoPrepareMessages.ts`). A cancel
+  // the member asked for is filtered out by the composer before it gets here; were one to reach
+  // this line anyway it would read as the fallback, never as nothing.
+  if (isVideoPrepareError(error)) return videoPrepareFailureMessage(error) ?? fallback;
   return localizedMessage(error, fallback);
 }
