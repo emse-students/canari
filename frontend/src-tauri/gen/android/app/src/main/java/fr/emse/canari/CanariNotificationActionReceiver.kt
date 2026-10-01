@@ -95,11 +95,12 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             return
         }
 
-        val entries = CanariFirebaseMessagingService.readOutboxMirror(context) +
+        CanariFirebaseMessagingService.enqueueOutboxMirror(
+            context,
             CanariFirebaseMessagingService.OutboxMirrorEntry(
                 messageId, groupId, protoB64, sentAt, silent = false, durable = true
             )
-        CanariFirebaseMessagingService.rewriteOutboxMirror(context, entries)
+        )
         Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${groupId.take(8)}")
 
         val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
@@ -178,14 +179,15 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.e(TAG, "sendReadWatermark: nativeBuildReadWatermarkProto failed")
             return
         }
-        val entries = CanariFirebaseMessagingService.readOutboxMirror(context) +
+        CanariFirebaseMessagingService.enqueueOutboxMirror(
+            context,
             CanariFirebaseMessagingService.OutboxMirrorEntry(
                 // Silent, but durable: a read watermark sent from the notification shade is the
                 // same mutation as one sent from the app, and must reach a device that was offline.
                 UUID.randomUUID().toString(), groupId, protoB64, System.currentTimeMillis(),
                 silent = true, durable = true
             )
-        CanariFirebaseMessagingService.rewriteOutboxMirror(context, entries)
+        )
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
         Log.d(TAG, "sendReadWatermark: queued+drained at=$at group=${groupId.take(8)}")
     }

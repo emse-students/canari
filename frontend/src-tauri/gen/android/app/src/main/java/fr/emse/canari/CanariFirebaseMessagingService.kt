@@ -1071,6 +1071,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
+        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx) }
+
+        /**
+         * Serialises every read-modify-write of `outbox_pending.ndjson` in this process: the drain,
+         * and [enqueueOutboxMirror].
+         *
+         * ONE ENTRY, ONE SEND. A drain reads the mirror, encrypts, POSTs, and only then rewrites it,
+         * so two drains overlapping read the same entry and both sent it. Measured on a Mi 9T,
+         * 2026-10-01: the quick-reply send and an [OutboxRetryWorker] run 5 ms apart both posted
+         * entry `f79aac25`, each under its own ratchet generation. The second drain now waits and
+         * reads the mirror the first one rewrote, where the delivered entry no longer is. The same
+         * lock covers the append, which a concurrent rewrite would otherwise erase.
+         *
+         * Ordered BEFORE [MlsStateLock], which the drain takes inside it and only with a timeout.
+         */
+        private val OUTBOX_LOCK = Any()
+
+        /**
+         * Appends [entry] to the outbox mirror under [OUTBOX_LOCK] - the one way native code queues a
+         * frame, so a drain running at that moment can neither miss nor erase it.
+         */
+        internal fun enqueueOutboxMirror(context: Context, entry: OutboxMirrorEntry) {
+            synchronized(OUTBOX_LOCK) {
+                rewriteOutboxMirror(context, readOutboxMirror(context) + entry)
+            }
+        }
+
+        /** The body of [drainOutboxBackground]; the caller holds [OUTBOX_LOCK]. */
+        private fun drainOutboxLocked(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
         ): Int {
             val entries = readOutboxMirror(context)
             if (entries.isEmpty()) return 0
@@ -1352,8 +1384,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * (cancelAllMessageNotifications in MainActivity.onResume), for this reason or another.
          *
          * THE ONLY COPY. It takes an explicit [context] rather than the Service-as-Context, so
-         * workers and receivers that have no Service - [OutboxRetryWorker] calls it after a failed
-         * drain retry, without waiting for the 3-attempt threshold - and the service itself both
+         * workers and receivers that have no Service - [OutboxRetryWorker] calls it once its real
+         * drain attempts are exhausted - and the service itself both
          * reach the same body. It used to exist twice, verbatim, which is two chances to update the
          * wording and one certainty of forgetting.
          */

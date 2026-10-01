@@ -1545,6 +1545,22 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
 
+**THE WORKER LOOKS AT THE QUEUE FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT (2026-10-01).** It
+used to test WorkManager's `runAttemptCount` before anything else, and that counts every
+`Result.retry()` - the foreground deferral included. Measured on a Mi 9T: a worker enqueued for a
+reply the app then flushed itself deferred three times and posted "Vous avez peut-etre des messages
+en attente" over an EMPTY outbox; it also posted that nudge on the first failed drain, beside the
+reply notification already re-posted as pending. Now an empty mirror succeeds, a deferral is not
+counted, real attempts are counted per request id in `canari_outbox_retry_prefs`, and the nudge is
+posted once, after three failed drains.
+
+**ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
+rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
+quick-reply send and the worker 5 ms apart both posted `f79aac25`, each under its own ratchet
+generation. Every native read-modify-write of the mirror (the drain, and `enqueueOutboxMirror`,
+which the shade actions append through) now holds one process lock, `OUTBOX_LOCK`, taken before
+`MlsStateLock`; the second drain waits and reads the mirror the first one rewrote.
+
 **A RESIDUE AFTER A DRAIN WAITS FOR THE NEXT TRIGGER, AND MAY WAIT A LONG TIME.** Observed on A1,
 2026-08-11: a 110-message backlog drained to **3** and then stopped, with the app foregrounded,
 unlocked, connected and polling `/api/presence` successfully throughout - and **zero log lines**
