@@ -1,11 +1,9 @@
 version: 0.18.33
 
-Les documents d'association ne sont plus supprimes apres des semaines sans ouverture. Si un fichier a deja disparu, l'association peut le televerser a nouveau en un geste.
+Les documents d'association se telechargent a nouveau, y compris ceux deposes avant la correction.
 
-On peut s'abonner au calendrier depuis le telephone.
+Le jour qui s'affiche quand tu fais defiler une conversation est centre et lisible : "mercredi" plutot qu'une date complete quand c'est recent.
 
-Pendant le defilement d'une conversation, le jour affiche est centre et court : aujourd'hui, hier, ou le jour de la semaine.
+Sur telephone, le bouton pour s'abonner au calendrier est de retour, et son lien s'ouvre hors de l'app.
 
-Un message de salon recu pendant que l'app etait en arriere-plan apparait des qu'on revient, et repondre depuis la notification ne la fait plus revenir.
-
-Sur iPhone, le bouton + reste en place avec le clavier, le nom du contact tient sur une ligne et la barre du bas suit le theme clair.
+Sur iPhone, la barre du bas suit le passage au mode clair, et le defilement des documents ne depasse plus.
