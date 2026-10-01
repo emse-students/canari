@@ -17,6 +17,7 @@
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
+  import { isFullScreenPlace } from '$lib/navigation/places';
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
@@ -95,6 +96,16 @@
   $effect(() => {
     document.documentElement.classList.toggle('mobile-convo-open', isMobileConvoOpen);
     return () => document.documentElement.classList.remove('mobile-convo-open');
+  });
+
+  // THE CAMERA IS THE WHOLE SCREEN (CanaReels, C5): no header, no tab bar - its preview IS the page,
+  // as Instagram's is. Unlike an open conversation it does NOT stand the swipe down: the camera is a
+  // swipe place, and swiping left from it is how the member goes back to the feed.
+  const isFullScreen = $derived(isFullScreenPlace(pathname));
+
+  $effect(() => {
+    document.documentElement.classList.toggle('fullscreen-place-open', isFullScreen);
+    return () => document.documentElement.classList.remove('fullscreen-place-open');
   });
 
   const keyboardViewport = $derived(getKeyboardViewport());
@@ -630,12 +641,10 @@
       the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
       dialog centre 640. Two independent statements about one fact, with nothing comparing them.
     -->
-    <div
-      class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-[6rem]'}"
-    >
+    <div class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-24'}">
       {#if !isLoginPage && !isKeyboardOpen}
         <Navbar />
-        {#if !isMobileConvoOpen}
+        {#if !isMobileConvoOpen && !isFullScreen}
           <MobileHeader />
         {/if}
       {/if}
@@ -673,9 +682,11 @@
              So does anything that covers the screen (`coversScreen`): a native bar is drawn ABOVE
              the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
-          <NativeTabBar visible={!isKeyboardOpen && !isMobileConvoOpen && !screenCover.covered} />
+          <NativeTabBar
+            visible={!isKeyboardOpen && !isMobileConvoOpen && !isFullScreen && !screenCover.covered}
+          />
         {/if}
-      {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
+      {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
         <BottomNav />
       {/if}
     </div>

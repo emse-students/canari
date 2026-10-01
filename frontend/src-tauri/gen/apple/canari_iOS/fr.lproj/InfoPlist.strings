@@ -3,7 +3,7 @@
    language is French. Keep in sync with en.lproj/InfoPlist.strings and the base
    Info.plist. Wired into the pbxproj as an InfoPlist.strings PBXVariantGroup
    (app Resources phase, `fr` in knownRegions). */
-"NSCameraUsageDescription" = "Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.";
-"NSMicrophoneUsageDescription" = "Canari utilise le microphone pour enregistrer des messages vocaux.";
+"NSCameraUsageDescription" = "Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations et pour filmer vos CanaReels.";
+"NSMicrophoneUsageDescription" = "Canari utilise le microphone pour enregistrer des messages vocaux et le son de vos CanaReels.";
 "NSPhotoLibraryUsageDescription" = "Canari accède à vos photos pour les partager dans vos conversations.";
 "NSFaceIDUsageDescription" = "Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.";

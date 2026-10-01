@@ -108,9 +108,9 @@
 	     French-first) and act as the fallback; per-locale overrides live in
 	     canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10). -->
 	<key>NSCameraUsageDescription</key>
-	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.</string>
+	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations et pour filmer vos CanaReels.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Canari utilise le microphone pour enregistrer des messages vocaux.</string>
+	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son de vos CanaReels.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
 	<key>NSFaceIDUsageDescription</key>

@@ -1227,8 +1227,17 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    the document element. (A conversation open on mobile also hides the sidebar outright, so that
    half is belt and braces; the keyboard half is reached for real by focusing the search field.) */
 .keyboard-open .mobile-nav-inset,
-.mobile-convo-open .mobile-nav-inset {
+.mobile-convo-open .mobile-nav-inset,
+.fullscreen-place-open .mobile-nav-inset {
   padding-bottom: 0;
+}
+
+/* THE CAMERA IS THE WHOLE SCREEN (CanaReels, C5): the layout unmounts the bar there, so the
+   reservation the wrapper keeps for it would be a dead band under the preview - and the preview is
+   one viewport tall, so the wrapper must not scroll either. Same reasoning as the chat shell above. */
+.fullscreen-place-open .page-scroll-wrap {
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView

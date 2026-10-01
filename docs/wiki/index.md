@@ -62,6 +62,7 @@
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
+- [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [Payments module](frontend/modules/payments.md) — Stripe Connect, products, shop
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config

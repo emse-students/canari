@@ -3097,5 +3097,18 @@
   "calendar_export_reset": "Réinitialiser",
   "calendar_export_palette_hint": "Les couleurs suivent l’image choisie.",
   "post_poll_max_selections_badge": "{count} réponses max",
-  "post_poll_selection_full_hint": "Limite de {count} réponses atteinte"
+  "post_poll_selection_full_hint": "Limite de {count} réponses atteinte",
+  "reels_camera_title": "Caméra",
+  "reels_camera_starting": "Ouverture de la caméra…",
+  "reels_camera_denied_title": "Canari n'a pas accès à la caméra",
+  "reels_camera_denied_body": "Autorisez la caméra et le micro pour Canari dans les réglages du téléphone, puis réessayez.",
+  "reels_camera_unavailable_title": "Aucune caméra disponible",
+  "reels_camera_unavailable_body": "Canari ne trouve aucune caméra utilisable sur cet appareil.",
+  "reels_camera_busy_title": "La caméra est occupée",
+  "reels_camera_busy_body": "Une autre application l'utilise. Fermez-la, puis réessayez.",
+  "reels_camera_retry": "Réessayer",
+  "reels_camera_close": "Fermer la caméra",
+  "reels_camera_switch": "Changer de caméra",
+  "reels_camera_torch_on": "Allumer le flash",
+  "reels_camera_torch_off": "Éteindre le flash"
 }

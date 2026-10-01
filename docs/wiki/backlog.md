@@ -182,6 +182,8 @@ The composer comparison R1 was built from is on
    format before upload - one reason R2 comes first. What the tab itself needs is the section below.
    **The SERVER half (the `reel` post kind, the 90 s declaration, the 30-day deletion, the expiry
    signal) and the API contract the client builds against: [reels](services/reels.md)** (2026-10-01).
+   **The first camera open was READ on both phones on 2026-10-01, and the tab is built on it**
+   ([reels](frontend/modules/reels.md#the-first-camera-open-read-on-both-phones-2026-10-01-before-anything-was-built-on-it)).
 4. **R4 - live** (C9), behind the calls revival.
 
 ### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01
