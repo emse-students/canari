@@ -785,23 +785,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             try {
-                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, "read_watermarks.ndjson")
+                val file = readWatermarksFile(context)
                 CACHE_LOCK.lock()
                 try {
-                    val byGroup = LinkedHashMap<String, Long>()
-                    if (file.exists()) {
-                        for (line in file.readLines()) {
-                            if (line.isBlank()) continue
-                            try {
-                                val o = JSONObject(line)
-                                val g = o.optString("groupId")
-                                val a = o.optLong("at", 0L)
-                                if (g.isNotEmpty() && a > 0L) byGroup[g] = maxOf(byGroup[g] ?: 0L, a)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "appendReadWatermark: unparsable line dropped: ${e.message}")
-                            }
-                        }
-                    }
+                    val byGroup = parseReadWatermarks(file)
                     byGroup[groupId] = maxOf(byGroup[groupId] ?: 0L, at)
                     file.writeText(
                         byGroup.entries.joinToString("\n") { (g, a) ->
@@ -814,6 +801,57 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at recorded for the next boot")
             } catch (e: Exception) {
                 Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+            }
+        }
+
+        /** The one location of `read_watermarks.ndjson`, for its writer and its two readers. */
+        private fun readWatermarksFile(context: Context): File =
+            File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, "read_watermarks.ndjson")
+
+        /**
+         * Parses `read_watermarks.ndjson` into groupId -> highest `at`. Caller holds [CACHE_LOCK].
+         * An unparsable line is dropped and said so; a missing file is an empty map.
+         */
+        private fun parseReadWatermarks(file: File): LinkedHashMap<String, Long> {
+            val byGroup = LinkedHashMap<String, Long>()
+            if (!file.exists()) return byGroup
+            for (line in file.readLines()) {
+                if (line.isBlank()) continue
+                try {
+                    val o = JSONObject(line)
+                    val g = o.optString("groupId")
+                    val a = o.optLong("at", 0L)
+                    if (g.isNotEmpty() && a > 0L) byGroup[g] = maxOf(byGroup[g] ?: 0L, a)
+                } catch (e: Exception) {
+                    Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
+                }
+            }
+            return byGroup
+        }
+
+        /**
+         * How far the user has read [groupId] FROM THE SHADE and the app has not yet merged, or 0.
+         *
+         * Asked by [showMessageNotification] before it posts, because a message the user has
+         * already answered or marked read is not news - and the WebSocket trigger cannot know it:
+         * the app merges this file only at login and resume, so a socket that reconnects in the
+         * background pulls the un-ACKed incoming row and asks for its banner again. Measured on a
+         * Mi 9T, 2026-10-01: a reply sent from the shade came back 2.5 s later as a fresh
+         * notification without the reply line. Once the app has merged the file its own
+         * conversation row carries the watermark, and `notifyInbound` asks the same question there.
+         */
+        internal fun shadeReadWatermark(context: Context, groupId: String): Long {
+            if (groupId.isEmpty()) return 0L
+            return try {
+                CACHE_LOCK.lock()
+                try {
+                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: 0L
+                } finally {
+                    CACHE_LOCK.unlock()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
+                0L
             }
         }
 
@@ -1692,6 +1730,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
                 return 0L
+            }
+            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark]. Only where the
+            // sender's stamp exists, the same condition the de-duplication below carries, and never
+            // against a supersede, which redraws a line that is already there.
+            if (sentAt > 0L && supersedes == 0L) {
+                val readUpTo = shadeReadWatermark(this, groupId)
+                if (sentAt <= readUpTo) {
+                    Log.d(TAG, "showMessageNotification: read from the shade up to $readUpTo -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                    return 0L
+                }
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(this, manager)

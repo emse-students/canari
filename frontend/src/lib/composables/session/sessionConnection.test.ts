@@ -41,6 +41,7 @@ function makeCtx(over: { connected?: boolean } = {}) {
     loggedIn: true,
     wsConnected: over.connected ?? false,
     reconnecting: false,
+    paused: false,
     attempts: 0,
   };
   const timers: Record<string, unknown> = {
@@ -49,9 +50,12 @@ function makeCtx(over: { connected?: boolean } = {}) {
     syncWatchdog: null,
     connectionWatchdog: null,
   };
+  // ONE instance, so a test can ask what the pause did to the socket.
+  const mls = { sendDisconnect: vi.fn(), pauseSocket: vi.fn(), isWsOpen: () => false };
   return {
     state,
     timers,
+    mls,
     ctx: {
       isLoggedIn: () => state.loggedIn,
       isWsConnected: () => state.wsConnected,
@@ -61,6 +65,10 @@ function makeCtx(over: { connected?: boolean } = {}) {
       isReconnecting: () => state.reconnecting,
       setIsReconnecting: (v: boolean) => {
         state.reconnecting = v;
+      },
+      isConnectionPaused: () => state.paused,
+      setConnectionPaused: (v: boolean) => {
+        state.paused = v;
       },
       getReconnectAttempts: () => state.attempts,
       setReconnectAttempts: (v: number) => {
@@ -75,7 +83,7 @@ function makeCtx(over: { connected?: boolean } = {}) {
       getUserId: () => 'someone',
       getDeviceKey: () => 'device-key',
       connectionRecoveryTimers: new Map(),
-      ensureMls: () => ({ sendDisconnect: vi.fn(), isWsOpen: () => false }),
+      ensureMls: () => mls,
       RECONNECT_DELAYS: [1000, 2000, 4000],
     } as unknown as SessionContext,
   };
@@ -114,6 +122,27 @@ describe('the pause/resume pair', () => {
     await resumeConnectionImpl(ctx, cb);
     expect(timers.connectionWatchdog).not.toBeNull();
     expect(startSyncWatchdogImpl).toHaveBeenCalledTimes(2);
+  });
+
+  // MEASURED ON A Mi 9T, 2026-10-01: the pause sent `disconnect` and KEPT the socket, the gateway
+  // stopped reading it, and 32 s later the zombie watchdog reported a disconnection that the ladder
+  // answered by reconnecting a backgrounded app - which pulled a row a shade reply had just answered.
+  it('releases the socket on pause and refuses every reconnect until the foreground', async () => {
+    const { ctx, mls } = makeCtx({ connected: true });
+    const cb = makeCb();
+
+    pauseConnectionImpl(ctx);
+    expect(mls.pauseSocket).toHaveBeenCalledTimes(1);
+
+    // What the zombie watchdog, an `online` event or the service's own hook would now ask for.
+    scheduleReconnectImpl(ctx, cb);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(openGatewayConnection).not.toHaveBeenCalled();
+    expect(cb.log).toHaveBeenCalledWith(expect.stringContaining('connection is paused'));
+
+    // The foreground is the one fact the pause was waiting for.
+    await resumeConnectionImpl(ctx, cb);
+    expect(openGatewayConnection).toHaveBeenCalledTimes(1);
   });
 
   it('re-arms even when the socket survived the background, since pausing disarmed it anyway', async () => {

@@ -413,6 +413,31 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
+  /**
+   * Sends `disconnect`, then drops the native socket and its heartbeat with no disconnect callback -
+   * see {@link IMlsService.pauseSocket}. The listener goes first, so the `Close` the plugin may
+   * still deliver cannot report a disconnection either.
+   */
+  pauseSocket(): void {
+    this.clearHeartbeat();
+    const ws = this.ws;
+    if (!ws) return;
+    this.wsUnlisten?.();
+    this.wsUnlisten = null;
+    this.ws = null;
+    void ws
+      .send(JSON.stringify({ type: 'disconnect' }))
+      .catch(() => {
+        // Best-effort - the gateway forgets a silent socket on its own presence TTL.
+      })
+      .finally(() => {
+        ws.disconnect().catch((e: unknown) => {
+          console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
+        });
+      });
+    console.log('[WS] Paused - disconnect sent, socket released until the next foreground.');
+  }
+
   /** Sends an ephemeral typing signal over the native WebSocket for a DM/group. */
   sendTyping(groupId: string, isTyping: boolean): void {
     if (this.ws) {

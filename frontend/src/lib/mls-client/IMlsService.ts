@@ -1138,14 +1138,10 @@ export interface IMlsService {
    * Send a `disconnect` control frame over the WebSocket so the gateway
    * removes the presence key immediately (instead of waiting for TTL / heartbeat
    * miss). Call this in `beforeunload` or when the app is intentionally closed.
-   * No-op if the socket is not open.
+   * No-op if the socket is not open. A backgrounded app calls {@link pauseSocket} instead, which
+   * sends the same frame and also lets go of the socket.
    *
-   * THIS DOES NOT CLOSE THE SOCKET, and must not: `pauseConnectionImpl` calls it when the app is
-   * backgrounded, and the socket is deliberately expected to survive that - the resume path reports
-   * `[LIFECYCLE] Resume: already connected (flag=true, socket=true)` precisely because it usually
-   * does. Closing here would force a full reconnect on every backgrounding.
-   *
-   * IT ALSO DOES NOT NEED A COMPANION THAT CLOSES. One was added on 2026-08-15 (`closeForUnload`,
+   * IT DOES NOT NEED A COMPANION THAT CLOSES AT UNLOAD. One was added on 2026-08-15 (`closeForUnload`,
    * spending `1001 - going away` so a dying document would stop reporting `1006`) and removed the
    * same day, measured inert on both sides at once: the gateway matches `disconnect` with
    * `handle_disconnect(...); break`, leaving its read loop before any close frame can be read - 0
@@ -1155,6 +1151,21 @@ export interface IMlsService {
    * browser console shows at a navigation is a property of unloading, not a defect to be fixed.
    */
   sendDisconnect(): void;
+
+  /**
+   * Sends the `disconnect` frame, then lets go of the socket WITHOUT reporting a disconnection -
+   * what `pauseConnectionImpl` asks of a backgrounded app.
+   *
+   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` with `handle_disconnect(...);
+   * break`, so it stops reading the socket the moment the frame lands. Keeping the client half
+   * alive after that, which is what a bare `sendDisconnect` used to do here, kept its heartbeat too:
+   * every ping went unanswered, and 32 s later the zombie watchdog closed it and reported a
+   * disconnection - which the reconnect ladder answered by reconnecting a BACKGROUNDED app. Measured
+   * on a Mi 9T, 2026-10-01: that reconnection pulled the incoming row a reply had just answered from
+   * the shade, and its banner came back 2.5 s after the reply. A paused socket has no watchdog because
+   * a paused socket does not exist; the next foreground transition opens a new one.
+   */
+  pauseSocket(): void;
 
   /**
    * Send an ephemeral `typing` signal over the WebSocket for a DM/group conversation.

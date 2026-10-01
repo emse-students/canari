@@ -78,6 +78,15 @@ export function runGroupDiscoveryImpl(
 export function scheduleReconnectImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   if (!ctx.isLoggedIn()) return;
   ctx.setIsWsConnected(false);
+  // A PAUSED CONNECTION IS DOWN ON PURPOSE. The pause closed it; the foreground resume is what opens
+  // the next one. A request arriving now - the platform's `online` event, the service's own
+  // visibility hook - is answered with a line, never with a socket in a backgrounded app.
+  if (ctx.isConnectionPaused()) {
+    cb.log(
+      '[WS] Reconnect request refused - the connection is paused until the app is foreground.'
+    );
+    return;
+  }
   // EVERY SWALLOWED BRANCH LOGS, and these two are why WP-RECONNECT-2 could not be read. A socket
   // close reaches here through `onDisconnect`, and when either guard holds, the request to reconnect
   // is dropped with no record at all - so the log shows a disconnection followed by nothing, and the
@@ -183,8 +192,15 @@ export async function attemptReconnectImpl(
 /**
  * Pauses the WebSocket connection and stops all background timers.
  * Called when the app is backgrounded.
+ *
+ * THE SOCKET IS CLOSED, NOT MERELY ANNOUNCED AS LEAVING. This used to send the `disconnect` frame
+ * and keep the socket: the gateway stops reading it on that frame, so its heartbeat went unanswered
+ * and 32 s later the zombie watchdog closed it and reconnected a backgrounded app (Mi 9T,
+ * 2026-10-01 - see `IMlsService.pauseSocket`). The pause flag then refuses every reconnect request
+ * until {@link resumeConnectionImpl}.
  */
 export function pauseConnectionImpl(ctx: SessionContext): void {
+  ctx.setConnectionPaused(true);
   if (ctx.timers.reconnect !== null) {
     clearTimeout(ctx.timers.reconnect);
     ctx.timers.reconnect = null;
@@ -198,13 +214,9 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
     ctx.timers.syncWatchdog = null;
   }
   stopConnectionWatchdogImpl(ctx);
-  ctx.getStorage(); // no-op read to keep the pattern, actual disconnect below
-  // MLS service disconnect
-  // Note: mls is accessed via ctx.ensureMls() - but sendDisconnect must NOT create the service.
-  // We check via getStorage (present when logged in) and call directly via the ensureMls guard.
   try {
     const svc = ctx.ensureMls();
-    svc.sendDisconnect?.();
+    svc.pauseSocket();
   } catch {
     // Service not initialised - safe to ignore.
   }
@@ -239,6 +251,8 @@ export async function resumeConnectionImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): Promise<void> {
+  // Lifted first, even logged out: the foreground is the one fact the pause was waiting for.
+  ctx.setConnectionPaused(false);
   if (!ctx.isLoggedIn()) return;
   appendLog('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
   ctx.setReconnectAttempts(0);

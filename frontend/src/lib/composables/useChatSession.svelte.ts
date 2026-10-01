@@ -90,6 +90,8 @@ export function useChatSession() {
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >();
   let isReconnecting = false;
+  /** Set by `pauseConnection`, cleared by `resumeConnection` - see `SessionContext.isConnectionPaused`. */
+  let isConnectionPaused = false;
   let isSyncing = false;
   /** True when this tab is the MLS leader (holds the WebSocket). Reactive for the UI. */
   let isTabLeaderState = $state(false);
@@ -182,6 +184,10 @@ export function useChatSession() {
     isReconnecting: () => isReconnecting,
     setIsReconnecting: (v) => {
       isReconnecting = v;
+    },
+    isConnectionPaused: () => isConnectionPaused,
+    setConnectionPaused: (v) => {
+      isConnectionPaused = v;
     },
     isOfflineSession: () => isOfflineSession,
     setIsOfflineSession: (v) => {
@@ -336,6 +342,10 @@ export function useChatSession() {
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {
       return isWsConnected;
+    },
+    /** True while the app is backgrounded and its connection deliberately closed. */
+    get isConnectionPaused() {
+      return isConnectionPaused;
     },
     /**
      * True when the session was unlocked offline and still holds no access token. The UI uses it
