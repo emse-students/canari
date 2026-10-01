@@ -1808,7 +1808,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             /**
              * Whether this notification is a conversation between PEOPLE, so every message carries
              * its author's name - the other person's above theirs, [R.string.notif_sender_self]
-             * above ours - under the conversation's title, as a group already did.
+             * above ours - as a group already did.
              *
              * TRUE from the two MESSAGE triggers only. A direct message used to be posted in
              * Android's one-to-one shape, which names nobody above the other person's text (their
@@ -1883,16 +1883,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // THE GROUP SHAPE IS WHAT NAMES EVERY MESSAGE. From API 28 the platform decides
             // one-to-one from `isGroupConversation` alone, and a one-to-one thread hides the other
             // person's name above their lines. A direct message therefore takes the group shape
-            // too, titled with the person it is with - which is what its conversation is called.
-            val conversationTitle = when {
-                isGroup -> groupName
-                namesEachSender -> senderName.ifEmpty { null }
-                else -> null
-            }
-            if (conversationTitle != null) {
-                style.conversationTitle = conversationTitle
-                style.isGroupConversation = true
-            }
+            // too - and NO title: titled with the person, the collapsed line read
+            // "Name : Name : text" and the expanded one put the name twice on top of each other
+            // (both read on the Mi 9T, 2026-10-01). Untitled, the name sits once, above the line.
+            val conversationTitle = if (isGroup) groupName else null
+            if (conversationTitle != null) style.conversationTitle = conversationTitle
+            if (isGroup || namesEachSender) style.isGroupConversation = true
             // Re-inject the previous (bounded) messages, then add the new one.
             // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
             existingNotif
@@ -2003,7 +1999,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val notif = notifBuilder.build()
 
-            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=${conversationTitle != null}")
+            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
             manager.notify(notifId, notif)
 
             // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
