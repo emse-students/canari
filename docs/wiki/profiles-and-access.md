@@ -420,7 +420,7 @@ filters.
   takes `campus` and `post` filters (either alone is a valid filter). `miconnectUuid` is never public.
 - Frontend: the directory shows each cursus entry, the posts and the campus, and filters on campus
   and post (Paraglide keys `directory_label_campus`, `directory_label_post`, `profile_campus_*`,
-  `profile_post_*`). **Not yet**: the profile page itself, which still reads `promo`/`formation`.
+  `profile_post_*`). The profile page (own and by id) shows them as chips (`ProfileChips.svelte`, reading `cursus` only, so a person not yet backfilled shows no chip until the backfill or their next sign-in).
 - **Not observed**: a real sign-in writing the columns on dev/prod.
 
 **WP4 - Editing from Canari (D9, D10).**

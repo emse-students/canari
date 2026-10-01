@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import type { Campus, CursusEntry, Post } from '$lib/profile/miconnectProfile';
 import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
@@ -25,6 +26,10 @@ export interface UserProfile {
   promo: number | null;
   /** Academic programme/track. */
   formation: string | null;
+  /** MiConnect campus, cursus and posts; absent on a profile cached before WP3. */
+  campus?: Campus | null;
+  cursus?: CursusEntry[];
+  posts?: Post[];
   /** Media ID of the uploaded avatar, or `null` if using the generated placeholder. */
   avatarMediaId: string | null;
   bio: string | null;
