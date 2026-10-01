@@ -18,6 +18,8 @@
 import { accountFor } from './accounts.mjs';
 import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
 import { forwardIdpBrowser } from './phone.mjs';
+import { WEBVIEW_MATCH as IOS_WEBVIEW, signInThroughSheet } from './phone-ios.mjs';
+import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 import { PORTS, SITE } from './names.mjs';
 
@@ -36,6 +38,12 @@ const opt = (name, fallback) => {
 const target = resolveDevice(argv, { defaultPort: PORTS.W2 });
 const { port, account, isPhone } = target;
 if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
+/**
+ * THE iPHONE SIGNS IN THROUGH A SYSTEM SHEET (ASWebAuthenticationSession) that no inspector reaches,
+ * so its form is answered by WDA (`signInThroughSheet`, docs/wiki/cross-client-ios.md O9) and it has
+ * no "browser on the next port" at all.
+ */
+const onIos = isIosName(target.device);
 
 const creds = accountFor(account);
 
@@ -54,7 +62,7 @@ await armIfPhone(target, `login:${account}`);
 // through this, drove the form in the wrong browser, and then failed on a tab that had never been
 // asked for anything. So the phone's port arithmetic is done only for the phone; a browser has no
 // Custom Tab, and `null` says so instead of pointing at a neighbour.
-const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : isPhone ? port + 1 : null;
+const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : isPhone && !onIos ? port + 1 : null;
 
 /**
  * The credential form when it is in the phone's BROWSER rather than in the app, or null.
@@ -73,7 +81,8 @@ const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : isPhone ?
  * The forward is re-made on every call rather than once: the abstract socket carries the browser's
  * pid, and a Custom Tab that is dismissed and re-opened is a different process.
  */
-const atAnIdP = (url) => url.includes('auth.canari-emse.fr') || url.includes('cas.emse.fr');
+const IDP_HOSTS = ['auth.canari-emse.fr', 'cas.emse.fr'];
+const atAnIdP = (url) => IDP_HOSTS.some((h) => url.includes(h));
 
 /**
  * The IdP page on port `p` THAT IS ACTUALLY ON SCREEN, or null - and the choice is MEASURED.
@@ -172,8 +181,9 @@ const here = async () => evaluate(await appCx(), 'location.href');
 // below spent its whole 30 s budget and every caller was handed a login that had in fact succeeded.
 // It is the anchored comparison the resume page measured as ZERO - it was written after that count.
 const APP_ORIGIN = new URL(SITE).origin;
+// The iPhone's shell serves it from `tauri://localhost` (`phone-ios.mjs`), not `tauri.localhost`.
 const onTheApp = (url) =>
-  (url.startsWith(APP_ORIGIN) || url.includes('tauri.localhost')) &&
+  (url.startsWith(APP_ORIGIN) || url.includes('tauri.localhost') || url.startsWith(IOS_WEBVIEW)) &&
   !url.includes('auth.canari-emse.fr') &&
   !url.includes('cas.emse.fr');
 console.log(`[login:${account}] start ${await here()}`);
@@ -376,6 +386,27 @@ if (theIdPAnsweredForUs) console.log(`[login:${account}] already on the app, no 
 //
 // Reading before acting is what the rest of this file already does for the session; this is the
 // same rule applied to the form.
+//
+// THE iPHONE ANSWERS ITS SHEET HERE AND ENDS HERE. The launcher click is an ordinary WebView click
+// (a WDA tap through `webkit-input.mjs`); everything after it is a system sheet, answered by WDA, and
+// the proof is the same one every path uses - the app itself holding a session.
+if (onIos && !theIdPAnsweredForUs) {
+  if (FLOW === 'cas') {
+    throw new Error('--flow cas on I1: CAS ends at the school 2FA no tool here can pass - the iPhone signs in with the service-account flow');
+  }
+  if (onTheLauncher(await here())) await realClick(await appCx(), LAUNCHER_BUTTON);
+  const signed = await signInThroughSheet(creds, { hosts: IDP_HOSTS, settled: holdsASession });
+  console.log(`[login:${account}] sign-in sheet answered by WDA: ${signed.stages.join(' -> ') || 'nothing to fill'} (${signed.inMs} ms)`);
+  let session = false;
+  for (let i = 0; i < 300 && !session; i++) {
+    session = await holdsASession();
+    if (!session) await sleep(100);
+  }
+  if (!session) throw new Error(`the sign-in sheet was answered and the app holds no session 30 s later, at ${await here()}`);
+  console.log(`[login:${account}] final ${await here()}`);
+  cx?.close();
+  process.exit(0);
+}
 for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++) {
   // THE CLICK IS GATED ON BEING ON THE LAUNCHER, because that is the only page carrying the button.
   // Reached mid-flow (`committed === 'idp'`) there is nothing to click, and asking `realClick` for a

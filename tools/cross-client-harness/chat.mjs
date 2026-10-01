@@ -313,9 +313,10 @@ export async function client(port, match = null, { focus = true, allowMany = fal
  * claim the campaign had no A1 reload left.
  */
 export async function goto(cx, path, { relaunch = null } = {}) {
-  if (cx.port === PORTS.A1 && !relaunch)
+  // I1 IS THE SAME TAURI SHELL, so the same reload costs the same PIN re-lock and the same IPC race.
+  if ((cx.port === PORTS.A1 || isIosApp(cx)) && !relaunch)
     throw new Error(
-      `goto('${path}') on A1 reloads the Tauri webview: it re-locks the PIN and breaks Tauri's ` +
+      `goto('${path}') on ${isIosApp(cx) ? 'I1' : 'A1'} reloads the Tauri webview: it re-locks the PIN and breaks Tauri's ` +
         'IPC callbacks into the old document. Use ensureChat/openConversation, or pass ' +
         "{ relaunch: 'why this check needs a reload' } if that is the subject."
     );
@@ -947,7 +948,7 @@ export async function ensureChat(cx) {
  * measurement taken on W1/W2 has to be re-baselined.
  */
 export async function openDM(cx, name) {
-  if (cx.port === PORTS.A1) {
+  if (cx.port === PORTS.A1 || isIosApp(cx)) {
     await ensureChat(cx);
     // THE TWO BRANCHES OWED THE SAME PRECONDITION AND ONLY ONE DELIVERED IT. `goto('/chat')` reloads,
     // so the desktop branch always arrives with the conversation LIST on screen. `ensureChat` cannot
@@ -2098,8 +2099,18 @@ export const MOBILE_SHEET = '[data-keyboard-aware-actions]';
  * one fact a connection already carries.
  */
 export function isPhone(cx) {
-  return cx.port === PORTS.A1 || cx.port === PORTS.A2;
+  return isAndroid(cx) || isIosApp(cx);
 }
+
+/** The Android app (A1, A2) - the one phone whose gestures `adb input` can inject. */
+export const isAndroid = (cx) => cx.port === PORTS.A1 || cx.port === PORTS.A2;
+
+/**
+ * The iOS app (I1) - a phone layout like A1, whose input reaches the device as WDA touches through
+ * the connection itself (`cx.webkitInput`, `webkit-input.mjs`). `PORTS.I1` is undefined in a
+ * `names.mjs` that predates the iPhone, and an undefined port must not match an undefined one.
+ */
+export const isIosApp = (cx) => PORTS.I1 !== undefined && cx.port === PORTS.I1;
 
 export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aware-actions]'}')`;
 
@@ -2134,8 +2145,10 @@ export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aw
  */
 export async function longPressBubble(cx, textMatch, holdMs = 700) {
   const c = await bubbleCentre(cx, textMatch);
-  const how = isPhone(cx) ? 'adb input swipe' : 'CDP Input.dispatchTouchEvent';
-  if (isPhone(cx)) {
+  // ON THE iPHONE THE CDP BRANCH BELOW *IS* AN OS TOUCH: the connection replays the touchStart /
+  // touchEnd pair as one WDA press held for the same 700 ms (`webkit-input.mjs`), a real finger.
+  const how = isAndroid(cx) ? 'adb input swipe' : cx.webkitInput ? 'WDA touch (webkit-input)' : 'CDP Input.dispatchTouchEvent';
+  if (isAndroid(cx)) {
     // CSS pixels are what the page measures in; `input` speaks device pixels from the screen's own
     // origin. `screenX`/`screenY` are the viewport's offset inside it - 0 on this edge-to-edge
     // shell, and read rather than assumed because a shell with a status bar would need them.

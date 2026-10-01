@@ -441,6 +441,8 @@ test-harness:
 	@bun tools/cross-client-harness/archive/epochfork-selftest.mjs
 	@bun tools/cross-client-harness/archive/consoleorigin-selftest.mjs
 	@bun tools/cross-client-harness/archive/phone-ios-selftest.mjs
+	@bun tools/cross-client-harness/archive/webkit-input-selftest.mjs
+	@bun tools/cross-client-harness/archive/ios-observables-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh

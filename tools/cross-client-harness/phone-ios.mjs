@@ -22,6 +22,13 @@
  * cannot see this" - the app's MLS state and Graine mirror live in the App Group container
  * (`group.fr.emse.canari`), which no lockdown service vends.
  *
+ * WHAT ONLY THE iPHONE NEEDS, at the end of the file: the system screens a row drives through WDA
+ * - Control Center (`setAirplaneMode`), the Network Link Conditioner (`setLinkConditioner`), the
+ * app switcher (`forceQuit`), Settings (`setNotificationsAllowed`), a reboot (`reboot`), a fresh
+ * install and the sign-in sheet (`freshInstall`, `signInThroughSheet`), a deep link
+ * (`openDeepLink`), a notification's actions (`notificationAction`). The WebView's own input is not
+ * here: it is the connection's (`webkit-input.mjs`).
+ *
  * SYNCHRONOUS WHERE `phone.mjs` IS. Rows write `if (phone.pid() === null)`; an async `pid()` would
  * return a Promise, never null, and every death would read as a live process. WDA is HTTP, so the
  * sync calls go through a spawned `ios.mjs` - ~100 ms each, the price of keeping one interface.
@@ -81,6 +88,19 @@ const io = {
       throw new Error(`ios.mjs ${args[0]} failed (exit ${r.status ?? 'none'}): ${why}`);
     }
     return String(r.stdout).trim();
+  },
+  /**
+   * `ios.mjs type -` with `text` on STDIN - a credential typed into the sign-in sheet never becomes an
+   * argv value a process list or a captured shell would show.
+   */
+  typeStdin(text, timeout = 60_000) {
+    const r = spawnSync(process.execPath, [join(HERE, '..', 'ios-device', 'ios.mjs'), 'type', '-'], { input: text, encoding: 'utf8', timeout });
+    if (r.status !== 0) throw new Error(`ios.mjs type - failed (exit ${r.status ?? 'none'}): ${String(r.stderr || r.error?.message || '').trim().slice(0, 300)}`);
+  },
+  /** Runs `sign-install.mjs` on an unsigned bench IPA (it signs AND installs); throws with its output. */
+  signInstall(ipa, timeout = 600_000) {
+    const r = spawnSync(process.execPath, [join(HERE, '..', 'ios-device', 'sign-install.mjs'), ipa], { encoding: 'utf8', timeout });
+    if (r.status !== 0) throw new Error(`sign-install.mjs failed (exit ${r.status ?? 'none'}): ${String(r.stderr || r.stdout || '').trim().slice(-400)}`);
   },
   /** A GET, synchronously; the body, or null when nothing answered. */
   http(url, timeout = 5_000) {
@@ -675,4 +695,517 @@ export function console_(sinceLines = 3000) {
     .map(parseSyslogLine)
     .filter((p) => p && p.process === APP_PROCESS)
     .map((p) => p.message);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The system's own screens - the WDA-only observables (docs/wiki/cross-client-ios.md O3, O6-O11).
+//
+// EVERY ONE ENDS IN A PROOF READ BACK FROM THE DEVICE, never in "the tap was sent": a switch is
+// re-read after it is flipped, a force-quit waits for the process to be gone, an install asks the
+// device what is installed. A gesture that missed reads exactly like one that worked otherwise.
+//
+// THE LABELS ARE THE EXPECTED ONES, French first (the bench iPhone's language) then English. Nothing
+// here has run on the iPhone yet; the first live session re-pins them (cross-client-ios.md).
+// ---------------------------------------------------------------------------------------------------
+
+const readFlat = () => JSON.parse(io.ios(['flat']));
+const labelOf = (e) => String(e?.label || String(e?.text ?? '').split(' | ')[0]).trim();
+const centreOf = (r) => ({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+const tapRect = (r) => {
+  const c = centreOf(r);
+  io.ios(['tap', `${c.x},${c.y}`]);
+  return c;
+};
+
+/**
+ * The first element whose label IS one of `labels` (exact, case-insensitive) and that has a
+ * rectangle; `type` narrows to an XCUIElementType suffix (`Button`, `Switch`, `TextField`).
+ */
+export function findLabelled(flat, labels, { type } = {}) {
+  const want = labels.map((l) => l.toLowerCase());
+  return (
+    (flat ?? []).find(
+      (e) => e.rect && want.includes(labelOf(e).toLowerCase()) && (!type || String(e.type ?? '').endsWith(type)),
+    ) ?? null
+  );
+}
+
+/** A switch's state from its accessibility value: true on, false off, null when it is not a switch. */
+export function switchState(e) {
+  const v = String(e?.value ?? '').trim().toLowerCase();
+  if (v === '1' || v === 'on' || v === 'true') return true;
+  if (v === '0' || v === 'off' || v === 'false') return false;
+  return null;
+}
+
+/** Flips the switch labelled one of `labels` to `on` if it is not, then RE-READS it. */
+function setSwitch(labels, on, where) {
+  const before = findLabelled(readFlat(), labels);
+  if (!before) throw new Error(`${where}: no control labelled ${labels.join(' / ')} on screen`);
+  const was = switchState(before);
+  if (was === null) throw new Error(`${where}: "${labelOf(before)}" is not a switch (value ${JSON.stringify(before.value)})`);
+  if (was !== on) {
+    tapRect(before.rect);
+    io.sleepSync(900);
+  }
+  const after = switchState(findLabelled(readFlat(), labels));
+  if (after !== on) throw new Error(`${where}: "${labelOf(before)}" reads ${after} after the tap - wanted ${on}`);
+  return { before: was, after };
+}
+
+/** Scrolls the front screen down until an element labelled one of `labels` is ON it; the element. */
+function scrollTo(labels, where, maxScrolls = 10) {
+  const { width, height } = screen();
+  const x = Math.round(width / 2);
+  for (let i = 0; i <= maxScrolls; i++) {
+    const hit = findLabelled(readFlat(), labels);
+    if (hit && hit.rect.y >= 0 && hit.rect.y + hit.rect.height <= height) return hit;
+    io.ios(['swipe', x, Math.round(height * 0.75), x, Math.round(height * 0.3), 0.05]);
+    io.sleepSync(500);
+  }
+  throw new Error(`${where}: nothing labelled ${labels.join(' / ')} after ${maxScrolls} scrolls`);
+}
+
+// --- O3 - network conditions ------------------------------------------------------------------------
+
+export const AIRPLANE_LABELS = ['Mode Avion', 'Airplane Mode'];
+export const WIFI_LABELS = ['Wi-Fi'];
+
+/** Pulls Control Center down from the top-RIGHT edge (the top-left one is Notification Center). */
+function openControlCentre() {
+  const { width, height } = screen();
+  const x = Math.round(width * 0.9);
+  io.ios(['swipe', x, 2, x, Math.round(height * 0.6), 0.05]);
+  io.sleepSync(900);
+}
+
+/**
+ * O3 OFFLINE - the phone off every network, through Control Center, the way its user does it.
+ * `Network.emulateNetworkConditions` does not exist in WebKit, and cutting the WebView alone would
+ * leave the NSE and APNs on the air - which is not what "offline" means to a push row.
+ *
+ * AIRPLANE MODE IS NOT ENOUGH ON ITS OWN, AND THAT IS WHY WI-FI IS SET TOO. iOS remembers a Wi-Fi
+ * turned back on inside airplane mode and restores it the next time, so `airplane on` can leave the
+ * phone on the bench's Wi-Fi - which is exactly the network the estate is reached on. Offline is
+ * therefore BOTH switches read back off; online is airplane off and Wi-Fi read back on. WDA rides
+ * usbmux (the cable), so it keeps answering while the radios are down.
+ *
+ * @param {boolean} on true = offline
+ * @returns {{ airplane: {before, after}, wifi: {before, after} }}
+ */
+export function setAirplaneMode(on) {
+  openControlCentre();
+  try {
+    const airplane = setSwitch(AIRPLANE_LABELS, on, 'Control Center');
+    const wifi = setSwitch(WIFI_LABELS, !on, 'Control Center');
+    return { airplane, wifi };
+  } finally {
+    closeCentre();
+  }
+}
+
+export const SETTINGS_BUNDLE = 'com.apple.Preferences';
+export const DEVELOPER_LABELS = ['Développeur', 'Developer'];
+export const LINK_CONDITIONER_LABELS = ['Network Link Conditioner'];
+export const LINK_CONDITIONER_ENABLE_LABELS = ['Enable', 'Activer'];
+
+/**
+ * O3 THROTTLE - the Developer menu's Network Link Conditioner (the iPhone's only throttle: WebKit has
+ * no network emulation). `profile` is the row's name as Settings lists it ("3G", "Very Bad Network",
+ * "100% Loss", ...); null switches the conditioner OFF. The Developer menu exists only on a phone that
+ * has had a developer build installed - the bench has.
+ *
+ * The ENABLE switch is read back; the profile row is tapped and NOT proven (a selected cell carries no
+ * value the tree exposes), which is the first thing the first live run re-pins.
+ */
+export function setLinkConditioner(profile) {
+  openSettings([DEVELOPER_LABELS, LINK_CONDITIONER_LABELS]);
+  try {
+    if (profile) {
+      tapRect(scrollTo([profile], 'Network Link Conditioner').rect);
+      io.sleepSync(600);
+    }
+    const enable = setSwitch(LINK_CONDITIONER_ENABLE_LABELS, Boolean(profile), 'Network Link Conditioner');
+    return { profile: profile ?? null, enable };
+  } finally {
+    home();
+  }
+}
+
+// --- O6 - the user's force-quit -----------------------------------------------------------------------
+
+/**
+ * The app's card in the open app switcher: labelled with the app's name, and TALL - a card is most of
+ * the screen's height, which is what tells it apart from the home screen's icon of the same name
+ * (the gesture that opens the switcher can fall short and leave the home screen up).
+ */
+export function switcherCard(flat, screenHeight, appName = APP_NAME) {
+  return (
+    (flat ?? []).find(
+      (e) =>
+        e.rect &&
+        labelOf(e).toLowerCase() === appName.toLowerCase() &&
+        !String(e.type ?? '').endsWith('Icon') &&
+        e.rect.height >= screenHeight * 0.3,
+    ) ?? null
+  );
+}
+
+/**
+ * O6 - THE USER'S FORCE-QUIT: the app switcher (a slow drag up from the bottom edge, held mid-screen)
+ * and the app's card flicked off the top. Not {@link forceStop}: on iOS this gesture is what stops the
+ * system from waking the app for background pushes, which is LIFE-3's subject.
+ *
+ * PROVEN DEAD, or it throws: a flick that missed the card leaves the app suspended, which reads
+ * exactly like a quit to anything that does not ask.
+ */
+export async function forceQuit(timeoutMs = 10_000) {
+  const stateBefore = procState();
+  if (stateBefore === null) throw new Error('forceQuit: the app is not running - there is no card to flick');
+  const { width, height } = screen();
+  const x = Math.round(width / 2);
+  io.ios([
+    'gesture',
+    JSON.stringify([
+      { type: 'pointerMove', duration: 0, x, y: height - 2 },
+      { type: 'pointerDown', button: 0 },
+      { type: 'pointerMove', duration: 450, x, y: Math.round(height * 0.55) },
+      { type: 'pause', duration: 900 },
+      { type: 'pointerUp', button: 0 },
+    ]),
+  ]);
+  io.sleepSync(900);
+  const flat = readFlat();
+  const card = switcherCard(flat, height);
+  if (!card) {
+    home();
+    throw new Error(
+      `forceQuit: the app switcher shows no ${APP_NAME} card - on screen: ${flat.map(labelOf).filter(Boolean).slice(0, 15).join(' | ')}`,
+    );
+  }
+  const c = centreOf(card.rect);
+  io.ios([
+    'gesture',
+    JSON.stringify([
+      { type: 'pointerMove', duration: 0, x: c.x, y: c.y },
+      { type: 'pointerDown', button: 0 },
+      { type: 'pointerMove', duration: 120, x: c.x, y: 10 },
+      { type: 'pointerUp', button: 0 },
+    ]),
+  ]);
+  io.sleepSync(800);
+  home();
+  const t0 = io.now();
+  while (io.now() - t0 < timeoutMs) {
+    if (pid() === null) return { stateBefore, deadInMs: io.now() - t0 };
+    await io.sleep(500);
+  }
+  throw new Error(`forceQuit: the card was flicked and the app still reads ${procState()} after ${timeoutMs} ms`);
+}
+
+// --- O7 - the Settings app --------------------------------------------------------------------------
+
+/**
+ * Opens Settings at its ROOT (ended first, so the path never starts on whatever page was left open)
+ * and taps down a path, each step a list of the labels that step may carry; the labels it took.
+ */
+export function openSettings(steps) {
+  io.ios(['terminate', SETTINGS_BUNDLE]);
+  io.ios(['launch', SETTINGS_BUNDLE]);
+  io.sleepSync(1200);
+  const took = [];
+  for (const labels of steps) {
+    const hit = scrollTo(labels, `Settings > ${took.join(' > ') || '(root)'}`);
+    tapRect(hit.rect);
+    took.push(labelOf(hit));
+    io.sleepSync(900);
+  }
+  return took;
+}
+
+/** iOS 18 lists every app under ONE root row, "Apps"; earlier iOS lists them on the root itself. */
+export const APPS_LABELS = ['Apps'];
+
+/** Settings > (Apps >) Canari - whichever the phone's iOS has, decided by which row the root shows. */
+export function openAppSettings() {
+  const took = openSettings([]);
+  const first = scrollTo([APP_NAME, ...APPS_LABELS], 'Settings (root)');
+  tapRect(first.rect);
+  took.push(labelOf(first));
+  io.sleepSync(900);
+  if (APPS_LABELS.includes(labelOf(first))) {
+    tapRect(scrollTo([APP_NAME], 'Settings > Apps').rect);
+    took.push(APP_NAME);
+    io.sleepSync(900);
+  }
+  return took;
+}
+
+export const ALLOW_NOTIFICATIONS_LABELS = ['Autoriser les notifications', 'Allow Notifications'];
+
+/**
+ * O7 - THE NOTIFICATION PERMISSION, where the user changes it: Settings > Canari > Notifications >
+ * the "Allow Notifications" switch, read back. LIFE-7's subject.
+ */
+export function setNotificationsAllowed(allowed) {
+  const path = openAppSettings();
+  try {
+    tapRect(scrollTo(['Notifications'], `Settings > ${path.join(' > ')}`).rect);
+    io.sleepSync(900);
+    return { path: [...path, 'Notifications'], ...setSwitch(ALLOW_NOTIFICATIONS_LABELS, allowed, 'Settings > Canari > Notifications') };
+  } finally {
+    home();
+  }
+}
+
+// --- O8 - a reboot ----------------------------------------------------------------------------------
+
+/**
+ * O8 - REBOOTS THE iPHONE and proves both halves: usbmux LOSES it (the restart was taken - a refused
+ * one returns at once and looks like a fast reboot) and then FINDS it again.
+ *
+ * IT STOPS AT "BEFORE FIRST UNLOCK", deliberately. A rebooted iPhone has no WDA (the runner died with
+ * it, and `wda-daemon.py` can only start it again once the phone is unlocked) and its data protection
+ * keeps the app's stores sealed until a human enters the passcode - which is LIFE-5's precondition,
+ * not the rig's to pass. `wda` reports whether WDA answers yet.
+ */
+export async function reboot({ downTimeoutMs = 90_000, upTimeoutMs = 300_000 } = {}) {
+  const udid = serial();
+  io.pymd(['diagnostics', 'restart', '--udid', udid], 60_000);
+  const t0 = io.now();
+  while (attached().includes(udid)) {
+    if (io.now() - t0 > downTimeoutMs) throw new Error(`reboot: usbmux still lists ${udid} ${downTimeoutMs} ms after the restart was asked - it was not taken`);
+    await io.sleep(2_000);
+  }
+  const downInMs = io.now() - t0;
+  while (!attached().includes(udid)) {
+    if (io.now() - t0 > upTimeoutMs) throw new Error(`reboot: ${udid} went down and did not come back within ${upTimeoutMs} ms`);
+    await io.sleep(3_000);
+  }
+  const locked = deviceLocked();
+  return {
+    udid,
+    downInMs,
+    backInMs: io.now() - t0,
+    wda: locked === null ? 'down' : 'up',
+    locked,
+    owed: 'the first unlock is a human passcode (Before First Unlock); then restart wda-daemon.py',
+  };
+}
+
+// --- O9 - a fresh device ----------------------------------------------------------------------------
+
+/** Whether the app is installed, asked of the device (`pymobiledevice3 apps list`, user apps). */
+export function isInstalled() {
+  const apps = JSON.parse(io.pymd(['apps', 'list', '--udid', serial()], 60_000));
+  return Array.isArray(apps) ? apps.some((a) => a?.CFBundleIdentifier === PKG) : Object.hasOwn(apps ?? {}, PKG);
+}
+
+/**
+ * Removes the app and PROVES it gone. On the iPhone this is the whole of a wipe: the App Group
+ * container (MLS state, Graine mirror) and the WebView's storage go with the last app of the group.
+ */
+export function uninstall() {
+  if (!isInstalled()) return { wasInstalled: false };
+  io.pymd(['apps', 'uninstall', PKG, '--udid', serial()], 120_000);
+  if (isInstalled()) throw new Error(`uninstall: ${PKG} is still listed after pymobiledevice3 apps uninstall`);
+  return { wasInstalled: true };
+}
+
+/**
+ * O9 - A FRESH DEVICE: uninstall (proven), then `sign-install.mjs` on the unsigned BENCH IPA (it
+ * signs and installs), then the device asked again. The sign-in that follows is `login.mjs --device
+ * I1`, which drives {@link signInThroughSheet}.
+ */
+export function freshInstall(ipa) {
+  if (!ipa) throw new Error('freshInstall needs the unsigned bench IPA ios.yml (local_url) produced');
+  const { wasInstalled } = uninstall();
+  io.signInstall(ipa);
+  if (!isInstalled()) throw new Error(`freshInstall: sign-install.mjs exited 0 and ${PKG} is not installed`);
+  return { wasInstalled, installed: true };
+}
+
+/** The consent alert ASWebAuthenticationSession raises before the sheet ("... souhaite utiliser ..."). */
+export const CONSENT_LABELS = ['Continuer', 'Continue'];
+
+/**
+ * Which stage the sign-in sheet shows: 'consent' (the system alert), 'identifier' or 'password' (the
+ * IdP's form, inside the sheet), or null when none is up.
+ *
+ * THE FORM COUNTS ONLY WHILE THE SHEET IS UP, named by an IdP HOST somewhere on screen (the sheet's
+ * bar shows it): Canari's own WebView has text fields too, and the search box of a signed-in app
+ * read as an "identifier stage" would have a login typed into it. The consent button counts only
+ * inside an ALERT, for the same reason - "Continuer" is also a word the app itself uses.
+ */
+export function signInStage(flat, hosts) {
+  const list = flat ?? [];
+  const has = (suffix) => list.some((e) => String(e.type ?? '').endsWith(suffix));
+  if (has('Alert') && findLabelled(list, CONSENT_LABELS, { type: 'Button' })) return 'consent';
+  const sheetUp = list.some((e) => hosts.some((h) => String(e.text ?? '').includes(h)));
+  if (!sheetUp) return null;
+  if (has('SecureTextField')) return 'password';
+  if (has('TextField')) return 'identifier';
+  return null;
+}
+
+/** Focuses `field`, deletes what it holds, and types `text` + Return - Return, never the IdP's button. */
+function fillField(field, text) {
+  tapRect(field.rect);
+  io.sleepSync(400);
+  // A secure field reads as dots and an empty one as its placeholder: deleting that many characters
+  // clears the first and is harmless to the second. Typed through stdin - see `typeStdin`.
+  const held = String(field.value ?? '').length;
+  io.typeStdin(`${'\b'.repeat(held)}${text}\n`);
+}
+
+/**
+ * O9 - SIGNS IN THROUGH THE ASWebAuthenticationSession SHEET, by WDA alone: the consent alert
+ * ("Continuer"), then the IdP's identifier and password stages, each typed and ended with RETURN.
+ * Return and not the form's button: tapping "Continuer" in the form added a character to the password
+ * each time (phone-comparison.md, 2026-09-30). The sheet is a system view no inspector reaches, so
+ * this is the only route to it.
+ *
+ * ENDS ON A FACT: `settled()` (the caller's proof - `login.mjs` asks the app whether it holds a
+ * session) or the sheet gone after it was answered. An IdP that kept its session closes the sheet by
+ * itself after the consent, and that is a success with nothing typed.
+ *
+ * @param {{ username: string, password: string }} creds never printed, never an argv value
+ * @param {{ hosts: string[], settled?: () => Promise<boolean>, timeoutMs?: number }} opts
+ */
+export async function signInThroughSheet(creds, { hosts, settled = async () => false, timeoutMs = 60_000 } = {}) {
+  if (!hosts?.length) throw new Error('signInThroughSheet needs the IdP hosts the sheet shows');
+  const answered = [];
+  const t0 = io.now();
+  while (io.now() - t0 < timeoutMs) {
+    if (await settled()) return { stages: answered, inMs: io.now() - t0 };
+    const flat = readFlat();
+    const stage = signInStage(flat, hosts);
+    if (stage === 'consent') {
+      tapRect(findLabelled(flat, CONSENT_LABELS, { type: 'Button' }).rect);
+      answered.push('consent');
+    } else if (stage === 'identifier' || stage === 'password') {
+      // A stage answered once and still on screen is the IdP REFUSING it, not a slow page: typing
+      // the same credential again would only add to the refusals counted against the account.
+      if (!answered.includes(stage)) {
+        const field = flat.find((e) => e.rect && String(e.type ?? '').endsWith(stage === 'password' ? 'SecureTextField' : 'TextField'));
+        fillField(field, stage === 'password' ? creds.password : creds.username);
+        answered.push(stage);
+      } else if (io.now() - t0 > timeoutMs / 2) {
+        throw new Error(`signInThroughSheet: the ${stage} stage was answered and is still on screen`);
+      }
+    } else if (answered.length) {
+      return { stages: answered, inMs: io.now() - t0 };
+    }
+    await io.sleep(700);
+  }
+  throw new Error(`signInThroughSheet: no session after ${timeoutMs} ms - answered: ${answered.join(', ') || 'nothing (the sheet never appeared)'}`);
+}
+
+// --- O10 - a deep link ------------------------------------------------------------------------------
+
+/** The confirmation Safari raises before handing a custom scheme to an app. */
+export const OPEN_LABELS = ['Ouvrir', 'Open'];
+
+/**
+ * O10 - OPENS A DEEP LINK THE WAY THE SYSTEM DOES (`fr.emse.canari://chat/<id>`, COMM-18), with
+ * nothing launched first, so a link into a dead app is a COLD start - `cold` says which it was. An
+ * "Open in Canari?" confirmation is answered. Ends when the app is in FRONT, or throws; whether the
+ * app then routed the link is the row's measurement (`[notifNav] deep link received`).
+ */
+export async function openDeepLink(url, timeoutMs = 20_000) {
+  const before = appState();
+  const cold = before === null ? null : before <= 1;
+  io.ios(['url', url]);
+  let confirmed = false;
+  const t0 = io.now();
+  while (io.now() - t0 < timeoutMs) {
+    if (foregrounded()) return { url, cold, confirmed, inFrontInMs: io.now() - t0 };
+    const ask = findLabelled(readFlat(), OPEN_LABELS, { type: 'Button' });
+    if (ask) {
+      tapRect(ask.rect);
+      confirmed = true;
+    }
+    await io.sleep(500);
+  }
+  throw new Error(`openDeepLink: ${PKG} never came to the front within ${timeoutMs} ms of ${url}`);
+}
+
+// --- O11 - a notification's actions -----------------------------------------------------------------
+
+const STRINGS_DIR = join(HERE, '..', '..', 'frontend', 'src-tauri', 'gen', 'apple', 'canari_iOS');
+
+/** `"key" = "value";` lines of an Apple `.strings` file, as a Map. */
+export function parseStrings(src) {
+  const out = new Map();
+  for (const m of String(src).matchAll(/^\s*"([^"]+)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;/gm)) out.set(m[1], m[2]);
+  return out;
+}
+
+/**
+ * The titles the app gives its notification actions (`canari_push.mm` registers them), read from the
+ * app's OWN `Localizable.strings` in every language it ships - one source, so a renamed action cannot
+ * leave the rig looking for the old word.
+ */
+export function notificationActionTitles(dir = STRINGS_DIR) {
+  const titles = { reply: [], send: [], mark_read: [] };
+  for (const lang of ['fr', 'en']) {
+    const strings = parseStrings(readFileSync(join(dir, `${lang}.lproj`, 'Localizable.strings'), 'utf8'));
+    for (const k of Object.keys(titles)) {
+      const v = strings.get(`notif.action.${k}`);
+      if (v) titles[k].push(v);
+    }
+  }
+  for (const [k, v] of Object.entries(titles)) if (!v.length) throw new Error(`no notif.action.${k} title in ${dir}`);
+  return titles;
+}
+
+/**
+ * O11 - A NOTIFICATION'S ACTION, as its user takes it: Notification Center, a LONG PRESS on the
+ * notification carrying `needle` (which expands it and shows its actions), then the action - and for
+ * a reply, `text` typed into the field iOS opens and its send button.
+ *
+ * Same outcome shape as {@link tapNotification}: `found: false` is the row's answer, `ok: false` with
+ * `found: true` names the step that did not happen. `ok: true` means the action was TAKEN - its
+ * button is gone from the screen; what it then did (the reply delivered, the conversation read) is
+ * the row's measurement, on the server and the peer.
+ *
+ * @param {'reply' | 'mark_read'} action
+ */
+export async function notificationAction(needle, action, { text } = {}) {
+  if (action !== 'reply' && action !== 'mark_read') throw new Error(`notificationAction: unknown action ${action}`);
+  if (action === 'reply' && !text) throw new Error('notificationAction: a reply needs its text');
+  const titles = notificationActionTitles();
+  openCentre();
+  try {
+    const hit = readCentre().find((n) => n.full.includes(needle));
+    if (!hit) return { ok: false, found: false, why: `no notification contains ${needle}` };
+    if (!hit.rect) return { ok: false, found: true, why: 'the matching element carries no rectangle' };
+    const c = centreOf(hit.rect);
+    io.ios(['long', c.x, c.y, 900]);
+    io.sleepSync(900);
+    const flat = readFlat();
+    const button = findLabelled(flat, titles[action], { type: 'Button' });
+    if (!button) {
+      return {
+        ok: false,
+        found: true,
+        why: `the long press showed no ${titles[action].join(' / ')} action`,
+        seen: flat.map(labelOf).filter(Boolean).slice(0, 20),
+      };
+    }
+    tapRect(button.rect);
+    io.sleepSync(800);
+    if (action === 'reply') {
+      io.typeStdin(text);
+      const send = findLabelled(readFlat(), titles.send, { type: 'Button' });
+      if (!send) return { ok: false, found: true, why: `the reply field shows no ${titles.send.join(' / ')} button` };
+      tapRect(send.rect);
+      io.sleepSync(800);
+    }
+    const still = findLabelled(readFlat(), [...titles[action], ...titles.send], { type: 'Button' });
+    if (still) return { ok: false, found: true, why: `"${labelOf(still)}" is still on screen after the tap` };
+    return { ok: true, found: true, action, x: c.x, y: c.y };
+  } finally {
+    closeCentre();
+  }
 }

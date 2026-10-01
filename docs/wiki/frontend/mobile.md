@@ -802,7 +802,7 @@ created through the App Store Connect API, and `rcodesign` signs the appex first
 | `sign-install.mjs <unsigned.ipa>` | signs (appex, then app), stops the running app, installs |
 | `install.py <signed.ipa>` | AFC push to `/PublicStaging`, then the installation proxy. `pymobiledevice3 apps install` hung 25 minutes on the 45 MB archive |
 | `wda-daemon.py` | keeps the WebDriverAgent runner alive and forwards its port 8100 to `localhost` over usbmux; the runner lives exactly as long as the process that started it |
-| `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type`, `swipe`, `button`, `size` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them) |
+| `ios.mjs` | `launch`, `shot`, `tree`, `find`, `tap <text or x,y>`, `type` (`type -` reads stdin, for a secret), `swipe`, `button`, `size`, `long`, `gesture`, `webview`, `url` - plain W3C WebDriver, **coordinates in POINTS** (390x844 on an iPhone 12, a screenshot pixel is 3 of them). The campaign rig drives the WebView's input and the system screens through it ([cross-client-ios](../cross-client-ios.md)) |
 
 Four traps of driving it, each of which cost a wrong conclusion: `tap <text>` taps the FIRST element
 containing the text, which is often a paragraph rather than the button (find the `Button` by type);

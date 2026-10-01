@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-72 scripts.
+73 scripts.
 
 | script | what it is |
 |---|---|
@@ -94,6 +94,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `verdicts.mjs` | THE VERDICT VOCABULARY, IN ONE PLACE, BECAUSE TWO COPIES DRIFTED TWICE. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
 | `webkit-console.mjs` | THE iPHONE'S CONSOLE IN THE SHAPE THE CLASSIFIER READS - WebKit's `Console.messageAdded` as CDP's |
+| `webkit-input.mjs` | THE iPHONE'S INPUT LAYER - CDP's `Input` domain performed as WebDriverAgent touches and keystrokes, |
 
 ## Primitives that carry their own row
 
@@ -197,7 +198,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-35 scripts.
+37 scripts.
 
 | script | what it is |
 |---|---|
@@ -216,6 +217,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
+| `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
@@ -236,6 +238,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
 | `archive/verdict-selftest.mjs` | ONE VOCABULARY, READ BY THE RECORDER AND BY THE RECONCILER, OR BY NEITHER. |
+| `archive/webkit-input-selftest.mjs` | THE iPHONE'S INPUT LAYER (`webkit-input.mjs`, C1) - pinned with no phone, no WDA and no names.mjs. |
 
 ## Gestures, libraries and runners in `archive/`
 
@@ -290,4 +293,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-229 scripts in total.
+232 scripts in total.
