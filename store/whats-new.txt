@@ -1,11 +1,11 @@
-version: 0.18.32
+version: 0.18.33
 
-Sur iPhone, la barre du bas est la barre native d'iOS, en Liquid Glass sur iOS 26, et l'en-tete
-des conversations prend le meme style.
+Les documents d'association ne sont plus supprimes apres des semaines sans ouverture. Si un fichier a deja disparu, l'association peut le televerser a nouveau en un geste.
 
-Sur telephone, une nouvelle publication s'ouvre en plein ecran, ses actions au-dessus du clavier.
-Les choix et les dates s'ouvrent dans l'app, et une video du fil se lit comme sur Instagram.
+On peut s'abonner au calendrier depuis le telephone.
 
-Dans les salons de communaute, tu vois qui a lu tes messages.
+Pendant le defilement d'une conversation, le jour affiche est centre et court : aujourd'hui, hier, ou le jour de la semaine.
 
-Glisser entre les onglets est plus fluide et l'export PDF garde ses logos.
+Un message de salon recu pendant que l'app etait en arriere-plan apparait des qu'on revient, et repondre depuis la notification ne la fait plus revenir.
+
+Sur iPhone, le bouton + reste en place avec le clavier, le nom du contact tient sur une ligne et la barre du bas suit le theme clair.
