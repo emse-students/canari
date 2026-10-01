@@ -106,6 +106,34 @@ export class StorageService implements OnModuleInit {
     }
   }
 
+  /**
+   * The stored length of a blob, or null if there is none - what a `Range` request is measured
+   * against. A HEAD on a missing key answers `NotFound` (no body to carry `NoSuchKey`), so both
+   * codes mean absent.
+   */
+  async size(objectId: string): Promise<number | null> {
+    try {
+      const stat = await this.client.statObject(this.bucket, objectId);
+      return stat.size;
+    } catch (err: any) {
+      if (err?.code === 'NotFound' || err?.code === 'NoSuchKey') return null;
+      throw err;
+    }
+  }
+
+  /**
+   * `length` bytes of a blob from `offset`, as a stream - the part a `Range` request asked for,
+   * read from the store as a part rather than fetched whole and sliced here. Null if not found.
+   */
+  async getRange(objectId: string, offset: number, length: number): Promise<Readable | null> {
+    try {
+      return await this.client.getPartialObject(this.bucket, objectId, offset, length);
+    } catch (err: any) {
+      if (err?.code === 'NoSuchKey') return null;
+      throw err;
+    }
+  }
+
   /** Delete a stored blob. */
   async delete(objectId: string): Promise<void> {
     await this.client.removeObject(this.bucket, objectId);

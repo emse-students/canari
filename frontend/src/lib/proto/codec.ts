@@ -13,6 +13,7 @@
  */
 
 import { canari } from './canari.js';
+import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
 
 // ─── Re-export the generated types so callers don't need to import canari.js ──
 
@@ -46,6 +47,38 @@ export function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audi
     default:
       return 'file';
   }
+}
+
+/** How a `MediaRef.encoding` spells a proto value this client has no name for. */
+const UNKNOWN_MEDIA_ENCODING_PREFIX = 'proto-';
+
+/**
+ * A `MediaMsg.encoding` as the `MediaRef` carries it: absent for the single block (0), the format's
+ * name for one this client knows, and `proto-<n>` for one it does not - kept, so the reader REFUSES
+ * it by name and a forward relays it unchanged, rather than either taking it for a single block.
+ */
+export function mediaEncodingFromProto(encoding?: number | null): string | undefined {
+  if (!encoding) return undefined;
+  if (encoding === canari.MediaEncoding.MEDIA_ENCODING_SEGMENTED_V1) return SEGMENTED_MEDIA_ENCODING;
+  return `${UNKNOWN_MEDIA_ENCODING_PREFIX}${encoding}`;
+}
+
+/**
+ * The `MediaMsg` field for a ref's `encoding`, to spread into `mkMedia` - nothing at all for the
+ * single block, so a legacy ref encodes byte for byte as it always has. The inverse of
+ * {@link mediaEncodingFromProto}, which is what lets a forward carry a format it cannot read.
+ */
+export function mediaEncodingProtoField(encoding?: string): { encoding?: number } {
+  if (encoding === undefined) return {};
+  if (encoding === SEGMENTED_MEDIA_ENCODING) {
+    return { encoding: canari.MediaEncoding.MEDIA_ENCODING_SEGMENTED_V1 };
+  }
+  const n = encoding.startsWith(UNKNOWN_MEDIA_ENCODING_PREFIX)
+    ? Number(encoding.slice(UNKNOWN_MEDIA_ENCODING_PREFIX.length))
+    : NaN;
+  if (Number.isInteger(n) && n > 0) return { encoding: n };
+  // A ref names a format no proto value spells: sending it as a single block would be a lie.
+  throw new Error(`media encoding "${encoding}" has no proto value`);
 }
 
 // ─── Transport layer ──────────────────────────────────────────────────────────

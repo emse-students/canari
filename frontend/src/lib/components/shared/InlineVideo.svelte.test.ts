@@ -79,6 +79,23 @@ it("wears the theme's amber whatever the frame under it, and its colour says the
   expect(soundButton.className).toContain('text-cn-ink');
 });
 
+it('seeks a decrypted file to its first frame, and hands a stream its URL untouched', () => {
+  const file = mountVideo();
+  expect(file.video.getAttribute('src')).toBe('blob:clip#t=0.1');
+
+  // An MSE URL with a fragment is a URL no MediaSource answers to: Chromium refuses it with
+  // MEDIA_ERR_SRC_NOT_SUPPORTED before `sourceopen` (measured on the Mi 9T, 2026-10-01).
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(InlineVideo, {
+    target,
+    props: { src: 'blob:stream', onOpen: vi.fn(), openLabel: 'Plein ecran', streamed: true },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  expect(target.querySelector('video')!.getAttribute('src')).toBe('blob:stream');
+});
+
 it('plays while it is on screen and pauses when it leaves', () => {
   const { video } = mountVideo();
   const play = vi.spyOn(video, 'play').mockResolvedValue();

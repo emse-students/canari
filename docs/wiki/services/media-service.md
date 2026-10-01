@@ -30,6 +30,11 @@ Server:
   - Never sees the plaintext or the key
 ```
 
+**Two formats, and the REF says which.** Every blob written until CanaReels R2 is ONE AES-GCM
+operation under ONE IV (`mediaCrypto.ts`), readable for ever. The segmented format a video can be
+played from while it downloads, and the order it ships in, is
+[below](#segmented-media-play-while-downloading-canareels-r2---the-reader-release-2026-10-01).
+
 ## Client-side download (`utils/mediaBlobCache.ts`)
 
 Every download goes through one seam: ciphertext is fetched (and kept in the Cache API under
@@ -46,19 +51,19 @@ a prop, but only as a signal that the session is authenticated.
 
 ## Routes
 
-| Method | Path                                   | Auth              | Description                                                                                                       |
-| ------ | -------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/media/limits`                    | none              | The configured upload ceiling in bytes - the client ASKS for it rather than being built with it                   |
-| POST   | `/api/media/upload`                    | JWT               | Upload encrypted blob, return `mediaId`                                                                           |
-| POST   | `/api/media/upload/public`             | JWT               | Upload small public image (logo), auto-resized to 512x512 WebP                                                    |
-| POST   | `/api/media/upload/chunk/init`         | JWT               | Initialize chunked upload session                                                                                 |
-| POST   | `/api/media/upload/chunk/:id`          | JWT               | Append chunk (max 50 MB per chunk)                                                                                |
-| POST   | `/api/media/upload/chunk/:id/complete` | JWT               | Complete chunked upload, return `mediaId`                                                                         |
-| GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                    |
-| GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member)                                                         |
-| DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                           |
-| DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                            |
-| POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below |
+| Method | Path                                   | Auth              | Description                                                                                                                                                                      |
+| ------ | -------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/media/limits`                    | none              | The configured upload ceiling in bytes - the client ASKS for it rather than being built with it                                                                                  |
+| POST   | `/api/media/upload`                    | JWT               | Upload encrypted blob, return `mediaId`                                                                                                                                          |
+| POST   | `/api/media/upload/public`             | JWT               | Upload small public image (logo), auto-resized to 512x512 WebP                                                                                                                   |
+| POST   | `/api/media/upload/chunk/init`         | JWT               | Initialize chunked upload session                                                                                                                                                |
+| POST   | `/api/media/upload/chunk/:id`          | JWT               | Append chunk (max 50 MB per chunk)                                                                                                                                               |
+| POST   | `/api/media/upload/chunk/:id/complete` | JWT               | Complete chunked upload, return `mediaId`                                                                                                                                        |
+| GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
+| GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
+| DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
+| DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
+| POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -239,6 +244,145 @@ fails is re-applied at the next boot; a release that fails only keeps an object 
 class folded into a total is a class whose growth nothing can ever see - the same defect the bucket
 breakdown was split to fix on 2026-08-18. At the rate measured on the day it shipped (40.8 MB over
 4.5 months, ~110 MB/year) this is indolent; the line exists so that stays a measurement.
+
+## Segmented media: play while downloading (CanaReels R2) - the READER release, 2026-10-01
+
+**Why.** A single-block blob ends with the one GCM tag that authenticates all of it, so no byte may
+be used before the last one has arrived: a 28 MB reel shows a black box until it is all here
+([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken),
+R2). Sealing it in independently authenticated segments is what lets segment 0 play while segment 1
+is on the wire.
+
+### The format (`frontend/src/lib/mediaSegmented.ts`, the only implementation)
+
+```
+header (20) = "CANARIM" (7) || 0x01 (1) || be32(segmentPlaintextBytes) || be64(plaintextLength)
+blob        = header || seal(0) || seal(1) || ... || seal(n-1)
+seal(i)     = AES-256-GCM(CEK, nonce_i, segment_i, aad = header)      -> |segment_i| + 16 bytes
+nonce_i     = iv[0..7] || be32(i) || (i == n-1 ? 0x01 : 0x00)
+```
+
+- **The construction is STREAM** (Hoang, Reyhanitabar, Rogaway, Vizar, _Online
+  Authenticated-Encryption and its Nonce-Reuse Misuse-Resistance_, CRYPTO 2015, section 7) - the one
+  Tink's `AesGcmHkdfStreaming` and age instantiate. The INDEX in the nonce makes a reordered or
+  duplicated segment fail its tag; the LAST flag makes a truncated file fail, even one cut exactly at
+  a segment boundary with a header rewritten to match; the header as every segment's additional data
+  makes an edited header fail every segment.
+- **Segments are 1 MiB of plaintext**; the last holds the rest, an empty file is one empty final
+  segment. A reader refuses a header naming a segment outside [4 KiB, 16 MiB] before allocating.
+- **The CEK is fresh per file**, so a nonce only has to be unique within one file, which the index
+  guarantees. The ref's 12-byte `iv` keeps its shape; its first 7 bytes are STREAM's prefix.
+- **Overhead**: 20 bytes + 16 per segment, about 820 bytes at the 50 MB ceiling. `uploadLimits`
+  subtracts the worst case once the writer is on, so a file within that margin is told no before it
+  uploads rather than after.
+
+### The REF decides the format, never the bytes
+
+`MediaRef.encoding` (`'segmented-v1'`; proto `MediaMsg.encoding = 12`, `MEDIA_ENCODING_SEGMENTED_V1 = 1`;
+a post's `images[].encoding`, declared on `PostMediaDto` so `whitelist: true` keeps it) is DECLARED by
+the writer, and absent on every ref before it. A legacy blob is raw GCM ciphertext, so asking the
+bytes would make the answer a coincidence; the ref travels inside the authenticated message and is a
+fact before a byte is read. The header then only CONFIRMS: a ref that says segmented over bytes that
+are not is refused (`magic`), never re-read as a single block. An encoding this client cannot name
+(proto `n` becomes `proto-<n>`) is kept, relayed unchanged by a forward, and refused by name
+(`encoding`) - never decrypted as a single block, which would turn "written by a newer client" into
+"corrupt". Every refusal is a typed `SegmentedMediaError` with a `fault` code, classified where
+WebCrypto throws.
+
+### Who reads it, and how
+
+| Reader                                                                | Path                                                              | A segmented blob                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web and both app shells (they embed the same frontend), every surface | `mediaBlobCache` `decryptByEncoding`                              | read WHOLE, segment by segment; plays at the end, as today                                                                                                                                                                                         |
+| A post's inline video                                                 | `PostMedia` -> `chooseSegmentedPlayback` -> `openSegmentedStream` | STREAMED through MSE when the ref is segmented, its `mimeType` names its codecs and the engine's `MediaSource` (or Safari's `ManagedMediaSource`) supports it; the whole file is then adopted into the blob pool for the lightbox and the download |
+| Native push thumbnail (Android FCM, iOS NSE, `canari_push.mm`)        | `proto_fields.rs` -> `decrypt_media_blob`                         | key WITHHELD when `encoding != 0`, so no download and a text-only banner - by the field, never by a failed decrypt. Kotlin, Swift and ObjC are unchanged: each already reads an empty `mediaKey` as "no thumbnail"                                 |
+| Post link preview (social-service)                                    | `pickPreviewMedia`                                                | skipped by its `encoding` field                                                                                                                                                                                                                    |
+
+**Why the stream is chosen only on a codecs-bearing type.** MSE appends only a fragmented container
+(WebM, fragmented MP4) described with its codecs, and fails HALF-WAY on an ordinary MP4 from a
+phone's camera. A picked file's `file.type` never names codecs; a `MediaRecorder` output does and is
+appendable by construction - which is what R3's capture will put in the ref. So today EVERY
+segmented ref would take the whole-blob path, and that is the fact-based choice, not a fallback.
+**Seeking ahead of the download waits for it**: segments are appended in order; the reader can fetch
+any one segment (`segmentForOffset`), but mapping a TIME to a byte needs the container's index,
+which belongs with the capture (R3). A streamed video is not written to the ciphertext cache.
+
+### The server serves byte ranges
+
+`GET /api/media/:id` with ONE range (`bytes=a-b`, `a-`, `-n`) answers `206` with
+`Content-Range: bytes a-b/size`, read from Garage as a part (`getPartialObject`), never fetched whole
+and sliced. An end past the object is clamped, which is how the reader opens a blob with ONE request
+for "the header and a whole segment 0" without knowing its length; a start past the end is `416`
+(`bytes */size`), which is how a truncated blob is seen. Several ranges, another unit or a reversed
+range are ignored and the whole object is served, as RFC 9110 permits. Every answer says
+`Accept-Ranges: bytes`. Auth and the purge tombstone are the whole download's. **The access clock
+moves only on a part starting at byte 0** - every reader opens there - so one opening is one access,
+not one metadata write per megabyte. The streaming client REFUSES a `200` to a range
+(`MediaRangeUnsupportedError`): accepting it would download the whole file once per segment. The
+nginx `location /api/media` passes `Range` and a `206` through untouched. Parser: `byte-range.ts`;
+tests: `byte-range.spec.ts`, `media.service.range.spec.ts`.
+
+### The writer flip - what this release does NOT do
+
+`SEGMENTED_MEDIA_WRITER_ENABLED` is `false`: nothing writes the format yet, so this release changes
+no blob anyone uploads. A client older than the reader, handed a segmented blob, would feed the
+header and every tag to ONE GCM decrypt and show a broken video. The flip is one line, video only
+(`writesSegmented`), and may land only when ALL of these hold - the order Graine v2 ships in
+([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)):
+
+1. `minClientVersion` is at or above the release carrying this reader;
+2. BOTH stores serve that version - measured (`bun tools/play-vitals/vitals.mjs`, the App Store),
+   never inferred from a date;
+3. the estate's media-service answers `206` to a `Range` - it ships with this reader, so its deploy
+   is the condition, not a code change.
+
+|                                | single-block blob          | segmented blob                                                                   |
+| ------------------------------ | -------------------------- | -------------------------------------------------------------------------------- |
+| **reader before this release** | reads                      | FAILS (one GCM over header and tags) - why the flip waits for `minClientVersion` |
+| **reader from this release**   | reads, unchanged, for ever | reads whole everywhere; streams where the facts allow                            |
+
+### Read on both phones (2026-10-01) - and the defect only a phone could show
+
+**The first phone run found that NO segmented post had ever streamed**: `InlineVideo` appended
+`#t=0.1` to every `src`, and an MSE object URL with a fragment names no `MediaSource`, so the Android
+WebView refused it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`, and the
+post sat on a dead player with no request sent. `segmentedMediaStream.test.ts`'s fake `MediaSource`
+cannot see a URL, so every gate was green. Fixed in the same pull request: a streamed `src` reaches
+the element exactly as minted (`streamed`, pinned in `InlineVideo.svelte.test.ts`).
+
+**How it was driven, with the writer off.** The PR's own `encryptSegmentedMedia` sealed a 20.9 MB
+fragmented MP4 (H.264 Main + AAC, `video/mp4; codecs="avc1.4D4028, mp4a.40.2"`, 20 segments) under
+bun; the blob went up through `/api/media/upload` with the owner's refreshed token, and a post on the
+LOCAL estate carried the ref with `encoding: 'segmented-v1'` (the social service stored it). Each case
+was opened in the app by a SvelteKit link click (no reload), with the page's own `fetch` and `<video>`
+events timed in its clock, the app's console read (logcat on Android, the WebKit inspector on iOS) and
+`docker logs` of the media service and nginx kept. Builds: a debug APK and an `ios.yml` bench build of
+this branch.
+
+| Case                                            | Mi 9T (Android 16 WebView 152, `MediaSource`)                                                                                                 | iPhone 12 (WKWebView, `ManagedMediaSource`)                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Segmented, codecs named -> stream               | PASS: 20 ranges, all `206`, contiguous and in order; first frame (`loadeddata`) at 676 ms with 2 of 20 segments in hand, last byte at 4837 ms | PASS: same 20 `206`s in order; first frame 539 ms, last byte 5686 ms |
+| Same blob, `video/mp4` (no codecs) -> whole     | PASS: one `200` of 20.9 MB, plays at 2204 ms (`read whole (no-codecs)` logged)                                                                | PASS: one `200`, plays at 4845 ms                                    |
+| Legacy single block (fresh post)                | PASS: one `200`, no `Range`, plays                                                                                                            | PASS: one `200`, no `Range`, plays                                   |
+| One bit flipped in segment 3                    | REFUSED: `segment-auth`, index 3, after segments 0-2 played; cause `corrupt` (#1309): "Ce media est endommage", with Reessayer                | REFUSED: same                                                        |
+| Last segment dropped, header intact             | REFUSED: the 20th range answers `416`, `length` fault on segment 19                                                                           | REFUSED: same                                                        |
+| Last segment dropped, header rewritten to match | REFUSED: `segment-auth` on segment 0 - the header is every segment's AAD                                                                      | REFUSED: same                                                        |
+
+**Since #1309, a refusal speaks the renderers' causes** (re-read on the Mi 9T after the rebase,
+same day): a segment whose tag fails or a blob cut short is `corrupt` - wrapped as
+`MediaDecryptError` by the whole-blob reader, read raw from the stream by `mediaFailureCause` - so
+the card says the media is damaged and offers "Reessayer", which re-opens the stream and is refused
+again at the same segment. An encoding or header version a NEWER client wrote
+(`isWrittenByNewerClient`) is `other`, never damage, and its cached bytes are kept. A failed range
+read throws the whole download's types (unreachable, 404, 410, status).
+
+What the table means for the flip: **a refused stream has already PLAYED its authentic prefix** - by
+construction, since each segment is verified on its own; what it never plays is a byte that failed
+its tag. The reader fetches one segment at a time, so its throughput is one round trip per MiB
+(~4.5 MB/s over the local link here); on a phone network the round trip dominates less than the
+bandwidth, and pipelining is a later choice, not a defect. The native push-thumbnail change is still
+compile- and `cargo test`-verified only. Evidence (JSON timelines, logs, screenshots) is kept
+machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 
 ## Environment variables
 

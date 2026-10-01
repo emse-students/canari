@@ -60,7 +60,7 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
-import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
+import { encodeAppMessage, mediaEncodingProtoField, mkMedia, MediaKind } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
   ChatMessage,
@@ -1126,6 +1126,7 @@ export function useMessaging() {
                 ...(mediaRef.width && mediaRef.height
                   ? { width: mediaRef.width, height: mediaRef.height }
                   : {}),
+                ...mediaEncodingProtoField(mediaRef.encoding),
               }),
               messageId,
               sentAt,
@@ -1599,6 +1600,8 @@ export function useMessaging() {
                 ...(env.media.width && env.media.height
                   ? { width: env.media.width, height: env.media.height }
                   : {}),
+                // A forward relays the blob as it was sealed, so it must relay how.
+                ...mediaEncodingProtoField(env.media.encoding),
               }),
               messageId: crypto.randomUUID(),
               sentAt: Date.now(),
@@ -1644,6 +1647,7 @@ export function useMessaging() {
             fileName: media.fileName ?? '',
             caption: env.caption,
             ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+            ...mediaEncodingProtoField(media.encoding),
           }),
           messageId,
           sentAt: Date.now(),

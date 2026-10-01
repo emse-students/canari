@@ -26,7 +26,8 @@
  *   "mimeType": string,
  *   "size":     number,          // original (plaintext) file size in bytes
  *   "fileName": string | undefined,
- *   "voiceNote": true | undefined  // recorded here, not picked from disk
+ *   "voiceNote": true | undefined, // recorded here, not picked from disk
+ *   "encoding": "segmented-v1" | undefined // absent = ONE AES-GCM block (mediaSegmented.ts)
  * }
  *
  * Messages that do NOT match this shape are treated as plain text (backward compat).
@@ -82,6 +83,17 @@ export interface MediaRef {
    * and those messages keep the behaviour they have always had.
    */
   voiceNote?: boolean;
+  /**
+   * How the blob is sealed, DECLARED BY THE WRITER because the bytes cannot say it unambiguously.
+   *
+   * Absent: ONE AES-GCM operation under `iv`, the format of every ref written before CanaReels R2,
+   * readable for ever. `'segmented-v1'`: the STREAM construction of `mediaSegmented.ts`, which a
+   * reader can decrypt and play segment by segment. The reader is chosen from this field before a
+   * byte is read, never by trying one format and then the other. Any OTHER value was written by a
+   * newer client and is refused by the reader rather than guessed at, which is why the type is a
+   * string and not just the one value this client writes.
+   */
+  encoding?: string;
 }
 
 export interface ImageDimensions {
@@ -118,6 +130,13 @@ const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
+import {
+  SEGMENTED_MEDIA_ENCODING,
+  SEGMENTED_MEDIA_WRITER_ENABLED,
+  encryptSegmentedMedia,
+  segmentedCiphertextLength,
+  writesSegmented,
+} from '$lib/mediaSegmented';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
@@ -403,6 +422,20 @@ export function parseMediaMessage(content: string): MediaRef | null {
 export const MEDIA_CIPHERTEXT_OVERHEAD_BYTES = 16;
 
 /**
+ * What encryption adds to a file of `maxBytes` in the WORST format this client writes.
+ *
+ * A segmented blob (`mediaSegmented.ts`) carries a 20-byte header and one tag per megabyte - about
+ * 820 bytes at 50 MB - so once the writer is on, a file within that margin of the ceiling would be
+ * refused by the server after its upload. The ceiling is compared against the larger overhead for
+ * every file, which costs a picture under a kilobyte of a 50 MB allowance: nothing a display at
+ * megabyte granularity can show. While the writer is off this is exactly the GCM tag, as before.
+ */
+function worstCaseOverheadBytes(maxBytes: number): number {
+  if (!SEGMENTED_MEDIA_WRITER_ENABLED) return MEDIA_CIPHERTEXT_OVERHEAD_BYTES;
+  return segmentedCiphertextLength(maxBytes) - maxBytes;
+}
+
+/**
  * THE UPLOAD CEILING, ASKED OF THE SERVER ONCE PER PAGE, because it is the server's number.
  *
  * It used to be `VITE_MEDIA_MAX_SIZE_MB`, inlined at BUILD time. Nothing in CI ever wrote that
@@ -467,7 +500,7 @@ export class MediaService {
           console.warn(`[media] /media/limits gave no usable maxBytes - no client-side ceiling`);
           return null;
         }
-        return { maxBytes, maxPlaintextBytes: maxBytes - MEDIA_CIPHERTEXT_OVERHEAD_BYTES };
+        return { maxBytes, maxPlaintextBytes: maxBytes - worstCaseOverheadBytes(maxBytes) };
       } catch (e) {
         console.warn(`[media] /media/limits unreachable - no client-side ceiling`, e);
         return null;
@@ -501,7 +534,15 @@ export class MediaService {
     retentionClass: MediaRetentionClass
   ): Promise<MediaRef> {
     const plaintext = await file.arrayBuffer();
-    const { ciphertext, keyHex, ivHex } = await encryptMediaBuffer(plaintext);
+    // THE FORMAT IS DECIDED HERE AND DECLARED IN THE REF - see `SEGMENTED_MEDIA_WRITER_ENABLED`,
+    // off in the reader release, for when it may be turned on.
+    const segmented = writesSegmented(file.type);
+    console.debug(
+      `[media] encryptAndUpload: ${file.type || 'unknown'}, ${file.size} bytes, ${segmented ? 'segmented' : 'single block'}`
+    );
+    const { ciphertext, keyHex, ivHex } = segmented
+      ? await encryptSegmentedMedia(plaintext)
+      : await encryptMediaBuffer(plaintext);
 
     // 3. Upload the encrypted blob (server stores opaque bytes, no key)
     const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
@@ -626,6 +667,7 @@ export class MediaService {
       size: file.size,
       fileName: file.name,
       ...(width && height ? { width, height } : {}),
+      ...(segmented ? { encoding: SEGMENTED_MEDIA_ENCODING } : {}),
     };
   }
 
