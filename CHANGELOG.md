@@ -14,6 +14,241 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [0.18.32] - 2026-10-01
+
+### Fixed - Android at a large text size: the header name and the avatar initials stay in their boxes
+
+With the system text size at 200 %, the header name no longer runs over the buttons beside it and avatar initials stay inside their circle. See [phone-comparison](docs/wiki/phone-comparison.md).
+
+### Added - anonymous forms and anonymous post polls
+
+A form or a post poll can be created anonymous: the answer is stored with no author, and only *that* an account answered is kept, in a table that knows no answer. Free forms only, final votes, fixed at creation - [forms](docs/wiki/frontend/modules/forms.md#an-anonymous-form-keeps-no-author-2026-09-30), [posts](docs/wiki/frontend/modules/posts.md#an-anonymous-poll-stores-a-tally-and-no-voters-2026-09-30).
+
+### Changed - the app icons: a smaller, smoothed bird on a soft navy gradient, one rule for every surface
+
+The bird was 0.76 of the iOS icon and three quarters of the visible Android one; it is now half of
+what is seen everywhere, and Android gains a themed (monochrome) layer ([app-icons](docs/wiki/frontend/app-icons.md)).
+
+The iOS and Android launch screens now show the perch logo on a transparent ground.
+
+### Fixed - a draft event could cancel the auto-merge arming
+
+A push and `gh pr ready` in the same second let the draft run, which skips, cancel the run that
+would have armed, and #1259 sat green and unmerged. The concurrency group now carries the draft
+flag, in all four repositories ([cicd](docs/wiki/cicd.md)).
+
+### Security - DOMPurify 3.4.16 in the frontend and `@grpc/grpc-js` 1.14.5 in chat-delivery-service
+
+Two advisories published 2026-09-30 (GHSA-p98j-92pf-mc4p, GHSA-m9gg-hp2v-232j) failed every pull request's audit; both are overrides pinned past the fix.
+
+### Fixed - five nights with no backup at all
+
+From 2026-09-26 to 2026-09-30 the nightly backup died reaching Authentik through an SSH alias the
+new host never had, and took `auth_db` down with it. Authentik runs on the same host, so the
+default is now a local dump; nothing reported the failure, which stays open
+([backup](docs/wiki/infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)).
+
+### Fixed - the media backup never held Garage's node key, and nothing reported a failed backup
+
+Garage's `node_key` is root-only, so no restic snapshot ever held it and the nightly run stopped
+before its offsite mirror; the backup step now reads as root. A daily `backups` job reads last
+night's archive and snapshot, whole and offsite, and goes red when they are not
+([backup](docs/wiki/infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)).
+
+### Security - brace-expansion 5.0.12 in all five trees
+
+Three new advisories (GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr) failed the dependency
+audit of every tree, so `CI passed` was red on every pull request. The `overrides` floor moves from 5.0.6-5.0.9
+to `^5.0.12` in each `package.json`, the same mechanism the earlier advisories used.
+
+### Added - read receipts in community salons
+
+A salon never had them: a sender saw "Envoyé" for ever. The server now keeps how far each member
+has read each salon and tells the salon's readers, so "Lu par" renders exactly as in a group
+([social-service](docs/wiki/services/social-service.md#read-receipts-in-a-salon)).
+
+### Fixed - a member who cannot manage a salon is no longer offered its settings
+
+The salon settings panel showed visibility, write policy, the allowlist, rename and delete to every
+member, and the server refused each one. It now reads the server's verdict, which also follows a role
+change or a role's permissions being edited while the panel is open
+([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - the frontend CI job rebuilt oxvelte on every run despite a cache hit
+
+The cache restored the binary without cargo's install record, so the install check rebuilt it each time (about 1m40s); the record is cached now ([durable-rules](docs/wiki/durable-rules.md)).
+
+### Changed - a pull request with a known advisory no longer merges
+
+The dependency audit is back in `CI passed`: a real advisory blocks the merge, an npm outage stays a warning ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - no stray logo before a video's first frame
+
+A feed video no longer flashes a camera icon or Android's grey play button while it loads or when the feed comes back after a swipe ([posts](docs/wiki/frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
+### Changed - the form fill page is split into reusable pieces
+
+The question card, the header and the answer rules left the 1300-line fill page, so a second page can reuse them; a required linear scale starting at 0 is no longer refused on submit - [forms](docs/wiki/frontend/modules/forms.md#the-fill-page-is-three-reusable-pieces-and-its-own-payment-logic-2026-09-30).
+
+### Fixed - the full reaction picker docks at the bottom on a phone
+
+Opened from the long-press sheet, it rests at the bottom of the screen like the small strip, instead of above a long message. See [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Changed - in the phone apps, a conversation's header is a back button, a name pill and a menu, and the composer's actions are one "+"
+
+Both float over the thread in glass and open into their options; the website keeps its design. The date pill no longer hides under the header ([chat](docs/wiki/frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)).
+
+### Security - Android and iOS notifications read Graine v2: author, salon, floor and signature are checked natively, and a DM push naming another sender is refused
+
+One Rust implementation serves both platforms. An arriving v2 seed is mirrored only once the key group's tree endorses it ([channel-encryption §21.5](docs/wiki/protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
+
+### Security - a frame whose envelope names a sender MLS did not verify is refused, DMs included
+
+On the web and desktop the frame is consumed and acknowledged and nothing of it is shown, on the live, Welcome-replay, key-group and history paths ([channel-encryption §21.1](docs/wiki/protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)).
+
+### Changed - every choice and every date opens in the app, and a feed video plays like Instagram's
+
+No native select or date dialog is left; a video fills its post at its own shape and plays muted where it is, with one sound button for every video in the app ([posts](docs/wiki/frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
+### Fixed - the iOS tab bar no longer sits over the composer and every dialog
+
+The native bar is drawn above the WebView, so no modal could cover it: it hid "Publier" in the post
+composer and stayed tappable over every dialog. It now hides while anything covers the screen, and the
+composer's attachment row fades on the side that scrolls ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+
+### Changed - the iOS icon is an Icon Composer document, so iOS 26 can render it clear, dark and tinted
+
+Written without the Mac application and checked by the iOS compile check ([app-icons](docs/wiki/frontend/app-icons.md)).
+
+### Changed - the iPhone page draws edge to edge, the keyboard loses its form bar, the test banner closes
+
+The page now reaches the top of the screen with the status bar's inset published to it, the system chrome follows the app's theme, the arrows-and-check bar above the keyboard is gone, and the test-environment banner has an X (for the session). See [android-ios-parity](docs/wiki/frontend/android-ios-parity.md) and [phone-comparison](docs/wiki/phone-comparison.md).
+
+The iPhone status strip now takes the phone header colour, so the top reads as one band ([phone-comparison](docs/wiki/phone-comparison.md)).
+
+### Added - on iPhone, the bottom bar is the native tab bar, in Liquid Glass on iOS 26
+
+The iOS app draws its four places with a native `UITabBar` (`tauri-plugin-system-components`), and the iOS build now requires Xcode 26 ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+
+### Added - a build of the iPhone app for one phone on the bench
+
+`ios.yml` takes a `local_url` and builds an UNSIGNED app pointed at the workstation, which the workstation signs itself and installs, so the iPhone joins the local test stack like the Mi 9T. Never published. See [mobile](docs/wiki/frontend/mobile.md#a-build-for-the-phone-on-the-bench).
+
+### Fixed - iOS tells the page where the home indicator is
+
+WebKit reported every safe area as 0 in the iPhone's WebView, so the post composer's "Publier" sat in
+the home indicator. The native layer now publishes the real bottom inset
+([parity §1.1](docs/wiki/frontend/android-ios-parity.md)).
+
+### Changed - the iPhone tab bar shows the app's own icons, the selected one in Canari's yellow
+
+It drew iOS's symbols in blue; it now draws the web bar's glyphs, tinted by a small patch to the plugin ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+The plugin's own keyboard fix is removed from Canari's copy: Canari already resizes the WebView for the keyboard itself.
+
+### Changed - the iPhone tab bar's icons are black at rest and yellow when selected, and the bar is no longer tinted
+
+Each tab now carries both states already coloured, instead of the bar being tinted yellow ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+
+### Security - MinoWiki and Archives no longer receive a MiGallery API key in their claims
+
+MiConnect's `avatar` mapping now hands out a per-person signed URL (MiGallery `v2.15.6`), and the
+leaked read key is deleted ([profiles-and-access](docs/wiki/profiles-and-access.md#the-work-packages-in-order)).
+
+### Fixed - the MiConnect blueprints job no longer hangs for 25 minutes
+
+Its wait for authentik's default blueprints had no end but the job timeout, so one lost race at boot
+(a blueprint left in `error`, never retried) failed three PRs. It now re-applies what is stuck once,
+naming it, and fails in minutes with the evidence otherwise
+([authentik](docs/wiki/infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+
+### Changed - MiConnect's configuration is code, applied by every stable release
+
+The flows, sources, providers, applications and login CSS built by hand are now seven blueprints,
+proven equal to production, tested on a fresh instance in CI and dry-run by every pre-release
+([authentik](docs/wiki/infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+
+### Removed - MiConnect's provider for the old Portail Etu
+
+Unused since 2026-07-01 and its callback gone; the next stable deletes it
+([profiles-and-access](docs/wiki/profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)).
+
+### Changed - MiConnect's objects carry one naming scheme, and its providers allow only the code flow
+
+26 objects renamed in place to `miconnect-...`, PKCE `S256` on the CAS, launch URLs on the final
+hosts, and the unused grant types removed from every provider
+([profiles-and-access](docs/wiki/profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)).
+
+### Changed - MiConnect holds a profile, and "Master" is now "Autre"
+
+Every account carries `attributes.profile` (campus, cursus, posts, explicit names); the old claims
+are derived from it, and the formation `Master` is sent as `Autre`
+([profiles-and-access](docs/wiki/profiles-and-access.md#4-the-technical-plan---validated-by-the-user-2026-09-29)).
+
+### Fixed - the agenda PDF saves on a phone, its logos are drawn, and post text can be copied
+
+`pdf.save()` is an `<a download>` a WebView drops, so every PDF export went through the shared
+download path instead, and the sheet's association logos are absolutized like every other stored
+asset ([calendar](docs/wiki/frontend/modules/calendar.md#the-sheet-on-a-phone-no-logos-and-a-download-button-that-did-nothing-2026-09-29), [mobile](docs/wiki/frontend/mobile.md)). Rendered Markdown is selectable again on a touch screen ([posts](docs/wiki/frontend/modules/posts.md#a-posts-text-could-not-be-copied-on-a-phone-because-nothing-marked-it-as-content-2026-09-29)).
+
+### Added - a copy button on a claimed partnership code
+
+The code is pasted into a partner's checkout, so it is one tap away rather than a long press ([social-service](docs/wiki/services/social-service.md#a-claimed-code-is-copied-by-a-button-not-by-a-long-press-2026-09-29)).
+
+### Changed - on iOS, a conversation's header pieces and the composer's "+" are real Liquid Glass
+
+Native glass buttons drawn where the app's own pieces are, opening native menus ([mobile](docs/wiki/frontend/mobile.md#the-conversations-native-glass-chrome)).
+
+### Fixed - the iOS tab bar's selected tab is drawn in yellow
+
+The selected bitmap was patched into the plugin's Swift half only, and its Rust half dropped it on the way; a test now compares both ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+
+### Changed - the phone campaign's state is on the wiki
+
+Lots 1-3 of the UI/UX pass are merged; the open lots and what the user still owes are on
+[phone-comparison](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30).
+
+### Changed - the encryption PIN sheet is a lock screen
+
+The PIN gate drops its title bar and its small print: app mark, one title, dots that turn red and shake on a refusal, round thumb-sized keys with backspace (and biometrics) in the pad, quiet text links, and the stay-signed-in explanation behind an info button - [phone-comparison](docs/wiki/phone-comparison.md).
+
+### Changed - the post composer is a full-screen page on a phone, with its actions above the keyboard
+
+One author line, the text taking the height, labelled chips (photo/video picker, camera, video, poll, form, file, schedule) and Markdown one "Aa" away; the photo button no longer opens Android's file browser, the camera chips open the camera, and a picked video shows its first frame instead of a broken image ([posts](docs/wiki/frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
+### Changed - the composer's choices open in the app, and a caption is one field opened from its photo
+
+Who publishes and the linked event open the app's own sheet (with avatars) instead of Android's system dialog; the caption box under every thumbnail became a "Légende" chip, and a tapped chip no longer keeps a halo ([posts](docs/wiki/frontend/modules/posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29)).
+
+### Added - public forms, answered without an account
+
+A free form can be made public: anyone with its `/f/` link answers without a Canari account, as many times as they like, behind a per-visitor throttle and a honeypot. Building it found that the container nginx named every visitor by the Docker gateway, so no per-IP throttle had ever been one - fixed at the edge - [forms](docs/wiki/frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30).
+
+### Fixed - the "who reacted" list opens on hover or a long press, never on a tap
+
+A tap on a reaction badge (posts and chat) toggled the reaction AND opened the list, because a touch screen synthesises `mouseenter`. A mouse now hovers, a finger holds, and a scroll closes the list ([posts](docs/wiki/frontend/modules/posts.md#the-who-reacted-list-hover-or-long-press-never-a-tap-2026-09-30)).
+
+### Fixed - a fast swipe between tabs stopped for an instant in the middle of the screen
+
+The page now keeps moving while the next one gets ready, and the neighbouring tabs' code is fetched in advance ([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
+### Fixed - the page a swipe goes to is now visible during the swipe, and a drifting tap no longer turns it
+
+The tab gesture slid the old page off over an empty background and only then navigated, so the
+destination was never on screen; the two now slide past each other in one motion. The commit rule
+was a flat 60px, which a sloppy tap covers - it is now a quarter of the screen or a flick. A reply
+swipe on a received message no longer also closes the conversation
+([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
+### Fixed - every small control is a 44px target on a touch screen
+
+Pills, inline links, the navbar avatar and the admin and sidebar rows were tapped at 20 to 32px; a
+touch tablet also got 38px icon buttons. They now take an invisible 44px hit box, with nothing
+visible changed ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - sliding a voice note to the screen edge cancels it instead of sending it
+
+The cancel distance (96 px) was larger than the room left of the microphone on a phone (~86 px), so a real finger could never reach the bin and releasing at the edge sent the note. It is now capped to the room available, and the hint carries a chevron showing which way to slide. Found on an iPhone 12 and a Mi 9T, 2026-09-30.
+
 ## [0.18.31] - 2026-09-29
 
 ### Removed - `ENABLE_DEV_ROUTES` and `VITE_ENABLE_DEV_ROUTES`
