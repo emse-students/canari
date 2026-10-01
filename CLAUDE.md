@@ -298,7 +298,7 @@ NAMED with its blocking condition - listing them here is the re-derivation the p
 ### CANARI - release, store submission, iOS
 
 **NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE - this paragraph has been stale
-THREE times**, so it names no version. **THE NEXT RELEASE IS ANOTHER PERSON'S (2026-10-01) - no agent tags one.** `gh release list` is the shipped version, Play a MEASUREMENT
+THREE times**, so it names no version. **1.0.0 IS CUT BY THIS TEAM, NOT BY AN AGENT ALONE (user, 2026-10-01): the pre-release is tagged, the stable only on the user's explicit go.** `gh release list` is the shipped version, Play a MEASUREMENT
 (`bun tools/play-vitals/vitals.mjs`), CI is `gh run list`, and the App Store half is on
 [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on).
 **No HEAL-REVOKE verdict about a clean device may be taken on a build older than 0.14.12.** **An

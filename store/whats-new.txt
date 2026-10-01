@@ -1,9 +1,9 @@
-version: 0.18.33
+version: 1.0.0
 
-Les documents d'association se telechargent a nouveau, y compris ceux deposes avant la correction.
+Canari passe en 1.0.0.
 
-Le jour qui s'affiche quand tu fais defiler une conversation est centre et lisible : "mercredi" plutot qu'une date complete quand c'est recent.
+Les videos ont leur propre lecteur, tournent en boucle, et les gros fichiers se lisent pendant leur telechargement. Un media qui ne s'affiche pas dit pourquoi et se relance d'un appui.
 
-Sur telephone, le bouton pour s'abonner au calendrier est de retour, et son lien s'ouvre hors de l'app.
+Les notifications nomment l'auteur de chaque message.
 
-Sur iPhone, la barre du bas suit le passage au mode clair, et le defilement des documents ne depasse plus.
+Les documents d'association se telechargent a nouveau. Le jour affiche en defilant est plus lisible. Le bouton d'abonnement au calendrier est de retour sur telephone.
