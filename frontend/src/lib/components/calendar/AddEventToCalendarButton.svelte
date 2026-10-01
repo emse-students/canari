@@ -6,7 +6,9 @@
     downloadTextFile,
     type AgendaExportEvent,
   } from '$lib/calendar/agendaExport';
-  import { openExternal } from '$lib/utils/openExternal';
+  import { navigateExternal, isTauriRuntime } from '$lib/utils/openExternal';
+  import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { CalendarPlus, Download, ExternalLink } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -17,7 +19,6 @@
   const isAndroid = os === 'android';
   const isIos = os === 'ios';
   const isMac = os === 'macos';
-  const isMobile = isAndroid || isIos;
 
   let showModal = $state(false);
 
@@ -30,12 +31,30 @@
     );
   }
 
+  /**
+   * Hands the server-hosted `.ics` of this event to the system browser, which gives it to the
+   * calendar app: iOS Safari answers a text/calendar response with its "Add to Calendar" sheet,
+   * Android downloads it for whichever app owns .ics. Our own backend's URL, so no Safe Browsing
+   * round trip (`navigateExternal`'s contract); on the web a new tab keeps the SPA alive.
+   */
+  async function openHostedIcs(url: string) {
+    Log.d('AddToCalendar', `opening the hosted .ics of ${event.id} on ${os}`);
+    try {
+      if (isTauriRuntime()) await navigateExternal(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      Log.d('AddToCalendar', `the hosted .ics did not open on ${os}: ${String(e)}`);
+      showToast(m.calendar_add_failed(), 'error');
+    }
+  }
+
   function handleClick(e: MouseEvent) {
     e.stopPropagation();
-    if (isAndroid) {
-      void openExternal(googleCalendarTemplateUrl(event));
-    } else if (isIos) {
-      downloadIcs();
+    if (isIos) {
+      // A pending event is not in the feed, so it has no hosted file: the local one is saved to
+      // Files, which is all a WebView can do with a blob.
+      if (event.icsUrl) void openHostedIcs(event.icsUrl);
+      else downloadIcs();
     } else {
       showModal = true;
     }
@@ -51,19 +70,24 @@
   <CalendarPlus size={16} />
 </button>
 
-{#if !isMobile}
+{#if !isIos}
   <Modal title={m.calendar_add_title()} open={showModal} onClose={() => (showModal = false)}>
     <div class="flex flex-col gap-2">
       <button
         type="button"
         onclick={() => {
-          downloadIcs();
+          if (isAndroid && event.icsUrl) void openHostedIcs(event.icsUrl);
+          else downloadIcs();
           showModal = false;
         }}
         class="border-cn-border text-text-main hover:bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-colors"
       >
         <Download size={18} class="text-text-muted shrink-0" />
-        {isMac ? 'Apple Calendar' : 'iCalendar (Outlook, Thunderbird…)'}
+        {isAndroid
+          ? m.calendar_add_android_app()
+          : isMac
+            ? 'Apple Calendar'
+            : 'iCalendar (Outlook, Thunderbird…)'}
       </button>
       <a
         href={googleCalendarTemplateUrl(event)}

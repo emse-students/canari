@@ -12,6 +12,12 @@ export type AgendaExportEvent = {
   endsAt?: string | Date | null;
   /** Shown as URL property and appended to Google details when provided. */
   sourceUrl?: string;
+  /**
+   * The server-hosted `.ics` of THIS event (validated events only - a pending one is not in the
+   * feed). A phone opens it in the system browser, which hands the file to the calendar app: a
+   * local blob cannot be handed to Calendar from a WebView, only saved to Files.
+   */
+  icsUrl?: string;
 };
 
 /** The client's rows in the shape `ics.ts` speaks - the only thing this module adds to the RFC. */

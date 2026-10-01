@@ -2678,6 +2678,8 @@
   "md_placeholder_list": "élément",
   "md_placeholder_link_text": "texte",
   "calendar_add_title": "Ajouter à mon calendrier",
+  "calendar_add_android_app": "Mon app calendrier (fichier .ics)",
+  "calendar_add_failed": "Impossible d'ouvrir le fichier du calendrier.",
   "calendar_day_select_prompt": "Sélectionnez un jour coloré dans le calendrier pour voir les événements.",
   "calendar_day_no_events": "Aucun événement ce jour-là.",
   "calendar_day_event_count": [

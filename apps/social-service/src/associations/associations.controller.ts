@@ -252,6 +252,8 @@ export class AssociationsController {
    * subscribed URL is saved once by the calendar app and re-polled forever with no way to ever
    * add query params to it.
    *
+   * `eventId` (optional) keeps only that event of the window - see the filter below.
+   *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
    * not a confidentiality boundary - see `promo-visibility.ts`. Anything that must be SECRET is
@@ -262,9 +264,16 @@ export class AssociationsController {
     @Query('from') from: string | undefined,
     @Query('to') to: string | undefined,
     @Query('associationId') associationId: string | undefined,
+    @Query('eventId') eventId: string | undefined,
     @Res({ passthrough: true }) res: Response
   ) {
-    const rows = await this.service.listAggregatedCalendarFeed(from, to, associationId);
+    const all = await this.service.listAggregatedCalendarFeed(from, to, associationId);
+    const wanted = eventId?.trim();
+    // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
+    // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
+    // response; Android downloads it for whichever calendar app owns .ics). Same route, same
+    // builder, same UID as the subscription - so importing one and subscribing never doubles it.
+    const rows = wanted ? all.filter((r) => r.id === wanted) : all;
     const body = buildAggregatedCalendarIcs(rows, {
       frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost',
     });

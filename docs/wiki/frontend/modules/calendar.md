@@ -155,6 +155,27 @@ cannot be told; that is why the copy row is in view on a phone.
 **Still owed:** one press on each phone in the APP - the Mi 9T should show the "no app" notice, the
 iPhone should show Calendar's subscription prompt. Neither is provable without a build.
 
+### "CAN I PUT THE CALENDAR IN APPLE CALENDAR / ON ANDROID?" - WHAT EXISTS, AND THE ONE-EVENT GAP (2026-10-01)
+
+*A user asked it in French; the answer is in three parts.* **Feeds**: there is ONE feed route,
+`GET /api/associations/calendar/feed.ics`, public, whole agenda or `?associationId=` for one
+association - no per-user feed exists (a calendar app sends no identity, see the promo section).
+**Subscribe** (the button, every screen): iPhone gets a `webcal:` link (Calendar's "Subscribe?"
+prompt - unmeasured on hardware); Android gets `webcals:`, which resolves NOTHING on the Mi 9T, so the
+modal says so and the copy row + Google's `cid=` link carry it (ICSx5 would register the scheme).
+**One event** (`AddEventToCalendarButton`, in the event modal): it existed, but in the iOS app it
+wrote a LOCAL `.ics` through the save dialog - into Files, not Calendar - and on Android it only
+offered Google's template URL (no use without a Google account; Etar users had nothing).
+
+**Now:** `feed.ics` takes `eventId`, keeping that one event of the window (same builder, same
+`UID@canari` as the subscription, so import + subscribe never doubles it).
+`eventIcsAbsoluteUrl` builds the link (one day either side of the start); a phone opens it in the
+SYSTEM BROWSER - iOS Safari answers a text/calendar response with "Add to Calendar", Android downloads
+it and the calendar app owning `.ics` takes it (Etar's `ImportActivity` resolves
+`VIEW text/calendar` on the Mi 9T, measured). iOS goes straight there; Android and desktop keep the
+modal, whose first row is now that link on Android. A pending event is not in the feed, so it keeps
+the local file. **Owed:** a press on each phone once a build carries the backend route.
+
 **THE GUTTER SPOKE FRENCH TO AN ENGLISH READER.** `monthFormatter` read `getLocale()`; the weekday
 under it was a `new Intl.DateTimeFormat('fr-FR', ...)` built inline, per day, per render. An English
 reader got `mar.` beneath "September 2026" - and the heading is the half anybody looks at, which is

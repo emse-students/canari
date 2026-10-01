@@ -539,11 +539,14 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   from: string;
   to: string;
   associationId?: string;
+  /** Narrows the feed to this one event - the link that adds a single evening to a calendar. */
+  eventId?: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
@@ -554,6 +557,7 @@ export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
   from: string;
   to: string;
   associationId?: string;
+  eventId?: string;
 }): string {
   const path = aggregatedCalendarFeedIcsPath(opts);
   const base = socialUrl();
@@ -2540,4 +2544,21 @@ export async function deletePartnershipIcon(
     `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/icon`,
     { method: 'DELETE' }
   );
+}
+
+/**
+ * Absolute `.ics` URL of ONE validated event, for a phone to open in the system browser.
+ *
+ * Narrow window around the event's own start (the feed filters by overlap) plus `eventId`.
+ * Returns an empty string for an unreadable start.
+ */
+export function eventIcsAbsoluteUrl(eventId: string, startsAt: string | Date): string {
+  const start = new Date(startsAt);
+  if (Number.isNaN(start.getTime())) return '';
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  return aggregatedCalendarFeedIcsAbsoluteUrl({
+    from: new Date(start.getTime() - DAY_MS).toISOString(),
+    to: new Date(start.getTime() + DAY_MS).toISOString(),
+    eventId,
+  });
 }
