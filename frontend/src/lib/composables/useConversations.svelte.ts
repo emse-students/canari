@@ -1211,7 +1211,11 @@ export function useConversations() {
       // the user's OTHER devices (rules 3 & 5) - their discovery purges it instead of showing the
       // "deleted" banner (reserved for peer deletions / exclusions). Best-effort: the local purge
       // below happens either way.
-      await mlsService.dismissGroup(convo.id).catch(() => {});
+      await mlsService.dismissGroup(convo.id).catch((e: unknown) => {
+        ctx.log(
+          `[${label}] dismissGroup(${convo.id}) failed - other devices keep it: ${String(e)}`
+        );
+      });
       // ANSWERED - the group is gone, or was never there. Either way nothing is owed.
       await clearPendingGroupExit(ctx.storage, convo.id, ctx.log);
     } catch (e) {
@@ -1222,7 +1226,11 @@ export function useConversations() {
       const failure = classifyExitFailure(e);
       if (failure === 'already-gone') {
         ctx.log(`[${label}] Deja fait cote serveur - purge MLS/UI locale`);
-        await mlsService.dismissGroup(convo.id).catch(() => {});
+        await mlsService.dismissGroup(convo.id).catch((e: unknown) => {
+          ctx.log(
+            `[${label}] dismissGroup(${convo.id}) failed - other devices keep it: ${String(e)}`
+          );
+        });
         await clearPendingGroupExit(ctx.storage, convo.id, ctx.log);
       } else if (failure === 'refused') {
         // Reachable and refusing. The exit is KEPT, because a server that is up and saying no is a

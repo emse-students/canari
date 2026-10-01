@@ -929,7 +929,16 @@ export async function handleWelcomeRequest(params: {
       log,
     });
     if (leafPresent === true) {
-      log(`[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add`);
+      // WHICH OF THE TWO CAUSES THIS REPAIRS, said from where it is already known: a Welcome this
+      // session sent to the device long enough ago to be past the cooldown means the device lost
+      // or failed to process it; none sent here means the leaf came from another path or session.
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add (` +
+          (lastWelcome
+            ? `last Welcome sent here ${Math.round((now - lastWelcome) / 1000)}s ago`
+            : 'no Welcome sent from here this session') +
+          ')'
+      );
       try {
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
