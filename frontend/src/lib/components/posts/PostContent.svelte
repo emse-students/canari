@@ -1,6 +1,7 @@
 <script lang="ts">
   import PostMedia from './PostMedia.svelte';
-  import type { PostEntity, PostMediaRef } from '$lib/posts/api';
+  import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
+  import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import { POST_MARKDOWN_RENDERERS as renderers } from './postMarkdownRenderers';
@@ -113,6 +114,14 @@
    * reserves the aspect ratio, so nothing moves when the picture lands.
    */
   const nearMedia = new SvelteSet<string>();
+
+  /**
+   * A CanaReel (C7) is drawn VERTICAL in the feed - a 9:16 box, the video covering it - rather than
+   * as an ordinary attachment, whose box follows the file's own ratio under a ceiling that crops a
+   * phone's portrait clip. Touching it opens the full-screen reel viewer instead of the media viewer.
+   */
+  const reel = $derived(isReel(post));
+  let reelViewerOpen = $state(false);
 </script>
 
 {#if post.markdown}
@@ -148,7 +157,27 @@
 
 {#if postMedia.length > 0 && authToken}
   <div class="mt-1 mb-1 w-full px-3">
-    {#if postMedia.length === 1}
+    {#if reel}
+      {@const media = postMedia[0]}
+      <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
+        <div
+          class="relative mx-auto aspect-9/16 h-[70svh] max-w-full overflow-hidden rounded-lg bg-black"
+          data-reel-card
+        >
+          <PostMedia
+            {media}
+            {authToken}
+            letterbox
+            deferred={!nearMedia.has(media.mediaId)}
+            onOpen={() => (reelViewerOpen = true)}
+            {postInfo}
+          />
+        </div>
+      </div>
+      {#if reelViewerOpen}
+        <ReelViewer startPost={post} {authToken} onClose={() => (reelViewerOpen = false)} />
+      {/if}
+    {:else if postMedia.length === 1}
       {@const media = postMedia[0]}
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
       <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>

@@ -808,10 +808,12 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 **THE SEAM CANAREELS (C7) BUILDS ON.** A reel plays in the feed and a touch opens a full-screen
 vertical viewer that swipes to the next ([backlog](../../backlog.md)). `VideoPlayer` assumes no feed,
 post or lightbox: it takes a `src` and the box classes, owns its bar, keyboard and fade, and reads
-the app's one sound answer. So a vertical viewer mounts one per reel, with `autoplay`/`loop` as it
-chooses. The two things such a viewer brings itself are the gesture exclusion (`data-video-controls`
-is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and one-video-at-a-time,
-which `followVideoSound` already gives every element it is on.
+the app's one sound answer. The two things such a viewer brings itself are the gesture exclusion
+(`data-video-controls` is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and
+one-video-at-a-time, which `followVideoSound` already gives every element it is on. **Built
+2026-10-02** ([reels](reels.md#watching-the-feed-card-and-the-full-screen-viewer-c7)), with one
+correction to "one per reel": a mounted player CLAIMS playback, so the viewer mounts ONE, for the
+reel on screen, and its neighbours draw the poster.
 
 ## Comment media (image + GIF)
 
