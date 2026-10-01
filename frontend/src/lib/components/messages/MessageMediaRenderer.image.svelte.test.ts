@@ -62,8 +62,11 @@ describe('MessageMediaRenderer - a decrypted photo', () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it('still draws a video as a video', () => {
+  it('still draws a video as a video - the feed one, with no native controls', () => {
     render(media('video', 'video/mp4'));
-    expect(document.querySelector('video')?.getAttribute('src')).toBe(BLOB);
+    const video = document.querySelector('video');
+    // `InlineVideo` seeks a decrypted file to its first frame (`#t=0.1`), as in the feed.
+    expect(video?.getAttribute('src')).toBe(`${BLOB}#t=0.1`);
+    expect(video?.hasAttribute('controls')).toBe(false);
   });
 });

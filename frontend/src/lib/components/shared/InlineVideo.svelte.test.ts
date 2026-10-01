@@ -96,6 +96,27 @@ it('seeks a decrypted file to its first frame, and hands a stream its URL untouc
   expect(target.querySelector('video')!.getAttribute('src')).toBe('blob:stream');
 });
 
+it('loops, muted and inline, like a feed video (Instagram)', () => {
+  const { video } = mountVideo();
+  expect(video.loop).toBe(true);
+  expect(video.muted).toBe(true);
+  expect(video.hasAttribute('playsinline')).toBe(true);
+});
+
+it("covers the box with Canari's poster until the first frame, never the engine's", () => {
+  const { video, openButton } = mountVideo();
+  const poster = () => document.querySelector('[aria-hidden="true"].bg-linear-to-br');
+  expect(video.hasAttribute('controls')).toBe(false);
+  expect(poster()).not.toBeNull();
+  // Decorative and click-through: the tap still reaches the button that opens the viewer.
+  expect(poster()!.className).toContain('pointer-events-none');
+  expect(openButton).toBeDefined();
+
+  video.dispatchEvent(new Event('loadeddata'));
+  flushSync();
+  expect(poster()).toBeNull();
+});
+
 it('plays while it is on screen and pauses when it leaves', () => {
   const { video } = mountVideo();
   const play = vi.spyOn(video, 'play').mockResolvedValue();

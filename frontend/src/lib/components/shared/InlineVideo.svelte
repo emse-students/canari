@@ -4,6 +4,7 @@
   import { playWhileVisible } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { m } from '$lib/paraglide/messages';
+  import VideoPoster from './VideoPoster.svelte';
 
   /**
    * A VIDEO THAT PLAYS WHERE IT IS - in the feed and in a conversation, the way Instagram's do.
@@ -51,6 +52,17 @@
   }: Props = $props();
 
   let videoEl: HTMLVideoElement | null = $state(null);
+  /**
+   * The first frame is in the element. Until then `VideoPoster` covers the box: a stream has no
+   * `#t=0.1` frame to show, and an engine slow to decode one would otherwise show a black box.
+   */
+  let frameReady = $state(false);
+
+  // A new source has no frame yet - the poster comes back until it decodes one.
+  $effect(() => {
+    void src;
+    frameReady = false;
+  });
 
   // The property, not the attribute: `muted` as an attribute is only the INITIAL state.
   $effect(() => {
@@ -76,7 +88,11 @@
     disableremoteplayback={disableRemotePlayback || undefined}
     use:playWhileVisible
     class={videoClass}
+    onloadeddata={() => (frameReady = true)}
   ></video>
+  {#if !frameReady}
+    <VideoPoster />
+  {/if}
   <button
     type="button"
     class="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"

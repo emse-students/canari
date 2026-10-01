@@ -128,6 +128,13 @@
   let showZoomIndicator = $state(false);
   let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * What the viewer's swipe, pinch, pan and double-tap leave alone: a video's taps and drags belong
+   * to the video, a button's to the button, and `VideoPlayer`'s control bar - whose seek bar is a
+   * drag that must stay a seek, never a swipe to the next media - says so with `data-video-controls`.
+   */
+  const NOT_A_GESTURE = 'video, button, [data-video-controls]';
+
   // ---- The frame ----
   /** The bars are faded out: a single tap toggles them (the immersive black view). */
   let chromeHidden = $state(false);
@@ -378,7 +385,7 @@
 
     function onTouchStart(e: TouchEvent) {
       // A video's taps and drags belong to its native controls, a button's to the button.
-      if ((e.target as HTMLElement).closest('video, button')) {
+      if ((e.target as HTMLElement).closest(NOT_A_GESTURE)) {
         gesture = null;
         return;
       }
@@ -566,7 +573,7 @@
   function handlePointerDown(e: PointerEvent) {
     if (e.pointerType === 'touch' || !isZoomed) return;
     const target = e.target as HTMLElement;
-    if (target.closest('video, button')) return;
+    if (target.closest(NOT_A_GESTURE)) return;
     isDragging = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
@@ -589,7 +596,7 @@
   function handleDoubleClick(e: MouseEvent) {
     e.stopPropagation();
     const target = e.target as HTMLElement;
-    if (target.closest('video, button')) return;
+    if (target.closest(NOT_A_GESTURE)) return;
     toggleZoomAt(e);
   }
 

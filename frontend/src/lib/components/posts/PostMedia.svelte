@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { Log } from '$lib/utils/Log';
@@ -27,7 +26,8 @@
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
-  import { followVideoSound } from '$lib/actions/playWhileVisible';
+  import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
+  import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
   import { m } from '$lib/paraglide/messages';
 
@@ -296,16 +296,8 @@
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else if mediaType === 'video'}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        src={playUrl}
-        disableremoteplayback={streamManaged || undefined}
-        controls
-        autoplay
-        poster={TRANSPARENT_VIDEO_POSTER}
-        use:followVideoSound
-        class="max-h-full max-w-full rounded-xl bg-black object-contain"
-      ></video>
+      <!-- A streamed `playUrl` reaches the element untouched: `VideoPlayer` never appends to it. -->
+      <VideoPlayer src={playUrl!} disableRemotePlayback={streamManaged} class="h-full w-full" />
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">
         <FileText size={48} strokeWidth={1.5} />
@@ -323,13 +315,16 @@
         <ImageIcon size={32} class="text-text-muted opacity-20" strokeWidth={1.5} />
       </div>
     {:else if mediaType === 'video'}
-      <!-- A plain dark box, the colour the video will fill it with: a camera icon pulsing in the
-           middle read as a stray logo on the Mi 9T (2026-09-29), and Instagram draws nothing. -->
+      <!-- Canari's poster, the one a player shows before its first frame: a camera icon pulsing in
+           the middle read as a stray logo on the Mi 9T (2026-09-29), and a flat black box as a
+           broken one (2026-10-01). -->
       <div
-        class="animate-pulse bg-black/80 {letterbox
+        class="relative overflow-hidden {letterbox
           ? 'h-full w-full'
           : 'aspect-video w-full max-w-md rounded-3xl'}"
-      ></div>
+      >
+        <VideoPoster />
+      </div>
     {:else if mediaType === 'audio'}
       <div
         class="flex h-14 w-full animate-pulse items-center justify-center rounded-xl bg-black/5 px-4 sm:w-56 dark:bg-white/10"
@@ -542,15 +537,14 @@
           class="max-h-full max-w-full object-contain select-none"
         />
       {:else}
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          src={blobUrl}
-          controls
-          autoplay
-          poster={TRANSPARENT_VIDEO_POSTER}
-          use:followVideoSound
-          class="max-h-full max-w-full rounded-xl bg-black object-contain"
-        ></video>
+        <!-- Canari's player, never the engine's `controls` (`VideoPlayer`). Opened from a video
+             that is still STREAMING, the viewer has no `blobUrl` yet - the MSE URL feeds the one
+             inline element only - so it shows the poster until the last segment fills it. -->
+        {#if blobUrl}
+          <VideoPlayer src={blobUrl} class="h-full w-full" />
+        {:else}
+          <div class="relative h-full w-full"><VideoPoster /></div>
+        {/if}
       {/if}
     </MediaLightbox>
   {/if}

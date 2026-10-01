@@ -709,8 +709,61 @@ the failure is SEEN, as a type, and every renderer reads it through one classifi
   purge set only the second, and the image and video branches tested only the first - a purged photo
   pulsed as a loading skeleton for ever. One nullable cause replaced the pair.
 
-Draft #1295's segmented reader throws its own tampered-segment error; when it merges, that error
-must map to `corrupt` in `mediaFailureCause` (one `instanceof` line).
+**A streamed video fails with the same types (#1295's reader).** `httpRangeSource` throws
+`MediaUnreachableError`, `MediaNotFoundError` and `MediaDownloadError` exactly as a whole download
+does (an aborted read stays an `AbortError`), and a `SegmentedMediaError` reads as `corrupt` - a
+tampered, reordered or truncated segment - EXCEPT the faults `encoding` and `version`, which a NEWER
+client wrote: those are `other`, and their cached bytes are kept, since an update reads them.
+`PostMedia`'s stream path classifies and logs through the same two functions as its download path.
+
+## A video is Canari's to play: `VideoPlayer`, never `controls` (2026-10-01)
+
+The viewers handed a clip to `<video controls>`, which is the ENGINE's bar: Android's grey strip
+with its own "plein ecran" pill and download button on the Mi 9T, another one on iOS, neither themed
+nor sized to a 44 px target. Two components now carry every video the app shows.
+
+| Where | Component | What it is |
+| --- | --- | --- |
+| Feed card, chat bubble | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
+| Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
+
+- **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
+  capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
+  playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
+  where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
+- **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch; a tap on the
+  picture, a key or a pause brings it back, and a paused video keeps it.
+- **Keyboard**: the player is one tab stop (`role="group"`); space/k, arrows (+-5 s), Home/End, m,
+  f (`videoKeyAction`). It stops the arrows from reaching `MediaLightbox`'s previous/next.
+- **Inside `MediaLightbox`** the bar carries `data-video-controls`, which the viewer's swipe, pinch
+  and pan treat like a `<video>` or a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek.
+- **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
+  button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
+  until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
+  card's loading box IS that poster rather than a flat black one.
+- **A streamed `src` reaches the element untouched.** `VideoPlayer` never appends to a URL, and
+  `InlineVideo` keeps its `streamed` prop: `#t=0.1` only on a decrypted file, never on an MSE URL.
+  A viewer opened while the card is still STREAMING has no `blobUrl` yet (an MSE URL feeds one
+  element) and shows the poster until the last segment fills it.
+- **A chat video is an `InlineVideo` now**, like the feed's, instead of a `<video controls>` in the
+  bubble; the bubble's viewer is `VideoPlayer`.
+- **Every video LOOPS, like Instagram's** (user, 2026-10-01): `InlineVideo` has `loop`, and
+  `VideoPlayer`'s `loop` prop defaults to true. A looping element never fires `ended` and never
+  pauses, so nothing in the bar can stick at the end: the time reads from 0 again on the next
+  `timeupdate` and the fade keeps running. Both are pinned by tests.
+- **A tap's FOCUS must not raise the controls** (Mi 9T, 2026-10-01): the player is focusable, a tap
+  focuses it, and `focusin` ran before the `click` - so the controls came up on the focus and the
+  click read them as up and hid them, and the first tap on a playing video did nothing visible.
+  Chromium on the desktop never showed it, because the player was already focused. `focusin` now
+  raises them only for keyboard focus (`:focus-visible`).
+
+**THE SEAM CANAREELS (C7) BUILDS ON.** A reel plays in the feed and a touch opens a full-screen
+vertical viewer that swipes to the next ([backlog](../../backlog.md)). `VideoPlayer` assumes no feed,
+post or lightbox: it takes a `src` and the box classes, owns its bar, keyboard and fade, and reads
+the app's one sound answer. So a vertical viewer mounts one per reel, with `autoplay`/`loop` as it
+chooses. The two things such a viewer brings itself are the gesture exclusion (`data-video-controls`
+is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and one-video-at-a-time,
+which `followVideoSound` already gives every element it is on.
 
 ## Comment media (image + GIF)
 
