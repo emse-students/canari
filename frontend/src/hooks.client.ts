@@ -329,8 +329,16 @@ if (isTauriRuntime()) {
         }
       };
 
-      // Handles deep links when the app is already running
-      onOpenUrl(processUrls);
+      // Handles deep links when the app is already running. EACH NEW INTENT ARRIVES HERE EXACTLY
+      // ONCE, and a second tap on the same notification is a fresh one, so this path is never
+      // gated - but it RECORDS what it acted on, in the claim the launch re-read below consults.
+      // `getCurrent()` returns that same intent's URL on the foreground resume that follows, and
+      // processing it again published the target twice: `[hooks] Processing URL` and
+      // `[notifNav] deep link received`, twice per backgrounded tap (Mi 9T, 2026-10-01).
+      onOpenUrl((urls) => {
+        if (urls[0]) deepLinkClaims.claim(urls[0]);
+        processUrls(urls);
+      });
 
       // Which launch URL this session has already acted on. NOT a module variable: `getCurrent()`
       // keeps returning the launch URL for the life of the PROCESS, while a WebView reload wipes

@@ -18,6 +18,10 @@
  * the same WebView and is empty in a new one, which is the same boundary as the plugin's
  * `currentUrl`. A process that really was cold-started by a new deep link therefore still processes
  * it, because its storage is empty too.
+ *
+ * THE LIVE `onOpenUrl` PATH WRITES THE SAME CLAIM, without being gated by it. A tap on a
+ * backgrounded app is delivered there AND is what `getCurrent()` answers on the resume right after,
+ * so the re-read must know it was already acted on (measured twice per tap, Mi 9T, 2026-10-01).
  */
 
 const STORAGE_KEY = 'canari:deeplink:handled';

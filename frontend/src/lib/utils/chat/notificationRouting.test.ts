@@ -50,13 +50,33 @@ describe('landingRecovery', () => {
         isChannel: true,
         alreadyRefreshed: false,
         conversationSourcesSettled: true,
+        workspacesLoading: false,
       })
     ).toBe('refresh');
   });
 
   it('waits instead of refreshing the same channel twice', () => {
     expect(
-      landingRecovery({ isChannel: true, alreadyRefreshed: true, conversationSourcesSettled: true })
+      landingRecovery({
+        isChannel: true,
+        alreadyRefreshed: true,
+        conversationSourcesSettled: true,
+        workspacesLoading: false,
+      })
+    ).toBe('wait');
+  });
+
+  // A killed start: the post-login load is running when the tap arrives, and it is the load that
+  // will bring the target. Refreshing beside it printed `refreshing communities` twice for one tap
+  // (Mi 9T, 2026-10-01) - the in-flight load settling re-runs the landing instead.
+  it('waits for a community load already in flight instead of starting a second', () => {
+    expect(
+      landingRecovery({
+        isChannel: true,
+        alreadyRefreshed: false,
+        conversationSourcesSettled: true,
+        workspacesLoading: true,
+      })
     ).toBe('wait');
   });
 
@@ -68,6 +88,7 @@ describe('landingRecovery', () => {
         isChannel: false,
         alreadyRefreshed: false,
         conversationSourcesSettled: false,
+        workspacesLoading: false,
       })
     ).toBe('wait');
   });
@@ -78,6 +99,7 @@ describe('landingRecovery', () => {
         isChannel: false,
         alreadyRefreshed: false,
         conversationSourcesSettled: true,
+        workspacesLoading: false,
       })
     ).toBe('abandon');
   });
@@ -93,6 +115,7 @@ describe('landingRecovery', () => {
         isChannel: false,
         alreadyRefreshed: false,
         conversationSourcesSettled: false,
+        workspacesLoading: false,
       })
     ).toBe('wait');
   });
