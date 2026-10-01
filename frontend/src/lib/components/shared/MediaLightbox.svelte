@@ -135,6 +135,16 @@
    */
   const NOT_A_GESTURE = 'video, button, [data-video-controls]';
 
+  /**
+   * A video player's own box - the picture AND the black around a letterboxed clip. A swipe or a
+   * pinch that starts there is still the viewer's, but a TAP or a double-tap is the player's: it
+   * toggles the player's controls (`VideoPlayer`), where the viewer's tap used to take the black
+   * margins for its own and toggle the title bar instead.
+   */
+  const VIDEO_PLAYER = '[data-video-player]';
+  /** The current touch began inside a video player, so its tap is the player's. */
+  let touchOnPlayer = false;
+
   // ---- The frame ----
   /** The bars are faded out: a single tap toggles them (the immersive black view). */
   let chromeHidden = $state(false);
@@ -389,6 +399,7 @@
         gesture = null;
         return;
       }
+      touchOnPlayer = !!(e.target as HTMLElement).closest(VIDEO_PLAYER);
       if (e.touches.length >= 2) {
         // A second finger turns anything into a pinch; a swipe under way springs back.
         if (gesture === 'swipe-h' || gesture === 'swipe-down') settle({ swipeDx: 0, dismissDy: 0 });
@@ -464,7 +475,8 @@
       const dy = end.y - touchStart.y;
 
       if (kind === 'pending') {
-        if (isTap(touchStart, end)) {
+        // A tap on a video player is NOT cancelled: its click is the player's toggle of its controls.
+        if (isTap(touchStart, end) && !touchOnPlayer) {
           // Cancelled so the tap does not also become the browser's click / dblclick.
           e.preventDefault();
           handleTap(end);
@@ -596,7 +608,7 @@
   function handleDoubleClick(e: MouseEvent) {
     e.stopPropagation();
     const target = e.target as HTMLElement;
-    if (target.closest(NOT_A_GESTURE)) return;
+    if (target.closest(NOT_A_GESTURE) || target.closest(VIDEO_PLAYER)) return;
     toggleZoomAt(e);
   }
 

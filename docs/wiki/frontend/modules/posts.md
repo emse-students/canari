@@ -731,12 +731,22 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
   playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
-- **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch; a tap on the
-  picture, a key or a pause brings it back, and a paused video keeps it.
+- **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
+  video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
+  player toggles it** (user, 2026-10-02) - anywhere means the black around a letterboxed clip too: the
+  tap listener used to be on the `<video>` alone, which a phone's landscape clip fills a third of.
+  Only a mouse's `pointermove` counts; a finger's is a drag (a swipe, a seek) and shows nothing. A
+  key or a pause brings it back too.
 - **Keyboard**: the player is one tab stop (`role="group"`); space/k, arrows (+-5 s), Home/End, m,
   f (`videoKeyAction`). It stops the arrows from reaching `MediaLightbox`'s previous/next.
 - **Inside `MediaLightbox`** the bar carries `data-video-controls`, which the viewer's swipe, pinch
   and pan treat like a `<video>` or a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek.
+  The player's root carries `data-video-player`: **a TAP that starts there is the player's** - the
+  viewer neither cancels its click nor toggles its own title bar - while a swipe from there is still the
+  viewer's. Before, a tap on the black margins was the viewer's, so the controls never answered on most
+  of the screen. Verified in Chromium on a recorded portrait clip in the open viewer: the controls fade,
+  a mouse move over the side margin brings them back, a touch tap on the margin toggles them both ways;
+  `MediaLightbox.videoTap.svelte.test.ts` is red on the old viewer.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
   until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
