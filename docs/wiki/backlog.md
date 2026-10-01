@@ -322,15 +322,6 @@ member; an end-to-end harness row. **Residue, not fixed:** a backgrounded Androi
 socket and look online while unable to answer - the elected member is then silent and the next
 start re-asks.
 
-### P1 - no media snapshot has ever held Garage's `node_key`, and nothing reported a failed backup (measured 2026-09-30)
-
-Five nights wrote no archive and no offsite media mirror, and it reached no one
-([backup](infrastructure/backup.md#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)).
-Fixed in the repository: the `backup` step reads as root, and `backup-report.sh` reports every night
-from `scheduled.yml`. **Owed**: the fix to `backup-objects.sh` reaches the host's checkout only with
-a stable - `v0.18.32`, cut 2026-10-01 - and until it lands the report is RED every day on
-`node_key`, which is true. Deleted the first day it is green.
-
 ### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
 
 `cloudflared` runs as `/usr/bin/cloudflared --no-autoupdate tunnel run --token <secret>`. In

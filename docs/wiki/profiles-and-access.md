@@ -1,7 +1,8 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
-**Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 to WP9 are
-PLANNED, NOT BUILT** (the next one is WP2, the enrolment flow). Every answer below was given by the user on
+**Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
+TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 to WP9 are PLANNED, NOT BUILT** (the next
+one is WP3, Canari reads the profile). Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
 VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE WP0/WP1: read them as the
 starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
@@ -361,6 +362,34 @@ suis ou j'ai été élève" (checkbox) -> formation + entry year; "Je travaille 
 EMSE / ME / Alumni. A validation policy refuses "none of them" with the D12 message, and an
 expression policy writes `attributes.profile`. `custom_statut`, `is-student`, `Merge attributes` and
 the `Personnel de l'école` mapping retire with WP9.
+
+**WP2 as built (2026-10-01).** ONE flow, `miconnect-enrollment` - the former `miconnect-enrollment-cas`,
+renamed in place so the CAS source keeps pointing at it - and BOTH sources (`cas-emse`, `alumni`)
+enrol through it (D7). The alumni flow and the old status question are deleted.
+
+- **Page 1**: campus (radio, `saint-etienne` / `gardanne`, the person's own choice - D6, never
+  deduced from the formation as the migration did), "Je suis ou j'ai été élève", and three checkboxes
+  "Je travaille pour" EMSE / la Maison des Élèves / l'association des Alumni. The policy
+  `miconnect-enrollment-validate-affiliation` refuses a page with no box ticked and says why, in
+  French (D12). A checkbox is `required: false`, otherwise authentik demands that it be ticked.
+- **Page 2** (formation + entry year) is bound to `miconnect-enrollment-is-student`, so a person who
+  only ticked a post is never asked for a cursus. An impossible year is refused WITH a message; it
+  used to re-show the page with none.
+- **The profile** is written by `miconnect-enrollment-merge-status`: the campus, one cursus when
+  student, a post for each box ticked (so a cursus AND a post are cumulative - D1), the explicit
+  names. It keeps writing `school_status` (`Elève` / `Personnel de l'école`) and the `formation` /
+  `promo` attributes, for the legacy claims until WP9.
+- **Proven by DRIVING the flow, not by evaluating its policies.** `test-enrollment-flow.py` seeds a
+  plan the way a source does and posts through authentik's own executor: a student, an ISMIN student
+  who chose Saint-Etienne, staff on two posts, a student who is also an alumni post, a page with no
+  box, an impossible year. It runs in CI after the blueprints' idempotence check, and was seen to
+  FAIL with the D12 guard removed. Two traps were in the test and not the flow: authentik's session
+  cookie is a signed JWT (a bare session key is ignored outside TEST and the executor quietly plans
+  anew, with an empty context - the username "vanished"), and a completed POST answers with a redirect.
+- **Not observed**: a real first CAS sign-in through the new pages - every account already exists, so
+  nothing on production can exercise it. The first new person is the observation.
+- **It reaches production with the next stable** (the release applies the blueprints): no order
+  constraint, unlike WP1. The pre-release's dry run against production shows the diff first.
 
 **WP3 - Canari reads the profile.** A core migration adds `miconnectUuid`, `campus`, `cursus` (jsonb)
 and `posts` (text[]); the callback REPLACES them wholesale (a claim that disappears clears, unlike
