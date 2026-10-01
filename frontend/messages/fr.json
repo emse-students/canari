@@ -3116,5 +3116,14 @@
   "reels_camera_close": "Fermer la caméra",
   "reels_camera_switch": "Changer de caméra",
   "reels_camera_torch_on": "Allumer le flash",
-  "reels_camera_torch_off": "Éteindre le flash"
+  "reels_camera_torch_off": "Éteindre le flash",
+  "reels_shutter_record": "Filmer (maintenir, ou toucher pour démarrer)",
+  "reels_shutter_stop": "Arrêter l'enregistrement",
+  "reels_capture_gallery": "Choisir une vidéo dans la galerie",
+  "reels_capture_record_error": "L'enregistrement a échoué. Réessayez.",
+  "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
+  "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",
+  "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
+  "reels_review_discard": "Supprimer et refilmer",
+  "reels_review_next": "Suivant"
 }

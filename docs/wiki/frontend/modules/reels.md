@@ -70,3 +70,43 @@ that state.
 `CameraSession` numbers every open, and an open that returns to a session that has moved on releases
 its own stream rather than installing it - a fact recorded at the request, never a delay
 (`reels/cameraSession.svelte.ts`, pinned by its test).
+
+## The capture screen (C4)
+
+The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`):
+a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
+has one), the gallery bottom-left, and the shutter in the middle.
+
+**The shutter is HOLD-to-record AND TAP-to-toggle** (`reels/reelCapture.ts`). Holding is the gesture
+the user named and Instagram's, and suits a few seconds. A reel runs to 90 s, and holding a button
+that long on glass shakes the frame, tires the thumb and puts the lens switch out of reach - so a
+press shorter than `SHUTTER_HOLD_THRESHOLD_MS` (300 ms) is a TAP that starts a take the release does
+not end, and the next press ends it. The threshold classifies a gesture; it never decides whether a
+recording exists. The shutter opts out of the tab swipe and captures its pointer, so a held take
+whose finger drifts neither turns the page nor loses its release.
+
+**The ring fills to the server's cap and the take ends there.** `GET /api/posts/reel-limits` is the
+one copy of the 90 s, so the shutter (and the gallery) stay disabled until it has answered, and a
+failure says "Canari cannot be reached" with a retry. The deadline that ends a full take IS the
+product rule (C4), not a timer standing in for a fact.
+
+**The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, VP9 WebM elsewhere,
+at 4 Mb/s - above the 2.5 Mb/s target on purpose, since the preparation re-encodes once and
+recording at the target would compress twice. Its bytes are handed over at the recorder's `stop`
+event, after the last chunk. Every failure is a typed `ReelRecorderError` (`unsupported`, `start`,
+`record`, `empty`) and a toast.
+
+**A take is one history entry from its first frame to the end of its review**, so Back ends a
+recording or discards a review before it leaves the camera, and the tab swipe stands down meanwhile
+(it reads the overlay depth). The lens switch and the close button stand down during a take. The
+review plays the take full screen and looping in `VideoPlayer`, with the camera held OFF
+(`CameraScreen`'s `paused`) so the privacy dot is not lit for nothing; discarding reopens it. Going to
+the background mid-take ENDS the take and keeps it (`onBeforeRelease`) rather than losing it with the
+camera.
+
+**The gallery is a tile with an icon, not a thumbnail of the last video.** Drawing the last item
+would need READ access to the library: `READ_MEDIA_VIDEO` on Android, which Play restricts to apps
+whose core purpose is a gallery, and a full photo-library grant on iOS - a privacy question asked
+only to draw a picture. The tile opens the system picker instead, which needs neither; a video over
+the cap is refused the moment it is picked (`reels/videoDuration.ts`), and one whose header has no
+duration is left to the preparation's own `too-long`.
