@@ -14,6 +14,200 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+### Fixed - the media sweep deleted an association's vault document; it now deletes chat media and nothing else
+
+Vault uploads named no retention class and the idle sweep took everything no exemption named, so one `les-rootz` document answered 410. The sweep is now an allowlist of `ephemeral`, vault documents are `association` (kept, and surviving the uploader's account), and a gone file says "upload it again" instead of "download failed" ([media-service](docs/wiki/services/media-service.md#the-sweep-is-an-allowlist-an-associations-document-was-swept-2026-10-01)).
+
+### Found - avatars are edge-cached since 2026-09-16, and batching them would now be a regression
+
+A Cache Rule took each avatar from ~900 ms to 17-37 ms; one batched JSON answer would add base64 and lose the per-image cache entries that made it fast ([core-service](docs/wiki/services/core-service.md#the-avatar-proxy)).
+
+### Added - one log line per avatar request, at both hops of a notification photo
+
+`[PUSH_AVATAR]` (chat-delivery) and `[AVATAR]` (core-service) now log the outcome, status, duration and a truncated target id of every avatar fetch, so a notification that drew initials once is findable ([chat-delivery](docs/wiki/services/chat-delivery.md#the-push-avatar-log-line)).
+
+### Added - `seed-bench.mjs` fills the local estate for the verification rows
+
+40 feed posts, an encrypted video post, six upcoming events and a 100-message salon, each topped up to a target so a re-run is a no-op ([harness README](tools/cross-client-harness/README.md)). Also recorded: replaying the migration ledger on the ledger-less local database deletes every community ([databases](docs/wiki/infrastructure/databases.md#migrations)).
+
+### Fixed - the agenda's "subscribe" button is on phones again, and its link can leave the app
+
+Hidden below `sm` since June on a premise half true (the Mi 9T resolves no `webcal` handler; an iPhone's Calendar does); the modal now leads with the calendar app, the URL to copy and Google Calendar on a phone, iOS gets `webcal:`, and the opener capability finally allows both schemes ([calendar](docs/wiki/frontend/modules/calendar.md#the-subscribe-button-is-on-phones-and-its-modal-orders-what-works-there-2026-10-01)).
+
+### Changed - every video plays in Canari's own player, never the engine's grey bar
+
+The viewers play a video with Canari's controls (seek bar with what is buffered, time, sound, full
+screen, 44 px targets, fading after 2.5 s), every video loops, a chat video plays inline like the
+feed's, and a box waits on Canari's poster instead of black
+([posts](docs/wiki/frontend/modules/posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01)).
+
+### Fixed - photos in a conversation display again
+
+Since `v0.18.32` every chat photo was handed to a video player, which cannot decode it ([chat](docs/wiki/frontend/modules/chat.md#every-photo-in-a-conversation-went-to-a-video-1229-shipped-in-v01832-fixed-2026-10-01)).
+
+### Changed - CLAUDE.md names WP2 (the enrolment flow) as in progress and WP3 as next
+
+### Fixed - three code-scanning alerts closed in the code, not dismissed
+
+The `epoch_rejected` log goes through `sanitizeForLog`, a test imports `vi` before using it, and a test no longer holds a `${...}` string that looks like a template.
+
+### Fixed - the floating day pill is centred, says the shortest honest day, and no longer doubles a separator
+
+"Aujourd'hui", "Hier", the weekday within six days, then "23 septembre" (year only when not this year), in fr and en; the pill is a centred row under the banners and hides while the day it names is on screen ([chat](docs/wiki/frontend/modules/chat.md#the-day-label-and-its-floating-pill-2026-10-01)).
+
+### Fixed - main's CI was red on six `devalue` advisories; the lockfile now resolves 5.9.4
+
+`devalue` (<= 5.9.2) comes transitively from `@sveltejs/kit` and `svelte`, whose ranges already admit the patched 5.9.3+, so the lockfile alone moved (`bun update devalue`) - no override, no audit ignore. `bun audit` is clean in `frontend/`.
+
+### Fixed - two frontend tests failed under load because the cold compile of the paraglide barrel was charged to a case's timer
+
+`PushNotificationService.permission` and `appVersionCheck.importIsQuiet` paid the first-import transform (about 10 s, past 30 s on a busy machine) inside the first case, which timed out and leaked into the next one. The import is now done once at collection, where no per-case budget applies, and the 30 s timeouts are gone.
+
+### Added - the Google Search Console ownership file is served at `/googlea035227b58453615.html`
+
+A static file nginx answers from disk, pinned by a test on its content and on the rule that serves it. The uptime-probe work item is dropped from the docs (the user handed availability monitoring to another team).
+
+### Fixed - iOS: the native "+" stays on its twin, the pill keeps one line and its avatar disc, the tab bar follows a switch to light
+
+Four findings of the first iPhone pass, three fixed at their cause and the launch logo diagnosed ([mobile](docs/wiki/frontend/mobile.md#the-conversations-native-glass-chrome), [app-icons](docs/wiki/frontend/app-icons.md#launch-screens)).
+
+### Documented - iOS push fails on the development-signed bench build, and the iOS rig's first live runs
+
+The backlog now records what was measured on 2026-10-01: `Invalid APNs credential` for sandbox tokens only, the Firebase slot that is owed to the user, and what the rig has and has not run ([backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else)).
+
+### Added - the cross-client rig can address the iPhone (`CANARI_PHONE=ios`, device `I1`)
+
+`phone-ios.mjs` keeps the Android phone's interface over WDA, Notification Center and the syslog, the iPhone's WebKit console now reaches the classifier, and every board row is classified for iOS with what it still needs ([cross-client-ios](docs/wiki/cross-client-ios.md)).
+
+### Fixed - the cross-client rig's first live run on the iPhone: six instruments that could not see the iOS app
+
+Identity on a cookie-less origin, the PIN keypad (whose erase key had stopped being the `⌫` text on every phone), the LAN route to the local estate, the native tab bar and glass twins, and the send witness for an app whose API calls bypass the WebView; plus the measured push refusal on bench builds (`Invalid APNs credential.` for sandbox tokens) ([cross-client-ios](docs/wiki/cross-client-ios.md#the-first-live-session-2026-10-01)).
+
+### Added - the cross-client rig can click and type on the iPhone, and drive its system screens
+
+Under `CANARI_PHONE=ios` the I1 connection performs every CDP `Input.*` frame as a WebDriverAgent touch or key (`webkit-input.mjs`), and `phone-ios.mjs` gains airplane mode, the link conditioner, force-quit, Settings, reboot, a fresh install with its sign-in sheet, deep links and notification actions - fixtures only, nothing run on the device yet ([cross-client-ios](docs/wiki/cross-client-ios.md)).
+
+### Added - the iPhone bench build answers the rig about its native stores, its filing and its refresh credential
+
+A `local_url` build carries a bench-only command and notification filing lines, asserted absent from every store archive; the rig reads the native stores, the interruption level, a composer file and the APNs witness through them ([cross-client-ios](docs/wiki/cross-client-ios.md#the-bench-observables-what-they-are-and-why-a-store-build-cannot-carry-them)).
+
+### Fixed - the login flatness test strips comments without a regex CodeQL flags
+
+Code-scanning alert 2544 (incomplete multi-character sanitization) named the single-pass comment regex in `LoginForm.flat.test.ts`; it now scans for the delimiters.
+
+### Fixed - a media that cannot be shown says why, and can be retried in place
+
+Offline, deleted (404), expired and damaged media each say so instead of one "Impossible de charger
+le media", with a "Reessayer" button where a retry can help; a purged chat photo no longer pulses as
+a skeleton for ever ([posts](docs/wiki/frontend/modules/posts.md#a-media-that-cannot-be-shown-says-why-typed-at-the-throw-2026-10-01)).
+
+### Changed - MiConnect enrolment: campus, then boxes, one flow for both sources
+
+A new account now picks its campus, ticks "student / was a student" and the organisations it works
+for (at least one box, or it is refused with the reason), and gets a cursus and/or posts in its
+profile. The CAS and the Alumni SSO share the flow, which CI now drives end to end
+([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Added - Canari reads the MiConnect profile
+
+Each account now carries its campus, cursus and posts, replaced at every sign-in, and the directory
+filters on campus and post ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Fixed - `mitv` ran a kernel two months behind its security update, and nothing watched its RAID1
+
+The reboot owed since 12 July was taken on 2026-09-03, and it exposed a `mdmonitor.service` that had refused to start on every boot; it now runs and its alarm was proven by a test event. The array still has no report that reaches a human ([host-updates](docs/wiki/infrastructure/host-updates.md#the-73-tb-raid1-nobody-was-watching-found-while-rebooting-for-the-kernel-2026-09-03)).
+
+### Fixed - the four notification-tap rows could not run, and their failure accused the product
+
+`notif7.mjs` shelled out to a machine-local `a1.py` that never reached git, so NOTIF-7/-7b/-7c/-7d read `no shade row contains <marker>` for a missing script; `phone.tapNotification` now taps by element and records `SETUP-FAILED` on an instrument fault, and the runner answers under the board's own row ids. NOTIF-7 `PASS` 2026-09-22. [cross-client-testing](docs/wiki/cross-client-testing.md).
+
+### Fixed - a direct message notification no longer prints the person's name twice
+
+The DM now uses the group shape with no title, so the name appears once, above its line. The titled version, read on the Mi 9T, showed "Name : Name : text" ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Changed - an Android message notification names every author, and a contact with no photo is no longer re-asked for one on every notification
+
+A direct message now looks like a group: the person's name above their lines, "Vous"/"You" above ours. A `404` from the avatar proxy is remembered for 24 h, while a `502`/`503` or a network failure is never remembered ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Fixed - a notification tap is processed once
+
+A tap on a backgrounded app no longer reaches the deep-link handler twice, and a killed start waits
+for the community load already running instead of starting a second one
+([mobile](docs/wiki/frontend/mobile.md#a-backgrounded-tap-reached-both-paths-and-the-live-one-now-writes-the-claim-2026-10-01)).
+
+### Fixed - Android: no false "messages en attente" alert, and a shade reply is never sent twice
+
+The background retry worker looks at the outbox before counting attempts and no longer counts a
+foreground deferral; the native outbox drain is single-flight
+([mobile](docs/wiki/frontend/mobile.md#background-execution)).
+
+### Fixed - a post card's dead space under its actions, full-bleed media and a green sound button
+
+An empty comment section no longer stacks 45 px of padding above its input, media are inset and
+rounded inside the card, cards stand off the page a little more, and the video sound button wears
+the app's amber ([posts](docs/wiki/frontend/modules/posts.md#the-cards-spacing-read-on-the-mi-9t-2026-10-01)).
+
+### Fixed - a reaction on a message no longer crowds its text
+
+The pill overlaps the bubble's edge by less ([posts](docs/wiki/frontend/modules/posts.md#the-who-reacted-list-a-tap-reacts-a-hold-shows-who---discords-gesture-2026-10-01)).
+
+### Changed - a tap on a reaction reacts, a hold shows who reacted; in a conversation, reactions sit on the bubble
+
+Messages and posts alike; the list closes on the next action ([posts](docs/wiki/frontend/modules/posts.md#the-who-reacted-list-a-tap-reacts-a-hold-shows-who---discords-gesture-2026-10-01)).
+
+### Found - the device-revocation check stays in front of the fingerprint prompt, and the launch's seven console lines are expected
+
+Moving it behind the prompt would make a stolen device's wipe wait for a fingerprint a thief never gives; the five 404s and two 415s of a cold start are a cached "no photo" and a favicon probe's answer ([cold-start](docs/wiki/frontend/cold-start.md#the-revocation-gate-stays-in-front-of-the-prompt-and-the-launchs-console-noise-is-explained-pixel-6a-2026-09-15)).
+
+### Fixed - the test rig chooses options of the in-app Picker by their drawn label
+
+`chooseOption` looked for a native select that #1227 replaced, so `venue.mjs` failed `no-select` and every role gesture with it; it now opens the Picker and clicks the option by its Paraglide label, with a selftest over fixture markup ([cross-client-harness](tools/cross-client-harness/README.md)).
+
+### Changed - the cross-client rig refuses a third identity, forgives scanner 404s by fact, and writes the server window into HEAL rows
+
+`peerNameFor` throws for a device outside the owner/peer pair, a 404 is judged against the paths the app owns, an unarmed COMM-9/10 names why, HEAL-NEW and HEAL-REVOKE rows carry the server window, browser console lines are attributed by origin, and an epoch-fork comparison exists (its in-page client hook does not yet) - rig only, see [testing-methodology](docs/wiki/testing-methodology.md).
+
+### Fixed - a salon message received in the background shows in the open salon on resume
+
+The salon history cache is no longer trusted for five minutes; a socket drop or reconnect marks it
+stale and the open salon reloads ([chat](docs/wiki/frontend/modules/chat.md#a-salon-copy-is-stale-when-the-live-stream-had-a-gap-never-when-a-clock-says-so-2026-10-01)).
+
+### Added - segmented media: the reader release (CanaReels R2)
+
+Every client now reads a video sealed in 1 MiB authenticated segments (STREAM), and the media service serves byte ranges, so a later release can play a video while it downloads; nothing writes the format until the writer flip ([media-service](docs/wiki/services/media-service.md#segmented-media-play-while-downloading-canareels-r2---the-reader-release-2026-10-01)).
+
+### Changed - the session state and the backlog match the repository of 2026-10-01
+
+What `v0.18.32` and `0.18.33-alpha.1` carry, the `301`, today's owed readings and four new durable rules, each re-derived from a tag or a measurement ([backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), [durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
+
+### Fixed - a message answered from the notification shade no longer comes back as a new notification
+
+A paused connection is now closed instead of left to a zombie watchdog that reconnected in the
+background, and both notification builders skip a message the shade already read
+([mobile](docs/wiki/frontend/mobile.md#a-message-the-shade-already-answered-is-never-announced-again-2026-10-01)).
+
+### Fixed - four silent branches now log (forgotten conversations, discovery dismissals, Welcome kick) and a full account records INVALID
+
+`forgetGroupReconciliation` says what it forgot, the two swallowed `dismissGroup` failures log, the Welcome-request kick says whether this session ever sent a Welcome, and `healnew.mjs` records the mint's refusal instead of a TypeError ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a tab open across a deploy offers a reload; the web login is flat and French; an abandoned poll or form toggle no longer comes back
+
+A failed lazy import reads `version.json` and offers ONE reload per served build instead of a bare "Erreur" ([architecture](docs/wiki/frontend/architecture.md#a-tab-open-across-a-deploy-its-lazy-modules-are-gone-and-a-reload-is-offered)); the login card loses its glows and gets the French store badges ([auth](docs/wiki/frontend/modules/auth.md)); a composer toggle left empty is neither saved nor restored ([posts](docs/wiki/frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)).
+
+### Changed - the store notes for 0.18.33
+
+The notes name the association documents that no longer expire, the calendar subscription on phones, the shorter day label and the fixes of the salon, shade reply and iPhone chrome.
+
+### Changed - the store notes for 1.0.0
+
+The notes recap what users gained since 0.18.32: the video player, readable media failures with a retry, named authors in notifications, and the 0.18.33 fixes.
+
+### Changed - one function names the estate a baked backend URL belongs to, and `[BUFFER]` says "recovery started"
+
+`build.yml`, `android.yml` and `ios.yml` now source `.github/scripts/lib/backend-url.sh` instead of three private lists (the web build also accepts the legacy apex now, like the native two), and the unknown-group line no longer claims a `welcome_request` that `requestReAdd` may never send ([cicd](docs/wiki/cicd.md), [chat-delivery](docs/wiki/services/chat-delivery.md)).
+
 ## [0.18.32] - 2026-10-01
 
 ### Fixed - Android at a large text size: the header name and the avatar initials stay in their boxes
