@@ -16,8 +16,8 @@
     unpackEncryptedBlob,
     decryptDocument,
   } from '$lib/associations/vaultCrypto';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { socialUrl } from '$lib/utils/apiUrl';
+  import { fetchVaultCiphertext } from '$lib/associations/vaultDownload';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { ChevronDown, Download, FileText, Building2 } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -31,6 +31,8 @@
   let query = $state('');
   const expanded = new SvelteSet<string>();
   let downloadingId = $state<string | null>(null);
+  /** A document whose file the server no longer holds - shown above the list, never replacing it. */
+  let purgedNotice = $state('');
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -71,12 +73,10 @@
   async function handleDownload(doc: ReviewerDocument) {
     downloadingId = doc.id;
     error = '';
+    purgedNotice = '';
     try {
       console.log(`[Reviewer] Downloading: ${doc.id}`);
-      const mediaBase = socialUrl() || '';
-      const res = await apiFetch(`${mediaBase}/api/media/${encodeURIComponent(doc.mediaId)}`);
-      if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-      const packed = await res.arrayBuffer();
+      const packed = await fetchVaultCiphertext(doc.mediaId);
 
       const { iv, ciphertext } = unpackEncryptedBlob(packed);
       const key = await importRawAesKey(doc.cek);
@@ -85,6 +85,12 @@
       await downloadDecryptedFile(new Blob([plaintext], { type: doc.mimeType }), downloadName(doc));
       console.log(`[Reviewer] Download complete: ${doc.name}`);
     } catch (e) {
+      // Gone for good: a reviewer cannot re-upload, so the notice says who must.
+      if (isMediaPurgedError(e)) {
+        console.warn(`[Reviewer] Document ${doc.id}: the server no longer holds its file (410)`);
+        purgedNotice = m.asso_doc_purged_reviewer({ name: doc.name });
+        return;
+      }
       console.error('[Reviewer] Download error:', e);
       error = m.common_generic_error_label();
     } finally {
@@ -137,6 +143,14 @@
     <PageHeader title={m.reviewer_docs_title()} subtitle={m.reviewer_docs_subtitle()} />
 
     <div class="space-y-6">
+      {#if purgedNotice}
+        <p
+          class="border-amber-warn/40 bg-amber-warn/10 text-text-main rounded-xl border px-4 py-3 text-sm"
+          role="alert"
+        >
+          {purgedNotice}
+        </p>
+      {/if}
       {#if loading}
         <div class="flex justify-center py-16">
           <div

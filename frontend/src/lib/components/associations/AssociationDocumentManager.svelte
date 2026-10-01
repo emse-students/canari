@@ -27,6 +27,9 @@
   } from '$lib/associations/vaultCrypto';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
+  import { fetchVaultCiphertext } from '$lib/associations/vaultDownload';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import type { MediaRetentionClass } from '$lib/media';
   import {
     FileUp,
     Trash2,
@@ -59,6 +62,12 @@
   let uploading = $state(false);
   let uploadError = $state('');
   let downloadingId = $state<string | null>(null);
+  /**
+   * The document whose blob the server no longer holds (410), shown as a notice ABOVE the list
+   * with the upload action - never through `error`, which replaces the whole list and would hide
+   * the very button the member needs.
+   */
+  let purgedDoc = $state<AssociationDocument | null>(null);
 
   let fileInput = $state<HTMLInputElement | undefined>(undefined);
 
@@ -210,6 +219,9 @@
       const mediaBase = socialUrl() || '';
       const fd = new FormData();
       fd.append('file', new Blob([packed], { type: 'application/octet-stream' }), file.name);
+      // A vault document belongs to the association: kept for ever, and it survives the uploader's
+      // account. Without a class it was swept like a chat photo, which is how one was lost.
+      fd.append('retentionClass', 'association' satisfies MediaRetentionClass);
       const uploadRes = await apiFetch(`${mediaBase}/api/media/upload`, {
         method: 'POST',
         body: fd,
@@ -232,6 +244,7 @@
         originalFilename: file.name,
       });
       console.log(`[Vault] Document saved: ${doc.id}`);
+      purgedDoc = null;
       stats = await listDocuments(associationId);
     } catch (e: unknown) {
       console.error('[Vault] Upload error:', e);
@@ -256,14 +269,29 @@
       return;
     }
     downloadingId = doc.id;
+    purgedDoc = null;
     performDownload(doc)
       .catch((e) => {
+        if (showPurged(doc, e)) return;
         console.error('[Vault] Download error:', e);
         error = m.common_download_failed();
       })
       .finally(() => {
         downloadingId = null;
       });
+  }
+
+  /**
+   * Shows the "no longer stored" notice when a download failed because the server no longer holds
+   * the blob. Classified by TYPE (`MediaPurgedError`), never by message.
+   *
+   * @returns true when the failure was that, so the caller does not also show a generic error.
+   */
+  function showPurged(doc: AssociationDocument, e: unknown): boolean {
+    if (!isMediaPurgedError(e)) return false;
+    console.warn(`[Vault] Document ${doc.id}: the server no longer holds its file (410)`);
+    purgedDoc = doc;
+    return true;
   }
 
   /**
@@ -286,10 +314,7 @@
         ? await deriveDocumentCekWithPassword(vaultKeyHex, cekSalt, password, pwSalt)
         : await deriveDocumentCek(vaultKeyHex, cekSalt);
 
-    const mediaBase = socialUrl() || '';
-    const dlRes = await apiFetch(`${mediaBase}/api/media/${encodeURIComponent(detail.mediaId)}`);
-    if (!dlRes.ok) throw new Error(`Download failed: ${dlRes.status}`);
-    const packed = await dlRes.arrayBuffer();
+    const packed = await fetchVaultCiphertext(detail.mediaId);
 
     const { iv, ciphertext } = unpackEncryptedBlob(packed);
     const plaintext = await decryptDocument(cek, iv, ciphertext);
@@ -300,13 +325,21 @@
 
   async function submitPwPrompt() {
     if (!pwPromptDoc || !pwPromptValue) return;
+    const doc = pwPromptDoc;
     pwPromptBusy = true;
     pwPromptError = '';
+    purgedDoc = null;
     try {
-      await performDownload(pwPromptDoc, pwPromptValue);
+      await performDownload(doc, pwPromptValue);
       pwPromptDoc = null;
       pwPromptValue = '';
     } catch (e) {
+      // A gone file is not a wrong password: close the prompt and say what actually happened.
+      if (showPurged(doc, e)) {
+        pwPromptDoc = null;
+        pwPromptValue = '';
+        return;
+      }
       console.error('[Vault] Failed to decrypt protected document:', e);
       pwPromptError = m.asso_doc_pw_incorrect();
     } finally {
@@ -466,6 +499,25 @@
         ></div>
       </div>
     </div>
+
+    {#if purgedDoc}
+      <!-- The server no longer holds this document's file: only a new upload replaces it. -->
+      <div
+        role="alert"
+        class="border-amber-warn/40 bg-amber-warn/10 text-text-main flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm"
+      >
+        <p class="min-w-0 flex-1">{m.asso_doc_purged_notice({ name: purgedDoc.name })}</p>
+        <button
+          type="button"
+          onclick={() => fileInput?.click()}
+          disabled={uploading}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
+        >
+          <FileUp size={14} />
+          {m.asso_doc_purged_reupload_button()}
+        </button>
+      </div>
+    {/if}
 
     <!-- Upload button -->
     <div>

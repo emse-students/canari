@@ -347,6 +347,23 @@
               })}
             </p>
           {/if}
+          {#if media.associationCount > 0}
+            <p class="text-text-muted text-sm">
+              {m.admin_storage_media_association({
+                count: media.associationCount,
+                size: formatStorageBytes(media.associationBytes),
+              })}
+            </p>
+          {/if}
+          <!-- The sweep is an allowlist, so what nobody classified is KEPT - and this is its cost. -->
+          {#if media.unclassifiedCount > 0}
+            <p class="text-text-muted text-sm">
+              {m.admin_storage_media_unclassified({
+                count: media.unclassifiedCount,
+                size: formatStorageBytes(media.unclassifiedBytes),
+              })}
+            </p>
+          {/if}
         {:else}
           <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}

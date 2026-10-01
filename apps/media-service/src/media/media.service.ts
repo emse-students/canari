@@ -22,7 +22,7 @@ const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
  * premise of keeping it short is spent. Measured on production before moving it: the bucket held
  * 66 MB against 73 GB free, and the sweep was taking ~1.5 objects/day, so +60 days costs ~150 MB.
  *
- * Two entry classes never reach this clock at all - see {@link isRetentionExempt}.
+ * Only the `ephemeral` class ever reaches this clock - see {@link isSweepable}.
  */
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
@@ -70,6 +70,16 @@ export interface MediaStorageStats {
    */
   archiveCount: number;
   archiveBytes: number;
+  /** Association vault documents: kept for ever AND outliving their uploader's account. */
+  associationCount: number;
+  associationBytes: number;
+  /**
+   * Live objects carrying no class at all: everything stored before the sweep became an allowlist
+   * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
+   * touch them, so this line is where their growth shows.
+   */
+  unclassifiedCount: number;
+  unclassifiedBytes: number;
   /** Echoed so the reader does not have to know the constants to interpret the numbers. */
   retentionMs: number;
   sweepIntervalMs: number;
@@ -78,23 +88,42 @@ export interface MediaStorageStats {
 type PurgeReason = 'retention_expired' | 'manual_delete';
 
 /**
- * Why an object is kept, when the answer is not "somebody opened it recently".
+ * Which retention an object gets. The service holds ciphertext and cannot tell one surface's blob
+ * from another's, so the class is set by whoever knows: the CLIENT at upload, social-service for a
+ * row it owns.
  *
- * `archive` is the feed: post media, post-comment media and avatars. A conversation scrolls away,
- * so an idle window is the right question to ask of it; a post is a permanent row in `posts` whose
- * body would rot under one, and on 2026-09-23 exactly half the feed's media (22 of 44) had already
- * been swept while their posts remained. The class is set by the CLIENT at upload, which is the
- * only place that knows which surface it is uploading from.
+ * THE IDLE SWEEP IS AN ALLOWLIST: it deletes `ephemeral` and nothing else ({@link isSweepable}).
+ * It used to be the opposite - every object was swept unless it was exempt - and that denylist is
+ * what deleted an association's vault document on production (2026-09): the document upload named
+ * no class, so it fell to the default, and the default was "delete". A class nobody thought of was
+ * a class the sweep destroyed. Now a class nobody thought of, an upload from a client too old to
+ * name one, and an entry re-created after an index loss are all KEPT, which costs storage; the
+ * other way round cost a member's file.
  *
- * It is deliberately NOT `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT) and
- * is skipped by {@link MediaService.removeAllOwnedBy}, so reusing it would put post ciphertext on
- * an unauthenticated route AND stop account deletion reaching a departing member's photos.
+ * - `ephemeral` - chat and channel media. A conversation scrolls away, so an idle window is the
+ *   right question to ask of it. The only class the sweep may take.
+ * - `archive` - the feed: post media, post-comment media and avatars. A post is a permanent row
+ *   whose body would rot under an idle window (on 2026-09-23, 22 of the feed's 44 media had already
+ *   been swept while their posts remained). Still reached by account deletion: a post photo is its
+ *   uploader's.
+ * - `association` - an association's vault documents. Kept for ever AND skipped by account
+ *   deletion, because the document belongs to the association, not to the officer who happened to
+ *   upload it; only deleting the document row deletes it.
+ *
+ * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
+ * it would put ciphertext on an unauthenticated route.
  */
-export type RetentionClass = 'archive';
+export type RetentionClass = 'ephemeral' | 'archive' | 'association';
+
+const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
+  'ephemeral',
+  'archive',
+  'association',
+]);
 
 /** Runtime guard for the class name arriving from a request body. */
 export function isRetentionClass(value: unknown): value is RetentionClass {
-  return value === 'archive';
+  return typeof value === 'string' && RETENTION_CLASSES.has(value);
 }
 
 interface MediaMetaEntry {
@@ -104,7 +133,7 @@ interface MediaMetaEntry {
   purgeReason?: PurgeReason;
   /** Plaintext object served at GET /api/media/public/:id without JWT; exempt from retention purge. */
   publicAsset?: boolean;
-  /** Exempt from the idle sweep, still reachable by account deletion. See {@link RetentionClass}. */
+  /** What the object is kept for; absent means unclassified, which the sweep never takes. See {@link RetentionClass}. */
   retentionClass?: RetentionClass;
   contentType?: string;
   /**
@@ -295,39 +324,38 @@ export class MediaService {
   }
 
   /**
-   * Sets or clears the retention class of existing objects.
+   * Sets the retention class of existing objects.
    *
-   * Two callers, both social-service. `'archive'` classifies media a post or comment references -
-   * on upload the client says so itself, so this exists for the objects stored BEFORE the class
-   * did, and as the repair after a metadata index loss (the index is a JSON file, and `download()`
-   * silently re-creates a lost entry with no class at all).
+   * Callers are all social-service, which owns the rows that cite an object. `'archive'` and
+   * `'association'` classify media a post, comment or vault document references - on upload the
+   * client says so itself, so this exists for the objects stored BEFORE the class did, for uploads
+   * from clients too old to name one, and as the repair after a metadata index loss (the index is a
+   * JSON file, and `download()` re-creates a lost entry with no class at all).
    *
-   * `null` is the release when a post or comment is deleted: the object drops back to the ordinary
-   * idle window and the sweep takes it {@link RETENTION_MS} later. That is deliberately not an
-   * immediate delete - an edit that merely removes an image reaches here too, and a destructive
-   * answer to an ambiguous event is the wrong one. It also means nothing is ever stranded: the
-   * class is a reason to keep, so removing the reason restores the only mechanism that reclaims.
+   * `'ephemeral'` is the release when a post or comment is deleted: the object joins the idle
+   * window and the sweep takes it {@link RETENTION_MS} later. That is deliberately not an immediate
+   * delete - an edit that merely removes an image reaches here too, and a destructive answer to an
+   * ambiguous event is the wrong one. There is no "clear": an unclassified object is one the sweep
+   * may never take, so clearing would strand it rather than release it.
    *
-   * Unknown and purged ids are skipped rather than rejected - the caller's list comes from post
-   * rows that may well cite an object swept before any of this existed, and reviving a tombstone
-   * would resurrect an entry the retention decision already closed.
+   * Unknown and purged ids are skipped rather than rejected - the caller's list comes from rows
+   * that may well cite an object swept before any of this existed, and reviving a tombstone would
+   * resurrect an entry the retention decision already closed. Public assets are skipped too: they
+   * are plaintext branding with their own lifetime, and a class must never make one sweepable.
    *
    * @returns how many entries actually changed, so a no-op backfill logs distinctly from a repair.
    */
-  async setRetentionClass(
-    mediaIds: string[],
-    retentionClass: RetentionClass | null
-  ): Promise<number> {
+  async setRetentionClass(mediaIds: string[], retentionClass: RetentionClass): Promise<number> {
     let changed = 0;
 
     for (const mediaId of mediaIds) {
       if (!UUID_REGEX.test(mediaId)) continue;
       const entry = this.meta.items[mediaId];
       if (!entry || entry.purgedAt) continue;
-      if ((entry.retentionClass ?? null) === retentionClass) continue;
+      if (this.isPublicAssetEntry(entry)) continue;
+      if (entry.retentionClass === retentionClass) continue;
 
-      if (retentionClass) entry.retentionClass = retentionClass;
-      else delete entry.retentionClass;
+      entry.retentionClass = retentionClass;
       changed += 1;
     }
 
@@ -343,6 +371,16 @@ export class MediaService {
     await this.storage.delete(mediaId);
     const now = Date.now();
     const current = this.meta.items[mediaId];
+    // AN EXISTING TOMBSTONE KEEPS ITS OWN DATE AND REASON. Deleting the row that cites an object
+    // the sweep already took is exactly what a member does after meeting the loss, and rewriting
+    // the tombstone to `manual_delete` erased the only record that the sweep had been the cause -
+    // which is how the vault document lost on production in 2026-09 first read as a deletion.
+    if (current?.purgedAt) {
+      this.logger.log(
+        `media ${mediaId}: delete asked of an object already purged (${current.purgeReason ?? 'unknown'}) - tombstone kept`
+      );
+      return;
+    }
     this.meta.items[mediaId] = {
       createdAt: current?.createdAt ?? now,
       lastAccessAt: current?.lastAccessAt ?? now,
@@ -356,8 +394,9 @@ export class MediaService {
    * Deletes every blob uploaded by a user. Called when the account itself is deleted.
    *
    * Only the UPLOADER's own objects: a message the user merely received belongs to whoever sent
-   * it. Public assets are excluded - an association logo outlives the member who uploaded it, and
-   * removing it would break a page for everyone else.
+   * it. Public assets and `association` documents are excluded - an association's logo and its
+   * vault outlive the officer who uploaded them, and removing them would take them from everyone
+   * else ({@link survivesAccountDeletion}).
    *
    * Deliberately NOT wired to message deletion: forwarding copies the reference, so one blob can
    * be cited by messages in conversations the deleter cannot see, and the server - holding only
@@ -373,11 +412,11 @@ export class MediaService {
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.ownerId !== ownerId) continue;
       if (entry.purgedAt) continue;
-      // `isPublicAssetEntry`, NOT `isRetentionExempt`: a logo outlives the member who uploaded it,
-      // but an archived post photo is still that member's and must go with the account. Exemption
-      // from the idle sweep is not exemption from erasure, and conflating the two here would have
-      // made account deletion silently stop reaching the feed.
-      if (this.isPublicAssetEntry(entry)) continue;
+      // `survivesAccountDeletion`, NOT "is not sweepable": a logo or a vault document outlives
+      // the member who uploaded it, but an archived post photo is still that member's and must go
+      // with the account. Exemption from the idle sweep is not exemption from erasure, and
+      // conflating the two here would have made account deletion silently stop reaching the feed.
+      if (this.survivesAccountDeletion(entry)) continue;
 
       try {
         await this.storage.delete(mediaId);
@@ -445,6 +484,10 @@ export class MediaService {
       publicAssetBytes: 0,
       archiveCount: 0,
       archiveBytes: 0,
+      associationCount: 0,
+      associationBytes: 0,
+      unclassifiedCount: 0,
+      unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
       sweepIntervalMs: this.sweepIntervalMs,
     };
@@ -474,19 +517,29 @@ export class MediaService {
         stats.tombstonedBytes += object.size;
         continue;
       }
-      if (entry.retentionClass === 'archive') {
-        stats.archiveCount += 1;
-        stats.archiveBytes += object.size;
-        continue;
-      }
       if (this.isPublicAssetEntry(entry)) {
         stats.publicAssetCount += 1;
         stats.publicAssetBytes += object.size;
         continue;
       }
-      // Deliberately the SAME predicate purgeExpiredMedia uses. Anything counted here is something
-      // the sweep was supposed to have taken, so the number is a verdict on the sweep, not an
-      // estimate of it - which is only true while the two predicates stay identical.
+      if (entry.retentionClass === 'archive') {
+        stats.archiveCount += 1;
+        stats.archiveBytes += object.size;
+        continue;
+      }
+      if (entry.retentionClass === 'association') {
+        stats.associationCount += 1;
+        stats.associationBytes += object.size;
+        continue;
+      }
+      // Deliberately the SAME predicate purgeExpiredMedia uses. Anything counted as overdue is
+      // something the sweep was supposed to have taken, so the number is a verdict on the sweep,
+      // not an estimate of it - which is only true while the two predicates stay identical.
+      if (!this.isSweepable(entry)) {
+        stats.unclassifiedCount += 1;
+        stats.unclassifiedBytes += object.size;
+        continue;
+      }
       if (entry.lastAccessAt < retentionCutoff) {
         stats.overdueCount += 1;
         stats.overdueBytes += object.size;
@@ -672,16 +725,30 @@ export class MediaService {
   }
 
   /**
-   * True for everything the idle sweep must leave alone, whatever the reason.
+   * THE ALLOWLIST: true only for what the idle sweep may delete, which is the `ephemeral` class.
    *
-   * The sweep and `getStorageStats` both call THIS and nothing else, so "exempt" means one thing
-   * and the overdue count stays a verdict on the sweep rather than an estimate of it.
-   * {@link removeAllOwnedBy} deliberately does not: an archived post photo is still its uploader's,
-   * and an account deletion must reach it.
+   * Everything else is kept - every other class, an unclassified entry, a public asset - so a new
+   * surface that forgets to name its class costs storage rather than a member's file. That
+   * direction is the whole point: until 2026-10-01 this was a list of EXEMPTIONS, and an
+   * association's vault document, which no exemption named, was swept on production.
+   *
+   * The sweep and `getStorageStats` both call THIS and nothing else, so the overdue count stays a
+   * verdict on the sweep rather than an estimate of it.
    */
-  private isRetentionExempt(entry: MediaMetaEntry | undefined): boolean {
+  private isSweepable(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
-    return entry.retentionClass === 'archive' || this.isPublicAssetEntry(entry);
+    return entry.retentionClass === 'ephemeral' && !this.isPublicAssetEntry(entry);
+  }
+
+  /**
+   * True for objects that belong to something other than their uploader, so an account deletion
+   * must not take them: public assets (a logo) and `association` vault documents.
+   *
+   * Deliberately NOT the inverse of {@link isSweepable}: an archived post photo is kept by the
+   * sweep and still goes with its uploader's account.
+   */
+  private survivesAccountDeletion(entry: MediaMetaEntry): boolean {
+    return this.isPublicAssetEntry(entry) || entry.retentionClass === 'association';
   }
 
   /** True for association logos and other plaintext images exempt from the retention sweep. */
@@ -742,7 +809,7 @@ export class MediaService {
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.purgedAt) continue;
-      if (this.isRetentionExempt(entry)) continue;
+      if (!this.isSweepable(entry)) continue;
       if (entry.lastAccessAt >= cutoff) continue;
 
       try {

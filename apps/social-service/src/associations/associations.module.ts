@@ -20,6 +20,7 @@ import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { AssociationsService } from './associations.service';
+import { AssociationDocumentRetentionService } from './association-document-retention.service';
 import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
@@ -67,6 +68,7 @@ import { PricingModule } from '../pricing/pricing.module';
   ],
   providers: [
     AssociationsService,
+    AssociationDocumentRetentionService,
     UserProfileService,
     ProductsService,
     PartnershipsService,
