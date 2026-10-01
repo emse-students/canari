@@ -75,12 +75,10 @@ describe('acquireDecryptedMediaBlobUrl', () => {
     serve(sealed.ciphertext);
     const ref = refOf('future-1', sealed.keyHex, sealed.ivHex, 'proto-9');
     const err = await acquireDecryptedMediaBlobUrl(ref, 'https://media.test').catch((e) => e);
-    // The renderers' one vocabulary (#1309): a blob that will not decrypt is `corrupt`, and the
-    // segmented reader's own fault rides along as the cause.
-    expect(err).toBeInstanceOf(MediaDecryptError);
-    expect(err.cause).toBeInstanceOf(SegmentedMediaError);
-    expect(err.cause.fault).toBe('encoding');
-    expect(mediaFailureCause(err)).toBe('corrupt');
+    // Written by a newer client: nothing is damaged, so it is never called corrupt.
+    expect(err).toBeInstanceOf(SegmentedMediaError);
+    expect(err.fault).toBe('encoding');
+    expect(mediaFailureCause(err)).toBe('other');
   });
 
   it('calls a segmented blob with a tampered segment corrupt, carrying the segment', async () => {

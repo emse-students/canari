@@ -19,7 +19,7 @@
  */
 
 import { ApiRefusalError } from './apiRefusal';
-import { SegmentedMediaError } from '$lib/mediaSegmented';
+import { SegmentedMediaError, isWrittenByNewerClient } from '$lib/mediaSegmented';
 
 /** Wire-level marker kept as the message so existing logs stay greppable. */
 export const MEDIA_PURGED_MESSAGE = 'MEDIA_PURGED_BY_RETENTION';
@@ -91,7 +91,8 @@ export class MediaDecryptError extends Error {
  * - `not-found`: 404 - permanent.
  * - `corrupt`: downloaded but failed to decrypt - a retry re-downloads (the cached copy is evicted).
  *   A segmented stream's refusal (`SegmentedMediaError`: a segment whose tag fails, a blob shorter
- *   or longer than its header) is this cause too, thrown raw by the streaming reader.
+ *   or longer than its header) is this cause too, thrown raw by the streaming reader - except an
+ *   encoding or header version written by a NEWER client, which is `other`: nothing is damaged.
  * - `other`: anything else (a 5xx, an unexpected throw) - retry.
  */
 export type MediaFailureCause = 'unreachable' | 'expired' | 'not-found' | 'corrupt' | 'other';
@@ -109,7 +110,7 @@ export function mediaFailureCause(err: unknown): MediaFailureCause {
   if (err instanceof MediaNotFoundError) return 'not-found';
   if (err instanceof MediaUnreachableError) return 'unreachable';
   if (err instanceof MediaDecryptError) return 'corrupt';
-  if (err instanceof SegmentedMediaError) return 'corrupt';
+  if (err instanceof SegmentedMediaError) return isWrittenByNewerClient(err) ? 'other' : 'corrupt';
   return 'other';
 }
 

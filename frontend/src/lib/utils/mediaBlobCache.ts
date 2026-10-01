@@ -4,6 +4,7 @@ import {
   SEGMENTED_MEDIA_ENCODING,
   SegmentedMediaError,
   decryptSegmentedMediaBuffer,
+  isWrittenByNewerClient,
 } from '$lib/mediaSegmented';
 import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
@@ -175,9 +176,13 @@ async function loadDecryptedBlobUrl(
     try {
       plaintext = await decryptByEncoding(ref, ciphertext);
     } catch (err) {
+      // An encoding or header version this client does not know was written by a NEWER client:
+      // the bytes are fine, so they are kept, and the reader's typed error goes up unchanged
+      // (`mediaFailureCause` reads it as 'other', never as damage).
+      if (isWrittenByNewerClient(err)) throw err;
       // A cached copy that will never decrypt would answer every retry the same way: the retry
       // the reader is offered must download the object again, not re-read the damaged one. A
-      // segmented blob refused for what it holds (`SegmentedMediaError`) is the same cause.
+      // segmented blob refused for what it holds (a tag, a length) is the same cause.
       await evictCiphertext(ref.mediaId, baseUrl);
       throw new MediaDecryptError(err);
     }

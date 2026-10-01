@@ -155,6 +155,15 @@ export function isSegmentedMediaError(err: unknown): err is SegmentedMediaError 
   return err instanceof SegmentedMediaError;
 }
 
+/**
+ * Whether a refusal means "a newer client wrote this" (an encoding or header version this client
+ * cannot name) rather than "these bytes are damaged" - the one split every reader of the fault
+ * needs: a newer format is kept and never called corrupt.
+ */
+export function isWrittenByNewerClient(err: unknown): boolean {
+  return isSegmentedMediaError(err) && (err.fault === 'encoding' || err.fault === 'version');
+}
+
 /** What a header says, parsed - the layout every offset below is computed from. */
 export interface SegmentedMediaHeader {
   /** The 20 header bytes themselves: every segment's additional data. */
