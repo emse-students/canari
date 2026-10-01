@@ -154,8 +154,58 @@ The composer comparison R1 was built from is on
    readable. On-device compression (C3).
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
-   save-to-gallery.
+   save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the
+   composer's Camera and Video chips hand off to the system camera today,
+   `PostComposerBar.svelte`): a full-screen preview, hold the shutter to record, front/back switch,
+   flash, a ring timer that stops at 90 s, and the gallery's last item bottom-left as Instagram has
+   it. **Permissions are declared and never yet run for VIDEO**: `CAMERA` is in the Android manifest
+   and `RustWebChromeClient.onPermissionRequest` turns a WebView `VIDEO_CAPTURE` request into the
+   runtime prompt, `NSCameraUsageDescription` is in the iOS `Info.plist` - but the only live
+   `getUserMedia` caller asks for AUDIO (`VoiceRecorder`); the video one is `CallService`, held off
+   with calls. So the first camera open is read on both phones before anything else. **The recorder
+   writes WebM on Android and MP4 on iOS**, and R2's on-device compression (C3) brings both to one
+   format before upload - one reason R2 comes first. What the tab itself needs is the section below.
 4. **R4 - live** (C9), behind the calls revival.
+
+### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01
+
+The 2026-09-29 session measured on the Mi 9T a ~320 ms freeze at the release and a destination
+invisible under the finger, and planned a pager that keeps the four tabs MOUNTED (four PRs). **That
+chantier is CLOSED UNBUILT**: #1237 keeps the released page moving into the view transition (after
+#1223 and #957), and the user read the swipe clean on the phone on 2026-10-01. What it still is, by
+design ([design-reference §38](frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)):
+**the destination mounts only after the release**, so a camera tab will not show its preview under
+the finger, and the camera's own start (`getUserMedia`) comes after the slide.
+
+**Adding the camera LEFT of the feed is a list entry, not a pager change.** Neighbours are an index
+into `MOBILE_SWIPE_PLACES` (`swipeNavigation.ts`), so a place before `posts` makes a swipe right from
+the feed its `prev` - and on `/posts` the right-hand rubber band becomes a commit, by the same rule.
+What it takes:
+- **Its own list.** `MOBILE_SWIPE_PLACES` and `MOBILE_NAV_PLACES` are today the SAME filter
+  (`mobileNav`), so a `mobileNav` camera would also draw a fifth icon in `BottomNav`, in the native
+  iOS bar and, through `APP_PLACES`, in the desktop sidebar. The swipe list becomes
+  `[camera, ...MOBILE_NAV_PLACES]` and the camera stays out of `APP_PLACES`.
+- **A `/camera` route** outside `SWIPE_NAV_EXCLUDED_PREFIXES`, full screen: the layout hides the
+  header and the bar there as it does for `isMobileConvoOpen`, and `NativeTabBar` is passed
+  `visible={false}`. **The native iOS bar needs nothing else** - on a path outside its four places it
+  keeps the last one lit (`selectTab` cannot clear), and it is hidden there anyway.
+- **The shutter opts out of the gesture** (`data-swipe-nav-ignore`), so a held record that drifts
+  does not turn the page.
+- **Android Back needs nothing for the tab**: a swipe is a `goto`, a history entry, and Back steps
+  the WebView history ([mobile](frontend/mobile.md#the-hardware-back-press-had-no-owner-and-chromium-decided-it-2026-09-21)),
+  so Back from the camera returns to the feed. A recording or its review screen opened ON the camera
+  is a `historyOverlayStack` entry, so Back closes that first.
+
+**If a mounted pager is ever reopened, its price was audited 2026-09-29 and still holds on `main`**
+(re-read 2026-10-01): nothing knows which page is on screen. `MainChatPage` marks read and sends the
+read receipt on document focus alone (`isWindowFocused`/`isTabVisible`), handles every
+`canari-keyboard-media` GIF whatever is focused, consumes `canari_pending_contact` only at mount, and
+resets on a tab switch only through a remount (`lastActiveRouteMode`); `/chat` and `/communities`
+share one `globalConvs.selectedContact`, so two mounted instances draw one thread with duplicate
+`msg-<id>` ids (`ChatArea` jumps by `getElementById`) and one `--chat-composer-height`. The feed
+reads its `load` data (`data.feedParams`) and binds pull-to-refresh to the FIRST `.page-scroll-wrap`
+in the document, and `app.css` keys the chat layout on `.page-scroll-wrap:has(.app-layout)` - one
+wrapper for every page.
 
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 
