@@ -38,8 +38,13 @@
    * `#t=0.1` holds here by construction.
    *
    * INSIDE `MediaLightbox` the bar carries `data-video-controls`, which the viewer's swipe, pinch and
-   * pan read as "not mine" exactly as they read a `<video>` or a `<button>`: a drag on the seek bar
-   * is a seek, never a swipe to the next media.
+   * pan read as "not mine" exactly as they read a `<button>`: a drag on the seek bar is a seek, never
+   * a swipe to the next media.
+   *
+   * THE CONTROLS ARE AN OVERLAY ON A ZOOMABLE PICTURE (user, 2026-10-02): the viewer zooms and pans
+   * only the `<video>`, handing its transform down as `--lightbox-zoom`, which the element applies to
+   * itself. The bar, the play button and the poster are siblings of it, so a zoom never scales them or
+   * carries them off the screen.
    */
   interface Props {
     /** The decrypted blob URL, or a segmented stream's MSE URL. */
@@ -292,6 +297,7 @@
     disableremoteplayback={disableRemotePlayback || undefined}
     use:followVideoSound
     class={videoClass}
+    style="transform: var(--lightbox-zoom, none); transform-origin: center;"
     onloadedmetadata={sync}
     onloadeddata={() => {
       frameReady = true;

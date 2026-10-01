@@ -249,3 +249,16 @@ it('marks its box, which is what the viewer reads to leave the tap to it', () =>
   const { root } = mountPlayer();
   expect(root.hasAttribute('data-video-player')).toBe(true);
 });
+
+/**
+ * THE CONTROLS ARE AN OVERLAY ON A ZOOMABLE PICTURE (user, 2026-10-02). The viewer hands the zoom
+ * down as `--lightbox-zoom` and ONLY the `<video>` applies it: the bar is a sibling, so a zoom never
+ * scales it or carries it off the screen.
+ */
+it('applies the viewer s zoom to the picture alone, never to the controls', () => {
+  const { video, bar, root } = mountPlayer();
+  expect(video.getAttribute('style')).toContain('transform: var(--lightbox-zoom, none)');
+  expect(bar.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
+  expect(root.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
+  expect(bar.contains(video)).toBe(false);
+});
