@@ -1,15 +1,15 @@
 <script lang="ts">
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import {
-    Image as ImageIcon,
-    ImageOff,
-    Link as LinkIcon,
-    FileText,
-    Download,
-  } from '@lucide/svelte';
+  import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
-  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import {
+    logMediaFailure,
+    mediaFailureCause,
+    type MediaFailureCause,
+  } from '$lib/utils/mediaErrors';
+  import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
+  import MediaLoadFailure from '../shared/MediaLoadFailure.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { openExternal } from '$lib/utils/openExternal';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -47,7 +47,9 @@
    * Why the open item has no image. Without it the lightbox spins forever on a media the
    * server will never return - a purged blob has no retry that can succeed.
    */
-  let lightboxError = $state('');
+  let lightboxFailure = $state<MediaFailureCause | null>(null);
+  /** Bumped by the viewer's "Reessayer"; the decrypt effect reads it and runs again. */
+  let lightboxAttempt = $state(0);
 
   const dateFmt = $derived(
     new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
@@ -97,9 +99,10 @@
   // Decrypt the selected media for the lightbox.
   $effect(() => {
     const idx = lightboxIndex;
+    void lightboxAttempt;
     if (idx === null) {
       lightboxUrl = null;
-      lightboxError = '';
+      lightboxFailure = null;
       return;
     }
     const item = content.media[idx];
@@ -108,7 +111,7 @@
     let destroyed = false;
     let acquired = false;
     lightboxUrl = null;
-    lightboxError = '';
+    lightboxFailure = null;
     new MediaService()
       .downloadAndDecrypt(ref)
       .then((url) => {
@@ -120,12 +123,8 @@
       })
       .catch((err) => {
         if (destroyed) return;
-        if (isMediaPurgedError(err)) {
-          lightboxError = m.msg_media_expired_label();
-        } else {
-          console.error('[ConversationMediaPanel] media decrypt failed', err);
-          lightboxError = m.msg_image_load_error();
-        }
+        lightboxFailure = mediaFailureCause(err);
+        logMediaFailure('ConversationMediaPanel', lightboxFailure, ref.mediaId, err);
       });
     return () => {
       destroyed = true;
@@ -140,8 +139,14 @@
     } catch (err) {
       // A console line is a trace for us, not an answer for the user: pressing a download
       // button and getting nothing at all is the same silent gap as a missing image.
-      console.error('[ConversationMediaPanel] download failed', err);
-      showToast(isMediaPurgedError(err) ? m.msg_media_expired_label() : m.msg_image_load_error());
+      const cause = mediaFailureCause(err);
+      logMediaFailure('ConversationMediaPanel.download', cause, ref.mediaId, err);
+      showToast(
+        mediaFailureLabel(cause, {
+          expired: m.msg_media_expired_label(),
+          other: m.msg_image_load_error(),
+        })
+      );
     }
   }
 
@@ -307,10 +312,15 @@
           class="max-h-full max-w-full object-contain select-none"
         />
       {/if}
-    {:else if lightboxError}
-      <div class="flex flex-col items-center gap-3 p-6 text-center text-white/70">
-        <ImageOff size={32} strokeWidth={1.5} />
-        <span class="text-sm">{lightboxError}</span>
+    {:else if lightboxFailure}
+      <div class="p-6">
+        <MediaLoadFailure
+          cause={lightboxFailure}
+          expiredLabel={m.msg_media_expired_label()}
+          otherLabel={m.msg_image_load_error()}
+          onRetry={() => (lightboxAttempt += 1)}
+          tone="dark"
+        />
       </div>
     {:else}
       <div

@@ -27,8 +27,7 @@ function render(mediaRef: MediaRef): void {
     props: {
       mediaRef,
       blobUrl: BLOB,
-      loadError: false,
-      mediaPurgedByRetention: false,
+      failure: null,
       textContent: '',
     },
   });

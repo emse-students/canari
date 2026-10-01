@@ -8,7 +8,11 @@
     Image as ImageIcon,
     Video as VideoIcon,
     Mic,
+    RotateCw,
   } from '@lucide/svelte';
+  import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
+  import { isRetryableMediaFailure, type MediaFailureCause } from '$lib/utils/mediaErrors';
+  import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
@@ -28,10 +32,10 @@
     mediaRef: MediaRef | null;
     /** Decrypted object URL for the media blob, or null while loading. */
     blobUrl: string | null;
-    /** True when the media failed to download or decrypt. */
-    loadError: boolean;
-    /** True when the media was removed by the 30-day retention policy. */
-    mediaPurgedByRetention: boolean;
+    /** Why the media could not be shown (`mediaFailureCause`), or null while it can still arrive. */
+    failure: MediaFailureCause | null;
+    /** Downloads it again in place; the failure box offers it when a retry can help. */
+    onRetry?: () => void;
     /** Caption text shown below the media (or the full text for text-only messages). */
     textContent: string;
     /** When true, adjusts colours for the amber bubble used on own messages. */
@@ -61,8 +65,8 @@
   let {
     mediaRef = null,
     blobUrl = null,
-    loadError = false,
-    mediaPurgedByRetention = false,
+    failure = null,
+    onRetry,
     textContent = '',
     isOwn = false,
     textSegments = [],
@@ -93,7 +97,8 @@
       : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10'
   );
 
-  const textMutedClass = $derived(isOwn ? 'text-cn-ink/70' : 'text-text-muted');
+  /** Red is unreadable on one's own amber bubble, so the failure box speaks in its ink there. */
+  const failureTone = $derived(isOwn ? 'ink' : 'surface');
 
   const imageAspectStyle = $derived(
     mediaRef?.type === 'image' ? mediaAspectStyle(mediaRef.width, mediaRef.height) : ''
@@ -162,15 +167,18 @@
             <Download size={16} strokeWidth={2.5} />
           </button>
         </div>
-      {:else if loadError}
+      {:else if failure}
         <div
-          class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex items-center justify-center p-4"
           style={imageAspectStyle}
         >
-          <CircleAlert size={28} class="opacity-50" />
-          <span class="text-xs leading-snug font-medium {textMutedClass}">
-            {mediaPurgedByRetention ? m.msg_media_expired_label() : m.msg_image_load_error()}
-          </span>
+          <MediaLoadFailure
+            cause={failure}
+            expiredLabel={m.msg_media_expired_label()}
+            otherLabel={m.msg_image_load_error()}
+            {onRetry}
+            tone={failureTone}
+          />
         </div>
       {:else}
         <!-- Skeleton Image -->
@@ -220,14 +228,17 @@
             <Download size={16} strokeWidth={2.5} />
           </button>
         </div>
-      {:else if loadError}
+      {:else if failure}
         <div
-          class="aspect-video w-full max-w-[16rem] rounded-3xl border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="aspect-video w-full max-w-[16rem] rounded-3xl border border-dashed {glassBoxClass} flex items-center justify-center p-4"
         >
-          <CircleAlert size={28} class="opacity-50" />
-          <span class="text-xs leading-snug font-medium {textMutedClass}">
-            {mediaPurgedByRetention ? m.msg_video_expired_label() : m.msg_video_load_error()}
-          </span>
+          <MediaLoadFailure
+            cause={failure}
+            expiredLabel={m.msg_video_expired_label()}
+            otherLabel={m.msg_video_load_error()}
+            {onRetry}
+            tone={failureTone}
+          />
         </div>
       {:else}
         <!-- Skeleton Video -->
@@ -261,13 +272,18 @@
             onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
           />
         </div>
-      {:else if loadError}
+      {:else if failure}
         <div
-          class="h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-4 text-center"
+          class="min-h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-3 py-1"
         >
-          <span class="text-2xs leading-snug font-medium {textMutedClass}">
-            {mediaPurgedByRetention ? m.msg_audio_expired_label() : m.msg_audio_load_error()}
-          </span>
+          <MediaLoadFailure
+            cause={failure}
+            expiredLabel={m.msg_audio_expired_label()}
+            otherLabel={m.msg_audio_load_error()}
+            {onRetry}
+            tone={failureTone}
+            compact
+          />
         </div>
       {:else}
         <!-- Skeleton Audio -->
@@ -314,7 +330,15 @@
             <p class="mb-0.5 truncate text-xs leading-tight font-bold">
               {mediaRef!.fileName ?? m.msg_attached_file_label()}
             </p>
-            {#if !mediaPurgedByRetention}
+            {#if failure && failure !== 'other' && failure !== 'expired'}
+              <!-- A file row has no box to fill, so the cause is its second line. -->
+              <p class="text-2xs leading-tight font-semibold opacity-70">
+                {mediaFailureLabel(failure, {
+                  expired: m.msg_expired_label(),
+                  other: m.msg_image_load_error(),
+                })}
+              </p>
+            {:else if !failure}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
               <p class="text-2xs font-semibold tracking-wider opacity-60">
                 {formatFileSize(mediaRef!.size)}
@@ -356,13 +380,26 @@
               class="opacity-70 transition-opacity group-hover/file:opacity-100"
             />
           </button>
-        {:else if mediaPurgedByRetention}
+        {:else if failure === 'expired'}
           <span
             class="text-2xs shrink-0 rounded-md bg-red-500/10 px-2 py-1 font-bold text-red-600 dark:text-red-400"
           >
             {m.msg_expired_label()}
           </span>
-        {:else if loadError}
+        {:else if failure && onRetry && isRetryableMediaFailure(failure)}
+          <button
+            type="button"
+            onclick={(e) => {
+              e.stopPropagation();
+              onRetry();
+            }}
+            aria-label={m.media_retry_button()}
+            title={m.media_retry_button()}
+            class="ui-icon-button rounded-xl text-red-500 transition-all outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+          >
+            <RotateCw size={18} strokeWidth={2.5} />
+          </button>
+        {:else if failure}
           <CircleAlert size={18} class="shrink-0 text-red-500 opacity-50" />
         {:else}
           <div

@@ -6,7 +6,11 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
-  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import {
+    logMediaFailure,
+    mediaFailureCause,
+    type MediaFailureCause,
+  } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
@@ -179,8 +183,14 @@
   let isEditingInline = $state(false);
   let editText = $state('');
   let blobUrl = $state<string | null>(null);
-  let loadError = $state(false);
-  let mediaPurgedByRetention = $state(false);
+  /**
+   * Why the attachment could not be shown, typed at the throw. It replaced two booleans that could
+   * disagree: a purge set `mediaPurgedByRetention` and left `loadError` false, and every branch of
+   * the renderer tested `loadError` first - so a purged photo or video pulsed as a skeleton forever.
+   */
+  let mediaFailure = $state<MediaFailureCause | null>(null);
+  /** Bumped by the renderer's "Reessayer": the download effect reads it and runs again. */
+  let mediaAttempt = $state(0);
   // WAS `let supportsHover = $state(true)` - and NOTHING EVER WROTE TO IT, so `canSwipeReply` said
   // no on every device from 2026-03-26 to 2026-09-20. `isCoarsePointerDevice()` is the predicate
   // this repo already owns for exactly this question, and it is READ here rather than assumed.
@@ -536,10 +546,10 @@
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
     if (!mediaRef || !mediaRef.mediaId || !authToken || !isNearViewport) return;
 
+    void mediaAttempt;
     let destroyed = false;
     let acquired = false;
-    loadError = false;
-    mediaPurgedByRetention = false;
+    mediaFailure = null;
 
     const ref: MediaRef = mediaRef;
     // Leaves the gate's queue if the row is torn down before its turn comes.
@@ -556,10 +566,10 @@
         }
       })
       .catch((error) => {
-        if (!destroyed) {
-          if (isMediaPurgedError(error)) mediaPurgedByRetention = true;
-          else loadError = true;
-        }
+        if (destroyed) return;
+        // This catch used to log nothing at all: a missing photo in a thread left no trace.
+        mediaFailure = mediaFailureCause(error);
+        logMediaFailure('MessageBubble', mediaFailure, ref.mediaId, error);
       });
 
     return () => {
@@ -760,8 +770,8 @@
             <MessageMediaRenderer
               {mediaRef}
               {blobUrl}
-              {loadError}
-              {mediaPurgedByRetention}
+              failure={mediaFailure}
+              onRetry={() => (mediaAttempt += 1)}
               {textContent}
               {isOwn}
               {textSegments}

@@ -2,7 +2,13 @@ import type { MediaRef } from '$lib/media';
 import { decryptMediaBuffer } from '$lib/mediaCrypto';
 import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
-import { MediaPurgedError } from './mediaErrors';
+import {
+  MediaDecryptError,
+  MediaDownloadError,
+  MediaNotFoundError,
+  MediaPurgedError,
+  MediaUnreachableError,
+} from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
 import { mediaRequestGate } from './requestGate';
 
@@ -20,6 +26,48 @@ function decryptedKey(ref: MediaRef): string {
 
 function cipherCacheKey(baseUrl: string, mediaId: string): string {
   return `${baseUrl.replace(/\/$/, '')}/__cached__/media/${encodeURIComponent(mediaId)}`;
+}
+
+/**
+ * GETs one media object through `mediaRequestGate` and TYPES every way it can fail, at the throw.
+ *
+ * A renderer has to say WHY a picture is missing - no network, gone, damaged - and it can only do
+ * that if the failure arrives as a type (`mediaFailureCause` reads it). This used to throw a plain
+ * `Error` holding the status in its message for everything but a 410, so every failure on screen
+ * was the same "Impossible de charger le media" (user, 2026-10-01).
+ *
+ * Only the `fetch` itself is wrapped as unreachable: a request abandoned while still queued
+ * rejects from the gate with its own `AbortError`, which the caller ignores and must keep seeing.
+ */
+async function fetchMediaObject(
+  mediaId: string,
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<Response> {
+  const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
+  const res = await mediaRequestGate.run(async () => {
+    const headers = { Authorization: `Bearer ${await getToken()}` };
+    try {
+      return await fetch(url, { headers });
+    } catch (err) {
+      throw new MediaUnreachableError(err);
+    }
+  }, signal);
+  if (res.ok) return res;
+  if (res.status === 410) throw new MediaPurgedError();
+  if (res.status === 404) throw new MediaNotFoundError();
+  throw new MediaDownloadError(res.status);
+}
+
+/** Drops a cached ciphertext, so the next attempt downloads it again instead of re-reading it. */
+async function evictCiphertext(mediaId: string, baseUrl: string): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    const cache = await caches.open(CIPHER_CACHE_NAME);
+    await cache.delete(cipherCacheKey(baseUrl, mediaId));
+  } catch (err) {
+    console.warn('[mediaBlobCache] could not evict an undecryptable ciphertext', mediaId, err);
+  }
 }
 
 /**
@@ -61,19 +109,7 @@ async function fetchCiphertext(
   // THE CACHE LOOKUP ABOVE IS FREE AND IS NOT GATED; ONLY THE BYTES ARE. An object already held
   // answers instantly whatever else is in flight, which is what makes the cap invisible to a
   // reader scrolling back through media they have seen.
-  const res = await mediaRequestGate.run(
-    async () =>
-      fetch(`${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`, {
-        headers: { Authorization: `Bearer ${await getToken()}` },
-      }),
-    signal
-  );
-
-  if (!res.ok) {
-    if (res.status === 410) throw new MediaPurgedError();
-    throw new Error(`Media download failed: ${res.status} ${res.statusText}`);
-  }
-
+  const res = await fetchMediaObject(mediaId, baseUrl, signal);
   const ciphertext = await res.arrayBuffer();
 
   if (typeof caches !== 'undefined' && ciphertext.byteLength > 0) {
@@ -108,7 +144,15 @@ async function loadDecryptedBlobUrl(
 
   const promise = (async () => {
     const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, signal);
-    const plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
+    let plaintext: ArrayBuffer;
+    try {
+      plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
+    } catch (err) {
+      // A cached copy that will never decrypt would answer every retry the same way: the retry
+      // the reader is offered must download the object again, not re-read the damaged one.
+      await evictCiphertext(ref.mediaId, baseUrl);
+      throw new MediaDecryptError(err);
+    }
     const blobUrl = URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
     decryptedPool.retain(key, blobUrl);
     return blobUrl;
@@ -138,17 +182,7 @@ async function loadRawBlobUrl(
   }
 
   const promise = (async () => {
-    const res = await mediaRequestGate.run(
-      async () =>
-        fetch(`${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`, {
-          headers: { Authorization: `Bearer ${await getToken()}` },
-        }),
-      signal
-    );
-    if (!res.ok) {
-      if (res.status === 410) throw new MediaPurgedError();
-      throw new Error(`Avatar download failed: ${res.status}`);
-    }
+    const res = await fetchMediaObject(mediaId, baseUrl, signal);
     const blobUrl = URL.createObjectURL(await res.blob());
     rawPool.retain(key, blobUrl);
     return blobUrl;
