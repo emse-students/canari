@@ -133,6 +133,21 @@ asks - the whole win for a reader scrolling past thirty rows. One that has alrea
 completion on purpose: the fetch behind it is shared with every other holder of the same object
 through the in-flight map, so cancelling it would cancel somebody else's.
 
+**AND THE SHARED LOAD IS ABANDONED ONLY WHEN ITS LAST HOLDER LEAVES (2026-10-02).** That paragraph was
+true of a request already STARTED and false of one still QUEUED: the load in the in-flight map was
+bound to the signal of whoever began it, so when the starter was torn down while queued, the shared
+promise rejected with the starter's `AbortError` - and every row that had joined it in the meantime
+received that. **Every video uploaded in the chat hit it**: the sent message is re-rendered right
+after its upload (the bubble is re-mounted when the optimistic copy is swapped for the sent one), the
+old bubble is torn down while the new one has joined its load, and the new one printed `media not shown
+(other) ... DOMException: The operation was aborted` with no thumbnail - *"ca arrive avec toutes les
+videos uploadees dans le chat"* (user). Photos escaped only because they finish before the re-render.
+The load now owns its OWN `AbortController` (`SharedLoad` in `mediaBlobCache.ts`) and each holder, the
+starter included, only counts: the controller fires when the count reaches zero, the entry leaves the
+map at that moment so a later arrival starts afresh instead of joining a doomed load, and a holder
+with no signal can never be abandoned. `mediaBlobCache.shared.test.ts` queues the request behind a
+saturated gate, which is the state the defect needs; three of its four cases fail on the old cache.
+
 ## 3quater. Six taps that waited to be told what they already knew (2026-09-23)
 
 SHAPE 2, AND THE WHOLE OF IT IS ONE QUESTION: does the device already know what the control is
