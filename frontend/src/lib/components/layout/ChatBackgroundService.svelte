@@ -251,6 +251,7 @@
       isChannel: isChannelConversationId(id),
       alreadyRefreshed: refreshedWorkspacesForTarget === id,
       conversationSourcesSettled: globalConvs.conversationSourcesSettled,
+      workspacesLoading: globalChannels.isLoadingWorkspaces,
     });
     if (recovery === 'wait') return;
     if (recovery === 'abandon') {

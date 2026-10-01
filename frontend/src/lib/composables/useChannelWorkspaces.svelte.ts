@@ -189,7 +189,12 @@ export function useChannelWorkspaces() {
    */
   const locallyCreatedChannels = new SvelteMap<string, number>();
   let selectedChannelConversationId = $state('');
-  let isLoadingWorkspaces = false;
+  /**
+   * Whether a community load is in flight. REACTIVE because the notification landing waits on it:
+   * a target channel missing while the post-login load is still running is not missing yet, and
+   * the landing must re-run when that load settles rather than start a second one.
+   */
+  let isLoadingWorkspaces = $state(false);
   let workspacesLoadError = $state<string | null>(null);
 
   const service = new ChannelService();

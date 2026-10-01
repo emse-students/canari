@@ -448,6 +448,21 @@ dead would produce, and the third row proves the claim is the thing holding the 
 an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
 introuvable", so the assertion is about ROUTING and touches nobody's data.
 
+#### A backgrounded tap reached BOTH paths, and the live one now writes the claim (2026-10-01)
+
+**Measured on a Mi 9T:** each tap on a backgrounded app logged `[hooks] Processing URL` and
+`[notifNav] deep link received` twice. The plugin delivers the new intent once to `onOpenUrl`, and
+also stores it as `currentUrl` - which the `visibilitychange` re-read of `getCurrent()` then found
+unclaimed, because only that path ever claimed. `onOpenUrl` now writes the same claim (ungated: a
+second tap on the same notification is a new intent and must still land), so the re-read sees it
+acted on.
+
+The killed-start half was a different duplicate: `[notifNav] channel ... unknown - refreshing
+communities` twice. The post-login community load was in flight, so the landing's own refresh came
+back `refreshRan: false` at once, re-armed, and asked again on the next mutation of the map.
+`landingRecovery` now WAITS while `isLoadingWorkspaces` (made reactive for this) is true; the
+in-flight load settling re-runs the landing.
+
 ## Where an update comes from
 
 Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store

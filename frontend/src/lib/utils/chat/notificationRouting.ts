@@ -35,13 +35,23 @@ export function selectionBelongsToRoute(
  * - `wait`: legitimately not there YET; the map is still filling and the effect re-runs on it.
  * - `abandon`: it is not coming, so release the target instead of holding the selection watchdog
  *   off a conversation that will never appear.
+ *
+ * A CHANNEL WAITS FOR A COMMUNITY LOAD ALREADY IN FLIGHT. On a killed start the post-login load is
+ * running when the tap's target arrives; asking for a refresh then got `refreshRan: false` back at
+ * once, re-armed, and asked again on the next mutation of the map - so `refreshing communities`
+ * printed twice for one tap (Mi 9T, 2026-10-01), for a load that was going to bring the target
+ * anyway. The in-flight load settling is what re-runs the landing.
  */
 export function landingRecovery(input: {
   isChannel: boolean;
   alreadyRefreshed: boolean;
   conversationSourcesSettled: boolean;
+  /** Whether a community load is running right now (`isLoadingWorkspaces`). */
+  workspacesLoading: boolean;
 }): 'refresh' | 'wait' | 'abandon' {
-  if (input.isChannel) return input.alreadyRefreshed ? 'wait' : 'refresh';
+  if (input.isChannel) {
+    return input.alreadyRefreshed || input.workspacesLoading ? 'wait' : 'refresh';
+  }
   // A DM or group appears from more than one place, and the IndexedDB restore is merely the FIRST:
   // the FCM cache injection that follows it is the ONLY way a first message from a new
   // correspondent becomes a conversation. Reading the restore alone said "settled" while that
