@@ -49,6 +49,20 @@ function initialsBox(root: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * The colour the initials are drawn ON: the first painted background from their box up to `root`.
+ * The box itself is usually transparent - `Avatar` paints its disc on a `div` and puts the initials
+ * in a `span` inside it (`text-zoom-exempt`, since 2026-10-01) - and reading the span alone drew
+ * bare yellow initials on the light glass, with no disc (iPhone 12, 2026-10-01).
+ */
+function paintedBackground(box: HTMLElement, root: HTMLElement): string | null {
+  for (let el: HTMLElement | null = box; el; el = el === root ? null : el.parentElement) {
+    const colour = getComputedStyle(el).backgroundColor;
+    if (colour && colour !== 'transparent' && !/^rgba\(.*,\s*0\)$/.test(colour)) return colour;
+  }
+  return null;
+}
+
+/**
  * `root` (the node the web avatar is drawn in) as a PNG data URL, or null when it shows nothing
  * yet. The circle is the pill's; a square photo is cropped to it like `object-cover`.
  */
@@ -88,8 +102,13 @@ export async function renderedAvatarPng(root: HTMLElement): Promise<string | nul
     ctx.drawImage(image, (side - glyph) / 2, (side - glyph) / 2, glyph, glyph);
   } else if (initials) {
     const style = getComputedStyle(initials);
-    ctx.fillStyle = style.backgroundColor;
-    ctx.fillRect(0, 0, side, side);
+    const ground = paintedBackground(initials, root);
+    if (ground) {
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, 0, side, side);
+    } else {
+      Log.d('avatarBitmap', 'the initials have no painted ground up to the avatar node');
+    }
     ctx.fillStyle = style.color;
     ctx.font = `${style.fontWeight} ${side * 0.42}px ${style.fontFamily}`;
     ctx.textAlign = 'center';

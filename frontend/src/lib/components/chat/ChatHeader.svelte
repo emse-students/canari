@@ -271,7 +271,7 @@
             {/if}
           </span>
         {/if}
-        <span class="text-text-main min-w-0 truncate text-sm font-bold">
+        <span data-glass-title class="text-text-main min-w-0 truncate text-sm font-bold">
           <EmojiText text={effectiveDisplayName} />
         </span>
       </button>

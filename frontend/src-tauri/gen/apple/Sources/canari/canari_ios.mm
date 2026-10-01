@@ -157,6 +157,64 @@ static void CanariSetupFirebaseIfAvailable(void) {
 
 static void CanariPublishSafeAreaInsets(void);
 
+/// Puts the WebView's own scroll view back inside its content whenever it has left it.
+///
+/// The app never scrolls the DOCUMENT: the shell is pinned to the viewport and every list scrolls
+/// in its own element, so the WKWebView's scroll view has no range at all. WebKit still moves it
+/// when the keyboard changes the geometry - revealing a focused field against a frame that
+/// `CanariApplyKeyboardLayout` is shrinking at that moment - and nothing moves it back once the
+/// content shrinks under it. Measured on an iPhone 12 (2026-10-01): with the keyboard up on the chat
+/// list the scroll view sat ~56 pt off, INVISIBLE to the page (no `scroll` event, the rects
+/// unchanged), so the header left the screen, the window's ground showed in the status strip, and
+/// every native glass piece - placed at the page's rects - was off by that much.
+///
+/// Event-driven, never timed: this runs on every change of the offset AND of the content size (the
+/// shrink is what strands the offset), and leaves the user's own gestures alone - a drag, its
+/// deceleration and its bounce are UIKit's, which returns inside the range by itself. An offset
+/// inside the range is never touched, so a page that does scroll scrolls as before.
+static void CanariClampDocumentScroll(UIScrollView *scrollView) {
+  if (scrollView.tracking || scrollView.dragging || scrollView.decelerating) {
+    return;
+  }
+  UIEdgeInsets inset = scrollView.adjustedContentInset;
+  CGFloat minY = -inset.top;
+  CGFloat maxY =
+      MAX(minY, scrollView.contentSize.height - CGRectGetHeight(scrollView.bounds) + inset.bottom);
+  CGFloat y = scrollView.contentOffset.y;
+  if (y >= minY - 0.5 && y <= maxY + 0.5) {
+    return;
+  }
+  CGFloat clamped = MIN(MAX(y, minY), maxY);
+  NSLog(@"[CanariIOS] WebView scroll view off its content (y=%.1f, range %.1f..%.1f) - put back to %.1f",
+        y, minY, maxY, clamped);
+  scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, clamped);
+}
+
+@interface CanariScrollRangeObserver : NSObject
+@end
+@implementation CanariScrollRangeObserver
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary *)change
+                       context:(void *)context {
+  CanariClampDocumentScroll((UIScrollView *)object);
+}
+@end
+
+/// Installs the observer above on the WebView's scroll view, once; the WebView only exists after
+/// `start_app()`, so this is called from every activation like the other WebView setups.
+static void CanariObserveDocumentScrollRange(void) {
+  static CanariScrollRangeObserver *observer = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || observer != nil) {
+    return;
+  }
+  observer = [CanariScrollRangeObserver new];
+  [webView.scrollView addObserver:observer forKeyPath:@"contentOffset" options:0 context:NULL];
+  [webView.scrollView addObserver:observer forKeyPath:@"contentSize" options:0 context:NULL];
+  NSLog(@"[CanariIOS] watching the WebView scroll view's range");
+}
+
 /// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
 /// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
 ///
@@ -212,6 +270,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                      webView.frame = target;
                    }
                    completion:^(__unused BOOL finished) {
+                     CanariClampDocumentScroll(webView.scrollView);
                      CanariPublishSafeAreaInsets();
                    }];
 }
@@ -431,6 +490,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
+  CanariObserveDocumentScrollRange();
   CanariObserveTheme();
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();

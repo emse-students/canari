@@ -40,6 +40,8 @@ class ComponentPropsArgs: Decodable {
     let foreground: String?
     /// Side, in points, of a button's bitmap image (default 20).
     let imageSide: Double?
+    /// Point size of a button's title: bold, one line, truncated at the tail.
+    let titleSize: Double?
 
     // `container` layout.
     let axis: String?

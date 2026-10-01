@@ -66,3 +66,16 @@ the screen's own background colour: `LaunchLogo.imageset` + `LaunchScreen.storyb
 `drawable/launch_background.xml` (every version) and `windowSplashScreenAnimatedIcon` in
 `values-v31/themes.xml` on Android. `scripts/gen-splash-logo.mjs` writes them. The web splash in
 `app.html` (bird + name on black) is unchanged.
+
+**The first iPhone that looked showed the ground and NO LOGO (iPhone 12, iOS 27.0.1, bench build of
+`0.18.32` from `a081f7d3e`, 2026-10-01) - and the built app is right.** Read out of that very IPA:
+the compiled `LaunchScreen.storyboardc` holds a `UIImageView` 160 x 160 pt, centred by two
+constraints, `scaleAspectFit`, whose image is the catalogue name `LaunchLogo`; `Assets.car` holds
+`LaunchLogo` at 1x/2x/3x (160/320/480 px, BGRA, no appearance variant); the ground resolves from the
+same catalogue (`AppBackground`, navy in dark) and DID show. What the phone showed is exactly the
+launch screen of every build since 2026-08-28 - that ground, no image - which is what iOS's cached
+launch snapshot would draw: a bench build carries the store band's `CFBundleVersion` (`1803299` for
+every `0.18.32`), so installing over an older `0.18.32` is no version change, and the cache is
+widely reported to survive a deletion until the phone restarts. **Owed ONE look, and it settles
+it**: delete the app, RESTART the iPhone, install, cold-launch. A logo means the cache and nothing to
+ship; still none means the snapshot cannot draw this image and the storyboard is what changes next.

@@ -681,7 +681,11 @@ in the resting colour. `systemComponentsPatch.test.ts` now reads both halves and
 Swift decodes that the Rust struct in front of it does not carry; on its first run it also found
 upstream's `itemPositioning`, dropped the same way (unused here, carried now). The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
-redraws both states and reconfigures the bar, and since the plugin REBUILDS its items on
+redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
+DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's
+`themeStore.init()`, so on a phone in dark mode the first glyphs were drawn dark while the store still
+said light, were filed as light, and the switch to light found "light" already drawn - the resting
+glyphs stayed `#e4e6eb` on the light bar until a relaunch. Since the plugin REBUILDS its items on
 configuration - clearing every badge - the dot is sent again after each one.
 
 **Nothing here has run on an iPhone.** `NativeTabBar.svelte.test.ts` pins what Canari ASKS of the
@@ -706,7 +710,8 @@ thread under it, where CSS can only blur it. Android keeps the CSS glass.
 
 **THE WEB LAYOUT STAYS THE ONLY OWNER OF WHERE THINGS ARE.** The web piece is not removed: it stays
 laid out, `visibility: hidden`, and the native button is drawn at its rect (`anchor: 'absolute'`)
-and follows it - a `ResizeObserver` on the piece, `resize` on the window and the visual viewport.
+and follows it - a `ResizeObserver` on the piece, `resize` on the window and the visual viewport, and
+a `MutationObserver` on `<html>`'s `style` and `class`.
 So the header's height, the pill's width and the "+" riding the keyboard are the web's answers, at
 every width, and nothing native decides a position. The backlog's first plan anchored the "+" to the
 keyboard natively; that would have been a second owner of the composer's place.
@@ -732,6 +737,25 @@ shows the name alone. **A failed creation leaves the CSS piece visible, at error
 **Verified here:** the action's contract (`nativeGlassPiece.svelte.test.ts`: placement, hiding,
 menus, clicks, cover, removal, a failed creation), the rasteriser's choices, and the patch's two
 halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift compiles in `ios.yml`.
+**FOUR DEFECTS THE FIRST HARDWARE PASS FOUND (iPhone 12, iOS 27.0.1, 2026-10-01), AND THEIR CAUSES:**
+- **The "+" 22 pt off its twin after every keyboard change.** 22 = 34 - 12: native writes
+  `--safe-area-inset-bottom` when the keyboard ANIMATION ENDS (`CanariApplyKeyboardLayout`'s
+  completion), after the window's `resize` was read, and the composer's floor is
+  `max(0.75rem, var(--safe-area-inset-bottom))`. That write moves the "+" without resizing it or the
+  window, so nothing remeasured. The root's `style`/`class` writes ARE that geometry change, and are
+  now observed.
+- **The WebView's own scroll view stranded ~56 pt off with the keyboard up** (the header left, the
+  status strip showed the window's ground), invisible to the page and so to every native piece.
+  `CanariClampDocumentScroll` puts the offset back inside its range on every change of the offset or
+  the content size, never during the user's own drag.
+- **The pill's title on two lines, its avatar without its disc, the dot clipped.** The configuration
+  drew 17 pt and wrapped: the title now takes the web title's computed size (`[data-glass-title]`,
+  the patch's `titleSize`), bold, one line, truncated at the tail. `Avatar` puts the initials in a
+  transparent `span` inside the disc, so the rasteriser now paints the first painted background up to
+  the avatar node. And the bitmap is already round, so it is no longer sent `circular`: the plugin's
+  second circular clip cut the presence dot, which sits past the inscribed circle.
+- (the tab bar's theme, [above](#the-native-ios-tab-bar)).
+
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
 
@@ -946,6 +970,13 @@ platform.
 It settles the safe area for free, which on Android needed a second mechanism: a WebView whose bottom
 edge no longer reaches the home indicator is given `safeAreaInsets.bottom == 0` by UIKit, so
 `env(safe-area-inset-bottom)` stops reserving a strip that is now behind the keyboard.
+
+**The WebView's scroll view is held inside its range (2026-10-01).** WebKit moved it while the frame
+was shrinking - ~56 pt with the keyboard up on the chat list, the header off the screen - and nothing
+moved it back once the content shrank under it; the page saw nothing. `CanariClampDocumentScroll`
+runs on every change of the scroll view's offset and content size (KVO) and at the end of the
+keyboard animation, puts an offset outside `[-inset.top, contentSize - bounds + inset.bottom]` back
+on its edge, and leaves a drag, its deceleration and its bounce to UIKit.
 
 Stateless on purpose - the target is recomputed from the superview's bounds on every event, so there is
 no remembered frame to restore and nothing that can drift. `UIKeyboardWillChangeFrame` alone covers
