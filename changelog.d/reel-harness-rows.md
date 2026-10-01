@@ -1,0 +1,1 @@
+- **Test rig: a REEL phase on the phone** - REEL-1 opens the camera tab with a real swipe and checks for a live portrait preview; REEL-2 films, captions and publishes a reel ([board](docs/wiki/cross-client-testing.md#18---reel---the-camera-tab-and-publishing-a-reel)).

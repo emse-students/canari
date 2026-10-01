@@ -497,7 +497,21 @@ question unaskable and the row records `INCONCLUSIVE` naming that precondition, 
 | PIN-10 | A PIN change while a message is in flight - explicit failure, never a silent wrong-key state | `+snapshot` | `pending` |
 | PIN-11 | **The gate cannot be walked away from**, and it offers an exit that destroys nothing. Written 2026-09-05 from a user report: people who forget their PIN close the modal on every page rather than take the destructive reset | `W1 W2` | **`PASS`** 2026-09-05, clean, **on the second reading of the row**. It recorded `FAIL` first and every word of it was true: `Escape` closed the gate, a backdrop click closed it (`backdrop: "clicked"`, so the event landed), and `exits: {signOut: 0, reset: 0, leaves: 0}` - no way out at all in the default state. Fixed the same day, both halves in one commit, and the row now reads `survivedEscape: true`, `survivedBackdrop: true`, `exits: {signOut: 1, reset: 1, leaves: 0}`. The run also cost two instrument fixes and one ESTATE fix - see [backlog](backlog.md) |
 
-## 18 - CORRUPT - deliberate store damage
+## 18 - REEL - the camera tab and publishing a reel
+
+Read [reels](frontend/modules/reels.md) first. **One runner, `reel.mjs --only N`, on A1 alone**:
+the tab swipe and the shutter classify the finger's path and timing, so both are OS touches. The
+rig GRANTS the camera and the microphone (`pm grant`) before it opens anything - the first-open
+dialog is the member's gesture, not this row's - and says so in the row's detail. **REEL-2 needs the
+reels server half on the estate** (#1328): with the shutter still disabled once the preview is live,
+it records `SETUP-FAILED` naming `GET /api/posts/reel-limits`.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| REEL-1 | A swipe right from the feed opens the camera tab on a LIVE PORTRAIT preview, and the swipe back gives the camera back | `A1` | `PASS-DIRTY` 2026-10-02 on `d1466de3c`+diff: live in 1211 ms, 720x1280 back lens at 30 fps, torch listed, the camera screen gone after the swipe back. The dirt is the ESTATE: it predates #1328, so `reel-limits` reached `GET /api/posts/:postId` and Postgres refused the id - a 500 (fixed in its own PR). Owed a clean re-run once both are on the estate |
+| REEL-2 | A tap-toggled take, "Suivant", a caption, "Publier": the phone re-encodes, uploads, lands on the feed, and the post is drawn as a REEL card | `A1` | `pending` - needs #1328 on the estate and `data-reel-publish-submit` (#1334) in the APK |
+
+## 19 - CORRUPT - deliberate store damage
 
 **Runs last.** SETUP-8's archive is the only way back that does not cost a full re-enrolment.
 
