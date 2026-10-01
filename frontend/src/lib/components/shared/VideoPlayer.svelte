@@ -42,6 +42,11 @@
     src: string;
     /** Starts playing when mounted (the viewer). */
     autoplay?: boolean;
+    /**
+     * Starts over at the end, as a feed video does (Instagram): the default. A looping element never
+     * fires `ended` and stays playing, so the bar keeps its fade and the time reads from 0 again.
+     */
+    loop?: boolean;
     /** Set for a `ManagedMediaSource` stream, which Safari only opens without AirPlay. */
     disableRemotePlayback?: boolean;
     /** Classes of the root - its box. */
@@ -53,6 +58,7 @@
   let {
     src,
     autoplay = true,
+    loop = true,
     disableRemotePlayback = false,
     class: klass = '',
     videoClass = 'max-h-full max-w-full object-contain',
@@ -180,6 +186,16 @@
     }
   }
 
+  /**
+   * Focus reaching the player FROM THE KEYBOARD brings the controls up. Only from the keyboard: a
+   * tap focuses the player too, and its `focusin` ran BEFORE its `click` - the controls came up on
+   * the focus and the click that followed read them as up and hid them again, so on the Mi 9T the
+   * first tap on a playing video did nothing visible (2026-10-01).
+   */
+  function onFocusIn(e: FocusEvent) {
+    if ((e.target as HTMLElement).matches(':focus-visible')) showControls();
+  }
+
   /** A tap on the picture brings the controls back, or hides them when they are up. */
   function onPictureTap(e: MouseEvent) {
     e.stopPropagation();
@@ -241,7 +257,7 @@
   aria-label={m.video_player_label()}
   tabindex="0"
   onkeydown={onKeydown}
-  onfocusin={showControls}
+  onfocusin={onFocusIn}
 >
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -249,6 +265,7 @@
     bind:this={video}
     {src}
     {autoplay}
+    {loop}
     playsinline
     preload="metadata"
     poster={TRANSPARENT_VIDEO_POSTER}

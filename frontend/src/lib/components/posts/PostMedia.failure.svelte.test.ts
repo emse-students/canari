@@ -67,20 +67,17 @@ const retryButton = (t: HTMLElement) =>
   );
 
 describe('PostMedia names the cause of a failure', () => {
+  // The sentence is read when the assertion runs, never when the table is built: the table is built
+  // at collection, before the component's imports have settled the locale it renders in.
   it.each([
-    [
-      'unreachable',
-      new MediaUnreachableError(new TypeError('x')),
-      m.media_error_unreachable(),
-      true,
-    ],
-    ['not found', new MediaNotFoundError(), m.media_error_not_found(), false],
-    ['expired', new MediaPurgedError(), m.post_media_expired_label(), false],
-    ['corrupt', new MediaDecryptError(new Error('x')), m.media_error_corrupt(), true],
-    ['other', new MediaDownloadError(500), m.post_image_load_error(), true],
+    ['unreachable', new MediaUnreachableError(new TypeError('x')), m.media_error_unreachable, true],
+    ['not found', new MediaNotFoundError(), m.media_error_not_found, false],
+    ['expired', new MediaPurgedError(), m.post_media_expired_label, false],
+    ['corrupt', new MediaDecryptError(new Error('x')), m.media_error_corrupt, true],
+    ['other', new MediaDownloadError(500), m.post_image_load_error, true],
   ])('%s', async (_name, err, text, retryable) => {
     const target = await mountFailing(err);
-    expect(target.textContent).toContain(text);
+    expect(target.textContent).toContain(text());
     expect(!!retryButton(target)).toBe(retryable);
   });
 

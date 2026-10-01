@@ -81,6 +81,46 @@ it('fades the controls after 2.5 s of playback, and a tap brings them back', () 
   expect(bar.className).toContain('opacity-100');
 });
 
+it('a tap that FOCUSES the player brings the faded controls back, not up and down again', () => {
+  // Mi 9T, 2026-10-01: the tap's focusin raised the controls, its click then read them as up and
+  // hid them - the first tap on a playing video did nothing visible.
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+
+  root.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  flushSync();
+  video.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('loops by default, and a loop restarting reads the time from 0 while it keeps playing', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  expect(video.loop).toBe(true);
+  Object.defineProperty(video, 'duration', { configurable: true, get: () => 8 });
+  let t = 7.9;
+  Object.defineProperty(video, 'currentTime', { configurable: true, get: () => t, set: () => {} });
+  startPlaying(video);
+  video.dispatchEvent(new Event('timeupdate'));
+  flushSync();
+  const slider = root.querySelector('[role="slider"]')!;
+  expect(slider.getAttribute('aria-valuenow')).toBe('7');
+
+  // The engine wraps to 0 with no `ended` and no `pause`: still playing, so the fade still runs.
+  t = 0.1;
+  video.dispatchEvent(new Event('timeupdate'));
+  flushSync();
+  expect(slider.getAttribute('aria-valuenow')).toBe('0');
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+});
+
 it('keeps the controls while paused', () => {
   vi.useFakeTimers();
   const { bar } = mountPlayer();

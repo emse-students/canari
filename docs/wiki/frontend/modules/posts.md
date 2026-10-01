@@ -747,6 +747,23 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   element) and shows the poster until the last segment fills it.
 - **A chat video is an `InlineVideo` now**, like the feed's, instead of a `<video controls>` in the
   bubble; the bubble's viewer is `VideoPlayer`.
+- **Every video LOOPS, like Instagram's** (user, 2026-10-01): `InlineVideo` has `loop`, and
+  `VideoPlayer`'s `loop` prop defaults to true. A looping element never fires `ended` and never
+  pauses, so nothing in the bar can stick at the end: the time reads from 0 again on the next
+  `timeupdate` and the fade keeps running. Both are pinned by tests.
+- **A tap's FOCUS must not raise the controls** (Mi 9T, 2026-10-01): the player is focusable, a tap
+  focuses it, and `focusin` ran before the `click` - so the controls came up on the focus and the
+  click read them as up and hid them, and the first tap on a playing video did nothing visible.
+  Chromium on the desktop never showed it, because the player was already focused. `focusin` now
+  raises them only for keyboard focus (`:focus-visible`).
+
+**THE SEAM CANAREELS (C7) BUILDS ON.** A reel plays in the feed and a touch opens a full-screen
+vertical viewer that swipes to the next ([backlog](../../backlog.md)). `VideoPlayer` assumes no feed,
+post or lightbox: it takes a `src` and the box classes, owns its bar, keyboard and fade, and reads
+the app's one sound answer. So a vertical viewer mounts one per reel, with `autoplay`/`loop` as it
+chooses. The two things such a viewer brings itself are the gesture exclusion (`data-video-controls`
+is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and one-video-at-a-time,
+which `followVideoSound` already gives every element it is on.
 
 ## Comment media (image + GIF)
 
