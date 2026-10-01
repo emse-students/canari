@@ -54,6 +54,7 @@
  */
 
 import { generateMediaCek, generateMediaIv, hexDecode, importMediaCek } from '$lib/mediaCrypto';
+import { SEGMENTED_MEDIA_WRITER_ENABLED } from '$lib/mediaSegmentedWriterFlag';
 
 /** The value a `MediaRef.encoding` carries for this format. Absent means single-block (legacy). */
 export const SEGMENTED_MEDIA_ENCODING = 'segmented-v1' as const;
@@ -62,28 +63,11 @@ export const SEGMENTED_MEDIA_ENCODING = 'segmented-v1' as const;
 export type MediaEncoding = typeof SEGMENTED_MEDIA_ENCODING;
 
 /**
- * THE WRITER FLIP - `false` IN THE READER RELEASE, AND THAT IS THE WHOLE OF THIS RELEASE'S SAFETY.
- *
- * A client older than the reader, handed a segmented blob, decrypts it as ONE GCM block: the header
- * and every tag are fed in as ciphertext, the final tag fails, and the member sees a broken video
- * that their own phone, not the sender's, is at fault for. So this ships in two releases, as Graine
- * v2 (channel-encryption section 21) and the state blob's framing did:
- *
- * 1. THIS release reads the format everywhere it is read (web and both app shells, which embed the
- *    same frontend) and writes nothing in it.
- * 2. The flip to `true` is ONE line, and it may land only when ALL of these hold:
- *    - `minClientVersion` (the box's `/version`) is at or above the release carrying this reader,
- *      so no client that cannot read a segmented blob is still allowed to connect;
- *    - BOTH stores serve that version - measured with `bun tools/play-vitals/vitals.mjs` and the App
- *      Store, never inferred from a date;
- *    - the media-service serving the estate answers `206` to a `Range` request (shipped with this
- *      reader, `media.controller.ts`), since the streaming reader refuses a `200`.
- *
- * Only VIDEO is segmented even then ({@link writesSegmented}): a picture is shown whole anyway, and
- * the readers that only ever open pictures - the native push thumbnail and the post link preview -
- * then never meet the format (both also refuse it by the ref's field, never by failing on it).
+ * THE WRITER FLIP lives in its own module (`mediaSegmentedWriterFlag.ts`) - the one line the flip
+ * changes, and the one module the end-to-end test replaces to run the whole path with it ON.
+ * Re-exported here so every reader of the format names it from one place.
  */
-export const SEGMENTED_MEDIA_WRITER_ENABLED = false;
+export { SEGMENTED_MEDIA_WRITER_ENABLED };
 
 /** `"CANARIM"`: the format's magic, seven ASCII bytes. */
 export const SEGMENTED_MEDIA_MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x41, 0x52, 0x49, 0x4d]);
