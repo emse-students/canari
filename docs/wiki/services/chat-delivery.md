@@ -1802,3 +1802,14 @@ how to read it are on [`call-service`](call-service.md#the-call-record) - keep n
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
 | `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
 | `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox (dev builds) |
+
+### The push avatar log line
+
+The `GET /api/mls/push/avatar/:targetUserId` route writes ONE `[PUSH_AVATAR]` line per request
+(`outcome=<o> status=<http> ms=<n> device=<bool> target=<first 8 chars>`, plus `detail=` when core is
+unreachable), and core-service `GET /users/:id/avatar` writes the matching `[AVATAR]` line (no `device=`:
+core never sees the requester device). Outcome vocabulary: `served` and `absent` log at info;
+`unavailable`, `unreachable`, `rejected` (push secret or query refused) and, in core only, `disabled` (no
+gallery key on the estate) log at warn. The full id, the secret and the image never appear. A failed
+fetch is found with `grep -E "PUSH_AVATAR|\[AVATAR\]" | grep -v -E "outcome=(served|absent) "`; see also
+[core-service](core-service.md#the-avatar-proxy).

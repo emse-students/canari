@@ -13,6 +13,7 @@ import {
   Res,
   Logger,
   Inject,
+  HttpException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -43,6 +44,9 @@ import { coreUrl, mediaUrl } from '../internal/service-urls';
  * text-only notification rather than being downloaded in a background handler.
  */
 const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
+type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
 
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
 @Controller()
@@ -302,17 +306,30 @@ export class PushController {
     @Param('targetUserId') targetUserIdRaw: string,
     @Res() res: Response
   ) {
-    const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
-    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
-    const targetUserId = sanitizeQueryValue(targetUserIdRaw, 'targetUserId');
+    // ONE LINE PER REQUEST, whatever the outcome: before this a 502/503/timeout/403 left no trace
+    // in either service, so a notification that drew initials once could not be explained.
+    const startedAt = Date.now();
+    const hasDevice = Boolean(deviceIdRaw);
+    const logOutcome = (outcome: AvatarPushOutcome, status: number, detail?: string) =>
+      this.logAvatarOutcome(outcome, status, startedAt, hasDevice, targetUserIdRaw, detail);
 
-    await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
+    let targetUserId: string;
+    try {
+      const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
+      const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+      targetUserId = sanitizeQueryValue(targetUserIdRaw, 'targetUserId');
+      await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
+    } catch (e) {
+      logOutcome('rejected', e instanceof HttpException ? e.getStatus() : 500);
+      throw e;
+    }
 
     try {
       const upstream = await fetch(coreUrl(`users/${encodeURIComponent(targetUserId)}/avatar`), {
         signal: AbortSignal.timeout(4_000),
       });
       if (!upstream.ok) {
+        logOutcome(upstream.status === 404 ? 'absent' : 'unavailable', upstream.status);
         // Core answers 404 for "this user has no photo" and 502 for "the gallery could not be
         // reached"; both are forwarded as they are, because the caller's fallback (Android draws
         // initials) is the same either way and the DISTINCTION is already made in core's log.
@@ -321,6 +338,7 @@ export class PushController {
         return;
       }
       const buffer = Buffer.from(await upstream.arrayBuffer());
+      logOutcome('served', 200);
       res
         .set({
           'Content-Type': upstream.headers.get('content-type') ?? 'image/jpeg',
@@ -333,11 +351,31 @@ export class PushController {
       // initials on every phone could not be told apart from a user who simply has no photo - and
       // core-service is on the other side of an internal hop, which is a failure this service is
       // the only one placed to see.
-      this.logger.warn(
-        `[PUSH_AVATAR] core-service unreachable for ${targetUserId}: ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`
-      );
+      logOutcome('unreachable', 503, e instanceof Error ? `${e.name} ${e.message}` : String(e));
       res.status(503).send();
     }
+  }
+
+  /**
+   * The single `[PUSH_AVATAR]` line of an avatar request: outcome, status, duration, whether the
+   * requester named a device, and the target id TRUNCATED to 8 characters (never the full id, the
+   * push secret or the image). `served`/`absent` log at info, every failure at warn, so
+   * `grep PUSH_AVATAR | grep -v outcome=served` finds a failed fetch.
+   */
+  private logAvatarOutcome(
+    outcome: AvatarPushOutcome,
+    status: number,
+    startedAt: number,
+    hasDevice: boolean,
+    targetUserIdRaw: string | undefined,
+    detail?: string
+  ): void {
+    const line =
+      `[PUSH_AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
+      `device=${hasDevice} target=${String(targetUserIdRaw ?? '').slice(0, 8)}` +
+      (detail ? ` detail=${detail}` : '');
+    if (outcome === 'served' || outcome === 'absent') this.logger.log(line);
+    else this.logger.warn(line);
   }
 
   /**

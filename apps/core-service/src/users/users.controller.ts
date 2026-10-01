@@ -14,6 +14,8 @@ import {
   Res,
   ForbiddenException,
   BadRequestException,
+  HttpException,
+  Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UsersService } from './users.service';
@@ -47,6 +49,26 @@ const MAX_PROFILE_BATCH = 100;
 /** Controller handling user profile CRUD, search, and avatar proxy. */
 @Controller('users')
 export class UsersController {
+  private readonly logger = new Logger(UsersController.name);
+
+  /**
+   * The single `[AVATAR]` line of an avatar request: outcome, status, duration and the target id
+   * TRUNCATED to 8 characters (never the full id or the image). `served`/`absent` log at info,
+   * every failure at warn, so `grep AVATAR | grep -v outcome=served` finds a failed fetch.
+   */
+  private logAvatar(
+    outcome: 'served' | 'absent' | 'unavailable' | 'disabled' | 'rejected',
+    status: number,
+    startedAt: number,
+    userId: string
+  ): void {
+    const line =
+      `[AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
+      `target=${String(userId).slice(0, 8)}`;
+    if (outcome === 'served' || outcome === 'absent') this.logger.log(line);
+    else this.logger.warn(line);
+  }
+
   constructor(
     private readonly usersService: UsersService,
     private readonly avatarService: AvatarService,
@@ -185,14 +207,29 @@ export class UsersController {
    */
   @Get(':id/avatar')
   async getAvatar(@Param('id') userId: string, @Res() res: Response) {
-    const outcome = await this.avatarService.fetchUserAvatar(userId);
+    // ONE `[AVATAR]` LINE PER REQUEST, whatever the outcome - see `logAvatar`.
+    const startedAt = Date.now();
+    let outcome: Awaited<ReturnType<AvatarService['fetchUserAvatar']>>;
+    try {
+      outcome = await this.avatarService.fetchUserAvatar(userId);
+    } catch (e) {
+      this.logAvatar(
+        'rejected',
+        e instanceof HttpException ? e.getStatus() : 500,
+        startedAt,
+        userId
+      );
+      throw e;
+    }
 
     if (outcome.kind === 'absent') {
+      this.logAvatar('absent', 404, startedAt, userId);
       res.set({ 'Cache-Control': 'public, max-age=600' });
       res.status(404).end();
       return;
     }
     if (outcome.kind === 'unavailable') {
+      this.logAvatar('unavailable', 502, startedAt, userId);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(502).end();
       return;
@@ -203,11 +240,13 @@ export class UsersController {
     // have succeeded: the key is read once at startup. Ten minutes matches `absent`, so a key
     // actually being added recovers within one TTL rather than a day.
     if (outcome.kind === 'disabled') {
+      this.logAvatar('disabled', 404, startedAt, userId);
       res.set({ 'Cache-Control': 'public, max-age=600' });
       res.status(404).end();
       return;
     }
 
+    this.logAvatar('served', 200, startedAt, userId);
     res.set({
       'Content-Type': outcome.contentType,
       'Content-Length': outcome.body.length,
