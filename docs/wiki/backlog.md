@@ -174,6 +174,8 @@ The composer comparison R1 was built from is on
    with calls. So the first camera open is read on both phones before anything else. **The recorder
    writes WebM on Android and MP4 on iOS**, and R2's on-device compression (C3) brings both to one
    format before upload - one reason R2 comes first. What the tab itself needs is the section below.
+   **The SERVER half (the `reel` post kind, the 90 s declaration, the 30-day deletion, the expiry
+   signal) and the API contract the client builds against: [reels](services/reels.md)** (2026-10-01).
 4. **R4 - live** (C9), behind the calls revival.
 
 ### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01
