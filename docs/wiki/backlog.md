@@ -68,7 +68,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | **dismiss code-scanning alert 2521 as a false positive** - `js/user-controlled-bypass` on the refresh endpoint's own 401; the flagged condition is the REFUSAL, and the sensitive path behind it is verified three ways. A judgement about an auth path is not an agent's to record unilaterally | 1 click, Security tab | [P3 - ONE HIGH-SEVERITY ALERT IS A FALSE POSITIVE](#p3---one-high-severity-code-scanning-alert-is-a-false-positive-and-only-a-click-closes-it) |
-| set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages. **NOT a Cloudflare click: measured 2026-09-22, the zone is on the FREE plan and standalone Health Checks are Pro and above** - so this is an account on an external service, or a paid plan, and the agent-side options are in the entry | 1 signup, or a plan | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [mobile](frontend/mobile.md#fcm-message-cache) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
@@ -1597,9 +1596,8 @@ re-attempted rather than reported. A retry on the pull is not the fix - it narro
 leaves the conflation - though the pull should retry too.
 
 **And the second half, which the split made newly visible:** nothing reports *"`dev` is green and
-`main` was not advanced"*. That is the same shape as the P2 below - a correct mechanism with no
-report is found by hand, a day late - and the probe owed there (`/api/version`, hitting the database)
-is the same probe. They want doing together. Until then the escape is still one visible variable:
+`main` was not advanced"*. A correct mechanism with no report is found by hand, a day late. Until
+then the escape is still one visible variable:
 `gh variable set DEV_ENVIRONMENT_ENABLED --body false`, which skips the dev arm and sends releases
 by the emergency path, a push straight to `main`.
 
@@ -1609,8 +1607,7 @@ by the emergency path, a push straight to `main`.
 
 **Reported by the user, again** (*"il ne faut surtout pas que la prod soit down"*, then *"Il y a des
 gens qui utilisent la prod"*, then *"Pas que canari, cercle surtout"*) - which is the third time an
-outage has been raised by a human rather than by anything here, and the reason the entry below it
-is now the more urgent of the two.
+outage has been raised by a human rather than by anything here.
 
 **The measurement, the drop pattern and the shared uplink are on
 [cloudflare-edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it),
@@ -1676,78 +1673,6 @@ control at 1.1.1.1 and the same target from inside `chat-delivery-service` - wit
 TLS apart from the total, and `report.py` prints each conditional rate beside its base rate. **It
 cannot be closed by working on it**: read that ledger the next time a stall appears in a service
 log, alongside the netwatch reading above.
-
-### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)
-
-**This is the largest thing the postgres outage exposed, and it is not a code defect.** Production
-lost every backend service twice on 2026-09-01, for 33 minutes and then again after a manual deploy,
-and on both occasions the thing that raised the alarm was **the user noticing**. Nothing in this
-repository or on the box would have said so.
-
-**What DID report, and why it was not enough.** The CD run went red both times, on `Run database
-migrations` - so the mechanism worked and the signal existed. Nobody is paged for a red run, and a
-GitHub notification in a mailbox is not a page.
-
-**AND THAT HALF HAS NOW BEEN MEASURED ON A SECOND POPULATION, WHICH IS WHY IT IS NOT ONLY ABOUT
-OUTAGES (2026-09-24).** The nightly `Scheduled` pass was RED every night from 2026-09-04 to
-2026-09-23 - twenty consecutive runs - in two stretches with unrelated causes. The first, to
-2026-09-15, was `Dependabot alerts on the default branch` and is recorded above as fixed on
-2026-09-16 by `DEPENDABOT_ALERTS_TOKEN`; the second, from 2026-09-16, was `Did the last stable reach
-both stores?` refusing because `0.18.21` could get no App Store version slot while `0.18.20` sat in
-`WAITING_FOR_REVIEW`. **The second was a real question for a human, it named the decision in its own
-log, and nothing asked one for eight days** - it ended when `v0.18.22` shipped on 2026-09-24 and took
-the slot itself, so the red went away without ever being read. Both stretches were found only
-because a `gh run list` was run for an unrelated reason. So the gap this entry names is not
-"production goes down and nobody hears"; it is **every** mechanism here whose only output is the
-colour of a run. Measuring it cost one dispatch of the read-only reporter - `gh workflow run
-scheduled.yml -f job=stores`, green, `0.18.22 is WAITING_FOR_REVIEW - with Apple, nothing to do` -
-which is also the reason no store click is owed to the user and none is listed above. Worse, the frontend kept answering **200** throughout:
-`frontendDist` is embedded and nginx serves it without touching a service, so every external check
-that reads the homepage saw a healthy site while `auth_db` was unreachable. **A liveness probe must
-hit something that needs the database** - `/api/version` and `/api/chat-delivery-health` both do, and
-both returned 502 the whole time.
-
-**WHAT IS OWED IS ONE CLICK, AND THE CHANNEL IS MAIL** (decided 2026-09-06). Not a tool: building a
-poller in this repository would be exactly the waste that `CLAUDE.md`'s one-off-actions rule names.
-The user asked on 2026-09-10 for the steps to be written out rather than described, so:
-
-| URL to probe | What its failure means |
-| --- | --- |
-| `https://canari-emse.fr/api/version` | the API is not answering, or answers as the wrong version |
-| `https://canari-emse.fr/api/chat-delivery-health` | the API is up but message delivery is not |
-
-Any external service does this. The requirements are only that it runs **from outside the box** (a
-probe on the host cannot see the host being unreachable), at an interval of 5 minutes or less, and
-that it alerts by mail. **Two settings to get right**: the check must assert the STATUS of the named
-path rather than follow redirects and report the final 200, and it should require two consecutive
-failures, so a nightly deploy does not page.
-
-**CLOUDFLARE'S OWN HEALTH CHECKS ARE OUT, AND THAT IS MEASURED RATHER THAN ASSUMED (2026-09-22).**
-The user authorised both Cloudflare gestures with the API token on 2026-09-22; one of the two had
-already shipped (the avatar Cache Rule, confirmed live the same day) and this one cannot be made at
-all. `GET /zones/{zone}` answers `plan: Free`, and standalone Health Checks - with the notification
-destination that makes them mail - are **Pro and above**. No token would lift it: the ceiling is the
-plan, not a permission. So the line above says "an account on an external service, or a paid plan",
-and it stays the user's click.
-
-**AND A SCHEDULED GITHUB JOB IS NOT THE WAY ROUND IT.** `scheduled.yml` runs from outside the box
-and could curl both paths, which is why it is worth naming and refusing rather than leaving for
-somebody to rediscover: at the 5-minute interval this needs it is **288 runs a day**, against a
-user who asked for the opposite (*"le moins de workflows differents possibles, ca inonde la console
-github"*). A probe whose own noise buries the Actions list is a probe whose next failure is read as
-one more green row.
-
-**MAIL WAS REFUSED ONCE, ON `mitv`, and this is not a reversal.** There, `MAILADDR` would have
-delivered into a spool nobody opens, on a host with postfix and exim4 both inactive and `monit`
-holding no destination - *a check that cannot reach its reader reports health*. An uptime service is
-a different sender entirely: a real MTA, a mailbox the user reads, and above all **not on the box
-that is down**, which is the requirement no probe hosted on `canari` or `mitv` could ever meet.
-
-**One thing that would be code, and is worth doing whichever way the above goes:** CD's health checks
-(`Health Check`, `Wait for services to be healthy`) run AFTER the migration step, so a deploy that
-fails on migrations never reaches them and reports only "migrations failed" - true, and silent about
-the estate being down. Reaching them on the failure path, or asserting the datastores before
-migrations, would make the run say what actually happened.
 
 ### P3 - A MERGED BRANCH THAT IS STILL THERE WAS NOT LEFT BEHIND, IT WAS PUSHED BACK (measured 2026-09-22)
 
@@ -5525,11 +5450,6 @@ before the stable is allowed to proceed.** That needs a USER decision rather tha
 smoke account on both estates, its credentials as GitHub secrets, and accepting that a CI job holds a
 real login on production. **The alternative - that nobody signs in before users do - is what happened
 on 2026-09-06.**
-
-**3. WHAT IS STILL SILENT IS PRODUCTION FALLING OVER BETWEEN RELEASES - the USER's.** The release
-half is closed (`release-shipped.sh`, 2026-09-10, story in `CHANGELOG.md`): it fires once, at a
-release. An estate that dies an hour later is reported by nobody - see the external uptime probe in
-the table at the top of this page.
 
 **4. THE EMERGENCY PATH SHORTENS NOTHING.** P2, measured under real urgency. `gh pr merge --admin`
 skips the ruleset's required check on the PULL REQUEST; `release-preflight.sh` gate 3 then refuses
