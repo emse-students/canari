@@ -1410,6 +1410,33 @@ keeps the marker inside the device wipe (`storage.rs`). **iOS (`cachedRemoteFile
 unchanged** - it still asks on every miss, and stays so until it can be read on the iPhone bench
 build. Pinned by `messageNotificationShape.test.ts`.
 
+**A face the app has drawn is in the notification's cache before any push needs it (Android,
+2026-10-01).** `userAvatarCache.ts` hands the bytes of every avatar it LOADS (once per load, not per
+mount) to `store_avatar_mirror` (`commands/notifications.rs`), which writes
+`files/avatar_<id>.jpg` - the very file `cachedRemoteIcon` reads first - and deletes the
+`.absent` marker beside it. One cache, one reader: a contact seen in the app no longer depends on the
+network for the notification's face. The id comes from `Avatar.svelte`, which holds it, never from
+the URL. The file name is spelt twice, Kotlin and Rust, and `avatarMirror.test.ts` holds the two
+together. **The clock**: the mirror's mtime is the moment of the write, so the native 24 h now
+measures "since the app last drew this face" - a contact seen daily never ages out, and a changed
+photo can be up to two days stale in the shade (the browser's 24 h `max-age`, then the native one).
+No ETag is carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
+nobody sends, and the reader would need the network to compare it. **The bytes go as a plain array
+(`{ userId, data }`, the shape `save_mls_state` takes), never a raw invoke body**: the first version
+read `tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" - the
+Android IPC turns a typed array into JSON. A body that does not open like a JPEG/PNG/GIF/WebP is
+refused, so a proxy's `200` HTML page never becomes a face. iOS is not mirrored: the extension reads
+an app-group container this command does not write.
+
+Read on the Mi 9T (2026-10-01): with the command handed a 3561-byte JPEG for the peer, the app's
+process killed and `adb reverse tcp:8081` REMOVED (the API unreachable, the FCM link up), the next
+push logged `fetchAvatar: from cache for c71e1a5b` and `hasAvatar=true` with no request, and the
+shade drew the mirrored face. A 3-byte non-image was refused (`3 bytes that are not an image`).
+**What that run could not show is the Avatar component producing the bytes itself**: the bench
+accounts have no photo (the local estate has no provider, so every avatar answers `404`). The
+WebView's cross-origin read of that answer DID succeed (`status 404`, not a thrown fetch), so a
+`200` reaches the blob branch that mirrors - which `userAvatarCache.test.ts` pins.
+
 **A conversation names every author, a direct message included (user, 2026-10-01).** A DM was posted
 in Android's one-to-one `MessagingStyle` shape, which from API 28 is decided by `isGroupConversation`
 alone: the other person's name is the title and appears above none of their lines, while our own
