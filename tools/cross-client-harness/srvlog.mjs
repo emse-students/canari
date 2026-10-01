@@ -22,6 +22,7 @@
  * anything nginx terminates before the app is out of scope.
  */
 import { pathToFileURL } from 'node:url';
+import { isForeign404, ownedPaths } from './ownedpaths.mjs';
 
 /** The application containers. Infrastructure (redis, postgres, garage) is deliberately out. */
 const SERVICES = [
@@ -1203,6 +1204,13 @@ for (const service of SERVICES) {
       !warnings.includes(l) &&
       !notable.includes(l)
   );
+
+  // A 404 ON A PATH THE APPLICATION CANNOT OWN is a scanner's guess, whatever its spelling: reported
+  // as notable, never gating. A 404 on an owned path stays in `unexplained`. See `ownedpaths.mjs`.
+  const owned = ownedPaths();
+  for (const l of unexplained.filter((x) => isForeign404(x, owned))) {
+    notable.push(...unexplained.splice(unexplained.indexOf(l), 1));
+  }
 
   // A group's FIRST LOOK is narration; a SECOND one is the race. See `settleFirstLooks`.
   for (const l of settleFirstLooks(unexplained)) {

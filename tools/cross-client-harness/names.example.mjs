@@ -33,11 +33,15 @@
  * opens NOTHING and then reports on whatever conversation happened to be on screen.
  */
 
-/** The account that owns W1 and A1, as W2 sees it in its sidebar. A DISPLAY name, not a login. */
-export const OWNER_NAME = "<owner display name>";
-
-/** The account that owns W2, as W1 sees it in its sidebar. A DISPLAY name, not a login. */
-export const PEER_NAME = "<peer display name>";
+/**
+ * Every account's DISPLAY name, keyed like `test-accounts.json` and `ACCOUNT_OF`. A DISPLAY name,
+ * not a login. A third and fourth account are just two more keys here.
+ *
+ * `OWNER_NAME` (the owner of W1/A1, as W2 sees it), `PEER_NAME` and `peerNameFor` are DERIVED from
+ * this by the COMMITTED `namesderive.mjs` - see the bottom of this template - so the logic that
+ * picks a name is reviewed and tested rather than living in a gitignored file.
+ */
+export const DISPLAY_NAME_OF = { owner: "<owner display name>", peer: "<peer display name>" };
 
 /**
  * The site, as an ABSOLUTE url.
@@ -137,11 +141,11 @@ export const ACCOUNT_OF = {
  */
 export const A1_WIFI = "<phone ip>:5555";
 
-/**
- * The name a given client must click to reach the shared DM - i.e. the OTHER party's name.
- * A1 holds the same account as W1, so it looks for the peer just as W1 does.
+/*
+ * `OWNER_NAME`, `PEER_NAME`, `displayNameFor(key)` and `peerNameFor(device)` come from
+ * `makeNameHelpers` (see the bottom of this template). `peerNameFor` is the name a client must click
+ * to reach the shared DM; it THROWS for a device whose account is outside the owner/peer pair.
  */
-export const peerNameFor = (device) => (device === "W2" ? OWNER_NAME : PEER_NAME);
 
 /**
  * The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin.
@@ -180,7 +184,10 @@ export const STRANDED_ABSENT_MENTION_IDS = [];
  * THE TWO LINES THE COPY IN THIS DIRECTORY ACTUALLY CONTAINS, replacing everything above:
  *
  *   import { fileURLToPath } from 'node:url';
+ *   import * as values from '../../../../canari-harness/names.mjs';
+ *   import { makeNameHelpers } from './namesderive.mjs';
  *   export * from '../../../../canari-harness/names.mjs';
+ *   export const { OWNER_NAME, PEER_NAME, displayNameFor, peerNameFor } = makeNameHelpers(values);
  *   export const STATE_DIR = fileURLToPath(new URL('../../../../canari-harness/', import.meta.url));
  *
  * `STATE_DIR` has exactly three consumers - `launch.mjs` for the profiles, `accounts.mjs` for the

@@ -12,7 +12,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as requestOverHttp } from 'node:http';
 import { request as requestOverHttps } from 'node:https';
-import { LOCAL } from './estate.mjs';
+import { LOCAL, srvLines } from './estate.mjs';
+import { foldServerWindow, takeServerWindow } from './serverwindow.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
@@ -300,26 +301,7 @@ const A1_BUILD = (() => {
   }
 })();
 
-/**
- * The expectations a check did not meet, named, ready to be pushed into its `failures[]`.
- *
- * A VERDICT IS NOT A REPORT, AND EVERY CHECK HERE DECIDED FAIL BY DISJUNCTION. Only the first term,
- * `failures.length > 0`, ever put anything in `failures[]`, so other terms could fire and record
- * `[FAIL] ... "failures":[]` - a row that knows exactly what went wrong and does not say it. COMM-1
- * did that on 2026-08-27: one of nine terms had fired, and reading the recorded detail term by term
- * was the only way to learn which. That is a diagnosis owed on every future failure of every such
- * row, which is the same debt `backlog` already booked against COMM-9/10 for its unarmed `VACUOUS`.
- *
- * `true` IS THE ONLY PASS. `null` and `undefined` are what a step that never ran returns, and they
- * are unmet for the same reason `false` is - nothing proved the thing - so they are reported with
- * their value rather than collapsed into it, because "never asked" and "asked and refused" are two
- * different findings and the sentence has to keep them apart.
- */
-export function unmet(expectations) {
-  return Object.entries(expectations)
-    .filter(([, v]) => v !== true)
-    .map(([name, v]) => `${name}: ${v === undefined ? 'undefined' : JSON.stringify(v)}`);
-}
+export { armingFailures, unmet } from './expectations.mjs';
 
 /** Every verdict THIS process has recorded, so the exit code can be derived rather than remembered. */
 const recorded = [];
@@ -656,7 +638,15 @@ export async function recordObserved(id, verdict, detail, observers) {
   for (const [label, o] of Object.entries(observers))
     if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
   const gated = gate(verdict, reports, { bundles });
-  return record(id, gated.verdict, { ...gated.detail, ...detail });
+  // THE SERVER'S WINDOW, written beside the clients' dirt. A row opts in by naming where its own
+  // window began (`serverWindowSince`); see `serverwindow.mjs` for why a HEAL verdict never said
+  // "clean on the server" before.
+  const { serverWindowSince, ...rowDetail } = detail ?? {};
+  const folded = foldServerWindow(
+    gated.verdict,
+    serverWindowSince ? takeServerWindow(srvLines, serverWindowSince) : null
+  );
+  return record(id, folded.verdict, { ...gated.detail, ...folded.detail, ...rowDetail });
 }
 
 /**

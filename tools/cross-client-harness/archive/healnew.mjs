@@ -949,6 +949,7 @@ const detail = {
   topology,
   samples: w.samples,
   timeline,
+  serverWindowSince: timeline[0].wall,
   unmet: missing,
   observers: { w3: w3Report },
 };

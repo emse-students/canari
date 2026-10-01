@@ -40,7 +40,7 @@ import {
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { seedsForChannel } from './grainestore.mjs';
 import { PEER_NAME, PORTS, VENUE } from '../names.mjs';
-import { mark, record, unmet } from '../results.mjs';
+import { armingFailures, mark, record, unmet } from '../results.mjs';
 import { consoleLines, gate, report, watch } from '../watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -164,10 +164,9 @@ const arming = {
   peerOffTheSalonRosterAfter: offRosterAfter === true,
   peerHeldASeedBefore: (seedsBefore?.received ?? 0) > 0,
 };
-const armed = Object.values(arming).every((v) => v === true);
-// PUSHED WHETHER OR NOT IT ARMED, and harmless when it did: `verdict` reads `!armed` first, so a
-// VACUOUS keeps its name and gains its reason, and an armed run pushes nothing.
-if (!armed) failures.push(...unmet(arming).map((f) => `could not arm - ${f}`));
+// An unarmed run pushes its named reasons: a VACUOUS keeps its name and gains its reason.
+const { armed, failures: armingReasons } = armingFailures(arming);
+failures.push(...armingReasons);
 
 const expectations = {
   // COMM-9

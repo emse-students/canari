@@ -11,6 +11,13 @@
  * to see what was not predicted.
  */
 import { evaluate } from './cdp.mjs';
+import {
+  TAURI_ORIGINS,
+  contextOrigins,
+  isForeignOrigin,
+  originOfConsoleEvent,
+  originOfUrl,
+} from './consoleorigin.mjs';
 import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
 
 /**
@@ -1216,7 +1223,13 @@ export async function watch(cx, label) {
   // "0 console lines" for a run that had driven W1 through four navigations, because it prints
   // the log after gating and every other runner happens to print it before.
   cx.consumed = [];
-  return { cx, label, since: Date.now() };
+  // THE APPLICATION'S OWN ORIGINS, for attributing console lines (see `consoleorigin.mjs`). Read off
+  // the tab at arm time; an unreadable or non-http origin leaves `home` EMPTY, which attributes
+  // nothing - an observer that cannot say where it stands must not forgive anyone.
+  const here = await evaluate(cx, 'location.origin').catch(() => null);
+  const own = originOfUrl(typeof here === 'string' ? here : '');
+  const home = new Set(own ? [own, ...TAURI_ORIGINS] : []);
+  return { cx, label, since: Date.now(), home };
 }
 
 /**
@@ -1269,7 +1282,9 @@ export async function awaitLine(cx, needle, timeoutMs = 15000) {
 
 /** Drains what was observed and classifies it. */
 export async function report(w) {
-  const { cx, label, since } = w;
+  const { cx, label, since, home = new Set() } = w;
+  // Contexts created in an EARLIER drained window are still where their lines' origins come from.
+  const ctxOrigins = contextOrigins((cx.consumed ?? []).concat(cx.events));
   const reqs = new Map();
   /** `Network.loadingFailed` events for a requestId this window never saw start - see the case. */
   let untrackedFailures = 0;
@@ -1348,7 +1363,7 @@ export async function report(w) {
         break;
       }
       case 'Runtime.consoleAPICalled':
-        console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300) });
+        console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300), origin: originOfConsoleEvent(e, ctxOrigins) });
         break;
       case 'Log.entryAdded':
         // Keep `url`: a browser "Failed to load resource" line names the status but not the
@@ -1363,7 +1378,7 @@ export async function report(w) {
         // four `[RUST::WARN] Past-epoch application frame` lines came back wearing
         // `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`; the `???` was the tell, because
         // there was no request to name. Only `source === 'network'` is about a resource.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source });
+        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source, origin: originOfConsoleEvent(e, ctxOrigins) });
         break;
     }
   }
@@ -1396,12 +1411,19 @@ export async function report(w) {
   // keying every line on it would stop collapsing the `Log.entryAdded` / `Runtime.consoleAPICalled`
   // pair this dedup exists for, which is the one thing it must keep doing.
   const seen = new Set();
-  const lines = console_.filter((l) => {
+  const dedupedLines = console_.filter((l) => {
     const k = `${l.level}|${l.source === 'network' ? l.url : ''}|${stripStamp(l.text)}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+  // A LINE ANOTHER ORIGIN EMITTED IS NOT THIS APPLICATION'S, whatever tab it surfaced in (the IdP's
+  // own console during a login). Removed from the classification and REPORTED - count and origins -
+  // never dropped silently. See `consoleorigin.mjs`; it replaces a per-row `IDP_CONSOLE_NARRATION`.
+  const foreignLines = dedupedLines.filter((l) => isForeignOrigin(l.origin, home));
+  const lines = dedupedLines.filter((l) => !foreignLines.includes(l));
+  const foreignOrigins = {};
+  for (const l of foreignLines) foreignOrigins[l.origin] = (foreignOrigins[l.origin] ?? 0) + 1;
 
   /**
    * The clock a line was stamped with, removed - so an `^`-anchored pattern matches the SENTENCE.
@@ -1575,6 +1597,8 @@ export async function report(w) {
     unexplained: unexplained.map((l) => `${l.level}: ${renderLine(l)}`),
     httpCount: http.length,
     consoleCount: lines.length,
+    // OUT OF THE GATE, NOT OUT OF THE RECORD: foreign-origin lines, counted per origin.
+    ...(foreignLines.length ? { foreignConsole: { count: foreignLines.length, origins: foreignOrigins } } : {}),
     // EVERY line and every socket event, in one sequence, each DATED. See {@link timelineOf}.
     //
     // BUILT FROM `console_`, NOT FROM `lines` - the de-duplicated copy. The dedup exists so a line

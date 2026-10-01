@@ -38,6 +38,7 @@
  */
 import { pathToFileURL } from "node:url";
 import { client, evaluate } from "../chat.mjs";
+import { epochForks } from "../epochfork.mjs";
 import { ORIGIN, PORTS } from "../names.mjs";
 // The four values that decide what "the app answered" means live in their own module so the gate can
 // test them: anything reaching `names.mjs` cannot run on a fresh checkout. See `usability.mjs`.
@@ -463,6 +464,69 @@ export async function amberListCost(cx) {
   };
 }
 
+/**
+ * The server's `activeEpoch` per group, by whole id, from this client's OWN session - the server half
+ * of {@link readEpochForks}. `null` when it could not be asked, never `{}`.
+ */
+export async function serverEpochs(cx, userId) {
+  const raw = await evaluate(
+    cx,
+    `(async function () {
+       try {
+         var r = await fetch(location.origin + '/api/auth/refresh', { method: 'POST', credentials: 'include' });
+         if (!r.ok) return JSON.stringify({ epochs: null, why: 'refresh answered ' + r.status });
+         var h = { Authorization: 'Bearer ' + (await r.json()).access_token };
+         var g = await fetch(location.origin + '/api/mls/users/' + ${JSON.stringify(encodeURIComponent(userId))} + '/groups', { headers: h });
+         if (!g.ok) return JSON.stringify({ epochs: null, why: 'groups answered ' + g.status });
+         var groups = await g.json();
+         if (!Array.isArray(groups)) return JSON.stringify({ epochs: null, why: 'not an array' });
+         var out = {};
+         groups.filter(function (x) { return !x.deletedAt; }).forEach(function (x) { out[x.groupId] = x.activeEpoch; });
+         return JSON.stringify({ epochs: out, why: null });
+       } catch (e) {
+         return JSON.stringify({ epochs: null, why: String(e) });
+       }
+     })()`,
+    { awaitPromise: true },
+  );
+  return JSON.parse(raw);
+}
+
+/**
+ * The client's own `getEpoch(groupId)` per group, read through `window.__canariMlsEpochs()`.
+ *
+ * **THAT HOOK DOES NOT EXIST YET** - the application exposes no in-page way to read an MLS epoch (the
+ * state is an encrypted IndexedDB blob), so until one is added this answers `epochs: null` with the
+ * reason, and {@link readEpochForks} reports the window `unobservable` rather than clean. The reader
+ * is written against the hook's contract so adding it is the only remaining step.
+ */
+export async function clientEpochs(cx) {
+  const raw = await evaluate(
+    cx,
+    `(function () {
+       try {
+         if (typeof window.__canariMlsEpochs !== 'function') return JSON.stringify({ epochs: null, why: 'no window.__canariMlsEpochs hook in this build' });
+         return JSON.stringify({ epochs: window.__canariMlsEpochs(), why: null });
+       } catch (e) {
+         return JSON.stringify({ epochs: null, why: String(e) });
+       }
+     })()`,
+  );
+  return JSON.parse(raw);
+}
+
+/**
+ * IS THIS DEVICE AT THE EPOCH OF EVERY GROUP IT IS A MEMBER OF? Readiness cannot say (see
+ * `epochfork.mjs`); the two epochs side by side can. Read-only.
+ */
+export async function readEpochForks(cx) {
+  const who = await whoAmI(cx);
+  if (!who.userId) return epochForks(null, null);
+  const [server, client] = [await serverEpochs(cx, who.userId), await clientEpochs(cx)];
+  const verdict = epochForks(client.epochs, server.epochs);
+  return { ...verdict, ...(verdict.observable ? {} : { why: (server.epochs ? client.why : server.why) ?? verdict.why }) };
+}
+
 /** One full read: who the device is, what it shows, what the server says. */
 export async function readAll(cx) {
   const who = await whoAmI(cx);
@@ -486,6 +550,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const cx = await client(PORTS[device], host);
   const first = await readAll(cx);
   console.log(`[syncrows] ${device} ${JSON.stringify(first)}`);
+  if (argv.includes("--epochs")) console.log(`[syncrows] epochs ${JSON.stringify(await readEpochForks(cx))}`);
   const watchFor = opt("watch", null);
   if (watchFor) {
     const hooked = await evaluate(cx, ROWS_PRESENT);

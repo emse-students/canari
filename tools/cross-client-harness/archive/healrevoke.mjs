@@ -1344,6 +1344,7 @@ try {
         deviceId: victimAfter.deviceId,
       },
       timeline,
+      serverWindowSince: timeline[0].wall,
       unmet: offlineMissing,
       observers: offlineObservers,
     };
@@ -1464,6 +1465,7 @@ if (row.stopsAtTheWipe) {
     leftBehind,
     world: { held: doomed, tidiedAway: tidied },
     timeline,
+    serverWindowSince: timeline[0].wall,
     unmet: wipeMissing,
     observers: wipeObservers,
   };
@@ -1718,6 +1720,7 @@ if (row.stopsAtTheReturn) {
     usability,
     topology,
     timeline,
+    serverWindowSince: timeline[0].wall,
     unmet: returnMissing,
     observers: returnObservers,
   };
@@ -2060,6 +2063,7 @@ const detail = {
     }
   })(),
   timeline,
+  serverWindowSince: timeline[0].wall,
   unmet: missing,
   observers,
 };
