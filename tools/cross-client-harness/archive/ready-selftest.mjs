@@ -40,7 +40,11 @@ function node({ label, text = "", w = 0, h = 0 } = {}) {
 }
 
 function ask({ pathname, sidebar = 0, pinField = false, username = false, keypad = false, dialog = null, bodyText = "" }) {
-  const buttons = keypad ? [node({ text: "⌫" })] : [];
+  // The keypad as `PinModal` draws it: ten digit keys, and an erase key that is an icon with a label
+  // and NO text (it was modelled as a `⌫` text button the app no longer renders - see `gate-probe.mjs`).
+  const buttons = keypad
+    ? [..."1234567890"].map((d) => node({ text: d })).concat([node({ label: "Effacer un chiffre" })])
+    : [];
   const dialogs = dialog === null ? [] : [node({ label: dialog })];
   const doc = {
     // The probe asks for four selector sets and nothing else; anything unlisted answering `[]` is

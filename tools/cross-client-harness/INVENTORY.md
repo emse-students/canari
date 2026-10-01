@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-78 scripts.
+79 scripts.
 
 | script | what it is |
 |---|---|
@@ -83,6 +83,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `seedargs.mjs` | The argument grammar of `seed-bench.mjs`, kept pure so `archive/seedargs-selftest.mjs` can hold it. |
 | `seenset.mjs` | WHAT A WEB CLIENT REMEMBERS HAVING ALREADY READ - the seen-ciphertext ledger, read off the client. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
+| `sendtrace.mjs` | WHETHER THE SERVER TOOK ONE DEVICE'S SEND, read off chat-delivery's own trace - for a client whose |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `serverwindow.mjs` | THE SERVER HALF OF A ROW'S WINDOW, CONDENSED FOR THE LEDGER AND FOLDED INTO ITS VERDICT. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
@@ -203,7 +204,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-39 scripts.
+40 scripts.
 
 | script | what it is |
 |---|---|
@@ -235,6 +236,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/seedargs-selftest.mjs` | THE SEEDER'S GRAMMAR REFUSES WHAT IT DOES NOT KNOW, AND THIS HOLDS IT TO THAT. |
 | `archive/selector-selftest.mjs` | EVERY UI STRING THE RIG CLICKS MUST STILL EXIST IN THE APP. |
+| `archive/sendtrace-selftest.mjs` | Pins `sendsByDevice` and `mobileNavOrder` - the two readers the iPhone needs because what the |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
 | `archive/serverwindow-selftest.mjs` | Pins `serverwindow.mjs`: the server's window reaches the ledger row, a dirty one demotes a PASS, |
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
@@ -300,4 +302,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-239 scripts in total.
+241 scripts in total.

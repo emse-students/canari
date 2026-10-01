@@ -5,7 +5,13 @@
  * account by login and by display name, and the only key the server decides by was unreachable from
  * code. These are the cases that check has to get right, and none of them needs a browser.
  */
-import { subjectOfToken, nameSubject, describeIdentity, wrongIdentities } from '../subject.mjs';
+import {
+  subjectOfToken,
+  subjectsOfDeviceSocket,
+  nameSubject,
+  describeIdentity,
+  wrongIdentities,
+} from '../subject.mjs';
 
 let failures = 0;
 const check = (label, actual, expected) => {
@@ -54,6 +60,24 @@ check(
   'no token yet is NOT an agreement, and is not correct either',
   describeIdentity({ saved: PEER, tokenSub: null, expected: 'peer', roleOf }),
   { shows: 'peer', actsAs: null, agrees: false, correct: false }
+);
+
+const DEV = `tauri-${OWNER}-mupb1gtc-k9w8`;
+check(
+  'no cookie jar (the iPhone): the subject is the user half of the gateway key for THIS device',
+  subjectsOfDeviceSocket(`user:online:${OWNER}:${DEV}\nuser:online:${PEER}:web-${PEER}-x-y\n`, DEV),
+  [OWNER]
+);
+check(
+  'a socket the server keyed under ANOTHER subject is reported, not hidden behind the device id',
+  subjectsOfDeviceSocket(`user:online:${PEER}:${DEV}\r\nuser:online:${OWNER}:${DEV}\r\n`, DEV),
+  [OWNER, PEER].sort()
+);
+check('no live socket is no subject', subjectsOfDeviceSocket('', DEV), []);
+check(
+  'a device id that only ENDS like ours is not ours',
+  subjectsOfDeviceSocket(`user:online:${OWNER}:x-${DEV}`, DEV),
+  []
 );
 
 check(

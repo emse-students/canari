@@ -25,11 +25,15 @@ import {
   awaitRequest,
   client,
   ensureChat,
+  isIosApp,
   openConversation,
   requestsSince,
   send,
 } from './chat.mjs';
+import { evaluate } from './cdp.mjs';
 import { armIfPhone, resolveDevice, tabMatchFor } from './device.mjs';
+import { srvLines } from './estate.mjs';
+import { sendsByDevice } from './sendtrace.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -68,6 +72,8 @@ if (to) {
 // THE NETWORK IS WATCHED FROM BEFORE THE GESTURE, because the answer arrives during it.
 await cx.send('Network.enable');
 const sinceIndex = cx.events.length;
+// One second back: docker's `--since` is whole-second, and the START is logged within the gesture.
+const gestureAt = new Date(Date.now() - 1_000).toISOString();
 
 await send(cx, body);
 
@@ -80,6 +86,37 @@ await send(cx, body);
 // So the pane is checked FIRST (it proves the composer fired and is a better failure message when it
 // did not), and then the WIRE is checked, which is the half that can be refused.
 await awaitMessage(cx, marker, 20_000);
+
+// THE iPHONE'S WIRE IS INVISIBLE TO ITS WEBVIEW - every API call goes through the Rust HTTP plugin -
+// so the server's own trace is the witness there (`sendtrace.mjs`). A START with no DONE is a refusal.
+if (isIosApp(cx)) {
+  const saved = await evaluate(cx, `localStorage.getItem('canari_saved_user')`);
+  const deviceId = saved ? await evaluate(cx, `localStorage.getItem('mls_device_id_' + ${JSON.stringify(saved)})`) : null;
+  if (!deviceId) {
+    console.error(`[${label}] the page names no device id, so the server trace cannot be attributed`);
+    cx.close();
+    process.exit(1);
+  }
+  let sends = [];
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline; ) {
+    sends = sendsByDevice(srvLines('chat-delivery-service', gestureAt), deviceId);
+    if (sends.some((s) => s.done)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  const taken = sends.find((s) => s.done);
+  if (!taken) {
+    console.error(
+      `[${label}] the bubble rendered and the server ${sends.length ? `STARTED ${sends.length} send(s) and finished none - refused` : 'logged no send from this device'} in 15s`
+    );
+    cx.close();
+    process.exit(1);
+  }
+  console.log(`[${label}] sent, rendered here, and the server took it (${taken.trace} DONE queued=${taken.queued})`);
+  console.log(`[${label}] ${JSON.stringify(body)}`);
+  console.log(`[${label}] marker ${marker}`);
+  cx.close();
+  process.exit(0);
+}
 
 const sendId = await awaitRequest(cx, /\/api\/mls\/send/, sinceIndex, 15_000);
 if (!sendId) {

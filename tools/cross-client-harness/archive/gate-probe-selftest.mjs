@@ -16,7 +16,7 @@
  * import. Asserting the match is found is what stops this passing vacuously if the constant moves.
  */
 import { readFileSync } from "node:fs";
-import { GATE_EXPR } from "../gate-probe.mjs";
+import { GATE_EXPR, KEYPAD_EXPR } from "../gate-probe.mjs";
 
 const src = readFileSync(new URL("../pin.mjs", import.meta.url), "utf8");
 const m = src.match(/^const GATE_PROBE = `([\s\S]*?)`;/m);
@@ -27,7 +27,7 @@ if (!m) {
 
 let probe;
 try {
-  probe = new Function("GATE_EXPR", "return `" + m[1] + "`")(GATE_EXPR);
+  probe = new Function("GATE_EXPR", "KEYPAD_EXPR", "return `" + m[1] + "`")(GATE_EXPR, KEYPAD_EXPR);
 } catch (e) {
   console.error(`[gate] the template itself does not evaluate: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);
@@ -39,11 +39,15 @@ const evaluateProbe = new Function("document", "location", `return ${probe}`);
  * One page, as the probe sees it.
  *
  * `document` and `location` are ARGUMENTS, so the string under test cannot read anything a page
- * would not have. The keypad is modelled as a real button whose label is the erase glyph, because
- * that glyph IS the escape this file exists to check.
+ * would not have. The keypad is modelled as `PinModal` renders it since the icon redesign: ten digit
+ * buttons and an erase key carrying NO text (a Lucide icon with an `aria-label`). It used to be
+ * modelled as a button whose text was `⌫` - a shape the app had stopped rendering, so this test
+ * passed while the clause it pinned was false on every real phone (found on the iPhone, 2026-10-01).
  */
 function ask({ pathname, sidebar = 0, field = false, keypad = false, text = "", dialogs = [] }) {
-  const buttons = keypad ? [{ innerText: " ⌫ " }] : [];
+  const buttons = keypad
+    ? [..."1234567890"].map((d) => ({ innerText: ` ${d} ` })).concat([{ innerText: "" }])
+    : [];
   const modals = dialogs.map((label) => ({ getAttribute: (a) => (a === "aria-label" ? label : null) }));
   const doc = {
     querySelector: (sel) => (sel === "#encryption-pin" ? (field ? {} : null) : null),
@@ -59,7 +63,8 @@ function ask({ pathname, sidebar = 0, field = false, keypad = false, text = "", 
 
 const cases = [
   ["the desktop text field", { pathname: "/chat", field: true }, { gate: true }],
-  ["the mobile keypad, by its erase glyph", { pathname: "/chat", keypad: true }, { gate: true, keypad: true }],
+  ["the mobile keypad, by its ten digit keys", { pathname: "/chat", keypad: true }, { gate: true, keypad: true }],
+  ["a page with SOME digit buttons is not a keypad", { pathname: "/posts", sidebar: 3, text: "1 2 3" }, { gate: false, keypad: false }],
   ["the gate as its own dialog, by label", { pathname: "/chat", dialogs: ["PIN de chiffrement"] }, { gate: true }],
   ["the first-setup variant, whose label contains the other", { pathname: "/chat", dialogs: ["Choisir un PIN de chiffrement"] }, { gate: true }],
 

@@ -116,6 +116,29 @@ export function flatten(node, out = []) {
   return out;
 }
 
+/**
+ * The native tab bar's buttons, left to right: `{ x, y, width, height, selected }` in points.
+ *
+ * ASKED BY CLASS CHAIN, NOT READ OFF `flatten`. The app's tab items carry NO title - icons only,
+ * a decision recorded in `NativeTabBar.svelte` - so three of the four have no label, name or value
+ * and `flatten` drops them as saying nothing; only the selected one survives, by its value `"1"`.
+ * Measured on the iPhone 12, 2026-10-01: four buttons, 95-96 pt wide, at y 765.
+ */
+export async function tabs(sid) {
+  const found = await wda('POST', `/session/${sid}/elements`, {
+    using: 'class chain',
+    value: '**/XCUIElementTypeTabBar/**/XCUIElementTypeButton',
+  });
+  const out = [];
+  for (const el of found.value ?? []) {
+    const id = el.ELEMENT ?? el['element-6066-11e4-a52e-4f735466cecf'];
+    const rect = (await wda('GET', `/session/${sid}/element/${id}/rect`)).value;
+    const value = (await wda('GET', `/session/${sid}/element/${id}/attribute/value`)).value;
+    out.push({ ...rect, selected: value === '1' || value === 1 });
+  }
+  return out.sort((a, b) => a.x - b.x);
+}
+
 /** Elements whose label, name or value contains `text`, case-insensitively. */
 export async function find(sid, text) {
   const needle = text.toLowerCase();
@@ -276,7 +299,7 @@ async function main() {
   // warm start dressed as a cold one, which is the one thing COMM-18 measures.
   // `type` too: it types into whatever holds focus - a sign-in sheet, a notification's reply field -
   // and launching the app first would take that focus away.
-  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size', 'long', 'gesture', 'url', 'webview', 'type'].includes(cmd);
+  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size', 'long', 'gesture', 'url', 'webview', 'type', 'tabs'].includes(cmd);
   const sid = await session(cmd === 'launch' && args[0] ? args[0] : observing ? null : DEFAULT_APP);
   switch (cmd) {
     case 'launch':
@@ -334,6 +357,9 @@ async function main() {
       break;
     case 'terminate':
       console.log(JSON.stringify(await terminate(sid, args[0] ?? DEFAULT_APP)));
+      break;
+    case 'tabs':
+      console.log(JSON.stringify(await tabs(sid)));
       break;
     case 'flat':
       // The visible tree as ONE JSON array, for a caller that needs it synchronously

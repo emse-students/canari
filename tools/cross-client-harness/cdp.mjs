@@ -842,6 +842,27 @@ export async function dragTo(cx, fromSelector, toSelector, { steps = 14, holdMs 
  * motion nobody has named yet, and the message carries what is needed to name it.
  */
 export async function realClick(cx, selector, { park = true } = {}) {
+  // A NATIVE GLASS TWIN ON THE iPHONE (WP-G2, `nativeGlassPiece.svelte.ts`): the header's back,
+  // pill and "more", and the composer's "+", are UIButtons drawn over the WebView, and their web
+  // pieces stay laid out with `visibility: hidden` as the geometry. The page's hit test then names
+  // whatever scrolls beneath ("onTopAtOwnCentre": false, measured 2026-10-01) - but the user's
+  // finger lands on the native button. So the tap goes to the native button carrying the SAME
+  // accessible name, which is the one handle both layers share.
+  if (cx.webkitInput) {
+    const twin = await evaluate(
+      cx,
+      `(function () {
+        var el = ${RESOLVE}(${JSON.stringify(selector)});
+        if (!el || getComputedStyle(el).visibility !== 'hidden') return null;
+        return el.getAttribute('aria-label') || null;
+      })()`
+    );
+    if (twin) {
+      const { tapNativeButton } = await import('./phone-ios.mjs');
+      const rect = tapNativeButton(twin);
+      return { native: twin, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    }
+  }
   const p = await stableCentreOf(cx, selector);
   if (!p) {
     throw new Error(

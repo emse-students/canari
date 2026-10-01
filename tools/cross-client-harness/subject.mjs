@@ -20,6 +20,31 @@ export function subjectOfToken(token) {
 }
 
 /**
+ * The subjects the gateway authenticated one device's live sockets as, read off its Redis keys.
+ *
+ * WHY A SECOND SOURCE. On `tauri://localhost` (the iOS app) WKWebView keeps no cookie jar, so the
+ * `canari_ws_token` cookie `identityOf` reads is absent BY CONSTRUCTION and every iPhone read
+ * "acts as null" - measured on the bench 2026-10-01. The gateway writes
+ * `user:online:{claims.sub}:{deviceId}` for each socket it accepted (`chat-gateway/src/handlers.rs`,
+ * `handle_socket(.., token_data.claims.sub, ..)`), so the user half of that key IS the token's
+ * subject, decided by the server. Distinct and sorted: two subjects for one device is a finding the
+ * caller must print, never collapse.
+ *
+ * @param keys the output of a `--scan --pattern 'user:online:*:<deviceId>'`, one key per line
+ * @param deviceId the device whose sockets are asked about
+ */
+export function subjectsOfDeviceSocket(keys, deviceId) {
+  const suffix = `:${deviceId}`;
+  const subs = String(keys ?? '')
+    .split(/\r?\n/)
+    .map((k) => k.trim())
+    .filter((k) => k.startsWith('user:online:') && k.endsWith(suffix))
+    .map((k) => k.slice('user:online:'.length, k.length - suffix.length))
+    .filter((s) => s.length > 0 && !s.includes(':'));
+  return [...new Set(subs)].sort();
+}
+
+/**
  * An account key for a subject, or `unknown:<12 chars>`.
  *
  * CUT ON PURPOSE: a subject is a user id, and this output reaches a PUBLIC repository's logs. Twelve

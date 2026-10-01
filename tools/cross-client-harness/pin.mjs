@@ -13,8 +13,9 @@
 import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
-import { estateOriginsAmong } from './estate-origins.mjs';
-import { GATE_EXPR } from './gate-probe.mjs';
+import { networkInterfaces } from 'node:os';
+import { estateVerdict, localAliases } from './estate-origins.mjs';
+import { GATE_EXPR, KEYPAD_EXPR } from './gate-probe.mjs';
 import { PORTS, SITE } from './names.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 
@@ -67,7 +68,7 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const GATE_DEADLINE_MS = 25000;
 const GATE_PROBE = `(function () {
   var f = !!document.querySelector('#encryption-pin');
-  var k = [].some.call(document.querySelectorAll('button'), function (b) { return b.innerText.trim() === '\\u232b'; });
+  var k = ${KEYPAD_EXPR};
   var sidebar = document.querySelectorAll('aside button, nav button').length;
   return JSON.stringify({
     field: f,
@@ -157,14 +158,12 @@ async function assertLocalEstate(cx) {
   // THE PAGE-SIDE READ IS ALL THAT LIVES HERE. What counts as an estate is `estate-origins.mjs`,
   // which imports nothing and is therefore gatable - see `archive/estate-selftest.mjs`.
   const read = async () =>
-    estateOriginsAmong(
-      JSON.parse(
-        await evaluate(
-          cx,
-          `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
-             try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
-           }))])`,
-        ),
+    JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
+           try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
+         }))])`,
       ),
     );
   // WAITED FOR, NOT SAMPLED ONCE. A client that has just answered the gate on a COLD START may not
@@ -172,14 +171,15 @@ async function assertLocalEstate(cx) {
   // firing on a legitimate state, which is its own kind of wrong answer. Ten seconds is the cap this
   // campaign puts on every wait: enough to show it works, and long enough that a client still silent
   // afterwards is not one whose estate can be established.
-  let estates = await read();
-  for (const deadline = Date.now() + 10_000; !estates.length && Date.now() < deadline; ) {
+  const aliases = localAliases(SITE, networkInterfaces());
+  let verdict = estateVerdict(await read(), SITE, aliases);
+  for (const deadline = Date.now() + 10_000; verdict.reason === 'silent' && Date.now() < deadline; ) {
     await new Promise((r) => setTimeout(r, 400));
-    estates = await read();
+    verdict = estateVerdict(await read(), SITE, aliases);
   }
-  const strangers = estates.filter((o) => o !== SITE);
+  const { estates, strangers } = verdict;
   console.log(`[pin] estate origins contacted: ${estates.join(' ') || '(none)'}`);
-  if (!strangers.length && estates.length > 0) return;
+  if (verdict.ok) return;
   console.error(
     estates.length === 0
       ? `[pin] THIS CLIENT CONTACTED NO ESTATE IN TEN SECONDS, so which one it is built against is ` +
@@ -220,11 +220,22 @@ if (hasField) {
   console.log('[pin] keypad shape (mobile)');
   // The keypad KEEPS its buffer between attempts: a failed run leaves its digits behind and the
   // next one submits a longer, wrong PIN. Always clear before entering.
+  // THE ERASE KEY HAS NO TEXT: it is an icon with an `aria-label` (localized), so it is found by
+  // place - the labelled, textless button in the same group as the `0` key.
   const tap = async (label) => {
     const hit = await evaluate(
       cx,
       `(function () {
-        var b = [].filter.call(document.querySelectorAll('button'), function (x) { return x.innerText.trim() === ${JSON.stringify(label)}; })[0];
+        var all = [].slice.call(document.querySelectorAll('button'));
+        var b = ${JSON.stringify(label)} === 'erase'
+          ? (function () {
+              var zero = all.filter(function (x) { return (x.innerText || '').trim() === '0'; })[0];
+              if (!zero || !zero.parentElement) return null;
+              return [].filter.call(zero.parentElement.querySelectorAll('button'), function (x) {
+                return !(x.innerText || '').trim() && !!x.getAttribute('aria-label');
+              })[0];
+            })()
+          : all.filter(function (x) { return (x.innerText || '').trim() === ${JSON.stringify(label)}; })[0];
         if (!b) return null;
         var r = b.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -237,7 +248,7 @@ if (hasField) {
     // A keypad is a state machine driven by taps; firing them back to back outruns its updates.
     await sleep(90);
   };
-  for (let i = 0; i < 12; i++) await tap('⌫');
+  for (let i = 0; i < 12; i++) await tap('erase');
   for (const digit of String(pin)) await tap(digit);
 }
 

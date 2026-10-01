@@ -923,7 +923,13 @@ export async function ensureChat(cx) {
     await until(cx, `!document.querySelector('${COMPOSER}')`, 8000).catch(() => null);
   }
 
-  await realClick(cx, 'text=Discussions');
+  if (isIosApp(cx)) {
+    // The iPhone's bar is the NATIVE UITabBar, outside the DOM - see `tapNativeTab`.
+    const { tapNativeTab } = await import('./phone-ios.mjs');
+    tapNativeTab('chat');
+  } else {
+    await realClick(cx, 'text=Discussions');
+  }
   await until(cx, `location.pathname === '/chat'`, 15000);
   return 'navigated';
 }

@@ -2,9 +2,9 @@
 
 **What it takes to run the [board](cross-client-testing.md)'s ladder on the iPhone 12 as well as on
 the Mi 9T: every row classified, the adapter that exists, and the observables still owed.** Written
-2026-10-01 with the iPhone in use by another session, so **nothing here has run on the device yet** -
-every shape the adapter reads is the expected one, pinned by `archive/phone-ios-selftest.mjs`, and the
-first live session re-pins it. The campaign's design is [cross-client-campaign](cross-client-campaign.md);
+2026-10-01; the FIRST LIVE SESSION ran the same day, and
+[what it confirmed and what it changed](#the-first-live-session-2026-10-01) is below. No board ROW has
+run on I1 yet - the rows are not ported (see [What is owed](#what-is-owed)). The campaign's design is [cross-client-campaign](cross-client-campaign.md);
 the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-bench).
 
 ## The seats
@@ -151,6 +151,67 @@ the fixtures assume:
    notification's action buttons.
 5. **O8**: `pymobiledevice3 diagnostics restart --udid` is taken over usbmux, and how long the phone
    stays unlisted.
+
+## The first live session (2026-10-01)
+
+Bench build of `main` at `4af29a0a0` (`ios.yml` run 36865179190, `local_url=http://192.168.1.32:8081`),
+signed and installed by `sign-install.mjs`, iOS 27.0.1. `PYMOBILEDEVICE3` must name the exe when it
+is not on `PATH` (on OXYGEN it is in the user's Python `Scripts` directory).
+
+**Confirmed on the device:**
+
+- The bridge answers `/json/list` with ONE `tauri://localhost` page; `iosbench.mjs --op list` answers,
+  with a non-null `group` (the App Group: `mls.bin`, `graine_seeds.json`, `push_context.json`, ...),
+  and `--op mls` gives a digest (O5 confirmations 1 and 2).
+- **C1's origin**: the WebView is EDGE TO EDGE (`0,0 390x844`, content inset 0). A `realClick` on the
+  feed's "Suivis" filter was named by the recorder (`expected: true`) and moved `aria-pressed`.
+- **The keyboard RESIZES THE FRAME**: with it up, WDA reports the WebView 543 pt tall and the layout
+  viewport follows (390x543); a long press at the page's point still hit its bubble.
+- **C1's keys**: a WDA tap focused the PIN field and `/wda/keys` typed six characters, read back, and
+  the unlock was accepted. A message typed into the composer reached the peer (`recv.mjs`). Return
+  was not exercised (the submit buttons are activated).
+- **C1's long press**: `longPressBubble`'s replayed 700 ms press opened the action sheet (MUT-18's
+  gesture).
+- **The syslog format** is the expected `<date> <time> <process>{<image>}[<pid>] <<level>>:`, and
+  `syslogWitness` grows (231 lines in 1 s).
+- **`identity.mjs`**: `I1 owner / owner (socket) ok`.
+
+**What it changed in the rig** (each found by the first real run, each pinned):
+
+| Found | Fix |
+| --- | --- |
+| `identity.mjs` read I1 as acting as `null`: `tauri://localhost` keeps no cookie jar, so `canari_ws_token` is absent by construction | on an origin with no cookie jar the subject is the user half of the gateway's `user:online:{claims.sub}:{deviceId}` key (`subjectsOfDeviceSocket`) |
+| `pin.mjs`: "no unlock modal" with the keypad on screen - the erase key is a Lucide icon with an `aria-label`, never the `⌫` text the probe and two self-tests modelled, so the keypad clause was false on EVERY phone | the keypad is its ten digit keys (`KEYPAD_EXPR`); the erase key is the labelled, textless button in the `0` key's group |
+| `pin.mjs`: "NOT ON THE LOCAL ESTATE: it called http://192.168.1.32:8081" - the iPhone's only route to the same nginx | `localAliases`: this machine's own IPv4 addresses on SITE's port are the same estate; another LAN host is still a stranger; `pin.mjs` now calls `estateVerdict` instead of a copy |
+| `ensureChat`: `text=Discussions` not found - the bottom bar is the plugin's native UITabBar, outside the DOM, with UNTITLED items (a decision, `NativeTabBar.svelte`) so WDA's flat tree drops three of four | `ios.mjs tabs` (class chain) and `tapNativeTab(placeId)`, the slot found by `places.ts`' `mobileNav` order and proven selected |
+| `realClick('[aria-label="Retour au menu"]')`: "no stable element" - WP-G2's header and "+" are native glass, the web twin `visibility: hidden` under the thread | on I1 a hidden twin with an `aria-label` is tapped as the native Button of the same label (`tapNativeButton`) |
+| `send.mjs`: "NO POST /api/mls/send" for a send the server took - every API call of the app goes through the Rust HTTP plugin, invisible to the WebView | on I1 the witness is chat-delivery's `[SEND] START sender=<user>:<device>` / `DONE` (`sendtrace.mjs`) |
+
+**O4 is BLOCKED, not unrun**: a push to the bench build is REFUSED before APNs - see
+[push on the bench](#push-on-the-bench-build-is-refused-by-firebase-invalid-apns-credential).
+
+### Push on the bench build is refused by Firebase: `Invalid APNs credential.`
+
+Measured 2026-10-01 against the local estate. The bench build is signed with a DEVELOPMENT profile,
+so `sign-install.mjs` sets `aps-environment: development` and the FCM token registers a SANDBOX APNs
+token. A DM from W2 to the owner, the app in the background:
+
+- Mi 9T (same send, same local service account): `[PUSH_SEND] FCM sent ... platform=android`.
+- iPhone, both registered iOS tokens: `[PUSH_SEND] FCM failed ... err=Error: Invalid APNs credential.`
+  (`messaging/third-party-auth-error`); no `apsd` line naming the app in the syslog.
+- Production, last 72 h: **366** `FCM sent ... platform=ios`, **0** `Invalid APNs credential` - store
+  builds, PRODUCTION APNs tokens, same Firebase project.
+
+So the service account is accepted (a foreign one is `mismatched-credential`, never an APNs error),
+and the refusal is FCM's own leg to Apple for the SANDBOX environment. MEASURED: production tokens
+deliver, sandbox tokens are refused, from one project. INFERRED, not read (no agent here can open the
+Firebase console): the project's Apple app config holds a credential for the production environment
+only. An APNs `.p8` key is per team and valid for both environments at Apple, but the console takes
+it per environment ("Development APNs auth key" / "Production APNs auth key"), so the expected fix is
+uploading the same `.p8` in the development slot (Project Settings > Cloud Messaging > Apple app
+configuration) - a console click for the account holder, nothing in this repository. Re-running the
+same DM afterwards settles it: `FCM sent ... platform=ios` and an `apsd` line, or a different error. Until then every push row on I1 (O4, O11,
+O13, NOTIF-*, MENTION-2/3, LIFE-2/3/5/8) cannot run.
 
 ## Every row
 

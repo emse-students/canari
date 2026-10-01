@@ -421,6 +421,62 @@ export const launch = () => io.ios(['launch', PKG]);
 export const forceStop = () => io.ios(['terminate', PKG]);
 
 /**
+ * The ids of the places on the phone's tab bar, in bar order, read from the app's own
+ * `frontend/src/lib/navigation/places.ts` (`MOBILE_NAV_PLACES` = the `mobileNav: true` entries, in
+ * declaration order). Read as TEXT because the module imports `$lib/paraglide`, which a Bun process
+ * cannot resolve - and a copy of the order here would drift the day the bar changes.
+ */
+export function mobileNavOrder(placesSource) {
+  const order = [];
+  const re = /id:\s*'([^']+)'[\s\S]*?mobileNav:\s*(true|false)/g;
+  for (let m = re.exec(placesSource); m; m = re.exec(placesSource)) if (m[2] === 'true') order.push(m[1]);
+  return order;
+}
+
+/**
+ * Taps the native Button whose accessibility label is exactly `label`, and returns its rect.
+ *
+ * For the WP-G2 glass twins (`realClick` in `cdp.mjs` explains the case). EXACT and UNIQUE: two
+ * buttons with one name is a screen this cannot disambiguate, and is refused rather than guessed.
+ */
+export function tapNativeButton(label) {
+  const hits = JSON.parse(io.ios(['flat'])).filter((e) => e.type === 'Button' && e.label === label);
+  // The tree lists a native glass piece once per layer it sits in; one RECT is one button.
+  const rects = [...new Map(hits.map((h) => [JSON.stringify(h.rect), h.rect])).values()];
+  if (rects.length !== 1) throw new Error(`tapNativeButton: ${rects.length} native buttons named ${JSON.stringify(label)}`);
+  const r = rects[0];
+  io.ios(['tap', `${Math.round(r.x + r.width / 2)},${Math.round(r.y + r.height / 2)}`]);
+  return r;
+}
+
+const PLACES_TS = join(HERE, '..', '..', 'frontend', 'src', 'lib', 'navigation', 'places.ts');
+
+/**
+ * Taps the NATIVE tab bar's slot for `placeId` (`'chat'`, `'posts'`, ...), and proves it is selected.
+ *
+ * WHY THIS EXISTS. On the iPhone the bottom navigation is the system-components plugin's UITabBar
+ * (`NativeTabBar.svelte`), drawn OVER the WebView and absent from the DOM, so `realClick(cx,
+ * 'text=Discussions')` finds nothing (`{"found":false}`, measured 2026-10-01) and every row that
+ * reaches the list through the bar stopped there. Its items carry no title, so the slot is found by
+ * POSITION: the bar's buttons left to right against the place order. A count that disagrees with the
+ * order is refused rather than guessed - it means the bar is not the one this source describes.
+ */
+export function tapNativeTab(placeId) {
+  const order = mobileNavOrder(readFileSync(PLACES_TS, 'utf8'));
+  const index = order.indexOf(placeId);
+  if (index < 0) throw new Error(`tapNativeTab: '${placeId}' is not on the tab bar (${order.join(', ')})`);
+  const slots = JSON.parse(io.ios(['tabs']));
+  if (slots.length !== order.length) {
+    throw new Error(`tapNativeTab: the bar shows ${slots.length} buttons and places.ts names ${order.length} (${order.join(', ')})`);
+  }
+  const s = slots[index];
+  io.ios(['tap', `${Math.round(s.x + s.width / 2)},${Math.round(s.y + s.height / 2)}`]);
+  const after = JSON.parse(io.ios(['tabs']));
+  if (!after[index]?.selected) throw new Error(`tapNativeTab: tapped slot ${index} ('${placeId}') and it is not selected`);
+  return { index, of: order.length };
+}
+
+/**
  * Sends the app to the background and waits for iOS to SUSPEND it - the analogue of Android's
  * cached state, which a kill must start from for the same reason (a kill of an app still running in
  * front measures a different path).

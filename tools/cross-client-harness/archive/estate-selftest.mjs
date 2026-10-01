@@ -21,7 +21,7 @@
  *
  *   bun archive/estate-selftest.mjs
  */
-import { estateOriginsAmong, estateVerdict, NOT_AN_ESTATE } from '../estate-origins.mjs';
+import { estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
 
 const SITE = 'http://localhost:8081';
 const PROD = 'https://canari-emse.fr';
@@ -76,6 +76,22 @@ ok('and it says WHY - silent, not strangers', estateVerdict([], SITE).reason ===
 ok('duplicates are collapsed', estateOriginsAmong([SITE, SITE, SITE]).join() === SITE);
 ok('the excused list is exactly the three that are not estates', NOT_AN_ESTATE.length === 3);
 ok('and a passing verdict reports the estate it accepted', estateVerdict([SITE], SITE).estates.join() === SITE);
+
+// ── the iPhone reaches the SAME nginx by this machine's LAN address (2026-10-01) ────────────────
+const IFACES = {
+  Ethernet: [
+    { family: 'IPv4', address: '192.168.1.32' },
+    { family: 'IPv6', address: 'fe80::1' },
+  ],
+  Loopback: [{ family: 4, address: '127.0.0.1' }],
+};
+const ALIASES = localAliases(SITE, IFACES);
+ok('an address this machine HOLDS, on the same port, is an alias', ALIASES.includes('http://192.168.1.32:8081'));
+ok('IPv6 is not invented into an alias', ALIASES.every((a) => !a.includes('fe80')));
+ok('the iPhone on the LAN alias is ACCEPTED', estateVerdict(['http://192.168.1.32:8081'], SITE, ALIASES).ok);
+ok('another workstation on the LAN is still a STRANGER', !estateVerdict(['http://192.168.1.40:8081'], SITE, ALIASES).ok);
+ok('the alias cannot rescue a production stray', !estateVerdict(['http://192.168.1.32:8081', PROD], SITE, ALIASES).ok);
+ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
 
 console.log(
   failures
