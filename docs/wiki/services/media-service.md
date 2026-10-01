@@ -326,15 +326,29 @@ tests: `byte-range.spec.ts`, `media.service.range.spec.ts`.
 
 `SEGMENTED_MEDIA_WRITER_ENABLED` is `false`: nothing writes the format yet, so this release changes
 no blob anyone uploads. A client older than the reader, handed a segmented blob, would feed the
-header and every tag to ONE GCM decrypt and show a broken video. The flip is one line, video only
-(`writesSegmented`), and may land only when ALL of these hold - the order Graine v2 ships in
+header and every tag to ONE GCM decrypt and show a broken video. The flip is ONE line - the
+constant in `frontend/src/lib/mediaSegmentedWriterFlag.ts`, a module of its own so nothing else
+moves - video only (`writesSegmented`), and may land only when ALL of these hold - the order
+Graine v2 ships in
 ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)):
 
-1. `minClientVersion` is at or above the release carrying this reader;
+1. `minClientVersion` is at or above the release carrying this reader (`1.0.0`). **Raising it is
+   the USER's decision, never an agent's** - it interrupts every older client
+   ([legacy-compatibility](../legacy-compatibility.md));
 2. BOTH stores serve that version - measured (`bun tools/play-vitals/vitals.mjs`, the App Store),
    never inferred from a date;
 3. the estate's media-service answers `206` to a `Range` - it ships with this reader, so its deploy
    is the condition, not a code change.
+
+**The path behind the flip is already exercised.** `media.segmentedWriter.e2e.test.ts` replaces
+exactly that module with `true` and drives the production code end to end: a prepared video
+([video-preparation](../frontend/video-preparation.md), `type` naming its codecs) through
+`encryptAndUpload` (segmented, the ref declaring it, the ceiling leaving room for the header and
+every tag), the chat transport's proto field, `chooseSegmentedPlayback` choosing the stream, the
+ranged reader returning every byte and a seek reading only its segment, the whole-blob reader
+returning the same file - and the pre-reader single-GCM decrypt FAILING on it, which is the
+reason for gate 1. The constant's own test (`mediaSegmented.test.ts`) pins it `false`, so the flip
+is also a visible test change.
 
 |                                | single-block blob          | segmented blob                                                                   |
 | ------------------------------ | -------------------------- | -------------------------------------------------------------------------------- |

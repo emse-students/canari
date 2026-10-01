@@ -162,7 +162,11 @@ The composer comparison R1 was built from is on
    the writer follows once `minClientVersion` is that reader and both stores serve it - the Graine
    v2 order. **On-device compression (C3) is the `prepareVideoForUpload` seam**, WebCodecs +
    mediabunny to one fragmented MP4, proven on both phones 2026-10-01
-   ([video-preparation](frontend/video-preparation.md)); its composer wiring is next.
+   ([video-preparation](frontend/video-preparation.md)); its composer wiring is #1327.
+   **The writer's whole path runs with the flag ON in `media.segmentedWriter.e2e.test.ts`; the flip
+   itself is one constant (`mediaSegmentedWriterFlag.ts`) and waits on the USER raising
+   `minClientVersion` to `1.0.0` once both stores serve it**
+   ([media-service](services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
    save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the
