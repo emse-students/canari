@@ -28,6 +28,9 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         const val PREFS_WORKER = "canari_outbox_retry_prefs"
         const val KEY_FAILED = "outbox_retry_failed"
 
+        /** Real drain attempts (never foreground deferrals) before the "open the app" nudge. */
+        private const val MAX_DRAIN_ATTEMPTS = 3
+
         /**
          * Resets the persistent failure flag so the next outbox drain failure can enqueue a fresh
          * worker. Called from [MainActivity.onResume] when the user opens the app.
@@ -66,45 +69,82 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         }
     }
 
+    /**
+     * THE QUEUE IS LOOKED AT FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT.
+     *
+     * This used to check WorkManager's `runAttemptCount` before anything else, and that counter
+     * counts every `Result.retry()` - including the foreground deferral below, which sends nothing.
+     * So a worker enqueued for a reply the app then flushed itself went: deferred, deferred,
+     * deferred, "max retries reached", and posted "Vous avez peut-etre des messages en attente" over
+     * an EMPTY outbox. It also posted that nudge on the first failed drain, beside the reply
+     * notification the receiver had already re-posted as pending. Measured on a Mi 9T, 2026-10-01.
+     *
+     * Now: an empty outbox owes nothing and succeeds; a deferral is not counted; a real drain that
+     * leaves entries is counted in [PREFS_WORKER] under this request's id, and the nudge is posted
+     * once, when [MAX_DRAIN_ATTEMPTS] real attempts have failed - the state it actually describes.
+     */
     override fun doWork(): Result {
-        if (runAttemptCount >= 3) {
-            Log.e(TAG, "doWork: max retries reached ($runAttemptCount) — persistent failure")
-            applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_FAILED, true).apply()
-            CanariFirebaseMessagingService.showPendingSyncNotification(applicationContext)
-            return Result.failure()
+        val queued = CanariFirebaseMessagingService.readOutboxMirror(applicationContext).size
+        if (queued == 0) {
+            Log.d(TAG, "doWork: outbox empty - nothing owed (run $runAttemptCount)")
+            forgetAttempts()
+            return Result.success()
         }
-        Log.d(TAG, "doWork: attempt $runAttemptCount")
 
         // Foreground guard: the TS outbox flusher is active while the WebView is visible.
-        // Processing here in parallel would double-send (duplicate delivery). Defer the retry
-        // — on the next attempt the app will likely be in the background, otherwise the
-        // foreground already handled it.
+        // Processing here in parallel would double-send (duplicate delivery). Defer - and a deferral
+        // sends nothing, so it is NOT counted as an attempt.
         if (MainActivity.isInForeground) {
-            Log.d(TAG, "doWork: app in foreground — outbox handled by TS, retry deferred")
+            Log.d(TAG, "doWork: app in foreground with $queued queued - outbox handled by TS, retry deferred (not an attempt)")
             return Result.retry()
         }
 
         val ctx = MlsContextLoader.loadPushContext(applicationContext)
         if (ctx == null) {
             Log.e(TAG, "doWork: push_context.json missing — permanent failure")
+            forgetAttempts()
             return Result.failure()
         }
 
+        val attempt = recordAttempt()
+        Log.d(TAG, "doWork: drain attempt $attempt/$MAX_DRAIN_ATTEMPTS ($queued queued)")
         val service = CanariFirebaseMessagingService()
         val remaining = CanariFirebaseMessagingService.drainOutboxBackground(
             applicationContext, service, ctx
         )
 
-        return if (remaining == 0) {
+        if (remaining == 0) {
             Log.d(TAG, "doWork: outbox drained — success")
-            Result.success()
-        } else {
-            Log.d(TAG, "doWork: $remaining message(s) still queued — retry")
-            // Show the nudge on every failure so the user can choose to open the app early,
-            // without waiting for the 3-attempt threshold.
-            CanariFirebaseMessagingService.showPendingSyncNotification(applicationContext)
-            Result.retry()
+            forgetAttempts()
+            return Result.success()
         }
+        if (attempt >= MAX_DRAIN_ATTEMPTS) {
+            Log.e(TAG, "doWork: $remaining message(s) still queued after $attempt drain attempts — persistent failure")
+            applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_FAILED, true).apply()
+            CanariFirebaseMessagingService.showPendingSyncNotification(applicationContext)
+            forgetAttempts()
+            return Result.failure()
+        }
+        Log.d(TAG, "doWork: $remaining message(s) still queued — retry")
+        return Result.retry()
+    }
+
+    /** This request's own attempt counter - one per enqueued request, so two never share a count. */
+    private val attemptsKey: String get() = "drain_attempts_$id"
+
+    /** Counts one real drain attempt and returns the new total. */
+    private fun recordAttempt(): Int {
+        val prefs = applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+        val next = prefs.getInt(attemptsKey, 0) + 1
+        // commit(): the count must be on disk before the drain, or a kill during it loses it.
+        prefs.edit().putInt(attemptsKey, next).commit()
+        return next
+    }
+
+    /** Drops this request's counter once it has a final result. */
+    private fun forgetAttempts() {
+        applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+            .edit().remove(attemptsKey).apply()
     }
 }
