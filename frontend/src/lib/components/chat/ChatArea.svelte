@@ -14,6 +14,7 @@
     ChartColumn,
   } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
+  import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
@@ -129,7 +130,10 @@
     onDelete?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
-    /** Callback to edit a message by ID with new text. */
+    /**
+     * Callback to save an edited message by ID with its new text. The editing itself is done in the
+     * composer (see {@link editing}); this is called once, on confirmation.
+     */
     onEdit?: (messageId: string, text: string) => void;
     /** Callback to cancel the current reply. */
     onCancelReply?: () => void;
@@ -789,6 +793,23 @@
     await navigateToMessageEnsureLoaded(searchMatches[next]);
   }
 
+  /**
+   * EDITING A MESSAGE HAPPENS IN THE COMPOSER, NOT IN THE BUBBLE (user, 2026-10-02) - see
+   * `createEditSession`, which keeps the draft the edit replaced and gives it back.
+   */
+  const editSession = createEditSession({
+    getText: () => messageText,
+    setText: (text) => onMessageChange(text),
+    save: (messageId, text) => onEdit?.(messageId, text),
+  });
+
+  // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
+  // saved by the session belonged to the conversation that was left.
+  $effect(() => {
+    void conversation?.id;
+    untrack(() => editSession.reset());
+  });
+
   $effect(() => {
     const c = conversation;
     const convoKey = c ? `${c.id}-${c.contactName}` : '';
@@ -1362,7 +1383,7 @@
             {onClosePoll}
             {onDelete}
             {canModerate}
-            {onEdit}
+            onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
             {pinnedIds}
             {switchTime}
@@ -1472,6 +1493,9 @@
           {onSend}
           {replyingTo}
           {onCancelReply}
+          editingText={editSession.original}
+          onCancelEdit={editSession.cancel}
+          onConfirmEdit={editSession.confirm}
           {onFilesSelected}
           {onSendVoiceNote}
           {pendingFiles}
