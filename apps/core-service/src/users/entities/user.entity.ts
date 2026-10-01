@@ -1,4 +1,5 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
+import type { Campus, CursusEntry, Post } from '../miconnect-profile';
 
 /** TypeORM entity representing a Canari user, keyed by their OIDC subject. */
 @Entity('users')
@@ -21,6 +22,22 @@ export class User {
 
   @Column({ type: 'varchar', nullable: true })
   formation?: string | null;
+
+  /**
+   * MiConnect profile, replaced wholesale by the OIDC callback at every sign-in (WP3). `promo` and
+   * `formation` above are derived from the first `cursus` entry until every consumer reads it.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  miconnectUuid?: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  campus?: Campus | null;
+
+  @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
+  cursus?: CursusEntry[];
+
+  @Column({ type: 'text', array: true, default: () => `'{}'` })
+  posts?: Post[];
 
   @Column({ type: 'text', nullable: true })
   bio?: string | null;

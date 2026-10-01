@@ -77,6 +77,7 @@ que la ou il n y en a pas, donc on peut le relancer sans risque ; verifier le du
 | Qui | Quoi |
 | --- | --- |
 | la CI (`test-miconnect-blueprints`) | `test-blueprints.sh` : un Authentik VIERGE demarre avec ce `compose.yml`, les blueprints y sont appliques deux fois, et la seconde doit dire `0 change(s)` |
+| la CI, ensuite | `test-enrollment-flow.py` : le parcours d inscription est PILOTE par l executeur d authentik (un eleve, un personnel, un cumul, un refus), pas seulement ses politiques evaluees |
 | un pre-release (`serve-dev.yml`) | `dry-run` contre la prod : le diff que la stable appliquera, rien d ecrit (le dev se connecte au MiConnect de prod) |
 | une release stable (`serve-prod.yml`) | `apply`, en une transaction : un echec laisse MiConnect intact et fait echouer le job |
 

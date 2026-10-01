@@ -8,20 +8,26 @@
  *
  * The clamping and the flip are `fixedPopover`'s and are tested on their own numbers next door.
  * What is pinned HERE is that this panel is wired to them - that it writes no coordinates of its
- * own, that it re-places on a scroll instead of staying behind, and that it closes by three routes
- * a touch screen can actually produce.
+ * own - and the gesture decided on 2026-10-01, Discord's: a tap reacts, a hold shows who reacted,
+ * for a mouse as for a finger, and the list closes on the reader's next action, whatever it is.
  *
  * Geometry in happy-dom is all zeroes, and a zero rect is exactly what `bindFixedPopover` refuses to
  * position against, so the badge's box is stubbed. The numbers are A1's (Mi 9T, 436 x 945 CSS px,
  * 2026-09-14) with the badge at the card's RIGHT edge, which is the case that ran off the screen.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ReactionsDisplay from './ReactionsDisplay.svelte';
+import { LONG_PRESS_MS } from '$lib/actions/reactorsTrigger';
 
 /** A pointer event of the given kind; happy-dom's own PointerEvent is skipped by Svelte's handlers. */
 const pointer = (type: string, pointerType: string) =>
-  Object.assign(new Event(type, { bubbles: type !== 'pointerenter' }), { pointerType });
+  Object.assign(new Event(type, { bubbles: true }), {
+    pointerType,
+    button: 0,
+    clientX: 0,
+    clientY: 0,
+  });
 
 vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: (id: string) => Promise.resolve(id === 'u1' ? 'Camille' : null),
@@ -35,7 +41,12 @@ const BADGE = { left: 384, right: 424, top: 300, bottom: 328, width: 40, height:
 
 const mounted: (() => void)[] = [];
 
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -69,8 +80,13 @@ async function render(onReactionClick: (t: string) => void = () => {}) {
 /** The portalled panel, which lives on `document.body` rather than under the component. */
 const panel = () => document.querySelector<HTMLElement>('[role="tooltip"]');
 
-function hover(badge: HTMLElement) {
-  badge.dispatchEvent(pointer('pointerenter', 'mouse'));
+/** A hold on the badge, released - the gesture that asks "who reacted" (Discord's, 2026-10-01). */
+function hold(badge: HTMLElement, pointerType = 'touch') {
+  badge.dispatchEvent(pointer('pointerdown', pointerType));
+  vi.advanceTimersByTime(LONG_PRESS_MS + 50);
+  flushSync();
+  badge.dispatchEvent(pointer('pointerup', pointerType));
+  badge.click();
   flushSync();
   // The panel has its own box once open; without it the placement refuses and warns.
   const p = panel();
@@ -79,10 +95,10 @@ function hover(badge: HTMLElement) {
 }
 
 describe('ReactionsDisplay - the "who reacted" panel', () => {
-  it('opens on the badge and is portalled out of the card', async () => {
+  it('opens on a hold and is portalled out of the card', async () => {
     const { target, badge } = await render();
     expect(panel()).toBeNull();
-    const p = hover(badge);
+    const p = hold(badge);
     expect(p).not.toBeNull();
     expect(target.contains(p!)).toBe(false);
   });
@@ -94,75 +110,79 @@ describe('ReactionsDisplay - the "who reacted" panel', () => {
    */
   it('leaves placement to the shared action - a clamped left, never the badge’s own', async () => {
     const { badge } = await render();
-    const p = hover(badge)!;
+    const p = hold(badge)!;
     const left = Number.parseFloat(p.style.left);
     expect(Number.isFinite(left)).toBe(true);
     expect(left).toBeLessThan(BADGE.left);
     expect(left).toBeGreaterThanOrEqual(0);
   });
 
-  it('closes on a scroll instead of trailing over unrelated posts', async () => {
-    const { badge } = await render();
-    expect(hover(badge)).not.toBeNull();
-    document.body.dispatchEvent(new Event('scroll', { bubbles: false }));
-    flushSync();
-    expect(panel()).toBeNull();
-  });
-
-  it('does not open on a touch tap, and the tap still toggles the reaction', async () => {
+  /**
+   * A TAP REACTS AND NOTHING ELSE - the defect of 2026-10-01: a mouse opened the list on HOVER, on
+   * its way to every click, so reacting and asking "who" were the same gesture.
+   */
+  it.each(['mouse', 'touch'])('a %s tap toggles the reaction and opens no list', async (kind) => {
     const onReactionClick = vi.fn();
     const { badge } = await render(onReactionClick);
-    badge.dispatchEvent(pointer('pointerenter', 'touch'));
-    badge.dispatchEvent(pointer('pointerdown', 'touch'));
-    badge.dispatchEvent(pointer('pointerup', 'touch'));
+    badge.dispatchEvent(pointer('pointerenter', kind));
+    badge.dispatchEvent(pointer('pointerdown', kind));
+    vi.advanceTimersByTime(100);
+    badge.dispatchEvent(pointer('pointerup', kind));
     badge.click();
     flushSync();
     expect(panel()).toBeNull();
     expect(onReactionClick).toHaveBeenCalledWith('like');
   });
 
-  it('opens on a long press and that press does not toggle the reaction', async () => {
-    vi.useFakeTimers();
-    try {
-      const onReactionClick = vi.fn();
-      const { badge } = await render(onReactionClick);
-      badge.dispatchEvent(pointer('pointerdown', 'touch'));
-      vi.advanceTimersByTime(500);
-      flushSync();
-      expect(panel()).not.toBeNull();
-      badge.dispatchEvent(pointer('pointerup', 'touch'));
-      badge.click();
-      expect(onReactionClick).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  /**
-   * THREE ROUTES OUT, AND `mouseleave` IS THE ONLY ONE THAT USED TO EXIST. A finger never sends it,
-   * so the panel a long press opened simply stayed - the third fault in the same report.
-   */
-  it('closes on a tap outside', async () => {
+  it('opens on nothing but a hold - a mouse resting on the badge opens no list', async () => {
     const { badge } = await render();
-    expect(hover(badge)).not.toBeNull();
-    document.body.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
+    badge.dispatchEvent(pointer('pointerenter', 'mouse'));
+    vi.advanceTimersByTime(2000);
     flushSync();
     expect(panel()).toBeNull();
   });
 
-  it('does NOT close on the tap that opened it, whatever order the events arrive in', async () => {
+  it.each(['mouse', 'touch'])('a %s hold opens the list and does not react', async (kind) => {
+    const onReactionClick = vi.fn();
+    const { badge } = await render(onReactionClick);
+    expect(hold(badge, kind)).not.toBeNull();
+    expect(onReactionClick).not.toHaveBeenCalled();
+  });
+
+  it('stays open once the hold that opened it is released', async () => {
     const { badge } = await render();
-    expect(hover(badge)).not.toBeNull();
-    badge.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
-    flushSync();
+    hold(badge);
     expect(panel()).not.toBeNull();
   });
 
-  it('closes on Escape', async () => {
+  /**
+   * IT CLOSES ON THE READER'S NEXT ACTION, WHATEVER IT IS (user, 2026-10-01: *"des la prochaine
+   * action (scroll etc.)"*) - a press anywhere, the badge and the list included, a scroll, the
+   * wheel, a key.
+   */
+  it.each([
+    ['a press elsewhere', () => document.body.dispatchEvent(pointer('pointerdown', 'touch'))],
+    ['a press on the list itself', () => panel()!.dispatchEvent(pointer('pointerdown', 'touch'))],
+    ['a scroll of an inner list', () => document.body.dispatchEvent(new Event('scroll'))],
+    ['the wheel', () => window.dispatchEvent(new Event('wheel'))],
+    ['a key', () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))],
+  ])('closes on %s', async (_, act) => {
     const { badge } = await render();
-    expect(hover(badge)).not.toBeNull();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(hold(badge)).not.toBeNull();
+    act();
     flushSync();
     expect(panel()).toBeNull();
+  });
+
+  it('closes on a press on its own badge, and that press is a tap like any other', async () => {
+    const onReactionClick = vi.fn();
+    const { badge } = await render(onReactionClick);
+    hold(badge);
+    badge.dispatchEvent(pointer('pointerdown', 'touch'));
+    flushSync();
+    expect(panel()).toBeNull();
+    badge.dispatchEvent(pointer('pointerup', 'touch'));
+    badge.click();
+    expect(onReactionClick).toHaveBeenCalledWith('like');
   });
 });

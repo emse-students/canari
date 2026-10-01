@@ -349,6 +349,30 @@ collapsing mobile URL bar does not re-lay-out the feed under the reader's finger
 started typing. Because the ceiling lives in the shared helper, the feed, the gallery cells, a
 comment image and a chat bubble are bounded by one decision instead of four local patches.
 
+### The card's spacing, read on the Mi 9T (2026-10-01)
+
+Four changes from one reading of the feed on the phone, each measured at 436 px in Chromium first:
+
+- **An empty comment section is a composer and nothing else.** Opened on a post with no comments,
+  the input sat 45 px under the action row: the section's `py-4` (16), the EMPTY list's `mb-4` (16)
+  and the input area's `pt-3` (12) - spacing between a list and the composer, drawn with no list.
+  Now the list element exists only when it holds something, the section pads `pt-2 pb-3`, and the
+  input pill dropped from 58 px to 50 (its 44 px send target sets the height). Measured after: 9 px.
+  `PostComments.empty.svelte.test.ts` pins the cause, since happy-dom lays nothing out.
+- **One separator, not two.** `PostActions` carried a `border-b` that sat one pixel above the
+  comment section's `border-t`; it is gone, and the row's first glyph lands on the text's 20 px.
+- **The picture is inset and rounded.** The media block pads `px-3` and the box is `rounded-lg`:
+  18 px card corner, 12 px inset, 8 px media corner - the concentric pair, and the scale's card
+  corner. **It is padding on the block, never a margin on the box**: the box's width would then come
+  from `aspect-ratio` under the `max-height` ceiling, and a portrait video SHRANK to 270 px wide
+  instead of being cropped (seen in the first draft).
+- **The card stands off the page**: `shadow-md` at 8 % in light; in dark mode, where a shadow has
+  nothing to fall on, the edge goes from 10 % to 15 % white.
+
+**The video sound button was green** while the app is amber. It was 55 % black over a backdrop
+blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
+`--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
+
 The gallery lightbox holds `lightboxMedia`, which is the attachment list **compacted** to
 image/video. A grid position is therefore not a lightbox index: each cell resolves its own index
 via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one
@@ -649,6 +673,40 @@ against `auteur.rice`, `cher.e.s` and the like - and no amount of narrowing sepa
 the two really are the same string. An exact WHITELIST of the hosts worth autolinking sidesteps the
 ambiguity instead of trying to out-narrow it: a token is a link because it is on the list, not
 because it looks like one. `postMarkdown.test.ts` and `messageDisplay.test.ts` pin both directions.
+
+## A media that cannot be shown says why, typed at the throw (2026-10-01)
+
+Every failure but a retention purge read "Impossible de charger le media" (user, Mi 9T): offline,
+deleted and damaged were one sentence with nothing to do about it. The cause is now decided where
+the failure is SEEN, as a type, and every renderer reads it through one classifier.
+
+| Thrown by `mediaBlobCache` | When | `mediaFailureCause` | Retry offered |
+| --- | --- | --- | --- |
+| `MediaUnreachableError` | `fetch` itself rejected (offline, DNS, TLS, dropped) | `unreachable` | yes |
+| `MediaPurgedError` | 410 | `expired` | no |
+| `MediaNotFoundError` | 404 | `not-found` | no |
+| `MediaDecryptError` | the bytes arrived, AES-GCM refused them | `corrupt` | yes |
+| `MediaDownloadError` (`status` field) | any other non-2xx | `other` | yes |
+
+- **Only the `fetch` is wrapped as unreachable**: a request dropped from `mediaRequestGate`'s queue
+  rejects with its own `AbortError`, which every caller already ignores once it is torn down.
+- **A ciphertext that fails to decrypt is evicted from the Cache API** before the error leaves, or
+  the retry would re-read the same damaged bytes and fail identically.
+- **`MediaLoadFailure.svelte`** draws the icon, the sentence and "Reessayer" (44 px, `stopPropagation`
+  so it never also opens the viewer); the BOX stays the caller's. `mediaFailureLabel` writes the three
+  new causes once and takes each surface's own wording for `expired` and `other`.
+- **Retry is an `attempt` counter the download effect reads**: in place, no reload. Used by
+  `PostMedia` (card and gallery viewer), `MessageBubble` -> `MessageMediaRenderer`, and the
+  conversation media panel's viewer; `SharedMediaThumb` names the cause on its tooltip.
+- **`logMediaFailure`** is the one log line: `console.error` for a retryable cause, `warn` for a 404
+  or a purge, which are answers rather than failures. `MessageBubble` and `SharedMediaThumb`
+  logged nothing before.
+- **A defect it closed**: `MessageMediaRenderer` took `loadError` and `mediaPurgedByRetention`, a
+  purge set only the second, and the image and video branches tested only the first - a purged photo
+  pulsed as a loading skeleton for ever. One nullable cause replaced the pair.
+
+Draft #1295's segmented reader throws its own tampered-segment error; when it merges, that error
+must map to `corrupt` in `mediaFailureCause` (one `instanceof` line).
 
 ## Comment media (image + GIF)
 
@@ -975,6 +1033,34 @@ every pick, here. Feedback for a one-shot action needs a home independent of the
 it. `copyPublicShareLink`'s rejection path was also a swallowed `void` with no log; it now logs
 through `Log.d`, same as `copyId`'s own clipboard refusal.
 
-## The "who reacted" list: hover or long press, never a tap (2026-09-30)
+## The "who reacted" list: a tap reacts, a hold shows who - Discord's gesture (2026-10-01)
 
-Reported by the user: tapping a reaction badge opened the list of reactors. A touch screen synthesises `mouseenter` after a tap, so the badges (posts and chat) toggled AND disclosed. `actions/reactorsTrigger.ts` is now the one gesture for both: hover only for `pointerType === "mouse"`, a 450 ms hold for touch/pen (the click ending that hold is swallowed in capture, the native context menu is suppressed), and `ReactorsPanel` closes on any scroll instead of following it. Owed: one look on a phone.
+**Decided by the user on 2026-10-01**, for messages and posts alike: *"appui simple pour reagir sur
+une reaction existante, et maintenu pour voir qui a reagi"*, and *"la liste des gens ayant reagi doit
+disparaitre des la prochaine action (scroll etc.)"*.
+
+**What it replaced.** The 2026-09-30 version opened the list on HOVER for a mouse and on a 450 ms
+hold for a finger. Hover meant a mouse opened the list on its way to every click, so reacting and
+asking "who" were still the same gesture - *"on reagit et on regarde qui a reagi avec la meme action,
+ca cree des problemes"*.
+
+- **`actions/reactorsTrigger.ts` is the one gesture, for every pointer, a mouse included**: a tap
+  toggles the reaction; a 450 ms hold (`LONG_PRESS_MS`, main button only for a mouse, cancelled past
+  10 px of travel or when the pointer leaves) opens the list, and the click that ends the hold is
+  swallowed in capture, so a hold never reacts. Nothing opens on hover any more.
+- **`ReactorsPanel` lives until the reader's next action.** One effect listens, in capture, for
+  `pointerdown`, `scroll`, `wheel`, `keydown` and `resize` on the window, and any of them closes it -
+  a press anywhere, the badge and the list included. The press that opened it is already down when
+  it starts listening, so its own release does not close it. That one rule replaces four dismissals
+  (a tap outside, `Escape`, a scroll, a mouse leaving after a 120 ms grace period).
+- **In a conversation the reactions sit ON the bubble** (user, same day, pointing at Messenger:
+  *"reaction apposee au message plutot qu'en dessous"*). `MessageReactions` pulls its row up over the
+  bubble's bottom edge (`-mt-1.5`: 6px; the first 10px crowded the last line of text, so the user asked
+  for it lower the same day), on the side the bubble is aligned to, and each chip is opaque
+  with a ring in the thread's ground (`--chat-thread-ground`), which is what makes it read as laid on
+  the bubble. The posts' badges stay in the action bar.
+
+**Verified:** both suites (`ReactionsDisplay.placement`, `MessageReactions.reactors`) on the gesture
+and every way out; in Chromium on a stand-in thread, light and dark: hovering opens nothing, a held
+mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
+the hold under a finger on a phone.

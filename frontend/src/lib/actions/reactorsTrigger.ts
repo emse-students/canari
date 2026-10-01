@@ -1,26 +1,26 @@
 /**
- * The gesture that asks "who reacted?" on a reaction badge, shared by the posts feed and the chat.
+ * The gesture on a reaction badge, shared by the posts feed and the chat - Discord's (user,
+ * 2026-10-01): A TAP REACTS, A HOLD SHOWS WHO REACTED. For every pointer, a mouse included.
  *
- * A MOUSE ASKS BY HOVERING, A FINGER BY HOLDING - and a plain tap only toggles the reaction. The
- * badges used to listen to `mouseenter`, which a touch screen synthesises after every tap, so one tap
- * both toggled the reaction and opened the list.
+ * The badge used to open its "who reacted" list on HOVER for a mouse, so the list opened on the way
+ * to every click and a reader reacting and a reader asking "who" did the same thing - *"on reagit et
+ * on regarde qui a reagi avec la meme action, ca cree des problemes"*. A hold is the one gesture a
+ * tap can never become by accident, and it reads the same under a finger and a mouse.
  */
 
-/** Hold time that turns a touch into a "who reacted" request. */
+/** Hold time that turns a press into a "who reacted" request. */
 export const LONG_PRESS_MS = 450;
-/** Finger travel past which the touch is a scroll, not a press. */
+/** Pointer travel past which the press is a scroll or a drag, not a hold. */
 const LONG_PRESS_SLOP_PX = 10;
 
 export interface ReactorsTriggerParams {
-  /** Open the panel for this badge. */
+  /** Open the "who reacted" list for this badge. */
   open: (anchor: HTMLElement) => void;
-  /** A pointer left the badge: schedule the panel's grace-period close. */
-  leave: () => void;
 }
 
 /**
- * Wires hover (mouse) and long press (touch, pen) on a badge. The click that ends a long press is
- * swallowed in the capture phase so it never reaches the badge's own toggle handler.
+ * Wires the hold on a badge. The click that ends a hold is swallowed in the capture phase, so the
+ * badge's own toggle never runs for it: a hold asks, it does not react.
  */
 export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParams) {
   let params = initial;
@@ -34,14 +34,9 @@ export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParam
     origin = null;
   }
 
-  const onEnter = (e: PointerEvent) => {
-    if (e.pointerType === 'mouse') params.open(node);
-  };
-  const onLeave = (e: PointerEvent) => {
-    if (e.pointerType === 'mouse') params.leave();
-  };
   const onDown = (e: PointerEvent) => {
-    if (e.pointerType === 'mouse') return;
+    // A mouse holds with its main button only; a right click is the context menu's.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     cancel();
     opened = false;
     origin = { x: e.clientX, y: e.clientY };
@@ -60,15 +55,14 @@ export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParam
     opened = false;
     e.stopPropagation();
   };
-  // The native long-press menu would cover the panel it just opened.
+  // The native long-press menu would cover the list it just opened.
   const onContextMenu = (e: Event) => e.preventDefault();
 
-  node.addEventListener('pointerenter', onEnter);
-  node.addEventListener('pointerleave', onLeave);
   node.addEventListener('pointerdown', onDown);
   node.addEventListener('pointermove', onMove);
   node.addEventListener('pointerup', cancel);
   node.addEventListener('pointercancel', cancel);
+  node.addEventListener('pointerleave', cancel);
   node.addEventListener('click', onClickCapture, true);
   node.addEventListener('contextmenu', onContextMenu);
 
@@ -78,12 +72,11 @@ export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParam
     },
     destroy() {
       cancel();
-      node.removeEventListener('pointerenter', onEnter);
-      node.removeEventListener('pointerleave', onLeave);
       node.removeEventListener('pointerdown', onDown);
       node.removeEventListener('pointermove', onMove);
       node.removeEventListener('pointerup', cancel);
       node.removeEventListener('pointercancel', cancel);
+      node.removeEventListener('pointerleave', cancel);
       node.removeEventListener('click', onClickCapture, true);
       node.removeEventListener('contextmenu', onContextMenu);
     },

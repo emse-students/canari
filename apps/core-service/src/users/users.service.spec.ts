@@ -151,3 +151,110 @@ describe('UsersService.deleteUser fan-out', () => {
     expect(remove).toHaveBeenCalledWith({ id: 'u1' });
   });
 });
+
+/**
+ * The MiConnect profile is REPLACED at every sign-in (WP3): a claim that vanished at authentik must
+ * clear the column, and `promo`/`formation` follow the first cursus entry.
+ */
+describe('UsersService.findOrCreateFromOidc profile', () => {
+  const profile = {
+    miconnectUuid: 'uuid-1',
+    campus: 'gardanne' as const,
+    cursus: [{ formation: 'ISMIN', promo: 2025 }],
+    posts: ['ALUMNI' as const],
+  };
+
+  function makeService(existing: Partial<User> | null) {
+    const save = jest.fn().mockImplementation(async (u: User) => u);
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(existing),
+      create: jest.fn().mockImplementation((u: Partial<User>) => u),
+      save,
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    return { service, save };
+  }
+
+  it('creates an account carrying the profile and the derived promo/formation', async () => {
+    const { service, save } = makeService(null);
+    await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ ...profile, promo: 2025, formation: 'ISMIN' })
+    );
+  });
+
+  it('replaces the stored profile, and clears what the provider stopped sending', async () => {
+    const stored = {
+      id: 's1',
+      displayName: 'A B',
+      firstName: 'A',
+      lastName: 'B',
+      ...profile,
+      promo: 2025,
+      formation: 'ISMIN',
+    };
+    const { service, save } = makeService(stored);
+    const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+      miconnectUuid: 'uuid-1',
+      campus: 'saint-etienne',
+      cursus: [],
+      posts: ['EMSE'],
+    });
+    expect(save).toHaveBeenCalled();
+    expect(user).toMatchObject({
+      campus: 'saint-etienne',
+      cursus: [],
+      posts: ['EMSE'],
+      promo: null,
+      formation: null,
+    });
+  });
+
+  it('does not write when nothing changed', async () => {
+    const stored = {
+      id: 's1',
+      displayName: 'A B',
+      firstName: 'A',
+      lastName: 'B',
+      ...profile,
+      promo: 2025,
+      formation: 'ISMIN',
+    };
+    const { service, save } = makeService(stored);
+    await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
+/** The directory's campus and post filters (WP3) must reach the query, and count as a filter. */
+describe('UsersService.directory campus and post filters', () => {
+  function makeService() {
+    const where: Array<[string, unknown]> = [];
+    const qb: Record<string, jest.Mock> = {};
+    for (const m of ['select', 'orderBy', 'skip', 'take', 'andWhere', 'where', 'leftJoin']) {
+      qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
+        if (m === 'andWhere') where.push([sql as string, params]);
+        return qb;
+      });
+    }
+    qb.getCount = jest.fn().mockResolvedValue(0);
+    qb.getMany = jest.fn().mockResolvedValue([]);
+    const userRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    return { service, where };
+  }
+
+  it('accepts a campus alone as a filter and applies it', async () => {
+    const { service, where } = makeService();
+    await service.directory({ campus: 'gardanne' });
+    expect(where).toContainEqual(['user.campus = :campus', { campus: 'gardanne' }]);
+  });
+
+  it('accepts a post alone as a filter and matches it against the array', async () => {
+    const { service, where } = makeService();
+    await service.directory({ post: 'ALUMNI' });
+    expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
+  });
+});

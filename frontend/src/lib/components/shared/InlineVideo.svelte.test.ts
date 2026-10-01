@@ -66,6 +66,19 @@ it('starts muted, and its sound button answers for every video', () => {
   expect(first.soundButton.getAttribute('aria-pressed')).toBe('true');
 });
 
+it("wears the theme's amber whatever the frame under it, and its colour says the state", () => {
+  const { soundButton } = mountVideo();
+  // Muted: an amber glyph on a scrim with no blur - a translucent blurred disc took the frame's hue.
+  expect(soundButton.className).toContain('text-cn-yellow');
+  expect(soundButton.className).not.toContain('backdrop-blur');
+
+  soundButton.click();
+  flushSync();
+
+  expect(soundButton.className).toContain('bg-cn-yellow');
+  expect(soundButton.className).toContain('text-cn-ink');
+});
+
 it('plays while it is on screen and pauses when it leaves', () => {
   const { video } = mountVideo();
   const play = vi.spyOn(video, 'play').mockResolvedValue();

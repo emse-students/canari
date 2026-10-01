@@ -45,8 +45,7 @@ function renderCaption(text: string): void {
     props: {
       mediaRef: image,
       blobUrl: null,
-      loadError: false,
-      mediaPurgedByRetention: false,
+      failure: null,
       textContent: text,
       textSegments: [{ type: 'text' as const, value: text }],
     },

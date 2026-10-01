@@ -107,7 +107,8 @@ has taken it, and is deleted then - so the names older pages quote are kept here
 | CAS source mapping | `CAS EMSE` | `miconnect-cas-identity` |
 | prompts | `Formation`, `Promotion`, `School Worker` | `miconnect-enrollment-prompt-formation`, `-promo`, `-status` |
 | policies | `Validate promo year`, `is-student`, `Merge attributes` | `miconnect-enrollment-validate-promo`, `-is-student`, `-merge-status` |
-| prompt stages | `Request School Status`, `Request Promo & Formation` | `miconnect-enrollment-ask-status`, `-ask-promo` |
+| prompt stages | `Request School Status`, `Request Promo & Formation` | `miconnect-enrollment-ask-status`, `-ask-promo`, then (WP2, 2026-10-01) `-ask-affiliations`, `-ask-cursus` |
+| enrolment flows | `miconnect-enrollment-cas`, `miconnect-enrollment-alumni` | ONE flow, `miconnect-enrollment`, bound to both sources (WP2); the alumni flow and the prompt `-prompt-status` are deleted |
 | redirect stage | `Archives MINO logout redirect` | `miconnect-logout-redirect-archives` |
 | flow (slug) | `mino-provider-invalidation-flow` | `miconnect-invalidation-mino` |
 | providers | `Archives MINO`, `Canari`, ..., `Provider for Sky` | `miconnect-<application slug>` |
@@ -468,7 +469,9 @@ Deliberately left:
   `return ["Elève", "Personnel de l'école"]`, and the change is
   `return [{"label": "Élève", "value": "Elève"}, "Personnel de l'école"]`. **Written
   2026-09-27 with the user's go-ahead**, guarded on the old expression, and `get_choices()` read
-  back returns the label/value pair. Nobody has watched an enrolment render it yet.
+  back returns the label/value pair. Nobody has watched an enrolment render it yet. **Retired by WP2
+  (2026-10-01): the prompt is gone, replaced by the checkbox page; `"Elève"` is now only a VALUE
+  that `miconnect-enrollment-merge-status` writes into `school_status`, for the legacy claim.**
 - **"Go back"** on the access-denied stage is authentik's own UI string, untranslated in its French
   bundle (2026.8); nothing in this DB carries it.
 - **The static prompt `Alumni Force Link Continue` renders NOWHERE (read 2026-09-27).** Its only

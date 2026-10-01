@@ -1,5 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { MediaPurgedError, MEDIA_PURGED_MESSAGE, isMediaPurgedError } from './mediaErrors';
+import {
+  MediaDecryptError,
+  MediaDownloadError,
+  MediaNotFoundError,
+  MediaPurgedError,
+  MediaUnreachableError,
+  MEDIA_PURGED_MESSAGE,
+  isMediaPurgedError,
+  isRetryableMediaFailure,
+  mediaFailureCause,
+} from './mediaErrors';
+
+describe('mediaFailureCause - one cause per type, never per message', () => {
+  it.each([
+    [new MediaUnreachableError(new TypeError('Failed to fetch')), 'unreachable', true],
+    [new MediaPurgedError(), 'expired', false],
+    [new MediaNotFoundError(), 'not-found', false],
+    [new MediaDecryptError(new DOMException('', 'OperationError')), 'corrupt', true],
+    [new MediaDownloadError(503), 'other', true],
+  ] as const)('%s -> %s', (err, cause, retryable) => {
+    expect(mediaFailureCause(err)).toBe(cause);
+    expect(isRetryableMediaFailure(cause)).toBe(retryable);
+  });
+
+  it('reads no prose: a look-alike message is "other"', () => {
+    expect(mediaFailureCause(new Error('Media not found (404)'))).toBe('other');
+    expect(mediaFailureCause(new TypeError('Failed to fetch'))).toBe('other');
+    expect(mediaFailureCause(undefined)).toBe('other');
+  });
+
+  it('carries the status as a field', () => {
+    expect(new MediaDownloadError(502).status).toBe(502);
+  });
+});
 
 describe('media error classification', () => {
   it('recognises the purged error', () => {

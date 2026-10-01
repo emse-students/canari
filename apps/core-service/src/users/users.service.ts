@@ -19,6 +19,7 @@ import {
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
+import { EMPTY_PROFILE, type MiconnectProfile } from './miconnect-profile';
 import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 import { STRIPE_API_VERSION } from '../payment/stripe-api-version';
 
@@ -143,6 +144,9 @@ export class UsersService implements OnModuleInit {
       lastName: user.lastName,
       promo: user.promo,
       formation: user.formation,
+      campus: user.campus ?? null,
+      cursus: user.cursus ?? [],
+      posts: user.posts ?? [],
       bio: user.bio,
       createdAt: user.createdAt,
     };
@@ -165,9 +169,20 @@ export class UsersService implements OnModuleInit {
     displayName: string | null,
     firstName: string | null,
     lastName: string | null,
-    promo: number | null = null,
-    formation: string | null = null
+    profile: MiconnectProfile = EMPTY_PROFILE
   ): Promise<User> {
+    // The MiConnect profile is REPLACED wholesale, unlike the names above: it is the one thing
+    // authentik owns outright, so a claim that vanished there must clear here (WP3). `promo` and
+    // `formation` are the first cursus entry until every consumer reads `cursus` (WP6).
+    const promo = profile.cursus[0]?.promo ?? null;
+    const formation = profile.cursus[0]?.formation ?? null;
+    const sameProfile = (u: User) =>
+      u.miconnectUuid === profile.miconnectUuid &&
+      u.campus === profile.campus &&
+      JSON.stringify(u.cursus ?? []) === JSON.stringify(profile.cursus) &&
+      JSON.stringify(u.posts ?? []) === JSON.stringify(profile.posts) &&
+      (u.promo ?? null) === promo &&
+      (u.formation ?? null) === formation;
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
       let updated = false;
@@ -186,17 +201,15 @@ export class UsersService implements OnModuleInit {
         user.lastName = lastName;
         updated = true;
       }
-      if (promo !== null && user.promo !== promo) {
-        user.promo = promo;
-        updated = true;
-      }
-      if (formation !== null && user.formation !== formation) {
-        user.formation = formation;
+      if (!sameProfile(user)) {
+        this.logger.debug(`OIDC profile changed for ${id}: campus=${profile.campus}`);
+        Object.assign(user, profile, { promo, formation });
         updated = true;
       }
       if (updated) {
-        await this.userRepository.save(user).catch(() => {
-          // Ignore unique constraint violations (e.g. email already taken)
+        await this.userRepository.save(user).catch((err: unknown) => {
+          // Ignore unique constraint violations (e.g. email already taken), but never silently.
+          this.logger.warn(`OIDC upsert of ${id} not saved: ${String(err)}`);
         });
       }
       return user;
@@ -206,8 +219,9 @@ export class UsersService implements OnModuleInit {
       displayName: displayName || null,
       firstName: firstName || null,
       lastName: lastName || null,
+      ...profile,
       promo,
-      formation: formation || null,
+      formation,
     });
     return await this.userRepository.save(newUser);
   }
@@ -328,10 +342,15 @@ export class UsersService implements OnModuleInit {
     const formation = query.formation?.trim() ?? '';
 
     const hasFilter =
-      q.length >= 2 || query.promo != null || formation.length > 0 || !!query.associationId;
+      q.length >= 2 ||
+      query.promo != null ||
+      formation.length > 0 ||
+      !!query.campus ||
+      !!query.post ||
+      !!query.associationId;
     if (!hasFilter) {
       throw new BadRequestException(
-        'Provide at least one filter (name >= 2 chars, promo, cursus, or association)'
+        'Provide at least one filter (name >= 2 chars, promo, cursus, campus, post, or association)'
       );
     }
 
@@ -345,7 +364,16 @@ export class UsersService implements OnModuleInit {
 
     const qb = this.userRepository
       .createQueryBuilder('user')
-      .select(['user.id', 'user.displayName', 'user.promo', 'user.formation', 'user.bio']);
+      .select([
+        'user.id',
+        'user.displayName',
+        'user.promo',
+        'user.formation',
+        'user.campus',
+        'user.cursus',
+        'user.posts',
+        'user.bio',
+      ]);
 
     // Accent-insensitive, word-order-insensitive, typo-tolerant name matching + relevance ordering.
     // Only when a name query is present; otherwise the directory keeps its alphabetical order below.
@@ -362,6 +390,14 @@ export class UsersService implements OnModuleInit {
       qb.andWhere('unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))', {
         formation: `%${formation}%`,
       });
+    }
+
+    if (query.campus) {
+      qb.andWhere('user.campus = :campus', { campus: query.campus });
+    }
+
+    if (query.post) {
+      qb.andWhere(':post = ANY(user.posts)', { post: query.post });
     }
 
     if (memberUserIds) {
@@ -384,6 +420,9 @@ export class UsersService implements OnModuleInit {
         displayName: u.displayName ?? null,
         promo: u.promo ?? null,
         formation: u.formation ?? null,
+        campus: u.campus ?? null,
+        cursus: u.cursus ?? [],
+        posts: u.posts ?? [],
         bio: u.bio ?? null,
       })),
       total,
