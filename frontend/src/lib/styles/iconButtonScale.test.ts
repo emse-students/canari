@@ -62,8 +62,8 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'matched to the quick-reaction emoji buttons beside it',
   },
   'lib/components/messages/MessageMediaRenderer.svelte': {
-    count: 1,
-    why: 'overlays an image and must not cover it',
+    count: 2,
+    why: 'the download buttons overlaying a photo and a video, which must not cover them',
   },
   'lib/components/messages/MessageMobileActions.svelte': {
     count: 1,
