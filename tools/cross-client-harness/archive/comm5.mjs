@@ -19,7 +19,7 @@
  * "the push did not arrive" from "the grant never happened at all", and those are two different
  * bugs with two different owners.
  *
- * THE CAPABILITY IS READ AS A SHAPE, NOT AS A LABEL. The members tab renders a `<select>` per member
+ * THE CAPABILITY IS READ AS A SHAPE, NOT AS A LABEL. The members tab renders a role Picker per member
  * to somebody who may manage the community and a translated badge to everybody else, so
  * `communityMembers().readFrom` IS the permission, observed rather than described. A check that
  * looked for the word "Administrateur" would be asserting on `fr.json` and would pass for a client
@@ -77,7 +77,7 @@ const peerCanManage = async (timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const seen = await communityMembers(w2).catch(() => []);
-    if (seen.some((m) => m.readFrom === 'select')) return true;
+    if (seen.some((m) => m.readFrom === 'picker')) return true;
     if (Date.now() > deadline) return false;
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -98,7 +98,7 @@ await step('open the community on the peer', async () => {
 
 const roleBefore = serverRole();
 const peerCouldManageBefore = await step('read the peer capability before', () =>
-  communityMembers(w2).then((seen) => seen.some((m) => m.readFrom === 'select'))
+  communityMembers(w2).then((seen) => seen.some((m) => m.readFrom === 'picker'))
 );
 
 // A peer who is ALREADY an administrator arms nothing: every assertion below would be about a

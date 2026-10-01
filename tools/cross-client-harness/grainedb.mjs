@@ -363,7 +363,7 @@ export function directConversation(userA, userB) {
 /**
  * A member's community role AS THE SERVER HOLDS IT: `admin`, `moderator`, `member`, or null.
  *
- * WHY NOT READ THE SCREEN. The modal shows an admin a `<select>` whose value is the role and shows
+ * WHY NOT READ THE SCREEN. The modal shows an admin a role Picker whose label is the role and shows
  * everybody else a translated badge - so a check asserting on the screen alone is asserting on
  * `fr.json` and on which client happened to be looking. This is the row the permission checks
  * actually consult, so it is the only thing that can say a promotion TOOK EFFECT rather than merely
