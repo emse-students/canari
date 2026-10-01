@@ -49,6 +49,21 @@ describe('groupMessages', () => {
     expect(yesterdayIdx).toBeLessThan(todayIdx);
   });
 
+  it('labels each day with its shortest honest name, measured against the clock it is given', () => {
+    const now = new Date(2026, 8, 30, 15, 0);
+    const messages: ChatMessage[] = [
+      msg({ id: 'old', timestamp: new Date(2025, 4, 5, 10, 0) }),
+      msg({ id: 'week', timestamp: new Date(2026, 8, 23, 10, 0) }),
+      msg({ id: 'mon', timestamp: new Date(2026, 8, 28, 10, 0) }),
+      msg({ id: 'yday', timestamp: new Date(2026, 8, 29, 10, 0) }),
+      msg({ id: 'today', timestamp: new Date(2026, 8, 30, 10, 0) }),
+    ];
+    const labels = groupMessages(messages, now).flatMap((g) =>
+      g.type === 'date_separator' ? [g.date] : []
+    );
+    expect(labels).toEqual(['5 mai 2025', '23 septembre', 'Lundi', 'Hier', "Aujourd'hui"]);
+  });
+
   it('inserts time separator when gap exceeds 15 minutes within a day', () => {
     const base = new Date('2024-03-01T10:00:00Z');
     const later = new Date('2024-03-01T10:20:00Z'); // 20 min gap

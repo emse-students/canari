@@ -892,8 +892,7 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | --- | --- | --- |
 | `--z-nav-scrim` | 22 | the scrim under the expanded nav rail |
 | `--z-nav-rail` | 30 | the nav rail, open OR shut - see "A rung that is ANIMATED" below |
-| `--z-page-sticky` | 35 | a sticky date pill inside a scroller |
-| `--z-page-overlay` | 40 | the chat's own banner stack, the composer footer |
+| `--z-page-overlay` | 40 | the chat's own banner stack (the day pill is its last row), the composer footer |
 | `--z-nav-drawer-scrim` | 42 | |
 | `--z-nav-drawer` | 44 | |
 | `--z-toast` | 60 | |

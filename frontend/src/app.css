@@ -200,7 +200,6 @@
   --z-nav-rail: 30;
 
   /* In a page, over that page's own content. */
-  --z-page-sticky: 35; /* a sticky date pill inside a scroller */
   --z-page-overlay: 40; /* the chat's own banner stack, the composer footer */
   /* A page that is not usable yet, covering its OWN content and every overlay above - the
      "Connexion en cours" / catch-up panel. One rung over `--z-page-overlay` because it has to hide
@@ -1153,15 +1152,6 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   box-shadow: 0 4px 20px var(--glass-chrome-shadow);
 }
 
-/* THE DATE PILL SITS UNDER THE CHROME, EVERYWHERE. It is positioned against the whole thread panel,
-   header included, so at `top: 0.85rem` the header covered it on every width while it showed - on
-   the website as much as under the apps' floating glass. `--chat-header-height` is the chrome's
-   measured height (`ChatArea`), published in the flow and floating alike. Scoped to the panel, which
-   also outweighs the base rule further down this file. */
-.chat-thread-panel .chat-sticky-date-indicator {
-  top: calc(var(--chat-header-height, 0px) + 0.85rem);
-}
-
 /* THE CONVERSATION'S CHROME FLOATS OVER THE THREAD IN THE PHONE APPS (`ChatArea` puts
    `.chat-glass-chrome` on the panel - `usesGlassChrome`; the website keeps it in the flow), so the
    thread scrolls under the header's glass. The layer lets touches through except on its own
@@ -1865,14 +1855,15 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   opacity: 0.35;
 }
 
+/* A row of `.chat-thread-banners` (`ChatArea`): centred by the column, below any banner, never
+   wider than the thread minus a gutter, and its text centred if a 200 % system font still wraps it. */
 .chat-sticky-date-indicator {
-  position: absolute;
-  top: 0.85rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--z-page-sticky);
+  align-self: center;
+  max-width: calc(100% - 2rem);
+  margin-top: 0.85rem;
   padding: 0.35rem 0.65rem;
   border-radius: 9999px;
+  text-align: center;
   font-size: var(--text-2xs);
   line-height: var(--text-2xs--line-height);
   font-weight: 700;
@@ -1881,18 +1872,22 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   color: var(--text-main);
   background: var(--cn-surface);
   border: 1px solid var(--cn-border);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+  /* A HALO IN THE PAGE'S OWN COLOUR, NOT A DROP SHADOW. The pill floats over the thread, so a
+     bubble's line can run under it: opaque, the pill hides the middle of that line, and the halo
+     fades the letters either side of it into the background instead of leaving them cut off hard
+     against its edge - the day stays readable and nothing reads as text printed over text. */
+  box-shadow: 0 0 0.75rem 0.375rem color-mix(in srgb, var(--cn-bg) 85%, transparent);
   animation: fadeInOut 0.22s ease;
 }
 
 @keyframes fadeInOut {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(-4px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
   }
 }
 

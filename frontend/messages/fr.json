@@ -234,6 +234,8 @@
   "chat_no_conversation_selected_title": "Aucun échange sélectionné",
   "chat_mls_protection_description": "Canari protège vos communications avec le protocole MLS.",
   "chat_scroll_to_bottom_label": "Revenir en bas de la discussion",
+  "chat_day_today": "Aujourd'hui",
+  "chat_day_yesterday": "Hier",
   "chat_scroll_to_bottom_title": "Revenir en bas",
   "chat_search_in_conversation_placeholder": "Rechercher dans la conversation",
   "chat_clear_search_label": "Effacer la recherche",

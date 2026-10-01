@@ -11,6 +11,8 @@
  * who sent it, when, its name, its size and its pixel dimensions.
  */
 
+import { calendarDay, type RelativeDayLabels } from './dates';
+
 /** A moment as the call sites carry it: a message's `Date`, a post's ISO string, a millisecond count. */
 export type ViewerDateInput = Date | string | number;
 
@@ -32,12 +34,6 @@ export interface MediaViewerInfo {
   height?: number;
 }
 
-/** The two localized words that replace a date close to now (Paraglide, passed by the caller). */
-export interface RelativeDayLabels {
-  today: string;
-  yesterday: string;
-}
-
 /** The viewer's title: the day on the first line, the time on the second (Google Photos). */
 export interface ViewerDateTitle {
   date: string;
@@ -54,26 +50,11 @@ export interface DateTitleOptions {
   timeZone?: string;
 }
 
-const MS_PER_DAY = 86_400_000;
-
 /** The instant `value` names, or `null` when it is missing or unparseable. */
 function toInstant(value: ViewerDateInput | null | undefined): Date | null {
   if (value === null || value === undefined || value === '') return null;
   const instant = value instanceof Date ? value : new Date(value);
   return Number.isNaN(instant.getTime()) ? null : instant;
-}
-
-/** Days since the Unix epoch of the calendar day `instant` falls on IN `timeZone`. */
-function calendarDay(instant: Date, timeZone: string | undefined): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-  }).formatToParts(instant);
-  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
-  // Differences of UTC midnights are whole days, whatever DST did in the zone itself.
-  return Math.round(Date.UTC(get('year'), get('month') - 1, get('day')) / MS_PER_DAY);
 }
 
 /**

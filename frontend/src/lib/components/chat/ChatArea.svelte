@@ -31,7 +31,7 @@
     respondToNewMessage,
     shouldFollowThreadBottom,
   } from '$lib/utils/chat/threadAnchor';
-  import { stickyDateIndex } from '$lib/utils/chat/stickyDate';
+  import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -301,6 +301,10 @@
   let stickyDateLabel = $state('');
   let showStickyDate = $state(false);
   let stickyDateTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The column hanging from the top of the visible thread: banners, then the day pill. */
+  let threadBanners: HTMLDivElement | undefined = $state();
+  /** The catch-up banner while it shows; the day pill's measurements start below it. */
+  let catchupBanner: HTMLDivElement | null = $state(null);
   let searchQuery = $state('');
   let searchMatches = $state<string[]>([]);
   let activeSearchIndex = $state(-1);
@@ -442,15 +446,28 @@
     );
     if (dates.length === 0) return;
 
-    const containerTop = chatContainer.getBoundingClientRect().top;
+    // MEASURED FROM THE TOP OF WHAT THE READER SEES, NOT FROM THE SCROLLER'S BOX. Under the phone
+    // apps' floating chrome the scroller starts at the top of the panel, behind the header, so a
+    // line measured from its box named the previous day over a separator just come into view.
+    // The banner column starts exactly where the visible thread does, in both chromes.
+    const visibleTop = (threadBanners ?? chatContainer).getBoundingClientRect().top;
     // A BINARY SEARCH, BECAUSE THE SCAN WAS LINEAR IN THE HISTORY ABOVE THE READER: the old walk
     // started at the FIRST separator and measured every one above the viewport before reaching the
-    // one it wanted. `stickyDateIndex` measures only what it visits, which is why it takes an
-    // accessor rather than a list of tops.
-    const index = stickyDateIndex(
+    // one it wanted. `floatingDateIndex` measures only what it visits, which is why it takes an
+    // accessor rather than a list of boxes.
+    const index = floatingDateIndex(
       dates.length,
-      (i) => dates[i].getBoundingClientRect().top - containerTop
+      (i) => {
+        const box = dates[i].getBoundingClientRect();
+        return { top: box.top - visibleTop, bottom: box.bottom - visibleTop };
+      },
+      catchupBanner?.offsetHeight ?? 0
     );
+    if (index === null) {
+      clearStickyDateTimer();
+      showStickyDate = false;
+      return;
+    }
     const currentDate = dates[index].dataset.chatDateSeparator ?? '';
 
     if (!currentDate) return;
@@ -1007,7 +1024,7 @@
   let chromeSlot: HTMLDivElement | undefined = $state();
 
   // `--chat-header-height`: what the floating chrome covers, re-measured as it grows (the search bar
-  // sliding in, a poll strip appearing). Read by `.chat-messages-scroll` and the sticky date pill.
+  // sliding in, a poll strip appearing). Read by `.chat-messages-scroll` and `.chat-thread-banners`.
   $effect(() => {
     const slot = chromeSlot;
     const panel = threadPanel;
@@ -1038,7 +1055,7 @@
       THE CHROME ABOVE THE THREAD - header, search, polls, pinned - IN ONE LAYER THAT FLOATS OVER THE
       MESSAGES IN THE PHONE APPS (`chat-glass-chrome`), so the thread scrolls under the header's glass (user, 2026-09-30: "only
       static ui element, that are apart from content, should be liquid glass"). Its height is
-      published as `--chat-header-height`, which the list and the sticky date pill reserve, the way
+      published as `--chat-header-height`, which the list and the banner column (day pill included) reserve, the way
       the composer publishes `--chat-composer-height` at the bottom. In the flow on a desktop.
     -->
     <div bind:this={chromeSlot} class="chat-chrome-slot">
@@ -1239,10 +1256,12 @@
       <!-- One column, so two simultaneous banners STACK instead of hiding one another: both were
            `absolute top-0` and the amber one simply covered the sky one. -->
       <div
+        bind:this={threadBanners}
         class="chat-thread-banners pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col"
       >
         {#if isCatchupAnnounced}
           <div
+            bind:this={catchupBanner}
             class="bg-banner-warn text-text-main border-amber-warn/30 pointer-events-none flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium"
             role="status"
             aria-live="polite"
@@ -1265,6 +1284,15 @@
           and it is not something a person can act on. The banner above is the exception, and the
           reason it earns its place is that MESSAGES ARRIVING is what the reader is waiting for.
         -->
+        <!-- THE DAY PILL IS THE LAST ROW OF THIS COLUMN, NOT A BOX POSITIONED OVER THE PANEL. Absolute
+             at `left: 50%` its width could only shrink to the half of the panel right of centre, so
+             a long day wrapped onto two left-aligned lines and read as off-centre on a phone; and
+             at its own `top` it slid UNDER the catch-up banner above (z-40 over 35). In the column it
+             is centred by layout, stacks below any banner, and starts under the header in both the
+             floating and the in-flow chrome, because the column already does. -->
+        {#if showStickyDate && stickyDateLabel}
+          <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
+        {/if}
       </div>
 
       <div
@@ -1392,10 +1420,6 @@
           </span>
         {/if}
       </button>
-    {/if}
-
-    {#if showStickyDate && stickyDateLabel}
-      <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
     {/if}
 
     {#if conversation?.lifecycle === 'removed'}

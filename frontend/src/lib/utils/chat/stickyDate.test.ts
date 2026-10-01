@@ -1,4 +1,4 @@
-import { stickyDateIndex } from './stickyDate';
+import { floatingDateIndex, stickyDateIndex } from './stickyDate';
 
 /**
  * THE BINARY SEARCH HAS TO GIVE THE SAME ANSWER AS THE WALK IT REPLACED, including at both ends -
@@ -52,5 +52,30 @@ describe('stickyDateIndex', () => {
     });
     // 512 separators: 9 or 10 reads rather than 400.
     expect(measured).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('floatingDateIndex', () => {
+  /** Separators 26px tall, given by their tops. */
+  const floating = (tops: number[], covered = 0) =>
+    floatingDateIndex(tops.length, (i) => ({ top: tops[i], bottom: tops[i] + 26 }), covered);
+
+  it('names the day whose separator has scrolled out of sight', () => {
+    expect(floating([-500, -100, 300])).toBe(1);
+  });
+
+  it('stays hidden while the separator it would name is still on screen, so no day is drawn twice', () => {
+    expect(floating([-500, 10, 300])).toBeNull();
+  });
+
+  it('stays hidden at the top of the history, where the first separator is visible', () => {
+    expect(floating([60, 400])).toBeNull();
+  });
+
+  it('counts a separator hidden under a banner as out of sight, and moves the band below it', () => {
+    // A 28px banner covers 0..28: the separator at 0..26 is behind it, so the pill names its day.
+    expect(floating([-400, 0, 300], 28)).toBe(1);
+    // One at 50 sits in the pill's band under the banner (28..68) and is still visible.
+    expect(floating([-400, 50, 300], 28)).toBeNull();
   });
 });
