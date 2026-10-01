@@ -20,7 +20,6 @@
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
-  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
   import { nearViewport } from '$lib/actions/nearViewport';
 
@@ -126,15 +125,43 @@
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
-        <!-- Plays where it is, muted by default, with one sound button for every video in the
-             app; a tap opens the viewer, which carries the controls and the download. -->
-        <InlineVideo
-          src={blobUrl}
-          onOpen={() => (showLightbox = true)}
-          openLabel={m.msg_open_video_fullscreen_label()}
-          class="inline-block max-w-full rounded-3xl bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
-          videoClass="block max-h-80 max-w-full"
-        />
+        <div class="group/media relative inline-block">
+          <!--
+            `w-56 max-w-full`, never `w-full`: the wrapper is `inline-block`, so its width comes from
+            its content, and a percentage width inside it has nothing definite to resolve against -
+            it collapses to the image's intrinsic size. Above `sm` an explicit `sm:w-56` hid that, so
+            a small picture only looked wrong on a phone: a 64 px thumbnail under a 36 px download
+            button. An explicit width at every breakpoint keeps the box constant whatever the file's
+            own dimensions are.
+          -->
+          <button
+            type="button"
+            onclick={openLightbox}
+            onpointerdown={(e) => e.stopPropagation()}
+            aria-label={m.msg_open_image_fullscreen_label()}
+            class="block w-56 max-w-full overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
+            style={imageAspectStyle}
+          >
+            <img
+              src={blobUrl}
+              alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
+              class="h-full w-full cursor-zoom-in object-cover object-center transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+            />
+          </button>
+
+          <button
+            type="button"
+            onclick={(e) => {
+              e.stopPropagation();
+              downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
+            }}
+            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+            aria-label={m.msg_download_image_label()}
+            title={m.common_download_label()}
+          >
+            <Download size={16} strokeWidth={2.5} />
+          </button>
+        </div>
       {:else if loadError}
         <div
           class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
