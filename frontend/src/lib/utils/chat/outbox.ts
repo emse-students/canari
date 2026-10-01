@@ -4,7 +4,14 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
-import { encodeAppMessage, mkText, mkReply, mkMedia, mediaKindToType } from '$lib/proto/codec';
+import {
+  encodeAppMessage,
+  mediaEncodingProtoField,
+  mediaKindToType,
+  mkMedia,
+  mkReply,
+  mkText,
+} from '$lib/proto/codec';
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -365,7 +372,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
       const uploaded = await deps.uploadMedia(media);
-      ref = { mediaId: uploaded.mediaId, key: uploaded.key, iv: uploaded.iv };
+      ref = {
+        mediaId: uploaded.mediaId,
+        key: uploaded.key,
+        iv: uploaded.iv,
+        ...(uploaded.encoding ? { encoding: uploaded.encoding } : {}),
+      };
       // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
       await storage
         ?.updateOutboxEntry(
@@ -389,6 +401,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       width: media.width,
       height: media.height,
       ...(media.voiceNote ? { voiceNote: true } : {}),
+      ...(ref.encoding ? { encoding: ref.encoding } : {}),
     };
     const proto = encodeAppMessage({
       ...mkMedia({
@@ -402,6 +415,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         voiceNote: media.voiceNote ?? false,
         caption: media.caption,
         ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+        ...mediaEncodingProtoField(ref.encoding),
       }),
       messageId: entry.id,
       sentAt: entry.sentAt,

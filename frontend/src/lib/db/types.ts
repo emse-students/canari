@@ -106,6 +106,8 @@ export interface OutboxMediaUploadedRef {
   key: string;
   /** Hex-encoded IV for the media blob. */
   iv: string;
+  /** How the blob is sealed - see `MediaRef.encoding`. Absent: the single block. */
+  encoding?: string;
 }
 
 /** Sensitive media descriptor for a queued media message. */

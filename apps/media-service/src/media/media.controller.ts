@@ -4,7 +4,8 @@
  * Endpoints:
  *   GET  /media/limits  - The one ceiling, so no client has to be built carrying a copy of it
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
- *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
+ *   GET  /media/:id     - Return the encrypted blob (client decrypts it), or one byte range of it
+ *                         (206 + Content-Range) - how a segmented video is read while it plays
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
@@ -473,11 +474,20 @@ export class MediaController {
   ): Promise<void> {
     this.verifyToken(req);
 
-    const result = await this.mediaService.download(id);
+    const result = await this.mediaService.downloadRange(id, req.headers.range);
     if (result.status === 'purged') {
       throw new GoneException(
         'Media supprime apres expiration de retention. Merci de demander un renvoi.'
       );
+    }
+    // Prevent any caching of sensitive encrypted content
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    // Said on every answer, so a client can learn that parts are served without asking for one.
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (result.status === 'unsatisfiable') {
+      res.setHeader('Content-Range', `bytes */${result.size}`);
+      res.status(416).send();
+      return;
     }
     if (result.status !== 'ok' || !result.data) {
       throw new NotFoundException('Media not found');
@@ -486,8 +496,13 @@ export class MediaController {
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', data.length);
-    // Prevent any caching of sensitive encrypted content
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    if (result.range) {
+      res.setHeader(
+        'Content-Range',
+        `bytes ${result.range.start}-${result.range.end}/${result.size}`
+      );
+      res.status(206);
+    }
     res.send(data);
   }
 

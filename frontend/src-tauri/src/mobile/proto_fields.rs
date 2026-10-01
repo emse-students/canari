@@ -436,10 +436,25 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         let media_id = find_length_delimited_field(&media_msg, 2)
             .and_then(|b| String::from_utf8(b).ok())
             .unwrap_or_default();
+        // `MediaMsg.encoding` (field 12, CanaReels R2): 0 is the single AES-GCM block, the only
+        // format `decrypt_media_blob` reads. Any other value is a segmented (or newer) blob, and its
+        // key is WITHHELD rather than handed to a decrypt certain to refuse it: every native caller
+        // already reads an empty `mediaKey` as "no thumbnail", so the banner stays text-only and no
+        // download is wasted. The writer segments video only, which no native path renders anyway -
+        // this is the refusal by FACT for the day a segmented picture ever reaches one.
+        let encoding = find_varint_field(&media_msg, 12).unwrap_or(0);
+        let thumbnail_readable = encoding == 0;
+        if !thumbnail_readable {
+            log::debug!(
+                "[MediaBG] media encoding {encoding} is not the single block - no thumbnail"
+            );
+        }
         let media_key = find_length_delimited_field(&media_msg, 3)
+            .filter(|_| thumbnail_readable)
             .map(|b| STANDARD.encode(b))
             .unwrap_or_default();
         let media_iv = find_length_delimited_field(&media_msg, 4)
+            .filter(|_| thumbnail_readable)
             .map(|b| STANDARD.encode(b))
             .unwrap_or_default();
         let mime_type = find_length_delimited_field(&media_msg, 5)
@@ -744,6 +759,45 @@ mod tests {
     fn silent_system_events_return_none() {
         assert!(format_system_event_text("read_receipt", "{}").is_none());
         assert!(format_system_event_text("delete_message", r#"{"messageId":"x"}"#).is_none());
+    }
+
+    /// A `MediaMsg` as the TS encoder writes it: kind, id, key, iv, mime, and `encoding` when set.
+    fn media_app_message(kind: u64, encoding: u64) -> Vec<u8> {
+        let mut media = Vec::new();
+        write_tag(&mut media, 1, 0);
+        write_varint(&mut media, kind);
+        write_string_field(&mut media, 2, "m-1");
+        write_bytes_field(&mut media, 3, &[7u8; 32]);
+        write_bytes_field(&mut media, 4, &[9u8; 12]);
+        write_string_field(&mut media, 5, "image/webp");
+        if encoding != 0 {
+            write_tag(&mut media, 12, 0);
+            write_varint(&mut media, encoding);
+        }
+        wrap_app_message(4, &media, "msg-1", 1)
+    }
+
+    #[test]
+    fn a_single_block_media_hands_its_key_to_the_thumbnail() {
+        let info = extract_full_message_info(&media_app_message(1, 0));
+        assert_eq!(info["type"], "media");
+        assert_eq!(info["mediaKind"], "image");
+        assert_eq!(info["mediaKey"], BASE64.encode([7u8; 32]));
+        assert_eq!(info["mediaIv"], BASE64.encode([9u8; 12]));
+    }
+
+    #[test]
+    fn a_segmented_media_withholds_its_key_so_no_thumbnail_is_attempted() {
+        for encoding in [1u64, 7] {
+            let info = extract_full_message_info(&media_app_message(1, encoding));
+            assert_eq!(info["type"], "media", "the banner still says it is a photo");
+            assert_eq!(info["mediaId"], "m-1");
+            assert_eq!(
+                info["mediaKey"], "",
+                "encoding {encoding} must not reach the decrypt"
+            );
+            assert_eq!(info["mediaIv"], "");
+        }
     }
 
     #[test]

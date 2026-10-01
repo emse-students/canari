@@ -1,5 +1,10 @@
 import type { MediaRef } from '$lib/media';
 import { decryptMediaBuffer } from '$lib/mediaCrypto';
+import {
+  SEGMENTED_MEDIA_ENCODING,
+  SegmentedMediaError,
+  decryptSegmentedMediaBuffer,
+} from '$lib/mediaSegmented';
 import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
 import {
@@ -127,6 +132,28 @@ async function fetchCiphertext(
   return ciphertext;
 }
 
+/**
+ * Decrypts a whole blob in the format its REF names - the one place the format is decided.
+ *
+ * The ref travels inside the authenticated message, so `encoding` is a fact the reader holds before
+ * a byte is read; the bytes are never asked which format they are, and a segmented blob that fails
+ * is never retried as a single block (`mediaSegmented.ts`, "Why the REF decides the format").
+ * Absent `encoding` is every ref written before the segmented format, read as they always were - for
+ * as long as such a ref exists, which is for ever.
+ */
+async function decryptByEncoding(ref: MediaRef, ciphertext: ArrayBuffer): Promise<ArrayBuffer> {
+  if (ref.encoding === SEGMENTED_MEDIA_ENCODING) {
+    console.debug(`[media] ${ref.mediaId}: segmented, ${ciphertext.byteLength} bytes`);
+    return decryptSegmentedMediaBuffer(ciphertext, ref.key, ref.iv);
+  }
+  if (ref.encoding !== undefined) {
+    // Never read as a single block: that would turn "written by a newer client" into "corrupt".
+    console.error(`[media] ${ref.mediaId}: unknown encoding ${String(ref.encoding)} - refused`);
+    throw new SegmentedMediaError('encoding', `media encoding ${String(ref.encoding)} is unknown`);
+  }
+  return decryptMediaBuffer(ciphertext, ref.key, ref.iv);
+}
+
 async function loadDecryptedBlobUrl(
   ref: MediaRef,
   baseUrl: string,
@@ -146,10 +173,11 @@ async function loadDecryptedBlobUrl(
     const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, signal);
     let plaintext: ArrayBuffer;
     try {
-      plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
+      plaintext = await decryptByEncoding(ref, ciphertext);
     } catch (err) {
       // A cached copy that will never decrypt would answer every retry the same way: the retry
-      // the reader is offered must download the object again, not re-read the damaged one.
+      // the reader is offered must download the object again, not re-read the damaged one. A
+      // segmented blob refused for what it holds (`SegmentedMediaError`) is the same cause.
       await evictCiphertext(ref.mediaId, baseUrl);
       throw new MediaDecryptError(err);
     }
@@ -222,6 +250,22 @@ export async function acquireDecryptedMediaBlobUrl(
  */
 export function retainWarmDecryptedMediaBlobUrl(ref: MediaRef): string | null {
   return decryptedPool.tryRetain(decryptedKey(ref));
+}
+
+/**
+ * Puts plaintext that was decrypted ELSEWHERE - a segmented stream that has appended its last
+ * segment - into the same pool {@link acquireDecryptedMediaBlobUrl} serves, and retains it once for
+ * the caller. The lightbox and the download then reuse it rather than fetching the file again.
+ *
+ * If the pool already holds this media, that URL is retained and returned and `blob` is dropped.
+ */
+export function adoptDecryptedMediaBlob(ref: MediaRef, blob: Blob): string {
+  const key = decryptedKey(ref);
+  const held = decryptedPool.tryRetain(key);
+  if (held) return held;
+  const blobUrl = URL.createObjectURL(blob);
+  decryptedPool.retain(key, blobUrl);
+  return blobUrl;
 }
 
 /** Releases a decrypted media blob URL acquired via {@link acquireDecryptedMediaBlobUrl}. */

@@ -7,6 +7,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
   import {
+    adoptDecryptedMediaBlob,
     releaseDecryptedMediaBlobUrl,
     retainWarmDecryptedMediaBlobUrl,
   } from '$lib/utils/mediaBlobCache';
@@ -16,6 +17,8 @@
     mediaFailureCause,
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
+  import { chooseSegmentedPlayback, openSegmentedStream } from '$lib/utils/segmentedMediaStream';
+  import { mediaUrl } from '$lib/utils/apiUrl';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
@@ -41,6 +44,8 @@
       width?: number;
       height?: number;
       caption?: string;
+      /** How the blob is sealed - see `MediaRef.encoding`. Absent: the single block. */
+      encoding?: string;
     };
     /** Non-empty once the session is authenticated; the download resolves its own live token. */
     authToken: string;
@@ -88,6 +93,16 @@
   }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
+  /**
+   * A segmented video's MSE URL while it streams (`segmentedMediaStream.ts`) - for the ONE inline
+   * player, since an MSE URL cannot feed two elements. The lightbox and the download wait for
+   * `blobUrl`, which the stream fills from the very segments it played once the last one is in.
+   */
+  let streamUrl = $state<string | null>(null);
+  /** Whether that stream runs through Safari's `ManagedMediaSource`. */
+  let streamManaged = $state(false);
+  /** What the inline player shows: the stream while there is one, the blob otherwise. */
+  const playUrl = $derived(streamUrl ?? blobUrl);
   let loading = $state(true);
   /** Set when no session token was handed down: nothing can be asked for. */
   let authMissing = $state(false);
@@ -123,6 +138,7 @@
       fileName: media.fileName,
       width: media.width,
       height: media.height,
+      ...(media.encoding ? { encoding: media.encoding } : {}),
     };
 
     // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame,
@@ -146,6 +162,43 @@
     let acquired = false;
     loading = true;
     failure = null;
+
+    // A SEGMENTED VIDEO THAT CAN STREAM PLAYS AS IT ARRIVES. The choice is made from facts the ref
+    // already holds (`chooseSegmentedPlayback`) and never by trying: everything else - every legacy
+    // blob included - takes the whole-blob path below, which reads both formats.
+    const playback = mediaType === 'video' ? chooseSegmentedPlayback(mediaRef) : null;
+    if (playback?.kind === 'stream') {
+      const stream = openSegmentedStream(mediaRef, mediaUrl(), playback);
+      streamUrl = stream.url;
+      streamManaged = playback.managed;
+      loading = false;
+      stream.done
+        .then((blob) => {
+          if (destroyed) return;
+          blobUrl = adoptDecryptedMediaBlob(mediaRef, blob);
+          acquired = true;
+        })
+        .catch((err) => {
+          if (destroyed) return;
+          streamUrl = null;
+          // The same vocabulary as the whole-blob path: a segment refused for what it holds is
+          // `corrupt`, a range that never arrived is `unreachable` - typed at the throw.
+          failure = mediaFailureCause(err);
+          logMediaFailure('PostMedia', failure, media.mediaId, err);
+        });
+      return () => {
+        destroyed = true;
+        stream.close();
+        if (acquired) releaseDecryptedMediaBlobUrl(mediaRef);
+        acquired = false;
+        streamUrl = null;
+        blobUrl = null;
+      };
+    }
+    // A segmented blob that cannot stream here says why; a single block is the ordinary case.
+    if (playback && playback.reason !== 'single-block') {
+      console.debug(`[PostMedia] ${mediaRef.mediaId}: segmented, read whole (${playback.reason})`);
+    }
 
     const mediaService = new MediaService();
     // Leaves the gate's queue if the card is torn down before its turn comes.
@@ -235,7 +288,7 @@
         tone="dark"
       />
     </div>
-  {:else if blobUrl}
+  {:else if blobUrl || streamUrl}
     {#if mediaType === 'image'}
       <img
         src={blobUrl}
@@ -245,7 +298,8 @@
     {:else if mediaType === 'video'}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
-        src={blobUrl}
+        src={playUrl}
+        disableremoteplayback={streamManaged || undefined}
         controls
         autoplay
         poster={TRANSPARENT_VIDEO_POSTER}
@@ -313,7 +367,9 @@
         onRetry={retry}
       />
     </div>
-  {:else if blobUrl}
+  {:else if blobUrl || streamUrl}
+    <!-- Only a VIDEO is ever streamed (`streamUrl`), so every other branch below runs with
+         `blobUrl` set - the assertions on it say that, which the guard cannot. -->
     {#if mediaType === 'image'}
       <!-- ========== IMAGE ========== -->
       <button
@@ -333,7 +389,7 @@
              rather than a ceiling. -->
         {#if letterbox}
           <LetterboxedImage
-            src={blobUrl}
+            src={blobUrl!}
             alt={media.fileName ?? m.post_image_alt()}
             class="h-full w-full"
             imgClass="h-full"
@@ -358,7 +414,8 @@
            (`mediaAspectStyle`) is about text at the edge of a picture, a clip's subject is in its
            middle, and the whole frame is one tap away in the viewer. -->
       <InlineVideo
-        src={blobUrl}
+        src={playUrl!}
+        disableRemotePlayback={streamManaged}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
         class={letterbox
@@ -437,7 +494,7 @@
             class="block w-full cursor-pointer"
           >
             <PdfThumbnail
-              url={blobUrl}
+              url={blobUrl!}
               maxWidth={640}
               imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
             />

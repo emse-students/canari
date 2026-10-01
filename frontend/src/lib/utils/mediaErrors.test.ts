@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SegmentedMediaError } from '$lib/mediaSegmented';
 import {
   MediaDecryptError,
   MediaDownloadError,
@@ -18,6 +19,9 @@ describe('mediaFailureCause - one cause per type, never per message', () => {
     [new MediaNotFoundError(), 'not-found', false],
     [new MediaDecryptError(new DOMException('', 'OperationError')), 'corrupt', true],
     [new MediaDownloadError(503), 'other', true],
+    // The streaming reader throws these raw: a segment whose tag fails, a blob cut short.
+    [new SegmentedMediaError('segment-auth', 'segment 3', 3), 'corrupt', true],
+    [new SegmentedMediaError('length', 'segment 19 short', 19), 'corrupt', true],
   ] as const)('%s -> %s', (err, cause, retryable) => {
     expect(mediaFailureCause(err)).toBe(cause);
     expect(isRetryableMediaFailure(cause)).toBe(retryable);

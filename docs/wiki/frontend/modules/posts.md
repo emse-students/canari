@@ -137,6 +137,10 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   playing, looping, silent at every start until its button is pressed, then audible on every video
   at once; the viewer opening PAUSES the feed's video and closing it resumes it - before that rule
   the two played together, sound on both.
+- **A segmented video can play before it has finished downloading** (CanaReels R2, reader only):
+  `PostMedia` streams it through MSE when its ref is segmented and names its codecs, and reads it
+  whole otherwise - every video posted today. The format, the choice and the writer flip it waits on
+  are on [media-service](../../services/media-service.md#segmented-media-play-while-downloading-canareels-r2---the-reader-release-2026-10-01).
 - **No stray logo before a video's first frame** (user, Mi 9T: *"un logo bizarre qui s'affiche avant
   que la video ne charge"*, also on every swipe back to the feed). Filmed at 60 fps it was TWO
   things. The loading placeholder drew a camera icon over media already decrypted in memory, because

@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException, PayloadTooLargeException } from '@nestjs/common';
 import { StorageService } from './storage.service';
+import { parseByteRange } from './byte-range';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
@@ -156,6 +157,20 @@ type DownloadResult =
   | { status: 'not_found' }
   | { status: 'purged' };
 
+/** A download that may have been asked for a part: see {@link MediaService.downloadRange}. */
+export type RangedDownloadResult =
+  | {
+      status: 'ok';
+      data: Buffer;
+      /** The whole object's length - what `Content-Range` names after the slash. */
+      size: number;
+      /** The part served, inclusive; null when the whole object was. */
+      range: { start: number; end: number } | null;
+    }
+  | { status: 'unsatisfiable'; size: number }
+  | { status: 'not_found' }
+  | { status: 'purged' };
+
 type PublicDownloadResult =
   | { status: 'ok'; data: Buffer; contentType: string }
   | { status: 'not_found' };
@@ -236,6 +251,68 @@ export class MediaService {
     this.setAccess(mediaId, Date.now());
     await this.persistMetadata();
     return { status: 'ok', data };
+  }
+
+  /**
+   * {@link download}, or the part of it a `Range` header asks for (CanaReels R2: a segmented blob is
+   * read one segment at a time, so a video plays while the rest is still here).
+   *
+   * Authorisation and the retention tombstone are exactly the whole download's - a part of a purged
+   * object is as gone as the object. THE ACCESS CLOCK MOVES ONLY ON A PART THAT STARTS AT BYTE 0:
+   * every reader opens a blob there (its header is there), so one opening is one access, as one
+   * whole download always was - rather than one metadata write per megabyte of a video.
+   *
+   * @param mediaId     The object.
+   * @param rangeHeader The request's `Range` header, if any.
+   */
+  async downloadRange(
+    mediaId: string,
+    rangeHeader: string | undefined
+  ): Promise<RangedDownloadResult> {
+    if (!rangeHeader) {
+      const whole = await this.download(mediaId);
+      return whole.status === 'ok'
+        ? { status: 'ok', data: whole.data, size: whole.data.length, range: null }
+        : whole;
+    }
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
+    await this.purgeExpiredMedia();
+
+    const entry = this.meta.items[mediaId];
+    if (entry?.purgedAt && entry.purgeReason === 'retention_expired') {
+      return { status: 'purged' };
+    }
+
+    const size = await this.storage.size(mediaId);
+    if (size === null) return { status: 'not_found' };
+
+    const requested = parseByteRange(rangeHeader, size);
+    if (requested.kind === 'whole') {
+      this.logger.debug(`media ${mediaId}: Range "${rangeHeader}" not served as a part - whole`);
+      const whole = await this.download(mediaId);
+      return whole.status === 'ok'
+        ? { status: 'ok', data: whole.data, size: whole.data.length, range: null }
+        : whole;
+    }
+    if (requested.kind === 'unsatisfiable') {
+      this.logger.debug(`media ${mediaId}: Range "${rangeHeader}" unsatisfiable on ${size} bytes`);
+      return { status: 'unsatisfiable', size };
+    }
+
+    const stream = await this.storage.getRange(
+      mediaId,
+      requested.start,
+      requested.end - requested.start + 1
+    );
+    if (!stream) return { status: 'not_found' };
+    const data = await this.readStreamToBuffer(stream);
+    if (requested.start === 0) {
+      this.setAccess(mediaId, Date.now());
+      await this.persistMetadata();
+    }
+    return { status: 'ok', data, size, range: { start: requested.start, end: requested.end } };
   }
 
   async downloadPublic(mediaId: string): Promise<PublicDownloadResult> {

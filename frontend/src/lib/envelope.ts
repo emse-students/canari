@@ -236,6 +236,9 @@ export function parseEnvelope(content: string): MessageEnvelope {
               // Only a literal `true` survives: an absent flag means UNKNOWN provenance, and
               // writing `false` there would claim the sender said "imported" when it said nothing.
               ...(media.voiceNote === true ? { voiceNote: true } : {}),
+              // Kept whatever its value: an encoding this client does not know is refused by the
+              // reader by name, and dropping it here would make the blob read as a single block.
+              ...(typeof media.encoding === 'string' ? { encoding: media.encoding } : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
             replyTo: safeReplyTo(obj.replyTo),

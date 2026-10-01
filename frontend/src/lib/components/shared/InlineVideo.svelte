@@ -18,7 +18,7 @@
    * poster, which is what shows before the video comes into view.
    */
   interface Props {
-    /** The decrypted blob URL. */
+    /** The decrypted blob URL, or a segmented stream's MSE URL. */
     src: string;
     /** Opens the full-screen viewer. */
     onOpen: () => void;
@@ -28,9 +28,21 @@
     class?: string;
     /** Classes of the `<video>` - how it sits in that box. */
     videoClass?: string;
+    /**
+     * Set for a `ManagedMediaSource` stream (`segmentedMediaStream.ts`): Safari opens one only on an
+     * element that cannot be handed to AirPlay, which would need a second, non-MSE source.
+     */
+    disableRemotePlayback?: boolean;
   }
 
-  let { src, onOpen, openLabel, class: klass = '', videoClass = 'h-full w-full' }: Props = $props();
+  let {
+    src,
+    onOpen,
+    openLabel,
+    class: klass = '',
+    videoClass = 'h-full w-full',
+    disableRemotePlayback = false,
+  }: Props = $props();
 
   let videoEl: HTMLVideoElement | null = $state(null);
 
@@ -55,6 +67,7 @@
     loop
     playsinline
     preload="metadata"
+    disableremoteplayback={disableRemotePlayback || undefined}
     use:playWhileVisible
     class={videoClass}
   ></video>
