@@ -157,10 +157,12 @@ The composer comparison R1 was built from is on
 2. **R2 - playable while downloading.** Segmented media encryption (~1 MB segments, each its own
    tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
    plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
-   readable. On-device compression (C3). **The READER half is #1295, a DRAFT held on purpose**
-   (2026-10-01): it reads the segmented format and writes nothing in it
-   (`SEGMENTED_MEDIA_WRITER_ENABLED = false`); the writer follows once `minClientVersion` is that
-   reader and both stores serve it - the Graine v2 order.
+   readable. On-device compression (C3). **The READER half is #1295, shipped in `1.0.0`**: it
+   reads the segmented format and writes nothing in it (`SEGMENTED_MEDIA_WRITER_ENABLED = false`);
+   the writer follows once `minClientVersion` is that reader and both stores serve it - the Graine
+   v2 order. **On-device compression (C3) is the `prepareVideoForUpload` seam**, WebCodecs +
+   mediabunny to one fragmented MP4, proven on both phones 2026-10-01
+   ([video-preparation](frontend/video-preparation.md)); its composer wiring is next.
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
    save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the
