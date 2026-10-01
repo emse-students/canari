@@ -1,7 +1,7 @@
 <script lang="ts">
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import { Volume2, VolumeX } from '@lucide/svelte';
-  import { playWhileVisible } from '$lib/actions/playWhileVisible';
+  import { Play, Volume2, VolumeX } from '@lucide/svelte';
+  import { playWhileVisible, trackManualPlayback } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { m } from '$lib/paraglide/messages';
   import VideoPoster from './VideoPoster.svelte';
@@ -41,6 +41,14 @@
     streamed?: boolean;
     /** The element's `loadedmetadata` - a `MediaFrame` reads an undeclared clip's size from it. */
     onMetadata?: (event: Event) => void;
+    /**
+     * Plays only when the reader presses play (a conversation's video - user, 2026-10-02: *"ne pas
+     * les jouer automatiquement par rapport au scroll, mettre un bouton play ... comme sur Discord"*).
+     * The play button starts it where it is, with sound; a tap anywhere else opens the viewer, whose
+     * player starts it too. It does not loop: it stops on its last frame and offers play again. Several
+     * can play at once, as on Discord; opening a viewer pauses them.
+     */
+    manualPlay?: boolean;
   }
 
   let {
@@ -52,7 +60,17 @@
     disableRemotePlayback = false,
     streamed = false,
     onMetadata,
+    manualPlay = false,
   }: Props = $props();
+
+  /**
+   * How the element starts: an autoplaying video plays while it is on screen (and is the only one
+   * that does), a manual one plays when asked and alongside any other manual one - it is only
+   * remembered, so that a viewer opening can pause it. Chosen once, at mount - the mode is not live.
+   */
+  function autoplayAction(node: HTMLVideoElement) {
+    return manualPlay ? trackManualPlayback(node) : playWhileVisible(node);
+  }
 
   let videoEl: HTMLVideoElement | null = $state(null);
   /**
@@ -72,6 +90,26 @@
     if (videoEl) videoEl.muted = videoSound.muted;
   });
 
+  /** The element is playing (manual mode only: an autoplaying video has no button to show). */
+  let playing = $state(false);
+
+  /**
+   * The play button. A press is a gesture, so the browser allows sound - and the reader asked for
+   * the video, so it has it: the app's one sound answer is turned ON (`videoSound`), the same
+   * answer every other video follows, rather than a muted clip the reader must then un-mute.
+   */
+  function playNow(e: MouseEvent) {
+    e.stopPropagation();
+    if (!videoEl) return;
+    videoSound.setMuted(false);
+    videoEl.muted = false;
+    videoEl.play().catch((err: unknown) => {
+      console.warn('[video] InlineVideo: play() refused', {
+        name: err instanceof Error ? err.name : String(err),
+      });
+    });
+  }
+
   function toggleSound(e: MouseEvent) {
     e.stopPropagation();
     videoSound.toggle();
@@ -85,14 +123,17 @@
     src={streamed ? src : `${src}#t=0.1`}
     poster={TRANSPARENT_VIDEO_POSTER}
     muted
-    loop
+    loop={!manualPlay}
     playsinline
     preload="metadata"
     disableremoteplayback={disableRemotePlayback || undefined}
-    use:playWhileVisible
+    use:autoplayAction
     class={videoClass}
     onloadeddata={() => (frameReady = true)}
     onloadedmetadata={onMetadata}
+    onplay={() => (playing = true)}
+    onpause={() => (playing = false)}
+    onended={() => (playing = false)}
   ></video>
   {#if !frameReady}
     <VideoPoster />
@@ -111,19 +152,33 @@
        green clip, green. It is now a near-opaque scrim with no blur, carrying the theme's `--cn-yellow` glyph while
        muted, and a solid `--cn-yellow` disc once the sound is on, so its colour says the state and
        nothing else. -->
-  <button
-    type="button"
-    class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {videoSound.muted
-      ? 'bg-cn-scrim/90 text-cn-yellow'
-      : 'bg-cn-yellow text-cn-ink'}"
-    aria-label={m.video_sound_label()}
-    aria-pressed={!videoSound.muted}
-    onclick={toggleSound}
-  >
-    {#if videoSound.muted}
-      <VolumeX size={16} strokeWidth={2.5} />
-    {:else}
-      <Volume2 size={16} strokeWidth={2.5} />
-    {/if}
-  </button>
+  {#if manualPlay && !playing && frameReady}
+    <!-- The one big target while nothing plays, over the open-viewer tap: it starts the video where
+         it is, and everything around it opens the viewer. The amber disc is `VideoPlayer`'s. -->
+    <button
+      type="button"
+      class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
+      aria-label={m.video_play_label()}
+      onclick={playNow}
+    >
+      <Play size={26} strokeWidth={2.25} fill="currentColor" class="ml-1" />
+    </button>
+  {/if}
+  {#if !manualPlay || playing}
+    <button
+      type="button"
+      class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {videoSound.muted
+        ? 'bg-cn-scrim/90 text-cn-yellow'
+        : 'bg-cn-yellow text-cn-ink'}"
+      aria-label={m.video_sound_label()}
+      aria-pressed={!videoSound.muted}
+      onclick={toggleSound}
+    >
+      {#if videoSound.muted}
+        <VolumeX size={16} strokeWidth={2.5} />
+      {:else}
+        <Volume2 size={16} strokeWidth={2.5} />
+      {/if}
+    </button>
+  {/if}
 </div>

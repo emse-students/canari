@@ -48,6 +48,27 @@ function tryPlay(video: HTMLVideoElement) {
   });
 }
 
+/**
+ * Inline videos the reader started with a play button (a conversation's - user, 2026-10-02: *"ne pas
+ * les jouer automatiquement par rapport au scroll, mettre un bouton play ... comme sur Discord"*).
+ *
+ * THEY PLAY TOGETHER, AS DISCORD'S DO (user, 2026-10-02: *"elles jouent ensemble"*): pressing play on
+ * a second one does not stop the first, so they are NOT part of `playing`'s one-at-a-time rule - the
+ * reader chose each of them. The one thing that does silence them is a viewer opening
+ * (`followVideoSound`): the viewer is the only video then, and they stay paused when it closes.
+ */
+const manualInline = new Set<HTMLVideoElement>();
+
+/** Registers a manually started video, so that opening a viewer can pause it. */
+export function trackManualPlayback(video: HTMLVideoElement) {
+  manualInline.add(video);
+  return {
+    destroy() {
+      manualInline.delete(video);
+    },
+  };
+}
+
 export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisibleOptions = {}) {
   if (typeof IntersectionObserver === 'undefined') return {};
 
@@ -89,6 +110,8 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
  */
 export function followVideoSound(video: HTMLVideoElement) {
   openViewers += 1;
+  // The viewer is the only video while it is open: the ones the reader started inline go quiet.
+  for (const inline of manualInline) if (!inline.paused) inline.pause();
   video.muted = videoSound.muted;
   const onVolumeChange = () => videoSound.setMuted(video.muted);
   const onPlay = () => claimPlayback(video);

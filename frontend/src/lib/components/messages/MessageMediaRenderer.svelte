@@ -203,6 +203,7 @@
               src={blobUrl}
               onOpen={() => (showLightbox = true)}
               onMetadata={frame.onLoad}
+              manualPlay
               openLabel={m.msg_open_video_fullscreen_label()}
               class="absolute inset-0"
               videoClass="h-full w-full object-contain object-center"

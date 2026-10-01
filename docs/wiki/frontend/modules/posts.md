@@ -729,9 +729,22 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card, chat bubble | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
+| Feed card | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
+| Chat bubble | `InlineVideo manualPlay` | Discord-style: a play button, no autoplay (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
+- **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
+  Discord"*): `InlineVideo`'s `manualPlay` mode. It shows its first frame with an amber **play
+  button**; **the button starts the video where it is, with sound** (it turns the app's one sound answer,
+  `videoSound`, ON - the reader asked for this video, and every other video follows that same answer);
+  **a tap on the rest of it opens the viewer, whose player starts it too**. No `playWhileVisible`, no
+  loop (it stops on its last frame and offers play again), and the sound button shows only while it plays.
+  **Several can play at once, as on Discord** (user's answer to a direct question, same day): a manual
+  video is only REMEMBERED (`trackManualPlayback`), never part of the one-at-a-time `playing` rule, which
+  stays for the feed's autoplaying videos and the viewer. **Opening a viewer pauses them**
+  (`followVideoSound`) and they stay paused when it closes. Verified in Chromium on two real clips: no
+  play from being in view, the button plays with `muted = false`, a second button plays alongside the
+  first, a tap on one opens the viewer and pauses both.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
   playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only

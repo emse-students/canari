@@ -168,3 +168,129 @@ it('pauses the video behind the viewer while it is open, and resumes it on close
   action.destroy();
   expect(play).toHaveBeenCalledTimes(2);
 });
+
+/**
+ * A CONVERSATION'S VIDEO PLAYS WHEN ASKED (user, 2026-10-02, Discord's way: *"ne pas les jouer
+ * automatiquement par rapport au scroll, mettre un bouton play ... cliquer sur le bouton play les
+ * lance, et cliquer sur une autre part de la video l'ouvre en grand et la lance"*).
+ */
+function mountManual() {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const onOpen = vi.fn();
+  const component = mount(InlineVideo, {
+    target,
+    props: { src: 'blob:clip', onOpen, openLabel: 'Plein ecran', manualPlay: true },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const video = target.querySelector('video')!;
+  const play = vi.spyOn(video, 'play').mockResolvedValue();
+  const pause = vi.spyOn(video, 'pause').mockImplementation(() => {});
+  /** The first frame is in: the play button is offered from then on. */
+  const frameIn = () => {
+    video.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+  };
+  const playButton = () => target.querySelector<HTMLButtonElement>('button[aria-label="Lire"]');
+  const openButton = () =>
+    target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
+  return { target, video, play, pause, onOpen, frameIn, playButton, openButton };
+}
+
+it('does NOT start when it scrolls into view', () => {
+  const { play, video } = mountManual();
+  // The observer an autoplaying video would have built: a manual one builds none.
+  expect(observed).toHaveLength(0);
+  expect(play).not.toHaveBeenCalled();
+  expect(video.loop).toBe(false);
+});
+
+it('offers a play button once the first frame is in, and not before', () => {
+  const { playButton, frameIn } = mountManual();
+  expect(playButton()).toBeNull();
+  frameIn();
+  expect(playButton()).not.toBeNull();
+});
+
+it('the play button starts it where it is, with sound, and opens nothing', () => {
+  const { video, play, onOpen, frameIn, playButton } = mountManual();
+  frameIn();
+  playButton()!.click();
+  flushSync();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(false);
+});
+
+it('hides the play button while it plays, and brings it back when it pauses or ends', () => {
+  const { video, frameIn, playButton } = mountManual();
+  frameIn();
+  video.dispatchEvent(new Event('play'));
+  flushSync();
+  expect(playButton()).toBeNull();
+  video.dispatchEvent(new Event('pause'));
+  flushSync();
+  expect(playButton()).not.toBeNull();
+  video.dispatchEvent(new Event('play'));
+  video.dispatchEvent(new Event('ended'));
+  flushSync();
+  expect(playButton()).not.toBeNull();
+});
+
+it('a tap on the rest of the video opens the viewer, which starts it', () => {
+  const { openButton, onOpen, play } = mountManual();
+  openButton().click();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  // The viewer's own player does the playing; the inline element is not asked to.
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('shows its sound button only while it plays', () => {
+  const { video, target, frameIn } = mountManual();
+  frameIn();
+  const sound = () => target.querySelector('button[aria-pressed]');
+  expect(sound()).toBeNull();
+  video.dispatchEvent(new Event('play'));
+  flushSync();
+  expect(sound()).not.toBeNull();
+});
+
+/**
+ * THEY PLAY TOGETHER (user, 2026-10-02: *"elles jouent ensemble"*, Discord's way): pressing play on a
+ * second video does not stop the first. Only a viewer opening silences them.
+ */
+it('lets several manually started videos play at once', () => {
+  const a = mountManual();
+  const b = mountManual();
+  // The rule pauses only a video that is really playing: make the first one report it.
+  Object.defineProperty(a.video, 'paused', { configurable: true, get: () => false });
+  a.video.dispatchEvent(new Event('play'));
+  b.video.dispatchEvent(new Event('play'));
+  expect(a.pause, 'starting the second does not stop the first').not.toHaveBeenCalled();
+  expect(b.pause).not.toHaveBeenCalled();
+});
+
+it('pauses the ones playing inline when a viewer opens, and leaves them paused when it closes', () => {
+  const a = mountManual();
+  const b = mountManual();
+  for (const v of [a, b]) {
+    Object.defineProperty(v.video, 'paused', { configurable: true, get: () => false });
+    v.video.dispatchEvent(new Event('play'));
+  }
+  const viewer = document.createElement('video');
+  const action = followVideoSound(viewer);
+  expect(a.pause).toHaveBeenCalledTimes(1);
+  expect(b.pause).toHaveBeenCalledTimes(1);
+  action.destroy();
+  expect(a.play).not.toHaveBeenCalled();
+  expect(b.play).not.toHaveBeenCalled();
+});
+
+it('an autoplaying video is unchanged: loops, plays on screen, shows its sound button', () => {
+  const { video, soundButton } = mountVideo();
+  expect(video.loop).toBe(true);
+  expect(observed).toHaveLength(1);
+  expect(soundButton).toBeDefined();
+});
