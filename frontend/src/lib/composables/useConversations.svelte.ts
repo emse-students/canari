@@ -97,8 +97,6 @@ const OLDER_MESSAGES_PAGE = 50;
  * from a peer fills the list exactly as a page read from disk does.
  */
 const SCROLLBACK_PAGE = OLDER_MESSAGES_PAGE;
-/** Skip channel REST history refetch when the in-memory copy was loaded recently. */
-const CHANNEL_HISTORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** Runtime dependencies injected into all conversation and group operations. */
 export interface ConversationContext {
@@ -194,12 +192,44 @@ export function useConversations() {
 
   // Short-lived cache so rapid successive sends don't re-check membership via HTTP
   const membershipCache = new SvelteMap<string, { isMember: boolean; expiresAt: number }>();
-  /** When a channel history was last fetched from the API (per user + channel). */
+  /**
+   * Which channel histories are CURRENT in memory, and for which user.
+   *
+   * A salon's in-memory copy is the REST page plus every live socket event since - so it is current
+   * exactly as long as that stream has had no gap, and it says nothing about a clock. It used to be
+   * trusted for five minutes after its load, which is a proof of nothing: a salon open across a
+   * background lost every message posted while the socket was paused (they arrive as pushes, which
+   * write no salon row), and showed none of them until the five minutes ran out. Measured on a
+   * Mi 9T, 2026-10-01. An entry now leaves this map only through an event that makes it stale -
+   * {@link noteLiveStreamTransition}, a deletion, a kick, a Graine repair.
+   */
   const channelHistoryLoadedAt = new SvelteMap<string, { loadedAt: number; userId: string }>();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
     else channelHistoryLoadedAt.clear();
+  }
+
+  /**
+   * The live stream went down or came back, and every salon copy held against it is stale.
+   *
+   * BOTH TRANSITIONS COUNT. Losing the socket is the gap itself: whatever a peer posts until it
+   * returns reaches this device as a push at best, which renders a banner and writes no salon row.
+   * Regaining it does not close a gap opened by a page loaded WHILE it was down, because what was
+   * posted between that page and the reconnect is in neither. So both clear every entry, and the
+   * reconnect also reloads the salon on screen - the only one a reader is looking at, and the only
+   * one nothing else would reload: re-tapping the open salon from its notification selects nothing
+   * new. Every other salon is reloaded by its own next selection.
+   *
+   * @param connected whether the live stream is up after this transition.
+   */
+  async function noteLiveStreamTransition(connected: boolean, ctx: ConversationContext) {
+    invalidateChannelHistoryCache();
+    if (!connected) return;
+    const open = selectedContact;
+    if (!open || !isChannelConversationId(open)) return;
+    ctx.log(`[CHANNEL] live stream back - reloading open salon ${open.slice(8, 16)}`);
+    await loadChannelHistory(open, ctx);
   }
 
   let mobileConvoHistoryClose: (() => void) | null = null;
@@ -443,15 +473,9 @@ export function useConversations() {
     const convo = conversations.get(channelConversationId);
     if (!convo) return;
 
+    // Current until an event says otherwise - see `channelHistoryLoadedAt`.
     const cached = channelHistoryLoadedAt.get(channelConversationId);
-    if (
-      !force &&
-      cached &&
-      cached.userId === ctx.userId &&
-      Date.now() - cached.loadedAt < CHANNEL_HISTORY_CACHE_TTL_MS
-    ) {
-      return;
-    }
+    if (!force && cached && cached.userId === ctx.userId) return;
 
     const isSelected = selectedContact === channelConversationId;
     if (isSelected) isLoadingHistory = true;
@@ -1607,6 +1631,7 @@ export function useConversations() {
     searchChannelHistory,
     /** Clears the in-memory channel history TTL cache (one channel or all). */
     invalidateChannelHistoryCache,
+    noteLiveStreamTransition,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
     /** Prepends an older page of messages from IndexedDB to the conversation. */

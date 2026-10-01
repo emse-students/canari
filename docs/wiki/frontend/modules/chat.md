@@ -2093,6 +2093,24 @@ which taking it verbatim would do whenever the stored row is still the notificat
 COUNT in the startup restore is now computed over the merged list too - counting the page alone lost
 the same message twice, once from the display and once from the badge.
 
+### A salon copy is stale when the live stream had a gap, never when a clock says so (2026-10-01)
+
+A salon is never persisted: its in-memory copy is the REST page plus every live socket event since.
+It used to be trusted for five minutes after its load (`CHANNEL_HISTORY_CACHE_TTL_MS`), which proves
+nothing. **Measured on a Mi 9T, 2026-10-01:** A1 on `#general`, HOME, a peer posts, the push decrypts
+and notifies (`seed source=mirror`), the tap resumes the app - the socket reconnects and NO
+`GET /api/channels/:id/messages` goes out, so the message stayed invisible in the open salon until
+the five minutes ran out. A salon push writes no row anywhere (only a DM push feeds
+`fcm_message_cache.ndjson`), and re-tapping the open salon selects nothing new. A rotated-seed
+message did appear, but only because the Graine repair listener invalidates the salon it repairs.
+
+So the copy is now current until an EVENT makes it stale, and the event a missed message produces is
+the gap in the stream: `useConversations.noteLiveStreamTransition`, driven by `isWsConnected`
+changing in `ChatBackgroundService`, clears every salon copy on BOTH transitions (a page loaded while
+the socket was down misses what was posted before the reconnect) and, on the reconnect, reloads the
+salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
+their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
+
 ## The workspace list prunes only what existed when it asked
 
 The same seam as the section above, one level up, and it destroyed whole communities rather than
