@@ -740,13 +740,33 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 - **Keyboard**: the player is one tab stop (`role="group"`); space/k, arrows (+-5 s), Home/End, m,
   f (`videoKeyAction`). It stops the arrows from reaching `MediaLightbox`'s previous/next.
 - **Inside `MediaLightbox`** the bar carries `data-video-controls`, which the viewer's swipe, pinch
-  and pan treat like a `<video>` or a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek.
+  and pan treat like a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek. **The `<video>`
+  itself is no longer on that list** (2026-10-02): its native controls were what put it there, and they
+  are gone, so a pinch, a pan and a swipe that start on the picture are the viewer's.
   The player's root carries `data-video-player`: **a TAP that starts there is the player's** - the
   viewer neither cancels its click nor toggles its own title bar - while a swipe from there is still the
   viewer's. Before, a tap on the black margins was the viewer's, so the controls never answered on most
   of the screen. Verified in Chromium on a recorded portrait clip in the open viewer: the controls fade,
   a mouse move over the side margin brings them back, a touch tap on the margin toggles them both ways;
   `MediaLightbox.videoTap.svelte.test.ts` is red on the old viewer.
+- **The controls are an overlay on a zoomable, movable picture** (user, 2026-10-02: *"les controles
+  devraient etre une ui par dessus l'element video zoomable et deplacable"*). The player sits INSIDE the
+  viewer's transform wrapper, so zooming the wrapper scaled the control bar and carried it off the
+  screen with the picture. A first answer - never zoom a video - was dropped the same day. Now the
+  viewer reads whether its frame holds a `[data-video-player]` (`hostsPlayer`, a `MutationObserver`:
+  the content is `{@render children}` and a gallery swipes from a photo to a clip) and, if so, **the
+  wrapper keeps only the swipe and the dismiss, and the zoom and pan go to the `<video>` alone**
+  through the custom property `--lightbox-zoom`, which `VideoPlayer` applies to the element
+  (`transform: var(--lightbox-zoom, none)`). The bar, the play button and the poster are siblings, so
+  they stay put above the picture. A photo is unchanged (the wrapper carries everything).
+  **Wheel and pinch zoom a video and a drag moves it; a CLICK or a DOUBLE-TAP does not start a zoom**
+  (user, same day: a tap on a player toggles its controls) - a double-click still RESETS one. The
+  `zoom-in` cursor is not offered over a video. **The click that ends a mouse pan is swallowed**
+  (`panMoved`), or every drag would toggle the controls. Verified in Chromium on a real clip: five wheel
+  ticks take the picture from 320 to 2560 px wide while the bar stays at 1000x84 in the same place, a
+  drag moves the picture 80 px, the controls do not toggle, a double-click only resets.
+  **Owed: a pinch and a one-finger pan on a phone** - the touch path is read from the code and tested
+  for its taps, not exercised with fingers.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
   until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
