@@ -18,6 +18,26 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MessageReactions from './MessageReactions.svelte';
+import { LONG_PRESS_MS } from '$lib/actions/reactorsTrigger';
+
+/** A hold on a badge - the only gesture that opens the list (Discord's, 2026-10-01). */
+function hold(badge: HTMLElement) {
+  vi.useFakeTimers();
+  try {
+    badge.dispatchEvent(
+      Object.assign(new Event('pointerdown', { bubbles: true }), {
+        pointerType: 'touch',
+        button: 0,
+        clientX: 0,
+        clientY: 0,
+      })
+    );
+    vi.advanceTimersByTime(LONG_PRESS_MS + 50);
+    flushSync();
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 const NAMES: Record<string, string> = { u1: 'Camille', u2: 'Dominique', u3: 'Sacha' };
 
@@ -69,8 +89,7 @@ describe('MessageReactions - who reacted with what', () => {
     const { badges } = render();
     expect(panel()).toBeNull();
 
-    badges[0].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
-    flushSync();
+    hold(badges[0]);
 
     const rows = [...(panel()?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
     expect(rows).toEqual(['Camille', 'Dominique']);
@@ -79,14 +98,13 @@ describe('MessageReactions - who reacted with what', () => {
   it('names the OTHER badge s reactor when that one is opened, and only that one', () => {
     const { badges } = render();
 
-    badges[1].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
-    flushSync();
+    hold(badges[1]);
 
     const rows = [...(panel()?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
     expect(rows).toEqual(['Sacha']);
   });
 
-  it('opens no panel until a badge is entered', () => {
+  it('opens no panel until a badge is held', () => {
     render();
     flushSync();
     expect(panel()).toBeNull();
@@ -95,8 +113,7 @@ describe('MessageReactions - who reacted with what', () => {
   it('portals the panel out of the row, so a bubble s overflow cannot clip it', () => {
     const { target, badges } = render();
 
-    badges[0].dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
-    flushSync();
+    hold(badges[0]);
 
     expect(panel()).not.toBeNull();
     expect(target.querySelector('[role="tooltip"]')).toBeNull();
@@ -107,7 +124,7 @@ describe('MessageReactions - who reacted with what', () => {
     for (const b of badges) expect(b.getAttribute('title')).toBeNull();
   });
 
-  it('keeps the badge a toggle: entering it does not react on the reader s behalf', () => {
+  it('keeps the badge a toggle: a mouse resting on it opens nothing and reacts to nothing', () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const reacted: string[] = [];
@@ -128,6 +145,7 @@ describe('MessageReactions - who reacted with what', () => {
     badge.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
     expect(reacted).toEqual([]);
+    expect(panel()).toBeNull();
 
     badge.click();
     expect(reacted).toEqual(['👍']);
