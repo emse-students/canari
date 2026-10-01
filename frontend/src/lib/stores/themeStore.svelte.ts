@@ -12,6 +12,12 @@ const THEME_KEY = 'canari-theme';
 /** User-facing preference. `system` defers to the OS and tracks live changes. */
 export type ThemePreference = 'dark' | 'light' | 'system';
 
+const NEXT_PREFERENCE: Record<ThemePreference, ThemePreference> = {
+  system: 'light',
+  light: 'dark',
+  dark: 'system',
+};
+
 function readPreference(): ThemePreference {
   if (typeof localStorage !== 'undefined') {
     const saved = localStorage.getItem(THEME_KEY);
@@ -112,10 +118,11 @@ export const themeStore = {
   },
 
   /**
-   * Toggles light/dark by setting an **explicit** preference (leaves `system` mode).
-   * Preserves the existing toggle-switch behaviour.
+   * Steps through the three choices in the order the settings control shows them
+   * (automatic -> light -> dark -> automatic), so a one-tap button can never strand the user
+   * outside Automatic with no way back.
    */
-  toggle(): void {
-    themeStore.setPreference(isDark ? 'light' : 'dark');
+  cycle(): void {
+    themeStore.setPreference(NEXT_PREFERENCE[preference]);
   },
 };

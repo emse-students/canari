@@ -1,16 +1,23 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { themeStore } from './themeStore.svelte';
 
 /** OS dark-mode flag driven by the test, read by the matchMedia stub. */
 let osDark = false;
+/** Listeners the store registered on the media query, so a test can fire an OS switch. */
+let osListeners: Array<(e: { matches: boolean }) => void> = [];
 
 beforeEach(() => {
   osDark = false;
+  osListeners = [];
   localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
   (window as any).matchMedia = vi.fn((query: string) => ({
     matches: query.includes('dark') ? osDark : false,
     media: query,
-    addEventListener: vi.fn(),
+    addEventListener: vi.fn((_t: string, cb: (e: { matches: boolean }) => void) => {
+      osListeners.push(cb);
+    }),
     removeEventListener: vi.fn(),
     addListener: vi.fn(),
     removeListener: vi.fn(),
@@ -19,6 +26,43 @@ beforeEach(() => {
 });
 
 describe('themeStore', () => {
+  it("en mode 'system', un changement d'OS pendant que l'app est ouverte est suivi en direct", () => {
+    osDark = false;
+    themeStore.setPreference('system');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    for (const cb of osListeners) cb({ matches: true });
+    expect(themeStore.isDark).toBe(true);
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it("une préférence explicite ignore un changement d'OS", () => {
+    themeStore.setPreference('light');
+    for (const cb of osListeners) cb({ matches: true });
+    expect(themeStore.isDark).toBe(false);
+  });
+
+  it('le script avant-premier-paint de app.html décide comme le store', () => {
+    const html = readFileSync(resolve(process.cwd(), 'src/app.html'), 'utf8');
+    const script =
+      /<script>\s*\(function \(\) \{\s*try \{\s*var saved = localStorage[\s\S]*?<\/script>/.exec(
+        html
+      );
+    expect(script).not.toBeNull();
+    const body = script![0].replace(/^<script>/, '').replace(/<\/script>$/, '');
+    for (const saved of [null, 'system', 'light', 'dark'] as const) {
+      for (const os of [false, true]) {
+        osDark = os;
+        localStorage.clear();
+        if (saved) localStorage.setItem('canari-theme', saved);
+        document.documentElement.dataset.theme = 'light';
+        new Function(body)();
+        const early = document.documentElement.dataset.theme;
+        themeStore.init();
+        expect(early, `saved=${saved} os=${os}`).toBe(themeStore.isDark ? 'dark' : 'light');
+      }
+    }
+  });
+
   it("setPreference('dark') active le mode sombre, persiste et applique data-theme", () => {
     themeStore.setPreference('dark');
     expect(themeStore.isDark).toBe(true);
@@ -44,14 +88,14 @@ describe('themeStore', () => {
     expect(themeStore.isDark).toBe(false);
   });
 
-  it('toggle() pose une préférence explicite opposée (sort du mode système)', () => {
-    themeStore.setPreference('light');
-    themeStore.toggle();
-    expect(themeStore.preference).toBe('dark');
-    expect(themeStore.isDark).toBe(true);
-    themeStore.toggle();
-    expect(themeStore.preference).toBe('light');
-    expect(themeStore.isDark).toBe(false);
+  it('cycle() parcourt automatique -> clair -> sombre -> automatique', () => {
+    themeStore.setPreference('system');
+    const seen = [themeStore.preference];
+    for (let n = 0; n < 3; n++) {
+      themeStore.cycle();
+      seen.push(themeStore.preference);
+    }
+    expect(seen).toEqual(['system', 'light', 'dark', 'system']);
   });
 
   it("init() sans préférence sauvée → défaut 'system'", () => {

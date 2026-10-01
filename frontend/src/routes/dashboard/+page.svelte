@@ -12,6 +12,7 @@
     User,
     SlidersHorizontal,
     Moon,
+    Monitor,
     Sun,
     LogOut,
     Shield,
@@ -153,14 +154,16 @@
 
       <button
         type="button"
-        onclick={() => themeStore.toggle()}
+        onclick={() => themeStore.cycle()}
         class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.dashboard_theme_title()}
       >
-        {#if themeStore.isDark}
+        {#if themeStore.preference === 'light'}
           <Sun size={22} class="text-text-muted" />
-        {:else}
+        {:else if themeStore.preference === 'dark'}
           <Moon size={22} class="text-text-muted" />
+        {:else}
+          <Monitor size={22} class="text-text-muted" />
         {/if}
         <span class="text-text-main text-sm font-medium">{m.dashboard_theme_btn()}</span>
       </button>
