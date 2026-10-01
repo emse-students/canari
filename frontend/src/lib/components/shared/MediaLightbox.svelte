@@ -263,8 +263,32 @@
     [tx, ty] = clampTranslation(nextTx, nextTy, { ...bounds, scale });
   }
 
+  /**
+   * A VIDEO IS NEVER ZOOMED (user, 2026-10-02: *"les controles video ne doivent pas etre affectes par
+   * le zoom, desactive aussi le clic pour zoomer sur les videos"*). The player sits INSIDE the
+   * transform wrapper, so zooming a video scaled its control bar with it - and a drag that starts on
+   * the `<video>` is the player's, so a zoomed video could not even be panned. Rather than a zoom that
+   * grows the controls and cannot be moved around, a viewer that hosts a player does not zoom: this
+   * is the one function every zoom goes through (wheel, pinch, double-click, double-tap), so the one
+   * place that has to know.
+   */
+  let hostsPlayer = $state(false);
+
+  // Whether a player is in the frame is the CONTENT'S business (`{@render children}`), so it is read
+  // from the DOM, and re-read when the content changes (a gallery swiping from a photo to a clip).
+  $effect(() => {
+    const el = transformEl;
+    if (!el) return;
+    const read = () => (hostsPlayer = !!el.querySelector(VIDEO_PLAYER));
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(el, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  });
+
   /** Zoom around a pivot point expressed in element-center coordinates. */
   function zoomAt(newScale: number, pivotX: number, pivotY: number) {
+    if (hostsPlayer) return;
     const next = zoomAboutPivot({
       scale,
       tx,
@@ -749,7 +773,13 @@
               progress
             )}); transform-origin: center; will-change: transform; touch-action: none; transition: {settling
             ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
-            : 'none'}; cursor: {isDragging ? 'grabbing' : isZoomed ? 'grab' : 'zoom-in'};"
+            : 'none'}; cursor: {isDragging
+            ? 'grabbing'
+            : isZoomed
+              ? 'grab'
+              : hostsPlayer
+                ? 'default'
+                : 'zoom-in'};"
           onclick={(e) => e.stopPropagation()}
           ondblclick={handleDoubleClick}
           ondragstart={refuseNativeDrag}

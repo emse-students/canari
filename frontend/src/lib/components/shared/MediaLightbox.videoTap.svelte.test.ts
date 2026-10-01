@@ -8,11 +8,21 @@
  * controls never answered on most of a phone's screen. A touch that starts inside `[data-video-player]`
  * now keeps its click, which is the player's toggle. A swipe from there is still the viewer's.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
+import { tick } from 'svelte';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import MediaLightbox from './MediaLightbox.svelte';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// The viewer fades out; happy-dom rejects a cancelled animation, see the helper.
+afterAll(adoptTransitionAnimations());
 
 const mounted: (() => void)[] = [];
+
+const photo = createRawSnippet(() => ({
+  render: () =>
+    '<div><img id="photo" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" /></div>',
+}));
 
 const content = createRawSnippet(() => ({
   render: () =>
@@ -24,10 +34,10 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function open(): void {
+function open(children = content): void {
   const instance = mount(MediaLightbox, {
     target: document.body,
-    props: { open: true, onClose: () => {}, children: content },
+    props: { open: true, onClose: () => {}, children },
   });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -58,5 +68,66 @@ describe('MediaLightbox - a tap inside a video player', () => {
     open();
     const end = tap(document.getElementById('picture')!);
     expect(end.defaultPrevented, 'the viewer handles it').toBe(true);
+  });
+});
+
+/**
+ * A VIDEO IS NEVER ZOOMED (user, 2026-10-02: *"les controles video ne doivent pas etre affectes par
+ * le zoom, desactive aussi le clic pour zoomer sur les videos"*). The player sits inside the
+ * transform wrapper, so a zoom scaled its control bar with it. Every zoom goes through `zoomAt`; it
+ * refuses while the frame holds a player. A photo still zooms - the control case.
+ */
+describe('MediaLightbox - zoom', () => {
+  const frame = () =>
+    document.querySelector<HTMLElement>('[role="presentation"][style*="scale("]')!;
+  const scaleOf = () => Number(/scale\(([\d.]+)\)/.exec(frame().style.transform)?.[1] ?? 1);
+  const wheelUp = () =>
+    frame().dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -800, bubbles: true, cancelable: true })
+    );
+  const doubleClick = (target: Element) =>
+    target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+
+  it('zooms a photo on the wheel and on a double-click (the control case)', async () => {
+    open(photo);
+    await tick();
+    wheelUp();
+    flushSync();
+    expect(scaleOf()).toBeGreaterThan(1);
+  });
+
+  it('zooms a photo on a double-click', async () => {
+    open(photo);
+    await tick();
+    doubleClick(document.getElementById('photo')!);
+    flushSync();
+    expect(scaleOf()).toBeGreaterThan(1);
+  });
+
+  it('does not zoom a video on the wheel', async () => {
+    open();
+    await tick();
+    wheelUp();
+    flushSync();
+    expect(scaleOf()).toBe(1);
+  });
+
+  it('does not zoom a video on a double-click, on the picture or on the margin', async () => {
+    open();
+    await tick();
+    doubleClick(document.getElementById('player')!);
+    doubleClick(document.getElementById('picture')!);
+    flushSync();
+    expect(scaleOf()).toBe(1);
+  });
+
+  it('does not offer the zoom-in cursor over a video', async () => {
+    open();
+    await tick();
+    expect(frame().style.cursor).not.toBe('zoom-in');
+    document.body.innerHTML = '';
+    open(photo);
+    await tick();
+    expect(frame().style.cursor).toBe('zoom-in');
   });
 });

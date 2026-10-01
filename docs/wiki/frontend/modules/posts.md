@@ -747,6 +747,17 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   of the screen. Verified in Chromium on a recorded portrait clip in the open viewer: the controls fade,
   a mouse move over the side margin brings them back, a touch tap on the margin toggles them both ways;
   `MediaLightbox.videoTap.svelte.test.ts` is red on the old viewer.
+- **A video is never zoomed** (user, 2026-10-02: *"les controles video ne doivent pas etre affectes par
+  le zoom, desactive aussi le clic pour zoomer sur les videos"*). The player sits INSIDE the viewer's
+  transform wrapper, so a zoom scaled the control bar with it - and a drag that starts on the `<video>`
+  is the player's, so a zoomed clip could not even be panned. The viewer reads whether its frame holds a
+  `[data-video-player]` (`hostsPlayer`, a `MutationObserver`, since the content is `{@render children}`
+  and a gallery swipes from a photo to a clip) and `zoomAt` - the one function wheel, pinch,
+  double-click and double-tap all go through - refuses while it does. The `zoom-in` cursor goes with it.
+  A photo zooms as before. The alternative - zooming only the `<video>` and keeping the bar on the
+  screen - was not built: it needs the player to know the viewer's transform, for a zoom the player
+  could not pan anyway. Verified in Chromium on a real clip: six wheel ticks and two double-clicks
+  leave the bar at 1000x84 and the scale at 1.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
   until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
