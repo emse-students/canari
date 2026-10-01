@@ -67,12 +67,6 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
-  # The name a PRODUCTION build must bake - the canonical one, NOT `serve-prod.yml`'s `DOMAIN`,
-  # which is the legacy apex on purpose (it feeds ALLOW_ORIGIN, where the old name must stay). The
-  # two meant different things under one name, and the day `BASE_URL` moved to `canari.emse.fr`
-  # this assertion refused the v0.18.24 stable as `unknown` (2026-09-25).
-  PROD_DOMAIN: canari.emse.fr
-  DEV_DOMAIN: dev.canari-emse.fr
 
 jobs:
   # THE DECISION IS MADE ONCE, IN `release.yml`, AND HANDED DOWN.
@@ -287,8 +281,6 @@ jobs:
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
-          EXPECTED_PROD_DOMAIN: ${{ env.PROD_DOMAIN }}
-          EXPECTED_DEV_DOMAIN: ${{ env.DEV_DOMAIN }}
         run: |
           set -euo pipefail
 
@@ -309,11 +301,9 @@ jobs:
           # is wiped every Monday. Neither failure is visible in a green pipeline. The secrets are
           # selected by the release just above, so the only way to reach here wrong is a secret that
           # holds the other environment's URL - which is exactly what this catches.
-          case "$APP_URL" in
-            *"$EXPECTED_DEV_DOMAIN"*) URL_ENVIRONMENT=dev ;;
-            *"$EXPECTED_PROD_DOMAIN"*) URL_ENVIRONMENT=production ;;
-            *) URL_ENVIRONMENT=unknown ;;
-          esac
+          # The names live in ONE function, shared with `android.yml` and `ios.yml`.
+          source ../.github/scripts/lib/backend-url.sh
+          URL_ENVIRONMENT="$(classify_backend_url "$APP_URL")"
           # ONE COMPARISON, BECAUSE BOTH SIDES NOW SPEAK THE SAME VOCABULARY. This was two
           # branches - one per release kind - each restating which domain that kind expects, which
           # is the same fact written twice and drifting independently. `ESTATE` names the estate
@@ -321,7 +311,7 @@ jobs:
           # so the assertion is simply that they agree. It also catches `unknown`, which the two
           # branches only caught by accident.
           if [ "$URL_ENVIRONMENT" != "$ESTATE" ]; then
-            echo "::error::This build is for the ${ESTATE} estate, but its backend URL resolved to ${URL_ENVIRONMENT} (expected a host under ${EXPECTED_DEV_DOMAIN} for dev, or ${EXPECTED_PROD_DOMAIN} for production). Refusing to build an estate pointing anywhere else."
+            echo "::error::This build is for the ${ESTATE} estate, but its backend URL resolved to ${URL_ENVIRONMENT} (the names each estate accepts are in .github/scripts/lib/backend-url.sh). Refusing to build an estate pointing anywhere else."
             exit 1
           fi
           echo "Building the ${URL_ENVIRONMENT} frontend against ${APP_URL}"

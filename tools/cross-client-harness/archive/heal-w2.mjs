@@ -274,7 +274,7 @@ const gotBroken = await seen(w1, 'HW2B', 180_000);
 // so a run whose restore had been checkpointed back over could still return PASS - a verdict about
 // a break that never happened. It is now SETUP-FAILED, which is not a failure of the app.
 const lines = consoleLines(w1);
-const unknown = lines.filter((l) => /welcome_request sent for unknown group/i.test(l));
+const unknown = lines.filter((l) => /(?:recovery started|welcome_request sent) for unknown group/i.test(l));
 const lostFrame = lines.filter((l) => /\[MLS\] LOST frame for/i.test(l));
 const recovery = lines.filter((l) => /Out-of-sync for|Recovery attempt finished|external join|requestReAdd|caught up for/i.test(l));
 const drainStart = lines.filter((l) => /\[QUEUE\] Drain start/.test(l)).length;

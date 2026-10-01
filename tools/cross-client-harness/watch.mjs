@@ -1102,9 +1102,10 @@ const NOTABLE = [
   /^\[QUEUE\] (?:Welcome complete|Welcome failed|stranded buffer): re-queued \d+ buffered message\(s\) for \S+$/,
   // THE OTHER HALF OF THAT LEDGER - A FRAME BEING SET ASIDE, which is where the re-fetch below gets
   // its list from. `UnackedReason` has exactly two values and each is noted at its own site, but
-  // only ONE of the two lines had a rule: `unknown-group`'s reads `[BUFFER] welcome_request sent
-  // for unknown group ...` and is claimed INCIDENTALLY by the generic `/...|welcome_request/i`
-  // keyword above, on the strength of a word. `absent-conversation`'s carries no such word, so the
+  // only ONE of the two lines had a rule: `unknown-group`'s read `[BUFFER] welcome_request sent
+  // for unknown group ...` and was claimed INCIDENTALLY by the generic `/...|welcome_request/i`
+  // keyword above, on the strength of a word (the line now says `recovery started`, since it announced
+  // a send that had not happened, and has its own rule below). `absent-conversation`'s carries no such word, so the
   // identical event in the other half of the same type stayed `unexplained` - GRP-7 pass 3 and
   // GRP-8 pass 5, 2026-08-25, both `PASS-DIRTY` with their assertions held.
   //
@@ -1113,6 +1114,7 @@ const NOTABLE = [
   // timer for exactly that reason). A frame that is never discharged is not this line's to report -
   // `[History] permanently undecryptable` is `SEVERE` and names a real loss.
   /^\[MLS\] Message for absent conversation \S+ - retry after restore$/,
+  /^\[BUFFER\] recovery started for unknown group \S+$/,
   // THE FRAMES EARLIER DRAINS LEFT UNACKNOWLEDGED, asked for again now that the reason they could
   // not be read is gone. Both trigger/reason pairs are enumerated rather than left to `\S+`: the
   // reasons are the whole of `UnackedReason` (`unknown-group`, `absent-conversation`) and the

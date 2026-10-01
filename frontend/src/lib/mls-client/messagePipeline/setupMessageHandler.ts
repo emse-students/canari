@@ -796,7 +796,9 @@ async function handleUnknownGroup({
     startRecovery(groupId);
     buf = { msgs: [] };
     pendingBuffer.set(groupId, buf);
-    log(`[BUFFER] welcome_request sent for unknown group ${groupId.slice(0, 8)}…`);
+    // Says only what is true here: a recovery was STARTED. Whether a `welcome_request` goes out is
+    // `requestReAdd`'s decision (throttle, held group, tombstone, pending) and it logs its own `[READD]` line.
+    log(`[BUFFER] recovery started for unknown group ${groupId.slice(0, 8)}…`);
   }
 
   if (buf.msgs.length < 20) buf.msgs.push({ sender, content });
