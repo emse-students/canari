@@ -812,7 +812,8 @@ attempt until "Pas vous ?" clears it; and WDA's `keys` can insert a stray charac
 field back before submitting** (the first login failed on `canari-test-alphah`, a user that does
 not exist, which Authentik reports as "invalid password").
 
-The Safari Web Inspector cannot see this app: a release archive is not inspectable, by design.
+A STORE archive is not inspectable, by design; a BENCH build (`local_url`) is, through `tauri/devtools`,
+and `pymobiledevice3 webinspector cdp` reaches it from Windows ([cross-client-ios](../cross-client-ios.md)).
 Diagnose from `docker logs canari-local-nginx-1` (the plugin's user agent is
 `tauri-plugin-http`, the WebView's is the iPhone's) and `idevicesyslog`.
 

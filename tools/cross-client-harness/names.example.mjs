@@ -82,7 +82,7 @@ export const SITE = "http://localhost:8081";
  * account-level, so the fresh device enters the same one. `newdevice.mjs` refuses any other device
  * by name - see its `WIPEABLE`.
  */
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335 };
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335, I1: 9444 };
 
 /**
  * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
@@ -102,6 +102,13 @@ export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335 };
 export const SERIAL_OF = { A1: "<adb serial of the first phone>", A2: "<adb serial of the second>" };
 
 /**
+ * WHICH iPHONE EACH `I*` NAME IS - its UDID, as `pymobiledevice3 usbmux list` prints it. A device id,
+ * so out of tree like `SERIAL_OF`. `PORTS.I1` is the port `pymobiledevice3 webinspector cdp --port`
+ * serves the WebKit inspector bridge on (`phone-ios.mjs`; docs/wiki/cross-client-ios.md).
+ */
+export const UDID_OF = { I1: "<UDID of the iPhone>" };
+
+/**
  * WHERE EACH DEVICE'S APP LIVES. The phone's is NOT the site's.
  *
  * The mobile app serves its own frontend from `tauri.localhost`, and the Tauri capability allowlist
@@ -114,7 +121,7 @@ export const SERIAL_OF = { A1: "<adb serial of the first phone>", A2: "<adb seri
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -127,6 +134,7 @@ export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhos
 export const ACCOUNT_OF = {
   W1: "<owner key>",
   A1: "<owner key>",
+  I1: "<owner key>",
   W3: "<owner key>",
   W2: "<peer key>",
 };

@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-66 scripts.
+72 scripts.
 
 | script | what it is |
 |---|---|
@@ -62,10 +62,15 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
 | `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
 | `newgroup.mjs` | Creates a group conversation, and reports the surface that adds a member to it. |
+| `notif-bodies.mjs` | The exact bodies the native push code renders when it could NOT decrypt - one list for BOTH phones. |
 | `overlay-probe.mjs` | THE ONE EXPRESSION THAT ANSWERS "what is covering the screen right now" - page source, kept PURE. |
 | `ownedpaths.mjs` | THE SET OF PATHS THE APPLICATION OWNS, READ FROM THE TREE, AND THE 404 RULE THAT FOLLOWS FROM IT. |
+| `phone-any.mjs` | THE PHONE A ROW DRIVES, CHOSEN BY `CANARI_PHONE` - `phone.mjs` (Android, the default) or |
+| `phone-ios.mjs` | The iPhone, as seen from a check - `phone.mjs`'s interface, name for name and sync for sync, over |
+| `phone-platform.mjs` | WHICH PHONE PLATFORM A RUN DRIVES - `CANARI_PHONE=android` (the default) or `CANARI_PHONE=ios`. |
 | `phone.mjs` | The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
 | `pin.mjs` | Enters the encryption PIN in the web unlock modal, over CDP. |
+| `pinspawn.mjs` | Unlocks a PHONE's encryption PIN by spawning `pin.mjs` - the one implementation both phone modules |
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
 | `recv.mjs` | Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
@@ -88,6 +93,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
 | `verdicts.mjs` | THE VERDICT VOCABULARY, IN ONE PLACE, BECAUSE TWO COPIES DRIFTED TWICE. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
+| `webkit-console.mjs` | THE iPHONE'S CONSOLE IN THE SHAPE THE CLASSIFIER READS - WebKit's `Console.messageAdded` as CDP's |
 
 ## Primitives that carry their own row
 
@@ -191,7 +197,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-34 scripts.
+35 scripts.
 
 | script | what it is |
 |---|---|
@@ -215,6 +221,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
 | `archive/origin-selftest.mjs` | NO CHECK MAY SPELL THE APPLICATION'S ORIGIN. `SITE` IS WHERE THE ESTATE IS NAMED. |
 | `archive/ownedpaths-selftest.mjs` | Pins `ownedpaths.mjs`: a 404 outside the application's route/static set is a scanner's guess, a 404 |
+| `archive/phone-ios-selftest.mjs` | THE iPHONE ADAPTER KEEPS THE ANDROID PHONE'S CONTRACT - pinned with no phone, no WDA and no names.mjs. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
@@ -283,4 +290,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-222 scripts in total.
+229 scripts in total.

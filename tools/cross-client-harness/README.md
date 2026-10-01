@@ -45,6 +45,11 @@ Nothing else knows the split exists.
 | **W1** | Desktop Chrome, `owner`        | CDP on `localhost:9224`                              |
 | **W2** | Desktop Chrome, `peer`         | CDP on `localhost:9223`                              |
 | **A1** | The Tauri WebView on the phone | CDP on `localhost:9333` via `adb forward`            |
+| **I1** | The Tauri WebView on the iPhone | the WebKit inspector bridge on `localhost:9444` (`pymobiledevice3 webinspector cdp`), WDA for the rest |
+
+**The iPhone is `CANARI_PHONE=ios`**: `phone-any.mjs` then hands a row `phone-ios.mjs`, which keeps
+`phone.mjs`'s interface over WDA, Notification Center and the syslog. Which rows run on it, and what
+each still needs, is [cross-client-ios](../../docs/wiki/cross-client-ios.md).
 
 One driver (`cdp.mjs`) speaks to all three - the WebView is a Chrome target like any other. `a1.py`
 is only for surfaces the WebView cannot reach (the notification shade, the system PIN, the launcher).
