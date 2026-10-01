@@ -75,4 +75,37 @@ describe('swipeBack', () => {
 
     expect(onBack).toHaveBeenCalledTimes(1);
   });
+
+  it('does not arm while text is selected, and abandons a drag a selection takes over', () => {
+    const node = document.createElement('section');
+    node.appendChild(document.createElement('div'));
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+    const selecting = { rangeCount: 1, isCollapsed: false, toString: () => 'copy me' };
+    const none = { rangeCount: 0, isCollapsed: true, toString: () => '' };
+    const spy = vi.spyOn(window, 'getSelection');
+
+    // A selection that exists at touchstart: the touch is a handle drag, nothing arms.
+    spy.mockReturnValue(selecting as unknown as Selection);
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchmove', 120);
+    touch(node, 'touchend', 120);
+    node.dispatchEvent(new Event('transitionend'));
+    expect(node.style.transform).toBe('');
+    expect(onBack).not.toHaveBeenCalled();
+
+    // A selection that appears mid-drag: the page snaps back and the release cannot go back.
+    spy.mockReturnValue(none as unknown as Selection);
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchmove', 60);
+    expect(node.style.transform).toContain('translate3d');
+    spy.mockReturnValue(selecting as unknown as Selection);
+    touch(node, 'touchmove', 120);
+    touch(node, 'touchend', 120);
+    node.dispatchEvent(new Event('transitionend'));
+    expect(node.style.transform).toBe('');
+    expect(onBack).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });

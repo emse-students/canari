@@ -50,6 +50,7 @@
     updateReplySwipeGesture,
     type ReplySwipeGestureState,
   } from '$lib/utils/messageSwipeReply';
+  import { hasActiveTextSelection } from '$lib/utils/textSelection';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
 
   interface Props {
@@ -449,12 +450,23 @@
     }
 
     if (!canSwipeReply(pointerType)) return;
+    // A touch that lands on a live selection is dragging the selection, not the bubble.
+    if (hasActiveTextSelection()) return;
     replyGesture = createReplySwipeGesture(x, y);
   }
 
   function handleSwipeReply(e: PointerEvent | TouchEvent) {
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
     if (!canSwipeReply(pointerType) || swipeHandled || !replyGesture) return;
+
+    // The long press that opens a selection keeps its finger, and the drag then extends the range:
+    // abandon the reply swipe (bubble back to rest) rather than let that stroke become a reply.
+    if (hasActiveTextSelection()) {
+      replyGesture = null;
+      replyDragPx = 0;
+      cancelLongPress();
+      return;
+    }
 
     const { x, y } = pointerCoords(e);
     const updated = updateReplySwipeGesture(replyGesture, x, y);
