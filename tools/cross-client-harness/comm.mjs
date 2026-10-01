@@ -31,6 +31,16 @@ import {
   until,
 } from './chat.mjs';
 import { answeringDialogs, RESOLVE } from './cdp.mjs';
+import {
+  currentLabelOf,
+  decidePickerChoice,
+  markOptionJs,
+  OPTION_MARK,
+  PICKER_IS_OPEN,
+  PICKER_OPTIONS_JS,
+  triggerByLabel,
+  UNMARK_OPTION_JS,
+} from './picker.mjs';
 
 // THE MESSAGE-FILE READERS ARE A PURE MODULE, and re-exported here so no caller moved. See
 // `messages.mjs` for why they could not stay in this file.
@@ -576,12 +586,12 @@ export async function channelAccessState(cx) {
                return (li.innerText || '').split(String.fromCharCode(10))[0].trim();
              })
            : [];
-         var sel = document.querySelector('select');
+         var trig = document.querySelector(${JSON.stringify(WRITE_POLICY_TRIGGER())});
          return JSON.stringify({
            up: true,
            isPrivate: sw ? sw.getAttribute('aria-checked') === 'true' : null,
            allowed: allowed,
-           writePolicy: sel ? sel.value : null,
+           writePolicyLabel: trig ? trig.getAttribute('aria-label') : null,
          });
        })()`
     )
@@ -592,8 +602,8 @@ export async function channelAccessState(cx) {
         'private salon, so this refuses instead: reopen it with openChannelAccess (or inPanel)'
     );
   }
-  const { up: _up, ...panel } = state;
-  return panel;
+  const { up: _up, writePolicyLabel, ...panel } = state;
+  return { ...panel, writePolicy: writePolicyFromAriaLabel(writePolicyLabel) };
 }
 
 /**
@@ -636,12 +646,16 @@ export async function setChannelPrivate(cx, wanted) {
 export async function setChannelWritePolicy(cx, policy) {
   const before = await channelAccessState(cx);
   if (before.writePolicy === policy) return false;
-  await chooseOption(cx, 'select', policy);
+  const wanted = writePolicyLabels()[policy];
+  if (wanted === undefined) throw new Error(`setChannelWritePolicy: unknown policy '${policy}'`);
+  await chooseOption(cx, WRITE_POLICY_TRIGGER(), wanted);
   await until(
     cx,
     `(function () {
-       var sel = document.querySelector('select');
-       return !!sel && sel.value === ${JSON.stringify(policy)};
+       var trig = document.querySelector(${JSON.stringify(WRITE_POLICY_TRIGGER())});
+       return !!trig && trig.getAttribute('aria-label') === ${JSON.stringify(
+         `${caption('chat_channel_who_can_write')} - ${wanted}`
+       )};
      })()`,
     5000
   );
@@ -824,37 +838,104 @@ export async function saveChannelAccess(cx) {
   return clearOverlays(cx);
 }
 
+/** Who may write in a salon: option value -> the label the app draws, from its own messages. */
+const writePolicyLabels = () => ({
+  everyone: caption('chat_channel_write_everyone'),
+  admins_moderators: caption('chat_channel_write_admins_mods'),
+  admins: caption('chat_channel_write_admins'),
+});
+
+/** A community role: option value -> the label the app draws, from its own messages. */
+const roleLabels = () => ({
+  member: caption('chat_role_member'),
+  moderator: caption('chat_role_moderator'),
+  admin: caption('chat_role_admin'),
+});
+
+/** The history rule a newcomer reads under: option value -> the label the app draws. */
+const historyOptionLabels = () => ({
+  shared: caption('chat_community_history_shared_option'),
+  joined: caption('chat_community_history_joined_option'),
+});
+
+/** The salon access panel's "who can write" trigger, found by the picker's own label. */
+const WRITE_POLICY_TRIGGER = () => triggerByLabel(caption('chat_channel_who_can_write'));
+/** The community panel's history-rule trigger, found by the picker's own label. */
+const HISTORY_TRIGGER = () => triggerByLabel(caption('chat_community_history_visibility_label'));
+/** Every role trigger in the members tab: the invite's, and one per member. */
+const ROLE_TRIGGER = () => triggerByLabel(caption('chat_assign_role_label'));
+
 /**
- * Chooses a value in a native `<select>`, and makes the app hear it.
- *
- * A NATIVE SELECT CANNOT BE CLICKED THROUGH CDP: the option list is drawn by the operating system,
- * outside the page, so there is nothing to hit-test and `realClick` on an `<option>` finds nothing.
- * The value is therefore assigned and a bubbling `change` dispatched, which is precisely the event
- * the `onchange` handler is bound to - so what runs afterwards is the application's own code path,
- * not a shortcut around it.
- *
- * WHAT THIS DOES NOT PROVE, and no check may claim it does: that the option was REACHABLE. A select
- * rendered disabled, or one whose option list the app never populated, is refused here loudly
- * instead of silently succeeding - but "a person could have picked it" is a question for the eyes,
- * not for this gesture.
+ * The write policy VALUE a trigger's accessible name stands for; null when there is no trigger.
+ * THROWS on a label that is no known policy: that is a finding about the app (a fourth policy, or a
+ * reworded message), and reporting it as `null` would read as "the control is absent".
  */
-export async function chooseOption(cx, selector, value) {
-  const outcome = await evaluate(
+function writePolicyFromAriaLabel(ariaLabel) {
+  if (ariaLabel === null) return null;
+  const shown = currentLabelOf(ariaLabel, caption('chat_channel_who_can_write'));
+  const hit = Object.entries(writePolicyLabels()).find(([, label]) => label === shown);
+  if (!hit) {
+    throw new Error(
+      `channelAccessState: the write-policy picker shows ${JSON.stringify(shown)}, which is no known policy`
+    );
+  }
+  return hit[0];
+}
+
+/**
+ * Chooses an option of an in-app Picker (`Picker.svelte`) BY THE LABEL IT DRAWS, as a person does.
+ *
+ * It opens the picker by clicking its trigger, reads what the open list offers, clicks the matching
+ * option through `realClick` (hit-tested, a real pointer gesture) and waits for the list to close.
+ * What runs afterwards is the app's own `onValueChange`, reached by the same gesture a user makes.
+ *
+ * THE OPTION IS NAMED BY ITS LABEL BECAUSE THAT IS ALL THE DOM HAS. The Picker's option buttons carry
+ * no value attribute - the value lives in a closure - so the native-select trick (assign `.value`,
+ * dispatch `change`) has nothing to assign. Callers pass the label from the app's Paraglide messages
+ * (`caption(...)`, `captionWith(...)`), never a copy of it. Refuses, with the reason, when there is
+ * no trigger, the trigger is disabled, the list never opens, or the label is absent, ambiguous or
+ * disabled (see `decidePickerChoice`).
+ *
+ * WHAT THIS DOES NOT PROVE: that the new value was SAVED. The caller waits on its own witness.
+ *
+ * @param cx the client
+ * @param trigger a CSS selector for the picker's trigger button
+ * @param optionLabel the visible label of the option to choose
+ */
+export async function chooseOption(cx, trigger, optionLabel) {
+  const what = `${trigger} := ${JSON.stringify(optionLabel)}`;
+  const state = await evaluate(
     cx,
     `(function () {
-       var el = document.querySelector(${JSON.stringify(selector)});
-       if (!el) return 'no-select';
-       if (el.disabled) return 'disabled';
-       var has = [].slice.call(el.options).some(function (o) { return o.value === ${JSON.stringify(value)}; });
-       if (!has) return 'no-option:' + [].slice.call(el.options).map(function (o) { return o.value; }).join(',');
-       el.value = ${JSON.stringify(value)};
-       el.dispatchEvent(new Event('change', { bubbles: true }));
-       return 'chosen';
+       var t = document.querySelector(${JSON.stringify(trigger)});
+       if (!t) return 'no-trigger';
+       if (t.disabled) return 'disabled';
+       return 'ok';
      })()`
   );
-  if (outcome !== 'chosen') {
-    throw new Error(`chooseOption: ${outcome} for ${selector} := ${value}`);
+  if (state !== 'ok') throw new Error(`chooseOption: ${state} for ${what}`);
+
+  await realClick(cx, trigger);
+  const opened = await until(cx, PICKER_IS_OPEN, 5000).then(
+    () => true,
+    () => false
+  );
+  if (!opened) throw new Error(`chooseOption: the picker never opened for ${what}`);
+
+  const offered = JSON.parse(await evaluate(cx, PICKER_OPTIONS_JS));
+  const choice = decidePickerChoice(offered, optionLabel);
+  if (!choice.ok) throw new Error(`chooseOption: ${choice.reason} for ${what}`);
+
+  try {
+    const marked = await evaluate(cx, markOptionJs(choice.index));
+    if (marked !== 'marked') throw new Error(`chooseOption: the option vanished for ${what}`);
+    await realClick(cx, `[${OPTION_MARK}]`);
+  } finally {
+    await evaluate(cx, UNMARK_OPTION_JS).catch(() => null);
   }
+  await until(cx, `!(${PICKER_IS_OPEN})`, 5000).catch(() => {
+    throw new Error(`chooseOption: the picker stayed open after choosing for ${what}`);
+  });
 }
 
 /**
@@ -877,7 +958,7 @@ async function markMemberRow(cx, displayName) {
        var all = [].slice.call(document.querySelectorAll('div, li, tr'));
        var rows = all.filter(function (el) {
          if ((el.innerText || '').indexOf(name) < 0) return false;
-         if (el.querySelectorAll('select').length !== 1) return false;
+         if (el.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())}).length !== 1) return false;
          // Never the invite row, which shows the name of whoever the autocomplete has selected and
          // would hand a caller the invitation control where it asked for a member's.
          return !el.querySelector('input');
@@ -899,8 +980,8 @@ async function markMemberRow(cx, displayName) {
  * The community's members as the modal shows them: `[{ name, role, readFrom }]`.
  *
  * THE ROLE IS READ FROM WHICHEVER CONTROL THIS VIEWER GETS, and the two are not the same evidence.
- * Someone who may manage the community sees a `<select>` whose VALUE is the role, straight from the
- * server; everyone else sees a badge whose TEXT is the role's translated label. Both are reported
+ * Someone who may manage the community sees a role Picker whose accessible name carries the role's
+ * label (mapped back to the role); everyone else sees a badge whose TEXT is the role's translated label. Both are reported
  * through one shape and the caller is told which by `readFrom`, because a check asserting on a badge
  * is also asserting on `fr.json` - and a check that cannot tell the two apart will one day report
  * "the promotion did not happen" for a client that simply is not an admin.
@@ -915,15 +996,19 @@ export async function communityMembers(cx) {
        byRole[${JSON.stringify(caption('chat_role_moderator'))}] = 'moderator';
        byRole[${JSON.stringify(caption('chat_role_member'))}] = 'member';
 
-       // THE ROW IS THE FIRST ANCESTOR THAT SAYS MORE THAN THE CONTROL DOES. A native select's
-       // innerText is ALL of its options ("Membre/Moderateur/Administrateur"), and the two wrappers
-       // above it repeat exactly that - which is why "the smallest element holding one select" found
-       // a wrapper and reported every member as being called "Membre". Walking up until the text
-       // CHANGES lands on the row, whatever it is styled as, and what changed is the name.
+       // THE ROW IS THE FIRST ANCESTOR THAT SAYS MORE THAN THE CONTROL DOES. The role control's own
+       // text is just the chosen label, and the wrappers above it repeat exactly that - which is why
+       // "the smallest element holding one control" found a wrapper and reported every member as
+       // being called "Membre". Walking up until the text CHANGES lands on the row, whatever it is
+       // styled as, and what changed is the name.
+       //
+       // THE ROLE IS READ FROM THE TRIGGER'S ACCESSIBLE NAME ("<label> - <chosen role>"): the
+       // Picker keeps no value in the DOM, only the label it draws, so the label is mapped back.
+       var rolePrefix = ${JSON.stringify(caption('chat_assign_role_label') + ' - ')};
        var out = [];
-       [].slice.call(document.querySelectorAll('select')).forEach(function (sel) {
-         var opts = [].slice.call(sel.options).map(function (o) { return o.value; });
-         if (opts.indexOf('moderator') < 0 || opts.indexOf('admin') < 0) return;
+       [].slice.call(document.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())})).forEach(function (sel) {
+         var shown = (sel.getAttribute('aria-label') || '').slice(rolePrefix.length);
+         if (byRole[shown] === undefined) return;
 
          var selText = (sel.innerText || '').trim();
          var row = sel.parentElement;
@@ -937,7 +1022,7 @@ export async function communityMembers(cx) {
 
          var name = (row.innerText || '').replace(selText, '').trim().split(NL)[0].trim();
          if (!name) return;
-         out.push({ name: name, role: sel.value, readFrom: 'select' });
+         out.push({ name: name, role: byRole[shown], readFrom: 'picker' });
        });
        if (out.length) return JSON.stringify(out);
 
@@ -1000,7 +1085,7 @@ export async function openCommunityMembers(cx) {
     cx,
     `(function () {
        if (!${saysCount}) return false;
-       return document.querySelectorAll('select').length > 1;
+       return document.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())}).length > 1;
      })()`,
     20000
   ).catch(() => {});
@@ -1010,7 +1095,7 @@ export async function openCommunityMembers(cx) {
 /**
  * Sets a member's community role, and waits for the app to stop saving it.
  *
- * THE RE-ENABLED CONTROL IS THE WITNESS, not the choosing: the handler disables the select, sends
+ * THE RE-ENABLED CONTROL IS THE WITNESS, not the choosing: the handler disables the picker, sends
  * the request and re-enables it. A check that reads the roster the instant it has chosen reads back
  * the value it typed in, which is a statement about the harness and not about the server.
  */
@@ -1020,7 +1105,7 @@ export async function setMemberRole(cx, displayName, role) {
   }
   const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
-  await chooseOption(cx, `${row} select`, role);
+  await chooseOption(cx, `${row} ${ROLE_TRIGGER()}`, roleLabels()[role]);
 
   // WAITED FOR ON THE ROSTER, NEVER ON THE CONTROL. The first version waited for
   // `!(document.querySelector(row + ' select') || {}).disabled` - which is TRUE the moment the row
@@ -1054,13 +1139,14 @@ async function awaitMemberRole(cx, displayName, role, timeoutMs = 20000) {
 /**
  * Removes a member from the community outright, answering the confirmation it raises.
  *
- * The row's only BUTTON is the removal - the role control beside it is a `<select>` - which is what
- * makes addressing it structurally safe: there is nothing else in the row to click by accident.
+ * The row's only button that is not a Picker trigger is the removal - the role control beside it is
+ * a Picker - which is what makes addressing it structurally safe: nothing else in the row is a plain
+ * button to click by accident.
  */
 export async function removeCommunityMember(cx, displayName) {
   const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
-  await realClick(cx, `${row} button`);
+  await realClick(cx, `${row} button:not([aria-haspopup="listbox"])`);
   await confirmDialog(cx, 'common_remove_label');
 
   // GONE FROM A ROSTER THAT STILL HAS PEOPLE IN IT. "The marked row no longer names them" is also
@@ -1094,22 +1180,23 @@ export async function inviteToCommunity(cx, displayName, role = 'member') {
   await until(cx, `!!${RESOLVE}('text=${displayName}')`, 10000);
   await realClick(cx, `text=${displayName}`);
 
-  // The invite row's select is the one that is NOT inside a member row, and the autocomplete input
-  // carries the only stable id on the modal - so the row is reached from it rather than by counting.
-  const inviteSelect = await evaluate(
+  // The invite row's role picker is the one that is NOT inside a member row, and the autocomplete
+  // input carries the only stable id on the modal - so the row is reached from it, not by counting.
+  const inviteTrigger = await evaluate(
     cx,
     `(function () {
        var input = document.querySelector('#community-invite-autocomplete');
        if (!input) return 'no-input';
+       var sel = ${JSON.stringify(ROLE_TRIGGER())};
        var box = input;
-       while (box && box.querySelectorAll('select').length === 0) box = box.parentElement;
-       if (!box) return 'no-select';
-       box.querySelector('select').setAttribute('data-harness-invite-role', '1');
+       while (box && box.querySelectorAll(sel).length === 0) box = box.parentElement;
+       if (!box) return 'no-role-picker';
+       box.querySelector(sel).setAttribute('data-harness-invite-role', '1');
        return 'marked';
      })()`
   );
-  if (inviteSelect !== 'marked') throw new Error(`inviteToCommunity: ${inviteSelect}`);
-  await chooseOption(cx, '[data-harness-invite-role]', role);
+  if (inviteTrigger !== 'marked') throw new Error(`inviteToCommunity: ${inviteTrigger}`);
+  await chooseOption(cx, '[data-harness-invite-role]', roleLabels()[role]);
   await realClick(cx, control('chat_community_generate_invite_button'));
 
   // The click returns long before the request does, so the SENDING label is waited out rather than
@@ -1246,86 +1333,36 @@ export async function acceptInviteLink(cx) {
  * {@link rotateInvite}. A check that set a cap and asserted on the link already on screen would be
  * asserting about a token minted before the cap existed.
  *
- * THE SELECTS ARE FOUND BY THEIR LABEL, and marked for one call. They carry no id, no name and no
- * test hook, and there are two of them side by side - so an index would silently swap expiry for
- * uses the day a third bound is added, which is a check that passes while measuring the wrong
- * control. The marker attribute is set and removed inside this gesture; nothing outside it ever
- * sees the DOM changed.
+ * THE TWO PICKERS ARE FOUND BY THEIR ids (`community-share-expiry`, `community-share-max-uses`),
+ * which the panel gives the triggers so their `<label for>` can point at them - so an index could
+ * never swap expiry for uses. The OPTION is chosen by its drawn label, read from the app's own
+ * messages: `0` is the app's value for "never" / "unlimited" and has its own wording.
  *
  * @param opts `{ expiryDays, maxUses }` - `0` is the app's own value for "never" / "unlimited",
  *   and omitting a key leaves that control alone
  */
-/**
- * Chooses a value in whichever `<select>` a search expression finds, and leaves the DOM as it was.
- *
- * THE SELECTS IN THE COMMUNITY PANEL CARRY NO ID, NO NAME AND NO TEST HOOK, and there are several of
- * them - invite expiry, invite uses, history visibility - so each has to be identified by something.
- * WHAT that something is differs per control and is the caller's business; the marking, the choosing
- * and the unmarking do not differ at all, and are here.
- *
- * `find` is a JS expression evaluated in the page, returning the element or a falsy value. The marker
- * attribute exists only for the duration of this call, so nothing outside it ever observes the DOM
- * changed - and it is removed in a `finally`, or a failed choice would poison every later pick.
- *
- * @param who the caller's name, so a failure says which control was not found
- */
-async function pickSelect(cx, find, value, who) {
-  const found = await evaluate(
-    cx,
-    `(function () {
-       var el = ${find};
-       if (!el) return 'not-found';
-       el.setAttribute('data-harness-pick', '');
-       return 'ok';
-     })()`
-  );
-  if (found !== 'ok') throw new Error(`${who}: no select matched`);
-  try {
-    await chooseOption(cx, 'select[data-harness-pick]', String(value));
-  } finally {
-    await evaluate(
-      cx,
-      `(function () {
-         var s = document.querySelector('select[data-harness-pick]');
-         if (s) s.removeAttribute('data-harness-pick');
-         return 'ok';
-       })()`
-    );
-  }
-}
-
-/** The `<select>` inside the `<label>` whose text opens with `labelText`. */
-const selectUnderLabel = (labelText) =>
-  `(function () {
-     var labels = [].slice.call(document.querySelectorAll('label'));
-     for (var i = 0; i < labels.length; i++) {
-       if ((labels[i].innerText || '').trim().indexOf(${JSON.stringify(labelText)}) !== 0) continue;
-       var s = labels[i].querySelector('select');
-       if (s) return s;
-     }
-     return null;
-   })()`;
-
-/**
- * The one `<select>` offering exactly this set of option VALUES.
- *
- * STRONGER THAN ANY LABEL, where it applies. An option's value is the token sent to the server and
- * stored in the column - it is the contract, and changing it is a migration. The captions beside it
- * are prose the product rewords freely, and the history control's caption is not even inside its
- * `<label>`: it sits in a sibling paragraph, so the label-based search finds nothing at all there.
- */
-const selectOffering = (values) =>
-  `[].slice.call(document.querySelectorAll('select')).filter(function (s) {
-     var v = [].slice.call(s.options).map(function (o) { return o.value; });
-     return ${JSON.stringify(values)}.every(function (w) { return v.indexOf(w) >= 0; });
-   })[0]`;
-
 export async function setInviteBounds(cx, { expiryDays = null, maxUses = null } = {}) {
   await communityTab(cx, 'members');
-  const pick = (key, value) =>
-    pickSelect(cx, selectUnderLabel(caption(key)), value, 'setInviteBounds');
-  if (expiryDays !== null) await pick('chat_community_invite_expiry_label', expiryDays);
-  if (maxUses !== null) await pick('chat_community_invite_max_uses_label', maxUses);
+  if (expiryDays !== null) {
+    const days = Number(expiryDays);
+    await chooseOption(
+      cx,
+      '#community-share-expiry',
+      days === 0
+        ? caption('chat_community_invite_expiry_never')
+        : captionWith('chat_community_invite_expiry_days', { days })
+    );
+  }
+  if (maxUses !== null) {
+    const count = Number(maxUses);
+    await chooseOption(
+      cx,
+      '#community-share-max-uses',
+      count === 0
+        ? caption('chat_community_invite_max_uses_unlimited')
+        : captionWith('chat_community_invite_max_uses_count', { count })
+    );
+  }
 }
 
 /**
@@ -1349,14 +1386,13 @@ export async function setHistoryVisibility(cx, visibility) {
     throw new Error(`setHistoryVisibility: '${visibility}' is neither 'shared' nor 'joined'`);
   }
   await communityTab(cx, 'overview');
-  await pickSelect(cx, selectOffering(['shared', 'joined']), visibility, 'setHistoryVisibility');
+  await chooseOption(cx, HISTORY_TRIGGER(), historyOptionLabels()[visibility]);
 
-  // THE SAVE IS NOT THE GESTURE, AND THE SELECT IS NOT THE PROOF. The change handler fires a PATCH
+  // THE SAVE IS NOT THE GESTURE, AND THE PICKER IS NOT THE PROOF. The change handler fires a PATCH
   // and applies nothing until the server has accepted it, so returning here would hand the caller a
   // request in flight; COMM-12 read the column immediately afterwards and recorded the value it had
-  // just asked to replace. And the control cannot be the witness: the option was assigned by this
-  // harness, so it reads back as the wanted value whether the save landed, is pending, or was
-  // refused - the three outcomes it exists to tell apart.
+  // just asked to replace. And the trigger cannot be the witness: it draws a label, not whether a
+  // save landed, is pending, or was refused - the three outcomes it exists to tell apart.
   await savedHistoryVisibility(cx, visibility);
   return clearOverlays(cx);
 }
@@ -1364,7 +1400,7 @@ export async function setHistoryVisibility(cx, visibility) {
 /**
  * Blocks until the history card SHOWS the requested rule, or says why it will not.
  *
- * The note under the select is drawn from the component's own state, which moves only once the
+ * The note under the picker is drawn from the component's own state, which moves only once the
  * server has answered - so it is the one thing on screen that separates a landed save from a
  * pending one. A refusal is read from the error line beside it and raised in its own
  * words, because a timeout would report "it never took" for a rule the server explicitly declined.
@@ -1378,7 +1414,7 @@ async function savedHistoryVisibility(cx, visibility, timeoutMs = 15000) {
   });
   const state = `(function () {
      var notes = ${notes};
-     var s = ${selectOffering(['shared', 'joined'])};
+     var s = document.querySelector(${JSON.stringify(HISTORY_TRIGGER())});
      if (!s) return 'no-control';
      var card = s;
      while (card) {

@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-73 scripts.
+74 scripts.
 
 | script | what it is |
 |---|---|
@@ -69,6 +69,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `phone-ios.mjs` | The iPhone, as seen from a check - `phone.mjs`'s interface, name for name and sync for sync, over |
 | `phone-platform.mjs` | WHICH PHONE PLATFORM A RUN DRIVES - `CANARI_PHONE=android` (the default) or `CANARI_PHONE=ios`. |
 | `phone.mjs` | The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
+| `picker.mjs` | THE IN-APP PICKER AS THE RIG SEES IT: how to find its trigger, read what its open list offers, and |
 | `pin.mjs` | Enters the encryption PIN in the web unlock modal, over CDP. |
 | `pinspawn.mjs` | Unlocks a PHONE's encryption PIN by spawning `pin.mjs` - the one implementation both phone modules |
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
@@ -198,7 +199,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-37 scripts.
+38 scripts.
 
 | script | what it is |
 |---|---|
@@ -224,6 +225,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/origin-selftest.mjs` | NO CHECK MAY SPELL THE APPLICATION'S ORIGIN. `SITE` IS WHERE THE ESTATE IS NAMED. |
 | `archive/ownedpaths-selftest.mjs` | Pins `ownedpaths.mjs`: a 404 outside the application's route/static set is a scanner's guess, a 404 |
 | `archive/phone-ios-selftest.mjs` | THE iPHONE ADAPTER KEEPS THE ANDROID PHONE'S CONTRACT - pinned with no phone, no WDA and no names.mjs. |
+| `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
@@ -293,4 +295,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-232 scripts in total.
+234 scripts in total.

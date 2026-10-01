@@ -434,6 +434,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/sourcestamp-selftest.mjs
 	@bun tools/cross-client-harness/archive/selector-selftest.mjs
 	@bun tools/cross-client-harness/archive/caption-selftest.mjs
+	@bun tools/cross-client-harness/archive/picker-selftest.mjs
 	@bun tools/cross-client-harness/archive/names-selftest.mjs
 	@bun tools/cross-client-harness/archive/ownedpaths-selftest.mjs
 	@bun tools/cross-client-harness/archive/expectations-selftest.mjs
