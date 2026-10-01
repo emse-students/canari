@@ -42,7 +42,11 @@ which option they picked - the server does not know.
 
 ## Post creation (EditPostForm.svelte)
 
-- Markdown content editor.
+- Markdown content editor. **A body OR a media entry, and either is enough** - the client's
+  `hasContent` and the server's `PostBodyOrMediaConstraint` (`post.dto.ts`, create and edit) say the
+  same thing, whitespace counting as no body on both. Until 2026-10-02 the server said
+  `@IsNotEmpty()` alone: a captionless photo or video was prepared, encrypted and uploaded, then
+  refused with `markdown should not be empty` - read on the Mi 9T while proving CanaReels R2.
 - Optional image upload. **Encrypted like any other media** (`encryptAndUpload`, per-file CEK, the
   key travelling in the post row) and marked `retentionClass: 'archive'` so the media service's idle
   sweep never takes it — see
