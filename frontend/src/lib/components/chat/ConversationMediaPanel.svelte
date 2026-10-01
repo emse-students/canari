@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
+  import VideoPlayer from '../shared/VideoPlayer.svelte';
   import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
@@ -18,7 +18,6 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
-  import { followVideoSound } from '$lib/actions/playWhileVisible';
   import { getLocale } from '$lib/paraglide/runtime';
   import { formatFileSize } from '$lib/utils/fileSize';
 
@@ -296,15 +295,7 @@
   >
     {#if lightboxUrl}
       {#if current.media.type === 'video'}
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          src={lightboxUrl}
-          controls
-          autoplay
-          poster={TRANSPARENT_VIDEO_POSTER}
-          use:followVideoSound
-          class="max-h-full max-w-full"
-        ></video>
+        <VideoPlayer src={lightboxUrl} class="h-full w-full" />
       {:else}
         <img
           src={lightboxUrl}

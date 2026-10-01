@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
+  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
+  import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
     FileText,
@@ -24,7 +25,6 @@
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
-  import { followVideoSound } from '$lib/actions/playWhileVisible';
   import { nearViewport } from '$lib/actions/nearViewport';
 
   interface Props {
@@ -195,38 +195,22 @@
       <!-- ================= VIDEO ================= -->
     {:else if mediaRef.type === 'video'}
       {#if blobUrl}
-        <div class="group/media relative inline-block">
-          <!-- svelte-ignore a11y_media_has_caption -->
-          <video
+        <!-- THE FEED'S VIDEO, NOT THE ENGINE'S (2026-10-01). This was a native `controls` element
+             with a "Plein ecran" pill and a download button laid over it - the very picture the
+             feed left on 2026-09-29 (Android's grey bar over the clip). A conversation's video now
+             plays like the feed's: by itself while on screen, muted by the app's one sound answer,
+             a tap opening the viewer, whose player carries the controls and the download. -->
+        <div
+          class="w-56 max-w-full overflow-hidden rounded-3xl bg-black shadow-sm"
+          style={mediaAspectStyle(mediaRef.width, mediaRef.height, 16 / 9)}
+        >
+          <InlineVideo
             src={blobUrl}
-            controls
-            preload="metadata"
-            onclick={(e) => e.stopPropagation()}
-            class="max-h-80 max-w-full rounded-3xl bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
-          ></video>
-
-          <button
-            type="button"
-            onclick={openLightbox}
-            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg transition-all duration-300 hover:bg-black/70"
-            aria-label={m.msg_open_video_fullscreen_label()}
-            title={m.msg_fullscreen_label()}
-          >
-            {m.msg_fullscreen_label()}
-          </button>
-
-          <button
-            type="button"
-            onclick={(e) => {
-              e.stopPropagation();
-              downloadBlob(blobUrl!, mediaRef.fileName ?? 'video.mp4');
-            }}
-            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
-            aria-label={m.msg_download_video_label()}
-            title={m.common_download_label()}
-          >
-            <Download size={16} strokeWidth={2.5} />
-          </button>
+            onOpen={() => (showLightbox = true)}
+            openLabel={m.msg_open_video_fullscreen_label()}
+            class="h-full w-full"
+            videoClass="h-full w-full object-cover object-center"
+          />
         </div>
       {:else if failure}
         <div
@@ -412,7 +396,7 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap select-text">
+    <p class="mt-2 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
@@ -455,15 +439,7 @@
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        src={blobUrl}
-        controls
-        autoplay
-        poster={TRANSPARENT_VIDEO_POSTER}
-        use:followVideoSound
-        class="max-h-full max-w-full rounded-xl bg-black object-contain"
-      ></video>
+      <VideoPlayer src={blobUrl} class="h-full w-full" />
     {/if}
   </MediaLightbox>
 {/if}

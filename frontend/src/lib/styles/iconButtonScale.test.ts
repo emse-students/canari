@@ -62,8 +62,8 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'matched to the quick-reaction emoji buttons beside it',
   },
   'lib/components/messages/MessageMediaRenderer.svelte': {
-    count: 2,
-    why: 'the download buttons overlaying a photo and a video, which must not cover them',
+    count: 1,
+    why: 'the download button overlaying a photo, which must not cover it (a video plays as InlineVideo and downloads from the viewer)',
   },
   'lib/components/messages/MessageMobileActions.svelte': {
     count: 1,
@@ -76,6 +76,10 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
   'lib/components/posts/PostComments.svelte': {
     count: 1,
     why: '16px cross on an attachment chip',
+  },
+  'lib/components/shared/VideoPlayer.svelte': {
+    count: 1,
+    why: 'the 64px play disc centred on a paused picture - the one big target, matched to the poster glyph',
   },
   'lib/components/shared/InlineVideo.svelte': {
     count: 1,
