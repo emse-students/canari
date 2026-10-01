@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-60 scripts.
+66 scripts.
 
 | script | what it is |
 |---|---|
@@ -33,14 +33,17 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `checks.mjs` | THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful. |
 | `cleanup.mjs` | Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on THE ESTATE |
 | `comm.mjs` | The vocabulary the COMM phase is written in: communities, channels, invitations, roles. |
+| `consoleorigin.mjs` | WHICH ORIGIN EMITTED A CONSOLE LINE - so the browser report can call a foreign one foreign. |
 | `debris.mjs` | THE ONE ALLOWLIST OF THROWAWAY GROUP NAMES, shared by every sweep that may delete one. |
 | `deploy.mjs` | WAS PRODUCTION REDEPLOYED WHILE THE CHECK WAS RUNNING? - the one cause of transport failure that |
 | `deployed-wasm-check.mjs` | Asks a DEPLOYED estate whether the `mls-core` WebAssembly it serves can panic on the target it |
 | `device-census.mjs` | THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
+| `epochfork.mjs` | IS THIS DEVICE AT THE GROUP'S EPOCH - the predicate no row asked, as a pure comparison. |
 | `estate-origins.mjs` | WHICH ESTATE A RUNNING CLIENT IS ACTUALLY TALKING TO, as a pure function of what it fetched. |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
+| `expectations.mjs` | THE PURE HALF OF A ROW'S VERDICT BOOKKEEPING: naming the expectations and preconditions it did not |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
@@ -55,10 +58,12 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `messages.mjs` | THE APP'S OWN FRENCH, READ FROM ITS MESSAGE FILE - and nothing else. |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
+| `namesderive.mjs` | THE DERIVATIONS OVER THE MACHINE-LOCAL VALUES - committed, so they are reviewable and testable. |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
 | `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
 | `newgroup.mjs` | Creates a group conversation, and reports the surface that adds a member to it. |
 | `overlay-probe.mjs` | THE ONE EXPRESSION THAT ANSWERS "what is covering the screen right now" - page source, kept PURE. |
+| `ownedpaths.mjs` | THE SET OF PATHS THE APPLICATION OWNS, READ FROM THE TREE, AND THE 404 RULE THAT FOLLOWS FROM IT. |
 | `phone.mjs` | The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
 | `pin.mjs` | Enters the encryption PIN in the web unlock modal, over CDP. |
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
@@ -70,6 +75,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `seenset.mjs` | WHAT A WEB CLIENT REMEMBERS HAVING ALREADY READ - the seen-ciphertext ledger, read off the client. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
+| `serverwindow.mjs` | THE SERVER HALF OF A ROW'S WINDOW, CONDENSED FOR THE LEDGER AND FOLDED INTO ITS VERDICT. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
 | `srcscan.mjs` | READING A SCRIPT AS CODE RATHER THAN AS TEXT. |
 | `srvlog.mjs` | THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
@@ -185,17 +191,20 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-28 scripts.
+34 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/consoleorigin-selftest.mjs` | Pins `consoleorigin.mjs` and its use in `report()`: a console line another origin emitted (the |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
+| `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
+| `archive/expectations-selftest.mjs` | Pins `expectations.mjs`: an unarmed row (COMM-9/10's `VACUOUS` with `failures: []`) names every |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
@@ -203,12 +212,15 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
+| `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
 | `archive/origin-selftest.mjs` | NO CHECK MAY SPELL THE APPLICATION'S ORIGIN. `SITE` IS WHERE THE ESTATE IS NAMED. |
+| `archive/ownedpaths-selftest.mjs` | Pins `ownedpaths.mjs`: a 404 outside the application's route/static set is a scanner's guess, a 404 |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/selector-selftest.mjs` | EVERY UI STRING THE RIG CLICKS MUST STILL EXIST IN THE APP. |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
+| `archive/serverwindow-selftest.mjs` | Pins `serverwindow.mjs`: the server's window reaches the ledger row, a dirty one demotes a PASS, |
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
@@ -271,4 +283,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-210 scripts in total.
+222 scripts in total.
