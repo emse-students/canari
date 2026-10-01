@@ -20,7 +20,6 @@
 
   let popupReactionType = $state<string | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
-  let panel = $state<ReturnType<typeof ReactorsPanel> | null>(null);
 
   const reactorsOf = $derived(
     Object.entries(reactions)
@@ -62,7 +61,6 @@
         onclick={() => onReactionClick(reactionType)}
         use:reactorsTrigger={{
           open: (anchor) => openPopup(reactionType, anchor),
-          leave: () => panel?.scheduleHide(),
         }}
         class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
@@ -78,7 +76,6 @@
 {/if}
 
 <ReactorsPanel
-  bind:this={panel}
   anchor={anchorEl}
   emoji={popupReactionType
     ? (reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊')

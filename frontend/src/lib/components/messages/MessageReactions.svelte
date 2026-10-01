@@ -33,7 +33,6 @@
    */
   let openEmoji = $state<string | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
-  let panel = $state<ReturnType<typeof ReactorsPanel> | null>(null);
 
   function openPanel(emoji: string, anchor: HTMLElement) {
     anchorEl = anchor;
@@ -78,8 +77,15 @@
     short now is `VISIBLE_KINDS` and its `+N` chip, a fold that SAYS what it folds; once unfolded the
     row wraps, and a message with forty distinct reactions is tall.
   -->
+  <!--
+    ON THE BUBBLE, NOT UNDER IT (user, 2026-10-01, pointing at Messenger: *"reaction apposee au
+    message plutot qu'en dessous"*). The row is pulled up over the bubble's bottom edge (`-mt-2.5`),
+    on the side the bubble is aligned to, and each chip wears a ring in the thread's own ground
+    (`--chat-thread-ground`) - the gap that makes a sticker read as laid ON the bubble rather than
+    cut into it. `relative z-1` lifts it above the bubble it overlaps.
+  -->
   <div
-    class="mt-1 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1 px-1 pt-0.5 pb-2 {isOwn
+    class="relative z-1 -mt-2.5 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1 px-1.5 pb-0.5 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
@@ -91,16 +97,15 @@
 
       <button
         type="button"
-        class="text-2xs flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 shadow-sm transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
-          ? 'border-amber-500/30 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-400'
-          : 'text-text-muted hover:text-text-main bg-cn-surface border-black/5 hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/50'}"
+        class="text-2xs flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
+          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400'
+          : 'text-text-muted bg-cn-surface hover:text-text-main'}"
         onclick={(e) => {
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
           onReact?.(emoji);
         }}
         use:reactorsTrigger={{
           open: (anchor) => openPanel(emoji, anchor),
-          leave: () => panel?.scheduleHide(),
         }}
         aria-pressed={hasReacted}
         aria-label={users.length === 1
@@ -116,7 +121,7 @@
     {#if folds}
       <button
         type="button"
-        class="text-2xs text-text-muted hover:text-text-main bg-cn-surface flex shrink-0 items-center rounded-full border border-black/5 px-1.5 py-0.5 font-bold shadow-sm transition-all duration-200 outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 dark:border-white/10 dark:hover:bg-black/50"
+        class="text-2xs text-text-muted hover:text-text-main bg-cn-surface flex shrink-0 items-center rounded-full px-1.5 py-0.5 font-bold shadow-sm ring-2 ring-(--chat-thread-ground) transition-all duration-200 outline-none focus-visible:ring-amber-500/50 active:scale-95"
         onclick={(e) => {
           e.stopPropagation(); // Same reason as a reaction chip: this is not a tap on the message.
           expanded = true;
@@ -130,7 +135,6 @@
 {/if}
 
 <ReactorsPanel
-  bind:this={panel}
   anchor={anchorEl}
   emoji={openEmoji}
   userIds={openEmoji ? (groupedReactions[openEmoji] ?? []) : []}

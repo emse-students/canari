@@ -975,6 +975,33 @@ every pick, here. Feedback for a one-shot action needs a home independent of the
 it. `copyPublicShareLink`'s rejection path was also a swallowed `void` with no log; it now logs
 through `Log.d`, same as `copyId`'s own clipboard refusal.
 
-## The "who reacted" list: hover or long press, never a tap (2026-09-30)
+## The "who reacted" list: a tap reacts, a hold shows who - Discord's gesture (2026-10-01)
 
-Reported by the user: tapping a reaction badge opened the list of reactors. A touch screen synthesises `mouseenter` after a tap, so the badges (posts and chat) toggled AND disclosed. `actions/reactorsTrigger.ts` is now the one gesture for both: hover only for `pointerType === "mouse"`, a 450 ms hold for touch/pen (the click ending that hold is swallowed in capture, the native context menu is suppressed), and `ReactorsPanel` closes on any scroll instead of following it. Owed: one look on a phone.
+**Decided by the user on 2026-10-01**, for messages and posts alike: *"appui simple pour reagir sur
+une reaction existante, et maintenu pour voir qui a reagi"*, and *"la liste des gens ayant reagi doit
+disparaitre des la prochaine action (scroll etc.)"*.
+
+**What it replaced.** The 2026-09-30 version opened the list on HOVER for a mouse and on a 450 ms
+hold for a finger. Hover meant a mouse opened the list on its way to every click, so reacting and
+asking "who" were still the same gesture - *"on reagit et on regarde qui a reagi avec la meme action,
+ca cree des problemes"*.
+
+- **`actions/reactorsTrigger.ts` is the one gesture, for every pointer, a mouse included**: a tap
+  toggles the reaction; a 450 ms hold (`LONG_PRESS_MS`, main button only for a mouse, cancelled past
+  10 px of travel or when the pointer leaves) opens the list, and the click that ends the hold is
+  swallowed in capture, so a hold never reacts. Nothing opens on hover any more.
+- **`ReactorsPanel` lives until the reader's next action.** One effect listens, in capture, for
+  `pointerdown`, `scroll`, `wheel`, `keydown` and `resize` on the window, and any of them closes it -
+  a press anywhere, the badge and the list included. The press that opened it is already down when
+  it starts listening, so its own release does not close it. That one rule replaces four dismissals
+  (a tap outside, `Escape`, a scroll, a mouse leaving after a 120 ms grace period).
+- **In a conversation the reactions sit ON the bubble** (user, same day, pointing at Messenger:
+  *"reaction apposee au message plutot qu'en dessous"*). `MessageReactions` pulls its row up over the
+  bubble's bottom edge (`-mt-2.5`), on the side the bubble is aligned to, and each chip is opaque
+  with a ring in the thread's ground (`--chat-thread-ground`), which is what makes it read as laid on
+  the bubble. The posts' badges stay in the action bar.
+
+**Verified:** both suites (`ReactionsDisplay.placement`, `MessageReactions.reactors`) on the gesture
+and every way out; in Chromium on a stand-in thread, light and dark: hovering opens nothing, a held
+mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
+the hold under a finger on a phone.
