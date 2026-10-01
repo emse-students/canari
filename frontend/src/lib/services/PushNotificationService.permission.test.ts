@@ -23,14 +23,25 @@ vi.mock('$lib/stores/user', () => ({ currentUserId: vi.fn(() => 'user-1') }));
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: vi.fn(() => true) }));
 
 /**
- * Per-case budget, and it is about IMPORTS, not about the app.
+ * THE COLD COMPILE IS PAID AT COLLECTION, NOT INSIDE A CASE.
  *
  * Every case calls `vi.resetModules` so it gets a service whose `pushAttempted` is false - a real
- * first launch rather than the foreground-return fast path - and that means re-importing this
- * module graph each time. The first import alone outran the 5 s default, which reads as a hung test
- * and is nothing of the kind.
+ * first launch rather than the foreground-return fast path - and that means re-evaluating this
+ * module graph each time. The FIRST import also transforms it (the 2669-file paraglide barrel
+ * included): ~10 s unloaded, past 30 s on a busy machine, charged to the first case's timer. It then
+ * timed out and its continuation leaked into the following cases, which failed on counts that were
+ * not theirs. Vite caches the transform across `vi.resetModules`, so importing once here - module
+ * collection has no per-case budget - leaves each case only the cheap re-evaluation. The paraglide
+ * barrel is replaced outright: no case asserts a message, and it is nearly all of that graph.
  */
-const IMPORT_BUDGET_MS = 30_000;
+// A module, so the top-level `await` below type-checks.
+export {};
+
+vi.mock('$lib/paraglide/messages', () => ({
+  m: new Proxy({}, { get: (_t, key) => () => String(key) }),
+}));
+await import('./PushNotificationService');
+await import('$lib/stores/confirm.svelte');
 
 type ConfirmModule = typeof import('$lib/stores/confirm.svelte');
 type ServiceModule = typeof import('./PushNotificationService');
@@ -97,85 +108,71 @@ describe('startPushService and the notification permission rationale', () => {
     throw new Error('the rationale dialog was never opened');
   }
 
-  it(
-    'does not open the OS dialog until the rationale has been answered, and schedules no timer that could',
-    async () => {
-      // WHAT THE OLD SHAPE DID IS EXACTLY THIS CALL: `setTimeout(r, 1200)` between the rationale and
-      // the OS dialog. Recording the schedule is a stronger statement than advancing a fake clock and
-      // a cheaper one: it asserts that no clock EXISTS on this path, rather than that one particular
-      // clock did not fire.
-      const scheduled: number[] = [];
-      const realSetTimeout = globalThis.setTimeout;
-      const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
-        ...args: Parameters<typeof setTimeout>
-      ) => {
-        scheduled.push(Number(args[1] ?? 0));
-        // `.apply` with the global receiver: happy-dom's `setTimeout` is a window method and
-        // refuses a bare call, which hangs the poll it was meant to observe.
-        return Reflect.apply(realSetTimeout, globalThis, args);
-      }) as unknown as typeof setTimeout);
+  it('does not open the OS dialog until the rationale has been answered, and schedules no timer that could', async () => {
+    // WHAT THE OLD SHAPE DID IS EXACTLY THIS CALL: `setTimeout(r, 1200)` between the rationale and
+    // the OS dialog. Recording the schedule is a stronger statement than advancing a fake clock and
+    // a cheaper one: it asserts that no clock EXISTS on this path, rather than that one particular
+    // clock did not fire.
+    const scheduled: number[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      ...args: Parameters<typeof setTimeout>
+    ) => {
+      scheduled.push(Number(args[1] ?? 0));
+      // `.apply` with the global receiver: happy-dom's `setTimeout` is a window method and
+      // refuses a bare call, which hangs the poll it was meant to observe.
+      return Reflect.apply(realSetTimeout, globalThis, args);
+    }) as unknown as typeof setTimeout);
 
-      const { startPushService, confirmStore, resolveConfirm } = await loadService();
-      const running = startPushService('https://api', 'jwt', 'dev-perm');
-      try {
-        console.log('DBG rationale open');
-        await waitForRationale({ confirmStore, resolveConfirm } as ConfirmModule);
-        console.log('DBG rationale reached');
-
-        // Every microtask this process can run, and the native dialog is still not open.
-        for (let i = 0; i < 100; i++) await Promise.resolve();
-
-        expect(requestPermission).not.toHaveBeenCalled();
-        expect(confirmStore.pending).not.toBeNull();
-        expect(scheduled, 'a timer was armed between the rationale and the OS dialog').toEqual([]);
-
-        resolveConfirm(true);
-        await running;
-
-        expect(requestPermission).toHaveBeenCalledTimes(1);
-      } finally {
-        // A case that failed above must not leave the service half-run: its continuation would land
-        // inside the NEXT test and be counted there, which is exactly how this file first lied.
-        spy.mockRestore();
-        if (confirmStore.pending) resolveConfirm(false);
-        await running.catch(() => {});
-      }
-    },
-    IMPORT_BUDGET_MS
-  );
-
-  it(
-    'never spends the OS prompt on a user who answered "later"',
-    async () => {
-      const { startPushService, confirmStore, resolveConfirm } = await loadService();
-      const running = startPushService('https://api', 'jwt', 'dev-perm');
-
+    const { startPushService, confirmStore, resolveConfirm } = await loadService();
+    const running = startPushService('https://api', 'jwt', 'dev-perm');
+    try {
       await waitForRationale({ confirmStore, resolveConfirm } as ConfirmModule);
-      resolveConfirm(false);
+
+      // Every microtask this process can run, and the native dialog is still not open.
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(confirmStore.pending).not.toBeNull();
+      expect(scheduled, 'a timer was armed between the rationale and the OS dialog').toEqual([]);
+
+      resolveConfirm(true);
       await running;
 
-      // Android gives an app very few chances to ask. Spending one on someone who just declined the
-      // explanation wastes it for good, so the refusal is honoured rather than overridden.
-      expect(requestPermission).not.toHaveBeenCalled();
-      // And registration continues regardless: FCM still delivers silent data messages, which is what
-      // keeps the conversation list in sync even with pop-ups blocked.
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    },
-    IMPORT_BUDGET_MS
-  );
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+    } finally {
+      // A case that failed above must not leave the service half-run: its continuation would land
+      // inside the NEXT test and be counted there, which is exactly how this file first lied.
+      spy.mockRestore();
+      if (confirmStore.pending) resolveConfirm(false);
+      await running.catch(() => {});
+    }
+  });
 
-  it(
-    'asks nobody anything when the permission is already granted',
-    async () => {
-      isPermissionGranted.mockResolvedValue(true);
-      const { startPushService, confirmStore } = await loadService();
+  it('never spends the OS prompt on a user who answered "later"', async () => {
+    const { startPushService, confirmStore, resolveConfirm } = await loadService();
+    const running = startPushService('https://api', 'jwt', 'dev-perm');
 
-      await startPushService('https://api', 'jwt', 'dev-perm');
+    await waitForRationale({ confirmStore, resolveConfirm } as ConfirmModule);
+    resolveConfirm(false);
+    await running;
 
-      expect(confirmStore.pending).toBeNull();
-      expect(requestPermission).not.toHaveBeenCalled();
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    },
-    IMPORT_BUDGET_MS
-  );
+    // Android gives an app very few chances to ask. Spending one on someone who just declined the
+    // explanation wastes it for good, so the refusal is honoured rather than overridden.
+    expect(requestPermission).not.toHaveBeenCalled();
+    // And registration continues regardless: FCM still delivers silent data messages, which is what
+    // keeps the conversation list in sync even with pop-ups blocked.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nobody anything when the permission is already granted', async () => {
+    isPermissionGranted.mockResolvedValue(true);
+    const { startPushService, confirmStore } = await loadService();
+
+    await startPushService('https://api', 'jwt', 'dev-perm');
+
+    expect(confirmStore.pending).toBeNull();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
 });

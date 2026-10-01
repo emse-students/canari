@@ -20,10 +20,23 @@ const SERVER_INFO = {
   maintenance: { enabled: false },
 };
 
-// The first import of this store transforms a wide module graph (connectivity, storage, paraglide),
-// which is comfortably past vitest's 5 s default on a cold run. The timeout is about the compiler,
-// not about anything this test asserts.
-describe('importing appVersionCheck', { timeout: 30_000 }, () => {
+// THE 2669-FILE PARAGLIDE BARREL IS THE COST, AND NOTHING HERE ASSERTS A MESSAGE.
+//
+// Importing this store transforms (first time) and then re-evaluates (after every `vi.resetModules`)
+// a wide module graph, of which the paraglide barrel is nearly all: ~10 s cold, past 30 s on a busy
+// machine, charged to a case's timer - which then timed out and leaked into the next case. The
+// store only needs `m.*` to be callable, so the barrel is replaced and the cost disappears at its
+// source. What remains of the graph is transformed once at collection, where no per-case budget
+// applies, and Vite keeps that transform across resets.
+// A module, so the top-level `await` below type-checks.
+export {};
+
+vi.mock('$lib/paraglide/messages', () => ({
+  m: new Proxy({}, { get: (_t, key) => () => String(key) }),
+}));
+await import('./appVersionCheck.svelte');
+
+describe('importing appVersionCheck', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllGlobals();
