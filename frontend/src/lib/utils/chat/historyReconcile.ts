@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { appendLog } from '$lib/utils/sessionLog';
 
 /**
  * When a device asks whether it holds the same history as its peers, and how it stops asking.
@@ -958,6 +959,11 @@ export function deferredReconciliations(): Array<[string, DeferredReason]> {
  * did, one of them user-visible.
  */
 export function forgetGroupReconciliation(groupId: string): void {
+  // The seam exists because this state once outlived its conversation, so a run leaves evidence of
+  // WHAT it held - the one thing a reader wants when it leaks again.
+  appendLog(
+    `[HISTORY_RECONCILE] forgetting ${groupId.slice(0, 8)}…: asked=${asked.has(groupId)} deferred=${deferred.get(groupId) ?? 'none'} coverageStated=${coverageStated.get(groupId)?.size ?? 0} peer(s) electedFor=${electedFor.has(groupId)} chased=${chased.get(groupId)?.size ?? 0}`
+  );
   asked.delete(groupId);
   deferred.delete(groupId);
   coverageStated.delete(groupId);

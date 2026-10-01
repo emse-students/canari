@@ -451,6 +451,19 @@ note(`topology ${JSON.stringify(topology)}`);
 // the fresh device healed in silence, so no reader of this row's could open on the amber window.
 note("minting a device the server has never seen");
 const minted = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
+// A BLOCKED JOB IS NOT A CRASHED ONE. The primitive refuses a full account and hands back `refused`
+// with no `cx` and no `observer`, so `invalid()` (which reads both) cannot be used: record the
+// primitive's own measured reason and stop, instead of dying on `minted.cx` with a TypeError.
+if (minted.refused) {
+  record(row.id, "INVALID", {
+    unobservable: minted.refused,
+    what: row.what,
+    topology,
+    timeline,
+    spent: minted.spent,
+  });
+  process.exit(1);
+}
 // The PIN gate is no longer read here: it moved into `confirmEnrolment` with the rest of the
 // post-observation work on 2026-08-29, and it is reported with the enrolment below.
 note(

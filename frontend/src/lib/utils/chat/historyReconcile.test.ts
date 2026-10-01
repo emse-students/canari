@@ -7,6 +7,7 @@
  * so every case below is about the lifetime of a fact, not about a conversation.
  */
 import type { Mock } from 'vitest';
+import { appendLog } from '$lib/utils/sessionLog';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
@@ -27,6 +28,8 @@ import {
   resetAuditRecord,
   type HistoryProbeSender,
 } from './historyReconcile';
+
+vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 
 const GROUP = 'g1';
 const OTHER = 'g2';
@@ -663,6 +666,18 @@ describe('forgetting', () => {
     await reconcileGroup(service(), GROUP, log, now);
     forgetGroupReconciliation(GROUP);
     expect(await reconcileGroup(service(), GROUP, log, now + 1)).toBe(true);
+  });
+
+  it('forgetGroupReconciliation says it ran, and what the conversation held', async () => {
+    await reconcileGroup(service({ noPeerOnline: true }), GROUP, log);
+    vi.mocked(appendLog).mockClear();
+
+    forgetGroupReconciliation(GROUP);
+
+    expect(appendLog).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(appendLog).mock.calls[0][0]).toMatch(
+      /\[HISTORY_RECONCILE\] forgetting g1.*deferred=/
+    );
   });
 
   it('resetHistoryReconciliation drops everything, for logout', async () => {
