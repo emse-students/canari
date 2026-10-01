@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { onMount } from 'svelte';
@@ -233,14 +234,7 @@
             {displayFallbackName}
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
-          {#if profile.formation}
-            <div
-              class="bg-cn-yellow/10 border-cn-yellow/20 text-cn-dark mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold tracking-wider uppercase shadow-sm"
-            >
-              <GraduationCap size={14} strokeWidth={2.5} />
-              {profile.formation}
-            </div>
-          {/if}
+          <ProfileChips {profile} />
         </div>
         <a
           href="/settings"
@@ -414,7 +408,11 @@
               <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
                 {m.profile_promo_label()}
               </p>
-              <p class="text-text-main truncate text-sm font-bold">{formatYear(profile.promo)}</p>
+              <p class="text-text-main truncate text-sm font-bold">
+                {profile.cursus?.length
+                  ? profile.cursus.map((e) => formatYear(e.promo)).join(' · ')
+                  : formatYear(null)}
+              </p>
             </div>
           </div>
 
