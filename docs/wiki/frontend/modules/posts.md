@@ -997,7 +997,8 @@ ca cree des problemes"*.
   (a tap outside, `Escape`, a scroll, a mouse leaving after a 120 ms grace period).
 - **In a conversation the reactions sit ON the bubble** (user, same day, pointing at Messenger:
   *"reaction apposee au message plutot qu'en dessous"*). `MessageReactions` pulls its row up over the
-  bubble's bottom edge (`-mt-2.5`), on the side the bubble is aligned to, and each chip is opaque
+  bubble's bottom edge (`-mt-1.5`: 6px; the first 10px crowded the last line of text, so the user asked
+  for it lower the same day), on the side the bubble is aligned to, and each chip is opaque
   with a ring in the thread's ground (`--chat-thread-ground`), which is what makes it read as laid on
   the bubble. The posts' badges stay in the action bar.
 

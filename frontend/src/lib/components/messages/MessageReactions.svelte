@@ -79,13 +79,14 @@
   -->
   <!--
     ON THE BUBBLE, NOT UNDER IT (user, 2026-10-01, pointing at Messenger: *"reaction apposee au
-    message plutot qu'en dessous"*). The row is pulled up over the bubble's bottom edge (`-mt-2.5`),
+    message plutot qu'en dessous"*). The row is pulled up over the bubble's bottom edge (`-mt-1.5`,
+    6px - at 10px a pill crowded the last line of text, user 2026-10-01),
     on the side the bubble is aligned to, and each chip wears a ring in the thread's own ground
     (`--chat-thread-ground`) - the gap that makes a sticker read as laid ON the bubble rather than
     cut into it. `relative z-1` lifts it above the bubble it overlaps.
   -->
   <div
-    class="relative z-1 -mt-2.5 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1 px-1.5 pb-0.5 {isOwn
+    class="relative z-1 -mt-1.5 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1 px-1.5 pb-0.5 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
