@@ -249,8 +249,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 13. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
-   Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
-   anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
+   Two open, all in [backlog](docs/wiki/backlog.md): the suppression control case, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 14. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).

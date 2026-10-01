@@ -68,7 +68,7 @@ jobs:
   # day late.*
   #
   # WHY A RED RUN IS THE REPORT. There is no alerting anywhere in this estate - both outages of
-  # 2026-09-01 were reported by the USER, and nothing pages anybody (`docs/wiki/backlog.md`). What
+  # 2026-09-01 were reported by the USER, and nothing pages anybody. What
   # this repository DOES read is `gh run list`, so a failing run is the only channel that already
   # exists. Everything the script finds is emitted as `::error::` so it is legible in the run
   # summary without opening a log.
