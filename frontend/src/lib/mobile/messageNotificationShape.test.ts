@@ -33,13 +33,12 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     expect(stringsEn).toContain('<string name="notif_sender_self">You</string>');
   });
 
-  it('gives a direct message the group shape, titled with the person', () => {
+  it('gives a direct message the group shape, with no title', () => {
     // From API 28 the platform decides one-to-one from isGroupConversation ALONE, and a one-to-one
     // thread hides the other person's name above their lines - the asymmetry the user reported.
-    expect(kotlin).toContain('namesEachSender -> senderName.ifEmpty { null }');
-    expect(kotlin).toMatch(
-      /if \(conversationTitle != null\) \{\s*style\.conversationTitle = conversationTitle\s*style\.isGroupConversation = true/
-    );
+    // Titled with the person, the Mi 9T printed the name twice; untitled, once.
+    expect(kotlin).toContain('val conversationTitle = if (isGroup) groupName else null');
+    expect(kotlin).toContain('if (isGroup || namesEachSender) style.isGroupConversation = true');
   });
 
   it('is asked for by the two MESSAGE triggers and by nothing else', () => {

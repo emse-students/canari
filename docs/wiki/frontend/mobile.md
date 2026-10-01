@@ -1414,9 +1414,14 @@ build. Pinned by `messageNotificationShape.test.ts`.
 in Android's one-to-one `MessagingStyle` shape, which from API 28 is decided by `isGroupConversation`
 alone: the other person's name is the title and appears above none of their lines, while our own
 reply carried "Moi". The user read that as lopsided. The two MESSAGE triggers (the push and the
-WebSocket frame) now pass `namesEachSender = true`, so a DM takes the group shape, titled with the
-person, and our own lines say **"Vous" / "You"** (`notif_sender_self`; the NSE composes no thread and
-has no such string). A reaction and a salon keep the old shape on purpose: a reaction line is a
+WebSocket frame) now pass `namesEachSender = true`, so a DM takes the group shape with **no title**,
+and our own lines say **"Vous" / "You"** (`notif_sender_self`; the NSE composes no thread and has no
+such string). **Both titles were read on the Mi 9T (Android 16) and the untitled one kept**: titled
+with the person, the collapsed line read `Canari Test Beta : Canari Test Beta : <text>` and the
+expanded view stacked the name twice; untitled, the header reads `Canari - maintenant` and the name
+appears once, above its line. **What the group shape costs**: the header circle is the app's bird,
+not the person's face - the face moves down beside their line, as in a group, because a group
+layout draws the conversation's icon, which a DM without a shortcut does not have. A reaction and a salon keep the old shape on purpose: a reaction line is a
 sentence about its actor, and a salon's "sender" IS its title, so naming either would print the
 title twice. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
 `repostReplyPending` copies the title and the group flag from what is in the shade.
