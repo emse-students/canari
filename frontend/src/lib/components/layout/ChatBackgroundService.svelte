@@ -997,6 +997,21 @@
     });
   });
 
+  // ── Live stream transitions: the salon copies held against it ─────────────
+  // A salon in memory is current only while the socket that keeps it current has had no gap, so
+  // the gap itself - a pause, a drop, a reconnect - is what marks it stale. See
+  // `noteLiveStreamTransition`. The first reading is a baseline, not a transition.
+  let lastLiveStreamUp: boolean | null = null;
+  $effect(() => {
+    const up = globalSession.isWsConnected;
+    untrack(() => {
+      const previous = lastLiveStreamUp;
+      lastLiveStreamUp = up;
+      if (previous === null || previous === up || !globalSession.isLoggedIn) return;
+      void globalConvs.noteLiveStreamTransition(up, convCtx());
+    });
+  });
+
   // ── Online / foreground resume: retry a failed workspace load ─────────────
   onMount(() => {
     // A Graine repair lands minutes after the rows it repairs were rendered unreadable and dropped,
