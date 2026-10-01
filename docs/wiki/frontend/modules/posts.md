@@ -674,6 +674,40 @@ the two really are the same string. An exact WHITELIST of the hosts worth autoli
 ambiguity instead of trying to out-narrow it: a token is a link because it is on the list, not
 because it looks like one. `postMarkdown.test.ts` and `messageDisplay.test.ts` pin both directions.
 
+## A media that cannot be shown says why, typed at the throw (2026-10-01)
+
+Every failure but a retention purge read "Impossible de charger le media" (user, Mi 9T): offline,
+deleted and damaged were one sentence with nothing to do about it. The cause is now decided where
+the failure is SEEN, as a type, and every renderer reads it through one classifier.
+
+| Thrown by `mediaBlobCache` | When | `mediaFailureCause` | Retry offered |
+| --- | --- | --- | --- |
+| `MediaUnreachableError` | `fetch` itself rejected (offline, DNS, TLS, dropped) | `unreachable` | yes |
+| `MediaPurgedError` | 410 | `expired` | no |
+| `MediaNotFoundError` | 404 | `not-found` | no |
+| `MediaDecryptError` | the bytes arrived, AES-GCM refused them | `corrupt` | yes |
+| `MediaDownloadError` (`status` field) | any other non-2xx | `other` | yes |
+
+- **Only the `fetch` is wrapped as unreachable**: a request dropped from `mediaRequestGate`'s queue
+  rejects with its own `AbortError`, which every caller already ignores once it is torn down.
+- **A ciphertext that fails to decrypt is evicted from the Cache API** before the error leaves, or
+  the retry would re-read the same damaged bytes and fail identically.
+- **`MediaLoadFailure.svelte`** draws the icon, the sentence and "Reessayer" (44 px, `stopPropagation`
+  so it never also opens the viewer); the BOX stays the caller's. `mediaFailureLabel` writes the three
+  new causes once and takes each surface's own wording for `expired` and `other`.
+- **Retry is an `attempt` counter the download effect reads**: in place, no reload. Used by
+  `PostMedia` (card and gallery viewer), `MessageBubble` -> `MessageMediaRenderer`, and the
+  conversation media panel's viewer; `SharedMediaThumb` names the cause on its tooltip.
+- **`logMediaFailure`** is the one log line: `console.error` for a retryable cause, `warn` for a 404
+  or a purge, which are answers rather than failures. `MessageBubble` and `SharedMediaThumb`
+  logged nothing before.
+- **A defect it closed**: `MessageMediaRenderer` took `loadError` and `mediaPurgedByRetention`, a
+  purge set only the second, and the image and video branches tested only the first - a purged photo
+  pulsed as a loading skeleton for ever. One nullable cause replaced the pair.
+
+Draft #1295's segmented reader throws its own tampered-segment error; when it merges, that error
+must map to `corrupt` in `mediaFailureCause` (one `instanceof` line).
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,

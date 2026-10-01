@@ -1,13 +1,8 @@
 <script lang="ts">
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import {
-    FileText,
-    Download,
-    CircleAlert,
-    Image as ImageIcon,
-    ImageOff,
-    Mic,
-  } from '@lucide/svelte';
+  import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
+  import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
+  import { Log } from '$lib/utils/Log';
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
@@ -15,7 +10,12 @@
     releaseDecryptedMediaBlobUrl,
     retainWarmDecryptedMediaBlobUrl,
   } from '$lib/utils/mediaBlobCache';
-  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import {
+    isRetryableMediaFailure,
+    logMediaFailure,
+    mediaFailureCause,
+    type MediaFailureCause,
+  } from '$lib/utils/mediaErrors';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
@@ -89,9 +89,12 @@
 
   let blobUrl = $state<string | null>(null);
   let loading = $state(true);
-  let loadError = $state('');
-  /** Purged by the 30-day retention: a permanent absence, not a failure to retry. */
-  let mediaExpired = $state(false);
+  /** Set when no session token was handed down: nothing can be asked for. */
+  let authMissing = $state(false);
+  /** Why the media could not be shown, typed at the throw - see `mediaFailureCause`. */
+  let failure = $state<MediaFailureCause | null>(null);
+  /** Bumped by "Reessayer": the download effect reads it, so a bump runs it again in place. */
+  let attempt = $state(0);
 
   const mediaType = $derived<MediaType>(resolveMediaType(media));
 
@@ -103,11 +106,13 @@
   const isPdf = $derived(mediaType === 'file' && isPdfAttachment(media.mimeType, media.fileName));
 
   $effect(() => {
+    void attempt;
     if (!authToken) {
       loading = false;
-      loadError = m.post_missing_auth_token();
+      authMissing = true;
       return;
     }
+    authMissing = false;
     const mediaRef: MediaRef = {
       type: mediaType,
       mediaId: media.mediaId,
@@ -126,8 +131,7 @@
     if (warm) {
       blobUrl = warm;
       loading = false;
-      loadError = '';
-      mediaExpired = false;
+      failure = null;
       return () => {
         releaseDecryptedMediaBlobUrl(mediaRef);
         blobUrl = null;
@@ -141,8 +145,7 @@
     let destroyed = false;
     let acquired = false;
     loading = true;
-    loadError = '';
-    mediaExpired = false;
+    failure = null;
 
     const mediaService = new MediaService();
     // Leaves the gate's queue if the card is torn down before its turn comes.
@@ -160,15 +163,8 @@
       })
       .catch((err) => {
         if (destroyed) return;
-        if (isMediaPurgedError(err)) {
-          // Retention GC, not a failure: say so, and never in red.
-          mediaExpired = true;
-          loadError = m.post_media_expired_label();
-        } else {
-          // The raw message used to be rendered as-is - a dev string shown to the user.
-          console.error('[PostMedia] media download failed', err);
-          loadError = m.post_image_load_error();
-        }
+        failure = mediaFailureCause(err);
+        logMediaFailure('PostMedia', failure, media.mediaId, err);
       })
       .finally(() => {
         if (!destroyed) loading = false;
@@ -182,6 +178,12 @@
       blobUrl = null;
     };
   });
+
+  /** "Reessayer": the same effect again, in place - no reload, the rest of the feed untouched. */
+  function retry() {
+    Log.d('PostMedia.retry', { after: failure, mediaId: media.mediaId });
+    attempt += 1;
+  }
 
   let lightboxOpen = $state(false);
   let pdfViewerOpen = $state(false);
@@ -221,14 +223,17 @@
     <div class="flex min-h-[12rem] w-full items-center justify-center">
       <ImageIcon size={32} class="animate-pulse text-white opacity-20" strokeWidth={1.5} />
     </div>
-  {:else if loadError}
-    <div class="flex flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
-      {#if mediaExpired}
-        <ImageOff size={24} strokeWidth={2} />
-      {:else}
-        <CircleAlert size={24} strokeWidth={2} />
-      {/if}
-      <span class="text-xs">{loadError}</span>
+  {:else if authMissing}
+    <div class="p-4 text-center text-xs text-white/60">{m.post_missing_auth_token()}</div>
+  {:else if failure}
+    <div class="p-4">
+      <MediaLoadFailure
+        cause={failure}
+        expiredLabel={m.post_media_expired_label()}
+        otherLabel={m.post_image_load_error()}
+        onRetry={retry}
+        tone="dark"
+      />
     </div>
   {:else if blobUrl}
     {#if mediaType === 'image'}
@@ -291,19 +296,22 @@
         <div class="h-2.5 flex-1 rounded-full bg-black/10 dark:bg-white/10"></div>
       </div>
     {/if}
-  {:else if loadError}
+  {:else if authMissing}
+    <p class="text-text-muted w-full p-4 text-center text-xs">{m.post_missing_auth_token()}</p>
+  {:else if failure}
     <div
-      class="{fillsReservedBox ? 'absolute inset-0' : 'w-full rounded-2xl'} {mediaExpired
-        ? 'border-black/10 bg-black/5 dark:border-white/10 dark:bg-white/5'
-        : 'border-red-500/20 bg-red-500/5 dark:bg-red-500/10'} flex flex-col items-center justify-center gap-2 border border-dashed p-4 text-center"
+      class="{fillsReservedBox
+        ? 'absolute inset-0'
+        : 'w-full rounded-2xl'} {isRetryableMediaFailure(failure)
+        ? 'border-red-500/20 bg-red-500/5 dark:bg-red-500/10'
+        : 'border-black/10 bg-black/5 dark:border-white/10 dark:bg-white/5'} flex items-center justify-center border border-dashed p-4"
     >
-      {#if mediaExpired}
-        <ImageOff size={24} class="text-text-muted opacity-70" strokeWidth={2} />
-        <span class="text-text-muted text-xs font-medium">{loadError}</span>
-      {:else}
-        <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
-        <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
-      {/if}
+      <MediaLoadFailure
+        cause={failure}
+        expiredLabel={m.post_media_expired_label()}
+        otherLabel={m.post_image_load_error()}
+        onRetry={retry}
+      />
     </div>
   {:else if blobUrl}
     {#if mediaType === 'image'}

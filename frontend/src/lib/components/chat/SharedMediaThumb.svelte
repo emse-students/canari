@@ -2,7 +2,12 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
-  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import {
+    logMediaFailure,
+    mediaFailureCause,
+    type MediaFailureCause,
+  } from '$lib/utils/mediaErrors';
+  import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
   import { Play, ImageOff } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { nearViewport } from '$lib/actions/nearViewport';
@@ -19,9 +24,19 @@
   let { media, authToken, onClick }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
-  let failed = $state(false);
+  /** Why the tile has no picture, typed at the throw; the viewer it opens offers the retry. */
+  let failure = $state<MediaFailureCause | null>(null);
   /** Purged by the 30-day retention: permanent, and worth saying so rather than showing a gap. */
-  let expired = $state(false);
+  const expired = $derived(failure === 'expired');
+  /** The tile is ~5rem wide: the sentence goes on its name and tooltip. */
+  const failureLabel = $derived(
+    failure
+      ? mediaFailureLabel(failure, {
+          expired: m.msg_media_expired_label(),
+          other: m.msg_image_load_error(),
+        })
+      : undefined
+  );
 
   /**
    * Whether this tile has come near the viewport. The panel mounts its grid in a window of 60,
@@ -39,8 +54,7 @@
     if (!authToken || !isNear) return;
     let destroyed = false;
     let acquired = false;
-    failed = false;
-    expired = false;
+    failure = null;
     // Abandons the request while it is still QUEUED, so a tile scrolled past never asks.
     const abort = new AbortController();
     new MediaService()
@@ -54,8 +68,8 @@
       })
       .catch((err) => {
         if (destroyed) return;
-        expired = isMediaPurgedError(err);
-        failed = true;
+        failure = mediaFailureCause(err);
+        logMediaFailure('SharedMediaThumb', failure, ref.mediaId, err);
       });
     return () => {
       destroyed = true;
@@ -71,10 +85,10 @@
   onclick={onClick}
   use:nearViewport={{ onnear: () => (isNear = true) }}
   class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 transition-opacity outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-amber-500 dark:bg-white/10"
-  aria-label={expired ? m.msg_media_expired_label() : m.chat_open_media_label()}
-  title={expired ? m.msg_media_expired_label() : undefined}
+  aria-label={failureLabel ?? m.chat_open_media_label()}
+  title={failureLabel}
 >
-  {#if failed}
+  {#if failure}
     <div
       class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center"
     >
