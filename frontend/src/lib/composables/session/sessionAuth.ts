@@ -1979,6 +1979,8 @@ export function tearDownLiveSession(
   ctx.setTabLeaderSessionCb(null);
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
+  // A pause belongs to the session that was backgrounded; the next one starts in the foreground.
+  ctx.setConnectionPaused(false);
   ctx.setIsMessagingInitializing(false);
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
   // nothing can drive recovery for a session that has ended.

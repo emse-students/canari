@@ -196,6 +196,29 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
+  // Mi 9T, 2026-10-01: a reply from the shade answered a message whose row was still queued for the
+  // device, the next connection delivered it, and its banner came back 2.5 s later.
+  it('a message already read up to the conversation watermark is not announced again', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendSystemNotification } = makeContext();
+    const convo = ctx.conversations.get(CONVO)!;
+    ctx.conversations.set(CONVO, { ...convo, readWatermarks: { [ME]: 5_000 } });
+    screen('visible', true, false);
+
+    await messaging.addMessageToChat(PEER, 'answered from the shade', CONVO, ctx, {
+      messageId: 'm-read',
+      timestamp: new Date(4_000),
+    });
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+
+    // And the control: a message AFTER the watermark is still news.
+    await messaging.addMessageToChat(PEER, 'a newer one', CONVO, ctx, {
+      messageId: 'm-new',
+      timestamp: new Date(6_000),
+    });
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+  });
+
   it('a phone still says nothing about the user own message', async () => {
     const messaging = useMessaging();
     const { ctx, sendSystemNotification } = makeContext();

@@ -65,6 +65,7 @@
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+  import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -1382,6 +1383,19 @@
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
           await drainNativePendingCallAccept();
+          // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order
+          // login uses: the FCM cache first, then the shade's read watermarks recomputed over it.
+          // The reconnect pulls every row still queued for this device, including one a reply from
+          // the shade has already answered; `notifyInbound` can only leave that one silent if the
+          // conversation row already says it was read. Until 2026-10-01 the watermarks were merged
+          // at login only, so a resumed app re-announced it (Mi 9T).
+          if (deviceKeyB64 && storage) await flushFcmCache(deviceKeyB64, storage);
+          const selfId = globalSession.userId;
+          if (selfId) {
+            await consumeNativeReadWatermarks(globalConvs.conversations, selfId, (key) =>
+              globalConvs.saveConversation(key, convCtx())
+            ).catch((e) => appendLog(`[READ_WATERMARK] Resume merge failed: ${String(e)}`));
+          }
           // resumeConnection, NOT attemptReconnect: `pauseConnection` stopped the connection and
           // sync watchdogs on the way out, and only this seam re-arms them - so it must run even
           // when the socket survived the background, hence no isWsConnected guard here. Calling
@@ -1389,10 +1403,6 @@
           // dead socket, which is exactly what was measured on hardware (see resumeConnectionImpl).
           void globalSession.resumeConnection(sessionCb());
           checkSiblingCallWarning();
-          // Flush FCM messages cached while the app was in the background.
-          if (deviceKeyB64 && storage) {
-            void flushFcmCache(deviceKeyB64, storage);
-          }
         })();
       }
     };
@@ -1413,6 +1423,14 @@
      */
     const handleOnlineResume = () => {
       if (!globalSession.isLoggedIn) return;
+      // The network coming back is not the app coming back: a paused connection stays closed until
+      // the foreground, and lifting it here would reconnect a backgrounded app.
+      if (globalSession.isConnectionPaused) {
+        appendLog(
+          '[LIFECYCLE] Network back online while paused - the foreground resume reconnects.'
+        );
+        return;
+      }
       appendLog('[LIFECYCLE] Network back online - re-arming watchdogs and reconnecting...');
       void globalSession.resumeConnection(sessionCb());
     };

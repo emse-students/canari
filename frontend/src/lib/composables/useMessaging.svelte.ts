@@ -373,7 +373,7 @@ export function useMessaging() {
      * is where both already are - deriving it from the name would be `deriveConversationIdentity`
      * run a second time, in a second place, against a string that is a `me::peer` key for a DM.
      */
-    convo: Pick<Conversation, 'name' | 'contactName' | 'conversationType'>,
+    convo: Pick<Conversation, 'name' | 'contactName' | 'conversationType' | 'readWatermarks'>,
     senderId: string,
     content: string,
     isSystem: boolean,
@@ -383,6 +383,21 @@ export function useMessaging() {
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
+    // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
+    // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
+    // still queued for this device, the next connection delivers it, and it used to be announced
+    // again - the reply's banner came back 2.5 s later without the reply line (Mi 9T, 2026-10-01).
+    if (
+      !isUnreadForUser(
+        { isOwn, isSystem, senderId, timestamp: new SvelteDate(sentAt) },
+        watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase())
+      )
+    ) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} at ${sentAt} is already read here - nothing raised.`
+      );
+      return;
+    }
 
     // NATIVE MOBILE USED TO RETURN HERE, AND THAT IS WHY A PHONE IN A POCKET NEVER NOTIFIED.
     //

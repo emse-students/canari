@@ -141,6 +141,13 @@ export interface SessionContext {
   isReconnecting(): boolean;
   setIsReconnecting(v: boolean): void;
   /**
+   * True from `pauseConnectionImpl` (app backgrounded) until `resumeConnectionImpl` (foreground).
+   * While it holds, nothing may open a socket: a lost connection is the EXPECTED state, not a fault
+   * for the reconnect ladder to repair.
+   */
+  isConnectionPaused(): boolean;
+  setConnectionPaused(v: boolean): void;
+  /**
    * True when this session was unlocked with no access token, because the device had no network
    * at launch (see `loginImpl`). The MLS state and the local message store are fully usable; only
    * the transport is missing. Cleared by `promoteOfflineSession` once a token is obtained.

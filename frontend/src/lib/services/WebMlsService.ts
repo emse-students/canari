@@ -700,6 +700,28 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
+  /**
+   * Sends `disconnect`, then closes the socket with its handlers detached first, so the close
+   * reports no disconnection - see {@link IMlsService.pauseSocket}. Same shape as the teardown at
+   * the top of `connect`.
+   */
+  pauseSocket(): void {
+    this.clearHeartbeat();
+    const ws = this.ws;
+    if (!ws) return;
+    this.sendDisconnect();
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.onmessage = null;
+    this.ws = null;
+    try {
+      ws.close();
+    } catch (e) {
+      console.warn(`[WS] pauseSocket: close failed: ${String(e)}`);
+    }
+    console.log('[WS] Paused - disconnect sent, socket released until the next foreground.');
+  }
+
   /** Sends an ephemeral typing signal over the browser WebSocket for a DM/group. */
   sendTyping(groupId: string, isTyping: boolean): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {

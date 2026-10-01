@@ -1961,6 +1961,29 @@ The receiving side still accepts the legacy `read_receipt` and converts it throu
 `watermarkAfterReading` - that shim is for clients older than this change, and is dated in
 [legacy-compatibility](../legacy-compatibility.md). Nothing in this repo sends one any more.
 
+### A message the shade already answered is never announced again (2026-10-01)
+
+**Measured on a Mi 9T:** a reply from the shade went out (`201`), and 2.5 s later the same message
+came back as a fresh notification without the reply line. Three facts lined up. The incoming row is
+not ACKed by the push path - by design, the engine that processes it on the next connection ACKs it,
+so the 201 of the reply has nothing to do with it. The PAUSED socket was not closed: the pause sent
+`disconnect`, the gateway stopped reading (`handle_disconnect(...); break`), the client kept the
+socket and its heartbeat, and after four unanswered pings the zombie watchdog reconnected a
+backgrounded app, which pulled that row. And nothing on the notifying side knew it had been read:
+the watermark file was merged at login only.
+
+Each fact is now answered where it lives, by durable state rather than a clock:
+
+- **a paused socket does not exist** - `pauseConnectionImpl` calls `IMlsService.pauseSocket`
+  (frame, then release with no disconnect callback), and the session's pause flag refuses every
+  reconnect request (`online`, the service's own hook) until the foreground `resumeConnectionImpl`;
+- **the resume merges the shade first** - `ChatBackgroundService` flushes the FCM cache and
+  `consumeNativeReadWatermarks` BEFORE reopening the socket, in login's order;
+- **already read is not news, on both builders' doorsteps** - `notifyInbound` asks
+  `isUnreadForUser` against the row's watermark, and `showMessageNotification` asks
+  `shadeReadWatermark` against `read_watermarks.ndjson`, which covers the socket that legitimately
+  stays up in the background (see `appForeground.ts`) before the app has merged the file.
+
 ## A device's identity survived only a successful network call
 
 `deviceId` is not a preference. The MLS credential is `userId:deviceId`, so losing it does not
