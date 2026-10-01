@@ -42,7 +42,7 @@ dump, a restore, or any pipe carrying bytes rather than text goes through Bash. 
 through either. Quote SQL single-outer, doubled-inner:
 
 ```
-ssh canari 'docker exec ... psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
+ssh portail-etu-direct 'docker exec canari-prod-postgres-1 psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
 ```
 
 Single shared database host for all relational data. The database name is `auth_db`; logical separation is by schema/table prefix, not by database.

@@ -14,7 +14,7 @@ This page is the mechanism and its report, installed 2026-09-03 on the user's de
 | Host | Debian | Reached as | Found |
 |---|---|---|---|
 | `canari` (10.0.0.3) | 13 trixie | `canari`, `sudo` + `docker` | no `unattended-upgrades`, no `20auto-upgrades` |
-| `mitv` (10.0.0.4) | 12 bookworm | **root** | **switches ON, package ABSENT**; reboot pending since 12 July |
+| `mitv` (10.0.0.4) | 12 bookworm | **root** | **switches ON, package ABSENT**; reboot pending since 12 July - taken 2026-09-03 ([below](#the-73-tb-raid1-nobody-was-watching-found-while-rebooting-for-the-kernel-2026-09-03)); re-read 2026-10-01: kernel `6.12.95+deb12-amd64`, no `reboot-required` |
 | `cercle` (10.0.0.6) | 13 trixie | `cercle`, passwordless `sudo` | no `unattended-upgrades`, 17 packages behind |
 | `miconnect` (10.0.0.7) | 13 trixie | `miconnect`, `sudo` | no `unattended-upgrades` |
 
