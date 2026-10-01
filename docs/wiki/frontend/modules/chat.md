@@ -91,6 +91,17 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### Every photo in a conversation went to a `<video>` (#1229, shipped in `v0.18.32`; fixed 2026-10-01)
+
+#1229 made a FEED video play inline (`InlineVideo`), and its edit to `MessageMediaRenderer` replaced
+the IMAGE branch rather than a video one. Every decrypted chat photo was handed to a `<video>` with
+`#t=0.1`, which no engine decodes as an image - Firefox said it outright: *"HTTP Content-Type of
+image/jpeg is not supported"*, then `playWhileVisible: play() refused NotSupportedError`. The image
+branch is back as it was (an `<img>` in a button opening the viewer, the download button over it);
+the video branch is unchanged. **No test had ever mounted that branch**: the caption test passes
+`blobUrl: null` and stops at the skeleton. `MessageMediaRenderer.image.svelte.test.ts` mounts it with
+the bytes decrypted, and was red on the defect.
+
 ### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
 
 `MessageBubble` renders `MessageTextBody` under `{#if !mediaRef}`. A message carrying an attachment
