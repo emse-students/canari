@@ -103,7 +103,7 @@
       </div>
     {/if}
 
-    <div class="flex items-center justify-between gap-4">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div class="flex items-center gap-3.5">
         <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           {#if themeStore.preference === 'light'}
@@ -134,13 +134,13 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="focus-visible:ring-cn-yellow flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-cn-yellow flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
  {themeStore.preference === opt.value
               ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
-            <span class="hidden sm:inline">{opt.label}</span>
+            <span>{opt.label}</span>
           </button>
         {/each}
       </div>
