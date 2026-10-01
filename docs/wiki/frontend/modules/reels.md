@@ -124,3 +124,28 @@ whose core purpose is a gallery, and a full photo-library grant on iOS - a priva
 only to draw a picture. The tile opens the system picker instead, which needs neither; a video over
 the cap is refused the moment it is picked (`reels/videoDuration.ts`), and one whose header has no
 duration is left to the preparation's own `too-long`.
+
+## Publishing (R3, on C2 and C3)
+
+"Suivant" on the review opens the publish step (`components/reels/ReelPublishSheet.svelte`) IN
+PLACE of the review, as its own history entry above the take's: Back returns to the take, a second
+Back discards it. It asks what a post asks and nothing a reel cannot carry: a caption (optional on
+the server for a reel) and **who is publishing**, through `PostIdentityPicker` - the post composer's
+choice extracted into one component, with `posts/postIdentity.ts` as the one reading of it (the
+associations a member may speak for, and the payload fields a choice adds). A poll, a form, a
+linked event or a schedule are refused on a reel by the server, so they are not offered.
+
+"Publier" runs `reels/publishReel.ts`, in the order the server's contract asks
+([reels (server)](../../services/reels.md)): the mute check, the media token, the re-encode on the
+device to ONE fragmented H.264/AAC MP4 (`prepareVideoForUpload`, bounded by the server's cap and the
+upload ceiling, with the shared progress line and its cancel), the upload under the `reel` retention
+class, then `POST /api/posts` with `kind: 'reel'` and the declared `durationMs`. A failure is a
+`ReelPublishError` naming its stage, and the sentence is `publishFailureMessage`'s, the composer's
+own; a cancelled re-encode says nothing. Success lands on the feed, REPLACING the camera in the
+history so Back from the feed does not reopen it.
+
+**The declared duration is clamped to the cap, and that is not a correction.** The preparation
+accepts a source up to half a second past the cap (`VIDEO_DURATION_GRACE_SECONDS`), because a
+recorder stopped at 90 s writes a container ending a few hundredths later; that take IS a 90-second
+reel, and the server refuses a declaration over the cap, so it declares the cap
+(`declaredReelDurationMs`, pinned by `publishReel.test.ts`).

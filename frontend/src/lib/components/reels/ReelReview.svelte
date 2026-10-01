@@ -15,8 +15,8 @@
   interface Props {
     clip: ReelClip;
     ondiscard: () => void;
-    /** Absent until a publish path exists for the screen that mounts this. */
-    onnext?: () => void;
+    /** On to the publish step. */
+    onnext: () => void;
   }
 
   let { clip, ondiscard, onnext }: Props = $props();
@@ -54,17 +54,15 @@
     </button>
   </div>
 
-  {#if onnext}
-    <div class="absolute right-0 bottom-0 p-4 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
-      <button
-        type="button"
-        class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-3 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
-        onclick={onnext}
-        data-reel-next
-      >
-        {m.reels_review_next()}
-        <ArrowRight size={18} strokeWidth={2.5} />
-      </button>
-    </div>
-  {/if}
+  <div class="absolute right-0 bottom-0 p-4 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
+    <button
+      type="button"
+      class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-3 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+      onclick={onnext}
+      data-reel-next
+    >
+      {m.reels_review_next()}
+      <ArrowRight size={18} strokeWidth={2.5} />
+    </button>
+  </div>
 </div>

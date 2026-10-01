@@ -3126,5 +3126,14 @@
   "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
   "reels_capture_limits_refused": "Les CanaReels ne répondent pas pour l'instant - toucher pour réessayer",
   "reels_review_discard": "Supprimer et refilmer",
-  "reels_review_next": "Suivant"
+  "reels_review_next": "Suivant",
+  "reels_publish_title": "Nouveau CanaReel",
+  "reels_publish_back": "Revenir à la vidéo",
+  "reels_publish_caption_label": "Légende",
+  "reels_publish_caption_placeholder": "Ajouter une légende...",
+  "reels_publish_submit": "Publier",
+  "reels_publish_uploading": "Envoi...",
+  "reels_publish_done": "CanaReel publié",
+  "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
+  "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là."
 }
