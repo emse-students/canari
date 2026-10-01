@@ -72,3 +72,16 @@ if [ "$second" != "[miconnect-blueprints] 0 change(s)" ]; then
   exit 1
 fi
 echo "blueprints apply to a fresh instance and are idempotent"
+
+# THE ENROLMENT FLOW, DRIVEN. Applying its blueprint proves the objects exist; only the flow
+# executor shows what a person gets - the pages, the refusals, the profile written. The script
+# prints ENROLLMENT-OK or raises (infrastructure/authentik/test-enrollment-flow.py).
+echo "enrolment flow: driving it through the executor"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=ak-shell.sh
+. "$here/ak-shell.sh"
+if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&2) | grep -qx 'ENROLLMENT-OK'; then
+  echo "::error::the enrolment flow did not behave - read the assertion above"
+  exit 1
+fi
+echo "the enrolment flow lets the right people in, refuses the others, and writes the profile"

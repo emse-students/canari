@@ -16,7 +16,7 @@ entries:
       name: "Cas EMSE"
       promoted: true
       authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
-      enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
       user_property_mappings:
         - !Find [authentik_sources_oauth.oauthsourcepropertymapping, [name, "miconnect-cas-identity"]]
       user_path_template: "users"
@@ -42,7 +42,7 @@ entries:
       name: "Mines Saint-Etienne Alumni"
       promoted: true
       authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
-      enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
+      enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
       user_path_template: "users"
       pre_authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-pre-authentication"]]
       sso_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ270K"

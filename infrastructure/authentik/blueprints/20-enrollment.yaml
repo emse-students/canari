@@ -1,4 +1,4 @@
-# The first sign-in: what a new account is asked (status, formation, entry year) and how it is written.
+# The first sign-in: what a new account is asked (campus, the boxes it ticks, formation and entry year) and how it is written.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -9,68 +9,34 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "false"
 entries:
-  # RENAMES (WPA-2, 2026-09-30). Each entry below runs only while the OLD name still exists, and
+  # RENAMES (WP2, 2026-10-01). Each entry below runs only while the OLD name still exists, and
   # gives the object its new name before the entry that describes it by that name. It finds the
   # object by PK, because authentik merges an entry's identifiers back into its attributes: found
-  # by its old name, it would write that old name straight back. So an instance
-  # built under the old names is renamed in place, and a fresh one never sees these. They are dead
-  # once production has taken them, and are deleted then (docs/wiki/profiles-and-access.md, WPA).
-  - model: authentik_stages_prompt.prompt
+  # by its old name, it would write that old name straight back. So the instance production runs is
+  # renamed in place, and a fresh one never sees these. They are dead once production has taken
+  # them, and are deleted then (docs/wiki/profiles-and-access.md, WP2). The WPA-2 renames that stood
+  # here were deleted: production took them on 2026-09-30.
+  - model: authentik_flows.flow
     conditions:
-      - !Find [authentik_stages_prompt.prompt, [name, "Formation"]]
+      - !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
     identifiers:
-      pk: !Find [authentik_stages_prompt.prompt, [name, "Formation"]]
+      pk: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
     attrs:
-      name: "miconnect-enrollment-prompt-formation"
-  - model: authentik_stages_prompt.prompt
-    conditions:
-      - !Find [authentik_stages_prompt.prompt, [name, "Promotion"]]
-    identifiers:
-      pk: !Find [authentik_stages_prompt.prompt, [name, "Promotion"]]
-    attrs:
-      name: "miconnect-enrollment-prompt-promo"
-  - model: authentik_stages_prompt.prompt
-    conditions:
-      - !Find [authentik_stages_prompt.prompt, [name, "School Worker"]]
-    identifiers:
-      pk: !Find [authentik_stages_prompt.prompt, [name, "School Worker"]]
-    attrs:
-      name: "miconnect-enrollment-prompt-status"
-  - model: authentik_policies_expression.expressionpolicy
-    conditions:
-      - !Find [authentik_policies_expression.expressionpolicy, [name, "Validate promo year"]]
-    identifiers:
-      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "Validate promo year"]]
-    attrs:
-      name: "miconnect-enrollment-validate-promo"
-  - model: authentik_policies_expression.expressionpolicy
-    conditions:
-      - !Find [authentik_policies_expression.expressionpolicy, [name, "is-student"]]
-    identifiers:
-      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "is-student"]]
-    attrs:
-      name: "miconnect-enrollment-is-student"
-  - model: authentik_policies_expression.expressionpolicy
-    conditions:
-      - !Find [authentik_policies_expression.expressionpolicy, [name, "Merge attributes"]]
-    identifiers:
-      pk: !Find [authentik_policies_expression.expressionpolicy, [name, "Merge attributes"]]
-    attrs:
-      name: "miconnect-enrollment-merge-status"
+      slug: "miconnect-enrollment"
   - model: authentik_stages_prompt.promptstage
     conditions:
-      - !Find [authentik_stages_prompt.promptstage, [name, "Request School Status"]]
+      - !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-status"]]
     identifiers:
-      pk: !Find [authentik_stages_prompt.promptstage, [name, "Request School Status"]]
+      pk: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-status"]]
     attrs:
-      name: "miconnect-enrollment-ask-status"
+      name: "miconnect-enrollment-ask-affiliations"
   - model: authentik_stages_prompt.promptstage
     conditions:
-      - !Find [authentik_stages_prompt.promptstage, [name, "Request Promo & Formation"]]
+      - !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
     identifiers:
-      pk: !Find [authentik_stages_prompt.promptstage, [name, "Request Promo & Formation"]]
+      pk: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
     attrs:
-      name: "miconnect-enrollment-ask-promo"
+      name: "miconnect-enrollment-ask-cursus"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-enrollment-prompt-formation"
@@ -89,16 +55,67 @@ entries:
       label: "Année d'entrée à l'école (ou année précédant l'entrée à l'école pour les 2A AST)"
       type: "number"
       placeholder: "ex. 2018"
+  # THE FIRST PAGE (WP2, D11): campus, then boxes. A box is a checkbox that may stay unchecked, and
+  # the policy `miconnect-enrollment-validate-affiliation` refuses a page where none is (D12). The
+  # values are the profile's own (`saint-etienne`, `gardanne`), so nothing translates them later.
   - model: authentik_stages_prompt.prompt
     identifiers:
-      name: "miconnect-enrollment-prompt-status"
+      name: "miconnect-enrollment-prompt-campus"
     attrs:
-      field_key: "custom_statut"
-      label: "Je suis :"
+      field_key: "campus"
+      label: "Mon campus :"
       type: "radio-button-group"
-      placeholder: "return [{\"label\": \"Élève\", \"value\": \"Elève\"}, \"Personnel de l'école\"]"
+      placeholder: "return [{\"label\": \"Saint-Étienne\", \"value\": \"saint-etienne\"}, {\"label\": \"Gardanne\", \"value\": \"gardanne\"}]"
       order: 1
       placeholder_expression: true
+      required: true
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-student"
+    attrs:
+      field_key: "is_student"
+      label: "Je suis ou j'ai été élève"
+      type: "checkbox"
+      order: 2
+      required: false
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-post-emse"
+    attrs:
+      field_key: "post_emse"
+      label: "Je travaille pour l'École des Mines"
+      type: "checkbox"
+      order: 3
+      required: false
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-post-me"
+    attrs:
+      field_key: "post_me"
+      label: "Je travaille pour la Maison des Élèves"
+      type: "checkbox"
+      order: 4
+      required: false
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-post-alumni"
+    attrs:
+      field_key: "post_alumni"
+      label: "Je travaille pour l'association des Alumni"
+      type: "checkbox"
+      order: 5
+      required: false
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-validate-affiliation"
+    attrs:
+      execution_logging: true
+      expression: |-
+        data = context.get('prompt_data', {})
+        if data.get("is_student") or data.get("post_emse") or data.get("post_me") or data.get("post_alumni"):
+            return True
+        ak_message("MiConnect est réservé aux élèves, anciens élèves et personnels de l'École, de la Maison des Élèves et de l'association des Alumni : coche au moins une case.")
+        return False
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-enrollment-validate-promo"
@@ -108,8 +125,13 @@ entries:
         from datetime import datetime
 
         promo = context.get('prompt_data', {}).get("attributes", {}).get("promo")
+        year = datetime.now().year
 
-        return (promo <= datetime.now().year and promo >= 1816)
+        # A refusal with no message re-shows the page with no explanation (found driving the flow, WP2).
+        if promo is not None and 1816 <= promo <= year:
+            return True
+        ak_message(f"L'année d'entrée doit être comprise entre 1816 et {year}.")
+        return False
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-enrollment-is-student"
@@ -117,63 +139,67 @@ entries:
       execution_logging: true
       expression: |-
         data = context.get('prompt_data', {})
-        return data.get("custom_statut") == "Elève"
+        return bool(data.get("is_student"))
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-enrollment-merge-status"
     attrs:
-      # Copies the status into `school_status` AND builds the version-1 profile (WP1), by the rules
-      # infrastructure/authentik/migrate-profile.py applied to the existing accounts - D26's campus,
-      # D27's EMSE post, the capitals split for the explicit names. Bound to the CAS flow only: the
-      # alumni flow is rebuilt by WP2.
+      # Builds the version-1 profile from what the two pages declared (WP2, D1/D2/D6/D11): the
+      # campus the person chose, one cursus when they are or were a student, and a post for each
+      # organisation ticked. The capitals split for the explicit names is the rule
+      # infrastructure/authentik/migrate-profile.py applied to the existing accounts. It ALSO keeps
+      # writing the legacy `school_status` (and the `formation`/`promo` the cursus page writes),
+      # which the old claims read until WP9 removes them.
       expression: |-
         prompt_data = request.context.get("prompt_data", {})
         attributes = prompt_data.get("attributes", {})
-        status = prompt_data.get("custom_statut")
-        if status is not None:
-            attributes["school_status"] = status
-        formation = attributes.get("formation")
-        promo = attributes.get("promo")
-        cursus = [{"formation": formation, "promo": int(promo)}] if status == "Elève" and formation and promo is not None else []
+        student = bool(prompt_data.get("is_student"))
+        formation = attributes.get("formation") if student else None
+        promo = attributes.get("promo") if student else None
+        cursus = [{"formation": formation, "promo": int(promo)}] if formation and promo is not None else []
+        posts = [post for key, post in (("post_emse", "EMSE"), ("post_me", "ME"), ("post_alumni", "ALUMNI")) if prompt_data.get(key)]
+        campus = prompt_data.get("campus")
+        attributes["school_status"] = "Elève" if student else "Personnel de l'école"
         parts = (prompt_data.get("name") or "").strip().split()
         last = [part for part in parts if part == part.upper() and len(part) > 1]
         first = [part for part in parts if not (part == part.upper() and len(part) > 1)]
         attributes["profile"] = {
             "version": 1,
-            "campus": "gardanne" if formation == "ISMIN" else "saint-etienne",
+            "campus": campus,
             "cursus": cursus,
-            "posts": [] if cursus else ["EMSE"],
+            "posts": posts,
             "firstName": " ".join(first) or (parts[0] if parts else ""),
             "lastName": " ".join(last),
         }
         prompt_data["attributes"] = attributes
         request.context["prompt_data"] = prompt_data
         return True
+  # ONE FLOW FOR BOTH SOURCES (WP2, D7): the provider is only a way in, so the CAS and the Alumni
+  # SSO lead to the same two pages and the same profile. It is the former `miconnect-enrollment-cas`,
+  # renamed above so the CAS source keeps pointing at it; the alumni flow is deleted below.
   - model: authentik_flows.flow
     identifiers:
-      slug: "miconnect-enrollment-cas"
+      slug: "miconnect-enrollment"
     attrs:
-      name: "miconnect-enrollment-cas"
-      title: "Inscription à MiConnect"
-      designation: "enrollment"
-      authentication: "require_unauthenticated"
-  - model: authentik_flows.flow
-    identifiers:
-      slug: "miconnect-enrollment-alumni"
-    attrs:
-      name: "miconnect-enrollment-alumni"
+      name: "miconnect-enrollment"
       title: "Inscription à MiConnect"
       designation: "enrollment"
       authentication: "require_unauthenticated"
   - model: authentik_stages_prompt.promptstage
     identifiers:
-      name: "miconnect-enrollment-ask-status"
+      name: "miconnect-enrollment-ask-affiliations"
     attrs:
       fields:
-        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-status"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-campus"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-student"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-post-emse"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-post-me"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-post-alumni"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-validate-affiliation"]]
   - model: authentik_stages_prompt.promptstage
     identifiers:
-      name: "miconnect-enrollment-ask-promo"
+      name: "miconnect-enrollment-ask-cursus"
     attrs:
       fields:
         - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-formation"]]
@@ -190,46 +216,43 @@ entries:
       name: "miconnect-login"
   - model: authentik_flows.flowstagebinding
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
-      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-status"]]
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-affiliations"]]
       order: 10
   - model: authentik_flows.flowstagebinding
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
-      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-cursus"]]
       order: 20
   - model: authentik_policies.policybinding
     identifiers:
-      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment-cas"], [flowstagebinding__stage__name, "miconnect-enrollment-ask-promo"], [flowstagebinding__order, 20]]
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment"], [flowstagebinding__stage__name, "miconnect-enrollment-ask-cursus"], [flowstagebinding__order, 20]]
       policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-is-student"]]
       order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
       stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-enrollment-write"]]
       order: 25
   - model: authentik_policies.policybinding
     identifiers:
-      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment-cas"], [flowstagebinding__stage__name, "miconnect-enrollment-write"], [flowstagebinding__order, 25]]
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment"], [flowstagebinding__stage__name, "miconnect-enrollment-write"], [flowstagebinding__order, 25]]
       policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-merge-status"]]
       order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-cas"]]
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
       stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
       order: 30
-  - model: authentik_flows.flowstagebinding
+  # DELETED (WP2, 2026-10-01). The alumni flow asked promo and formation only and shared its stages
+  # with the CAS one; the source is re-pointed at the single flow in 30-sources.yaml, and the old
+  # status question ("Je suis : Élève / Personnel") is replaced by the first page above. Delete
+  # these entries once production has taken them.
+  - model: authentik_flows.flow
+    state: absent
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
-      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-ask-promo"]]
-      order: 10
-  - model: authentik_flows.flowstagebinding
+      slug: "miconnect-enrollment-alumni"
+  - model: authentik_stages_prompt.prompt
+    state: absent
     identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
-      stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-enrollment-write"]]
-      order: 20
-  - model: authentik_flows.flowstagebinding
-    identifiers:
-      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment-alumni"]]
-      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
-      order: 30
+      name: "miconnect-enrollment-prompt-status"
