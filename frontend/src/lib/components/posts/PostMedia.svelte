@@ -416,6 +416,7 @@
       <InlineVideo
         src={playUrl!}
         disableRemotePlayback={streamManaged}
+        streamed={streamUrl !== null}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
         class={letterbox

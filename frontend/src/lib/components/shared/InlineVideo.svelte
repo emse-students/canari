@@ -15,7 +15,10 @@
    * opens the full-screen viewer, which carries the controls and the download.
    *
    * `#t=0.1` is what makes the Android WebView decode a first frame instead of its grey default
-   * poster, which is what shows before the video comes into view.
+   * poster, which is what shows before the video comes into view. NEVER ON A STREAM: an MSE URL
+   * names a `MediaSource` in the engine's registry, and a URL with a fragment is a different URL -
+   * Chromium refuses it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`,
+   * measured on the Mi 9T (2026-10-01). A stream starts at its first frame anyway.
    */
   interface Props {
     /** The decrypted blob URL, or a segmented stream's MSE URL. */
@@ -33,6 +36,8 @@
      * element that cannot be handed to AirPlay, which would need a second, non-MSE source.
      */
     disableRemotePlayback?: boolean;
+    /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
+    streamed?: boolean;
   }
 
   let {
@@ -42,6 +47,7 @@
     class: klass = '',
     videoClass = 'h-full w-full',
     disableRemotePlayback = false,
+    streamed = false,
   }: Props = $props();
 
   let videoEl: HTMLVideoElement | null = $state(null);
@@ -61,7 +67,7 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video
     bind:this={videoEl}
-    src="{src}#t=0.1"
+    src={streamed ? src : `${src}#t=0.1`}
     poster={TRANSPARENT_VIDEO_POSTER}
     muted
     loop
