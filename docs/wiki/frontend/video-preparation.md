@@ -93,9 +93,17 @@ synthetic test patterns (2.97 against 2.5 Mb/s); at that rate a 90 s reel is ~35
 
 ## Who calls it
 
-- **The post and chat composers** - owed with the composer wiring, which shows the progress and the
-  cancel.
-- **The CanaReels camera** (R3) - calls it on the recorder's `Blob` with `maxSeconds: 90`.
+- **The post composer and the post editor** - at publish, through `preparePostMedia(file, options)`
+  (`media.ts`), the ceiling from `uploadLimits()`. The progress line and its cross
+  (`VideoPreparationProgress.svelte`) sit above the composer's bar; the cross stops the publish and
+  leaves the composer as it was, with no banner. A refusal names its fault on the composer's banner
+  (`publishFailureMessage`).
+- **The chat composer** - at PICK time (`useMessaging.prepareMediaFiles`), so the video joins the
+  pending strip already prepared. The picked size is no longer compared against the ceiling for a
+  video: the encoder's budget is the ceiling instead. Two picks are prepared one after the other.
+- **The CanaReels camera** (R3) - calls it on the recorder's `Blob` with `maxSeconds: 90`; the
+  screen state is `VideoPreparationState` (`videoPreparationState.svelte.ts`) and the sentences
+  are `videoPrepareFailureMessage` (`videoPrepareMessages.ts`), the same three every screen uses.
 
 The output plays on every client that exists, segmented or not: it is an ordinary MP4 to a reader
 that reads it whole. Whether it is WRITTEN segmented is a separate switch,

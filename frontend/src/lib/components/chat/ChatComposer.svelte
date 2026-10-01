@@ -36,6 +36,8 @@
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
   import type { PendingMediaFile } from '$lib/media';
+  import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -96,6 +98,8 @@
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
+    /** A picked video being re-encoded before it joins `pendingFiles` - drawn with its cancel. */
+    videoPreparation?: VideoPreparationState;
     /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
@@ -119,6 +123,7 @@
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
+    videoPreparation,
     isUploading = false,
     allowedUserIds,
   }: Props = $props();
@@ -755,6 +760,13 @@
   {/if}
 
   <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
+    <!-- A picked video being re-encoded on the device, before it joins the strip below. -->
+    {#if videoPreparation && videoPreparation.fraction !== null}
+      <VideoPreparationProgress
+        fraction={videoPreparation.fraction}
+        oncancel={() => videoPreparation.cancel()}
+      />
+    {/if}
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
       <!--

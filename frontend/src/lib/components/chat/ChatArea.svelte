@@ -38,6 +38,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
+  import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
@@ -159,6 +160,8 @@
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
+    /** A picked video being re-encoded before it is staged - handed to the composer. */
+    videoPreparation?: VideoPreparationState;
     /** Whether a file upload is currently in progress. */
     isUploading?: boolean;
     /** Callback to start an audio-only call. */
@@ -247,6 +250,7 @@
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
+    videoPreparation,
     isUploading = false,
     onStartAudioCall,
     onStartVideoCall,
@@ -1500,6 +1504,7 @@
           {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}
+          {videoPreparation}
           {isUploading}
         />
       </div>

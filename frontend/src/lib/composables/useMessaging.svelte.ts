@@ -82,6 +82,9 @@ import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/c
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
+import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
+import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
+import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -142,6 +145,10 @@ export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   let replyingTo = $state<ChatMessage | null>(null);
   let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
+  /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
+  const videoPreparation = new VideoPreparationState();
+  /** The video preparations queued behind each other - see `prepareChatVideo`. */
+  let videoPreparationChain: Promise<unknown> = Promise.resolve();
   let isUploadingMedia = $state(false);
 
   /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
@@ -1259,6 +1266,14 @@ export function useMessaging() {
     // a picker that has not yet been answered has nothing to refuse.
     const limits = await mediaService.uploadLimits();
     for (const file of files) {
+      // A VIDEO IS RE-ENCODED ON THE DEVICE FIRST (decision C3), so its PICKED size says nothing
+      // about what is uploaded: a 200 MB camera clip leaves as ~30 MB. The ceiling is the encoder's
+      // budget instead, and a video that cannot fit it is refused there, by its own fault.
+      if (file.type.startsWith('video/')) {
+        const prepared = await prepareChatVideo(file, limits?.maxPlaintextBytes, ctx);
+        if (prepared) readyFiles.push(prepared);
+        continue;
+      }
       if (limits !== null && file.size > limits.maxPlaintextBytes) {
         const size = (file.size / 1024 / 1024).toFixed(1);
         // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
@@ -1299,6 +1314,52 @@ export function useMessaging() {
       readyFiles.push(entry);
     }
     return readyFiles;
+  }
+
+  /**
+   * Re-encodes one picked video for the chat (`prepareVideoForUpload`), its progress and cancel
+   * drawn by the composer through {@link videoPreparation}.
+   *
+   * @returns The entry to stage, or `null` when it was refused (said on the banner) or cancelled
+   *          (nothing said: the member asked for it).
+   */
+  function prepareChatVideo(
+    file: File,
+    maxBytes: number | undefined,
+    ctx: MessagingContext
+  ): Promise<import('$lib/media').PendingMediaFile | null> {
+    // ONE AT A TIME: a second pick while a video is encoding waits for it, so the one progress
+    // line and its cancel always belong to the video actually running.
+    const run = videoPreparationChain.then(() => prepareOneChatVideo(file, maxBytes, ctx));
+    videoPreparationChain = run.catch(() => undefined);
+    return run;
+  }
+
+  async function prepareOneChatVideo(
+    file: File,
+    maxBytes: number | undefined,
+    ctx: MessagingContext
+  ): Promise<import('$lib/media').PendingMediaFile | null> {
+    try {
+      const prepared = await prepareVideoForUpload(file, videoPreparation.optionsFor(maxBytes));
+      ctx.log(
+        `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
+          `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
+      );
+      return { file: prepared.file, width: prepared.width, height: prepared.height };
+    } catch (e) {
+      if (!isVideoPrepareError(e)) throw e;
+      const message = videoPrepareFailureMessage(e);
+      if (message === null) {
+        ctx.log(`[MEDIA] video "${file.name}" not staged: cancelled`);
+        return null;
+      }
+      ctx.log(`[MEDIA] video "${file.name}" refused: ${e.fault} - ${e.message}`);
+      ctx.setSendError(message);
+      return null;
+    } finally {
+      videoPreparation.finish();
+    }
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
@@ -1688,6 +1749,7 @@ export function useMessaging() {
     get pendingMediaFiles() {
       return pendingMediaFiles;
     },
+    videoPreparation,
     /** True while a media file is being encrypted and uploaded. */
     get isUploadingMedia() {
       return isUploadingMedia;

@@ -127,7 +127,8 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   non ? Je veux un truc joli comme instagram"*). It drew the native controls - Android's grey bar -
   inside a 16:9 box of its own, a "Plein ecran" pill and a download button over it, and a phone's
   vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
-  a video's `width`/`height` at upload (`readVideoDimensions`), so `PostContent` reserves the box
+  a video's `width`/`height` at upload (the on-device encoder's own output since R2,
+  [video-preparation](../video-preparation.md)), so `PostContent` reserves the box
   at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
   `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
   whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
