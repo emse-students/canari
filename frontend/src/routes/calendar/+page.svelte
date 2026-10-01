@@ -551,7 +551,8 @@
       <button
         type="button"
         onclick={() => (showSubscribeModal = true)}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
+        data-calendar-subscribe
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}
@@ -581,21 +582,15 @@
            at the foot, because those rows are still exactly what they claim to be. -->
       <Card class="space-y-4 p-4 sm:p-5">
         {@render associationFilter()}
-        <!-- THE RULE IS DRAWN ONLY WHERE THERE IS SOMETHING UNDER IT.
+        <!-- THE ROW ALWAYS HAS SOMETHING UNDER ITS RULE, SO IT HAS NO BREAKPOINT OF ITS OWN.
 
-             `exportActions` holds two controls and a phone reader usually has NEITHER: the PDF
-             export is a right most readers do not have, and the subscribe button is deliberately
-             not drawn below `sm` (d90f06397 - no `webcal://` handler there). So on a 390px screen
-             this row was a 1px rule and 16px of padding over nothing, which is what the first
-             render of the phone agenda showed on 2026-09-22.
-
-             The breakpoint is spelt again here rather than inferred: the button is hidden by CSS,
-             so it is still a child and `:empty` cannot see the difference. -->
-        <div
-          class="border-cn-border/60 {canExportPdf
-            ? 'flex'
-            : 'hidden sm:flex'} flex-wrap justify-end gap-2 border-t pt-4"
-        >
+             It used to be `hidden sm:flex` for a reader without the PDF right, because the
+             subscribe button was not drawn below `sm` (d90f06397, on the premise that phones have
+             no `webcal://` handler) and the row was a 1px rule over nothing (2026-09-22). That
+             premise was wrong for the iPhone, whose Calendar subscribes from a `webcal:` link, and
+             the modal now orders what works per platform - so the button is on every screen and
+             the row with it (2026-10-01). -->
+        <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
           {@render exportActions()}
         </div>
       </Card>

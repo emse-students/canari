@@ -114,12 +114,46 @@ then says so in words. **The rolling window itself is exactly what it claims.** 
 were not.
 
 **A RULE WAS DRAWN OVER NOTHING.** The filter card's action row holds `exportActions`, which on a
-phone is usually EMPTY: the PDF export is a right most readers do not have, and the subscribe button
-is deliberately `hidden` below `sm` (`d90f06397`, June 2026 - no `webcal://` handler there). So the
-row rendered a 1px rule and 16px of padding under the filter, 17px of card spent saying nothing. It
-now carries the button's own breakpoint, spelt again rather than inferred: a CSS-hidden child is
-still a child, so `:empty` cannot tell the difference. Measured after: 126px at 390, 175px at 700
-where the button is real.
+phone was then usually EMPTY: the PDF export is a right most readers do not have, and the subscribe
+button was `hidden` below `sm` (`d90f06397`, June 2026). So the row rendered a 1px rule and 16px of
+padding under the filter, 17px of card spent saying nothing, and it took the button's breakpoint.
+Since 2026-10-01 the button is on every screen (below), so the row is too and has no breakpoint.
+
+### THE SUBSCRIBE BUTTON IS ON PHONES, AND ITS MODAL ORDERS WHAT WORKS THERE (2026-10-01)
+
+Reported: *no button to subscribe to the calendar on mobile*. It had been hidden on purpose since
+`d90f06397` on the premise "no `webcal://` handler on phones". **Measured, that premise is half
+true:**
+
+- **Mi 9T (LineageOS 23.2, Android 16; Etar + Google's calendar sync adapter, no Google Calendar
+  app), 2026-10-01:** `cmd package query-activities -a VIEW -d webcal://...` and `-d webcals://...`
+  both answer `No activities found`, and `am start` of either is `unable to resolve Intent`. The
+  control (`https://`) resolves the browser. So on THIS phone nothing opens the link - but Android
+  is not one phone: an app such as ICSx5 registers the scheme, and the WebView cannot know.
+- **iPhone: UNMEASURED.** iOS registers `webcal:` for Calendar, which turns the link into a
+  subscription prompt - documented platform behaviour, not read on our hardware. `webcals:` is not
+  the scheme Apple documents, and `UIApplication.open` on an unregistered scheme fails without a
+  word (the opener plugin resolves regardless), so iOS is handed `webcal:` and everything else
+  keeps `webcals:` (the Thunderbird cross-scheme-redirect reason in `CalendarSubscribeModal`).
+
+So the button is drawn everywhere and the ONE modal orders by likelihood. **On a phone**: open in my
+calendar app first, then the URL to copy (visible, not folded), then Google Calendar's `cid=` link
+and the add-by-URL steps. **On a desktop** the order it always had. The scheme choice is
+`lib/calendar/subscribeLinks.ts`, the only copy.
+
+**THE LINK WAS NEVER ALLOWED OUT OF THE APP.** Two defects any phone would have met had the button
+been visible: `opener:default` scopes `openUrl` to http(s)/mailto/tel, so a `webcal`/`webcals` link
+would have been refused with `Not allowed to open url`; and the modal's `<a href="webcals:...">` was
+not in `openExternal`'s `EXTERNAL_PROTOCOLS`, so in the app the click fell to the WebView itself.
+`capabilities/default.json` now scopes `opener:allow-open-url` to both schemes
+(`tauriCapabilities.test.ts` pins it), and the button calls `navigateExternal` directly. **Android's
+opener REJECTS an intent nothing resolves** (`ActivityNotFoundException`), the one answer a WebView
+gets about a handler - so that rejection is logged and shown, pointing at the copy row, rather than
+leaving a button that did nothing. On the web a browser without a handler does nothing at all and
+cannot be told; that is why the copy row is in view on a phone.
+
+**Still owed:** one press on each phone in the APP - the Mi 9T should show the "no app" notice, the
+iPhone should show Calendar's subscription prompt. Neither is provable without a build.
 
 **THE GUTTER SPOKE FRENCH TO AN ENGLISH READER.** `monthFormatter` read `getLocale()`; the weekday
 under it was a `new Intl.DateTimeFormat('fr-FR', ...)` built inline, per day, per render. An English

@@ -119,6 +119,17 @@ describe('Tauri capabilities', () => {
     expect(granted.has('dialog:default')).toBe(true);
   });
 
+  it('lets a calendar subscription link leave the app', () => {
+    // `opener:default` scopes `openUrl` to http(s), mailto and tel. The subscribe modal hands the
+    // OS a `webcal:` link on iOS and a `webcals:` one elsewhere (`subscribeLinks.ts`); without
+    // these two entries `openUrl` rejects them with "Not allowed to open url" - on the device only.
+    const scoped = capability('default.json').permissions.find(
+      (p) => typeof p !== 'string' && p.identifier === 'opener:allow-open-url'
+    );
+    const urls = typeof scoped === 'string' ? [] : (scoped?.allow ?? []).map((e) => e.url);
+    expect(urls).toEqual(expect.arrayContaining(['webcal://*', 'webcals://*']));
+  });
+
   // ---------------------------------------------------------------------------------------------
   // WHAT A RELEASE BUILD MAY REACH. Added 2026-09-04, after a capability whose own description said
   // "NOT included in production builds" turned out to be in all of them.
@@ -147,6 +158,9 @@ describe('Tauri capabilities', () => {
       if (!named.includes(cap.identifier)) continue; // opt-in, added by a debug-only --config overlay
       for (const permission of cap.permissions) {
         if (typeof permission === 'string') continue;
+        // An OPENER scope reaches nothing: it names which URLs the app may hand to the OS, and
+        // `webcal:`/`webcals:` there are a calendar subscription leaving the app (pinned below).
+        if (permission.identifier.startsWith('opener:')) continue;
         for (const entry of permission.allow ?? []) {
           // THE ESTATE IS NOT REACHED IN PLAINTEXT FROM A SHIPPED APP. `http://**` and
           // `ws://localhost:*` rode into production for months on a description that claimed
