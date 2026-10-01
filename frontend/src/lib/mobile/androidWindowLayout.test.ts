@@ -24,6 +24,17 @@ const mainActivity = readFileSync(
 const manifest = readFileSync(resolve(ANDROID_MAIN, 'AndroidManifest.xml'), 'utf8');
 
 describe('Android window layout (anti-regression)', () => {
+  it('lets the page set the bar icon appearance, because enableEdgeToEdge() only decides once', () => {
+    // `uiMode` is in configChanges, so a live OS theme switch never recreates the activity and the
+    // icons chosen at start stay: white on a white page. Only a run on a phone shows the pixels;
+    // this pins the two ends of the bridge so neither can be dropped silently.
+    expect(mainActivity).toContain('addJavascriptInterface(ThemeBridge(), "canariTheme")');
+    expect(mainActivity).toContain('isAppearanceLightStatusBars = light');
+    expect(mainActivity).toContain('isAppearanceLightNavigationBars = light');
+    const store = readFileSync(resolve(here, '../stores/themeStore.svelte.ts'), 'utf8');
+    expect(store).toContain('canariTheme?.set?.(theme)');
+  });
+
   it('asks for edge-to-edge rather than inheriting it', () => {
     // The web layer reads system-bar insets through env(safe-area-inset-*) on 46 declarations, and
     // app.html asks for them with viewport-fit=cover. Both are worthless if the window does not go

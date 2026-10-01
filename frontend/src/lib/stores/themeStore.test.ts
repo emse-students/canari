@@ -70,7 +70,16 @@ describe('themeStore', () => {
     delete (window as any).webkit;
   });
 
-  it('ne fait rien sans shell natif (Android, navigateur)', () => {
+  it('prévient le shell Android du thème, y compris au changement du thème OS en direct', () => {
+    const set = vi.fn();
+    (window as any).canariTheme = { set };
+    themeStore.setPreference('dark');
+    themeStore.setPreference('light');
+    expect(set.mock.calls).toEqual([['dark'], ['light']]);
+    delete (window as any).canariTheme;
+  });
+
+  it('ne fait rien sans shell natif (navigateur)', () => {
     delete (window as any).webkit;
     expect(() => themeStore.setPreference('dark')).not.toThrow();
   });

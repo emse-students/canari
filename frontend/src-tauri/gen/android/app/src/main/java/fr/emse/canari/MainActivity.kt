@@ -8,11 +8,13 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.graphics.Insets
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import java.io.File
@@ -155,6 +157,35 @@ class MainActivity : TauriActivity() {
         // Held from here because it is the only hook that is handed the WebView at all.
         liveWebView = webView
         pushForeground(isInForeground)
+        webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
+    }
+
+    /**
+     * THE STATUS AND NAVIGATION BAR ICONS FOLLOW THE PAGE'S THEME, AND THE PAGE IS THE ONLY THING
+     * THAT KNOWS IT.
+     *
+     * `enableEdgeToEdge()` picks light or dark icons ONCE, from the OS `uiMode` at the moment it is
+     * called. This activity declares `uiMode` in `configChanges`, so a live OS switch never
+     * recreates it and never calls it again: MEASURED on a Mi 9T, Android 16, 2026-10-01, a cold
+     * start in either theme is right (`mLastAppearance=LIGHT_STATUS_BARS`), but dark -> light while
+     * the app is open left WHITE icons on the white page (`AppearanceRegion{ ...}`, no light flag).
+     * The in-app preference (Light while the OS is Dark, and the reverse) was wrong from the first
+     * frame for the same reason - the OS is not what paints under the bar, the page is.
+     *
+     * So `themeStore` hands the resolved theme here, the Android twin of the iOS `canariTheme`
+     * message handler, on every apply (start, preference change, live OS change).
+     */
+    private inner class ThemeBridge {
+        @JavascriptInterface
+        fun set(theme: String) {
+            val light = theme == "light"
+            runOnUiThread {
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.isAppearanceLightStatusBars = light
+                controller.isAppearanceLightNavigationBars = light
+                Log.d("MainActivity", "theme=$theme -> light bar icons=$light")
+            }
+        }
     }
 
     /**
