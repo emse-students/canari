@@ -16,6 +16,7 @@
     FolderOpen,
     ImagePlay,
     Plus,
+    Check,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -69,6 +70,17 @@
     replyingTo?: ReplyTo | null;
     /** Callback to cancel the current reply. */
     onCancelReply?: () => void;
+    /**
+     * The text of the message being EDITED, or null. While set, the composer is an edit field
+     * (user, 2026-10-02: *"modification des messages -> pas dans la bulle, dans le composer"*): a
+     * banner names the message, Send saves instead of sending, attachments and the microphone step
+     * aside, and Escape cancels. The text field's own content (`messageText`) is the edit.
+     */
+    editingText?: string | null;
+    /** Abandons the edit and gives the draft back. */
+    onCancelEdit?: () => void;
+    /** Saves the edit. Called instead of `onSend`; the parent restores the draft itself. */
+    onConfirmEdit?: () => void;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /**
@@ -100,6 +112,9 @@
     onCreatePoll,
     replyingTo,
     onCancelReply,
+    editingText = null,
+    onCancelEdit,
+    onConfirmEdit,
     onFilesSelected,
     onSendVoiceNote,
     pendingFiles = [],
@@ -301,8 +316,16 @@
     hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !controlsCollapsed
   );
 
+  const isEditing = $derived(editingText !== null);
+
+  /** The attachments, GIF, poll and microphone give way while a message is edited or recorded. */
+  const actionsHidden = $derived(isVoiceActive || isEditing);
+
+  // SAVE NEEDS A CHANGE: an empty text would erase the message and an identical one says nothing.
   const isSendDisabled = $derived(
-    (!messageText.trim() && pendingFiles.length === 0) || isUploading
+    isEditing
+      ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
+      : (!messageText.trim() && pendingFiles.length === 0) || isUploading
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -406,6 +429,22 @@
     });
   });
 
+  /**
+   * The ONE send path, for Enter and for the button. An edit is saved by the parent, which puts the
+   * draft back as the field's text - so the editor is NOT cleared here, or the clear would reach the
+   * parent after the draft and wipe it.
+   */
+  function submit() {
+    mentionComposer?.commitComposition();
+    stopTyping();
+    if (isEditing) {
+      onConfirmEdit?.();
+      return;
+    }
+    onSend();
+    mentionComposer?.clearEditor();
+  }
+
   function handleComposerKeydown(e: KeyboardEvent) {
     // Guard: !e.isComposing prevents this from firing while the IME is selecting a suggestion.
     if (e.key === 'Enter' && !e.isComposing) {
@@ -422,15 +461,13 @@
         // insertion rather than one relying on the other's luck.
         mentionComposer?.insertNewlineAtCursor();
       } else if (!isSendDisabled) {
-        mentionComposer?.commitComposition();
-        onSend();
-        stopTyping();
-        mentionComposer?.clearEditor();
+        submit();
         tick().then(() => mentionComposer?.focusEditor());
       }
     }
-    if (e.key === 'Escape' && replyingTo) {
-      onCancelReply?.();
+    if (e.key === 'Escape') {
+      if (isEditing) onCancelEdit?.();
+      else if (replyingTo) onCancelReply?.();
     }
   }
 
@@ -580,7 +617,7 @@
   });
 
   $effect(() => {
-    if (replyingTo) {
+    if (replyingTo || isEditing) {
       mentionComposer?.focusEditor();
     }
   });
@@ -649,6 +686,38 @@
 
 <!-- Footer Container -->
 <footer class="chat-composer-footer" bind:this={composerFooter}>
+  <!-- Edit banner: the message being edited, which the field below holds the new text of. -->
+  {#if isEditing}
+    <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
+      <div
+        class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
+      >
+        <div
+          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+        ></div>
+        <div class="min-w-0 flex-1 pl-1.5">
+          <div
+            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
+          >
+            <span class="truncate">{m.chat_editing_message_label()}</span>
+          </div>
+          <div class="text-text-muted truncate text-xs leading-snug font-medium">
+            <EmojiText text={editingText ?? ''} />
+          </div>
+        </div>
+        {#if onCancelEdit}
+          <button
+            onclick={onCancelEdit}
+            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            aria-label={m.chat_cancel_edit_label()}
+          >
+            <X size={16} strokeWidth={2.5} />
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <!-- Reply preview strip. -->
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
@@ -855,7 +924,7 @@
       {/if}
 
       <!-- The chevron that brings the folded group back. Takes the group's place, never adds to it. -->
-      {#if !appChrome && controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
             type="button"
@@ -871,7 +940,7 @@
       {/if}
 
       <!-- The phone apps' "+": every action, growing out of one glass button (see `addMenuItems`). -->
-      {#if appChrome && !isVoiceActive}
+      {#if appChrome && !actionsHidden}
         {#if isUploading}
           <div class="shrink-0">
             <button
@@ -902,7 +971,7 @@
 
       <!-- The website's paperclip: a phone browser gets the photos / files menu (`attachMenuItems`),
            a desktop the file dialog, directly. -->
-      {#if !appChrome && isMobileViewport && !controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && isMobileViewport && !controlsCollapsed && !actionsHidden}
         <GlassMenuButton
           variant="plain"
           icon={Paperclip}
@@ -910,7 +979,7 @@
           items={attachMenuItems}
         />
       {/if}
-      {#if !isMobileViewport && !controlsCollapsed && !isVoiceActive}
+      {#if !isMobileViewport && !controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
             onclick={() => openPicker(fileInput, 'files')}
@@ -929,7 +998,7 @@
       {/if}
 
       <!-- Poll button (communities only: parent provides onCreatePoll). -->
-      {#if !appChrome && onCreatePoll && !controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && onCreatePoll && !controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
             type="button"
@@ -944,7 +1013,7 @@
       {/if}
 
       <!-- GIF button (shown when KLIPY is configured). -->
-      {#if !appChrome && hasGifPicker && onSendGif && !controlsCollapsed && !isVoiceActive}
+      {#if !appChrome && hasGifPicker && onSendGif && !controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
             type="button"
@@ -962,7 +1031,7 @@
            no wrapper here: `shrink-0` while idle, `flex-1` once it has taken the row. The second
            half of the condition keeps it mounted through a recording that outlives the microphone
            button's own visibility rule. -->
-      {#if isVoiceRecordingSupported || isVoiceActive}
+      {#if (isVoiceRecordingSupported && !isEditing) || isVoiceActive}
         <VoiceRecorder
           onRecordingComplete={handleVoiceRecording}
           onActiveChange={(active) => (isVoiceActive = active)}
@@ -995,7 +1064,7 @@
           onchange={handleMessageChange}
           class="min-w-0 flex-1"
           editorClass="chat-composer-textarea"
-          placeholder={m.chat_message_placeholder()}
+          placeholder={isEditing ? m.msg_edit_placeholder() : m.chat_message_placeholder()}
           minHeight={COMPOSER_MIN_HEIGHT}
           onfocus={() => onFocusChange?.(true)}
           onblur={() => {
@@ -1053,18 +1122,17 @@
         <div class="shrink-0 pr-1">
           <button
             onmousedown={(e) => e.preventDefault()}
-            onclick={() => {
-              mentionComposer?.commitComposition();
-              onSend();
-              stopTyping();
-              mentionComposer?.clearEditor();
-            }}
+            onclick={submit}
             disabled={isSendDisabled}
-            aria-label={m.chat_send_message_label()}
+            aria-label={isEditing ? m.common_save_button() : m.chat_send_message_label()}
             class="ui-icon-button chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
           >
-            <!-- Slight icon offset for optical centering. -->
-            <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
+            {#if isEditing}
+              <Check size={18} strokeWidth={2.75} />
+            {:else}
+              <!-- Slight icon offset for optical centering. -->
+              <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
+            {/if}
           </button>
         </div>
       {/if}

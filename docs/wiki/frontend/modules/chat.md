@@ -127,6 +127,35 @@ the video branch is unchanged. **No test had ever mounted that branch**: the cap
 `blobUrl: null` and stops at the skeleton. `MessageMediaRenderer.image.svelte.test.ts` mounts it with
 the bytes decrypted, and was red on the defect.
 
+### Editing a message happens in the composer, not in the bubble (2026-10-02)
+
+*"modification des messages -> pas dans la bulle, dans le composer de message classique"* (user,
+2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
+deleted); it now only ANNOUNCES the edit.
+
+- **`MessageBubble` takes `onBeginEdit(messageId, text)`**, not `onEdit`. The toolbar's and the mobile
+  sheet's "edit" call it for the author's own text message (`canEdit`: not deleted, own, no media, a
+  parent able to take it). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
+- **`createEditSession` (`utils/chat/editSession.svelte.ts`) holds the state.** `begin` loads the
+  message into the composer's text and keeps the DRAFT it replaced; `cancel` and `confirm` give the
+  draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
+  from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
+  changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
+  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+- **`ChatComposer` takes `editingText`, `onCancelEdit`, `onConfirmEdit`.** While `editingText` is set:
+  a banner (the reply strip's skin) names the message, Send becomes a Save check that stays disabled
+  until the text is non-empty and different, **Escape or the banner's X cancels**, and the "+", the
+  paperclip, poll, GIF and microphone step aside (`actionsHidden`). `submit()` is the one send path
+  for Enter and the button; **an edit does NOT clear the field**, because the parent hands the draft
+  back and a clear would reach it after and wipe it.
+- **Channels cannot edit**, as before: `MainChatPage` passes no `onEdit` there, so no action shows.
+
+Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
+`ChatComposer.edit.svelte.test.ts` (banner, Save rule, Enter and button, no clear, Escape and X, the
+"+" put away and present otherwise) and `editSession.svelte.test.ts` (draft kept and returned, first
+draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
+edit through `handleEditMessage` end to end on a phone.
+
 ### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
 
 `MessageBubble` renders `MessageTextBody` under `{#if !mediaRef}`. A message carrying an attachment
