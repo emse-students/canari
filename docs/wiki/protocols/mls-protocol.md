@@ -806,9 +806,9 @@ equality (`storage_values` is an unordered `HashMap`; the CBOR is not determinis
 
 ## Failing to load a saved state
 
-`loadStateWithKey` can reject three ways. Two are told apart by
-`BaseMlsService.classifyStateLoadFailure`; the third is checked first because it looks exactly like
-`sealed` and has a completely different answer.
+`loadStateWithKey` rejects with a TYPED `mls-core` error, and `BaseMlsService.classifyStateLoadFailure`
+reads the type, never a sentence (table below). One case is checked first because it looks exactly
+like `undecryptable` and has a completely different answer.
 
 ### An envelope older than v0.11.0
 
@@ -820,7 +820,7 @@ so on the first v0.11.x login they fail to decrypt and are indistinguishable fro
 elsewhere. Reported as such, they sent every upgrading user into an old-PIN recovery that could
 never succeed.
 
-So on a `sealed` verdict, when the caller supplied `MlsInitOptions.legacyPin` (the PIN just
+So on an `undecryptable` verdict, when the caller supplied `MlsInitOptions.legacyPin` (the PIN just
 verified server-side; absent on the biometric and vault paths), the legacy envelope is tried once:
 
 | Platform | Entry point | On success |
@@ -839,16 +839,53 @@ its recovery.
 
 **Opening the envelope says nothing about whose state it is.** A snapshot written before an
 interrupted fresh start carries the previous device's credential, so the re-sealed bytes can still
-be rejected - with a `mismatch`, not a `sealed`. The verdict is therefore re-read from the
+be rejected - with a `mismatch`, not an `undecryptable`. The verdict is therefore re-read from the
 migration's own failure and applied by the normal path below. Doing this from inside the first
 `catch` is what let a raw `Credential identity mismatch` escape `init` instead of fresh-starting.
 
-### The two `classifyStateLoadFailure` verdicts
+### The `classifyStateLoadFailure` verdicts
 
-| Verdict | Meaning | Recovery |
-|---|---|---|
-| `sealed` | The blob would not decrypt (AEAD failure): the account key was rotated on another device. | Honour `MlsInitOptions.noFreshStart`: throw `MLS_LOCAL_STATE_UNDECRYPTABLE` so the caller can offer the old PIN and recover the history intact. |
-| `mismatch` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
+| Verdict | Thrown as | Meaning | Recovery |
+|---|---|---|---|
+| `undecryptable` | `STATE_UNDECRYPTABLE:` | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `MLS_LOCAL_STATE_UNDECRYPTABLE`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
+| `rotated` | `STATE_KEY_MISMATCH:` | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | As `undecryptable`, and the pre-v0.11.0 Argon2id retry must NOT fire. |
+| `mismatch` | `IDENTITY_MISMATCH:` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
+| `keystore_unavailable` | `KEYSTORE_KEY_UNAVAILABLE` | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
+| `unknown` | anything else | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!== 'mismatch'`. |
+
+**It used to branch on prose, with a default arm of `sealed`** - so every unrecognised failure,
+corruption included, told the user *"your PIN was changed on another device"*. Measured by CORRUPT-2
+and CORRUPT-1 on 2026-09-08 (one flipped byte; the state cut to half its length): the message sent
+the user after an old PIN that never existed, and the correct PIN left the gate `LOCKED+overlay` five
+passes running. Typed in `v0.18.18`; `state_load_failure_is_typed.rs` and the classifier tests
+assert that the OLD PROSE no longer classifies. **The only exit from a damaged state today is
+`onForgotPinReset`** (it destroys the messaging state); signing out keeps the local state by design
+(`handlePinSignOut`), so it returns to the same wall.
+
+### The state blob's framing - read-first, write-later
+
+`mls-core/src/state_blob.rs` is the one place either platform decides what shape a state blob is:
+
+```
+legacy : [nonce (12) || ciphertext]                                  <- every installed device
+v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ct]     <- nothing writes this yet
+```
+
+The fingerprint is what turns `undecryptable` into two verdicts: a header naming the key in hand
+excludes rotation, so a failed tag is alteration; a header naming another key is `rotated`. Seven
+magic bytes plus a version byte make "is this framed" a 2^-64 question, so there is no
+re-parse-as-legacy retry (it would be a fallback). The fingerprint is eight bytes of SHA-256 over a
+domain constant and the key - NOT the AEAD under a fixed nonce, which would risk reusing a nonce on a
+public plaintext. The three readers (`load_with_key`, the keystore probe in `resolve_at_rest_key`,
+`mls-wasm`'s `decrypt_mls_state_blob_with_key`) share it; the probe on its own would have read a
+header as a nonce and DELETED a good keystore key.
+
+**The header goes at the STATE layer, never in `security::encrypt_blob`**, which also seals the
+PIN-protected backup files. **The writer cannot move first**: an older build handed a framed blob
+reads the magic as a nonce and reports the state unopenable - this very defect, caused by a
+downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flip
+(`state_blob::frame_v1` at `save_encrypted_with_key`, one line) waits until `minClientVersion`
+makes that reader the floor everywhere ([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
 
 Fresh start, in order:
 

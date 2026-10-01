@@ -387,12 +387,29 @@ per address on this box, so a decision taken on Canari traffic already closes th
 `gala`, `mep` and `portail-etu-new` to that address, and theirs closes ours. That is a decision for
 the machine's owner, not a one-line port ([backlog](../backlog.md)).
 
-**REFUTED: an nginx `proxy_cache` substitute for the lost edge cache.** It was proposed here and
-approved, then refused by its own measurement: timed on the host, the origin answers the SSR shell
-in 2.6-5.2 ms and an immutable asset in 0.8-1.2 ms, so a cache one hop above it removes those
-milliseconds of local work and not one metre of the network path Cloudflare's edge actually
-shortened. The reasoning, and what would have to be true for it to come back, are on
-[backlog](../backlog.md).
+#### REFUTED - an nginx `proxy_cache` substitute for the lost edge cache buys ~3 ms of an ~80 ms path
+
+Raised, approved for building, then refused by its own measurement (2026-09-25). Kept because the
+reasoning is what stops it being raised a third time.
+
+The origin's own `Cache-Control` headers migrated untouched - `canari.emse.fr` serves the identical
+`max-age=31536000, immutable` on `/_app/immutable/*` and `max-age=0, s-maxage=60` on the shell, byte
+for byte. What is gone is the SHARED cache: `canari-emse.fr` still answers `cf-cache-status:
+HIT`/`REVALIDATED` through Cloudflare, `canari.emse.fr` carries no such header. So an nginx
+`proxy_cache` on the shared host was proposed to recover the effect locally.
+
+**It recovers almost nothing, because it is the wrong layer.** Timed on the host against the
+frontend container it would sit in front of: the SSR shell answers in **2.6-5.2 ms** and an
+immutable asset in **0.8-1.2 ms**. A cache one hop above that removes those milliseconds of local
+work and not one metre of the network path; Cloudflare's cache was worth having because it
+TERMINATED the request nearer the browser, and the ~80 ms measured from the user's own line is that
+path.
+
+**What would have to be true for it to come back**: the origin's answer becoming slow enough to
+matter, or `frontend-ssr` becoming a throughput bottleneck under real concurrency (at 3 ms one
+process serves ~300 req/s sequentially). Measure that first; do not re-derive the idea from the
+missing `cf-cache-status` header. **And it would not have been free**: `proxy_cache_path` lives in
+the `http` block, which here is the DSI's shared `conf.d/`, on a host carrying three co-tenant sites.
 
 #### THE LEGACY HOSTNAME WAS ANSWERING 502 AT THE ORIGIN AND THE EDGE CACHE HID IT, 2026-09-25
 

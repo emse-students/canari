@@ -1524,6 +1524,13 @@ counts was read back from disk: the decoded count rises by exactly one per mode 
 and the caption count never rises. The two captions the PRE-fix runs stranded on that phone are
 still there after all seven passes, which is the paragraph above, measured.
 
+**A DIAGNOSTIC WORTH KEEPING: `📷 Photo` INSIDE A BUBBLE ALWAYS MEANS A PUSH ROW THAT WAS NEVER
+UPGRADED.** `📷 Photo` is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`),
+while `[Media]` is the app's own label for an envelope it summarises on purpose (a conversation-list
+line, a reply quote). If `📷 Photo` is ever seen in a bubble again, the arrival orders above are
+where to look. Whether the rows already stuck are worth recovering is the user's decision
+([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
 **THE CHECK CANNOT BE MOVED INSIDE THE WRITE, AND THAT IS A PROPERTY OF THE ENGINE RATHER THAN A CHOICE.** An IndexedDB transaction closes on the first `await` of a non-IDB promise, and reading a stored row means awaiting WebCrypto - so no single transaction can both read the existing content and decide on it. The read is a separate step, exactly as in `updateMessage`, which is safe here because the injection runs inside the `fcm_cache` startup phase, after the conversations are loaded and before the MLS sync writes anything. `getMessage` is the primitive that reclaimed it: it was already written twice, inline in the body of each `updateMessage`, and both now delegate to it.
 
 **THE MEDIA REFERENCE IS DELIBERATELY NOT CARRIED, SO DO NOT "FINISH" THIS LATER.** `DecryptedMessage` holds `mediaId`, `mediaKey`, `mediaIv` and `mimeType` - it must, the notification thumbnail decrypts the blob with them - and `writeFcmCache` copies none of the four. Adding them would let a cold boot draw the picture immediately instead of waiting for the sync, and would write an AES-256-GCM content key in CLEARTEXT into a plain `writeText` file, beside an `mls.bin` that is explicitly encrypted at rest. That asymmetry is the point: this file holds a caption, never key material. The latency it would buy is the sync's, and the sync repairs the row correctly now that it cannot be undone.
