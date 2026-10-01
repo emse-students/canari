@@ -48,8 +48,10 @@ Nothing else knows the split exists.
 | **I1** | The Tauri WebView on the iPhone | the WebKit inspector bridge on `localhost:9444` (`pymobiledevice3 webinspector cdp`), WDA for the rest |
 
 **The iPhone is `CANARI_PHONE=ios`**: `phone-any.mjs` then hands a row `phone-ios.mjs`, which keeps
-`phone.mjs`'s interface over WDA, Notification Center and the syslog. Which rows run on it, and what
-each still needs, is [cross-client-ios](../../docs/wiki/cross-client-ios.md).
+`phone.mjs`'s interface over WDA, Notification Center and the syslog, and the I1 connection performs
+every CDP `Input.*` frame as a WDA touch or key (`webkit-input.mjs`) - the WebKit protocol has no
+`Input` domain. Which rows run on it, and what each still needs, is
+[cross-client-ios](../../docs/wiki/cross-client-ios.md).
 
 One driver (`cdp.mjs`) speaks to all three - the WebView is a Chrome target like any other. `a1.py`
 is only for surfaces the WebView cannot reach (the notification shade, the system PIN, the launcher).

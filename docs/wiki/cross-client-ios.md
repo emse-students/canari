@@ -24,41 +24,91 @@ the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-benc
 | `phone-any.mjs` | `CANARI_PHONE=ios` picks `phone-ios.mjs`, unset keeps `phone.mjs`; a row switches by its import line |
 | `device.mjs` | `--device I1` arms the iPhone (`armIfPhone`), so the atoms resolve it like A1 |
 | `webkit-console.mjs` + `watch.mjs` | the iPhone's console (`Console.messageAdded`) reaches the classifier as `Log.entryAdded` - without it every iPhone window would read clean by construction |
-| `tools/ios-device/ios.mjs` | `state`, `active`, `terminate`, `locked`, `unlock`, `flat`, `longPressAt`; asking about the app or swiping never launches it |
+| `tools/ios-device/ios.mjs` | `state`, `active`, `terminate`, `locked`, `unlock`, `flat` (now with each element's `label` and `value`, which is how a switch is read), `longPressAt`, and since C1 `perform` (one W3C touch sequence), `webviewRect`, `openUrl`, `type -` (stdin, for a secret); asking about the app, swiping, typing or opening a URL never launches it |
+| `webkit-input.mjs` (C1) | the WebView's input: under `CANARI_PHONE=ios`, the connection `cdp.mjs`'s `connect()` opens on `PORTS.I1` performs every `Input.*` frame as a WDA touch or key - see [C1](#c1---the-input-seam-done) |
+| `phone-ios.mjs`, second half | the WDA-only observables O3, O6-O11 below, each ending in a proof read back from the device |
+| `login.mjs --device I1` | the launcher click through C1, then `signInThroughSheet` (O9); the proof is the app holding a session, as on every other client |
 
 **The bench before a run**: a BENCH build (`ios.yml` with `local_url` - it adds `tauri/devtools`, so the
 WKWebView is inspectable; a store build is not), `python tools/ios-device/wda-daemon.py`,
 `pymobiledevice3 webinspector cdp --port 9444`, then `bun phone.mjs`-style arming through `--device I1`.
 
+## C1 - the input seam (DONE)
+
+`cdp.mjs`, `chat.mjs`, `comm.mjs`, `pin.mjs` and the rows type with `Input.insertText` and click with
+`Input.dispatchTouchEvent`/`dispatchMouseEvent` - ~70 call sites - and the WebKit protocol has no `Input`
+domain. **So the seam is the connection, not the callers**: `connect()` wraps `send` for the one
+connection that is the iPhone (`CANARI_PHONE=ios` AND the socket's port is `PORTS.I1`), and
+`webkit-input.mjs` performs each `Input.*` frame on the device. With `CANARI_PHONE` unset the predicate
+answers before reading anything and every connection keeps the plain CDP `send` (`cx.webkitInput ===
+false`, asserted); under `CANARI_PHONE=ios` the browsers keep theirs too, since W2 stays one.
+
+- **A click** is a WDA touch at the element's SCREEN point: the WebView's rectangle from WDA (re-read
+  when the layout viewport changes size - the keyboard shrinks the frame), plus the content inset UIKit
+  adds above the page (the frame height `documentElement.clientHeight` does not fill: 47 pt on the iPhone
+  12 when the shell is not edge to edge, 0 when it is), plus the visual viewport's offset and scale.
+  `armClickRecorder` still names what took the click, so a wrong origin fails as `click missed its
+  target` with the point - which is how the first live run checks the geometry.
+- **A touch is recorded and replayed at its release**, as one W3C gesture with the durations the caller
+  spent: a tap stays a tap, `longPressBubble`'s 700 ms stays an OS long press (on the iPhone the CDP
+  branch IS the real finger), `dragTo` keeps its moves. WDA has no finger that stays down between two
+  requests, so `holdAndSlide({ release: false })` REFUSES on the iPhone (`WebKitInputUnsupported`), and
+  `dragTo`'s target centre, re-read "after the lift", is read before the finger lands there.
+- **Text** is WDA keys, one character each, in process (never an argv). An empty `insertText` deletes
+  only a selection, as in Chrome. Enter and Backspace map to Return and Delete; **Escape, Tab and the
+  arrows refuse** - the soft keyboard has none, and a key reported sent that did nothing is a gesture
+  that lies. A row that closes a sheet with Escape taps its close control on the iPhone.
+- **A hover** (`parkPointer`, a `mouseMoved` with no button) performs nothing: a touch screen has no
+  pointer.
+- `chat.mjs`: `isPhone` covers I1 (`isIosApp`), the `adb input swipe` branch is Android's only
+  (`isAndroid`), and `goto`'s reload refusal and `openDM`'s parking apply to I1 as to A1 - the same Tauri
+  shell, the same PIN re-lock.
+
+Pinned by `archive/webkit-input-selftest.mjs`; **nothing has run on the iPhone**.
+
 ## What is owed
 
-**C1 - the input seam, and it gates nearly every row.** `cdp.mjs` and `chat.mjs` type with
-`Input.insertText` and click with `Input.dispatchMouseEvent`/`dispatchTouchEvent`; the WebKit protocol
-has no `Input` domain. On a WebKit client the gestures must become WDA touches at the element's own
-rectangle (CSS px are points on an edge-to-edge WKWebView) and WDA keys for text. It is one seam in two
-files, not a per-row change - but it is the core of the rig, so it is its own change.
-
-**Then each row is a mechanical port**: `import phone from '../phone-any.mjs'`, `WEBVIEW_MATCH` and
+**Each row is a mechanical port**: `import phone from '../phone-any.mjs'`, `WEBVIEW_MATCH` and
 `PORTS.I1` instead of `'tauri.localhost'` and `PORTS.A1`, `syslogSince` for `logcatSince`. And the
-row-specific observables below.
+row-specific observables below - O3 and O6-O11 are functions of `phone-ios.mjs` now, each ending in a
+proof read back from the device and pinned by `archive/ios-observables-selftest.mjs` over a scripted
+iPhone. Their LABELS are the expected ones (French first, the bench phone's language) and the first live
+run re-pins them.
 
 | Id | Observable | Route on the iPhone | State |
 | --- | --- | --- | --- |
 | O1 | the console | `webkit-console.mjs` | DONE |
 | O2 | the shade | Notification Center through WDA | DONE |
-| O3 | network conditions on the phone | Control Center airplane mode through WDA (offline); the Developer Network Link Conditioner (throttle) - `Network.emulateNetworkConditions` does not exist in WebKit | owed |
+| O3 | network conditions on the phone | `setAirplaneMode(on)`: Control Center, airplane AND Wi-Fi read back (iOS restores a Wi-Fi turned on inside airplane mode, and Wi-Fi is the estate's network); `setLinkConditioner(profile \| null)`: Settings > Developer > Network Link Conditioner, its Enable switch read back - `Network.emulateNetworkConditions` does not exist in WebKit | DONE, fixtures only; the profile row is tapped, not proven |
 | O4 | APNs delivered | per row: the server's `[PUSH_SEND] ... platform=ios` line + `apnsReceipts()` (syslog `apsd`); replaces `requireFreshFcmLink`, since APNs has no socket to renew - `fcmlink.mjs` needs the iOS branch | half: `apnsReceipts` DONE |
 | O5 | the native stores | the MLS state and the Graine mirror are in the App Group container `group.fr.emse.canari`, which no lockdown service vends - a BENCH-only app command reporting counts (and taking/restoring/damaging a snapshot) through the WebView | owed, product code |
-| O6 | user force-quit | the app-switcher swipe through WDA - on iOS it stops background pushes, so it is LIFE-3's subject, not `forceStop` | owed |
-| O7 | system settings | the Settings app through WDA (notification permission) | owed |
-| O8 | reboot | `pymobiledevice3 diagnostics restart`; the first unlock is a human's | owed |
-| O9 | a fresh device | uninstall, `sign-install.mjs`, sign-in through ASWebAuthenticationSession by WDA ([phone-comparison](phone-comparison.md)) - `login.mjs` needs that branch | owed |
-| O10 | a cold deep link | WDA `POST /session/:id/url` | owed |
-| O11 | notification actions | long-press the Notification Center element (`longPressAt`), then reply / mark read | owed |
+| O6 | user force-quit | `forceQuit()`: the app switcher (slow drag from the bottom edge, held) and the card flicked off, then PROVEN dead - on iOS it stops background pushes, so it is LIFE-3's subject, not `forceStop` | DONE, fixtures only |
+| O7 | system settings | `openSettings(path)` from the ROOT (Settings ended first), `openAppSettings()` (Apps > Canari on iOS 18, Canari on the root before), `setNotificationsAllowed(on)` read back | DONE, fixtures only |
+| O8 | reboot | `reboot()`: `pymobiledevice3 diagnostics restart`, usbmux SEEN losing the phone (a restart not taken is refused) and finding it again; stops at Before First Unlock - the first unlock is a human's, then `wda-daemon.py` | DONE, fixtures only |
+| O9 | a fresh device | `freshInstall(ipa)`: uninstall proven by `apps list`, `sign-install.mjs`, installed proven; `signInThroughSheet` answers the consent alert and the IdP's two stages with RETURN ([phone-comparison](phone-comparison.md)), the password through stdin; `login.mjs --device I1` drives it | DONE, fixtures only |
+| O10 | a cold deep link | `openDeepLink(url)`: WDA `POST /session/:id/url` with NOTHING launched first (`cold` reported), Safari's "Ouvrir" answered, done when the app is in front | DONE, fixtures only |
+| O11 | notification actions | `notificationAction(needle, 'reply' \| 'mark_read', { text })`: long press in Notification Center, the action by the title in the app's own `Localizable.strings`, a reply typed and sent; taken = the button gone | DONE, fixtures only |
 | O12 | calls | CallKit's UI and the mic/camera alerts through WDA; the server's `[apns-voip]` lines | owed (calls are held off) |
 | O13 | how a notification is filed | the NSE's `interruptionLevel` (iOS has no channels) - a syslog line from the NSE | owed |
 | O14 | a file into the composer | WDA through the system picker with fixtures in Photos/Files | owed |
 | O15 | the refresh credential | `tauri://localhost` carries it in `X-Canari-Refresh`, not a cookie ([sessions](sessions.md)) - cleared through the WebView / O5 | owed |
+
+**What the first live session must confirm before any row's verdict is believed** - each is a shape
+the fixtures assume:
+
+1. **C1's origin**: one `realClick` on a known control (the bottom nav) with the shell edge to edge AND
+   with the keyboard up; the recorder must name the control, not `click missed its target`. That
+   settles the WebView rect WDA returns (`XCUIElementTypeWebView`), the content inset, and whether the
+   keyboard resizes the frame or only the visual viewport.
+2. **C1's keys**: WDA `/wda/keys` reaches a WebView field focused by a WDA tap (the composer, a PIN
+   field), and Return submits where Enter did.
+3. **C1's long press**: `longPressBubble` opens the sheet with the replayed 700 ms press (MUT-18).
+4. **The labels**: Control Center's airplane and Wi-Fi switches and their `value`; the switcher card's
+   label and type; Settings' "Apps" row (iOS version), "Autoriser les notifications", the Developer
+   menu's NLC rows; the consent alert and the IdP host on the sheet; Safari's "Ouvrir"; the expanded
+   notification's action buttons.
+5. **O8**: `pymobiledevice3 diagnostics restart --udid` is taken over usbmux, and how long the phone
+   stays unlisted.
 
 ## Every row
 

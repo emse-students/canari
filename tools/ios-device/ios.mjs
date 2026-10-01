@@ -18,6 +18,11 @@
  *   bun tools/ios-device/ios.mjs locked                 whether the device lock screen is up
  *   bun tools/ios-device/ios.mjs unlock                 screen on + swipe up (raises the passcode if one is set)
  *   bun tools/ios-device/ios.mjs flat                   the visible tree as one JSON array
+ *   bun tools/ios-device/ios.mjs type -                 type stdin into the focused field (secrets)
+ *   bun tools/ios-device/ios.mjs long x y [ms]          press and hold a point
+ *   bun tools/ios-device/ios.mjs gesture '<json>'       one W3C touch sequence (pointerMove/Down/Up, pause)
+ *   bun tools/ios-device/ios.mjs webview                the app's WKWebView rectangle, in points
+ *   bun tools/ios-device/ios.mjs url <url>              open a URL / deep link without launching anything first
  *
  * Coordinates are POINTS, not pixels: the iPhone 12 is 390x844 points for 1170x2532 pixels, so a
  * screenshot pixel divided by 3 is the point to tap. It is the one unit difference from adb.
@@ -88,11 +93,25 @@ export async function tree(sid) {
   return (await wda('GET', `/session/${sid}/source?format=json`)).value;
 }
 
-/** Flattens the tree into the visible elements that say something, in reading order. */
+/**
+ * Flattens the tree into the visible elements that say something, in reading order.
+ *
+ * `label` and `value` travel beside the joined `text` because a SWITCH is answered by its value
+ * (`'1'` on, `'0'` off - Control Center's airplane toggle, Settings' notification switch), and a
+ * caller that had to split `text` back apart would be guessing which segment was which.
+ */
 export function flatten(node, out = []) {
   if (!node) return out;
   const text = [node.label, node.name, node.value].filter((s) => typeof s === 'string' && s).join(' | ');
-  if (text && node.isVisible !== '0' && node.rect) out.push({ type: node.type, text, rect: node.rect });
+  if (text && node.isVisible !== '0' && node.rect) {
+    out.push({
+      type: node.type,
+      text,
+      rect: node.rect,
+      label: typeof node.label === 'string' ? node.label : '',
+      value: node.value === undefined || node.value === null ? null : String(node.value),
+    });
+  }
   for (const child of node.children ?? []) flatten(child, out);
   return out;
 }
@@ -195,9 +214,50 @@ export async function longPressAt(sid, x, y, ms = 900) {
   });
 }
 
+/**
+ * ONE FINGER, ANY PATH: a W3C touch sequence (`pointerMove`/`pointerDown`/`pause`/`pointerUp`, in
+ * POINTS) performed as one gesture. The rig's input layer (`webkit-input.mjs`) replays a CDP touch
+ * through this, and the app switcher's slow drag-and-hold is one too - neither is a tap or a swipe.
+ */
+export async function perform(sid, actions) {
+  await wda('POST', `/session/${sid}/actions`, {
+    actions: [{ type: 'pointer', id: 'finger1', parameters: { pointerType: 'touch' }, actions }],
+  });
+}
+
+/**
+ * The app's WKWebView rectangle on screen, in POINTS - the origin every CSS pixel is measured from.
+ * The first `XCUIElementTypeWebView` in the front app: the Canari shell has exactly one.
+ */
+export async function webviewRect(sid) {
+  const found = await wda('POST', `/session/${sid}/element`, { using: 'class name', value: 'XCUIElementTypeWebView' });
+  const id = found.value?.ELEMENT ?? found.value?.['element-6066-11e4-a52e-4f735466cecf'];
+  if (!id) throw new Error('WDA found no XCUIElementTypeWebView in the front app');
+  return (await wda('GET', `/session/${sid}/element/${id}/rect`)).value;
+}
+
+/**
+ * Opens a URL the way the system does - a custom scheme (`fr.emse.canari://...`) or a web link -
+ * WITHOUT launching anything first, so a deep link into a dead app is a cold start. WDA hands it to
+ * `XCUIDevice.system.open` where the OS has it, and to Safari otherwise (which then asks "Open in
+ * Canari?" - `phone-ios.mjs`'s `openDeepLink` answers that).
+ */
+export async function openUrl(sid, url) {
+  await wda('POST', `/session/${sid}/url`, { url });
+}
+
+/** Reads all of stdin - how a SECRET reaches `type -`, never as an argv value a process list shows. */
+async function stdinText() {
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
-  if (!cmd) throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size|state|active|terminate|locked|unlock|flat> ...');
+  if (!cmd) {
+    throw new Error('usage: ios.mjs <launch|shot|tree|find|tap|type|swipe|button|size|state|active|terminate|locked|unlock|flat|long|gesture|webview|url> ...');
+  }
   if (cmd === 'locked') {
     // Unscoped: asking whether the phone is locked must not create a session, which launches the app.
     console.log(JSON.stringify(await locked()));
@@ -212,7 +272,11 @@ async function main() {
   // The commands that ask about the app, or act on whatever screen is up (Notification Center, the
   // home screen), never launch it (see `session`): a killed app must stay killed while a row reads
   // the notification it is waiting for.
-  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size'].includes(cmd);
+  // `url` above all: a deep link opened through a session that had just LAUNCHED the app would be a
+  // warm start dressed as a cold one, which is the one thing COMM-18 measures.
+  // `type` too: it types into whatever holds focus - a sign-in sheet, a notification's reply field -
+  // and launching the app first would take that focus away.
+  const observing = ['state', 'active', 'terminate', 'flat', 'swipe', 'button', 'size', 'long', 'gesture', 'url', 'webview', 'type'].includes(cmd);
   const sid = await session(cmd === 'launch' && args[0] ? args[0] : observing ? null : DEFAULT_APP);
   switch (cmd) {
     case 'launch':
@@ -238,7 +302,20 @@ async function main() {
       break;
     }
     case 'type':
-      await type(sid, args.join(' '));
+      // `type -` reads the text from stdin: a password typed into a sign-in sheet never sits in argv.
+      await type(sid, args[0] === '-' && args.length === 1 ? await stdinText() : args.join(' '));
+      break;
+    case 'long':
+      await longPressAt(sid, Number(args[0]), Number(args[1]), args[2] ? Number(args[2]) : undefined);
+      break;
+    case 'gesture':
+      await perform(sid, JSON.parse(args[0]));
+      break;
+    case 'webview':
+      console.log(JSON.stringify(await webviewRect(sid)));
+      break;
+    case 'url':
+      await openUrl(sid, args[0]);
       break;
     case 'swipe':
       await swipe(sid, ...args.slice(0, 4).map(Number), args[4] ? Number(args[4]) : undefined);

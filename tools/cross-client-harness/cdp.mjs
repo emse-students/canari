@@ -11,6 +11,8 @@
  *   W2  - desktop Chrome, the PEER account:   --port 9223
  *   A1  - the Tauri WebView on the phone, the owner's second device, reached through
  *         `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`:  --port 9333
+ *   I1  - the iOS app's WKWebView, through `pymobiledevice3 webinspector cdp` (`PORTS.I1`); its
+ *         `Input.*` frames become WDA touches and keys (`webkit-input.mjs`) under CANARI_PHONE=ios
  * W1 was planned on the chrome-devtools MCP; its own Chrome + this driver is strictly better,
  * because a password then never has to appear as a tool-call argument in the transcript.
  *
@@ -33,6 +35,8 @@
  *   pointer handlers and :active styling behave as they do for a user.
  * - A per-page WebSocket survives same-target navigations, which is all this campaign needs.
  */
+
+import { WebKitInputUnsupported, isWebKitInputTarget, webkitInput } from './webkit-input.mjs';
 
 /** True only when this file is the process entry point, so it can also be imported as a module. */
 const IS_CLI = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());
@@ -213,7 +217,7 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   });
   // The timer MUST be cleared on the reply, and unref'd besides: an armed 30 s timeout keeps
   // Node's event loop alive, so every command "took" 30 s after its answer had already arrived.
-  const send = (method, params = {}) =>
+  const cdpSend = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
       // CAPTURED SYNCHRONOUSLY, which is the whole point: by the time the answer comes back this
@@ -255,7 +259,14 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   //
   // A PREDICATE, NOT THE SOCKET. Handing out `ws` would let a caller send frames around `send`,
   // which is where the pending map, the stack capture and the timeout live.
-  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1 };
+  //
+  // THE iPHONE'S WebView HAS NO `Input` DOMAIN, so its connection's `send` performs every `Input.*`
+  // frame as a WDA touch or key (`webkit-input.mjs`, docs/wiki/cross-client-ios.md C1). Decided per
+  // connection, from `CANARI_PHONE=ios` and the bridge port; every other connection keeps `cdpSend`
+  // itself, unwrapped.
+  const webkit = isWebKitInputTarget(wsUrl);
+  const send = webkit ? webkitInput(cdpSend) : cdpSend;
+  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
 }
 
 /** Evaluates an expression in the page and returns its value, awaiting promises. */
@@ -733,6 +744,15 @@ export async function holdAndSlide(
   selector,
   { holdMs = 600, dx = 0, dy = 0, steps = 6, release = true } = {}
 ) {
+  // ON THE iPHONE A TOUCH IS PERFORMED AT ITS RELEASE (`webkit-input.mjs`): WDA has no finger that
+  // stays down between two requests. A measurement taken "while held" would read a page no finger
+  // had touched yet, so it is refused here, where the reason is still nameable.
+  if (cx.webkitInput && !release) {
+    throw new WebKitInputUnsupported(
+      'holdAndSlide({ release: false })',
+      'WDA performs a whole gesture per request; measure the state the release leaves instead',
+    );
+  }
   if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
