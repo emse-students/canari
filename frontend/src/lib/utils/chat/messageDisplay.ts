@@ -112,6 +112,48 @@ export function isGifUrl(url: string): boolean {
   }
 }
 
+/**
+ * The fragment parameter a GIF's size rides in: `https://.../x.gif#cn-size=498x280`.
+ *
+ * A GIF sent from the picker is a bare URL in a TEXT message, so there is no `MediaMsg` to carry its
+ * `width` / `height` - and with no size the receiver drew a 0 px `<img>` that grew to 256 px when the
+ * GIF arrived (user, 2026-10-02). THE FRAGMENT, BECAUSE NOTHING ELSE SEES IT: a browser never sends
+ * it to the GIF's host, every older client ignores it (`isGifUrl` reads the path), and it travels
+ * inside the end-to-end message like the rest of the text.
+ */
+const GIF_SIZE_PARAM = 'cn-size';
+
+/**
+ * Writes a GIF's size into its URL's fragment, for a picker to call before it sends. Anything but a
+ * positive integer size returns the URL untouched - a wrong size is worse than none.
+ */
+export function withGifSize(url: string, width: number, height: number): string {
+  const w = Math.round(width);
+  const h = Math.round(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return url;
+  try {
+    const u = new URL(url);
+    u.hash = `${GIF_SIZE_PARAM}=${w}x${h}`;
+    return u.toString();
+  } catch {
+    // Not a URL at all: a picker bug, and the GIF would not render either way.
+    return url;
+  }
+}
+
+/** The size a sender wrote into a GIF URL's fragment, or `null` for every older or foreign URL. */
+export function gifSizeFromUrl(url: string): { width: number; height: number } | null {
+  const hashAt = url.indexOf('#');
+  if (hashAt < 0) return null;
+  const match = new RegExp(`(?:^|&)${GIF_SIZE_PARAM}=(\\d{1,5})x(\\d{1,5})(?:&|$)`).exec(
+    url.slice(hashAt + 1)
+  );
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 /** Converts a Tenor or Giphy page URL to a direct .gif embed URL when possible. */
 export function getGifEmbedUrl(url: string): string {
   try {

@@ -39,6 +39,8 @@
     disableRemotePlayback?: boolean;
     /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
     streamed?: boolean;
+    /** The element's `loadedmetadata` - a `MediaFrame` reads an undeclared clip's size from it. */
+    onMetadata?: (event: Event) => void;
   }
 
   let {
@@ -49,6 +51,7 @@
     videoClass = 'h-full w-full',
     disableRemotePlayback = false,
     streamed = false,
+    onMetadata,
   }: Props = $props();
 
   let videoEl: HTMLVideoElement | null = $state(null);
@@ -89,6 +92,7 @@
     use:playWhileVisible
     class={videoClass}
     onloadeddata={() => (frameReady = true)}
+    onloadedmetadata={onMetadata}
   ></video>
   {#if !frameReady}
     <VideoPoster />

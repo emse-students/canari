@@ -142,8 +142,10 @@ export function respondToNewMessage(state: NewMessageState): NewMessageResponse 
  *
  * THE ANCHOR IS A ROW, NOT A NUMBER. `scrollTop` cannot tell a prepend from an append - both grow
  * `scrollHeight` and leave `scrollTop` alone - so the caller keeps a reference to a row it has
- * already measured and asks how far that row moved. Anything above it growing, for any reason, is
- * the same correction: the thing the reader is looking at stays where it is.
+ * already measured and asks how far that row moved. Anything above it growing or shrinking, for any
+ * reason, is the same correction: the thing the reader is looking at stays where it is. The row is
+ * the one at the TOP OF THE VIEWPORT ({@link firstRowBelow}), the same choice CSS scroll anchoring
+ * makes - which this pane cannot use, because WebKit shipped `overflow-anchor` only in Safari 27.
  */
 export interface ThreadAnchorShift {
   /** The anchor row's `offsetTop` when it was last measured, or `null` if there was no anchor. */
@@ -157,8 +159,31 @@ export interface ThreadAnchorShift {
 export function anchorShift(shift: ThreadAnchorShift): number {
   if (shift.isEntering) return 0;
   if (shift.previousTop === null || shift.currentTop === null) return 0;
-  const moved = shift.currentTop - shift.previousTop;
-  // Only downward movement is a prepend. A row moving UP means something above it shrank, which
-  // pulls the reader up on its own and needs no help.
-  return moved > 0 ? moved : 0;
+  // SIGNED SINCE THE ANCHOR IS THE ROW THE READER SEES (2026-10-02). While it was the topmost
+  // RENDERED row, only a prepend could move it, and only downward. The row at the top of the
+  // viewport also moves when a medium ABOVE it settles - an old message's frame taking its measured
+  // ratio, which can be shorter than the fallback as well as taller - and the reader's place is lost
+  // either way, so either way is undone.
+  return shift.currentTop - shift.previousTop;
+}
+
+/**
+ * The index of the first row whose bottom edge is below `line` - the row at the top of the
+ * viewport when `line` is the scroller's top - or `-1` when every row is above it. Rows are in
+ * document order, so their bottoms only increase and a binary search reads `log n` of them: this
+ * runs inside a layout observer, once per change.
+ */
+export function firstRowBelow(
+  count: number,
+  bottomOf: (index: number) => number,
+  line: number
+): number {
+  let lo = 0;
+  let hi = count;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (bottomOf(mid) > line) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo < count ? lo : -1;
 }

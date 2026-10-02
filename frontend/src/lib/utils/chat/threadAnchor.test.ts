@@ -1,5 +1,6 @@
 import {
   anchorShift,
+  firstRowBelow,
   isPinnedToBottom,
   respondToNewMessage,
   shouldFollowThreadBottom,
@@ -159,8 +160,10 @@ describe('anchorShift', () => {
     expect(anchorShift({ ...base, currentTop: 2600 })).toBe(2200);
   });
 
-  it('reports nothing when content above SHRANK, which pulls the reader up on its own', () => {
-    expect(anchorShift({ ...base, currentTop: 120 })).toBe(0);
+  it('reports content above that SHRANK too, so the row the reader sees stays put', () => {
+    // An old message's frame taking its measured ratio - a 16:9 clip in a 4:3 fallback box - is a
+    // shrink above the reader, and it moved what they were reading up by the difference.
+    expect(anchorShift({ ...base, currentTop: 120 })).toBe(-280);
   });
 
   it('reports nothing when the anchor is gone or was never taken', () => {
@@ -170,5 +173,34 @@ describe('anchorShift', () => {
 
   it('defers to the entry pin, which owns the position until it lands', () => {
     expect(anchorShift({ ...base, currentTop: 2600, isEntering: true })).toBe(0);
+  });
+});
+
+describe('firstRowBelow', () => {
+  // Rows 100 px tall, stacked from 0: row i spans [100i, 100i + 100).
+  const bottoms = (count: number) => Array.from({ length: count }, (_, i) => 100 * i + 100);
+
+  it('picks the row the viewport top cuts through, not the topmost rendered one', () => {
+    const b = bottoms(50);
+    expect(firstRowBelow(b.length, (i) => b[i], 1234)).toBe(12);
+  });
+
+  it('skips a row whose bottom sits exactly on the line - it is no longer visible', () => {
+    const b = bottoms(50);
+    expect(firstRowBelow(b.length, (i) => b[i], 300)).toBe(3);
+  });
+
+  it('answers the first row at the top of the pane and -1 past the last', () => {
+    const b = bottoms(5);
+    expect(firstRowBelow(b.length, (i) => b[i], -10)).toBe(0);
+    expect(firstRowBelow(b.length, (i) => b[i], 10_000)).toBe(-1);
+    expect(firstRowBelow(0, () => 0, 0)).toBe(-1);
+  });
+
+  it('reads log n rows, not all of them', () => {
+    const b = bottoms(1024);
+    let reads = 0;
+    firstRowBelow(b.length, (i) => (reads++, b[i]), 51_234);
+    expect(reads).toBeLessThanOrEqual(11);
   });
 });
