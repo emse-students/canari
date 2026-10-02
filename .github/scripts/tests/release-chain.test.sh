@@ -934,6 +934,30 @@ else
   fail 'no job puts the release notes on the GitHub release'
 fi
 
+printf '\na stable operates on its pre-release, so main may move on\n'
+if grep -q 'latest_prerelease_tag' "$WF/release.yml"; then
+  pass 'a stable resolves its target from the latest pre-release tag'
+else
+  fail 'a stable no longer resolves its target from the latest pre-release tag - main moving would refuse it again'
+fi
+if grep -q 'refs/heads/release/v' "$WF/release.yml" && grep -q 'refs/tags/v' "$WF/release.yml"; then
+  pass 'the stable is pushed to release/vX.Y.Z and its tag follows the shipped commit'
+else
+  fail 'the stable is not pushed to its release branch, or its tag does not move'
+fi
+if grep -qE '^  land:' "$WF/release.yml" && grep -q 'land-release-changelog.sh' "$WF/release.yml"; then
+  pass 'a land job carries the changelog onto main'
+else
+  fail 'no land job - the stable changelog would never reach main and be folded twice'
+fi
+for f in serve-dev.yml serve-prod.yml; do
+  if grep -q 'git fetch origin main' "$WF/$f"; then
+    fail "$f fetches main only - a stable built on a release branch would not be reachable"
+  else
+    pass "$f fetches the released commit by name"
+  fi
+done
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

@@ -151,3 +151,23 @@ classify_main_position() {
       ;;
   esac
 }
+
+# WHICH PRE-RELEASE DOES A STABLE SHIP? The latest one of ITS OWN version (user, 2026-10-02: *"une
+# release n'opere que sur le tag de la derniere pre-release, comme ca on peut commit sur main sans
+# empecher la release"*). A stable used to be refused the moment `main` moved past its commit, so
+# every merge during the minutes of a release cost a new tag; now the stable is built from the commit
+# the pre-release was cut at, whatever `main` has become since.
+#
+# args:  <stable version, no v>   stdin: tag names, one per line
+# stdout: the highest `v<version>-<label>` tag (version order, so alpha.10 follows alpha.9), or
+#         nothing when no pre-release of that version exists - which the caller refuses.
+latest_prerelease_tag() {
+  local want="${1#v}"
+  local -a tags=()
+  local tag
+  while IFS= read -r tag; do
+    [[ "$tag" =~ ^v${want//./\.}-[0-9A-Za-z.]+$ ]] && tags+=("$tag")
+  done
+  [ "${#tags[@]}" -eq 0 ] && return 0
+  printf '%s\n' "${tags[@]}" | sort -V | tail -1
+}

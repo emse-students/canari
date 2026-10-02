@@ -115,12 +115,12 @@ GitHub release body through ONE implementation. Check it before tagging:
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE IS REFUSED unless a pre-release served dev at that commit first**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z`, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
 sequence is two releases:
 
 ```sh
 gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + testers, moves the marker
-# wait for it to be green, and do not merge anything in between - gate 2 checks main still points here
+# wait for it to be green; merging to main meanwhile is fine - the stable ships THIS pre-release
 gh release create v0.16.2 --generate-notes                        # -> production + both stores
 ```
 
