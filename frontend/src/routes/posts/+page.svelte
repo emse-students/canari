@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -233,6 +233,12 @@
     const cached = readFeedCache(key);
     const stale = cached?.posts ?? null;
     postsOverride = stale;
+    // WHAT IS ON SCREEN IS THE PROXY, NOT `stale`. A `$state` wraps the array it is given in a
+    // proxy, so `postsOverride === stale` was false the moment anything was cached, and the
+    // answer never replaced the paint: the feed was always one visit behind. A reel just
+    // published never appeared on the feed it landed on (REEL-2 on the Mi 9T, 2026-10-02). The
+    // proxy read back here keeps its identity until something else reassigns the list.
+    const painted = untrack(() => postsOverride);
     initialPostsResolved = stale;
     hasMore = cached?.hasMore ?? true;
 
@@ -244,7 +250,7 @@
         const more = posts.length >= 20;
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
-        if (postsOverride === stale) {
+        if (postsOverride === painted) {
           postsOverride = posts;
           hasMore = more;
         }
