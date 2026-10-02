@@ -39,14 +39,36 @@ function sources(policy: string, directive: string): string[] {
 }
 
 describe('the served Content-Security-Policy', () => {
-  it('is declared exactly once, and included wherever it is needed', () => {
+  it('is declared exactly once site-wide, and included wherever it is needed', () => {
     // nginx's add_header REPLACES the inherited set, so three blocks each need the policy. Three
     // verbatim copies is how one of them silently keeps an old value: this asserts there is one
     // definition and that the blocks reach it by include, never by restating it.
-    expect(policyDeclarations()).toHaveLength(1);
+    //
+    // ONE DECLARED EXCEPTION, and it is a narrowing, never a copy: `/adminer/` (the database admin
+    // UI, 2026-10-02) states its OWN policy, because the site-wide one allows `img-src https:` and
+    // `connect-src` to Stripe and Klipy - a console that shows production data must not have an
+    // image beacon to send it out through if Adminer ever has an XSS. The next test holds it narrower.
+    const declared = policyDeclarations();
+    expect(declared).toHaveLength(2);
+    expect(declared[1]).toContain("frame-ancestors 'none'");
     expect(dockerfile.match(/include \/etc\/nginx\/snippets\/csp\.conf;/g)?.length).toBeGreaterThan(
       1
     );
+  });
+
+  it('keeps the one exception (/adminer/) strictly narrower than the site-wide policy', () => {
+    const [siteWide, adminer] = policyDeclarations();
+    // No host named at all, and `img-src`/`connect-src` are the page's own origin (plus data: images).
+    expect(adminer).not.toMatch(/https?:/);
+    expect(sources(adminer, 'img-src')).toEqual(["'self'", 'data:']);
+    expect(sources(adminer, 'connect-src')).toEqual(["'self'"]);
+    expect(sources(adminer, 'default-src')).toEqual(["'self'"]);
+    // And it is not a copy of the wide one: everything it allows, the site-wide policy allows too.
+    for (const directive of ['script-src', 'style-src', 'img-src', 'connect-src']) {
+      for (const source of sources(adminer, directive)) {
+        expect(sources(siteWide, directive)).toContain(source);
+      }
+    }
   });
 
   it('names every external host the client reads bytes from', () => {

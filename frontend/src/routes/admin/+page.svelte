@@ -24,6 +24,7 @@
     BookUser,
     Map,
     HardDrive,
+    Database,
     History,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -103,6 +104,7 @@
     | 'doc-reviewers'
     | 'carte'
     | 'storage'
+    | 'database'
     | 'legacy';
 
   interface AdminCard {
@@ -186,6 +188,12 @@
           description: m.admin_card_storage_desc(),
         },
         {
+          href: '/admin/database',
+          kind: 'database',
+          label: m.admin_database_label(),
+          description: m.admin_card_database_desc(),
+        },
+        {
           href: '/admin/legacy-cotisations',
           kind: 'legacy',
           label: m.admin_legacy_label(),
@@ -245,6 +253,8 @@
               <Map size={20} />
             {:else if card.kind === 'storage'}
               <HardDrive size={20} />
+            {:else if card.kind === 'database'}
+              <Database size={20} />
             {:else if card.kind === 'legacy'}
               <History size={20} />
             {:else}
