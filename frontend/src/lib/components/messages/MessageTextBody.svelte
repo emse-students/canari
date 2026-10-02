@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { isGifUrl, getGifEmbedUrl, splitWithHighlight } from '$lib/utils/chat/messageDisplay';
+  import { isGifUrl, splitWithHighlight } from '$lib/utils/chat/messageDisplay';
+  import GifEmbed from './GifEmbed.svelte';
   import AppLink from '../shared/AppLink.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
   import MessageInlineText from './MessageInlineText.svelte';
@@ -46,27 +47,7 @@
     {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
       {#if segment.type === 'link'}
         {#if !segment.noEmbed && isGifUrl(segment.value)}
-          <span class="my-1.5 block">
-            <img
-              src={getGifEmbedUrl(segment.value)}
-              alt="GIF"
-              class="max-h-64 max-w-full rounded-xl object-contain shadow-sm"
-              onerror={(e) => {
-                const img = e.currentTarget;
-                if (img instanceof HTMLImageElement) {
-                  img.style.display = 'none';
-                  const link = document.createElement('a');
-                  link.href = segment.value;
-                  link.target = '_blank';
-                  link.rel = 'noopener noreferrer';
-                  link.textContent = segment.value;
-                  link.className =
-                    'underline underline-offset-2 decoration-current hover:opacity-80 transition-opacity';
-                  img.parentElement?.appendChild(link);
-                }
-              }}
-            />
-          </span>
+          <GifEmbed url={segment.value} />
         {:else}
           <AppLink href={segment.value} />
         {/if}

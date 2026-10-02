@@ -80,6 +80,39 @@ The wire already had the size: `MediaMsg.width = 9` / `height = 10`, mirrored by
 | File | n/a | same row, spinner | same row, button | none measured by reading |
 | Failure box | - | `max-w-xs sm:w-64`, video `aspect-video` | - | a failure re-shapes the row |
 
+### Measured (2026-10-02)
+
+A bench page mounts the OLD renderers (copied from `main`) and the NEW ones side by side, in a
+436 px scroller with filler rows, holds every medium in its "decrypting" state, then hands every row
+its bytes at once and reads each row's height before and after. Same build, same assets, three
+engines asked; the numbers are row heights in CSS px.
+
+| Row | OLD before -> after | NEW, first time on the device | NEW, every later time |
+| --- | --- | --- | --- |
+| photo 1080x1920, size declared | 57 -> 405 | 398 -> 398 | 398 -> 398 |
+| photo 1600x900 + caption | 164 -> 191 | 191 -> 191 | 191 -> 191 |
+| video 720x1280, size declared | 32 -> 398 | 398 -> 398 | 398 -> 398 |
+| video 720x1280, OLD message (no size) | 32 -> 126 | 126 -> 398 | 398 -> 398 |
+| GIF file 320x240, OLD message (no size) | 32 -> 175 | 168 -> 168 | 168 -> 168 |
+| GIF link 498x280, size in the fragment | 28 -> 246 | 246 -> 246 | 246 -> 246 |
+| GIF link 320x240, OLD link (no size) | 28 -> 268 | 284 -> 268 | 268 -> 268 |
+| voice note | 56 -> 84 | 84 -> 84 | 84 -> 84 |
+| **sum of row height changes** | **1464** | **288** (old messages only) | **0** |
+| **reader's row, reading history** | **moved 629** | **moved 0-1** | 0 |
+| Chromium CLS over the load | 0.79-1.04 | 0.0000-0.0001 | 0.0001 |
+
+Read on desktop Chromium at a 436x945 phone viewport and in **Chrome on the Mi 9T** (Android 10,
+same numbers to the pixel; the 629 px is the Mi 9T's). Two things the "before" column shows that
+reading the source did not: the old photo and video skeletons were 32-57 px tall, not the 4:3 /
+16:9 box the code seemed to ask for - `w-full` inside a `w-fit` bubble resolves against nothing and
+the skeleton shrank to its 32 px icon - so EVERY photo and video grew by 300+ px on arrival, sized
+or not; and the GIF link was 0 px.
+
+**The iPhone 12 (iOS 27.0.1) was NOT read**: opening the bench in Safari raised iOS's
+default-browser choice screen, a decision that is the owner's, so the session was abandoned
+untouched (WDA stopped, Canari back in front). Owed: one pass on the iPhone, after that choice is
+made once, or in a bench build.
+
 **And the pane did not follow what it could not see.** `ChatArea`'s growth observer is a
 `MutationObserver` plus a `ResizeObserver` on the SCROLLER's own box. An `<img>` decoding to its
 size is neither a DOM mutation nor a change of the scroller's box, so a GIF arriving at the bottom of
@@ -119,8 +152,16 @@ reader down.
 - **The skeleton, the decrypting state, the failure state and the media are ALL children of the same
   frame.** A renderer that draws its failure box at a different size than its picture has
   re-introduced the shift through the back door - that is exactly what the audit found.
-- **`placeholder`** is painted as the frame's background until the child covers it; with none, the
-  frame's surface tone is the placeholder.
+- **`placeholder`** (lands with the sender-side pull request, section 6) is painted as the frame's
+  background until the child covers it; until then, and for every old message, the frame's surface
+  tone is the placeholder.
+- **`tag="span"`** where the frame sits in phrasing content (a GIF inside a message's `<p>`).
+- **`data-media-size`** on the frame says what it was drawn from (`498x280`, or `fallback`) - the
+  attribute the component tests read, since happy-dom cannot parse `width: min(...)`.
+- **The feed (`PostContent`) keeps calling `mediaAspectStyle`**, which IS the frame's `fill` style
+  (`mediaFrameStyle` delegates to it), so the ceiling has one implementation; a feed attachment
+  already reserved its box before this work, and a post without a size letterboxes rather than
+  shifts.
 
 **For a GIF sent by URL**, the size rides in the URL's FRAGMENT, which no server ever receives and
 every old client ignores: `withGifSize(url, w, h)` writes `#cn-size=<w>x<h>`, `gifSizeFromUrl(url)`
@@ -131,10 +172,21 @@ sizing="intrinsic"` from the provider's dimensions, so the grid does not reflow 
 
 ## 4. The pane keeps the reader's row, whatever grows
 
-`ChatArea` anchors on the row AT THE TOP OF THE VIEWPORT, not the topmost rendered one, and its
-growth observer also watches the message list's own box - so a medium settling anywhere is either
-followed (reader at the bottom) or compensated (reader above it). `overflow-anchor` is not used
-(section 1).
+`observeThreadGrowth` (`frontend/src/lib/utils/chat/threadGrowthObserver.ts`, taken out of
+`ChatArea` so the bench drives the real wiring) anchors on the row AT THE TOP OF THE VIEWPORT
+(`firstRowBelow`), not the topmost rendered one, compensates a change above it in BOTH directions,
+and watches every child's box as well as the mutations - so a medium settling anywhere is either
+followed (reader at the bottom) or compensated (reader above it).
+
+**It switches the browser's own anchoring OFF (`overflow-anchor: none`), and that was measured, not
+chosen.** The first bench run of the new code moved the reader's row by 253 px UPWARD: Chromium had
+already moved `scrollTop` by the 272 px an old video grew above the reader, and the observer added
+272 more. Native anchoring exists in Chromium and from Safari 27 - the iPhone 12 runs iOS 27.0.1 -
+and not before it, so leaving it on makes one piece of code right on one phone and wrong on the
+next. With it off, the same run moved the row by 0 px on desktop Chromium and 1 px on the Mi 9T.
+It also explains a remark in [local-first-ui](local-first-ui.md): a prepend at `scrollTop` 0 is
+never natively anchored (the spec selects no anchor there), which is why only the top of the pane
+ever showed the slide.
 
 ## 5. Old messages, honestly
 
@@ -148,6 +200,6 @@ message never shifts.
 
 | Half | Pull request | State |
 | --- | --- | --- |
-| This contract and the research | the page's first commit | merged with it |
-| `MediaFrame`, every chat renderer and the feed on it, the measured-size cache, the pane's anchor | next | not yet |
+| This contract and the research | #1339 | merged |
+| `MediaFrame`, the chat photo / video / GIF-link / voice renderers on it, the measured-size cache, the pane's anchor | this page's second pull request | see its state on GitHub |
 | Sender side: GIF sizes (files and URLs), the ThumbHash placeholder on the wire | after it | not yet |

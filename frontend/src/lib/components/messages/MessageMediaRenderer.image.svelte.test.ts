@@ -112,9 +112,9 @@ describe('MessageMediaRenderer - media that bleeds into its bubble', () => {
   it('cancels the bubble padding and its own rounding, and keeps the caption beneath', () => {
     render(media('image', 'image/jpeg'), { ...caption, bleed: true });
     const img = document.querySelector('img')!;
-    const frame = img.closest('button')!;
+    const frame = img.closest('[data-media-frame]')!;
     expect(frame.className).not.toContain('rounded-3xl');
-    expect(frame.parentElement!.parentElement!.className).toContain('-mx-3');
+    expect(frame.parentElement!.className).toContain('-mx-3');
     const text = document.querySelector('p')!;
     expect(text.textContent).toContain('Regarde cette vue');
     expect(img.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -128,6 +128,9 @@ describe('MessageMediaRenderer - media that bleeds into its bubble', () => {
 
   it('keeps its framed, rounded look when it carries no caption', () => {
     render(media('image', 'image/jpeg'));
-    expect(document.querySelector('img')!.closest('button')!.className).toContain('rounded-3xl');
+    // The rounding is the FRAME's since 2026-10-02 - the one box every state of the medium shares.
+    expect(document.querySelector('img')!.closest('[data-media-frame]')!.className).toContain(
+      'rounded-3xl'
+    );
   });
 });

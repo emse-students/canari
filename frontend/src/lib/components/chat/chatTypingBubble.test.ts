@@ -22,6 +22,7 @@ const CHAT_AREA = 'src/lib/components/chat/ChatArea.svelte';
 const COMPOSER = 'src/lib/components/chat/ChatComposer.svelte';
 const BUBBLE = 'src/lib/components/chat/ChatTypingBubble.svelte';
 const GROUPS = 'src/lib/components/chat/ChatMessageGroups.svelte';
+const GROWTH = 'src/lib/utils/chat/threadGrowthObserver.ts';
 
 const read = (path: string) => withoutComments(readFileSync(path, 'utf8'));
 
@@ -68,13 +69,20 @@ describe('the bubble caps how many people it draws', () => {
   });
 });
 
-describe('the thread follows its own bottom from three triggers', () => {
-  it('watches the content, its own box and the composer band', () => {
-    const body = read(CHAT_AREA);
-    expect(body).toContain('const mutations = new MutationObserver(follow);');
-    expect(body).toContain('const boxes = new ResizeObserver(follow);');
-    expect(body).toContain('boxes.observe(el);');
-    expect(body).toContain('if (composerBand) boxes.observe(composerBand);');
+describe('the thread follows its own bottom from four triggers', () => {
+  // The wiring moved to `observeThreadGrowth` (2026-10-02) so the media-frame bench could drive it
+  // in a real browser; ChatArea must still hand it the pane AND the composer band.
+  it('watches the content, every child box, its own box and the composer band', () => {
+    expect(read(CHAT_AREA)).toContain('return observeThreadGrowth(');
+    expect(read(CHAT_AREA)).toContain('composerBand\n    );');
+    const wiring = read(GROWTH);
+    expect(wiring).toContain('const boxes = new ResizeObserver(follow);');
+    expect(wiring).toContain('boxes.observe(scroller);');
+    expect(wiring).toContain('for (const child of scroller.children) boxes.observe(child);');
+    expect(wiring).toContain('const mutations = new MutationObserver(');
+    expect(wiring).toContain('if (composerBand) boxes.observe(composerBand);');
+    // The browser's own anchoring would compensate a second time in Chromium and Safari 27.
+    expect(wiring).toContain("scroller.style.overflowAnchor = 'none';");
   });
 
   it('holds the stick-to-bottom judgement in one shared predicate', () => {

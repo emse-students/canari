@@ -336,6 +336,10 @@
      For reference the tallest media measured on the Facebook group page was 735px in a 945px
      viewport - 78% - but that was an uncropped portrait document, not the shape a feed is browsed at. */
   --media-max-height: 60svh;
+  /* The tallest a medium drawn at its OWN size may be - a GIF in a message, a GIF panel tile
+     (`MediaFrame sizing="intrinsic"`). 16rem is the `max-h-64` the inline GIF always had, so a GIF
+     is the size it was; it is now that size BEFORE it loads. */
+  --media-inline-max-height: 16rem;
   /* Height of the full-width brand bar. READ BY THREE THINGS - the bar itself, the nav rail
      that hangs below it, and the rail's hover scrim, which starts at its bottom edge. It was
      the literal `3.5rem` in all three, and floating the bar by 0.75rem left the scrim short by
