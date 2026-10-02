@@ -120,6 +120,13 @@ The numbers and what they imply are in
 | PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
 
+**`:postId` is parsed as a UUID on every route (`ParseUUIDPipe`), so a malformed id is a `400`.**
+`posts.id` is a Postgres `uuid`. Before 2026-10-02, a path segment that was not a UUID reached the
+query, and Postgres's `invalid input syntax for type uuid` became an unhandled 500. A newer client
+asking an older server for a route it lacks (`/api/posts/reel-limits`) landed on `GET :postId` and
+logged a server ERROR. `posts.controller.post-id.spec.ts` reads Nest's route metadata, so a handler
+added later without the pipe fails there.
+
 ### Channels and workspaces (`/api/channels`)
 
 | Method | Path | Description |

@@ -47,6 +47,7 @@
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
+- [MediaFrame](frontend/media-frame.md) - the box a picture, a GIF or a video holds before it arrives: what Discord, WhatsApp, Telegram and Slack carry (sourced), what Canari shifted, and the primitive every renderer uses
 - [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s): the `prepareVideoForUpload` seam, its faults, and the device readings
 - [The cold start, measured](frontend/cold-start.md) - every reading behind the under-1 s target, and every hypothesis refuted on the way
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI

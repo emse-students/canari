@@ -23,8 +23,57 @@ export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
 
 const decryptedPool = new BlobUrlPool();
 const rawPool = new BlobUrlPool();
-const inflightDecrypted = new Map<string, Promise<string>>();
-const inflightRaw = new Map<string, Promise<string>>();
+const inflightDecrypted = new Map<string, SharedLoad>();
+const inflightRaw = new Map<string, SharedLoad>();
+
+/**
+ * ONE DOWNLOAD, MANY HOLDERS - AND IT IS ABANDONED ONLY WHEN THE LAST ONE LEAVES.
+ *
+ * Every row that wants the same object joins the load already running for it. That load used to be
+ * bound to the signal of whoever STARTED it, so when the starter was torn down while the request was
+ * still queued (`mediaRequestGate`: abort means "never start"), the shared promise rejected with that
+ * starter's `AbortError` - and every row that had joined in the meantime received it. A freshly sent
+ * video hit this every time: the sent message is re-rendered right after its upload, the first
+ * render's effect is torn down, the second joins, and it is handed the first one's abort, which the
+ * bubble printed as "media not shown (other) ... The operation was aborted" with no thumbnail
+ * (user, 2026-10-02, on every video uploaded in the chat).
+ *
+ * So the load owns its OWN `AbortController`, and each holder - the starter included - only counts.
+ * The controller fires when the count reaches zero, which is exactly "nobody wants this any more";
+ * an entry abandoned that way leaves the map at once, so a caller arriving a moment later starts a
+ * fresh load instead of joining one that is already doomed.
+ */
+interface SharedLoad {
+  promise: Promise<string>;
+  controller: AbortController;
+  holders: number;
+}
+
+/** Registers one more holder of `entry`; when the last one's signal aborts, the load is abandoned. */
+function holdSharedLoad(
+  map: Map<string, SharedLoad>,
+  key: string,
+  entry: SharedLoad,
+  signal?: AbortSignal
+): void {
+  entry.holders += 1;
+  // A holder with no signal can never be abandoned, so the load it joined can never be either.
+  if (!signal) return;
+  const leave = () => {
+    entry.holders -= 1;
+    if (entry.holders > 0) return;
+    if (map.get(key) === entry) map.delete(key);
+    entry.controller.abort(signal.reason);
+  };
+  if (signal.aborted) {
+    leave();
+    return;
+  }
+  signal.addEventListener('abort', leave, { once: true });
+  // Once the load has settled there is nothing left to abandon.
+  const settled = () => signal.removeEventListener('abort', leave);
+  entry.promise.then(settled, settled);
+}
 
 function decryptedKey(ref: MediaRef): string {
   return `${ref.mediaId}:${ref.key}:${ref.iv}`;
@@ -166,12 +215,14 @@ async function loadDecryptedBlobUrl(
 
   const pending = inflightDecrypted.get(key);
   if (pending) {
-    const url = await pending;
+    holdSharedLoad(inflightDecrypted, key, pending, signal);
+    const url = await pending.promise;
     return decryptedPool.tryRetain(key) ?? url;
   }
 
+  const controller = new AbortController();
   const promise = (async () => {
-    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, signal);
+    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, controller.signal);
     let plaintext: ArrayBuffer;
     try {
       plaintext = await decryptByEncoding(ref, ciphertext);
@@ -191,11 +242,13 @@ async function loadDecryptedBlobUrl(
     return blobUrl;
   })();
 
-  inflightDecrypted.set(key, promise);
+  const entry: SharedLoad = { promise, controller, holders: 0 };
+  inflightDecrypted.set(key, entry);
+  holdSharedLoad(inflightDecrypted, key, entry, signal);
   try {
     return await promise;
   } finally {
-    inflightDecrypted.delete(key);
+    if (inflightDecrypted.get(key) === entry) inflightDecrypted.delete(key);
   }
 }
 
@@ -210,22 +263,26 @@ async function loadRawBlobUrl(
 
   const pending = inflightRaw.get(key);
   if (pending) {
-    const url = await pending;
+    holdSharedLoad(inflightRaw, key, pending, signal);
+    const url = await pending.promise;
     return rawPool.tryRetain(key) ?? url;
   }
 
+  const controller = new AbortController();
   const promise = (async () => {
-    const res = await fetchMediaObject(mediaId, baseUrl, signal);
+    const res = await fetchMediaObject(mediaId, baseUrl, controller.signal);
     const blobUrl = URL.createObjectURL(await res.blob());
     rawPool.retain(key, blobUrl);
     return blobUrl;
   })();
 
-  inflightRaw.set(key, promise);
+  const entry: SharedLoad = { promise, controller, holders: 0 };
+  inflightRaw.set(key, entry);
+  holdSharedLoad(inflightRaw, key, entry, signal);
   try {
     return await promise;
   } finally {
-    inflightRaw.delete(key);
+    if (inflightRaw.get(key) === entry) inflightRaw.delete(key);
   }
 }
 
