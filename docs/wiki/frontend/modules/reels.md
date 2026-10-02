@@ -71,6 +71,14 @@ that state.
 its own stream rather than installing it - a fact recorded at the request, never a delay
 (`reels/cameraSession.svelte.ts`, pinned by its test).
 
+**Read on both phones through a real swipe from the feed (2026-10-02).** Mi 9T, through harness row
+REEL-1: live in 1211 ms, 720x1280 from `camera 0, facing back`, 30 fps, torch offered, and the track
+ended once the swipe back reached `/posts`. iPhone 12 (iOS 27.0.1), through the WebKit bridge: live,
+720x1280 from the dual wide back camera, 30 fps, torch offered, and no `[data-camera-phase]` left
+once the swipe back reached `/posts`. On both phones the shutter stayed disabled, with the
+"unreachable" line under it, because the bench estate had no reel routes yet. That line was false
+(the server was up), and the capture screen now tells the two cases apart (see the table below).
+
 ## The capture screen (C4)
 
 The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`):
@@ -180,3 +188,67 @@ the first frame is there. A reel is never fetched twice: if it becomes current b
 has finished, the preload is ABORTED and the player fetches (or streams) it alone. One cost is
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
+
+## Saving before the deletion, and the days left (C6)
+
+**What says a reel is the member's own is the server's list**, `GET /api/posts/my-reels`
+(`reels/myReels.svelte.ts`), never `authorId`: a reel published as an association or anonymously
+carries no author for anybody, its author included, and is still theirs to save. The list is asked
+once, held FOR THE ACCOUNT THAT ASKED (another account signing in on the same device sees none of
+it), and asked again only when a reel being drawn was created AFTER the list's `serverNow` and is
+absent from it - a fact, never a timer.
+
+**The days left are counted on the server's clock** (`serverNow`), rounded up, so a phone set a day
+wrong does not announce the wrong date. The chip (`ReelExpiryChip`) sits on the member's own reels
+only - top-left of the feed card, over the caption in the viewer - and turns amber once the server
+says `expiringSoon` (its warning window).
+
+**The save** (`ReelSaveButton`, the member's own reel, in the viewer) reads the video out of the
+media cache with the key `my-reels` handed over, and gives it to:
+
+| Where | Path | Permission |
+| --- | --- | --- |
+| Android 10+ | `tauri-plugin-gallery`: a pending `MediaStore` row in `Movies/Canari`, the bytes, then the row published (a failed write deletes the row) | none - ADDING to the shared collection needs none |
+| Android 9 (`minSdk` 28) | the plugin copies into the public `Movies/Canari` and scans it | `WRITE_EXTERNAL_STORAGE`, declared `maxSdkVersion 28`, asked at the save |
+| iOS | the plugin: `PHPhotoLibrary.requestAuthorization(for: .addOnly)`, then `PHAssetCreationRequest` | ADD-ONLY (`NSPhotoLibraryAddUsageDescription`): Canari can read nothing back |
+| Web, desktop | `saveBlobAs` - the download, or the save dialog | none |
+
+The file is the fragmented H.264/AAC MP4 every reel was prepared into (C3), which both Photos and
+Android's gallery play, named `canari-reel-<day>-<id8>.mp4`.
+
+**The bytes are STAGED in base64 chunks, never sent whole** (`reels/gallery.ts`). The first
+design sent them as a raw IPC body, and the Mi 9T refused it (2026-10-02): on Android every Tauri
+call travels through `postMessage` as JSON - Tauri's own script never uses the custom-protocol
+transport there, because the WebView cannot read a request body - so a `Uint8Array` arrives as a
+JSON array of numbers, several times the video's size in one string. So `append_video_chunk` takes
+768 KiB at a time, read by the engine (`FileReader.readAsDataURL` on a `Blob` slice), each tagged
+with its OFFSET: `0` creates the staged file in the app cache, any other offset must equal the
+bytes already staged or the chunk is refused (`OutOfOrder`) rather than writing a video with a
+hole in it. `save_video` hands the native side the staged PATH and removes it on every outcome;
+`discard_video` removes it when a failure stops the save before that, and the plugin sweeps any
+`gallery-*` file left in the cache at start-up, when no save can be in flight - a decrypted reel
+does not outlive its save by more than one launch. The session is a `crypto.randomUUID()` and the
+name a plain file name; anything that looks like a path is a typed refusal (`BadSession`,
+`BadName`), never a default. The native copy runs off the main thread. The command names, their
+arguments and the capability are pinned on both sides by `services/galleryCommands.test.ts`, which
+reads the Rust sources.
+
+**A refusal is an outcome, not a failure**: `denied` swaps the save button for "Open settings",
+which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,
+`UIApplication.openSettingsURLString`). The camera screen's refused state carries the same button in
+the app, since a refused camera on iOS stays refused until Settings.
+
+**Read on both phones (2026-10-02)**, each time from the app's own WebView with the calls
+`gallery.ts` makes, using an 842 KB fragmented MP4 sent in 2 chunks:
+
+| | Mi 9T (Android 16) | iPhone 12 (iOS 27.0.1) |
+| --- | --- | --- |
+| Asked | nothing | once, Photos' add-only dialog, with Canari's own sentence |
+| Saved in | 311 ms (164 ms of it staging), copied on a worker thread | 115 ms |
+| Landed | `Movies/Canari/`, 720x1280, nothing left in the cache | the camera roll |
+| Played by | the system Gallery, the full 00:02 | Photos, 0:02 |
+| Refusals | path-shaped session, out-of-order chunk and path-shaped name each answered typed | not re-run; the same Rust answers them |
+
+MediaStore's `duration` column reads `0` for a fragmented file whose `moov` holds no samples. The
+Gallery's player is not affected, but a list sorted or filtered by duration would see a 0-second
+video.

@@ -113,6 +113,8 @@
 	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son de vos CanaReels.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Canari enregistre vos CanaReels dans vos photos quand vous le demandez.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.</string>
 	<!-- KEPT YES, but nothing here depends on it any more, and that is deliberate. The proxy is

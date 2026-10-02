@@ -3140,5 +3140,12 @@
   "reels_viewer_close": "Close CanaReels",
   "reels_viewer_prev": "Previous CanaReel",
   "reels_viewer_next": "Next CanaReel",
-  "reels_viewer_load_error": "The next CanaReels could not be loaded."
+  "reels_viewer_load_error": "The next CanaReels could not be loaded.",
+  "reels_expires_in": "Deleted in {days} d",
+  "reels_expires_today": "Deleted today",
+  "reels_save": "Save to the gallery",
+  "reels_save_done": "CanaReel saved to your gallery",
+  "reels_save_denied": "Canari cannot reach your gallery: allow it in the phone's settings.",
+  "reels_save_error": "The CanaReel could not be saved. Try again.",
+  "reels_open_settings": "Open settings"
 }

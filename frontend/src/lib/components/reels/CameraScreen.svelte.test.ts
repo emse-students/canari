@@ -11,13 +11,21 @@ import { CameraAccessError, type CameraFault } from '$lib/reels/cameraAccess';
 import { m } from '$lib/paraglide/messages';
 
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
+let nativeApp = false;
+const openAppSettings = vi.fn(async () => {});
+vi.mock('$lib/reels/gallery', () => ({
+  hasNativeGallery: () => nativeApp,
+  openAppSettings: () => openAppSettings(),
+}));
 
 const mounted: Record<string, unknown>[] = [];
 
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
+  nativeApp = false;
   vi.restoreAllMocks();
+  openAppSettings.mockClear();
 });
 
 /**
@@ -66,6 +74,25 @@ describe('CameraScreen', () => {
     );
     retry!.click();
     expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refusal on the phone apps offers their settings page, and only a refusal', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    nativeApp = true;
+    const denied = await render(() => Promise.reject(new CameraAccessError('denied', 'denied')));
+    denied.target.querySelector<HTMLButtonElement>('[data-camera-open-settings]')!.click();
+    expect(openAppSettings).toHaveBeenCalled();
+
+    const busy = await render(() => Promise.reject(new CameraAccessError('busy', 'busy')));
+    expect(busy.target.querySelector('[data-camera-open-settings]')).toBeNull();
+  });
+
+  it('the web has no settings page to offer', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { target } = await render(() =>
+      Promise.reject(new CameraAccessError('denied', 'denied'))
+    );
+    expect(target.querySelector('[data-camera-open-settings]')).toBeNull();
   });
 
   it('offers the torch only on a lens that has one', async () => {

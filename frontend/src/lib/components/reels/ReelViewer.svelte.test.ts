@@ -24,6 +24,14 @@ vi.mock('$lib/reels/reelPreload', () => ({
     }
   },
 }));
+const ownReels = new Map<string, unknown>();
+vi.mock('$lib/reels/myReels.svelte', () => ({
+  myReels: {
+    find: (id: string) => ownReels.get(id),
+    ensure: () => {},
+    daysLeft: () => 12,
+  },
+}));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
 }));
@@ -85,6 +93,7 @@ async function render(loadPage = vi.fn(async () => [reel('a'), reel('b'), reel('
 }
 
 beforeEach(() => {
+  ownReels.clear();
   preloads.length = 0;
   stopped.length = 0;
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce') }));
@@ -128,5 +137,12 @@ describe('ReelViewer', () => {
     document.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_viewer_close()}"]`)!.click();
     await settle();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("offers the save on the author's own reel only", async () => {
+    ownReels.set('b', { id: 'b', expiresAt: '', expiringSoon: true, media: [] });
+    await render();
+    expect(document.querySelectorAll('[data-reel-save]').length).toBe(1);
+    expect(document.querySelector('[data-reel-slide="b"] [data-reel-save]')).not.toBeNull();
   });
 });

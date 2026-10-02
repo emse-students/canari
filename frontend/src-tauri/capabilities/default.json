@@ -24,6 +24,7 @@
     "biometric:default",
     "keystore:default",
     "customtabs:default",
+    "gallery:default",
     "http:default",
     {
       "identifier": "http:allow-fetch",
