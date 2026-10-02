@@ -10,7 +10,9 @@
     Loader,
     Link2,
     RotateCcwClock,
+    QrCode,
   } from '@lucide/svelte';
+  import QrCodeModal from '../shared/QrCodeModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
   import SidePanel from '../shared/SidePanel.svelte';
@@ -157,6 +159,8 @@
   let shareLoading = $state(false);
   let shareError = $state('');
   let shareCopied = $state(false);
+  /** The QR code of the live invite link, shown in the shared modal. */
+  let shareQrOpen = $state(false);
   /** Days until expiry for the next link; 0 means it never expires. */
   let shareExpiryDays = $state(0);
   /** Cap on accepted joins for the next link; 0 means unlimited. */
@@ -558,7 +562,8 @@
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !selectedWorkspace?.id) return;
-    if (!file.type.startsWith('image/')) {
+    // The public avatar route decodes JPEG, PNG and WebP only; anything else would be a 400.
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       imageUploadError = m.chat_community_select_image_error();
       return;
     }
@@ -722,7 +727,7 @@
                   {/if}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp"
                     class="sr-only"
                     disabled={imageUploading}
                     onchange={handleImageFileChange}
@@ -993,6 +998,15 @@
                   >
                     {m.chat_regenerate_link_button()}
                   </button>
+                  <button
+                    type="button"
+                    onclick={() => (shareQrOpen = true)}
+                    aria-label={m.qr_button()}
+                    class="border-cn-border hover:bg-cn-bg flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold"
+                  >
+                    <QrCode size={14} />
+                    {m.qr_button()}
+                  </button>
                 </div>
                 <p class="text-text-muted text-xs">{shareBounds}</p>
                 {#if shareCopied}
@@ -1016,6 +1030,16 @@
             </div>
           {/if}
         </div>
+      {/if}
+
+      {#if shareQrOpen && shareLink}
+        <QrCodeModal
+          open
+          url={shareLink}
+          label={selectedWorkspace?.name ?? ''}
+          intro={m.chat_community_invite_qr_intro()}
+          onClose={() => (shareQrOpen = false)}
+        />
       {/if}
 
       <!-- THE ONE COPY. It used to be two, one per layout; there is one layout now. -->

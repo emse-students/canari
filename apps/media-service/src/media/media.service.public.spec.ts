@@ -145,3 +145,54 @@ describe('MediaService.downloadPublic', () => {
     await expect(service.downloadPublic(UUID_UNKNOWN)).resolves.toEqual({ status: 'not_found' });
   });
 });
+
+describe('MediaService.promoteToPublicAssets', () => {
+  const NOW = 1_000;
+  const UUID_CIPHER = '44444444-4444-4444-8444-444444444444';
+
+  /** A 1x1 PNG, the smallest thing sharp decodes. */
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+
+  function serviceHolding(items: Record<string, MetaEntry>, blobs: Record<string, Buffer>) {
+    const { service, persisted } = serviceWith(items, []);
+    (service as unknown as ServiceInternals).storage = {
+      get: (id: string) => Promise.resolve(blobs[id] ? streamOf(blobs[id]) : null),
+    };
+    return { service, persisted };
+  }
+
+  it('promotes an image uploaded behind the JWT route and serves it publicly afterwards', async () => {
+    const items: Record<string, MetaEntry> = {
+      [UUID_PRIVATE]: { createdAt: NOW, lastAccessAt: NOW },
+    };
+    const { service } = serviceHolding(items, { [UUID_PRIVATE]: PNG });
+
+    expect((await service.downloadPublic(UUID_PRIVATE)).status).toBe('not_found');
+    const result = await service.promoteToPublicAssets([UUID_PRIVATE]);
+
+    expect(result).toEqual({ promoted: [UUID_PRIVATE], refused: [] });
+    expect(await service.downloadPublic(UUID_PRIVATE)).toMatchObject({
+      status: 'ok',
+      contentType: 'image/png',
+    });
+  });
+
+  it('REFUSES a blob that is not an image, so a wrong id cannot publish ciphertext', async () => {
+    const items: Record<string, MetaEntry> = {
+      [UUID_CIPHER]: { createdAt: NOW, lastAccessAt: NOW },
+    };
+    const { service, persisted } = serviceHolding(items, {
+      [UUID_CIPHER]: Buffer.from('not an image, just ciphertext'),
+    });
+
+    const result = await service.promoteToPublicAssets([UUID_CIPHER, UUID_UNKNOWN, 'nope']);
+
+    expect(result.promoted).toEqual([]);
+    expect(result.refused).toEqual([UUID_CIPHER, UUID_UNKNOWN, 'nope']);
+    expect(items[UUID_CIPHER].publicAsset).toBeUndefined();
+    expect(persisted()).toBe(0);
+  });
+});

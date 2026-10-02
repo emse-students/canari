@@ -395,6 +395,41 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /media/internal/promote-public - repair avatars stored behind the JWT route
+  // ---------------------------------------------------------------------------
+  /**
+   * Makes existing group avatars and community images servable by `GET /media/public/:id`. They
+   * were uploaded through `POST /media/upload`, so the invite card, the link preview and the SEO
+   * head - all unauthenticated - got a 404 for them. The caller names the ids (it owns the rows
+   * that cite them); the service promotes only blobs that decode as JPEG, PNG or WebP.
+   */
+  @Post('internal/promote-public')
+  async promotePublic(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ promoted: number; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+
+    const ids = body?.mediaIds;
+    if (!Array.isArray(ids)) {
+      throw new BadRequestException('mediaIds must be an array');
+    }
+    if (ids.length > RETENTION_CLASS_MAX_IDS) {
+      throw new BadRequestException(
+        `mediaIds must hold at most ${RETENTION_CLASS_MAX_IDS} entries`
+      );
+    }
+
+    const { promoted, refused } = await this.mediaService.promoteToPublicAssets(
+      ids.filter((id): id is string => typeof id === 'string')
+    );
+    this.logger.log(
+      `Promoted ${promoted.length} object(s) to public assets, ${refused.length} refused`
+    );
+    return { promoted: promoted.length, refused };
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /media/internal/:id - server-to-server ciphertext fetch (X-Internal-Secret)
   // ---------------------------------------------------------------------------
   /**

@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Readable } from 'stream';
+import sharp from 'sharp';
 
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -443,6 +444,59 @@ export class MediaService {
 
     if (changed > 0) await this.persistMetadata();
     return changed;
+  }
+
+  /**
+   * Promotes objects uploaded through the authenticated route (group avatars and community images,
+   * before they went through `upload/public`) to public assets, so `GET /media/public/:id` serves
+   * them to the invite card, the link preview and the SEO head.
+   *
+   * THE ALLOWLIST IS THE CONTENT, NOT THE CALLER'S WORD: every blob is decoded as an image and only
+   * JPEG, PNG and WebP are promoted, under the content type the decoder reports. Ciphertext does not
+   * decode, so a wrong id in the list cannot publish a private object - the failure the removed
+   * lazy fallback in {@link downloadPublic} had.
+   *
+   * @returns the ids promoted and the ids refused, so the caller can log what it could not repair.
+   */
+  async promoteToPublicAssets(
+    mediaIds: string[]
+  ): Promise<{ promoted: string[]; refused: string[] }> {
+    const promoted: string[] = [];
+    const refused: string[] = [];
+
+    for (const mediaId of mediaIds) {
+      if (!UUID_REGEX.test(mediaId)) {
+        refused.push(mediaId);
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) {
+        refused.push(mediaId);
+        continue;
+      }
+      if (this.isPublicAssetEntry(entry)) continue;
+
+      const stream = await this.storage.get(mediaId);
+      if (!stream) {
+        refused.push(mediaId);
+        continue;
+      }
+      try {
+        const { format } = await sharp(await this.readStreamToBuffer(stream)).metadata();
+        if (format !== 'jpeg' && format !== 'png' && format !== 'webp') {
+          throw new Error(`format ${format ?? 'unknown'} is not a public image format`);
+        }
+        entry.publicAsset = true;
+        entry.contentType = `image/${format}`;
+        promoted.push(mediaId);
+      } catch (err) {
+        this.logger.warn(`media ${mediaId}: not promoted to a public asset - ${String(err)}`);
+        refused.push(mediaId);
+      }
+    }
+
+    if (promoted.length > 0) await this.persistMetadata();
+    return { promoted, refused };
   }
 
   async remove(mediaId: string): Promise<void> {

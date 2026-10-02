@@ -2091,6 +2091,7 @@
   "form_view_link_copied": "Link copied!",
   "form_view_share": "Share",
   "form_qr_intro": "Scan this code to open the form.",
+  "chat_community_invite_qr_intro": "Scan this code to join the community.",
   "form_view_event_linked": "Linked event",
   "form_view_event_see": "See →",
   "form_view_opens_at": "Opens on {date}",
