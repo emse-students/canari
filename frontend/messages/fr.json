@@ -892,6 +892,8 @@
   "admin_storage_media_public": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention.",
   "admin_storage_media_archive": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment.",
   "admin_storage_media_association": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés.",
+  "admin_storage_media_reel": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication.",
+  "admin_storage_reels": "{live} reels en vie, {overdue} en retard de suppression (un reel en retard est encore là passé son mois : le traitement horaire ne l'a pas retiré).",
   "admin_storage_media_unclassified": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "Ce que contiennent la base et le cache ci-dessus. Des nombres seulement : rien ici n'alerte, ne classe ni n'agit.",

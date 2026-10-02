@@ -243,6 +243,20 @@ export class CreatePostDto {
   @IsOptional()
   authorId?: string;
 
+  /**
+   * `'reel'` publishes a CanaReel (one video, expires after a month); absent or `'post'` is the
+   * post that has always existed. The rest of the reel's shape is `assertCreateKindShape`.
+   */
+  @IsIn(['post', 'reel'])
+  @IsOptional()
+  kind?: 'post' | 'reel';
+
+  /** The reel's length in ms as the CLIENT declares it; refused above `REEL_MAX_DURATION_MS`. */
+  @IsInt()
+  @IsOptional()
+  durationMs?: number;
+
+  /** Text or media (a reel always carries its video, so its caption may be empty). */
   @IsString()
   @Validate(PostBodyOrMediaConstraint)
   @MaxLength(50_000)
@@ -318,6 +332,14 @@ export class ListPostsQueryDto {
   @IsIn(['all', 'followed', 'custom', 'associations'])
   feed?: 'all' | 'followed' | 'custom' | 'associations';
 
+  /**
+   * Restricts the page to one kind. ABSENT MEANS BOTH - the feed shows reels where it shows posts
+   * - and the full-screen reel viewer asks for `reel`.
+   */
+  @IsOptional()
+  @IsIn(['post', 'reel'])
+  kind?: 'post' | 'reel';
+
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
   @Type(() => Number)
@@ -380,6 +402,7 @@ export class EditCommentDto {
 }
 
 export class UpdatePostDto {
+  /** Text or media, as on create; a reel's caption can only be emptied in a request that still names its media. */
   @IsString()
   @Validate(PostBodyOrMediaConstraint)
   @MaxLength(50_000)

@@ -64,6 +64,10 @@ a prop, but only as a signal that the session is authenticated.
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
+| POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md) |
+| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`) |
+
+(`retention-class` refuses `reel`: that class is only ever set through its owner.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -169,6 +173,7 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `ephemeral`   | the client, for chat and channel media; social-service on a post release           | **takes it** | takes it         |
 | `archive`     | the client, for feed media and avatars; social-service's boot backfill             | keeps        | takes it         |
 | `association` | the client, for a vault upload; social-service on `createDocument` and at boot     | keeps        | **keeps**        |
+| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md))  | keeps        | takes it         |
 | none          | an old client, anything before 2026-10-01, an entry re-created after an index loss | **keeps**    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site

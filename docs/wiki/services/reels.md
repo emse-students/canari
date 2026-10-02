@@ -201,6 +201,24 @@ Hourly (`@Cron('23 * * * *')`). Everything it knows is in the database:
 above zero for more than a couple of ticks means the worker is stuck, and that figure is the one to
 read - the same reasoning as the media sweep's own `overdueCount`.
 
+## What was verified, and how (2026-10-02)
+
+- **Unit**: the rules, the service paths, the worker (fake store with the media service's
+  vocabulary and ownership allowlist), the media service's claim and purge.
+- **Real PostgreSQL**: `reel-retention.integration.spec.ts`, gated on `SOCIAL_IT_DATABASE_URL`
+  (skipped in CI, which has no database): migration 069 applied twice, nothing existing becomes a
+  reel, the CHECK refuses a reel stated in pieces, only the due reel is selected and deleted, a
+  failed transaction leaves the row AND its notifications, a failing blob keeps only its own reel.
+- **Running local estate**: this branch's media-service and social-service against the estate's
+  PostgreSQL (scratch database), Redis (db 5) and Garage, over HTTP: every refusal answers `400`, a
+  reel publishes and reads back with `kind`/`durationMs`/`expiresAt`, `my-reels` carries the key, an
+  expired reel answers `404` before the worker runs, the real worker deleted the row, the
+  notification and both blobs (reel and a commenter's media) while a post, a live reel and a
+  foreign blob stayed; the second run found nothing; with the media service unreachable the row was
+  kept and logged, then deleted on the next run; a reel deleted by hand loses its blob at once.
+- **Not run**: the cron firing itself (a unit-tested one-line `@Cron`), and a real blob refusing
+  deletion (simulated at the store boundary only).
+
 ## The migration: `069_posts_reels.sql`
 
 Adds `kind varchar(16) NOT NULL DEFAULT 'post'`, `"durationMs" integer NULL`, `"expiresAt"

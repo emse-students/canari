@@ -136,6 +136,7 @@ describe('the backend storage report is one shape, declared in the controller an
     'MlsQueueUsage',
     'MlsGhostUsage',
     'RedisKeyspaceUsage',
+    'ReelUsage',
     'MlsUsage',
     'BackendStorageUsage',
   ];

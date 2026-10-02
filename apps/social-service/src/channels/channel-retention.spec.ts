@@ -41,7 +41,8 @@ describe('ChannelRetentionScheduler', () => {
   afterEach(() => jest.restoreAllMocks());
 
   it('deletes past the window and NEVER a pinned message', async () => {
-    query.mockResolvedValue({ rowCount: 4 });
+    // The shape TypeORM's postgres driver really returns for a DELETE: `[rows, rowCount]`.
+    query.mockResolvedValue([[], 4]);
 
     const deleted = await makeScheduler().purgeOnce();
 

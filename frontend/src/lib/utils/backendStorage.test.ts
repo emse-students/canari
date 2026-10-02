@@ -32,6 +32,8 @@ function media(overrides: Partial<MediaBucketUsage> = {}): MediaBucketUsage {
     archiveBytes: 0,
     associationCount: 0,
     associationBytes: 0,
+    reelCount: 0,
+    reelBytes: 0,
     unclassifiedCount: 0,
     unclassifiedBytes: 0,
     retentionMs: RETENTION_MS,
@@ -52,6 +54,7 @@ describe('getBackendStorageUsage', () => {
       postgresBytes: 20,
       redisBytes: 5,
       media: media(),
+      reels: { live: 4, overdue: 0, oldestOverdueMs: null },
       // The MLS half is measured independently of the four totals and fails on its own, so `null`
       // here is a real response shape rather than a gap in the fixture.
       mls: null,

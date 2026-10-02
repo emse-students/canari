@@ -36,6 +36,9 @@ export interface MediaBucketUsage {
   /** Association vault documents, kept for ever and surviving their uploader's account. */
   associationCount: number;
   associationBytes: number;
+  /** CanaReels' videos: kept until their post expires, then deleted with it by social-service. */
+  reelCount: number;
+  reelBytes: number;
   /** Live objects with no retention class: the allowlisted sweep never touches them. */
   unclassifiedCount: number;
   unclassifiedBytes: number;
@@ -100,12 +103,25 @@ export interface MlsUsage {
   redisKeyspace: RedisKeyspaceUsage | null;
 }
 
+/**
+ * CanaReels' retention worker as the database sees it. `overdue` is reels past their expiry whose
+ * row is still there: non-zero for a moment is the gap before the hourly tick, non-zero with
+ * `oldestOverdueMs` past an hour is a worker that stopped or a blob that will not delete.
+ */
+export interface ReelUsage {
+  live: number;
+  overdue: number;
+  oldestOverdueMs: number | null;
+}
+
 export interface BackendStorageUsage {
   diskTotalBytes: number | null;
   diskUsedBytes: number | null;
   postgresBytes: number | null;
   redisBytes: number | null;
   media: MediaBucketUsage | null;
+  /** The reel worker's verdict on itself; `null` when the measurement failed. */
+  reels: ReelUsage | null;
   /**
    * The MLS half. Postgres and Redis are bare totals above; this is what they are made of, and it
    * is DISPLAY ONLY - the user's call of 2026-08-17 was a panel and no alert, so nothing here
