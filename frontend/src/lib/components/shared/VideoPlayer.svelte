@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
@@ -9,6 +10,7 @@
     formatVideoTime,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
+  import { resumePosition, takeVideoPosition } from '$lib/utils/videoResume';
   import VideoPoster from './VideoPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -78,6 +80,27 @@
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
   }: Props = $props();
+
+  /**
+   * WHERE THE INLINE VIDEO THIS ONE WAS OPENED FROM HAD GOT TO (`videoResume`), taken once at mount.
+   * The seek waits for `loadedmetadata`: before it the element has no duration to seek within, and
+   * a clip that played to its end starts over rather than resuming on its last frame.
+   */
+  let resumeFrom = 0;
+  onMount(() => {
+    resumeFrom = takeVideoPosition(src);
+  });
+
+  /** Seeks to {@link resumeFrom} once, as soon as the element knows its duration. */
+  function resumeOnce() {
+    if (!video || resumeFrom <= 0) return;
+    const at = resumePosition(resumeFrom, video.duration);
+    resumeFrom = 0;
+    if (at > 0) {
+      Log.d('VideoPlayer', `resuming at ${at.toFixed(1)} s`);
+      video.currentTime = at;
+    }
+  }
 
   let root: HTMLDivElement | null = $state(null);
   let video: HTMLVideoElement | null = $state(null);
@@ -304,7 +327,10 @@
     use:followVideoSound={soundScope}
     class={videoClass}
     style="transform: var(--lightbox-zoom, none); transform-origin: center;"
-    onloadedmetadata={sync}
+    onloadedmetadata={() => {
+      resumeOnce();
+      sync();
+    }}
     onloadeddata={() => {
       frameReady = true;
       sync();

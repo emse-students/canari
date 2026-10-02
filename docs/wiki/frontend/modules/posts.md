@@ -769,6 +769,18 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   listener). Calls are held off, so one starting is not wired - do it when they return. Tests:
   `playbackArbiter.test.ts` (video<->video, voice<->voice, video<->voice, feed<->conversation, viewer,
   recorder, refused play, unregister) and `VoiceMessagePlayer.svelte.test.ts`.
+- **Opening a video full screen resumes where it is** (user, 2026-10-02: *"ouvrir une video en grand
+  devrait reprendre la ou elle en est, pas au debut"*). The inline video and the viewer's player are
+  two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
+  video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
+  each: `InlineVideo` writes `currentTime` to `utils/videoResume.ts` as the reader opens it, keyed by
+  the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
+  mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
+  once the viewer has it, it is gone, so opening the same file later from somewhere that never played
+  it (the conversation's media panel) starts at 0. **A clip that played to its end starts over** (a
+  conversation's video does not loop; resuming on its last frame would end it at once). A streamed
+  (MSE) `src` is minted per player, so it never matches and is not resumed. Verified in Chromium on a
+  real clip: a chat video stopped at 2.6 s, the viewer opened at the same place and played on.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
   playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
