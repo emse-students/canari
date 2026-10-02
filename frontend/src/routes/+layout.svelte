@@ -58,6 +58,7 @@
     type SwipeNavDirection,
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
+  import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
 
@@ -348,7 +349,16 @@
 
     if (updated.phase !== 'horizontal') return;
 
-    e.preventDefault();
+    // A MOVE THE ENGINE IS ALREADY SCROLLING CANNOT BE CLAIMED (a sideways swipe straight after a
+    // vertical fling): the gesture is the scroller's, so it stands down instead of being half-claimed.
+    if (!claimTouchMove(e)) {
+      swipeGesture = { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
+      return;
+    }
     const canNext = swipeNavTargetHref(pathname, 'next') !== null;
     const canPrev = swipeNavTargetHref(pathname, 'prev') !== null;
     const offset = swipeDragResistancePx(updated.dragPx, null, canNext, canPrev);
