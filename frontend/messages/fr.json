@@ -3135,5 +3135,10 @@
   "reels_publish_uploading": "Envoi...",
   "reels_publish_done": "CanaReel publié",
   "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
-  "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là."
+  "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
+  "reels_viewer_label": "CanaReels",
+  "reels_viewer_close": "Fermer les CanaReels",
+  "reels_viewer_prev": "CanaReel précédent",
+  "reels_viewer_next": "CanaReel suivant",
+  "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés."
 }

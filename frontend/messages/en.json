@@ -3135,5 +3135,10 @@
   "reels_publish_uploading": "Uploading...",
   "reels_publish_done": "CanaReel published",
   "reels_publish_error": "The CanaReel could not be published. Try again.",
-  "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then."
+  "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then.",
+  "reels_viewer_label": "CanaReels",
+  "reels_viewer_close": "Close CanaReels",
+  "reels_viewer_prev": "Previous CanaReel",
+  "reels_viewer_next": "Next CanaReel",
+  "reels_viewer_load_error": "The next CanaReels could not be loaded."
 }

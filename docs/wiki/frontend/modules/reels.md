@@ -149,3 +149,34 @@ accepts a source up to half a second past the cap (`VIDEO_DURATION_GRACE_SECONDS
 recorder stopped at 90 s writes a container ending a few hundredths later; that take IS a 90-second
 reel, and the server refuses a declaration over the cap, so it declares the cap
 (`declaredReelDurationMs`, pinned by `publishReel.test.ts`).
+
+## Watching: the feed card and the full-screen viewer (C7)
+
+**In the feed a reel is a VERTICAL box** (`PostContent`): 9:16, 70 % of the screen's height, the
+video covering it. An ordinary attachment's box follows the file's ratio under the 60 % ceiling and
+cropped a phone's portrait clip into a wide strip; a reel is always portrait, so its box says so
+before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
+touch opens the viewer instead of the media viewer.
+
+**The viewer** (`components/reels/ReelViewer.svelte`) shows the touched reel first, then the reels
+`GET /api/posts?kind=reel&feed=all` lists, without repeating it, one per screen. Drag up for the
+next, down for the previous, to the right (or Back, or the X, or Escape) to close; a wide screen has
+two step buttons and the arrow keys. Every decision is `reels/reelViewerNav.ts`, ON THE MEDIA
+VIEWER'S OWN GESTURE MATH (`utils/viewerGestures.ts`: `classifyMove` locks the axis,
+`decideSwipe` decides the release, `dragOffset` resists past an end) rather than a second copy of
+it. The reels sit one screen apart in ONE track, so a swipe is one transform, and its own
+`transitionend` says when it has landed - reduced motion lands at once. The next page is asked for
+two reels before the end.
+
+**Only the current reel mounts a player.** It is `PostMedia` in gallery mode - the same download,
+the same streaming of a segmented video as it arrives, the same failure and retry - so `VideoPlayer`
+brings its bar, its loop and the app's ONE sound answer: a reel plays with sound once the member
+has turned sound on anywhere, and muted until then. A neighbour draws the poster instead, because a
+mounted player claims playback (`followVideoSound`) and would pause the reel being watched.
+
+**The next reel PRELOADS** (`reels/reelPreload.ts`): its video is fetched and decrypted into the
+media cache while the current one plays, so when the swipe lands its player takes the WARM path and
+the first frame is there. A reel is never fetched twice: if it becomes current before its preload
+has finished, the preload is ABORTED and the player fetches (or streams) it alone. One cost is
+known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
+time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
