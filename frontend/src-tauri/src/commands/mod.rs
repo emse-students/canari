@@ -5,5 +5,6 @@ pub mod bench;
 pub mod cookies;
 pub mod mls;
 pub mod notifications;
+pub mod picked_files;
 pub mod push;
 pub mod storage;

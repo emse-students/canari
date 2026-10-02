@@ -724,8 +724,11 @@ glyphs are the web's Lucide icons drawn as templates, so the menu colours them i
 
 **A pick runs the web entry SYNCHRONOUSLY in the event handler**, which is what lets "Photos" open
 a file input from a native tap: the plugin's events arrive through `evaluateJavaScript`, which
-WebKit runs as a user gesture. That is a reading of WebKit, not a measurement - **owed ONE look on an
-iPhone: "+" > Photos opens the picker.**
+WebKit runs as a user gesture - which the user's recording of 2026-10-02 confirmed, by showing the
+WRONG picker opening: "Photos" reached a file input, and WebKit's own Phototheque / Prendre une photo /
+Choisir les fichiers sheet followed Canari's menu. The library and files entries are now NATIVE pickers
+and the camera an input with `capture`, so iOS shows one menu
+([chat](modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
 
 **Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
 can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The

@@ -18,10 +18,13 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function mountMenu(items: GlassMenuItem[]) {
+function mountMenu(items: GlassMenuItem[], keepsFocus = false) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const app = mount(GlassMenuButton, { target, props: { icon: Ellipsis, label: 'Plus', items } });
+  const app = mount(GlassMenuButton, {
+    target,
+    props: { icon: Ellipsis, label: 'Plus', items, keepsFocus },
+  });
   mounted.push(() => void unmount(app));
   flushSync();
   return document.querySelector<HTMLButtonElement>('button[aria-label="Plus"]')!;
@@ -77,4 +80,25 @@ describe('GlassMenuButton', () => {
     expect(search?.getAttribute('aria-checked')).toBe('true');
     expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(1);
   });
+
+  /** A press whose default is cancelled moves no focus - the composer's keyboard stays up under "+". */
+  function pressKeepsFocus(el: Element): boolean {
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    el.dispatchEvent(press);
+    return press.defaultPrevented;
+  }
+
+  it.each([true, false])(
+    'keepsFocus=%s: the button and its entries leave focus where it was only when asked',
+    (keepsFocus) => {
+      const button = mountMenu(
+        [{ id: 'a', label: 'A', icon: Search, onSelect: vi.fn() }],
+        keepsFocus
+      );
+      expect(pressKeepsFocus(button)).toBe(keepsFocus);
+      button.click();
+      flushSync();
+      expect(pressKeepsFocus(document.querySelector('[role="menuitem"]')!)).toBe(keepsFocus);
+    }
+  );
 });

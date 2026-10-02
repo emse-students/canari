@@ -87,3 +87,25 @@ describe('computeSnapshot', () => {
     expect(snap.zoomed).toBe(false);
   });
 });
+
+describe('computeSnapshot - keyboardHeight', () => {
+  it('is what the keyboard took from the baseline, on every platform shape', () => {
+    // The app shrinks the layout viewport too (iOS native, Android padding)...
+    expect(
+      computeSnapshot(measure({ winH: 464, vvHeight: 464 }), baseline, IOS_THRESHOLD).keyboardHeight
+    ).toBe(336);
+    // ...a phone browser only the visual one.
+    expect(
+      computeSnapshot(measure({ vvHeight: 464 }), baseline, IOS_THRESHOLD).keyboardHeight
+    ).toBe(336);
+  });
+
+  it('is zero while closed (a URL bar sliding is not a keyboard) and while zoomed', () => {
+    expect(
+      computeSnapshot(measure({ vvHeight: 744 }), baseline, IOS_THRESHOLD).keyboardHeight
+    ).toBe(0);
+    expect(
+      computeSnapshot(measure({ vvHeight: 400, scale: 2 }), baseline, IOS_THRESHOLD).keyboardHeight
+    ).toBe(0);
+  });
+});
