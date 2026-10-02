@@ -2202,6 +2202,12 @@ bound only where the gesture can BEGIN, and a passive `scroll` listener re-asks 
 `active` and `refreshing` hold the binding through a pull already under way - a claimed pull is
 `preventDefault`ed, so no scroll event arrives to re-arm it.
 
+**It claims only a DOWNWARD pull (2026-10-02).** A sideways drag that drifts a few px down belongs
+to the tab swipe, and a move the engine has already given to a scroll (`cancelable` false) cannot be
+cancelled. Both were being claimed, and the second logged "Ignored attempt to cancel a touchmove
+event" on every swipe from the feed to the camera tab (REEL-1 on the Mi 9T). The pull now releases
+when `dx > dy` or when the event is not cancelable (`pullToRefresh.test.ts`).
+
 ### REFUTED, ON HARDWARE: `touch-action: pan-y` was NOT what stopped the tab strips panning
 
 The second half of the report - *"le tactile bug un peu aussi ... dans associations"* - had an

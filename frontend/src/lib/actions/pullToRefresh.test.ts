@@ -5,9 +5,14 @@ import { pullToRefresh } from './pullToRefresh';
  * claimed the gesture by calling `preventDefault` - which is the whole question: a claimed gesture
  * never reaches the scroller.
  */
-function touch(node: HTMLElement, type: 'touchstart' | 'touchmove' | 'touchend', clientY: number) {
-  const e = new Event(type, { bubbles: true, cancelable: true });
-  const list = [{ clientY }];
+function touch(
+  node: HTMLElement,
+  type: 'touchstart' | 'touchmove' | 'touchend',
+  clientY: number,
+  { clientX = 0, cancelable = true }: { clientX?: number; cancelable?: boolean } = {}
+) {
+  const e = new Event(type, { bubbles: true, cancelable });
+  const list = [{ clientY, clientX }];
   Object.defineProperty(e, 'touches', { value: list });
   Object.defineProperty(e, 'changedTouches', { value: list });
   node.dispatchEvent(e);
@@ -79,6 +84,30 @@ describe('pullToRefresh', () => {
     const claimed = touch(node, 'touchmove', 300);
 
     expect(claimed).toBe(false);
+  });
+
+  it('leaves a sideways drag that drifts down to the tab swipe', () => {
+    const node = scroller();
+    pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+
+    touch(node, 'touchstart', 400, { clientX: 40 });
+    const claimed = touch(node, 'touchmove', 412, { clientX: 200 });
+
+    expect(claimed).toBe(false);
+    expect(node.querySelector('div')).toBeNull();
+  });
+
+  it('never cancels a move the engine has already given to a scroll', () => {
+    // Cancelling it does nothing but log "Ignored attempt to cancel a touchmove event".
+    const node = scroller();
+    pullToRefresh(node, { onRefresh: () => Promise.resolve() });
+    const warn = vi.spyOn(console, 'warn');
+
+    touch(node, 'touchstart', 100);
+    touch(node, 'touchmove', 140, { cancelable: false });
+
+    expect(node.querySelector('div')).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('never claims a gesture when the node is already scrolled', () => {
