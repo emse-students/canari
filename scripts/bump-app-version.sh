@@ -301,6 +301,12 @@ promote_changelog() {
   shopt -s nullglob
   for fragment in "$fragments_dir"/*.md; do
     [ "$(basename "$fragment")" = "README.md" ] && continue
+    # A LANDING (see the bottom of this file) folds only the entries the shipped commit carried -
+    # `main` has moved on and holds entries of changes this release did not contain.
+    if [ -n "${CHANGELOG_FRAGMENTS_FROM:-}" ] &&
+      ! grep -qxF "$(basename "$fragment")" "$CHANGELOG_FRAGMENTS_FROM"; then
+      continue
+    fi
     fragments+=("$fragment")
   done
   shopt -u nullglob
@@ -384,6 +390,20 @@ discover_cargo_files() {
 RAW_VERSION="${1:-}"
 [ -n "$RAW_VERSION" ] || usage
 parse_version "$RAW_VERSION"
+
+# A LANDING: THE CHANGELOG HALF OF A STABLE, APPLIED TO A `main` THAT HAS MOVED ON. A stable is
+# built from the latest pre-release's commit on `release/vX.Y.Z`, so the notes it folded and the
+# fragments it deleted exist on that branch alone. `CHANGELOG_FRAGMENTS_FROM` names a file of
+# fragment basenames (the ones the shipped commit carried); only those are folded and deleted, and
+# NO manifest is touched - `main`'s version is whatever its latest pre-release wrote, and a landing
+# must never move it backwards.
+if [ -n "${CHANGELOG_FRAGMENTS_FROM:-}" ]; then
+  [ -f "$CHANGELOG_FRAGMENTS_FROM" ] || { echo "Missing: $CHANGELOG_FRAGMENTS_FROM" >&2; exit 1; }
+  echo "Landing the changelog of ${VERSION} (manifests untouched)"
+  promote_changelog "$ROOT/CHANGELOG.md" "$VERSION" "$RANK"
+  echo "Done."
+  exit 0
+fi
 
 echo "Bumping Canari app version to ${VERSION}"
 echo "  manifests ${VERSION} | stores: short ${CORE}, build/versionCode ${VERSION_CODE} (rank ${RANK})"

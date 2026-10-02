@@ -627,6 +627,29 @@ for the export-compliance key; nothing needs to re-assert the build number there
 `.github/scripts/tests/bump-version.test.sh` runs the script in a sandbox, reads every file back and
 asserts the ordering directly (31 assertions).
 
+### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
+
+A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
+moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
+*"une release n'opere que sur le tag de la derniere pre-release"*):
+
+- **Resolve.** `release.yml`'s preflight picks the highest `vX.Y.Z-label` tag of the stable's own
+  version (`latest_prerelease_tag`, version order) and resolves THAT commit once; no such tag is an
+  error naming the command to cut one. The stable's own tag is not read.
+- **Gates.** 2 asks only that `main` contains the commit (the fast-forward question has nobody
+  asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
+- **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
+  contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
+  stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs. Pre-releases
+  are unchanged: bump pushed to `main`.
+- **Hosts** fetch the released commit BY NAME (`git fetch origin <sha>`), not `main`, since the
+  shipped commit is on the release branch.
+- **Land.** The `land` job, parallel with the arms and blocking nothing, runs
+  `.github/scripts/land-release-changelog.sh`: on `main`'s head it folds ONLY the fragments the
+  shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
+  retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
+  production back. Test: `land-release-changelog.test.sh`.
+
 ## GitHub Secrets
 
 See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory.

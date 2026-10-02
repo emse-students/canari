@@ -403,3 +403,11 @@ deuxieme porte est exactement ce que la migration a supprime.
 
 Le reste de ce qui t'est du - decisions, rotations, clics uniques - est dans **une seule table**,
 [`docs/wiki/backlog.md`](../wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+
+## Une stable livre la derniere pre-release (2026-10-02)
+
+Une release stable ne s'appuie plus sur `main` : elle livre le commit de la **derniere pre-release de
+la meme version** (`vX.Y.Z-alpha.N`). On peut donc continuer a fusionner sur `main` pendant qu'elle
+tourne. Elle est construite sur la branche `release/vX.Y.Z`, son tag `vX.Y.Z` est deplace sur le
+commit livre, et le job `land` reporte son entree de CHANGELOG sur `main`. Sans pre-release de cette
+version, la stable est refusee : creez-en une d'abord.

@@ -185,6 +185,19 @@ position '' 0.15.0 0.16.0 'undecidable status is empty' \
 position identical 0.15.0 '' 'undecidable no version was passed to compare against' \
   'and with no release version there is nothing to compare the tree against'
 
+printf '\nwhich pre-release a stable ships\n'
+latest() { printf '%s\n' "${@:2}" | latest_prerelease_tag "$1"; }
+check_latest() {
+  local want="$1" ver="$2"; shift 2
+  local got; got="$(latest "$ver" "$@")"
+  if [ "$got" = "$want" ]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "latest of $ver -> ${want:-none}"
+  else FAIL=$((FAIL + 1)); printf '  FAIL  latest of %s: wanted %s, got %s\n' "$ver" "${want:-none}" "$got"; fi
+}
+check_latest v1.0.1-alpha.10 1.0.1 v1.0.1-alpha.2 v1.0.1-alpha.10 v1.0.1-alpha.9
+check_latest v1.0.1-alpha.2 1.0.1 v1.0.1-alpha.2 v1.0.2-alpha.7 v1.0.10-alpha.1 v1.0.1
+check_latest '' 1.0.1 v1.0.2-alpha.1 v1.0.1 v1.0.11-alpha.1
+check_latest '' 1.0.1
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

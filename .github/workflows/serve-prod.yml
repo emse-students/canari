@@ -105,7 +105,7 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          git fetch origin main
+          git fetch origin "${{ inputs.sha }}"
           git reset --hard "${{ inputs.sha }}"
           echo "production tree at $(git rev-parse --short HEAD)"
 
