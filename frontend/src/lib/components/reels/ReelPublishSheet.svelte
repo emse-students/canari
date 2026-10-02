@@ -14,6 +14,7 @@
   import { ChevronLeft, CircleAlert } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
+  import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import type { Association } from '$lib/associations/api';
@@ -23,6 +24,7 @@
   import type { ReelClip } from '$lib/reels/reelCapture';
   import { publishReel, ReelPublishError, type PublishReelDeps } from '$lib/reels/publishReel';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
@@ -46,6 +48,8 @@
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
+  /** The preview's first frame is decoded: Canari's poster gives way to it. */
+  let previewReady = $state(false);
   const preparation = new VideoPreparationState();
 
   const overlay = bindHistoryOverlay(
@@ -156,15 +160,29 @@
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
 
     <div class="mt-4 flex gap-3">
-      <video
-        {src}
-        class="aspect-9/16 w-24 shrink-0 rounded-lg bg-black object-cover"
-        autoplay
-        muted
-        loop
-        playsinline
-        aria-hidden="true"
-      ></video>
+      <!-- The box is 9:16 from the first paint. The take is a local blob, so its first frame is a
+           moment away, not a download: until then Canari's own poster fills the box, and the
+           element's `poster` is the transparent one - an Android WebView with none draws its own
+           grey play glyph over a video that has not decoded yet. -->
+      <div
+        class="relative aspect-9/16 w-24 shrink-0 overflow-hidden rounded-lg bg-black"
+        data-reel-publish-preview
+      >
+        <video
+          {src}
+          class="h-full w-full object-cover"
+          poster={TRANSPARENT_VIDEO_POSTER}
+          autoplay
+          muted
+          loop
+          playsinline
+          aria-hidden="true"
+          onloadeddata={() => (previewReady = true)}
+        ></video>
+        {#if !previewReady}
+          <VideoPoster compact />
+        {/if}
+      </div>
       <label class="flex min-w-0 flex-1 flex-col">
         <span class="sr-only">{m.reels_publish_caption_label()}</span>
         <textarea

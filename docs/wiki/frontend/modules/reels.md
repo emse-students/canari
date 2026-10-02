@@ -152,6 +152,14 @@ class, then `POST /api/posts` with `kind: 'reel'` and the declared `durationMs`.
 own; a cancelled re-encode says nothing. Success lands on the feed, REPLACING the camera in the
 history so Back from the feed does not reopen it.
 
+**No reel video ever shows the engine's own placeholder** (user, 2026-10-02: Android's grey play glyph
+appeared right after a recording). Every `<video>` of the flow carries `TRANSPARENT_VIDEO_POSTER` and
+sits under Canari's `VideoPoster` until `loadeddata`: the review and the viewer through `VideoPlayer`,
+the feed card through `InlineVideo`, and the publish step's 9:16 preview - which had neither, and
+now reserves its box (`aspect-9/16`) from the first paint. Pinned by `ReelReview.svelte.test.ts` and
+`ReelPublishSheet.svelte.test.ts`. There is no "my reels" list screen; the member's own reels are the
+feed cards and the viewer.
+
 **The declared duration is clamped to the cap, and that is not a correction.** The preparation
 accepts a source up to half a second past the cap (`VIDEO_DURATION_GRACE_SECONDS`), because a
 recorder stopped at 90 s writes a container ending a few hundredths later; that take IS a 90-second

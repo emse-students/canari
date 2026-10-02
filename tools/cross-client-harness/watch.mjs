@@ -2236,6 +2236,8 @@ export const REEL_NARRATION = [
   /^\[media\] encryptAndUpload: .+, \d+ bytes, .+$/,
   /^\[media-seg\] stream \S+ \(.+\) through MediaSource$/,
   /^\[my-reels\] \d+ live reels$/,
+  /^\[my-reels\] \S+ is newer than the list: asking again$/,
+  /^\[VIDEO\] viewer opens with (the app's|its own) sound$/,
   /^\[KeyboardHeightMemory\] portrait: \d+px$/,
 ];
 
