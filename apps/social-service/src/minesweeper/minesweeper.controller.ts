@@ -1,5 +1,18 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { BanMinesweeperUserDto } from './dto/ban-minesweeper-user.dto';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperService } from './minesweeper.service';
 
@@ -49,5 +62,38 @@ export class MinesweeperController {
       return { personalBestMs: null as number | null, rank: null as number | null };
     }
     return standing;
+  }
+
+  // ---- Moderation: global admins only (`X-Global-Admin`, set by nginx from the JWT claim) ----
+
+  /** Removes one verified score. The player keeps their others. */
+  @Delete('scores/:scoreId')
+  @UseGuards(GlobalAdminGuard)
+  removeScore(
+    @Headers('x-user-id') adminId: string,
+    @Param('scoreId', ParseUUIDPipe) scoreId: string
+  ) {
+    return this.minesweeperService.removeScore(scoreId, adminId);
+  }
+
+  /** Everyone banned from the ranked game. */
+  @Get('bans')
+  @UseGuards(GlobalAdminGuard)
+  listBans() {
+    return this.minesweeperService.listBans();
+  }
+
+  /** Bans a user from the ranked game; their scores are kept, hidden, until the ban is lifted. */
+  @Post('bans')
+  @UseGuards(GlobalAdminGuard)
+  ban(@Headers('x-user-id') adminId: string, @Body() dto: BanMinesweeperUserDto) {
+    return this.minesweeperService.ban(dto.userId, dto.reason, adminId);
+  }
+
+  /** Lifts a ban. */
+  @Delete('bans/:userId')
+  @UseGuards(GlobalAdminGuard)
+  unban(@Headers('x-user-id') adminId: string, @Param('userId') userId: string) {
+    return this.minesweeperService.unban(userId, adminId);
   }
 }

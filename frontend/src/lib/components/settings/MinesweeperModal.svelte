@@ -16,11 +16,31 @@
     startMinesweeperChallenge,
     submitMinesweeperChallenge,
     fetchMinesweeperLeaderboard,
+    fetchMinesweeperBans,
+    banMinesweeperUser,
+    removeMinesweeperScore,
+    unbanMinesweeperUser,
     formatDurationMs,
+    MinesweeperBannedError,
     type LeaderboardEntry,
+    type MinesweeperBan,
   } from '$lib/minesweeper/api';
-  import { Bomb, Flag, Maximize2, RotateCcw, Timer, Trophy, ZoomIn, ZoomOut } from '@lucide/svelte';
+  import {
+    Ban,
+    Bomb,
+    Flag,
+    Maximize2,
+    RotateCcw,
+    Timer,
+    Trash2,
+    Trophy,
+    Undo2,
+    ZoomIn,
+    ZoomOut,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { globalAdminState } from '$lib/stores/userState.svelte';
 
   interface Props {
     /** Whether the modal is visible; becoming true starts a fresh game. */
@@ -168,6 +188,62 @@
     } finally {
       leaderboardLoading = false;
     }
+    if (isAdmin) await loadBans();
+  }
+
+  // ---- Moderation (global admins; the server refuses anyone else) ----
+  /** The buttons are drawn for a global admin only - the 403 behind them is the real gate. */
+  const isAdmin = $derived(globalAdminState());
+  let bans = $state<MinesweeperBan[]>([]);
+  /** An admin action failed - said on the tab, never swallowed. */
+  let moderationFailed = $state(false);
+
+  async function loadBans() {
+    try {
+      bans = await fetchMinesweeperBans();
+    } catch (err) {
+      console.warn('[minesweeper] could not load the bans', err);
+      bans = [];
+    }
+  }
+
+  /** Runs one admin action, then refreshes both lists; a failure is logged and shown. */
+  async function moderate(action: () => Promise<void>) {
+    moderationFailed = false;
+    try {
+      await action();
+    } catch (err) {
+      console.warn('[minesweeper] moderation action failed', err);
+      moderationFailed = true;
+    }
+    await loadLeaderboard();
+  }
+
+  async function removeScore(entry: LeaderboardEntry) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_remove({
+        name: entry.displayName,
+        time: formatDurationMs(entry.durationMs),
+      }),
+      { danger: true, confirmLabel: m.minesweeper_admin_confirm_remove_label() }
+    );
+    if (confirmed) await moderate(() => removeMinesweeperScore(entry.scoreId));
+  }
+
+  async function banPlayer(entry: LeaderboardEntry) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_ban({ name: entry.displayName }),
+      { danger: true, confirmLabel: m.minesweeper_admin_confirm_ban_label() }
+    );
+    if (confirmed) await moderate(() => banMinesweeperUser(entry.userId));
+  }
+
+  async function unbanPlayer(ban: MinesweeperBan) {
+    const confirmed = await showConfirm(
+      m.minesweeper_admin_confirm_unban({ name: ban.displayName }),
+      { confirmLabel: m.minesweeper_admin_unban() }
+    );
+    if (confirmed) await moderate(() => unbanMinesweeperUser(ban.userId));
   }
 
   /** Switches tabs, refreshing scores on entry to the leaderboard tab (game timer keeps running). */
@@ -263,6 +339,11 @@
         });
       } catch (err) {
         console.debug('[minesweeper] ranked start failed, falling back to casual', err);
+        // A banned player is TOLD, not dropped into an unranked game without a word.
+        if (err instanceof MinesweeperBannedError) {
+          submitError = true;
+          submitMessage = m.minesweeper_banned();
+        }
         board = createBoard(DEFAULT_CONFIG, null);
         challengeId = null;
         rankedMode = false;
@@ -908,12 +989,72 @@
                   {entry.displayName}
                 </span>
               </span>
-              <span class="text-cn-dark shrink-0 font-mono text-sm font-semibold">
-                {formatDurationMs(entry.durationMs)}
+              <span class="flex shrink-0 items-center gap-1">
+                <span class="text-cn-dark font-mono text-sm font-semibold">
+                  {formatDurationMs(entry.durationMs)}
+                </span>
+                {#if isAdmin}
+                  <button
+                    type="button"
+                    class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                    aria-label={m.minesweeper_admin_remove_score()}
+                    title={m.minesweeper_admin_remove_score()}
+                    onclick={() => void removeScore(entry)}
+                  >
+                    <Trash2 size={14} strokeWidth={2.25} />
+                  </button>
+                  <button
+                    type="button"
+                    class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                    aria-label={m.minesweeper_admin_ban()}
+                    title={m.minesweeper_admin_ban()}
+                    onclick={() => void banPlayer(entry)}
+                  >
+                    <Ban size={14} strokeWidth={2.25} />
+                  </button>
+                {/if}
               </span>
             </li>
           {/each}
         </ol>
+      {/if}
+
+      {#if isAdmin}
+        {#if moderationFailed}
+          <p class="text-red-err mt-2 text-xs font-semibold" role="alert">
+            {m.minesweeper_admin_failed()}
+          </p>
+        {/if}
+        {#if bans.length > 0}
+          <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
+            {m.minesweeper_admin_bans_title()}
+          </h3>
+          <ul class="space-y-1.5">
+            {#each bans as ban (ban.userId)}
+              <li
+                class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
+              >
+                <span class="min-w-0">
+                  <span class="text-text-main block truncate text-sm font-semibold">
+                    {ban.displayName}
+                  </span>
+                  {#if ban.reason}
+                    <span class="text-text-muted block truncate text-xs">{ban.reason}</span>
+                  {/if}
+                </span>
+                <button
+                  type="button"
+                  class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  aria-label={m.minesweeper_admin_unban()}
+                  title={m.minesweeper_admin_unban()}
+                  onclick={() => void unbanPlayer(ban)}
+                >
+                  <Undo2 size={14} strokeWidth={2.25} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       {/if}
     </div>
   {/if}
