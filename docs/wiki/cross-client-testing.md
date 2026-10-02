@@ -499,7 +499,7 @@ question unaskable and the row records `INCONCLUSIVE` naming that precondition, 
 
 ## 18 - REEL - the camera tab and publishing a reel
 
-Read [reels](frontend/modules/reels.md) first. **One runner, `reel.mjs --only N`, on A1 alone**:
+Read `frontend/modules/reels.md` first (it lands with the camera tab, #1326). **One runner, `reel.mjs --only N`, on A1 alone**:
 the tab swipe and the shutter classify the finger's path and timing, so both are OS touches. The
 rig GRANTS the camera and the microphone (`pm grant`) before it opens anything - the first-open
 dialog is the member's gesture, not this row's - and says so in the row's detail. **REEL-2 needs the
