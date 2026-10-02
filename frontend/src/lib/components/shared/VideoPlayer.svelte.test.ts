@@ -9,6 +9,7 @@ import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import VideoPlayer from './VideoPlayer.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { rememberVideoPosition } from '$lib/utils/videoResume';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
@@ -298,4 +299,47 @@ it('applies the viewer s zoom to the picture alone, never to the controls', () =
   expect(bar.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
   expect(root.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
   expect(bar.contains(video)).toBe(false);
+});
+
+/**
+ * OPENING A VIDEO FULL SCREEN PICKS UP WHERE IT IS (user, 2026-10-02: *"ouvrir une video en grand
+ * devrait reprendre la ou elle en est, pas au debut"*). The inline video notes its position
+ * (`videoResume`); the player seeks to it once its metadata is in.
+ */
+function withDuration(video: HTMLVideoElement, seconds: number) {
+  Object.defineProperty(video, 'duration', { configurable: true, get: () => seconds });
+}
+
+it('resumes where the inline video was, once the duration is known', () => {
+  rememberVideoPosition('blob:clip', 12);
+  const { video } = mountPlayer('blob:clip');
+  withDuration(video, 30);
+  expect(video.currentTime, 'nothing is seeked before the metadata').toBe(0);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(12);
+});
+
+it('seeks only once: a later metadata event does not drag it back', () => {
+  rememberVideoPosition('blob:clip', 12);
+  const { video } = mountPlayer('blob:clip');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  video.currentTime = 20;
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(20);
+});
+
+it('starts a clip that played to its end from its first frame', () => {
+  rememberVideoPosition('blob:ended', 30);
+  const { video } = mountPlayer('blob:ended');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(0);
+});
+
+it('starts at 0 for a file that was not played inline', () => {
+  const { video } = mountPlayer('blob:fresh');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(0);
 });

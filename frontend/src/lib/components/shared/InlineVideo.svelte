@@ -6,6 +6,7 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
+  import { rememberVideoPosition } from '$lib/utils/videoResume';
   import VideoPoster from './VideoPoster.svelte';
 
   /**
@@ -149,6 +150,8 @@
     aria-label={openLabel}
     onclick={(e) => {
       e.stopPropagation();
+      // The viewer opens where this video is, not at its first frame (`videoResume`).
+      rememberVideoPosition(src, videoEl?.currentTime ?? 0);
       onOpen();
     }}
   ></button>

@@ -9,6 +9,7 @@ import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import InlineVideo from './InlineVideo.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { takeVideoPosition } from '$lib/utils/videoResume';
 import { followVideoSound } from '$lib/actions/playWhileVisible';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 
@@ -314,4 +315,19 @@ it('an autoplaying video is unchanged: loops, plays on screen, shows its sound b
   expect(video.loop).toBe(true);
   expect(observed).toHaveLength(1);
   expect(soundButton).toBeDefined();
+});
+
+/** OPENING IT FULL SCREEN NOTES WHERE IT IS, for the viewer's player to resume (`videoResume`). */
+it('notes its position when the viewer is opened, so the viewer resumes there', () => {
+  const { video, openButton, onOpen } = mountVideo();
+  video.currentTime = 12;
+  openButton.click();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(takeVideoPosition('blob:clip')).toBe(12);
+});
+
+it('notes nothing for a video that has not played', () => {
+  const { openButton } = mountVideo();
+  openButton.click();
+  expect(takeVideoPosition('blob:clip')).toBe(0);
 });
