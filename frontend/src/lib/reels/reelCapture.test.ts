@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SHUTTER_HOLD_THRESHOLD_MS,
   captureReducer,
+  classifyLimitsFault,
   classifyShutterPress,
   formatTakeTime,
   pickReelRecorderMime,
@@ -101,5 +102,14 @@ describe('ringFraction and formatTakeTime', () => {
     expect(formatTakeTime(0)).toBe('0:00');
     expect(formatTakeTime(61_900)).toBe('1:01');
     expect(formatTakeTime(90_000)).toBe('1:30');
+  });
+});
+
+describe('classifyLimitsFault', () => {
+  it('no status is unreachable, a 404 is a server without reels, anything else failed', () => {
+    expect(classifyLimitsFault(null)).toBe('unreachable');
+    expect(classifyLimitsFault(404)).toBe('absent');
+    expect(classifyLimitsFault(500)).toBe('failed');
+    expect(classifyLimitsFault(403)).toBe('failed');
   });
 });

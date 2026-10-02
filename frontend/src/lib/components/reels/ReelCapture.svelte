@@ -5,7 +5,8 @@
    *
    * THE CAP IS THE SERVER'S. `GET /api/posts/reel-limits` is the one copy of the 90 s, so the shutter
    * stays disabled until it has answered - an installed app never films to a stale number - and says
-   * so when it cannot be reached.
+   * why when it has not: unreachable, a server without reels (a 404, no retry), or an error
+   * (`classifyLimitsFault`).
    *
    * A TAKE IS A HISTORY ENTRY from its first frame to its review's end, so Android's Back (and iOS's
    * edge swipe) ends a recording or discards a review before it leaves the camera, and the tab swipe
@@ -19,15 +20,18 @@
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import {
     captureReducer,
+    classifyLimitsFault,
     formatTakeTime,
     ringFraction,
     type CaptureEvent,
     type CaptureState,
+    type LimitsFault,
     type ReelClip,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
+  import { refusalStatus } from '$lib/utils/apiRefusal';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -44,7 +48,7 @@
 
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
-  let limitsFailed = $state(false);
+  let limitsFault = $state<LimitsFault | null>(null);
   let elapsedMs = $state(0);
 
   let recorder: ReelRecorder | null = null;
@@ -57,13 +61,13 @@
   const ios = isIosTauriRuntime();
 
   async function loadLimits() {
-    limitsFailed = false;
+    limitsFault = null;
     try {
       limits = await getReelLimits();
       console.debug(`[reel-capture] cap ${limits.maxDurationMs} ms`);
     } catch (err) {
-      console.error('[reel-capture] the reel limits could not be read', err);
-      limitsFailed = true;
+      limitsFault = classifyLimitsFault(refusalStatus(err));
+      console.error(`[reel-capture] the reel limits could not be read (${limitsFault})`, err);
     }
   }
 
@@ -243,15 +247,24 @@
         </div>
         <div></div>
       </div>
-      {#if limitsFailed}
-        <div class="mt-3 flex justify-center" role="alert">
+      {#if limitsFault === 'absent'}
+        <!-- No retry: the server answered that it has no reels, and asking again changes nothing. -->
+        <p class="mt-3 flex justify-center" role="alert" data-reel-limits-fault="absent">
+          <span class="rounded-full bg-black/50 px-4 py-2 text-xs font-semibold">
+            {m.reels_capture_limits_absent()}
+          </span>
+        </p>
+      {:else if limitsFault}
+        <div class="mt-3 flex justify-center" role="alert" data-reel-limits-fault={limitsFault}>
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             onclick={() => void loadLimits()}
           >
             <RefreshCcw size={14} strokeWidth={2.5} />
-            {m.reels_capture_limits_error()}
+            {limitsFault === 'unreachable'
+              ? m.reels_capture_limits_error()
+              : m.reels_capture_limits_failed()}
           </button>
         </div>
       {/if}

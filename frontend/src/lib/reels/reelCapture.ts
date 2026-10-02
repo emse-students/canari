@@ -114,6 +114,24 @@ export function ringFraction(elapsedMs: number, maxMs: number): number {
   return Math.min(1, Math.max(0, elapsedMs / maxMs));
 }
 
+/**
+ * Why the reel limits could not be read, which decides what the capture screen says.
+ *
+ * - `unreachable`: nobody answered (the network, or the server is down). Trying again can help.
+ * - `absent`: the server answered `404`. It is reachable but has no reel routes (it predates
+ *   CanaReels), and trying again cannot help. This is what a client one release ahead of its
+ *   server meets, and it used to read "Canari cannot be reached", which was false.
+ * - `failed`: any other answer (a 5xx, a refusal). The server did answer, so it is not
+ *   "unreachable", and a later try may still succeed.
+ */
+export type LimitsFault = 'unreachable' | 'absent' | 'failed';
+
+/** Reads a {@link LimitsFault} from the error's status. A status is an answer; its absence is not. */
+export function classifyLimitsFault(status: number | null): LimitsFault {
+  if (status === null) return 'unreachable';
+  return status === 404 ? 'absent' : 'failed';
+}
+
 /** `m:ss` for a duration in ms, as the timer over the shutter shows it. */
 export function formatTakeTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));

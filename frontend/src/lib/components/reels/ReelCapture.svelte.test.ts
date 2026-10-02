@@ -8,6 +8,8 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelCapture from './ReelCapture.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { m } from '$lib/paraglide/messages';
 
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
@@ -120,13 +122,33 @@ describe('ReelCapture', () => {
 
   it('says so, and offers a retry, when the cap cannot be read', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    getReelLimits.mockRejectedValueOnce(new Error('offline'));
+    getReelLimits.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     const { target, shutter } = await render();
     expect(shutter().disabled).toBe(true);
+    expect(target.querySelector('[data-reel-limits-fault="unreachable"]')).not.toBeNull();
     const retry = target.querySelector<HTMLButtonElement>('[role="alert"] button')!;
     retry.click();
     await settle();
     expect(getReelLimits).toHaveBeenCalledTimes(2);
     expect(shutter().disabled).toBe(false);
+  });
+
+  it('a server without reels (404) is not called unreachable, and offers no retry', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    getReelLimits.mockRejectedValueOnce(new ApiRefusalError(404, null, 'post-service 404'));
+    const { target, shutter } = await render();
+    expect(shutter().disabled).toBe(true);
+    const alert = target.querySelector('[data-reel-limits-fault="absent"]')!;
+    expect(alert.textContent).toContain(m.reels_capture_limits_absent());
+    expect(alert.querySelector('button')).toBeNull();
+  });
+
+  it('a server error is not called unreachable either, and may be retried', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    getReelLimits.mockRejectedValueOnce(new ApiRefusalError(503, null, 'post-service 503'));
+    const { target } = await render();
+    const alert = target.querySelector('[data-reel-limits-fault="failed"]')!;
+    expect(alert.textContent).toContain(m.reels_capture_limits_failed());
+    expect(alert.querySelector('button')).not.toBeNull();
   });
 });

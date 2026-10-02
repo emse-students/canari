@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
@@ -275,7 +276,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const details = await res.text();
-    throw new Error(`post-service ${res.status}: ${details || res.statusText}`);
+    // A typed refusal: a screen reads the status (`refusalStatus`), never this sentence.
+    throw new ApiRefusalError(
+      res.status,
+      null,
+      `post-service ${res.status}: ${details || res.statusText}`
+    );
   }
   return (await res.json()) as T;
 }

@@ -86,9 +86,20 @@ recording exists. The shutter opts out of the tab swipe and captures its pointer
 whose finger drifts neither turns the page nor loses its release.
 
 **The ring fills to the server's cap and the take ends there.** `GET /api/posts/reel-limits` is the
-one copy of the 90 s, so the shutter (and the gallery) stay disabled until it has answered, and a
-failure says "Canari cannot be reached" with a retry. The deadline that ends a full take IS the
-product rule (C4), not a timer standing in for a fact.
+one copy of the 90 s, so the shutter (and the gallery) stay disabled until it has answered. The
+line under the shutter says WHY it has not, from the error's status (`classifyLimitsFault`; the
+posts API throws an `ApiRefusalError`, never a sentence):
+
+| Fault | When | French line | Retry |
+| --- | --- | --- | --- |
+| `unreachable` | no status: nobody answered | "Canari est injoignable - toucher pour réessayer" | yes |
+| `absent` | `404`: a server older than CanaReels | "Les CanaReels ne sont pas encore disponibles sur ce serveur" | no, asking again changes nothing |
+| `failed` | any other status | "Canari n'a pas pu répondre - toucher pour réessayer" | yes |
+
+Until 2026-10-02 all three said "unreachable". Both phones showed that line for a server that was
+up and answering everything else, because the bench estate did not have the reel routes yet.
+
+The deadline that ends a full take IS the product rule (C4), not a timer standing in for a fact.
 
 **The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, VP9 WebM elsewhere,
 at 4 Mb/s - above the 2.5 Mb/s target on purpose, since the preparation re-encodes once and
