@@ -3141,8 +3141,6 @@
   "reels_viewer_prev": "CanaReel précédent",
   "reels_viewer_next": "CanaReel suivant",
   "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés.",
-  "reels_expires_in": "Supprimé dans {days} j",
-  "reels_expires_today": "Supprimé aujourd'hui",
   "reels_save": "Enregistrer dans la galerie",
   "reels_save_done": "CanaReel enregistré dans votre galerie",
   "reels_save_denied": "Canari n'a pas accès à votre galerie : autorisez-le dans les réglages du téléphone.",

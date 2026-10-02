@@ -6,14 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostContent from './PostContent.svelte';
 
-const ownReels = new Map<string, unknown>();
-vi.mock('$lib/reels/myReels.svelte', () => ({
-  myReels: {
-    find: (id: string) => ownReels.get(id),
-    ensure: () => {},
-    daysLeft: () => 12,
-  },
-}));
 vi.mock('./PostMedia.svelte', async () => ({
   default: (await import('./PostMediaOpenStub.test-helper.svelte')).default,
 }));
@@ -25,7 +17,6 @@ const mounted: (() => void)[] = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
-  ownReels.clear();
 });
 
 const video = { type: 'video', mediaId: 'm-1', key: 'k', iv: 'i', mimeType: 'video/mp4', size: 1 };
@@ -66,11 +57,9 @@ describe('PostContent, a reel', () => {
     expect(target.querySelector('[data-reel-card]')).toBeNull();
   });
 
-  it("the author's own reel says how long it has left; anybody else's does not", async () => {
-    const other = await render('reel');
-    expect(other.querySelector('[data-reel-expiry]')).toBeNull();
-    ownReels.set('p1', { id: 'p1', expiresAt: '', expiringSoon: false });
-    const own = await render('reel');
-    expect(own.querySelector('[data-reel-expiry]')?.getAttribute('data-reel-expiry')).toBe('12');
+  it("the card carries no deletion countdown: the 30 days are known, the age is the header's", async () => {
+    const target = await render('reel');
+    expect(target.querySelector('[data-reel-expiry]')).toBeNull();
+    expect(target.querySelector('[data-reel-card]')?.textContent ?? '').not.toMatch(/\d+\s*j\b/);
   });
 });

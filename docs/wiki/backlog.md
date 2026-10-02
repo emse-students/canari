@@ -184,10 +184,12 @@ The composer comparison R1 was built from is on
    signal) and the API contract the client builds against: [reels](services/reels.md)** (2026-10-01).
    **The first camera open was READ on both phones on 2026-10-01, and the tab is built on it**
    ([reels](frontend/modules/reels.md#the-first-camera-open-read-on-both-phones-2026-10-01-before-anything-was-built-on-it)).
-   **The client is built as stacked PRs (2026-10-02)**, and the camera tab and the gallery save are read
-   on both phones ([reels](frontend/modules/reels.md)). **OWED:** REEL-2 (publish a reel), which runs once
-   the server's reel routes reach the bench; the same publish read on the iPhone; a clean REEL-1;
-   and one look at the shutter's "unreachable" line, which a missing ROUTE (a 404) also produces.
+   **The client is on `main` and READ end to end on both phones (2026-10-02)**: camera tab, capture,
+   publish, vertical card, full-screen viewer, save to the gallery - REEL-1 and REEL-2 `PASS` clean on
+   the Mi 9T ([reels](frontend/modules/reels.md#read-end-to-end-on-both-phones-2026-10-02-main-at-4b62429e4-then-the-fixes-of-1354-and-1355)).
+   The "deleted in N days" chip is REMOVED (user, 2026-10-02): a reel shows its age. **OWED:** one
+   real-content take on each phone, the iOS frame timing of the viewer swipe (the Mi 9T measured 11.5 %
+   janky frames), the intermittent `touchmove` console line, and the user's ruling on the publish note.
 4. **R4 - live** (C9), behind the calls revival.
 
 ### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01

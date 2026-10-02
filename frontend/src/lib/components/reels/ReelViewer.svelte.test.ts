@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelViewer from './ReelViewer.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { timeAgo } from '$lib/utils/time';
 import { m } from '$lib/paraglide/messages';
 
 const preloads: string[] = [];
@@ -29,7 +30,6 @@ vi.mock('$lib/reels/myReels.svelte', () => ({
   myReels: {
     find: (id: string) => ownReels.get(id),
     ensure: () => {},
-    daysLeft: () => 12,
   },
 }));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
@@ -144,5 +144,12 @@ describe('ReelViewer', () => {
     await render();
     expect(document.querySelectorAll('[data-reel-save]').length).toBe(1);
     expect(document.querySelector('[data-reel-slide="b"] [data-reel-save]')).not.toBeNull();
+  });
+
+  it('shows each reel its age, the same relative time as a post header, and no deletion countdown', async () => {
+    await render();
+    const slide = document.querySelector('[data-reel-slide]')!;
+    expect(slide.textContent).toContain(timeAgo('2026-10-01T00:00:00Z'));
+    expect(slide.querySelector('[data-reel-expiry]')).toBeNull();
   });
 });
