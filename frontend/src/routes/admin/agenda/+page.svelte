@@ -246,7 +246,7 @@
 
 <!--
   Reject modal. It was the worst of the seven this component fused: a raw `z-50` that is not a rung
-  of the ladder in `app.css` - it sits between `--z-page-overlay` (40) and `--z-toast` (60), so this
+  of the ladder in `app.css` - it sits between `--z-page-overlay` (40) and `--z-toast` (310), so this
   dialog opened UNDERNEATH a toast - no portal, no Escape, no outside-click, and a panel painted
   `bg-white` by hand instead of the surface token.
 -->

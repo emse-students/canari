@@ -8,6 +8,7 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelPublishSheet from './ReelPublishSheet.svelte';
 import type { PublishReelDeps } from '$lib/reels/publishReel';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
@@ -190,5 +191,18 @@ describe('ReelPublishSheet', () => {
     target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();
     await settle();
     expect(onclose).toHaveBeenCalled();
+  });
+
+  it("the preview box is 9:16 and shows Canari's poster, never the engine's, until its first frame", async () => {
+    const { target } = await render(deps());
+    const box = target.querySelector<HTMLElement>('[data-reel-publish-preview]')!;
+    const video = box.querySelector('video')!;
+    expect(box.className).toContain('aspect-9/16');
+    expect(video.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
+    expect(box.querySelector('[aria-hidden="true"].bg-linear-to-br')).not.toBeNull();
+
+    video.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+    expect(box.querySelector('[aria-hidden="true"].bg-linear-to-br')).toBeNull();
   });
 });
