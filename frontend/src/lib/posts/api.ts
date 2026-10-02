@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
@@ -158,6 +159,33 @@ export interface PostEntity {
   scheduledAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * `'reel'` for a CanaReel - one vertical video that the server deletes, row and blob, at
+   * `expiresAt` (C6). Absent on a server older than reels, which is a post.
+   */
+  kind?: PostKind;
+  /** A reel's length as its author declared it (C4); `null` on a post. */
+  durationMs?: number | null;
+  /** When the server deletes a reel (`createdAt` + 30 days, set once); `null` on a post. */
+  expiresAt?: string | null;
+}
+
+/** What a feed row is. A reel is a post of kind `'reel'`: same feed, comments, reactions, reports. */
+export type PostKind = 'post' | 'reel';
+
+/** Whether a row is a CanaReel. */
+export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
+  return post.kind === 'reel';
+}
+
+/**
+ * The server's reel numbers - the ONE copy is the server's (`GET /api/posts/reel-limits`), so an
+ * installed app never carries a stale cap: the camera asks before it arms its ring timer.
+ */
+export interface ReelLimits {
+  maxDurationMs: number;
+  retentionDays: number;
+  warningWindowDays: number;
 }
 
 /**
@@ -198,6 +226,8 @@ export interface ListPostsOptions {
   feed?: PostFeed;
   promo?: number;
   formation?: string;
+  /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
+  kind?: PostKind;
 }
 
 export interface ScheduledPost {
@@ -223,6 +253,10 @@ export interface CreatePostPayload {
   /** Mutually exclusive with `associationId` - the server ignores this whenever both are set. */
   anonymous?: boolean;
   linkedCalendarEventId?: string;
+  /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
+  kind?: PostKind;
+  /** A reel's length in ms, 1 to `ReelLimits.maxDurationMs`; required on a reel, absent otherwise. */
+  durationMs?: number;
 }
 
 /** Payload for PATCH /api/posts/:id. All fields except markdown are optional. */
@@ -242,7 +276,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const details = await res.text();
-    throw new Error(`post-service ${res.status}: ${details || res.statusText}`);
+    // A typed refusal: a screen reads the status (`refusalStatus`), never this sentence.
+    throw new ApiRefusalError(
+      res.status,
+      null,
+      `post-service ${res.status}: ${details || res.statusText}`
+    );
   }
   return (await res.json()) as T;
 }
@@ -254,6 +293,7 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.feed && options.feed !== 'all') p.set('feed', options.feed);
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
+  if (options.kind) p.set('kind', options.kind);
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -291,6 +331,11 @@ export async function listPosts(
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
   const q = buildListPostsSearchParams(opts);
   return request<PostEntity[]>(`/api/posts${q}`);
+}
+
+/** The server's reel numbers (`ReelLimits`). */
+export async function getReelLimits(): Promise<ReelLimits> {
+  return request<ReelLimits>('/api/posts/reel-limits');
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {

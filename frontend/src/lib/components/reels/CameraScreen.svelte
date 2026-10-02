@@ -5,7 +5,7 @@
    * It owns the preview and the three states around it (opening, refused, live); recording is the
    * `controls` snippet's, so the shutter can be built and tested apart from the device.
    */
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { Camera, CameraOff, RefreshCcw, SwitchCamera, X, Zap, ZapOff } from '@lucide/svelte';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
@@ -15,13 +15,32 @@
   interface Props {
     /** The session, injectable for tests; the route lets the component make its own. */
     session?: CameraSession;
-    /** Whether the lens may change - false while the recorder holds the tracks. */
+    /**
+     * True during a take: the lens cannot change (a recorder cannot swap a track mid-file) and the
+     * close button stands down.
+     */
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
-    controls?: Snippet<[CameraSession]>;
+    controls?: Snippet;
+    /**
+     * Holds the camera OFF while true - a take under review needs no preview, and an open camera
+     * would keep the phone's privacy dot lit for nothing. Turning it false opens the camera again.
+     */
+    paused?: boolean;
+    /**
+     * Called just before the app's going to the background takes the camera away, so a take in
+     * progress can be ended - and kept - while its tracks still flow.
+     */
+    onBeforeRelease?: () => void;
   }
 
-  let { session = new CameraSession(), lensLocked = false, controls }: Props = $props();
+  let {
+    session = new CameraSession(),
+    lensLocked = false,
+    controls,
+    paused = false,
+    onBeforeRelease,
+  }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
 
@@ -56,15 +75,28 @@
   function onVisibility() {
     if (document.visibilityState === 'hidden') {
       console.debug('[camera] app hidden - releasing the camera');
+      onBeforeRelease?.();
       session.stop();
-    } else if (session.phase === 'stopped') {
+    } else if (session.phase === 'stopped' && !paused) {
       console.debug('[camera] app visible - reopening the camera');
       void session.start();
     }
   }
 
+  // Opens the camera on arrival and after a pause, and closes it for one. Only `paused` is read
+  // here: the session's own state is read untracked, or every phase change would re-run this.
+  $effect(() => {
+    const hold = paused;
+    untrack(() => {
+      if (hold) {
+        if (session.phase !== 'stopped') session.stop();
+      } else if (session.phase === 'stopped' && document.visibilityState !== 'hidden') {
+        void session.start();
+      }
+    });
+  });
+
   onMount(() => {
-    void session.start();
     document.addEventListener('visibilitychange', onVisibility);
   });
 
@@ -127,16 +159,22 @@
   {/if}
 
   <!-- The top row: close on the left, the lens controls on the right - Instagram's arrangement. -->
+  <!-- No close during a take: it is a history entry of its own, so a step back would end the take,
+       not leave the tab - the shutter and Back are what end it. -->
   <div class="absolute inset-x-0 top-0 flex items-start justify-between p-3">
-    <button
-      type="button"
-      class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-label={m.reels_camera_close()}
-      title={m.reels_camera_close()}
-      onclick={close}
-    >
-      <X size={24} strokeWidth={2.5} />
-    </button>
+    {#if lensLocked}
+      <span></span>
+    {:else}
+      <button
+        type="button"
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={m.reels_camera_close()}
+        title={m.reels_camera_close()}
+        onclick={close}
+      >
+        <X size={24} strokeWidth={2.5} />
+      </button>
+    {/if}
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
@@ -173,7 +211,7 @@
 
   {#if controls && session.phase === 'live'}
     <div class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
-      {@render controls(session)}
+      {@render controls()}
     </div>
   {/if}
 </section>
