@@ -85,6 +85,22 @@ describe('MessageMediaRenderer - one frame from skeleton to media', () => {
     expect(geometry(frame())).toEqual(before);
   });
 
+  it('paints the sender placeholder in the frame while the bytes are on their way', () => {
+    // A 1x1 ThumbHash is enough: what is asserted is that the frame paints what the message says.
+    const instance = mount(MessageMediaRenderer, {
+      target: document.body,
+      props: {
+        mediaRef: { ...ref('image', { width: 4, height: 3 }), placeholder: 'AAgKBAAAAAAAAAAAAAAA' },
+        blobUrl: null,
+        failure: null,
+        textContent: '',
+      },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    expect(frame().getAttribute('style') ?? '').toContain('data:image/png');
+  });
+
   it('a portrait video is reserved at its own ratio, not 16:9', () => {
     const instance = mount(MessageMediaRenderer, {
       target: document.body,

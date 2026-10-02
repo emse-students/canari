@@ -60,7 +60,13 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
-import { encodeAppMessage, mediaEncodingProtoField, mkMedia, MediaKind } from '$lib/proto/codec';
+import {
+  encodeAppMessage,
+  mediaEncodingProtoField,
+  mediaPlaceholderProtoField,
+  mkMedia,
+  MediaKind,
+} from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
   ChatMessage,
@@ -1133,6 +1139,7 @@ export function useMessaging() {
                 ...(mediaRef.width && mediaRef.height
                   ? { width: mediaRef.width, height: mediaRef.height }
                   : {}),
+                ...mediaPlaceholderProtoField(entry.placeholder),
                 ...mediaEncodingProtoField(mediaRef.encoding),
               }),
               messageId,
@@ -1156,6 +1163,7 @@ export function useMessaging() {
                   fileName: entry.file.name,
                   width: entry.width,
                   height: entry.height,
+                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
                 },
                 captionForFile
@@ -1179,6 +1187,7 @@ export function useMessaging() {
                 fileName: entry.file.name,
                 width: entry.width,
                 height: entry.height,
+                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                 caption: captionForFile,
                 ...(entry.voiceNote ? { voiceNote: true } : {}),
                 fileBytes,
@@ -1310,6 +1319,20 @@ export function useMessaging() {
         } catch (e) {
           console.warn('Compression failed, using original:', e);
         }
+      } else if (file.type === 'image/gif') {
+        // A GIF IS SENT AS IT IS - but not without its size (2026-10-02). It skipped the compressor,
+        // which is the only thing that measured a picture, so every GIF file reached the receiver
+        // with no `width` / `height` and its box was a guess until the bytes landed.
+        const { readImageDimensions } = await import('$lib/media');
+        const dims = await readImageDimensions(file);
+        if (dims) entry = { file, width: dims.width, height: dims.height };
+        else ctx.log(`[MEDIA] GIF "${file.name}" has no readable size - sent without one`);
+      }
+      if (entry.file.type.startsWith('image/')) {
+        // The receiver's box shows this while the blob downloads (`MediaMsg.placeholder`).
+        const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+        const placeholder = await placeholderForImageFile(entry.file);
+        if (placeholder) entry = { ...entry, placeholder };
       }
       readyFiles.push(entry);
     }
@@ -1661,6 +1684,7 @@ export function useMessaging() {
                 ...(env.media.width && env.media.height
                   ? { width: env.media.width, height: env.media.height }
                   : {}),
+                ...mediaPlaceholderProtoField(env.media.placeholder),
                 // A forward relays the blob as it was sealed, so it must relay how.
                 ...mediaEncodingProtoField(env.media.encoding),
               }),
@@ -1708,6 +1732,7 @@ export function useMessaging() {
             fileName: media.fileName ?? '',
             caption: env.caption,
             ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+            ...mediaPlaceholderProtoField(media.placeholder),
             ...mediaEncodingProtoField(media.encoding),
           }),
           messageId,

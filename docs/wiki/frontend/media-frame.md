@@ -152,9 +152,19 @@ reader down.
 - **The skeleton, the decrypting state, the failure state and the media are ALL children of the same
   frame.** A renderer that draws its failure box at a different size than its picture has
   re-introduced the shift through the back door - that is exactly what the audit found.
-- **`placeholder`** (lands with the sender-side pull request, section 6) is painted as the frame's
-  background until the child covers it; until then, and for every old message, the frame's surface
-  tone is the placeholder.
+- **`placeholder`** is a base64 ThumbHash, painted as the frame's background (`placeholderDataUrl`,
+  `frontend/src/lib/utils/mediaPlaceholder.ts`) until the child covers it; for an old message the
+  frame's surface tone stands in. The sender computes it for every IMAGE (photos and GIF files) in
+  `prepareMediaFiles` (`placeholderForImageFile`: decode, scale to at most 100 px, hash) and it
+  travels in `MediaMsg.placeholder` (proto field 13) and in the stored `MediaRef` JSON. **A video
+  carries none yet** - its poster frame needs the chat video path, so it is owed with it.
+  Measured on a 3000x4000 JPEG: 21 bytes; 129 ms first / ~48 ms warm on desktop Chromium, 726 ms
+  first / 200-390 ms warm on the Mi 9T's Chrome. It runs once per picture at prepare time, beside the
+  compression that already decodes the file. **Wire compatibility is a test, not a hope**:
+  `codec.mediaPlaceholder.test.ts` decodes new bytes with the pre-field schema parsed by protobufjs
+  and the reverse, and asserts a ref with no placeholder encodes byte for byte as before.
+- **A GIF FILE now declares its size** too (`readImageDimensions` in the GIF branch of
+  `prepareMediaFiles`), so a GIF sent from the gallery no longer opens at the fallback ratio.
 - **`tag="span"`** where the frame sits in phrasing content (a GIF inside a message's `<p>`).
 - **`data-media-size`** on the frame says what it was drawn from (`498x280`, or `fallback`) - the
   attribute the component tests read, since happy-dom cannot parse `width: min(...)`.
@@ -201,5 +211,8 @@ message never shifts.
 | Half | Pull request | State |
 | --- | --- | --- |
 | This contract and the research | #1339 | merged |
-| `MediaFrame`, the chat photo / video / GIF-link / voice renderers on it, the measured-size cache, the pane's anchor | this page's second pull request | see its state on GitHub |
-| Sender side: GIF sizes (files and URLs), the ThumbHash placeholder on the wire | after it | not yet |
+| `MediaFrame`, the chat photo / video / GIF-link / voice renderers on it, the measured-size cache, the pane's anchor | #1346 | merged |
+| Sender side: GIF file sizes, the ThumbHash placeholder on the wire (images) | this page's third pull request | see its state on GitHub |
+| GIF URL sizes from the picker (`withGifSize`), tiles on `MediaFrame` | the GIF panel's pull request | owed by it |
+| Video placeholder (poster frame) | with the chat video path | owed |
+| A reading on the iPhone 12 | - | owed: Safari's first launch asks the owner to choose a default browser |

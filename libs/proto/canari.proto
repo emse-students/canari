@@ -286,6 +286,15 @@ message MediaMsg {
   // operation under `iv` - read for ever. A value a reader does not know is REFUSED, never read as a
   // single block: that would turn "written by a newer client" into "corrupt".
   MediaEncoding encoding = 12;
+  // A ThumbHash of the picture (https://evanw.github.io/thumbhash/), about 25 bytes, painted in the
+  // media's reserved box while the blob downloads - Discord's attachment `placeholder`, WhatsApp's
+  // `jpegThumbnail`. WRITTEN BY THE SENDER, because the server holds ciphertext and can make no
+  // preview; it travels encrypted with the rest of this message, like `key`.
+  //
+  // Absent on every message written before 2026-10-02 and on non-visual media: the box then shows
+  // its plain surface tone. A reader that cannot decode it ignores it - it is decoration, never
+  // content. docs/wiki/frontend/media-frame.md
+  bytes placeholder = 13;
 }
 
 enum MediaEncoding {

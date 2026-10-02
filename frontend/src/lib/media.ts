@@ -71,6 +71,12 @@ export interface MediaRef {
   /** Display height in px (after compression), used to reserve layout before decrypt. */
   height?: number;
   /**
+   * A ThumbHash of the picture, base64 (`MediaMsg.placeholder`), painted in the reserved box while
+   * the blob downloads. Made by the SENDER (`mediaPlaceholder.ts`): the server holds ciphertext and
+   * can make no preview. Absent on every ref before 2026-10-02 and on non-visual media.
+   */
+  placeholder?: string;
+  /**
    * Recorded by the composer's microphone rather than picked from disk.
    *
    * **DECLARED BY THE SENDER, BECAUSE NOTHING DOWNSTREAM CAN TELL.** A voice note and an imported
@@ -112,6 +118,8 @@ export interface PendingMediaFile {
   file: File;
   width?: number;
   height?: number;
+  /** See {@link MediaRef.placeholder}. */
+  placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
 }
