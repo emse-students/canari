@@ -427,3 +427,19 @@ by the next person as evidence about what is running.
 `MINIO_PUBLIC_BUCKET` used to be listed here and is **not read anywhere** in
 `apps/media-service/src` - `storage.service.ts` puts private and public objects in the single
 `GARAGE_BUCKET`. Removed 2026-08-07.
+
+## Group and community images are public assets (2026-10-02)
+
+`uploadRaw` (frontend `media.ts`) used to post to `/api/media/upload` with class `archive`, so a
+group avatar or community image was stored WITHOUT the `publicAsset` flag. The app drew it fine
+(`GroupAvatar` reads `GET /api/media/:id` with a JWT), but the invite card (`/c/join/:token`), the
+link preview and the SEO head read the unauthenticated `GET /api/media/public/:id`, which refuses
+anything not flagged - and answered 404 once #507 removed the lazy fallback that had been flagging
+such blobs on first request. It now posts to `/api/media/upload/public` (JPEG/PNG/WebP, resized to
+512px WebP), which also exempts it from the idle sweep.
+
+**Repair of the images stored before:** `POST /api/media/internal/promote-public`
+(`X-Internal-Secret`, body `{ mediaIds }`, at most the retention-class batch size). The caller names
+the ids (`channel_workspaces."imageMediaId"` and the groups' `imageMediaId`); the service promotes
+only blobs that DECODE as JPEG, PNG or WebP, under the content type the decoder reports, so a wrong
+id cannot publish ciphertext. Refused ids are returned and logged.

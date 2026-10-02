@@ -1,1 +1,3 @@
-- **A stable release ships the latest pre-release's commit**, built on `release/vX.Y.Z`, so `main` can keep merging while it runs; its changelog lands on `main` afterwards. See [cicd](docs/wiki/cicd.md#a-stable-ships-the-latest-pre-release-and-main-may-move-on-2026-10-02).
+### Changed - a stable release ships the latest pre-release's commit
+
+**A stable release ships the latest pre-release's commit**, built on `release/vX.Y.Z`, so `main` can keep merging while it runs; its changelog lands on `main` afterwards. See [cicd](docs/wiki/cicd.md#a-stable-ships-the-latest-pre-release-and-main-may-move-on-2026-10-02).

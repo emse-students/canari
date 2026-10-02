@@ -691,12 +691,13 @@ export class MediaService {
   // -------------------------------------------------------------------------
 
   /**
-   * Upload a file to the media service without client-side encryption.
-   * Suitable for group/community avatars that don't require E2E secrecy.
+   * Upload a group/community avatar to the media service as a PUBLIC asset (no client-side
+   * encryption; JPEG, PNG or WebP, which the server resizes to 512px WebP).
    *
-   * Always `archive`: both callers set a group avatar or a community image, which a durable row
-   * points at for as long as that group exists. Under the idle window a quiet group's avatar
-   * simply disappears one day, and nothing would ever put it back.
+   * Public because the invite card, the link preview and the SEO head show this image to someone
+   * with no session, through `GET /api/media/public/:id` - which refuses anything not stored as a
+   * public asset. The same flag exempts it from the idle sweep, which is what a durable row
+   * pointing at it needs: a quiet group's avatar must not disappear one day.
    *
    * @param file        The image File selected by the user.
    * @param authToken   JWT token.
@@ -705,9 +706,8 @@ export class MediaService {
   async uploadRaw(file: File, authToken: string): Promise<string> {
     const formData = new FormData();
     formData.append('file', file, file.name);
-    formData.append('retentionClass', 'archive' satisfies MediaRetentionClass);
 
-    const res = await fetch(`${this.baseUrl}/api/media/upload`, {
+    const res = await fetch(`${this.baseUrl}/api/media/upload/public`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
       body: formData,
