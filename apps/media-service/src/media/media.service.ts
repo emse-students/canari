@@ -532,17 +532,19 @@ export class MediaService {
   async purgeReels(
     items: Array<{ mediaId: string; ownerId: string }>
   ): Promise<Record<string, ReelPurgeOutcome>> {
-    const results: Record<string, ReelPurgeOutcome> = Object.create(null);
+    // A Map, not an object: `mediaId` is caller-supplied and may be refused precisely because it is
+    // not a UUID, so it must never be a property name.
+    const results = new Map<string, ReelPurgeOutcome>();
     let changed = false;
 
     for (const { mediaId, ownerId } of items) {
       if (!UUID_REGEX.test(mediaId)) {
-        results[mediaId] = 'refused';
+        results.set(mediaId, 'refused');
         continue;
       }
       const entry = this.meta.items[mediaId];
       if (!entry || entry.purgedAt) {
-        results[mediaId] = 'absent';
+        results.set(mediaId, 'absent');
         continue;
       }
       if (
@@ -551,7 +553,7 @@ export class MediaService {
         this.isPublicAssetEntry(entry) ||
         entry.retentionClass === 'association'
       ) {
-        results[mediaId] = 'refused';
+        results.set(mediaId, 'refused');
         this.logger.warn(
           `Reel purge refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
         );
@@ -560,7 +562,7 @@ export class MediaService {
       try {
         await this.storage.delete(mediaId);
       } catch (err) {
-        results[mediaId] = 'failed';
+        results.set(mediaId, 'failed');
         this.logger.warn(
           `Reel purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -573,11 +575,11 @@ export class MediaService {
         purgeReason: 'manual_delete',
       };
       changed = true;
-      results[mediaId] = 'deleted';
+      results.set(mediaId, 'deleted');
     }
 
     if (changed) await this.persistMetadata();
-    return results;
+    return Object.fromEntries(results);
   }
 
   async remove(mediaId: string): Promise<void> {
