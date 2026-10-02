@@ -265,3 +265,39 @@ the app, since a refused camera on iOS stays refused until Settings.
 MediaStore's `duration` column reads `0` for a fragmented file whose `moov` holds no samples. The
 Gallery's player is not affected, but a list sorted or filtered by duration would see a 0-second
 video.
+
+## Read end to end on both phones (2026-10-02, `main` at `4b62429e4`, then the fixes of #1354 and #1355)
+
+Bench builds against the local estate: a debug APK on the Mi 9T (Android 16, WebView Chrome 152), the
+`ios.yml` bench IPA on the iPhone 12 (iOS 27.0.1). **Nothing here relied on the segmented-writer
+flag**: it stays `false`, a reel is uploaded as ONE prepared MP4, and `minClientVersion` is untouched.
+
+| Reading | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| REEL-1 (the camera tab opens a live portrait preview from a real swipe, gives the camera back) | `PASS`, server clean | camera opens on the swipe (green privacy dot), read by hand |
+| REEL-2 (film, review, publish, vertical card in the feed) | `PASS` clean, 2.2-2.6 s from "Publier" to the feed | filmed 4 s, reviewed, published; the vertical card is in the feed |
+| The full-screen viewer, swipe to the next reel | read; the next slide's caption and age replace the first | read; a drag up lands on the next reel |
+| Save from the member's own reel, in the UI | file written to `Movies/Canari/` | `IMG_0007.MP4` in the camera roll after one press |
+| The save confirmation | visible (after #1355's toast fix) | visible (after the fix) |
+
+**What the readings found and fixed**: the publish step's preview had no poster (Android drew its own
+glyph), the confirmation toast of a save was painted BEHIND the viewer (`--z-toast` 60 under
+`--z-viewer` 300, so a save and its refusal answered nothing on screen), and the publish header
+padded the safe area a second time on the iPhone (47 pt too low). The "deleted in N days" chip was
+then removed by the user's decision (above).
+
+**Fluidity, judged honestly.** On the Mi 9T (60 Hz) six swipes in the viewer measured by `gfxinfo`:
+365 frames, **11.5 % janky**, median 12 ms, 90th percentile 29 ms (two refresh periods), 99th 36 ms,
+no missed vsync - while a video decodes under the drag. Smooth enough to use, **not yet Instagram-smooth**:
+the janks are the swipe commit while the next reel's player mounts. The iPhone was read by eye over
+WDA (no frame timing taken): the tab swipe, the viewer drag and the card layout showed no hitch, but
+that is an impression, not a measurement. Lens-covered takes read BLACK on both phones (the bench
+phones lie on a desk), so no frame of real content was judged; the pretty-or-not question on content
+is the user's look.
+
+**Owed**: one real-content take on each phone (the user's eye); the iOS frame timing of the viewer
+swipe; the intermittent console line `Ignored attempt to cancel a touchmove event with
+cancelable=false`, seen ONCE in six REEL-2 runs on the Mi 9T and not reproduced with a hook on
+`preventDefault` (the feed's pull-to-refresh is already guarded by #1350, so the caller is another
+non-passive `touchmove` listener); and the publish step's own "Visible 30 jours..." note, which the
+user may want gone with the chip.
