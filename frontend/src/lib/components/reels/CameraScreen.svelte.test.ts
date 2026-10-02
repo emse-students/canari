@@ -8,6 +8,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import CameraScreen from './CameraScreen.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { CameraAccessError, type CameraFault } from '$lib/reels/cameraAccess';
+import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
 
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
@@ -102,6 +103,42 @@ describe('CameraScreen', () => {
 
     const dark = await render(() => Promise.resolve(stream(false)));
     expect(dark.target.querySelector(`[aria-label="${m.reels_camera_torch_on()}"]`)).toBeNull();
+  });
+
+  describe('between the track and the first frame', () => {
+    const preview = (t: HTMLElement) => t.querySelector('video')!;
+    const standIn = (t: HTMLElement) => t.querySelector<HTMLElement>('[data-camera-standin]')!;
+
+    it('keeps the engine placeholder out of sight: transparent poster, preview hidden, stand-in up', async () => {
+      const { target, session } = await render(() => Promise.resolve(stream(false)));
+      // A track is in hand (live) but the element has decoded nothing yet.
+      expect(session.phase).toBe('live');
+      expect(preview(target).getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
+      expect(preview(target).className).toContain('opacity-0');
+      expect(standIn(target).dataset.cameraStandin).toBe('shown');
+    });
+
+    it('cross-fades to the preview on the first real frame, and not on an empty one', async () => {
+      const { target } = await render(() => Promise.resolve(stream(false)));
+      const video = preview(target);
+      Object.defineProperty(video, 'videoWidth', { value: 0, configurable: true });
+      video.dispatchEvent(new Event('loadeddata'));
+      flushSync();
+      expect(video.className).toContain('opacity-0');
+
+      Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+      video.dispatchEvent(new Event('playing'));
+      flushSync();
+      expect(video.className).toContain('opacity-100');
+      expect(standIn(target).dataset.cameraStandin).toBe('gone');
+    });
+
+    it('a refusal replaces the stand-in with its own state', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { target } = await render(() => Promise.reject(new CameraAccessError('busy', 'busy')));
+      expect(standIn(target).dataset.cameraStandin).toBe('gone');
+      expect(preview(target).className).toContain('opacity-0');
+    });
   });
 
   it('gives the camera back when the app goes to the background', async () => {

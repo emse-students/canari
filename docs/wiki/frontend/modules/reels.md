@@ -65,6 +65,19 @@ so the preview cannot be under the finger: the page arrives dark, saying the cam
 the preview fades in when the first track is in hand. A permission dialog, the first time, sits on
 that state.
 
+**The preview is never visible before its first frame** (user, 2026-10-02, Mi 9T: *"quelques frames le
+placeholder moche d'Android"*). `live` only says a track is in hand; from there to the first decoded
+frame the `<video>` draws the engine's own placeholder (a grey play glyph, scaled to the screen). So
+the element keeps the transparent poster (`TRANSPARENT_VIDEO_POSTER`) AND stays at opacity 0 until
+`loadeddata`/`playing` reports a real picture (`videoWidth > 0`, reset on every new stream so a lens
+switch is covered too), while a stand-in of the app's own - the dark `cn-ink` -> `cn-scrim` surface
+with a calm pulsing camera glyph and the "opening" line, same layout, no shift - stays up and cross-fades
+out over the preview fading in. The refusal screens replace the stand-in with their own state. The
+close button, the lens controls and the shutter are already in place. Pinned by
+`CameraScreen.svelte.test.ts`; read on the Mi 9T by screen-recorded frames
+([design-reference section 40](../design-reference.md#40-the-bar-arrived-after-the-page-and-the-camera-showed-androids-own-glyph-mi-9t-2026-10-02)).
+The review and the publish step already carry the poster over `VideoPoster` (#1354).
+
 **The camera is given back** when the tab is left, when the app goes to the background
 (`visibilitychange`), and when the lens changes. The device is acquired asynchronously, so
 `CameraSession` numbers every open, and an open that returns to a session that has moved on releases

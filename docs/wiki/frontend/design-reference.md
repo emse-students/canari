@@ -2932,3 +2932,32 @@ range still lingers is refused until a tap clears it - the intended trade.
 predicate and the two abort paths with a stubbed `getSelection`; whether the real handle drag stops
 moving the page is read on hardware only. Image viewers, PDF and the colour picker carry no text
 selection and are untouched.
+
+## 40. The bar arrived after the page, and the camera showed Android's own glyph (Mi 9T, 2026-10-02)
+
+Two defects of the same family - *the chrome around a swipe is decided by what the transition paints,
+not by what the DOM holds* - read on SCREEN-RECORDED FRAMES (`adb shell screenrecord`, ffmpeg contact
+sheets at 15 fps; the first frame of a changed screen is what a reader sees, so frames are the
+measurement, not the logs).
+
+**The bottom bar popped in ~270 ms after the feed** on camera -> feed. Named view-transition groups
+(`swipe-nav-out` / `swipe-nav-in`, the page wrapper) stack ABOVE `root`, which is where the `fixed`
+bar is drawn, and the wrapper's box runs under that bar: the incoming page's snapshot painted over the
+bar until the transition finished and the live DOM took over. Fixed in ONE place (`app.css`): while
+`data-swipe-nav` is set, `#bottom-nav` has its own name, `bottom-nav`, so it is a group painted AFTER
+the pages (paint order); old capture hidden, group and new capture `animation: none`. So the bar is on
+top from the first frame, never faded, never left behind, and leaving for the camera it is gone at
+once. Only while a swipe is under way: a permanent name would make the bar a group of every
+navigation. Pinned by `styles/swipeBottomBar.test.ts`. The native iOS bar is not in the page, so the
+web group does not apply there.
+
+**The camera's preview showed the engine's placeholder** between `phase === 'live'` (a track is in
+hand) and the first decoded frame: Android's grey play glyph, scaled to the whole screen, for ~1
+frame-burst at 1.27 s in the before recording. See [reels](modules/reels.md#the-tab-c5).
+
+Before / after (frames at 15 fps, the same swipe from the feed, Mi 9T):
+
+| | before | after |
+| --- | --- | --- |
+| Feed -> camera, the frames between the slide and the first preview frame | black "Ouverture de la camera" for 600 ms, then ONE frame of the grey glyph | Canari's navy stand-in throughout, cross-faded to the preview |
+| Camera -> feed, the bar | absent on the 4 frames of the slide, present at +270 ms | present on the first frame of the slide |

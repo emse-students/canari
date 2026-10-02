@@ -20,6 +20,7 @@
   import { hasNativeGallery, openAppSettings } from '$lib/reels/gallery';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import type { CameraFault } from '$lib/reels/cameraAccess';
+  import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -54,6 +55,25 @@
 
   let video = $state<HTMLVideoElement | null>(null);
 
+  /**
+   * The element holds a decoded frame of the CURRENT stream. `live` only says a track is in hand: from
+   * there to the first frame the element draws the engine's own placeholder (Android: a grey glyph),
+   * so the preview stays transparent and Canari's stand-in stays up until this is true - a fact the
+   * element reports (`loadeddata` / `playing` with a real picture), never a delay.
+   */
+  let frameReady = $state(false);
+
+  /** Up from the swipe to the first frame; the refusal screen has its own and replaces it. */
+  const standInShown = $derived(
+    session.phase !== 'error' && !(session.phase === 'live' && frameReady)
+  );
+
+  function onFrame() {
+    if (!video || video.videoWidth === 0 || frameReady) return;
+    console.debug(`[camera] first frame ${video.videoWidth}x${video.videoHeight}`);
+    frameReady = true;
+  }
+
   /** Whether this tab was reached from inside the app - then closing it is a step back. */
   let cameFromApp = false;
   afterNavigate(({ from }) => {
@@ -74,6 +94,7 @@
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.
   $effect(() => {
+    frameReady = false;
     if (video) video.srcObject = session.stream;
   });
 
@@ -148,22 +169,34 @@
     bind:this={video}
     class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
       ? '-scale-x-100'
-      : ''} {session.phase === 'live' ? 'opacity-100' : 'opacity-0'}"
+      : ''} {session.phase === 'live' && frameReady
+      ? 'opacity-100'
+      : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
+    poster={TRANSPARENT_VIDEO_POSTER}
+    onloadeddata={onFrame}
+    onplaying={onFrame}
     autoplay
     muted
     playsinline
     aria-hidden="true"
   ></video>
 
-  {#if session.phase === 'starting' || session.phase === 'stopped'}
-    <div
-      class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70"
-      role="status"
-    >
-      <Camera size={40} strokeWidth={1.5} />
-      <p class="text-sm">{m.reels_camera_starting()}</p>
-    </div>
-  {:else if session.phase === 'error' && session.fault}
+  <!-- Canari's stand-in for everything between the swipe and the first frame: a dark surface of the
+       app's own, so the engine's placeholder is never seen. It stays mounted and fades out as the
+       preview fades in, so the two cross-fade instead of cutting. -->
+  <div
+    class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-linear-to-b text-white/70 transition-opacity duration-200 motion-reduce:transition-none {standInShown
+      ? 'opacity-100'
+      : 'opacity-0'}"
+    role={standInShown ? 'status' : undefined}
+    aria-hidden={!standInShown}
+    data-camera-standin={standInShown ? 'shown' : 'gone'}
+  >
+    <Camera size={40} strokeWidth={1.5} class="motion-safe:animate-pulse" />
+    <p class="text-sm">{m.reels_camera_starting()}</p>
+  </div>
+
+  {#if session.phase === 'error' && session.fault}
     {@const text = FAULT_TEXT[session.fault]}
     <div
       class="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
