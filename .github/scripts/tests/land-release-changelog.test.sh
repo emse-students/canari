@@ -12,6 +12,8 @@ PASS=0
 FAIL=0
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+# `expect <description> <command...>`: pass when the command succeeds. An if/else, not `A && B || C`.
+expect() { local d="$1"; shift; if "$@"; then pass "$d"; else fail "$d"; fi; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -40,17 +42,17 @@ printf '\nthe landing folds the shipped fragments and only those\n'
 out="$(bash .github/scripts/land-release-changelog.sh 1.0.0 "$SHIPPED" 2>&1)" || { fail "landing failed: $out"; }
 git fetch -q origin main
 git checkout -q -B check origin/main
-grep -q '^## \[1.0.0\]' CHANGELOG.md && pass 'main carries the [1.0.0] section' || fail 'no [1.0.0] section on main'
-grep -q 'shipped fix' CHANGELOG.md && pass 'the shipped entry is in it' || fail 'the shipped entry is missing'
-grep -q 'later fix' CHANGELOG.md && fail 'a later entry was folded into the release' || pass 'the later entry was NOT folded'
-[ ! -e changelog.d/shipped.md ] && pass 'the folded fragment is deleted' || fail 'the folded fragment is still there'
-[ -e changelog.d/later.md ] && pass 'the later fragment is kept for the next release' || fail 'the later fragment was deleted'
+expect 'main carries the [1.0.0] section' grep -q '^## \[1.0.0\]' CHANGELOG.md
+expect 'the shipped entry is in it' grep -q 'shipped fix' CHANGELOG.md
+if grep -q 'later fix' CHANGELOG.md; then fail 'a later entry was folded into the release'; else pass 'the later entry was NOT folded'; fi
+expect 'the folded fragment is deleted' test ! -e changelog.d/shipped.md
+expect 'the later fragment is kept for the next release' test -e changelog.d/later.md
 
 printf '\na second run changes nothing\n'
 before="$(git rev-parse origin/main)"
 bash .github/scripts/land-release-changelog.sh 1.0.0 "$SHIPPED" >/dev/null 2>&1
 git fetch -q origin main
-[ "$(git rev-parse origin/main)" = "$before" ] && pass 'no new commit' || fail 'a second landing pushed again'
+expect 'no new commit' test "$(git rev-parse origin/main)" = "$before"
 
 printf '\na lost race is retried from the new head\n'
 # The first push is refused by a hook after another commit slips onto origin in the meantime.
@@ -68,9 +70,9 @@ fi
 HOOK
 chmod +x "$TMP/origin.git/hooks/pre-receive"
 out="$(ATTEMPTS=3 bash .github/scripts/land-release-changelog.sh 1.0.1 "$SECOND" 2>&1)"
-echo "$out" | grep -q 'starting again' && pass 'the first push lost and the landing started again' || fail "no retry: $out"
+expect 'the first push lost and the landing started again' grep -q 'starting again' <<<"$out"
 git fetch -q origin main
-git show origin/main:CHANGELOG.md | grep -q '^## \[1.0.1\]' && pass 'and landed on the second attempt' || fail 'never landed'
+expect 'and landed on the second attempt' grep -q '^## \[1.0.1\]' <(git show origin/main:CHANGELOG.md)
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
