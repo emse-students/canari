@@ -14,6 +14,190 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-02
+
+### Added - a gated `/adminer/` route: the database in a browser, for global admins, in production only
+
+A short signed cookie checked on every request, then Adminer's own database login ([databases](docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02)).
+
+### Fixed - Android status bar icons were white on a white page after a live theme switch
+
+`enableEdgeToEdge()` chooses the icon colour once; the page now hands its theme to the activity on every change ([mobile](docs/wiki/frontend/mobile.md#the-bar-icons-follow-the-pages-theme-handed-over-by-the-page-2026-10-01)).
+
+### Added - add ONE event to Apple Calendar or an Android calendar app from a phone
+
+The event modal's "add to calendar" now hands the system browser a one-event `.ics` (`feed.ics?eventId=`), so iOS offers "Add to Calendar" and Android opens its calendar app, instead of saving a file into Files / offering only Google. See [calendar](docs/wiki/frontend/modules/calendar.md).
+
+### Fixed - the camera tab never shows Android's placeholder, and the bottom bar is there from the first frame of a swipe
+
+The preview stays hidden until its first frame under a Canari stand-in, and the tab bar gets its own view-transition group above the sliding pages ([design-reference](docs/wiki/frontend/design-reference.md#40-the-bar-arrived-after-the-page-and-the-camera-showed-androids-own-glyph-mi-9t-2026-10-02)).
+
+### Added - CanaReels: the camera is a tab left of the feed
+
+A swipe right from the feed opens Canari's own full-screen camera; a refused, missing or busy camera each says so and offers a retry ([reels](docs/wiki/frontend/modules/reels.md#the-tab-c5)).
+
+### Added - CanaReels: film a reel in the app's own camera
+
+Hold the shutter to film, or tap to start and tap to stop; the ring stops at the server's 90 s cap, and a take is reviewed before it goes anywhere ([reels](docs/wiki/frontend/modules/reels.md#the-capture-screen-c4)).
+
+### Added - CanaReels: a filmed take is published from the camera
+
+A caption and the same "who is publishing" choice as a post, re-encoded on the phone and created as a reel ([reels](docs/wiki/frontend/modules/reels.md#publishing-r3-on-c2-and-c3)).
+
+### Added - CanaReels: the author saves a reel to the gallery before its deletion
+
+Android and iOS through a new gallery plugin, a download elsewhere; a refusal offers the settings ([reels](docs/wiki/frontend/modules/reels.md#saving-before-the-deletion-c6)).
+
+### Added - CanaReels, the server half: a `reel` post kind that deletes itself after a month
+
+A reel is a post of `kind = 'reel'` with a declared duration (at most 90 s) and an expiry; an hourly worker deletes the post, its comments, reactions, notifications and every blob together, and `GET /api/posts/my-reels` tells its author which ones are about to go. Also fixes the community-message GC reading a DELETE's row count wrongly (its log line could never be written). See [reels](docs/wiki/services/reels.md).
+
+### Added - CanaReels: a reel is vertical in the feed and opens a full-screen viewer
+
+Swipe up and down between reels, right to close; the next one preloads ([reels](docs/wiki/frontend/modules/reels.md#watching-the-feed-card-and-the-full-screen-viewer-c7)).
+
+### Changed - a photo or video with text fills its bubble, and a chat video keeps its shape
+
+The media sits at the top of the bubble with the caption under it, and a video is no longer cropped ([chat](docs/wiki/frontend/modules/chat.md#a-photo-or-video-with-text-fills-its-bubble-and-a-video-keeps-its-shape-2026-10-02)).
+
+### Changed - a video in a conversation plays when you press play, not when you scroll to it
+
+A play button starts it in place, several can play together, and a tap elsewhere opens it full screen ([posts](docs/wiki/frontend/modules/posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01)).
+
+### Fixed - a conversation's video no longer carries the feed's mute button
+
+Tapping it flipped every sound button in the app. A conversation video now plays audible with no app-wide button, and its viewer mutes only itself ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Changed - editing a message happens in the composer, not in the bubble
+
+A banner names the message, Save replaces Send, and the draft you were typing comes back afterwards ([chat](docs/wiki/frontend/modules/chat.md#editing-a-message-happens-in-the-composer-not-in-the-bubble-2026-10-02)).
+
+### Fixed - a hold on an emoji picture no longer opens iOS's image menu
+
+Holding a reaction badge or a picker emoji on the iPhone showed Apple's Share / Save to Photos menu on a blown-up picture instead of the "who reacted" list; the callout is now off for every emoji picture ([emoji](docs/wiki/frontend/emoji.md#a-hold-on-an-emoji-picture-opened-ioss-image-menu-2026-10-01)).
+
+### Fixed - The feed shows what the server answered, not what it held from the last visit
+
+The cached paint was never replaced, so a new post (a reel just published included) appeared only on the next visit ([local-first-ui](docs/wiki/frontend/local-first-ui.md)).
+
+### Changed - a GIF sent from the picker carries its size, and the picker's tiles are MediaFrames
+
+A reader now reserves a picked GIF's box before it loads (`#cn-size`), and the panel's tiles are
+drawn as `MediaFrame`s ([chat](docs/wiki/frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
+
+### Fixed - a chat photo, video, GIF or voice note no longer moves the thread when it loads
+
+Every medium opens in a `MediaFrame` at its final size; old messages without a size shift once per device, then never again, and the reader's row stays put (1464 px of row growth measured on the Mi 9T before, 0 after) - [media-frame](docs/wiki/frontend/media-frame.md).
+
+### Added - the contract for media that holds its size before it loads
+
+Every chat medium is to open at its final size; the research behind it (Discord, WhatsApp, Telegram, Slack) and the primitive's contract are in [media-frame](docs/wiki/frontend/media-frame.md).
+
+### Added - a picture shows its blurred colours before it arrives, and a GIF file declares its size
+
+The sender attaches a ~21-byte ThumbHash to every image (`MediaMsg` field 13, wire-compatible both ways) and reads a GIF file's dimensions at send time - [media-frame](docs/wiki/frontend/media-frame.md).
+
+### Fixed - a video you upload in a conversation shows its thumbnail and plays
+
+A shared download was cancelled for everyone when the row that started it was torn down ([local-first-ui](docs/wiki/frontend/local-first-ui.md#3ter-sixty-downloads-in-one-frame-2026-09-23)).
+
+### Changed - the profile page shows campus, cursus and posts
+
+A profile now lists every formation, post and the campus MiConnect holds for the person, instead of
+the single formation it used to show ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Added - admins can remove a minesweeper score and ban a player from the ranked game
+
+A ban hides the player's scores and rank without deleting them, and can be lifted ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#moderation-remove-a-score-ban-a-player-2026-10-02)).
+
+### Added - a face the app has shown reaches the Android notification without the network
+
+The foreground writes each avatar it loads into the same native cache file the notification reads, through `store_avatar_mirror` ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Fixed - a direct message notification no longer prints the person's name twice
+
+The DM now uses the group shape with no title, so the name appears once, above its line. The titled version, read on the Mi 9T, showed "Name : Name : text" ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Changed - one attachment menu, and the GIF picker opens in the keyboard's place
+
+On iOS a photo pick no longer opens a second, system menu after Canari's; on a phone the GIF search is a keyboard-sized panel whose tiles hold their size before they load ([chat](docs/wiki/frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
+
+### Changed - starting a video, a voice note or an audio file pauses whatever else was playing
+
+Several conversation videos could play at once since #1341; now one media plays at a time in the whole app, and the paused one keeps its place. A recorder silences playback too ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Fixed - A post id that is not a UUID is a 400, no longer a server 500
+
+Every `:postId` route parses it first ([social-service](docs/wiki/services/social-service.md#posts-apiposts)).
+
+### Fixed - a photo or a video posted without a caption is no longer refused after its upload
+
+social-service required a body on every post while the composer enables Publier for media alone;
+a body OR a media entry is now enough, on create and on edit
+([posts](docs/wiki/frontend/modules/posts.md#post-creation-editpostformsvelte)).
+
+### Fixed - Pull-to-refresh claims only a downward pull
+
+A sideways swipe from the top of the feed is left to the tab swipe, and a move the browser already scrolls is no longer cancelled, which logged a console error on every swipe ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Added - Test rig: a REEL phase on the phone
+
+REEL-1 opens the camera tab with a real swipe and checks for a live portrait preview; REEL-2 films, captions and publishes a reel ([board](docs/wiki/cross-client-testing.md#18---reel---the-camera-tab-and-publishing-a-reel)).
+
+### Removed - the "deleted in N days" chip on a member's own reels
+
+Not discreet, and the 30 days are known: the chip is gone from the feed card and the viewer, and the viewer shows the reel's age beside the author like a post header does. The save to the gallery stays ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Fixed - the reel publish preview shows Canari's poster, not Android's grey play glyph, until its first frame
+
+The 9:16 preview beside the caption had no `poster`, so the Android WebView drew its own placeholder right after a recording; it now reserves its box and carries the transparent poster under `VideoPoster`, like every other video ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Changed - the REEL rows forgive what the camera and the publish say when they work
+
+The reels code's success-path `console.debug` lines are a named list (`REEL_NARRATION`) the REEL rows ignore; a failure spelling is not on it, so it stays the finding ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Fixed - a reel's save confirmation is visible, and the publish header is no longer 47pt too low on iPhone
+
+Toasts sat under the full-screen viewer's layer, so "CanaReel enregistre" (and a refusal) answered nothing on screen; they now clear it. The publish step's header added the safe-area inset the app shell already applies ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Added - the segmented writer's whole path is tested with the flag ON, and the flag is one module
+
+`SEGMENTED_MEDIA_WRITER_ENABLED` moves to `mediaSegmentedWriterFlag.ts` (still `false`); an
+end-to-end test replaces that one module and runs upload, ranged streaming, seek and whole-blob read
+([media-service](docs/wiki/services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
+
+### Fixed - dragging a text selection no longer slides the page to the next tab
+
+While a post's text is selected, the tab swipe, the message reply swipe and the edge swipe back refuse to start and abandon an engaged drag, through one shared predicate. Details in [design-reference](docs/wiki/frontend/design-reference.md#39-a-selection-being-dragged-is-not-a-swipe-iphone-100-2026-10-01).
+
+### Fixed - the Automatic theme was there but read as light/dark only
+
+The setting is now labelled "Automatique" with its text always shown, the dashboard button cycles automatic, light, dark instead of leaving Automatic for good, and a saved Automatic no longer paints light first on a dark phone ([frontend architecture](docs/wiki/frontend/architecture.md#theming-light--dark)).
+
+### Changed - the opened video's controls follow any mouse movement, and a tap anywhere toggles them
+
+A tap on the black around a clip used to do nothing ([posts](docs/wiki/frontend/modules/posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01)).
+
+### Changed - a video is re-encoded on the phone before a post or a chat message sends it
+
+The post composer, the post editor and the chat composer prepare every picked video with
+`prepareVideoForUpload`, showing its progress with a cross that stops it; a video is no longer
+refused for its picked size ([video-preparation](docs/wiki/frontend/video-preparation.md)).
+
+### Added - one seam that re-encodes any video on the device before upload
+
+`prepareVideoForUpload` turns an Android WebM, an iPhone MOV or a gallery file into one fragmented
+MP4 (H.264 + AAC, 720p, ~2.5 Mb/s) with WebCodecs, typed faults, progress and cancel
+([video-preparation](docs/wiki/frontend/video-preparation.md)).
+
+### Changed - a video in the viewer zooms and moves, and its controls stay on top, unscaled
+
+Wheel and pinch zoom the picture alone; a click no longer starts a zoom on a video ([posts](docs/wiki/frontend/modules/posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01)).
+
+### Changed - opening a video full screen picks up where it is
+
+The viewer no longer starts a video over; a clip that played to its end still does ([posts](docs/wiki/frontend/modules/posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01)).
+
 ## [1.0.0] - 2026-10-01
 
 ### Fixed - the media sweep deleted an association's vault document; it now deletes chat media and nothing else
