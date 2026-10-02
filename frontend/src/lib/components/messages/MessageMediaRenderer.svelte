@@ -162,6 +162,7 @@
         height={mediaRef.height}
         measureKey={mediaRef.mediaId || undefined}
         fallbackAspect={mediaRef.type === 'video' ? 16 / 9 : undefined}
+        placeholder={mediaRef.type === 'image' || !blobUrl ? mediaRef.placeholder : undefined}
         class="group/media max-w-full {bleed ? 'w-68' : 'w-56 rounded-3xl'} {frameSurfaceClass}"
       >
         {#snippet children(frame)}

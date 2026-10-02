@@ -8,6 +8,7 @@ import {
   encodeAppMessage,
   mediaEncodingProtoField,
   mediaKindToType,
+  mediaPlaceholderProtoField,
   mkMedia,
   mkReply,
   mkText,
@@ -400,6 +401,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       fileName: media.fileName,
       width: media.width,
       height: media.height,
+      ...(media.placeholder ? { placeholder: media.placeholder } : {}),
       ...(media.voiceNote ? { voiceNote: true } : {}),
       ...(ref.encoding ? { encoding: ref.encoding } : {}),
     };
@@ -415,6 +417,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         voiceNote: media.voiceNote ?? false,
         caption: media.caption,
         ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+        ...mediaPlaceholderProtoField(media.placeholder),
         ...mediaEncodingProtoField(ref.encoding),
       }),
       messageId: entry.id,

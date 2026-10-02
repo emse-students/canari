@@ -30,6 +30,7 @@
     type MediaSize,
   } from '$lib/utils/mediaFrame';
   import { measuredMediaSize, recordMeasuredMediaSize } from '$lib/utils/mediaSizeCache';
+  import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
 
   interface Props {
     /** Width the sender declared, in px. Absent on an old message. */
@@ -48,6 +49,12 @@
     class?: string;
     /** `span` where the frame sits in phrasing content - a GIF inside a message's `<p>`. */
     tag?: 'div' | 'span';
+    /**
+     * The sender's ThumbHash (base64, `MediaRef.placeholder`), painted under the child until it
+     * covers the frame. Pass it only while the child does not cover it - a contained video's
+     * letterbox would show it through.
+     */
+    placeholder?: string;
     children: Snippet<[MediaFrameApi]>;
   }
 
@@ -60,6 +67,7 @@
     maxHeight,
     class: className = '',
     tag = 'div',
+    placeholder,
     children,
   }: Props = $props();
 
@@ -70,7 +78,11 @@
   const size = $derived(
     resolveMediaSize({ width, height }, measuredNow ?? measuredMediaSize(measureKey))
   );
-  const style = $derived(mediaFrameStyle({ size, sizing, fallbackAspect, maxHeight }));
+  const placeholderUrl = $derived(placeholderDataUrl(placeholder));
+  const style = $derived(
+    mediaFrameStyle({ size, sizing, fallbackAspect, maxHeight }) +
+      (placeholderUrl ? `; background: center / cover no-repeat url("${placeholderUrl}")` : '')
+  );
 
   function onLoad(event: Event): void {
     if (declared) return;

@@ -120,6 +120,8 @@ export interface OutboxMediaPayload {
   caption?: string;
   width?: number;
   height?: number;
+  /** The sender's ThumbHash, base64 - see `MediaRef.placeholder`. */
+  placeholder?: string;
   /** Recorded by the composer rather than picked from disk - see `MediaRef.voiceNote`. */
   voiceNote?: boolean;
   /**

@@ -14,6 +14,7 @@
 
 import { canari } from './canari.js';
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 
 // ─── Re-export the generated types so callers don't need to import canari.js ──
 
@@ -79,6 +80,19 @@ export function mediaEncodingProtoField(encoding?: string): { encoding?: number 
   if (Number.isInteger(n) && n > 0) return { encoding: n };
   // A ref names a format no proto value spells: sending it as a single block would be a lie.
   throw new Error(`media encoding "${encoding}" has no proto value`);
+}
+
+/**
+ * The `MediaMsg` field for a ref's `placeholder` (base64 ThumbHash), to spread into `mkMedia` -
+ * nothing at all when there is none, so a ref without one encodes byte for byte as it always has.
+ */
+export function mediaPlaceholderProtoField(placeholder?: string): { placeholder?: Uint8Array } {
+  return placeholder ? { placeholder: fromBase64(placeholder) } : {};
+}
+
+/** A `MediaMsg.placeholder` as the `MediaRef` carries it: base64, or absent for none. */
+export function mediaPlaceholderFromProto(placeholder?: Uint8Array | null): string | undefined {
+  return placeholder && placeholder.length > 0 ? toBase64(placeholder) : undefined;
 }
 
 // ─── Transport layer ──────────────────────────────────────────────────────────
