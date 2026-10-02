@@ -70,7 +70,13 @@ for the same endpoint; the helper now matches it instead of holding a second opi
 synchronously, so switching tab and back replaced a rendered feed with four skeletons and refetched
 from zero. `$lib/posts/feedCache` holds the last page **per tab per reader**, so the pill and the
 posts under it can never disagree, and the fresh answer replaces the paint it is replacing -
-anything the reader has since appended or deleted is kept. A pull-to-refresh no longer collapses a
+anything the reader has since appended or deleted is kept. **Until 2026-10-02 the fresh answer
+never replaced the paint.** The test of "is the paint still on screen" compared the list with the
+cached array, but a `$state` holds a PROXY of the array it is given, so the two were never equal
+once anything was cached. The feed was always one visit behind. A reel just published did not
+appear on the feed the app landed on (REEL-2 on the Mi 9T). The page now compares with the proxy
+it read back after painting, and `feedPaintIdentity.svelte.test.ts` pins the Svelte behaviour this
+relies on. A pull-to-refresh no longer collapses a
 list that is on screen either: the skeleton is for an empty list, which is the rule `ChatArea`
 already followed.
 
