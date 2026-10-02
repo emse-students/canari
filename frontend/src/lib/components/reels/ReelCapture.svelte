@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * The CanaReels capture screen (R3): the camera tab's preview, a shutter that films up to the cap
-   * (C4), the gallery bottom-left, and the take's review. Publishing is the caller's (`onNext`).
+   * (C4), the gallery bottom-left, the take's review, and its publish step (`ReelPublishSheet`).
    *
    * THE CAP IS THE SERVER'S. `GET /api/posts/reel-limits` is the one copy of the 90 s, so the shutter
    * stays disabled until it has answered - an installed app never films to a stale number - and says
@@ -17,6 +17,7 @@
   import CameraScreen from './CameraScreen.svelte';
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
+  import ReelPublishSheet from './ReelPublishSheet.svelte';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import {
     captureReducer,
@@ -26,11 +27,11 @@
     type CaptureEvent,
     type CaptureState,
     type LimitsFault,
-    type ReelClip,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
+  import type { PublishReelDeps } from '$lib/reels/publishReel';
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
@@ -40,16 +41,18 @@
   interface Props {
     /** The session, injectable for tests. */
     session?: CameraSession;
-    /** Where a reviewed take goes next - the publish step. Absent, the review offers only a discard. */
-    onNext?: (clip: ReelClip) => void;
+    /** The publish step's services, injectable for tests. */
+    publishDeps?: PublishReelDeps;
   }
 
-  let { session = new CameraSession(), onNext }: Props = $props();
+  let { session = new CameraSession(), publishDeps }: Props = $props();
 
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
   let limitsFault = $state<LimitsFault | null>(null);
   let elapsedMs = $state(0);
+  /** The publish step is open over the review (its own history entry, above the take's). */
+  let publishOpen = $state(false);
 
   let recorder: ReelRecorder | null = null;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -83,7 +86,10 @@
     if (before.kind === 'ready' && after.kind === 'recording') beginTake();
     if (before.kind === 'recording' && after.kind === 'finishing') void endTake();
     if (before.kind === 'ready' && after.kind === 'review') holdTakeEntry();
-    if (after.kind === 'ready') releaseTakeEntry();
+    if (after.kind === 'ready') {
+      publishOpen = false;
+      releaseTakeEntry();
+    }
   }
 
   function holdTakeEntry() {
@@ -93,6 +99,7 @@
       takeEntry = null;
       console.debug('[reel-capture] the take was dismissed');
       abandonRecording();
+      publishOpen = false;
       if (capture.kind !== 'ready') capture = { kind: 'ready' };
     };
     pushHistoryOverlay(takeEntry);
@@ -266,10 +273,14 @@
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}
-    <ReelReview
-      {clip}
-      ondiscard={() => send({ type: 'discard' })}
-      onnext={onNext ? () => onNext(clip) : undefined}
-    />
+    {#if publishOpen && limits}
+      <ReelPublishSheet {clip} {limits} deps={publishDeps} onclose={() => (publishOpen = false)} />
+    {:else}
+      <ReelReview
+        {clip}
+        ondiscard={() => send({ type: 'discard' })}
+        onnext={() => (publishOpen = true)}
+      />
+    {/if}
   {/if}
 </div>

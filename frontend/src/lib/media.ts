@@ -48,11 +48,14 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * - `'archive'` - the feed (a post, a post comment, an avatar): a permanent row cites the object.
  * - `'association'` - an association's vault document: kept for ever, and it survives the
  *   uploader's account deletion because it belongs to the association.
+ * - `'reel'` - a CanaReels video: kept by the idle sweep, deleted with its reel 30 days after
+ *   publication by social-service's reel worker, which claims the blob at publication
+ *   ([reels (server)](docs/wiki/services/reels.md)).
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
  */
-export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association';
+export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
 
 export interface MediaRef {
   type: MediaType;

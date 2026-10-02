@@ -3,21 +3,30 @@
  * server's cap, a tap films until the next tap, a hold films until it lifts, the take is reviewed, and
  * a discard brings the preview back. Every step is driven by an event the test sends - no clock.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelCapture from './ReelCapture.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { m } from '$lib/paraglide/messages';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// The publish step fades in, and a test closes it mid-fade.
+afterAll(adoptTransitionAnimations());
 
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
 vi.mock('$lib/utils/appVersion', () => ({ isIosTauriRuntime: () => false }));
-vi.mock('$lib/utils/historyOverlayStack', () => ({
+vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
-  closeHistoryOverlayFromUi: vi.fn(),
+  closeHistoryOverlayFromUi: vi.fn((close: () => void) => close()),
+}));
+vi.mock('$lib/posts/postIdentity', async (orig) => ({
+  ...(await orig<typeof import('$lib/posts/postIdentity')>()),
+  listPostAsAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
   default: (await import('./VideoPlayerStub.test-helper.svelte')).default,
@@ -64,7 +73,7 @@ async function render() {
   const session = new CameraSession(() => Promise.resolve(stream()));
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(ReelCapture, { target, props: { session, onNext: vi.fn() } }));
+  mounted.push(mount(ReelCapture, { target, props: { session } }));
   await settle();
   const shutter = () => target.querySelector<HTMLButtonElement>('[data-reel-shutter]')!;
   const pointer = (type: string, timeStamp: number) => {
@@ -143,5 +152,21 @@ describe('ReelCapture', () => {
     expect(alert.textContent).toContain(m.reels_capture_limits_refused());
     expect(alert.textContent).not.toContain(m.reels_capture_limits_error());
     expect(alert.querySelector('button')).not.toBeNull();
+  });
+
+  it('Suivant opens the publish step over the take, and its back arrow returns to the take', async () => {
+    const { target, pointer } = await render();
+    pointer('pointerdown', 1000);
+    pointer('pointerup', 4000);
+    await settle();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+
+    target.querySelector<HTMLButtonElement>('[data-reel-publish] header button')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 });

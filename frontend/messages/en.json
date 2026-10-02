@@ -3126,5 +3126,14 @@
   "reels_capture_limits_error": "Canari cannot be reached - tap to try again",
   "reels_capture_limits_refused": "CanaReels are not answering right now - tap to try again",
   "reels_review_discard": "Discard and film again",
-  "reels_review_next": "Next"
+  "reels_review_next": "Next",
+  "reels_publish_title": "New CanaReel",
+  "reels_publish_back": "Back to the video",
+  "reels_publish_caption_label": "Caption",
+  "reels_publish_caption_placeholder": "Add a caption...",
+  "reels_publish_submit": "Publish",
+  "reels_publish_uploading": "Uploading...",
+  "reels_publish_done": "CanaReel published",
+  "reels_publish_error": "The CanaReel could not be published. Try again.",
+  "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then."
 }
