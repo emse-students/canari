@@ -1,9 +1,7 @@
-version: 1.0.1
+version: 1.0.2
 
-Les videos des conversations se lancent avec un bouton lecture. Ouvertes en grand, elles reprennent ou elles en etaient et se zooment.
+Les reels arrivent : un onglet camera pour filmer 90 secondes et publier dans le fil. La camera s'ouvre sur l'objectif avant, en plein ecran.
 
-Une photo ou une video avec du texte tient dans sa bulle. Un message se modifie dans le champ de saisie.
+Les videos des conversations se lancent avec un bouton lecture, une seule joue a la fois, et reprennent ou elles en etaient en grand.
 
-Les reels arrivent : un onglet camera pour filmer 90 secondes et publier dans le fil.
-
-Le calendrier ajoute un evenement a votre agenda, et le theme Automatique suit l'appareil.
+Le retour au fil et l'ouverture d'une conversation sont plus fluides. Le calendrier ajoute un evenement a votre agenda, et le theme Automatique suit l'appareil.
