@@ -16,8 +16,8 @@
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { markdownToPlainText } from '$lib/seo/text';
+  import { exactDate, timeAgo } from '$lib/utils/time';
   import { myReels } from '$lib/reels/myReels.svelte';
-  import ReelExpiryChip from './ReelExpiryChip.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
 
   interface Props {
@@ -59,10 +59,13 @@
   <div
     class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
   >
-    {#if mine}
-      <div class="mb-2"><ReelExpiryChip reel={mine} /></div>
-    {/if}
-    <p class="text-sm font-bold">{postAuthorName(post)}</p>
+    <p class="text-sm font-bold">
+      {postAuthorName(post)}
+      <!-- The same age, from the same helper, as the post header's: the viewer has no header. -->
+      <span class="ml-1.5 text-xs font-medium opacity-70" title={exactDate(post.createdAt)}
+        >{timeAgo(post.createdAt)}</span
+      >
+    </p>
     {#if caption}
       <p class="mt-1 line-clamp-3 text-sm leading-snug opacity-90">{caption}</p>
     {/if}

@@ -2,8 +2,6 @@
   import PostMedia from './PostMedia.svelte';
   import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
-  import ReelExpiryChip from '$lib/components/reels/ReelExpiryChip.svelte';
-  import { myReels } from '$lib/reels/myReels.svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import { POST_MARKDOWN_RENDERERS as renderers } from './postMarkdownRenderers';
@@ -124,11 +122,6 @@
    */
   const reel = $derived(isReel(post));
   let reelViewerOpen = $state(false);
-  /** The member's own reel: its card says how long it has left (C6). */
-  const mine = $derived(reel ? myReels.find(post.id) : undefined);
-  $effect(() => {
-    if (reel) myReels.ensure(post);
-  });
 </script>
 
 {#if post.markdown}
@@ -179,11 +172,6 @@
             onOpen={() => (reelViewerOpen = true)}
             {postInfo}
           />
-          {#if mine}
-            <div class="pointer-events-none absolute top-2 left-2">
-              <ReelExpiryChip reel={mine} />
-            </div>
-          {/if}
         </div>
       </div>
       {#if reelViewerOpen}

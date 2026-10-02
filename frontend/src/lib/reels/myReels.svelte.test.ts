@@ -3,7 +3,7 @@
  * newer than it is drawn, and a failed read draws nothing as the member's.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { MyReelsState, reelDaysLeft } from './myReels.svelte';
+import { MyReelsState } from './myReels.svelte';
 import type { MyReel, MyReelsAnswer } from '$lib/posts/api';
 
 const mine = (id: string, expiresAt: string): MyReel => ({
@@ -24,14 +24,6 @@ const answer = (reels: MyReel[]): MyReelsAnswer => ({
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-describe('reelDaysLeft', () => {
-  it('counts whole days up, on the clock it is given', () => {
-    expect(reelDaysLeft('2026-10-31T09:00:00Z', '2026-10-02T09:00:00Z')).toBe(29);
-    expect(reelDaysLeft('2026-10-02T10:00:00Z', '2026-10-02T09:00:00Z')).toBe(1);
-    expect(reelDaysLeft('2026-10-02T08:00:00Z', '2026-10-02T09:00:00Z')).toBe(0);
-  });
-});
-
 describe('MyReelsState', () => {
   it('asks once for every reel the list already speaks for', async () => {
     const fetch = vi.fn(async () => answer([mine('r1', '2026-10-31T09:00:00Z')]));
@@ -44,7 +36,6 @@ describe('MyReelsState', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(s.find('r1')?.id).toBe('r1');
     expect(s.find('someone-else')).toBeUndefined();
-    expect(s.daysLeft(s.find('r1')!)).toBe(29);
   });
 
   it('asks again for a reel created after the list it holds', async () => {

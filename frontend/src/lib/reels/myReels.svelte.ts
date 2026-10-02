@@ -15,17 +15,6 @@
 import { getMyReels, type MyReel, type MyReelsAnswer, type PostEntity } from '$lib/posts/api';
 import { currentUserId } from '$lib/stores/userState.svelte';
 
-const DAY_MS = 86_400_000;
-
-/**
- * Whole days left before a reel is deleted, counted from `serverNow` and rounded UP - "1" until the
- * last day is over, "0" only when the deletion is due.
- */
-export function reelDaysLeft(expiresAt: string, serverNow: string): number {
-  const left = Date.parse(expiresAt) - Date.parse(serverNow);
-  return Math.max(0, Math.ceil(left / DAY_MS));
-}
-
 /** One `my-reels` answer and the account it was asked for. */
 interface HeldAnswer {
   userId: string | null;
@@ -62,16 +51,6 @@ export class MyReelsState {
   /** The member's own reel with this id, or `undefined` when it is not theirs (or not loaded). */
   find(id: string): MyReel | undefined {
     return this.answer?.reels.find((r) => r.id === id);
-  }
-
-  /**
-   * Days left for one of the member's reels, on the server's clock. Only a reel `find` returned is
-   * given here, so the answer it came from is held.
-   */
-  daysLeft(reel: MyReel): number {
-    const answer = this.answer;
-    if (!answer) throw new Error(`[my-reels] daysLeft(${reel.id}) with no list held`);
-    return reelDaysLeft(reel.expiresAt, answer.serverNow);
   }
 
   /**
