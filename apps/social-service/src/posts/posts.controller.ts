@@ -7,6 +7,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post as HttpPost,
   Query,
@@ -185,7 +186,7 @@ export class PostsController {
   /** Association agenda entry linked to this post (same association), if configured. */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId/calendar-link')
-  async getPostCalendarLink(@Param('postId') postId: string) {
+  async getPostCalendarLink(@Param('postId', ParseUUIDPipe) postId: string) {
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
     return { linkedEvent };
   }
@@ -213,7 +214,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
   getPost(
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string,
     @Headers('x-user-id') userId?: string
   ) {
@@ -230,7 +231,7 @@ export class PostsController {
   updatePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: UpdatePostDto
   ) {
     return this.service.updatePost(postId, xUserId, body, ga === 'true');
@@ -242,7 +243,7 @@ export class PostsController {
   deletePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
@@ -252,7 +253,7 @@ export class PostsController {
   @HttpPost(':postId/polls/:pollId/vote')
   votePoll(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
@@ -264,7 +265,7 @@ export class PostsController {
   @HttpPost(':postId/reactions')
   async addReaction(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -274,7 +275,10 @@ export class PostsController {
   /** Removes the calling user's reaction from a post. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
-  removeReaction(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
+  removeReaction(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
+  ) {
     return this.interactions.removeReaction(postId, xUserId);
   }
 
@@ -283,7 +287,7 @@ export class PostsController {
   @HttpPost(':postId/comments')
   async addComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: AddCommentDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -295,7 +299,7 @@ export class PostsController {
   @HttpPost(':postId/comments/:commentId/like')
   likeComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
     return this.interactions.likeComment(postId, commentId, xUserId);
@@ -306,7 +310,7 @@ export class PostsController {
   @Patch(':postId/comments/:commentId')
   editComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
@@ -319,7 +323,7 @@ export class PostsController {
   deleteComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
@@ -334,7 +338,7 @@ export class PostsController {
   async pinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, true);
@@ -346,7 +350,7 @@ export class PostsController {
   async unpinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, false);
@@ -358,7 +362,7 @@ export class PostsController {
   async unmaskPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.clearAnonymousFlag(postId);
@@ -381,7 +385,7 @@ export class PostsController {
   async hidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.hidePostByModeration(postId);
@@ -393,7 +397,7 @@ export class PostsController {
   async unhidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.unhidePost(postId);
