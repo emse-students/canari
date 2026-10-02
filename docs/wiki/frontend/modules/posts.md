@@ -748,12 +748,27 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   video (`followVideoSound(video, 'local')`). The feed, its viewer and the reel review keep the
   `app` scope exactly as before. Post comments render no video, and the replied-to preview and media
   thumbnails are muted stills, so no other surface carried the button.
-  **Several can play at once, as on Discord** (user's answer to a direct question, same day): a manual
-  video is only REMEMBERED (`trackManualPlayback`), never part of the one-at-a-time `playing` rule, which
-  stays for the feed's autoplaying videos and the viewer. **Opening a viewer pauses them**
-  (`followVideoSound`) and they stay paused when it closes. Verified in Chromium on two real clips: no
-  play from being in view, the button plays with `muted = false`, a second button plays alongside the
-  first, a tap on one opens the viewer and pauses both.
+  **ONE MEDIA PLAYS AT A TIME, IN THE WHOLE APP - this replaces the same-day "several can play at
+  once"** (user, 2026-10-02, after #1341: *"commencer une video doit en arreter une autre ... pareil
+  pour l'audio, les vocaux"*). ONE module, `actions/playbackArbiter.ts`: every `<video>` and `<audio>`
+  that can make sound registers on mount (`use:arbitratePlayback`; `followVideoSound` for the viewer)
+  and unregisters on destroy, and CLAIMS on its own `play` event, so a button, a native control and a
+  programmatic `play()` claim alike. Every other media playing is PAUSED, not reset: it keeps its
+  position, its own `pause` handler shows "play" again, no `ended`. Players: conversation video
+  (`InlineVideo manualPlay`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
+  video (`playWhileVisible`), the viewers (`VideoPlayer`, reels included). Not registered, so untouched:
+  notification sounds, a call's streams, silent previews (`SharedMediaThumb`, `PickedMediaPreview`,
+  the reel publish sheet's muted loop), the camera preview.
+  Cases: **the feed's muted autoplay is AMBIENT** - it claims only against other ambient videos, a
+  foreground media that starts pauses it, one scrolling into view does NOT start while a foreground
+  media plays, and once nothing plays any more (`onPlaybackIdle`) the video on screen resumes, so the
+  background never steals playback back; **a viewer opening** claims at once and, closing, hands the
+  feed back (what the reader started inline stays paused); **a recorder** (`VoiceRecorder`,
+  `reelRecorder`) calls `pausePlayback()` before it opens the microphone; **a refused `play()`** raises
+  no `play` event, so it pauses nobody; **a page hidden** pauses nothing new (no `visibilitychange`
+  listener). Calls are held off, so one starting is not wired - do it when they return. Tests:
+  `playbackArbiter.test.ts` (video<->video, voice<->voice, video<->voice, feed<->conversation, viewer,
+  recorder, refused play, unregister) and `VoiceMessagePlayer.svelte.test.ts`.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
   playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only

@@ -9,6 +9,7 @@
  * screen never reads a message.
  */
 
+import { pausePlayback } from '$lib/actions/playbackArbiter';
 import { pickReelRecorderMime } from './reelCapture';
 
 /**
@@ -61,6 +62,8 @@ export class ReelRecorder {
         cause: event,
       });
     };
+    // The take records the room: a video or voice note playing would be in it.
+    pausePlayback(undefined, false, 'reel recorder started');
     recorder.start(CHUNK_MS);
     this.#startedAt = performance.now();
   }
