@@ -116,7 +116,7 @@ jobs:
           cd "$DEV_DEPLOY_PATH"
           git remote set-url origin \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch origin main
+          git fetch origin "${{ inputs.sha }}"
           # THE COMMIT, NEVER THE BRANCH. `main` MOVES while a release runs - the bump's own push
           # is on it, and auto-merge lands pull requests unattended for as long as the arms take.
           # Resolving `main` here would be a SECOND resolution of a reference the caller already

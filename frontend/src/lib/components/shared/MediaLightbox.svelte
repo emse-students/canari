@@ -129,11 +129,26 @@
   let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * What the viewer's swipe, pinch, pan and double-tap leave alone: a video's taps and drags belong
-   * to the video, a button's to the button, and `VideoPlayer`'s control bar - whose seek bar is a
-   * drag that must stay a seek, never a swipe to the next media - says so with `data-video-controls`.
+   * What the viewer's swipe, pinch, pan and double-tap leave alone: a button's gestures belong to the
+   * button, and `VideoPlayer`'s control bar - whose seek bar is a drag that must stay a seek, never a
+   * swipe to the next media - says so with `data-video-controls`.
+   *
+   * THE `<video>` ITSELF IS NOT ON THE LIST ANY MORE (user, 2026-10-02): it used to be, because the
+   * engine's native controls lived on it. They are gone - the player draws its own bar, which is a
+   * separate element - so a pinch, a pan and a swipe that start on the picture are the viewer's, and
+   * a video zooms and moves like a photo. Its TAPS are still the player's (`VIDEO_PLAYER`).
    */
-  const NOT_A_GESTURE = 'video, button, [data-video-controls]';
+  const NOT_A_GESTURE = 'button, [data-video-controls]';
+
+  /**
+   * A video player's own box - the picture AND the black around a letterboxed clip. A swipe or a
+   * pinch that starts there is still the viewer's, but a TAP or a double-tap is the player's: it
+   * toggles the player's controls (`VideoPlayer`), where the viewer's tap used to take the black
+   * margins for its own and toggle the title bar instead.
+   */
+  const VIDEO_PLAYER = '[data-video-player]';
+  /** The current touch began inside a video player, so its tap is the player's. */
+  let touchOnPlayer = false;
 
   // ---- The frame ----
   /** The bars are faded out: a single tap toggles them (the immersive black view). */
@@ -253,6 +268,35 @@
     [tx, ty] = clampTranslation(nextTx, nextTy, { ...bounds, scale });
   }
 
+  /**
+   * THE FRAME HOLDS A VIDEO PLAYER (user, 2026-10-02: *"les controles devraient etre une ui par dessus
+   * l'element video zoomable et deplacable"*).
+   *
+   * The player sits INSIDE the transform wrapper, so zooming the wrapper scaled its control bar and
+   * carried it off the screen with the picture. A viewer that hosts a player therefore zooms and pans
+   * only the PICTURE: the wrapper keeps the swipe and the dismiss (the whole player moves with those),
+   * and the zoom reaches the `<video>` through `--lightbox-zoom`, which `VideoPlayer` applies to it.
+   * The bar, the play button and the poster are not part of that transform, so they stay put on the
+   * screen above the picture however far it is zoomed.
+   *
+   * Whether a player is in the frame is the CONTENT'S business (`{@render children}`), so it is read
+   * from the DOM, and re-read when the content changes (a gallery swiping from a photo to a clip).
+   */
+  let hostsPlayer = $state(false);
+
+  $effect(() => {
+    const el = transformEl;
+    if (!el) return;
+    const read = () => (hostsPlayer = !!el.querySelector(VIDEO_PLAYER));
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(el, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  });
+
+  /** The zoom and the pan as one transform: the wrapper's own, or the picture's alone. */
+  const zoomTransform = $derived(`translate(${tx}px, ${ty}px) scale(${scale})`);
+
   /** Zoom around a pivot point expressed in element-center coordinates. */
   function zoomAt(newScale: number, pivotX: number, pivotY: number) {
     const next = zoomAboutPivot({
@@ -288,6 +332,9 @@
       resetZoom();
       return;
     }
+    // A CLICK OR A DOUBLE-TAP DOES NOT ZOOM A VIDEO (user, 2026-10-02): a tap on a player toggles its
+    // controls. The wheel and a pinch still do.
+    if (hostsPlayer) return;
     const pivot = pivotOf(point, transformEl);
     zoomAt(GESTURE.DOUBLE_TAP_SCALE, pivot.x, pivot.y);
   }
@@ -389,6 +436,7 @@
         gesture = null;
         return;
       }
+      touchOnPlayer = !!(e.target as HTMLElement).closest(VIDEO_PLAYER);
       if (e.touches.length >= 2) {
         // A second finger turns anything into a pinch; a swipe under way springs back.
         if (gesture === 'swipe-h' || gesture === 'swipe-down') settle({ swipeDx: 0, dismissDy: 0 });
@@ -464,7 +512,8 @@
       const dy = end.y - touchStart.y;
 
       if (kind === 'pending') {
-        if (isTap(touchStart, end)) {
+        // A tap on a video player is NOT cancelled: its click is the player's toggle of its controls.
+        if (isTap(touchStart, end) && !touchOnPlayer) {
           // Cancelled so the tap does not also become the browser's click / dblclick.
           e.preventDefault();
           handleTap(end);
@@ -575,6 +624,7 @@
     const target = e.target as HTMLElement;
     if (target.closest(NOT_A_GESTURE)) return;
     isDragging = true;
+    panMoved = false;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragStartTx = tx;
@@ -582,8 +632,18 @@
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
+  /** A mouse pan moved the picture: the click that ends it is not a tap on whatever is under it. */
+  let panMoved = false;
+
+  function swallowClickAfterPan(e: MouseEvent) {
+    if (!panMoved) return;
+    panMoved = false;
+    e.stopPropagation();
+  }
+
   function handlePointerMove(e: PointerEvent) {
     if (!isDragging || e.pointerType === 'touch') return;
+    if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 3) panMoved = true;
     panTo(dragStartTx + e.clientX - dragStartX, dragStartTy + e.clientY - dragStartY);
   }
 
@@ -596,7 +656,7 @@
   function handleDoubleClick(e: MouseEvent) {
     e.stopPropagation();
     const target = e.target as HTMLElement;
-    if (target.closest(NOT_A_GESTURE)) return;
+    if (target.closest(NOT_A_GESTURE) || target.closest(VIDEO_PLAYER)) return;
     toggleZoomAt(e);
   }
 
@@ -732,12 +792,22 @@
           bind:this={transformEl}
           role="presentation"
           class="pointer-events-auto relative z-10 flex h-full w-full items-center justify-center select-none"
-          style="transform: translate({tx + swipeDx}px, {ty + dismissDy}px) scale({scale *
-            dismissScale(
-              progress
-            )}); transform-origin: center; will-change: transform; touch-action: none; transition: {settling
+          style="transform: {hostsPlayer
+            ? `translate(${swipeDx}px, ${dismissDy}px) scale(${dismissScale(progress)})`
+            : `translate(${tx + swipeDx}px, ${ty + dismissDy}px) scale(${
+                scale * dismissScale(progress)
+              })`}; --lightbox-zoom: {hostsPlayer
+            ? zoomTransform
+            : 'none'}; transform-origin: center; will-change: transform; touch-action: none; transition: {settling
             ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
-            : 'none'}; cursor: {isDragging ? 'grabbing' : isZoomed ? 'grab' : 'zoom-in'};"
+            : 'none'}; cursor: {isDragging
+            ? 'grabbing'
+            : isZoomed
+              ? 'grab'
+              : hostsPlayer
+                ? 'default'
+                : 'zoom-in'};"
+          onclickcapture={swallowClickAfterPan}
           onclick={(e) => e.stopPropagation()}
           ondblclick={handleDoubleClick}
           ondragstart={refuseNativeDrag}

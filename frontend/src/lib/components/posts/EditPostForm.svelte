@@ -46,6 +46,9 @@
   import FormSection from './FormSection.svelte';
   import PostMedia from './PostMedia.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
+  import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
 
   /**
    * Full-featured post edit form, mirroring CreatePostForm.
@@ -146,6 +149,8 @@
   // --- UI state ---
   let saving = $state(false);
   let errorMessage = $state('');
+  /** A newly picked video being re-encoded on the device during save (decision C3). */
+  const videoPreparation = new VideoPreparationState();
   let currentAuthToken = $state(untrack(() => authToken));
   let editorField = $state<MarkdownComposerField | null>(null);
 
@@ -256,8 +261,13 @@
 
       // Upload new media files and get their refs.
       const uploadedRefs: PostMediaRef[] = [];
+      const limits = newFiles.length > 0 ? await mediaService.uploadLimits() : null;
       for (let i = 0; i < newFiles.length; i++) {
-        const { file, dims } = await preparePostMedia(newFiles[i]);
+        const { file, dims } = await preparePostMedia(
+          newFiles[i],
+          videoPreparation.optionsFor(limits?.maxPlaintextBytes)
+        );
+        videoPreparation.finish();
         const ref = await mediaService.encryptAndUpload(file, currentAuthToken, dims, 'archive');
         const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
@@ -299,10 +309,16 @@
       newFilePreviews.forEach((url) => URL.revokeObjectURL(url));
       onSaved(updated);
     } catch (err) {
+      if (isVideoPrepareError(err) && err.fault === 'aborted') {
+        // The member pressed the cross on the progress line: the editor stays as it was.
+        Log.d('POST_EDITOR', 'save stopped: video preparation cancelled');
+        return;
+      }
       // Accused, not debug-logged: this is the one failure an editor reports (see CreatePostForm).
       console.error('[POST_EDITOR] save failed', err);
       errorMessage = publishFailureMessage(err, m.post_edit_save_error());
     } finally {
+      videoPreparation.finish();
       saving = false;
     }
   }
@@ -510,6 +526,13 @@
           {m.post_create_error_dismiss_label()}
         </button>
       </div>
+    {/if}
+
+    {#if videoPreparation.fraction !== null}
+      <VideoPreparationProgress
+        fraction={videoPreparation.fraction}
+        oncancel={() => videoPreparation.cancel()}
+      />
     {/if}
 
     <PostComposerBar

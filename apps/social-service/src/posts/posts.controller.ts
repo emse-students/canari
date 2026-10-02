@@ -7,6 +7,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post as HttpPost,
   Query,
@@ -16,6 +17,8 @@ import {
 import { FeedAudienceGuard } from './feed-audience.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
+import { assertCreateKindShape } from './reel-rules';
+import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
@@ -77,6 +80,24 @@ export class PostsController {
     return this.service.getMyScheduledPosts(xUserId);
   }
 
+  /**
+   * The CanaReels numbers (longest reel, retention, "about to expire" window), so no client is
+   * built carrying a copy - see `reel.constants.ts`. Declared before `:postId` like every literal
+   * segment here.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('reel-limits')
+  getReelLimits() {
+    return reelLimits();
+  }
+
+  /** The caller's own live reels, soonest expiry first, flagged when they are about to expire. */
+  @UseGuards(NginxAuthGuard)
+  @Get('my-reels')
+  getMyReels(@Headers('x-user-id') xUserId: string) {
+    return this.service.getMyReels(xUserId);
+  }
+
   /** Returns all posts currently hidden by moderation, with their pending report count. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Get('hidden')
@@ -126,6 +147,7 @@ export class PostsController {
       isAdmin: xGlobalAdmin === 'true',
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
+      kind: query.kind,
     });
   }
 
@@ -164,6 +186,8 @@ export class PostsController {
     @Body() body: CreatePostDto
   ) {
     await this.assertNotMuted(xUserId);
+    // The shape of the request first - a malformed reel is refused before anything is claimed.
+    assertCreateKindShape(body);
     const isGlobalAdmin = xGlobalAdmin === 'true';
     if (body.associationId) {
       const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
@@ -185,7 +209,7 @@ export class PostsController {
   /** Association agenda entry linked to this post (same association), if configured. */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId/calendar-link')
-  async getPostCalendarLink(@Param('postId') postId: string) {
+  async getPostCalendarLink(@Param('postId', ParseUUIDPipe) postId: string) {
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
     return { linkedEvent };
   }
@@ -213,7 +237,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
   getPost(
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string,
     @Headers('x-user-id') userId?: string
   ) {
@@ -230,7 +254,7 @@ export class PostsController {
   updatePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: UpdatePostDto
   ) {
     return this.service.updatePost(postId, xUserId, body, ga === 'true');
@@ -242,7 +266,7 @@ export class PostsController {
   deletePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
@@ -252,7 +276,7 @@ export class PostsController {
   @HttpPost(':postId/polls/:pollId/vote')
   votePoll(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
@@ -264,7 +288,7 @@ export class PostsController {
   @HttpPost(':postId/reactions')
   async addReaction(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -274,7 +298,10 @@ export class PostsController {
   /** Removes the calling user's reaction from a post. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
-  removeReaction(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
+  removeReaction(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
+  ) {
     return this.interactions.removeReaction(postId, xUserId);
   }
 
@@ -283,7 +310,7 @@ export class PostsController {
   @HttpPost(':postId/comments')
   async addComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: AddCommentDto
   ) {
     await this.assertNotMuted(xUserId);
@@ -295,7 +322,7 @@ export class PostsController {
   @HttpPost(':postId/comments/:commentId/like')
   likeComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
     return this.interactions.likeComment(postId, commentId, xUserId);
@@ -306,7 +333,7 @@ export class PostsController {
   @Patch(':postId/comments/:commentId')
   editComment(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
@@ -319,7 +346,7 @@ export class PostsController {
   deleteComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
@@ -334,7 +361,7 @@ export class PostsController {
   async pinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, true);
@@ -346,7 +373,7 @@ export class PostsController {
   async unpinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, false);
@@ -358,7 +385,7 @@ export class PostsController {
   async unmaskPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.clearAnonymousFlag(postId);
@@ -381,7 +408,7 @@ export class PostsController {
   async hidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.hidePostByModeration(postId);
@@ -393,7 +420,7 @@ export class PostsController {
   async unhidePost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId') postId: string
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.unhidePost(postId);

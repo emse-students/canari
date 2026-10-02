@@ -1,4 +1,4 @@
-import { APP_PLACES } from '$lib/navigation/places';
+import { CAMERA_PLACE, MOBILE_NAV_PLACES, type AppPlace } from '$lib/navigation/places';
 import { historyOverlayStackDepth } from '$lib/utils/historyOverlayStack';
 import { isSwipeNavViewport as isSwipeViewportQuery } from './viewport';
 
@@ -17,8 +17,20 @@ const SWIPE_NAV_EXCLUDED_PREFIXES = [
   '/login',
 ] as const;
 
-/** Bottom-nav places that can be switched with a horizontal swipe. */
-export const MOBILE_SWIPE_PLACES = APP_PLACES.filter((p) => p.mobileNav);
+/**
+ * The places a horizontal swipe walks through, in order: the CAMERA, then the four of the bottom bar.
+ *
+ * ITS OWN LIST, NOT A `mobileNav` FILTER (C5, user 2026-09-29: the camera is a tab LEFT of the feed).
+ * The bar's list (`MOBILE_NAV_PLACES`) also feeds `BottomNav`, the native iOS bar and - through
+ * `APP_PLACES` - the desktop sidebar, so a `mobileNav` camera would have drawn a fifth icon in all
+ * three. The camera is reached by swiping right from the feed and by nothing else, so it lives here
+ * alone: a place before `posts` makes that swipe its `prev`, and the feed's right-hand rubber band
+ * becomes a commit by the same index rule.
+ */
+export const MOBILE_SWIPE_PLACES: readonly Pick<AppPlace, 'id' | 'href'>[] = [
+  CAMERA_PLACE,
+  ...MOBILE_NAV_PLACES,
+];
 
 /**
  * A FIXED 60px WAS A TAP'S WORTH OF DRIFT AND IT CHANGED THE PAGE (user, 2026-09-29: *"le swipe est

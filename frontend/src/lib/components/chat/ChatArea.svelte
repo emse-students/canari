@@ -14,6 +14,7 @@
     ChartColumn,
   } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
+  import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
@@ -25,18 +26,15 @@
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
-  import {
-    anchorShift,
-    isPinnedToBottom,
-    respondToNewMessage,
-    shouldFollowThreadBottom,
-  } from '$lib/utils/chat/threadAnchor';
+  import { isPinnedToBottom, respondToNewMessage } from '$lib/utils/chat/threadAnchor';
+  import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
+  import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
@@ -129,7 +127,10 @@
     onDelete?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
-    /** Callback to edit a message by ID with new text. */
+    /**
+     * Callback to save an edited message by ID with its new text. The editing itself is done in the
+     * composer (see {@link editing}); this is called once, on confirmation.
+     */
     onEdit?: (messageId: string, text: string) => void;
     /** Callback to cancel the current reply. */
     onCancelReply?: () => void;
@@ -155,6 +156,8 @@
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
+    /** A picked video being re-encoded before it is staged - handed to the composer. */
+    videoPreparation?: VideoPreparationState;
     /** Whether a file upload is currently in progress. */
     isUploading?: boolean;
     /** Callback to start an audio-only call. */
@@ -243,6 +246,7 @@
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
+    videoPreparation,
     isUploading = false,
     onStartAudioCall,
     onStartVideoCall,
@@ -789,6 +793,23 @@
     await navigateToMessageEnsureLoaded(searchMatches[next]);
   }
 
+  /**
+   * EDITING A MESSAGE HAPPENS IN THE COMPOSER, NOT IN THE BUBBLE (user, 2026-10-02) - see
+   * `createEditSession`, which keeps the draft the edit replaced and gives it back.
+   */
+  const editSession = createEditSession({
+    getText: () => messageText,
+    setText: (text) => onMessageChange(text),
+    save: (messageId, text) => onEdit?.(messageId, text),
+  });
+
+  // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
+  // saved by the session belonged to the conversation that was left.
+  $effect(() => {
+    void conversation?.id;
+    untrack(() => editSession.reset());
+  });
+
   $effect(() => {
     const c = conversation;
     const convoKey = c ? `${c.id}-${c.contactName}` : '';
@@ -881,12 +902,12 @@
    * is what the user reported on 2026-09-18 (*"mettre une reaction devrait faire monter la
    * discussion, pas la descendre"* - the same request read from the other end).
    *
-   * **THREE TRIGGERS, ONE CLOSURE, ONE QUANTITY.** The pane can grow from its content (a row
-   * added or re-laid out), from its own box (the soft keyboard, a resize, a panel opening) or from
-   * the composer band, whose measured height IS this scroller's `padding-bottom` and therefore part
-   * of its `scrollHeight`. Three observers, and all three ask `follow()` the same question about
-   * the same number - which is why a typing bubble, a wrapping composer and a new message cannot
-   * disagree about where the bottom is. That disagreement was the defect (user, 2026-09-22:
+   * **FOUR TRIGGERS, ONE CLOSURE, ONE QUANTITY** - `observeThreadGrowth`, which holds the wiring
+   * and the anchor. The pane can grow from its content (a row added or re-laid out), from a child's
+   * box (a medium decoding to its size), from its own box (the soft keyboard, a resize, a panel
+   * opening) or from the composer band, whose measured height IS this scroller's `padding-bottom`.
+   * All of them ask the same question about the same number - which is why a typing bubble, a
+   * wrapping composer and a new message cannot disagree about where the bottom is. That disagreement was the defect (user, 2026-09-22:
    * *"suivre les mouvements de maniere fluide plutot que de cacher involontairement des morceaux de
    * l'interface"*).
    *
@@ -904,61 +925,11 @@
   $effect(() => {
     const el = chatContainer;
     if (!el) return;
-    let previousHeight = el.scrollHeight;
-    /**
-     * The topmost rendered row, and where it was the last time this fired.
-     *
-     * THE SAME CLOSURE ANSWERS BOTH ENDS OF THE PANE. Growth below the reader is followed; growth
-     * ABOVE them is a prepend and must be undone, and `scrollTop` cannot tell the two apart - both
-     * grow `scrollHeight` and leave `scrollTop` alone. A row can, so the row is what is kept. It
-     * survives a prepend (the window only ever grows upward), which is exactly the case that had
-     * no compensation at all: the render window stepping up by 140 groups, and a PEER scrollback
-     * answer, which does not arrive as a return value but later, as an ordinary bundle.
-     */
-    let anchor: { row: HTMLElement; top: number } | null = null;
-    const captureAnchor = () => {
-      const row = el.querySelector<HTMLElement>('[id^="msg-"]');
-      anchor = row ? { row, top: row.offsetTop } : null;
-    };
-    captureAnchor();
-    const follow = () => {
-      const currentHeight = el.scrollHeight;
-      const shouldFollow = shouldFollowThreadBottom({
-        previousHeight,
-        currentHeight,
-        wasNearBottom: isNearBottom,
-        isLoadingOlder,
-        isEntering: entering,
-      });
-      const shift = shouldFollow
-        ? 0
-        : anchorShift({
-            previousTop: anchor?.top ?? null,
-            currentTop: anchor?.row.isConnected ? anchor.row.offsetTop : null,
-            isEntering: entering,
-          });
-      previousHeight = currentHeight;
-      if (shouldFollow) el.scrollTop = currentHeight;
-      // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
-      // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
-      // therefore lands on the same pixel whether or not this ran first - it cannot double-count.
-      else if (shift > 0) el.scrollTop += shift;
-      captureAnchor();
-    };
-    const mutations = new MutationObserver(follow);
-    mutations.observe(el, { childList: true, subtree: true, characterData: true });
-    // The pane's OWN box, for everything that changes the geometry without changing the content:
-    // the soft keyboard, a window resize, a side panel opening.
-    const boxes = new ResizeObserver(follow);
-    boxes.observe(el);
-    // And the composer band, whose height IS this scroller's `padding-bottom`. Growing the composer
-    // grows `scrollHeight` by exactly as much as a new row would, so the same closure answers it -
-    // which is what stops a third line of typing from swallowing the last message.
-    if (composerBand) boxes.observe(composerBand);
-    return () => {
-      mutations.disconnect();
-      boxes.disconnect();
-    };
+    return observeThreadGrowth(
+      el,
+      () => ({ wasNearBottom: isNearBottom, isLoadingOlder, isEntering: entering }),
+      composerBand
+    );
   });
 
   $effect(() => {
@@ -1362,7 +1333,7 @@
             {onClosePoll}
             {onDelete}
             {canModerate}
-            {onEdit}
+            onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
             {pinnedIds}
             {switchTime}
@@ -1472,10 +1443,14 @@
           {onSend}
           {replyingTo}
           {onCancelReply}
+          editingText={editSession.original}
+          onCancelEdit={editSession.cancel}
+          onConfirmEdit={editSession.confirm}
           {onFilesSelected}
           {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}
+          {videoPreparation}
           {isUploading}
         />
       </div>

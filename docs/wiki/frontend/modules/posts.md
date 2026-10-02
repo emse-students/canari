@@ -42,7 +42,11 @@ which option they picked - the server does not know.
 
 ## Post creation (EditPostForm.svelte)
 
-- Markdown content editor.
+- Markdown content editor. **A body OR a media entry, and either is enough** - the client's
+  `hasContent` and the server's `PostBodyOrMediaConstraint` (`post.dto.ts`, create and edit) say the
+  same thing, whitespace counting as no body on both. Until 2026-10-02 the server said
+  `@IsNotEmpty()` alone: a captionless photo or video was prepared, encrypted and uploaded, then
+  refused with `markdown should not be empty` - read on the Mi 9T while proving CanaReels R2.
 - Optional image upload. **Encrypted like any other media** (`encryptAndUpload`, per-file CEK, the
   key travelling in the post row) and marked `retentionClass: 'archive'` so the media service's idle
   sweep never takes it — see
@@ -127,7 +131,8 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   non ? Je veux un truc joli comme instagram"*). It drew the native controls - Android's grey bar -
   inside a 16:9 box of its own, a "Plein ecran" pill and a download button over it, and a phone's
   vertical clip became a strip between black bands over a grey one. Now `preparePostMedia` records
-  a video's `width`/`height` at upload (`readVideoDimensions`), so `PostContent` reserves the box
+  a video's `width`/`height` at upload (the on-device encoder's own output since R2,
+  [video-preparation](../video-preparation.md)), so `PostContent` reserves the box
   at the clip's own shape; the video FILLS it (`object-cover`, cropped only by the
   `--media-max-height` ceiling - a clip's subject is in its middle, unlike a poster's text, and the
   whole frame is one tap away) and plays muted on its own (`InlineVideo`, rule in
@@ -724,19 +729,98 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card, chat bubble | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
+| Feed card | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
+| Chat bubble | `InlineVideo manualPlay` | Discord-style: a play button, no autoplay (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
+- **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
+  Discord"*): `InlineVideo`'s `manualPlay` mode. It shows its first frame with an amber **play
+  button**; **the button starts the video where it is, with sound of its own**;
+  **a tap on the rest of it opens the viewer, whose player starts it too**. No `playWhileVisible`, no
+  loop (it stops on its last frame and offers play again).
+  **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
+  2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
+  TOUS les boutons de la page changent"* - the feed's rule, one answer for every video, is right for
+  the feed and was wrong where each video is its own). The manual `InlineVideo` is audible from the
+  start (`muted = false`), neither reads nor writes the app-wide answer - so a feed that autoplays
+  muted cannot open a conversation video silent - and the chat viewer and the conversation media
+  panel mount `VideoPlayer soundScope="local"`: it opens audible and its bar button mutes that one
+  video (`followVideoSound(video, 'local')`). The feed, its viewer and the reel review keep the
+  `app` scope exactly as before. Post comments render no video, and the replied-to preview and media
+  thumbnails are muted stills, so no other surface carried the button.
+  **ONE MEDIA PLAYS AT A TIME, IN THE WHOLE APP - this replaces the same-day "several can play at
+  once"** (user, 2026-10-02, after #1341: *"commencer une video doit en arreter une autre ... pareil
+  pour l'audio, les vocaux"*). ONE module, `actions/playbackArbiter.ts`: every `<video>` and `<audio>`
+  that can make sound registers on mount (`use:arbitratePlayback`; `followVideoSound` for the viewer)
+  and unregisters on destroy, and CLAIMS on its own `play` event, so a button, a native control and a
+  programmatic `play()` claim alike. Every other media playing is PAUSED, not reset: it keeps its
+  position, its own `pause` handler shows "play" again, no `ended`. Players: conversation video
+  (`InlineVideo manualPlay`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
+  video (`playWhileVisible`), the viewers (`VideoPlayer`, reels included). Not registered, so untouched:
+  notification sounds, a call's streams, silent previews (`SharedMediaThumb`, `PickedMediaPreview`,
+  the reel publish sheet's muted loop), the camera preview.
+  Cases: **the feed's muted autoplay is AMBIENT** - it claims only against other ambient videos, a
+  foreground media that starts pauses it, one scrolling into view does NOT start while a foreground
+  media plays, and once nothing plays any more (`onPlaybackIdle`) the video on screen resumes, so the
+  background never steals playback back; **a viewer opening** claims at once and, closing, hands the
+  feed back (what the reader started inline stays paused); **a recorder** (`VoiceRecorder`,
+  `reelRecorder`) calls `pausePlayback()` before it opens the microphone; **a refused `play()`** raises
+  no `play` event, so it pauses nobody; **a page hidden** pauses nothing new (no `visibilitychange`
+  listener). Calls are held off, so one starting is not wired - do it when they return. Tests:
+  `playbackArbiter.test.ts` (video<->video, voice<->voice, video<->voice, feed<->conversation, viewer,
+  recorder, refused play, unregister) and `VoiceMessagePlayer.svelte.test.ts`.
+- **Opening a video full screen resumes where it is** (user, 2026-10-02: *"ouvrir une video en grand
+  devrait reprendre la ou elle en est, pas au debut"*). The inline video and the viewer's player are
+  two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
+  video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
+  each: `InlineVideo` writes `currentTime` to `utils/videoResume.ts` as the reader opens it, keyed by
+  the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
+  mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
+  once the viewer has it, it is gone, so opening the same file later from somewhere that never played
+  it (the conversation's media panel) starts at 0. **A clip that played to its end starts over** (a
+  conversation's video does not loop; resuming on its last frame would end it at once). A streamed
+  (MSE) `src` is minted per player, so it never matches and is not resumed. Verified in Chromium on a
+  real clip: a chat video stopped at 2.6 s, the viewer opened at the same place and played on.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
   playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
-- **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch; a tap on the
-  picture, a key or a pause brings it back, and a paused video keeps it.
+- **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
+  video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
+  player toggles it** (user, 2026-10-02) - anywhere means the black around a letterboxed clip too: the
+  tap listener used to be on the `<video>` alone, which a phone's landscape clip fills a third of.
+  Only a mouse's `pointermove` counts; a finger's is a drag (a swipe, a seek) and shows nothing. A
+  key or a pause brings it back too.
 - **Keyboard**: the player is one tab stop (`role="group"`); space/k, arrows (+-5 s), Home/End, m,
   f (`videoKeyAction`). It stops the arrows from reaching `MediaLightbox`'s previous/next.
 - **Inside `MediaLightbox`** the bar carries `data-video-controls`, which the viewer's swipe, pinch
-  and pan treat like a `<video>` or a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek.
+  and pan treat like a `<button>` (`NOT_A_GESTURE`): a drag on the seek bar is a seek. **The `<video>`
+  itself is no longer on that list** (2026-10-02): its native controls were what put it there, and they
+  are gone, so a pinch, a pan and a swipe that start on the picture are the viewer's.
+  The player's root carries `data-video-player`: **a TAP that starts there is the player's** - the
+  viewer neither cancels its click nor toggles its own title bar - while a swipe from there is still the
+  viewer's. Before, a tap on the black margins was the viewer's, so the controls never answered on most
+  of the screen. Verified in Chromium on a recorded portrait clip in the open viewer: the controls fade,
+  a mouse move over the side margin brings them back, a touch tap on the margin toggles them both ways;
+  `MediaLightbox.videoTap.svelte.test.ts` is red on the old viewer.
+- **The controls are an overlay on a zoomable, movable picture** (user, 2026-10-02: *"les controles
+  devraient etre une ui par dessus l'element video zoomable et deplacable"*). The player sits INSIDE the
+  viewer's transform wrapper, so zooming the wrapper scaled the control bar and carried it off the
+  screen with the picture. A first answer - never zoom a video - was dropped the same day. Now the
+  viewer reads whether its frame holds a `[data-video-player]` (`hostsPlayer`, a `MutationObserver`:
+  the content is `{@render children}` and a gallery swipes from a photo to a clip) and, if so, **the
+  wrapper keeps only the swipe and the dismiss, and the zoom and pan go to the `<video>` alone**
+  through the custom property `--lightbox-zoom`, which `VideoPlayer` applies to the element
+  (`transform: var(--lightbox-zoom, none)`). The bar, the play button and the poster are siblings, so
+  they stay put above the picture. A photo is unchanged (the wrapper carries everything).
+  **Wheel and pinch zoom a video and a drag moves it; a CLICK or a DOUBLE-TAP does not start a zoom**
+  (user, same day: a tap on a player toggles its controls) - a double-click still RESETS one. The
+  `zoom-in` cursor is not offered over a video. **The click that ends a mouse pan is swallowed**
+  (`panMoved`), or every drag would toggle the controls. Verified in Chromium on a real clip: five wheel
+  ticks take the picture from 320 to 2560 px wide while the bar stays at 1000x84 in the same place, a
+  drag moves the picture 80 px, the controls do not toggle, a double-click only resets.
+  **Owed: a pinch and a one-finger pan on a phone** - the touch path is read from the code and tested
+  for its taps, not exercised with fingers.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
   until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
@@ -760,10 +844,12 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 **THE SEAM CANAREELS (C7) BUILDS ON.** A reel plays in the feed and a touch opens a full-screen
 vertical viewer that swipes to the next ([backlog](../../backlog.md)). `VideoPlayer` assumes no feed,
 post or lightbox: it takes a `src` and the box classes, owns its bar, keyboard and fade, and reads
-the app's one sound answer. So a vertical viewer mounts one per reel, with `autoplay`/`loop` as it
-chooses. The two things such a viewer brings itself are the gesture exclusion (`data-video-controls`
-is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and one-video-at-a-time,
-which `followVideoSound` already gives every element it is on.
+the app's one sound answer. The two things such a viewer brings itself are the gesture exclusion
+(`data-video-controls` is the attribute to honour, as `MediaLightbox`'s `NOT_A_GESTURE` does) and
+one-video-at-a-time, which `followVideoSound` already gives every element it is on. **Built
+2026-10-02** ([reels](reels.md#watching-the-feed-card-and-the-full-screen-viewer-c7)), with one
+correction to "one per reel": a mounted player CLAIMS playback, so the viewer mounts ONE, for the
+reel on screen, and its neighbours draw the poster.
 
 ## Comment media (image + GIF)
 

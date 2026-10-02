@@ -33,20 +33,13 @@
     type PostComposerDraft,
   } from '$lib/posts/postComposerDraft';
   import {
-    listAssociations,
-    listMyAssociations,
     listLinkableValidatedCalendarEvents,
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import { listPostAsAssociations, postIdentityFields } from '$lib/posts/postIdentity';
   import Picker from '$lib/components/ui/Picker.svelte';
-  import type { PickerOption } from '$lib/components/ui/picker';
-  import { isGlobalAdmin, getSavedDisplayName } from '$lib/stores/user';
-  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
+  import PostIdentityPicker from './PostIdentityPicker.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -60,6 +53,9 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import { linkableEventPickerOptions } from '$lib/utils/time';
+  import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
+  import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
 
   /**
    * Full-featured post creation form. Supports:
@@ -115,47 +111,16 @@
   let scheduledAt = $state('');
 
   // --- Association identity ---
-  let myAssociations = $state<Association[]>([]);
-  /**
-   * One field for THREE kinds of identity: `''` (personal profile), `ANONYMOUS_POST_IDENTITY`
-   * (anonymous), or a real association's UUID. They were a select plus a separate toggle - user
-   * request, 2026-09-17, to fold "Anonyme" into the same "who is publishing" choice instead, and
-   * to make that choice available to every user rather than only association admins.
-   */
+  /** Associations the user may post as (`listPostAsAssociations`). */
+  let postAsAssociations = $state<Association[]>([]);
+  /** Who is publishing - `''`, anonymous or an association (`PostIdentityPicker`). */
   let selectedAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
 
-  /** Associations the user may post as (admin/owner). Global admins can post as any. */
-  let postAsAssociations = $derived(
-    isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
-  );
-
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
-  const selectedAssociation = $derived(
-    isAssociationSelected
-      ? postAsAssociations.find((a) => a.id === selectedAssociationId)
-      : undefined
-  );
-  /**
-   * The personal option is labelled with the member's OWN NAME, because the select is drawn as the
-   * author line ("Jolan Boudin" and a chevron, as Facebook heads its composer), and a heading that
-   * read "Profil personnel" would say what kind of identity this is rather than whose.
-   */
-  const personalLabel = getSavedDisplayName() || m.post_create_personal_profile_label();
-
-  /**
-   * Who may publish, in the app's own picker: the member, anonymous, then the associations and lists
-   * they may speak for, each with its avatar. It was a native `<select>`, which on Android opened
-   * the system's dialog of bare names (user, 2026-09-29).
-   */
-  const identityOptions = $derived<PickerOption[]>([
-    { value: '', label: personalLabel },
-    { value: ANONYMOUS_POST_IDENTITY, label: m.post_create_anonymous_label() },
-    ...associationPickerOptions(postAsAssociations),
-  ]);
 
   /** The events a post as an association may link to, "no event" first. */
   const linkableEventOptions = $derived(
@@ -169,6 +134,8 @@
   // --- UI state ---
   let publishing = $state(false);
   let errorMessage = $state('');
+  /** A picked video being re-encoded on the device during publish (decision C3). */
+  const videoPreparation = new VideoPreparationState();
   let authToken = $state('');
   // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
@@ -308,7 +275,7 @@
     }
 
     try {
-      myAssociations = isGlobalAdmin() ? await listAssociations() : await listMyAssociations();
+      postAsAssociations = await listPostAsAssociations();
     } catch (e) {
       console.error('Failed to load associations', e);
     }
@@ -406,11 +373,17 @@
         }
       }
 
-      // Compress images, upload other files as-is; collect the resulting refs.
-      stage = 'mediaUpload';
+      // Compress images, re-encode videos on the device, upload the rest as-is; collect the refs.
       const media = [];
+      const limits = selectedFiles.length > 0 ? await mediaService.uploadLimits() : null;
       for (let i = 0; i < selectedFiles.length; i++) {
-        const { file, dims } = await preparePostMedia(selectedFiles[i]);
+        stage = 'mediaPrepare';
+        const { file, dims } = await preparePostMedia(
+          selectedFiles[i],
+          videoPreparation.optionsFor(limits?.maxPlaintextBytes)
+        );
+        videoPreparation.finish();
+        stage = 'mediaUpload';
         const ref = await mediaService.encryptAndUpload(file, authToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
@@ -443,8 +416,7 @@
       }
       if (includeForm) payload.attachedFormId = selectedFormId;
 
-      if (isAssociationSelected) payload.associationId = selectedAssociationId;
-      else if (isAnonymousSelected) payload.anonymous = true;
+      Object.assign(payload, postIdentityFields(selectedAssociationId));
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -473,12 +445,18 @@
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
+      if (isVideoPrepareError(err) && err.fault === 'aborted') {
+        // The member pressed the cross on the progress line: the composer stays as it was.
+        Log.d('POST_COMPOSER', 'publish stopped: video preparation cancelled');
+        return;
+      }
       // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. This was `Log.d` - debug level - in a file
       // that already logged `console.error` for a dropdown that would not load, so the one failure
       // a reader reports was the quietest line in it.
       console.error(`[POST_COMPOSER] publish failed at ${stage}`, err);
       errorMessage = publishFailureMessage(err, m.post_create_publish_error());
     } finally {
+      videoPreparation.finish();
       publishing = false;
     }
   }
@@ -497,57 +475,11 @@
 <div class="flex min-h-0 flex-1 flex-col">
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3 sm:px-6">
     <!-- Who is publishing: the avatar of that identity, and the choice itself drawn as the name. -->
-    <div class="flex items-center gap-3">
-      <div class="h-11 w-11 shrink-0">
-        {#if isAnonymousSelected}
-          <AnonymousAvatar fill />
-        {:else if selectedAssociation}
-          <AssociationAvatar
-            fill
-            shape="circle"
-            name={selectedAssociation.name}
-            logoUrl={selectedAssociation.logoUrl}
-          />
-        {:else if globalSession.userId}
-          <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
-        {/if}
-      </div>
-      <div class="min-w-0">
-        <Picker
-          id="post-association-select"
-          value={selectedAssociationId}
-          options={identityOptions}
-          onValueChange={(v) => (selectedAssociationId = v)}
-          label={m.post_create_post_as_label()}
-          triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
-        >
-          {#snippet leading(option)}
-            <span class="block h-9 w-9">
-              {#if option.value === ANONYMOUS_POST_IDENTITY}
-                <AnonymousAvatar fill />
-              {:else if option.value === ''}
-                {#if globalSession.userId}
-                  <Avatar fill userId={globalSession.userId} fallbackLabel={personalLabel} />
-                {/if}
-              {:else}
-                {@const asso = postAsAssociations.find((a) => a.id === option.value)}
-                <AssociationAvatar
-                  fill
-                  shape="circle"
-                  name={asso?.name ?? option.label}
-                  logoUrl={asso?.logoUrl}
-                />
-              {/if}
-            </span>
-          {/snippet}
-        </Picker>
-      </div>
-    </div>
-    {#if isAnonymousSelected}
-      <p class="text-text-muted text-2xs mt-2" transition:fade={{ duration: 200 }}>
-        {m.post_create_anonymous_hint()}
-      </p>
-    {/if}
+    <PostIdentityPicker
+      id="post-association-select"
+      associations={postAsAssociations}
+      bind:value={selectedAssociationId}
+    />
 
     {#if isAssociationSelected}
       <div class="mt-3" transition:fade={{ duration: 200 }}>
@@ -711,6 +643,13 @@
       </div>
     {/if}
 
+    {#if videoPreparation.fraction !== null}
+      <VideoPreparationProgress
+        fraction={videoPreparation.fraction}
+        oncancel={() => videoPreparation.cancel()}
+      />
+    {/if}
+
     <PostComposerBar
       onFiles={addFiles}
       onFormat={(type) => editorField?.format(type)}
@@ -724,7 +663,7 @@
       {#snippet action()}
         <Button
           type="button"
-          class="shrink-0 px-5 py-2 text-sm !font-bold"
+          class="shrink-0 px-5 py-2 text-sm font-bold!"
           disabled={publishing || !hasContent(markdown, selectedFiles.length)}
           loading={publishing}
           onclick={publishPost}

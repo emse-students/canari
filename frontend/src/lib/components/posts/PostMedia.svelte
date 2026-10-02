@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { Log } from '$lib/utils/Log';
@@ -423,7 +424,8 @@
       <!-- ========== AUDIO ========== -->
       <div class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5">
         <!-- svelte-ignore a11y_media_has_caption -->
-        <audio src={blobUrl} controls preload="metadata" class="h-12 w-full"></audio>
+        <audio use:arbitratePlayback src={blobUrl} controls preload="metadata" class="h-12 w-full"
+        ></audio>
       </div>
     {:else}
       <!-- ========== GENERIC FILE ========== -->

@@ -41,7 +41,12 @@ export const SYSTEM_SENDER_ID = 'system';
 export function isSystemSender(senderId: string): boolean {
   return senderId.toLowerCase() === SYSTEM_SENDER_ID;
 }
-import { mediaEncodingFromProto, mediaKindToType, type IAppMessage } from '$lib/proto/codec';
+import {
+  mediaEncodingFromProto,
+  mediaKindToType,
+  mediaPlaceholderFromProto,
+  type IAppMessage,
+} from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
 import type { AddMessageToChatOptions, ChatMessage, MessageReference } from '$lib/types';
 
@@ -206,6 +211,9 @@ export function appMsgToEnvelope(
             fileName: msg.media.fileName ?? undefined,
             width: msg.media.width && msg.media.width > 0 ? msg.media.width : undefined,
             height: msg.media.height && msg.media.height > 0 ? msg.media.height : undefined,
+            ...(mediaPlaceholderFromProto(msg.media.placeholder)
+              ? { placeholder: mediaPlaceholderFromProto(msg.media.placeholder) }
+              : {}),
             // protobuf gives an absent bool as `false`, and `false` here would be a claim the
             // sender never made - so only a true reaches the envelope.
             ...(msg.media.voiceNote ? { voiceNote: true } : {}),

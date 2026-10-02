@@ -1150,6 +1150,7 @@
           onSendVoiceNote={handleSendVoiceNote}
           pendingFiles={messaging.pendingMediaFiles}
           onRemovePendingFile={messaging.removePendingMediaFile}
+          videoPreparation={messaging.videoPreparation}
           isUploading={messaging.isUploadingMedia}
           onStartAudioCall={CALLS_ENABLED
             ? () => {

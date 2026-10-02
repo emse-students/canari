@@ -18,7 +18,6 @@
   import ChannelPoll from '../channels/ChannelPoll.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
-  import MessageEditForm from './MessageEditForm.svelte';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction } from '$lib/types';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
@@ -28,6 +27,7 @@
   import MessageTextBody from './MessageTextBody.svelte';
   import MessageMetadata from './MessageMetadata.svelte';
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
+  import { phoneViewport } from '$lib/stores/phoneViewport.svelte';
   import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
@@ -113,8 +113,13 @@
     pinned?: boolean;
     /** Called to toggle this message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
-    /** Called when the user confirms an inline edit. */
-    onEdit?: (messageId: string, newText: string) => void;
+    /**
+     * Called when the user chooses "edit" on their own text message, with its current text. The
+     * edit itself happens in the conversation's composer (user, 2026-10-02: *"modification des
+     * messages -> pas dans la bulle, dans le composer de message classique"*), so the bubble only
+     * announces it. Omit to hide the edit action.
+     */
+    onBeginEdit?: (messageId: string, text: string) => void;
     /** ID of the authenticated user, used to highlight own reactions and gate edit/delete. */
     currentUserId?: string;
     /** Bearer token forwarded to MediaService for downloading and decrypting attachments. */
@@ -156,7 +161,7 @@
     onClosePoll,
     onDelete,
     canModerate = false,
-    onEdit,
+    onBeginEdit,
     pinned = false,
     onTogglePin,
     currentUserId = '',
@@ -181,8 +186,6 @@
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
-  let isEditingInline = $state(false);
-  let editText = $state('');
   let blobUrl = $state<string | null>(null);
   /**
    * Why the attachment could not be shown, typed at the throw. It replaced two booleans that could
@@ -223,6 +226,17 @@
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
+  // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
+  // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
+  // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A quoted reply stacks its own
+  // bubble above, so it keeps the padded layout.
+  const bleedsMedia = $derived(
+    !!mediaRef &&
+      (mediaRef.type === 'image' || mediaRef.type === 'video') &&
+      !!textContent &&
+      !effectiveReplyTo &&
+      !isDeleted
+  );
 
   // Poll message: rendered as a self-contained card (no bubble chrome). The live
   // tally comes from the poll store (keyed by message id); falls back to an empty
@@ -335,34 +349,18 @@
     standingReactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji)
   );
 
-  function confirmEdit() {
-    const trimmed = editText.trim();
-    if (trimmed && trimmed !== textContent.trim()) {
-      onEdit?.(messageId, trimmed);
-    }
-    isEditingInline = false;
-    showInfo = false;
-  }
-
-  function startInlineEdit() {
-    editText = textContent;
-    isEditingInline = true;
+  /** Hands the message to the composer for editing, and closes whatever panel was open on it. */
+  function startEdit() {
+    onBeginEdit?.(messageId, textContent);
     emojiPickerOrigin = null;
     showInfo = false;
     showMobileActions = false;
   }
 
-  function cancelInlineEdit() {
-    isEditingInline = false;
-    editText = textContent;
-  }
+  /** Only the author's own text message can be edited, and only where the parent can take it. */
+  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !!onBeginEdit);
 
   function handleBubbleClick(e: MouseEvent) {
-    if (isEditingInline) {
-      e.stopPropagation();
-      return;
-    }
-
     // Double-tap on mobile: react with ❤️ instead of toggling info
     if (isMobile && !isDeleted && onReact) {
       const now = Date.now();
@@ -747,14 +745,16 @@
             showMobileActions = true;
           }}
           onkeydown={(e) => {
-            if ((e.key === 'Enter' || e.key === ' ') && !isEditingInline) {
+            if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               toggleInfo(e as unknown as MouseEvent);
             }
           }}
           class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
             ? 'p-0'
-            : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
+            : 'px-3 py-2'} {bleedsMedia
+            ? 'overflow-hidden'
+            : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
             ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
             : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
             ? ''
@@ -787,29 +787,20 @@
               {textContent}
               {isOwn}
               {textSegments}
+              bleed={bleedsMedia}
               {senderId}
               sentAt={timestamp}
               onNear={() => (isNearViewport = true)}
             />
 
             {#if !mediaRef}
-              <MessageEditForm
-                editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
-                {editText}
-                onEditChange={(text) => (editText = text)}
-                onConfirm={confirmEdit}
-                onCancel={cancelInlineEdit}
+              <MessageTextBody
+                {textSegments}
+                {searchTerm}
+                {isDeleted}
+                {firstLink}
+                jumbo={isEmojiOnly}
               />
-
-              {#if !isEditingInline}
-                <MessageTextBody
-                  {textSegments}
-                  {searchTerm}
-                  {isDeleted}
-                  {firstLink}
-                  jumbo={isEmojiOnly}
-                />
-              {/if}
             {/if}
           {/if}
 
@@ -824,30 +815,36 @@
         </div>
       </div>
 
-      <MessageBubbleToolbar
-        {isOwn}
-        {isDeleted}
-        hasMedia={!!mediaRef}
-        {showEmojiPicker}
-        onReply={onReply ? () => onReply!(messageId) : undefined}
-        onForward={onForward ? () => onForward!(messageId) : undefined}
-        onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
-        userReactions={userOwnReactions}
-        onToggleEmojiPicker={!isDeleted && onReact
-          ? () => {
-              emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
-            }
-          : undefined}
-        {canModerate}
-        onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? startInlineEdit : undefined}
-        onDelete={!isDeleted && (isOwn || canModerate) && onDelete
-          ? () => {
-              showDeleteModal = true;
-            }
-          : undefined}
-        {pinned}
-        onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
-      />
+      <!-- THE HOVER STRIP IS `hidden` BELOW `md`, so a phone never sees it - and it was mounted in
+           every bubble anyway: five buttons, a menu and their icons per message, about a third of
+           what opening a conversation cost on the Mi 9T (2026-10-02, profiled). A phone has the
+           long-press sheet (`MessageMobileActions`) instead. -->
+      {#if !phoneViewport()}
+        <MessageBubbleToolbar
+          {isOwn}
+          {isDeleted}
+          hasMedia={!!mediaRef}
+          {showEmojiPicker}
+          onReply={onReply ? () => onReply!(messageId) : undefined}
+          onForward={onForward ? () => onForward!(messageId) : undefined}
+          onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
+          userReactions={userOwnReactions}
+          onToggleEmojiPicker={!isDeleted && onReact
+            ? () => {
+                emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
+              }
+            : undefined}
+          {canModerate}
+          onEdit={canEdit ? startEdit : undefined}
+          onDelete={!isDeleted && (isOwn || canModerate) && onDelete
+            ? () => {
+                showDeleteModal = true;
+              }
+            : undefined}
+          {pinned}
+          onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
+        />
+      {/if}
     </div>
 
     <MessageReactions
@@ -935,12 +932,7 @@
             }
           }
         : undefined}
-      onEdit={!isDeleted && isOwn && !mediaRef && onEdit
-        ? () => {
-            startInlineEdit();
-            showMobileActions = false;
-          }
-        : undefined}
+      onEdit={canEdit ? startEdit : undefined}
       {canModerate}
       onDelete={!isDeleted && (isOwn || canModerate) && onDelete
         ? () => {

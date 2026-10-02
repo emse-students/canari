@@ -56,6 +56,7 @@ for **server deployment**:
 |---|---|
 | Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET` |
 | Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY`. The MiConnect stack's own `.env` on its host also holds `MIGALLERY_AVATAR_SIGNING_KEY` and `MICONNECT_CAS_CONSUMER_SECRET`, written by hand ([authentik/README](authentik/README.md#secrets)) |
 | App / frontend | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |

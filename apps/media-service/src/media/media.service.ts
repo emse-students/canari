@@ -76,6 +76,14 @@ export interface MediaStorageStats {
   associationCount: number;
   associationBytes: number;
   /**
+   * CanaReels' videos, kept until their own post expires (30 days) and reaped by social-service
+   * with the post. Reported on their own line for the reason `archive` is: an exempt class folded
+   * into a total is one whose growth nothing can see, and here a count that does not fall back is
+   * the signal that the reel worker has stopped.
+   */
+  reelCount: number;
+  reelBytes: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -111,17 +119,25 @@ type PurgeReason = 'retention_expired' | 'manual_delete';
  * - `association` - an association's vault documents. Kept for ever AND skipped by account
  *   deletion, because the document belongs to the association, not to the officer who happened to
  *   upload it; only deleting the document row deletes it.
+ * - `reel` - a CanaReel's video. Kept by the idle sweep (the post, not idleness, decides its end)
+ *   and reaped by social-service's `ReelRetentionScheduler` through {@link MediaService.purgeReels}
+ *   when the post expires, 30 days after publication. Still reached by account deletion: a reel is
+ *   its uploader's.
  *
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
-export type RetentionClass = 'ephemeral' | 'archive' | 'association';
+export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
 
 const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',
+  'reel',
 ]);
+
+/** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
+export type ReelPurgeOutcome = 'deleted' | 'absent' | 'refused' | 'failed';
 
 /** Runtime guard for the class name arriving from a request body. */
 export function isRetentionClass(value: unknown): value is RetentionClass {
@@ -499,6 +515,127 @@ export class MediaService {
     return { promoted, refused };
   }
 
+  /**
+   * Claims objects for CanaReels: sets class `reel` on every one that is the named owner's.
+   *
+   * The claim is what makes the later purge safe. A reel's row names its blob by id, ids are not
+   * secrets, and the purge is destructive - so a member who cites SOMEBODY ELSE'S blob in a reel
+   * must get nothing: the entry records who uploaded it (the JWT `sub`), and only the uploader can
+   * claim it. A public asset, a purged entry, an unknown id and an object stored before ownership
+   * was recorded (no `ownerId`) are all refused, never claimed on trust.
+   *
+   * Idempotent: an entry already `reel` is claimed again as a no-op.
+   *
+   * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
+   */
+  async claimReels(
+    mediaIds: string[],
+    ownerId: string
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    const claimed: string[] = [];
+    const refused: string[] = [];
+    let changed = false;
+
+    for (const mediaId of new Set(mediaIds)) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        !entry ||
+        entry.purgedAt ||
+        this.isPublicAssetEntry(entry) ||
+        !entry.ownerId ||
+        entry.ownerId !== ownerId
+      ) {
+        refused.push(mediaId);
+        continue;
+      }
+      if (entry.retentionClass !== 'reel') {
+        entry.retentionClass = 'reel';
+        changed = true;
+      }
+      claimed.push(mediaId);
+    }
+
+    if (changed) await this.persistMetadata();
+    if (refused.length > 0) {
+      this.logger.warn(
+        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (unknown, purged, public or not theirs)`
+      );
+    }
+    return { claimed, refused };
+  }
+
+  /**
+   * Deletes the blobs of expired (or deleted) CanaReels, each on its OWNER's say-so.
+   *
+   * THE ALLOWLIST IS OWNERSHIP: an object is deleted only when its entry's `ownerId` equals the
+   * `ownerId` the caller names, and it is neither a public asset nor an `association` document. A
+   * comment's media on a reel is deleted too - under the commenter's id, which is how the worker
+   * names it - so a blob a member merely cited cannot be taken by citing it. Not "class is
+   * `reel`": a comment's media carries another class and must be reachable.
+   *
+   * One outcome per id, because the caller decides what a reel's row does next:
+   * - `deleted` - removed now (and tombstoned `manual_delete`);
+   * - `absent` - no entry, or already purged. SUCCESS: the object is gone as far as this service can
+   *   tell, and a retry after a crash lands here - the idempotence the worker relies on;
+   * - `refused` - an entry exists and is not the named owner's (or is protected). Terminal and
+   *   logged: it is a forged reference, and leaving the object is the point;
+   * - `failed` - the store refused or threw. The ONLY outcome that should keep a reel's row.
+   *
+   * Per id, a `try`: one object the store will not delete never blocks the rest.
+   */
+  async purgeReels(
+    items: Array<{ mediaId: string; ownerId: string }>
+  ): Promise<Record<string, ReelPurgeOutcome>> {
+    // A Map, not an object: `mediaId` is caller-supplied and may be refused precisely because it is
+    // not a UUID, so it must never be a property name.
+    const results = new Map<string, ReelPurgeOutcome>();
+    let changed = false;
+
+    for (const { mediaId, ownerId } of items) {
+      if (!UUID_REGEX.test(mediaId)) {
+        results.set(mediaId, 'refused');
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) {
+        results.set(mediaId, 'absent');
+        continue;
+      }
+      if (
+        !ownerId ||
+        entry.ownerId !== ownerId ||
+        this.isPublicAssetEntry(entry) ||
+        entry.retentionClass === 'association'
+      ) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(
+          `Reel purge refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
+        );
+        continue;
+      }
+      try {
+        await this.storage.delete(mediaId);
+      } catch (err) {
+        results.set(mediaId, 'failed');
+        this.logger.warn(
+          `Reel purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt,
+        lastAccessAt: entry.lastAccessAt,
+        purgedAt: Date.now(),
+        purgeReason: 'manual_delete',
+      };
+      changed = true;
+      results.set(mediaId, 'deleted');
+    }
+
+    if (changed) await this.persistMetadata();
+    return Object.fromEntries(results);
+  }
+
   async remove(mediaId: string): Promise<void> {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {
@@ -622,6 +759,8 @@ export class MediaService {
       archiveBytes: 0,
       associationCount: 0,
       associationBytes: 0,
+      reelCount: 0,
+      reelBytes: 0,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -666,6 +805,11 @@ export class MediaService {
       if (entry.retentionClass === 'association') {
         stats.associationCount += 1;
         stats.associationBytes += object.size;
+        continue;
+      }
+      if (entry.retentionClass === 'reel') {
+        stats.reelCount += 1;
+        stats.reelBytes += object.size;
         continue;
       }
       // Deliberately the SAME predicate purgeExpiredMedia uses. Anything counted as overdue is

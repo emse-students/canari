@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { AssociationsService } from '../associations/associations.service';
 import { mediaUrl } from '../internal/service-urls';
+import { isExpiredReel } from './reel.constants';
 
 /**
  * WHAT A SHARED `/posts/:id` LINK MAY DISCLOSE TO SOMEBODY WITH NO CANARI SESSION.
@@ -165,6 +166,8 @@ export class PostPreviewService {
     if (!post) return null;
     if (!post.associationId) return null;
     if (post.hiddenByModeration) return null;
+    // A reel past its month is dead to everyone, an anonymous link preview included.
+    if (isExpiredReel(post)) return null;
     if (post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now()) return null;
 
     // `findById` throws NotFoundException on a miss; here an absent association is one more reason

@@ -39,8 +39,8 @@
     onDelete?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
-    /** Callback to edit a message by ID with new text. */
-    onEdit?: (messageId: string, text: string) => void;
+    /** Called when the author chooses to edit a message; the edit happens in the composer. */
+    onBeginEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
@@ -77,7 +77,7 @@
     onClosePoll,
     onDelete,
     canModerate = false,
-    onEdit,
+    onBeginEdit,
     onTogglePin,
     onJoinChannel,
     pinnedIds = [],
@@ -308,7 +308,7 @@
               {onClosePoll}
               {onDelete}
               {canModerate}
-              {onEdit}
+              {onBeginEdit}
               {onTogglePin}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}

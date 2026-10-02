@@ -1,4 +1,11 @@
+import {
+  arbitratePlayback,
+  claimPlayback,
+  isForegroundPlaying,
+  onPlaybackIdle,
+} from '$lib/actions/playbackArbiter';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { Log } from '$lib/utils/Log';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -23,21 +30,10 @@ export interface PlayWhileVisibleOptions {
   threshold?: number;
 }
 
-/**
- * ONE VIDEO PLAYS AT A TIME, IN THE WHOLE APP. Opening the viewer left the feed's video playing
- * behind it, so with the sound on two soundtracks talked over each other (Mi 9T, 2026-09-29). Every
- * video - inline or the viewer's - reports its `play` here, and the one playing before it pauses.
- */
-let playing: HTMLVideoElement | null = null;
 /** Inline videos currently on screen, in the order they came into view. */
 const visibleInline = new Set<HTMLVideoElement>();
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
-
-function claimPlayback(video: HTMLVideoElement) {
-  if (playing && playing !== video && !playing.paused) playing.pause();
-  playing = video;
-}
 
 function tryPlay(video: HTMLVideoElement) {
   video.play().catch((err: unknown) => {
@@ -48,18 +44,30 @@ function tryPlay(video: HTMLVideoElement) {
   });
 }
 
+/**
+ * ONE MEDIA PLAYS AT A TIME is `playbackArbiter`'s rule; this file is the feed's side of it. Once
+ * nothing plays any more (a viewer closed, a voice note ended) the video last come into view plays
+ * again - and never before, so the background does not take playback back from the reader's choice.
+ */
+function resumeVisible() {
+  const resume = [...visibleInline].at(-1);
+  if (openViewers === 0 && resume && resume.paused) tryPlay(resume);
+}
+onPlaybackIdle(resumeVisible);
+
 export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisibleOptions = {}) {
   if (typeof IntersectionObserver === 'undefined') return {};
 
-  const onPlay = () => claimPlayback(video);
-  video.addEventListener('play', onPlay);
+  const registration = arbitratePlayback(video, { ambient: true });
 
   const observer = new IntersectionObserver(
     (entries) => {
       const entry = entries[entries.length - 1];
       if (entry.isIntersecting) {
         visibleInline.add(video);
-        if (openViewers === 0) tryPlay(video);
+        // Not while a viewer or another media of the reader's is playing: the background never
+        // takes playback back from what was chosen. `resumeVisible` brings it back afterwards.
+        if (openViewers === 0 && !isForegroundPlaying(video)) tryPlay(video);
       } else {
         visibleInline.delete(video);
         if (!video.paused) video.pause();
@@ -72,40 +80,54 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
   return {
     destroy() {
       observer.disconnect();
-      video.removeEventListener('play', onPlay);
       visibleInline.delete(video);
-      if (playing === video) playing = null;
+      registration.destroy();
     },
   };
 }
 
 /**
- * Makes a video with its own controls - the full-screen viewer's - follow the app's sound answer.
+ * WHOSE ANSWER A VIEWER'S SOUND IS (user, 2026-10-02: the mute button should not appear in
+ * conversations - tapping it changed ALL the buttons on the page).
  *
- * It opens at `videoSound`'s answer, and a change made through its native controls BECOMES that
- * answer, so turning the sound on in the viewer leaves it on in the feed behind it: one answer for
- * every video, whichever control gave it. While it is open it is the only video playing, and
- * closing it resumes the one on screen behind it.
+ * - `app`: the feed's. Every video follows `videoSound`, and the viewer's own control changes it.
+ * - `local`: a conversation's. A video there is its own thing and nobody asked for the feed's answer:
+ *   it starts AUDIBLE (the reader pressed play or tapped it open) and its control mutes only this
+ *   element. It neither reads `videoSound` - the feed autoplays muted and may have left it muted,
+ *   which would open a conversation video silent - nor writes it.
  */
-export function followVideoSound(video: HTMLVideoElement) {
+export type VideoSoundScope = 'app' | 'local';
+
+/**
+ * Makes a video with its own controls - the full-screen viewer's - follow the sound answer of its scope.
+ *
+ * In the `app` scope (the default) it opens at `videoSound`'s answer, and a change made through its
+ * native controls BECOMES that answer, so turning the sound on in the viewer leaves it on in the feed
+ * behind it: one answer for every video, whichever control gave it. In the `local` scope see
+ * {@link VideoSoundScope}. Either way, while it is open it is the only media playing (it registers
+ * with `playbackArbiter` and claims at once), and closing it resumes the video on screen behind it.
+ */
+export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
+  Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : 'its own'} sound`);
   openViewers += 1;
-  video.muted = videoSound.muted;
   const onVolumeChange = () => videoSound.setMuted(video.muted);
-  const onPlay = () => claimPlayback(video);
-  video.addEventListener('volumechange', onVolumeChange);
-  video.addEventListener('play', onPlay);
-  // Taking over from the video behind it at once, not on its `play`: an `autoplay` that the
+  const registration = arbitratePlayback(video);
+  if (scope === 'app') {
+    video.muted = videoSound.muted;
+    video.addEventListener('volumechange', onVolumeChange);
+  } else {
+    video.muted = false;
+  }
+  // Taking over from whatever plays behind it at once, not on its `play`: an `autoplay` that the
   // browser delays would otherwise leave both audible for that delay.
   claimPlayback(video);
   return {
     destroy() {
       openViewers -= 1;
       video.removeEventListener('volumechange', onVolumeChange);
-      video.removeEventListener('play', onPlay);
-      if (playing === video) playing = null;
-      // Back to the feed: the video last come into view there picks up where it was.
-      const resume = [...visibleInline].at(-1);
-      if (openViewers === 0 && resume) tryPlay(resume);
+      // Back to the feed: unregistering says the viewer is quiet, and `resumeVisible` picks up the
+      // video last come into view there. What the reader had playing inline stays paused.
+      registration.destroy();
     },
   };
 }

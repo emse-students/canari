@@ -1,0 +1,8 @@
+[default]
+description = "Default permissions for the plugin"
+permissions = [
+  "allow-append-video-chunk",
+  "allow-save-video",
+  "allow-discard-video",
+  "allow-open-app-settings",
+]

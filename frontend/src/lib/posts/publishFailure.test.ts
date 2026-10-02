@@ -16,6 +16,7 @@ import { MutedError } from '$lib/moderation/muteCheck';
 import { LocalizedError } from '$lib/utils/localizedError';
 import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 import { m } from '$lib/paraglide/messages';
+import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 
 const FALLBACK = m.post_create_publish_error();
 
@@ -68,6 +69,15 @@ describe('publishFailureMessage', () => {
     expect(publishFailureMessage(err, m.post_unable_to_comment())).toBe(m.post_unable_to_comment());
     expect(publishFailureMessage(err, m.post_action_not_allowed())).toBe(
       m.post_action_not_allowed()
+    );
+  });
+
+  it('names why a video could not be prepared on the device', () => {
+    expect(publishFailureMessage(new VideoPrepareError('too-long', 'x'), FALLBACK)).toBe(
+      m.video_prepare_too_long()
+    );
+    expect(publishFailureMessage(new VideoPrepareError('unsupported', 'x'), FALLBACK)).toBe(
+      m.video_prepare_unsupported()
     );
   });
 });

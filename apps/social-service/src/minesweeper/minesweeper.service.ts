@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
+import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
 import { CHALLENGE as BOARD_CONFIG, verifySolve, type MinesweeperMove } from './engine/game';
@@ -64,14 +65,30 @@ export class MinesweeperService {
     @InjectRepository(MinesweeperChallenge)
     private readonly challenges: Repository<MinesweeperChallenge>,
     @InjectRepository(MinesweeperScore)
-    private readonly scores: Repository<MinesweeperScore>
+    private readonly scores: Repository<MinesweeperScore>,
+    @InjectRepository(MinesweeperBan)
+    private readonly bans: Repository<MinesweeperBan>
   ) {}
+
+  /** Whether a global admin has banned this user from the ranked game. */
+  async isBanned(userId: string): Promise<boolean> {
+    return (await this.bans.count({ where: { userId } })) > 0;
+  }
+
+  /** The ranked game is closed to a banned user: no challenge, and no submit of one opened before. */
+  private async assertNotBanned(userId: string): Promise<void> {
+    if (await this.isBanned(userId)) {
+      this.logger.warn(`minesweeper refused: banned user=${userId}`);
+      throw new ForbiddenException('You are banned from the ranked minesweeper');
+    }
+  }
 
   /**
    * Starts a ranked run: cancels prior open challenges for this user and returns
    * a fresh seed. Duration is measured from `startedAt` on the server.
    */
   async startChallenge(userId: string) {
+    await this.assertNotBanned(userId);
     const now = new Date();
     await this.challenges
       .createQueryBuilder()
@@ -113,6 +130,7 @@ export class MinesweeperService {
    * replays moves, and records server-measured `durationMs` when valid.
    */
   async submit(userId: string, challengeId: string, dto: SubmitMinesweeperDto) {
+    await this.assertNotBanned(userId);
     const challenge = await this.challenges.findOne({ where: { id: challengeId } });
     if (!challenge) throw new NotFoundException('Challenge not found');
     if (challenge.userId !== userId) throw new ForbiddenException('Not your challenge');
@@ -216,6 +234,7 @@ export class MinesweeperService {
   async leaderboard(limit = LEADERBOARD_LIMIT) {
     const capped = Math.min(Math.max(limit, 1), 50);
     const rows: Array<{
+      scoreId: string;
       userId: string;
       durationMs: number;
       moveCount: number;
@@ -223,11 +242,13 @@ export class MinesweeperService {
     }> = await this.scores.query(
       `
       SELECT DISTINCT ON (s."userId")
+        s.id AS "scoreId",
         s."userId" AS "userId",
         s."durationMs" AS "durationMs",
         s."moveCount" AS "moveCount",
         s."verifiedAt" AS "verifiedAt"
       FROM minesweeper_scores s
+      WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
       ORDER BY s."userId", s."durationMs" ASC, s."verifiedAt" ASC
       `
     );
@@ -251,6 +272,8 @@ export class MinesweeperService {
     return {
       entries: top.map((r, i) => ({
         rank: i + 1,
+        // The row to remove: a global admin's "remove this score" names it (`removeScore`).
+        scoreId: r.scoreId,
         userId: r.userId,
         displayName: nameById.get(r.userId) ?? r.userId,
         durationMs: r.durationMs,
@@ -275,9 +298,10 @@ export class MinesweeperService {
     const rows: Array<{ cnt: string | number }> = await this.scores.query(
       `
       WITH bests AS (
-        SELECT MIN("durationMs") AS best
-        FROM minesweeper_scores
-        GROUP BY "userId"
+        SELECT MIN(s."durationMs") AS best
+        FROM minesweeper_scores s
+        WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+        GROUP BY s."userId"
       )
       SELECT COUNT(*)::int AS cnt FROM bests WHERE best < $1
       `,
@@ -288,6 +312,8 @@ export class MinesweeperService {
 
   /** Standing for a user who has at least one verified score; null otherwise. */
   async userStanding(userId: string) {
+    // A banned player has no standing: a profile badge must not show a rank they were removed from.
+    if (await this.isBanned(userId)) return null;
     const best = await this.getPersonalBest(userId);
     if (!best) return null;
     const rank = await this.rankForDurationMs(best.durationMs);
@@ -305,5 +331,65 @@ export class MinesweeperService {
       return { personalBestMs: null as number | null, rank: null as number | null };
     }
     return standing;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Moderation (global admins; the controller holds the guard)
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Removes ONE verified score - a cheat the replay let through, an offensive name's time.
+   * The player keeps their other scores, so their next best (if any) takes the place of this one.
+   */
+  async removeScore(scoreId: string, adminId: string) {
+    const score = await this.scores.findOne({ where: { id: scoreId } });
+    if (!score) throw new NotFoundException('Score not found');
+    await this.scores.delete({ id: scoreId });
+    this.logger.warn(
+      `minesweeper score removed id=${scoreId} user=${score.userId} ms=${score.durationMs} by=${adminId}`
+    );
+    return { removed: true, userId: score.userId, durationMs: score.durationMs };
+  }
+
+  /**
+   * Bans a user from the ranked game. Their scores are NOT deleted - every read asks whether a ban
+   * exists, so lifting it restores them exactly. Banning again only updates the reason.
+   */
+  async ban(userId: string, reason: string | undefined, adminId: string) {
+    if (userId === adminId) throw new BadRequestException('You cannot ban yourself');
+    const trimmed = reason?.trim();
+    await this.bans.save(
+      this.bans.create({ userId, reason: trimmed ? trimmed : null, bannedBy: adminId })
+    );
+    this.logger.warn(`minesweeper ban user=${userId} by=${adminId} reason=${trimmed ?? '-'}`);
+    return { banned: true, userId };
+  }
+
+  /** Lifts a ban. 404 when there was none, so a stale list cannot report a success that did nothing. */
+  async unban(userId: string, adminId: string) {
+    const result = await this.bans.delete({ userId });
+    if (!result.affected) throw new NotFoundException('That user is not banned');
+    this.logger.warn(`minesweeper unban user=${userId} by=${adminId}`);
+    return { banned: false, userId };
+  }
+
+  /** Everyone currently banned, newest first, with the name the leaderboard would show. */
+  async listBans() {
+    const rows = await this.bans.find({ order: { bannedAt: 'DESC' } });
+    if (rows.length === 0) return { bans: [] };
+    const users: Array<{ id: string; displayName: string | null }> = await this.scores.query(
+      `SELECT id, "displayName" FROM users WHERE id = ANY($1)`,
+      [rows.map((r) => r.userId)]
+    );
+    const nameById = new Map(users.map((u) => [u.id, u.displayName?.trim() || u.id]));
+    return {
+      bans: rows.map((r) => ({
+        userId: r.userId,
+        displayName: nameById.get(r.userId) ?? r.userId,
+        reason: r.reason,
+        bannedBy: r.bannedBy,
+        bannedAt: r.bannedAt.toISOString(),
+      })),
+    };
   }
 }

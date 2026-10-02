@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Head,
   HttpCode,
@@ -28,6 +29,12 @@ import {
   SESSION_TTL_SECONDS,
   type SessionClientInfo,
 } from './auth-sessions.service';
+import {
+  ADMINER_COOKIE,
+  ADMINER_COOKIE_PATH,
+  ADMINER_SESSION_SECONDS,
+  AdminerAccessService,
+} from './adminer-access.service';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
 
@@ -88,7 +95,8 @@ export class AuthController {
   constructor(
     private readonly usersService: UsersService,
     private readonly platformService: PlatformService,
-    private readonly authSessions: AuthSessionsService
+    private readonly authSessions: AuthSessionsService,
+    private readonly adminerAccess: AdminerAccessService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -674,6 +682,52 @@ export class AuthController {
       this.clearRefreshCookie(res);
     }
     return { ok };
+  }
+
+  // ─── Adminer (database admin UI, global admins only) ───────────────────────
+
+  /**
+   * Opens an Adminer session: a global admin, authenticated by their access token, is handed the
+   * short signed cookie `/adminer/` requires (see {@link AdminerAccessService}). The role is read
+   * from the DATABASE, not from the token's claim - the claim can be an hour old.
+   *
+   * A 404 where the route is not enabled, so a stack that does not offer it does not say that it
+   * exists.
+   */
+  @Post('adminer-session')
+  @HttpCode(200)
+  async openAdminerSession(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<{ expiresInSeconds: number }> {
+    if (!this.adminerAccess.enabled) throw new NotFoundException();
+    const { userId } = this.requireAccessToken(req);
+    const user = await this.usersService.findOne(userId).catch(() => null);
+    if (!user?.admin) {
+      this.logger.warn(`adminer session refused: ${userId} is not a global admin`);
+      throw new ForbiddenException('Global admin only');
+    }
+    res.cookie(ADMINER_COOKIE, this.adminerAccess.mint(userId), {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+      path: ADMINER_COOKIE_PATH,
+      maxAge: ADMINER_SESSION_SECONDS * 1000,
+    });
+    // An audit line, always: opening a door onto the database is the one thing here worth a trail.
+    this.logger.warn(`adminer session opened by ${userId}`);
+    return { expiresInSeconds: ADMINER_SESSION_SECONDS };
+  }
+
+  /**
+   * nginx's `auth_request` for `/adminer/`: 200 when the cookie is a live session of a user who is
+   * still a global admin, 401 otherwise - and nginx turns every 401 into a bare 404.
+   */
+  @Get('adminer-verify')
+  async verifyAdminer(@Req() req: Request, @Res() res: Response) {
+    const cookie = req.cookies?.[ADMINER_COOKIE] as string | undefined;
+    const userId = await this.adminerAccess.verify(cookie);
+    return res.status(userId ? 200 : 401).send();
   }
 
   // ─── Verify (used by nginx auth_request) ──────────────────────────────────

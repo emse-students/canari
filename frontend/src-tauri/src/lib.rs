@@ -42,6 +42,7 @@ use crate::commands::mls::{
     skip_send_generations, trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
     get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
@@ -814,7 +815,8 @@ pub fn run() {
         .plugin(tauri_plugin_biometric::init())
         .plugin(tauri_plugin_keystore::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_customtabs::init());
+        .plugin(tauri_plugin_customtabs::init())
+        .plugin(tauri_plugin_gallery::init());
 
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
@@ -1097,6 +1099,7 @@ pub fn run() {
             forget_graine_sessions,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
+            take_picked_file,
             notifier_message_natif,
             store_avatar_mirror,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.

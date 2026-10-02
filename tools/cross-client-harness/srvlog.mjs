@@ -542,6 +542,13 @@ const BENIGN = [
   // the happy path cannot swallow a failure that took a different one.
   /\[AssociationsService\] \[PERM\] user=[0-9a-f]{8} holds flag=\d+ on \d+\/\d+ assocs/,
   /\[PricingFactsService\] \[PRICING\] profile user=[0-9a-f]{8} promo=\S+ formation=\S+/,
+  // A SEGMENTED VIDEO READ PART BY PART (CanaReels R2): every streamed video in the window - the
+  // feed's, a reel's - writes one of these per range, in order. It reached `unexplained` on REEL-1's
+  // first run (2026-10-02), four lines for one feed video playing under the camera tab. The happy
+  // path ONLY: its two siblings - a Range served WHOLE and one unsatisfiable - are different prose
+  // and stay unclassified, because each says the segmented reader asked for something the server
+  // could not give as a part.
+  /\[MediaService\] media [0-9a-f-]{36}: bytes \d+-\d+\/\d+ served as a part$/,
 ];
 
 /**

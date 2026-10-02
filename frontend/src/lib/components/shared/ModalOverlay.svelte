@@ -15,7 +15,7 @@
   | `routes/admin/agenda` | no | no | NO | no | raw `z-50` |
 
   **THE RAW `z-50` IS THE ONE THAT PROVES THE POINT.** This app has a twenty-rung ladder in
-  `app.css` and `50` is not on it: it lands between `--z-page-overlay` (40) and `--z-toast` (60), so
+  `app.css` and `50` is not on it: it lands between `--z-page-overlay` (40) and `--z-toast` (310), so
   the agenda's reject modal opened UNDERNEATH a toast and far below every other modal on the page.
   Nobody wrote that; it is what a number picked in isolation does. A component cannot pick a number
   in isolation, which is why `layer` here takes a NAME and the class strings are literals in this

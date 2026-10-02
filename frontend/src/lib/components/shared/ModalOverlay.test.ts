@@ -12,7 +12,7 @@
  * when you open them:
  *
  * - `routes/admin/agenda` used a raw `z-50`, which is not a rung of the ladder in `app.css` - it
- *   lands between `--z-page-overlay` (40) and `--z-toast` (60), so a reject dialog opened
+ *   lands between `--z-page-overlay` (40) and `--z-toast` (310), so a reject dialog opened
  *   UNDERNEATH a toast.
  * - `PollComposerModal` was not portalled, which is exactly the defect the user reported about the
  *   GIF picker on 2026-09-13. It is opened from the channel composer, near the root, so nobody had

@@ -355,6 +355,14 @@
               })}
             </p>
           {/if}
+          {#if media.reelCount > 0}
+            <p class="text-text-muted text-sm">
+              {m.admin_storage_media_reel({
+                count: media.reelCount,
+                size: formatStorageBytes(media.reelBytes),
+              })}
+            </p>
+          {/if}
           <!-- The sweep is an allowlist, so what nobody classified is KEPT - and this is its cost. -->
           {#if media.unclassifiedCount > 0}
             <p class="text-text-muted text-sm">
@@ -364,6 +372,20 @@
               })}
             </p>
           {/if}
+        {:else}
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
+        {/if}
+        <!--
+          The reel worker's verdict on itself. Shown even at zero overdue: a counter that only
+          appears when it is non-zero is one nobody believes the first time it does.
+        -->
+        {#if usage.reels}
+          <p class="text-text-muted text-sm">
+            {m.admin_storage_reels({
+              live: usage.reels.live,
+              overdue: usage.reels.overdue,
+            })}
+          </p>
         {:else}
           <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}

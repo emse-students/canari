@@ -117,7 +117,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-78 scripts.
+79 scripts.
 
 | script | what it is |
 |---|---|
@@ -190,6 +190,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
+| `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
 | `archive/tab1.mjs` | TAB-1 - the OS notification for a message, and the silence that must precede it. |
@@ -302,4 +303,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-241 scripts in total.
+242 scripts in total.

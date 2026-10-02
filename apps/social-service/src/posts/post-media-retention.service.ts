@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import { claimReelMedia, purgeReelMedia, type ReelPurgeOutcome } from '../internal/reel-media';
 
 /**
  * Keeps the media service's retention class in step with what the feed actually references.
@@ -42,6 +43,36 @@ export class PostMediaRetentionService implements OnModuleInit {
    * only ever ran in a migration is a repair that is not there the day it is needed.
    */
   async onModuleInit(): Promise<void> {
+    // EACH PASS IS A REPAIR, NEVER A PRECONDITION OF SERVING, so neither may take the process down.
+    //
+    // The deploy STARTS the containers and only THEN applies the migrations
+    // (`infrastructure/deploy/deploy-environment.sh`). On the deploy that ships migration 069 these
+    // queries therefore ran against a database with no `kind` / `expiresAt` column yet; the rejection
+    // left `onModuleInit`, the process exited 1, and the deploy - for which `Restarting` is fatal - failed
+    // on dev (`v1.0.1-alpha.2`, 2026-10-02) and would have failed production the same way. The restart
+    // policy had it healthy again within seconds, but the deploy had already read the loop.
+    //
+    // So a failure is said at ERROR level, naming the pass, and the next boot repeats it. Nothing is
+    // lost by waiting: a pass only re-applies what an index loss could have dropped.
+    for (const [name, pass] of [
+      ['archive', () => this.backfillArchive()],
+      ['reel', () => this.backfillReels()],
+    ] as const) {
+      try {
+        await pass();
+      } catch (err) {
+        this.logger.error(
+          `Media retention backfill (${name} pass) FAILED at boot and is skipped until the next boot - ` +
+            `if a migration is still being applied this is expected once: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
+    }
+  }
+
+  /** The `archive` pass. A reel's own blob is NOT in it - see `referencedMediaIds`. */
+  private async backfillArchive(): Promise<void> {
     const ids = await this.referencedMediaIds();
     if (ids.length === 0) {
       this.logger.log('Media retention backfill: the feed references no media');
@@ -55,6 +86,74 @@ export class PostMediaRetentionService implements OnModuleInit {
         ? `Media retention backfill FAILED for ${ids.length} referenced object(s) - they keep the idle window until the next boot`
         : `Media retention backfill: ${ids.length} referenced object(s), ${changed} newly classified`
     );
+  }
+
+  /**
+   * Re-applies `reel` to every LIVE reel's own blob, once per boot, each claimed for its author.
+   *
+   * Same two states as the archive pass (an index rebuilt after a loss; a blob uploaded under
+   * another class), and one more reason it exists: it is what makes the `archive` pass safe to run
+   * at all - that pass would otherwise have flipped a reel's blob to `archive`.
+   * Per author, because the claim is an ownership proof; best-effort and LOUD, and a failing author
+   * never skips the next.
+   */
+  private async backfillReels(): Promise<void> {
+    const rows: Array<{ authorId: string; mediaId: string | null }> = await this.postRepo.query(`
+      SELECT p."authorId" AS "authorId", m->>'mediaId' AS "mediaId"
+        FROM posts p, jsonb_array_elements(p.images) m
+       WHERE p.kind = 'reel'
+         AND p."expiresAt" > NOW()
+         AND jsonb_typeof(p.images) = 'array'
+    `);
+    const byAuthor = new Map<string, string[]>();
+    for (const row of rows) {
+      if (typeof row.mediaId !== 'string') continue;
+      byAuthor.set(row.authorId, [...(byAuthor.get(row.authorId) ?? []), row.mediaId]);
+    }
+    if (byAuthor.size === 0) return;
+    let refused = 0;
+    let failed = 0;
+    for (const [authorId, mediaIds] of byAuthor) {
+      try {
+        refused += (await claimReelMedia(this.httpService, mediaIds, authorId)).refused.length;
+      } catch (err) {
+        failed += mediaIds.length;
+        this.logger.warn(
+          `Reel backfill: claim failed for ${mediaIds.length} object(s) of one author: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+    this.logger.log(
+      `Reel backfill: ${rows.length} live reel blob(s), ${refused} refused, ${failed} not reached`
+    );
+  }
+
+  /**
+   * Claims a reel's blob for its author, or throws.
+   *
+   * @returns normally only if EVERY id was claimed. A refused id is a blob the author did not
+   *   upload (or that no longer exists): the caller answers `400`. Transport failures propagate so
+   *   the caller answers `503` - a reel is never stored on trust.
+   */
+  async claimReelFor(authorId: string, mediaIds: string[]): Promise<{ refused: string[] }> {
+    const { refused } = await claimReelMedia(this.httpService, mediaIds, authorId);
+    return { refused };
+  }
+
+  /**
+   * Deletes a reel's blobs now - the comments' too, each under its own uploader - and reports
+   * whether ALL of them are gone (`deleted`/`absent`), or left alone as not the named owner's
+   * (`refused`, terminal), or still there (`failed`, retry).
+   *
+   * Throws on a transport failure. See `purgeReelMedia`.
+   */
+  async purgeReelBlobs(
+    items: Array<{ mediaId: string; ownerId: string }>
+  ): Promise<Record<string, ReelPurgeOutcome>> {
+    if (items.length === 0) return Object.create(null) as Record<string, ReelPurgeOutcome>;
+    return purgeReelMedia(this.httpService, items);
   }
 
   /** Marks media as archived, so the idle sweep never takes them. */
@@ -89,6 +188,8 @@ export class PostMediaRetentionService implements OnModuleInit {
       SELECT m->>'mediaId' AS "mediaId"
         FROM posts p, jsonb_array_elements(p.images) m
        WHERE jsonb_typeof(p.images) = 'array'
+         -- A reel's blob is class 'reel', claimed for its author; archiving it here would flip it.
+         AND p.kind <> 'reel'
       UNION
       SELECT c->'media'->>'mediaId' AS "mediaId"
         FROM posts p, jsonb_array_elements(p.comments) c
@@ -118,4 +219,24 @@ export function commentMediaIds(comments: unknown): string[] {
   return comments
     .map((comment) => (comment as { media?: { mediaId?: unknown } } | null)?.media?.mediaId)
     .filter((id): id is string => typeof id === 'string');
+}
+
+/**
+ * Every media a post's comments cite, with the member who uploaded it.
+ *
+ * The owner is the comment's `userId`: it is the only attribution a comment row carries, and the
+ * media service deletes only an object whose recorded uploader matches - which is what stops a
+ * comment that merely CITES somebody else's blob from getting it deleted with the reel.
+ */
+export function commentMediaOwners(comments: unknown): Array<{ mediaId: string; ownerId: string }> {
+  if (!Array.isArray(comments)) return [];
+  const out: Array<{ mediaId: string; ownerId: string }> = [];
+  for (const comment of comments) {
+    const c = comment as { userId?: unknown; media?: { mediaId?: unknown } } | null;
+    const mediaId = c?.media?.mediaId;
+    if (typeof mediaId === 'string' && typeof c?.userId === 'string') {
+      out.push({ mediaId, ownerId: c.userId });
+    }
+  }
+  return out;
 }

@@ -338,6 +338,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
+	@bash .github/scripts/tests/land-release-changelog.test.sh
 	@bash .github/scripts/tests/backend-url.test.sh
 	@bash .github/scripts/tests/release-chain.test.sh
 	@bash .github/scripts/tests/release-notes-body.test.sh
@@ -349,6 +350,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
+	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs

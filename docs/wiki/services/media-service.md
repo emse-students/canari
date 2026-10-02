@@ -64,6 +64,10 @@ a prop, but only as a signal that the session is authenticated.
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
+| POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md) |
+| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`) |
+
+(`retention-class` refuses `reel`: that class is only ever set through its owner.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -169,6 +173,7 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `ephemeral`   | the client, for chat and channel media; social-service on a post release           | **takes it** | takes it         |
 | `archive`     | the client, for feed media and avatars; social-service's boot backfill             | keeps        | takes it         |
 | `association` | the client, for a vault upload; social-service on `createDocument` and at boot     | keeps        | **keeps**        |
+| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md))  | keeps        | takes it         |
 | none          | an old client, anything before 2026-10-01, an entry re-created after an index loss | **keeps**    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
@@ -300,9 +305,12 @@ WebCrypto throws.
 
 **Why the stream is chosen only on a codecs-bearing type.** MSE appends only a fragmented container
 (WebM, fragmented MP4) described with its codecs, and fails HALF-WAY on an ordinary MP4 from a
-phone's camera. A picked file's `file.type` never names codecs; a `MediaRecorder` output does and is
-appendable by construction - which is what R3's capture will put in the ref. So today EVERY
-segmented ref would take the whole-blob path, and that is the fact-based choice, not a fallback.
+phone's camera. A picked file's `file.type` never names codecs - but no picked video reaches the
+upload as picked any more: every composer hands it to `prepareVideoForUpload`, whose output is a
+fragmented MP4 whose `type` names `avc1` + `mp4a` ([video-preparation](../frontend/video-preparation.md)),
+so every video written segmented is streamable by construction. A ref without codecs (an image, a
+file, a video from a client older than the composer wiring) takes the whole-blob path, and that is
+the fact-based choice, not a fallback.
 **Seeking ahead of the download waits for it**: segments are appended in order; the reader can fetch
 any one segment (`segmentForOffset`), but mapping a TIME to a byte needs the container's index,
 which belongs with the capture (R3). A streamed video is not written to the ciphertext cache.
@@ -326,15 +334,29 @@ tests: `byte-range.spec.ts`, `media.service.range.spec.ts`.
 
 `SEGMENTED_MEDIA_WRITER_ENABLED` is `false`: nothing writes the format yet, so this release changes
 no blob anyone uploads. A client older than the reader, handed a segmented blob, would feed the
-header and every tag to ONE GCM decrypt and show a broken video. The flip is one line, video only
-(`writesSegmented`), and may land only when ALL of these hold - the order Graine v2 ships in
+header and every tag to ONE GCM decrypt and show a broken video. The flip is ONE line - the
+constant in `frontend/src/lib/mediaSegmentedWriterFlag.ts`, a module of its own so nothing else
+moves - video only (`writesSegmented`), and may land only when ALL of these hold - the order
+Graine v2 ships in
 ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)):
 
-1. `minClientVersion` is at or above the release carrying this reader;
+1. `minClientVersion` is at or above the release carrying this reader (`1.0.0`). **Raising it is
+   the USER's decision, never an agent's** - it interrupts every older client
+   ([legacy-compatibility](../legacy-compatibility.md));
 2. BOTH stores serve that version - measured (`bun tools/play-vitals/vitals.mjs`, the App Store),
    never inferred from a date;
 3. the estate's media-service answers `206` to a `Range` - it ships with this reader, so its deploy
    is the condition, not a code change.
+
+**The path behind the flip is already exercised.** `media.segmentedWriter.e2e.test.ts` replaces
+exactly that module with `true` and drives the production code end to end: a prepared video
+([video-preparation](../frontend/video-preparation.md), `type` naming its codecs) through
+`encryptAndUpload` (segmented, the ref declaring it, the ceiling leaving room for the header and
+every tag), the chat transport's proto field, `chooseSegmentedPlayback` choosing the stream, the
+ranged reader returning every byte and a seek reading only its segment, the whole-blob reader
+returning the same file - and the pre-reader single-GCM decrypt FAILING on it, which is the
+reason for gate 1. The constant's own test (`mediaSegmented.test.ts`) pins it `false`, so the flip
+is also a visible test change.
 
 |                                | single-block blob          | segmented blob                                                                   |
 | ------------------------------ | -------------------------- | -------------------------------------------------------------------------------- |

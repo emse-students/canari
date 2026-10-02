@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Pause, Play, Download } from '@lucide/svelte';
+  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { m } from '$lib/paraglide/messages';
   import {
     barCountForWidth,
@@ -78,7 +79,11 @@
     if (isPlaying) {
       audioEl.pause();
     } else {
-      void audioEl.play();
+      audioEl.play().catch((err: unknown) => {
+        console.warn('[voice] play() refused', {
+          name: err instanceof Error ? err.name : String(err),
+        });
+      });
     }
   }
 
@@ -156,6 +161,7 @@
 >
   <audio
     bind:this={audioEl}
+    use:arbitratePlayback
     {src}
     preload="auto"
     onloadedmetadata={() => {

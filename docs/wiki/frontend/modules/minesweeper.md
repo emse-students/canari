@@ -10,6 +10,38 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
+## Moderation: remove a score, ban a player (2026-10-02)
+
+*"ajoute le fait de pouvoir retirer un score sur demineur, et bannir un utilisateur"* (user). **Global
+admins only** - `GlobalAdminGuard` on the server (`X-Global-Admin`, set by nginx from the JWT claim),
+and the buttons are drawn for `globalAdminState()` only, the 403 behind them being the real gate.
+
+| Action | Route | Effect |
+| --- | --- | --- |
+| Remove a score | `DELETE /minesweeper/scores/:scoreId` | deletes THAT row; the player keeps their others, so their next best takes its place |
+| Ban a player | `POST /minesweeper/bans` `{userId, reason?}` | out of the RANKED game |
+| Lift a ban | `DELETE /minesweeper/bans/:userId` | everything comes back; 404 when there was no ban |
+| List the bans | `GET /minesweeper/bans` | newest first, with the name the leaderboard shows |
+
+**A ban is a row, and NOTHING is deleted** (`minesweeper_bans`, migration `070`). Every read asks whether
+a ban exists - the leaderboard (`NOT EXISTS`), the rank query (so a banned player's time stops counting
+against everyone else's rank), `userStanding` (so a profile badge cannot show a rank they were removed
+from) and `me` - so lifting it restores the scores exactly. A ban that destroyed them could not be
+undone by a moderator who made a mistake. A banned player **cannot start a challenge or submit one opened
+before the ban** (403); the client types that as `MinesweeperBannedError` at the throw and the modal says
+*"vous etes banni du classement"* instead of dropping them into an unranked game without a word - they
+may still play casually. A moderator cannot ban themselves.
+
+The leaderboard now carries each row's `scoreId`, which is what "remove" names. In the modal's
+leaderboard tab an admin gets a remove and a ban button per row, **each behind a confirmation**
+(`showConfirm`), and a "Joueurs bannis" list with an unban button; a failed action is said on the tab.
+
+**Verified:** 14 service specs (a ban refuses the challenge and the submit, deletes nothing, is
+reversible, a self-ban is refused, an unban of nobody is a 404), the API client and the modal
+(six of seven modal tests fail without the change). **NOT verified: the SQL against a PostgreSQL** -
+none was available, so the leaderboard and rank statements are only pinned to name `minesweeper_bans`;
+and the migration has not been applied to a real database. **Owed:** one look at the tab as an admin.
+
 ## A board is a function of the seed AND the first click
 
 The server issues a seed (`randomBytes(16)`) when the first dig happens; mines are placed only

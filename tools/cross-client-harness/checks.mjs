@@ -374,6 +374,14 @@ export const PHASES = {
   // nothing ran half of it. The damage each remaining row needs is different again.
   // -5 and -7 can use `mlsdb.mjs truncate`, which -4 and -1 are the reason for writing (`--to 0` and
   // `--to N` are two different questions), and -2 has `flip`; -9 and -10 need A1.
+  // THE PHONE ALONE: the camera tab, the app's own capture screen and the publish step are a
+  // phone's, and every gesture they classify is an OS touch (`archive/reel.mjs`). Before CORRUPT
+  // because CORRUPT runs last.
+  REEL: {
+    title: 'CanaReels - the camera tab and publishing a reel',
+    scripts: only('reel.mjs', 1, 2),
+    needs: ['A1'],
+  },
   CORRUPT: {
     title: 'deliberate store damage',
     scripts: ['corrupt.mjs', 'corrupt1.mjs', 'corrupt2.mjs', 'corrupt4.mjs', 'corrupt6.mjs'],

@@ -70,7 +70,13 @@ for the same endpoint; the helper now matches it instead of holding a second opi
 synchronously, so switching tab and back replaced a rendered feed with four skeletons and refetched
 from zero. `$lib/posts/feedCache` holds the last page **per tab per reader**, so the pill and the
 posts under it can never disagree, and the fresh answer replaces the paint it is replacing -
-anything the reader has since appended or deleted is kept. A pull-to-refresh no longer collapses a
+anything the reader has since appended or deleted is kept. **Until 2026-10-02 the fresh answer
+never replaced the paint.** The test of "is the paint still on screen" compared the list with the
+cached array, but a `$state` holds a PROXY of the array it is given, so the two were never equal
+once anything was cached. The feed was always one visit behind. A reel just published did not
+appear on the feed the app landed on (REEL-2 on the Mi 9T). The page now compares with the proxy
+it read back after painting, and `feedPaintIdentity.svelte.test.ts` pins the Svelte behaviour this
+relies on. A pull-to-refresh no longer collapses a
 list that is on screen either: the skeleton is for an empty list, which is the rule `ChatArea`
 already followed.
 
@@ -98,9 +104,10 @@ window stepping up by 140 groups did not, and neither did a PEER scrollback answ
 arrive as a return value but later, as an ordinary bundle, by which time nothing is holding an
 anchor. So a reader who asked for older history was slid down the page by exactly the height of what
 they had asked for. `scrollTop` cannot tell a prepend from an append, so a ROW is anchored instead:
-the growth observer keeps the topmost rendered row and asks how far it moved (`anchorShift`). That
-covers all three mechanisms without knowing which one ran, and it needs no `overflow-anchor`, which
-WebKit does not implement.
+the growth observer keeps a row and asks how far it moved (`anchorShift`). That covers all three
+mechanisms without knowing which one ran. **Since 2026-10-02 the row is the one at the top of the
+viewport and the browser's own `overflow-anchor` is switched OFF on the pane** - Chromium and Safari
+27 anchor natively and the two compensations added up (measured, [media-frame](media-frame.md#4-the-pane-keeps-the-readers-row-whatever-grows)).
 
 ## 3ter. Sixty downloads in one frame (2026-09-23)
 
@@ -132,6 +139,21 @@ ABORT MEANS "NEVER START", NOT "STOP". A request abandoned while still QUEUED is
 asks - the whole win for a reader scrolling past thirty rows. One that has already started runs to
 completion on purpose: the fetch behind it is shared with every other holder of the same object
 through the in-flight map, so cancelling it would cancel somebody else's.
+
+**AND THE SHARED LOAD IS ABANDONED ONLY WHEN ITS LAST HOLDER LEAVES (2026-10-02).** That paragraph was
+true of a request already STARTED and false of one still QUEUED: the load in the in-flight map was
+bound to the signal of whoever began it, so when the starter was torn down while queued, the shared
+promise rejected with the starter's `AbortError` - and every row that had joined it in the meantime
+received that. **Every video uploaded in the chat hit it**: the sent message is re-rendered right
+after its upload (the bubble is re-mounted when the optimistic copy is swapped for the sent one), the
+old bubble is torn down while the new one has joined its load, and the new one printed `media not shown
+(other) ... DOMException: The operation was aborted` with no thumbnail - *"ca arrive avec toutes les
+videos uploadees dans le chat"* (user). Photos escaped only because they finish before the re-render.
+The load now owns its OWN `AbortController` (`SharedLoad` in `mediaBlobCache.ts`) and each holder, the
+starter included, only counts: the controller fires when the count reaches zero, the entry leaves the
+map at that moment so a later arrival starts afresh instead of joining a doomed load, and a holder
+with no signal can never be abandoned. `mediaBlobCache.shared.test.ts` queues the request behind a
+saturated gate, which is the state the defect needs; three of its four cases fail on the old cache.
 
 ## 3quater. Six taps that waited to be told what they already knew (2026-09-23)
 

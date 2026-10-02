@@ -162,7 +162,11 @@ The composer comparison R1 was built from is on
    the writer follows once `minClientVersion` is that reader and both stores serve it - the Graine
    v2 order. **On-device compression (C3) is the `prepareVideoForUpload` seam**, WebCodecs +
    mediabunny to one fragmented MP4, proven on both phones 2026-10-01
-   ([video-preparation](frontend/video-preparation.md)); its composer wiring is next.
+   ([video-preparation](frontend/video-preparation.md)); its composer wiring is #1327.
+   **The writer's whole path runs with the flag ON in `media.segmentedWriter.e2e.test.ts`; the flip
+   itself is one constant (`mediaSegmentedWriterFlag.ts`) and waits on the USER raising
+   `minClientVersion` to `1.0.0` once both stores serve it**
+   ([media-service](services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
    save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the
@@ -178,6 +182,14 @@ The composer comparison R1 was built from is on
    format before upload - one reason R2 comes first. What the tab itself needs is the section below.
    **The SERVER half (the `reel` post kind, the 90 s declaration, the 30-day deletion, the expiry
    signal) and the API contract the client builds against: [reels](services/reels.md)** (2026-10-01).
+   **The first camera open was READ on both phones on 2026-10-01, and the tab is built on it**
+   ([reels](frontend/modules/reels.md#the-first-camera-open-read-on-both-phones-2026-10-01-before-anything-was-built-on-it)).
+   **The client is on `main` and READ end to end on both phones (2026-10-02)**: camera tab, capture,
+   publish, vertical card, full-screen viewer, save to the gallery - REEL-1 and REEL-2 `PASS` clean on
+   the Mi 9T ([reels](frontend/modules/reels.md#read-end-to-end-on-both-phones-2026-10-02-main-at-4b62429e4-then-the-fixes-of-1354-and-1355)).
+   The "deleted in N days" chip is REMOVED (user, 2026-10-02): a reel shows its age. **OWED:** one
+   real-content take on each phone, the iOS frame timing of the viewer swipe (the Mi 9T measured 11.5 %
+   janky frames), the intermittent `touchmove` console line, and the user's ruling on the publish note.
 4. **R4 - live** (C9), behind the calls revival.
 
 ### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01
@@ -357,6 +369,31 @@ that caused the incident, instead of against the question the incident raised - 
 read this token*. The paragraph recording it has read as though the exposure were closed since
 2026-09-02.
 
+
+### P3 - every keyboard rise moves the composer for a moment, on both phones, and the cause is a different stale number on each (measured 2026-10-02)
+
+Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
+via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
+with no panel involved**, so neither comes from the panel's hand-off, though both show through it.
+
+- **Mi 9T (A1, Android WebView).** The top sits at 877 px, then for 60-100 ms at **174 px**, then at
+  532 px. During that window `visualViewport.height` reads **230** while `innerHeight` is already
+  **588**. 945 - 2 x 357 = 231: the keyboard's height is taken off TWICE for one report, once by the
+  resize and once by the visual viewport. `keyboardViewport` follows the visual viewport, so the
+  composer jumps 358 px up and comes back. Measured twice (with and without the GIF panel), with the
+  same numbers both times. The remembered keyboard height is not polluted: the last write wins, and
+  it is 357.
+- **iPhone 12 (I1, iOS 27.0.1).** The top sits at 766 pt, then for ~400 ms at **465 pt**, then at
+  487 pt. `visualViewport.height` is 543 from the first frame, but `--safe-area-inset-bottom` stays at
+  **34px** for ~400 ms before it falls to 0. `.keyboard-open .chat-composer-footer` pads
+  `max(0.75rem, var(--safe-area-inset-bottom))`, so the composer stands 22 pt (34 - 12) too high
+  until the inset catches up.
+
+Neither is fixed. The Android one wants the WebView's double report recognised for what it is (a
+viewport that shrank inside a layout viewport that already shrank). The iOS one wants the footer
+not to pad a safe area the keyboard already covers. That runs against the comment on that rule ("the
+reserved space must not visibly shrink just because the keyboard opened"), which has to be read
+before changing it. Readings: [#1345](https://github.com/emse-students/canari/pull/1345#issuecomment-5943602239).
 
 ### P3 - MiConnect: one string left after the French pass, and one observation (2026-09-25)
 

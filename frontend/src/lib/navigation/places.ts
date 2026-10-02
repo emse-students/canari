@@ -97,6 +97,24 @@ export const APP_PLACES: AppPlace[] = [
  */
 export const MOBILE_NAV_PLACES: AppPlace[] = APP_PLACES.filter((p) => p.mobileNav);
 
+/**
+ * The CanaReels camera (C5): a tab LEFT of the feed, reached by swiping right from it and by nothing
+ * else. Deliberately NOT an `AppPlace` in `APP_PLACES` - it has no icon in any bar or sidebar - so it
+ * carries only what the swipe list reads (`swipeNavigation.ts`).
+ */
+export const CAMERA_PLACE = { id: 'camera', href: '/camera' } as const satisfies Pick<
+  AppPlace,
+  'id' | 'href'
+>;
+
+/**
+ * Whether this path draws full screen, with no header and no tab bar: the camera, whose preview IS
+ * the page. The layout hides its chrome on it as it does for an open conversation on a phone.
+ */
+export function isFullScreenPlace(pathname: string): boolean {
+  return pathname === CAMERA_PLACE.href || pathname.startsWith(`${CAMERA_PLACE.href}/`);
+}
+
 /** Returns the active place ID for the given pathname, or null if no place matches. */
 export function resolveActivePlaceId(pathname: string): string | null {
   const exact = APP_PLACES.find(

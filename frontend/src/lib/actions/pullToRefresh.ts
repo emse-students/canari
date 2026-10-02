@@ -37,6 +37,7 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
   ensureStyles();
 
   let startY = 0;
+  let startX = 0;
   let active = false;
   let refreshing = false;
   let indicator: HTMLDivElement | null = null;
@@ -88,13 +89,22 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
     // (the socket is up, or it is not), and an action bound at mount would answer for ever.
     if (enabled && !enabled()) return;
     startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
     active = true;
   }
 
   function onTouchMove(e: TouchEvent) {
     if (!active || refreshing) return;
     const dy = e.touches[0].clientY - startY;
-    if (dy <= 0) {
+    const dx = Math.abs(e.touches[0].clientX - startX);
+    // NOT A PULL, AND NOT OURS TO CANCEL. Three cases are released to whoever owns them:
+    // - an upward drag, which is the scroller's;
+    // - a sideways drag, which is the tab swipe's (it drifts a few px down, and used to be claimed
+    //   as a pull);
+    // - a move the engine has already given to a scroll (`cancelable` false). Cancelling that one
+    //   does nothing except log "Ignored attempt to cancel a touchmove event" in the console. The
+    //   Mi 9T logged it on every swipe from the feed to the camera tab (REEL-1, 2026-10-02).
+    if (dy <= 0 || dx > dy || !e.cancelable) {
       active = false;
       removeIndicator();
       return;

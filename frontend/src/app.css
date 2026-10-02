@@ -210,8 +210,6 @@
   --z-nav-drawer-scrim: 42;
   --z-nav-drawer: 44;
 
-  --z-toast: 60;
-
   /* Window scale: the banner column in the root layout. */
   --z-banner: 120;
 
@@ -234,6 +232,13 @@
   --z-modal-popover: 290;
   /* A full-screen media viewer. Above a modal because it opens from one. */
   --z-viewer: 300;
+
+  /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
+     full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted
+     BEHIND the reel viewer's rung 300, so a save (and its refusal) answered nothing on screen
+     (iPhone 12, 2026-10-02). Non-interactive (`pointer-events-none`), so it traps no click; below
+     `--z-critical`, which a confirmation holds. */
+  --z-toast: 310;
 
   /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
   --z-critical: 320;
@@ -336,6 +341,10 @@
      For reference the tallest media measured on the Facebook group page was 735px in a 945px
      viewport - 78% - but that was an uncropped portrait document, not the shape a feed is browsed at. */
   --media-max-height: 60svh;
+  /* The tallest a medium drawn at its OWN size may be - a GIF in a message, a GIF panel tile
+     (`MediaFrame sizing="intrinsic"`). 16rem is the `max-h-64` the inline GIF always had, so a GIF
+     is the size it was; it is now that size BEFORE it loads. */
+  --media-inline-max-height: 16rem;
   /* Height of the full-width brand bar. READ BY THREE THINGS - the bar itself, the nav rail
      that hangs below it, and the rail's hover scrim, which starts at its bottom edge. It was
      the literal `3.5rem` in all three, and floating the bar by 0.75rem left the scrim short by
@@ -630,6 +639,27 @@ html[data-swipe-nav]::view-transition-old(root) {
 html[data-swipe-nav]::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+}
+
+/* THE BOTTOM BAR IS ITS OWN GROUP, ABOVE THE PAGES (Mi 9T, 2026-10-02: camera -> feed showed the feed
+   for ~270 ms with the bar missing, then the bar popped in). Named groups stack ABOVE `root`, and the
+   page wrapper's box runs under the `fixed` bar, so the incoming page's snapshot - which paints its
+   own background - covered the bar that `root` had drawn on the first frame, until the transition
+   ended and the live DOM took over. A name of its own puts the bar in a group painted after the
+   pages (paint order), where it is on top from the first frame; the old capture is hidden and the
+   new one does not animate, so the bar is never faded, morphed or left behind. Only while a swipe
+   is under way: a bar with a permanent name would become a transition group of every navigation. */
+html[data-swipe-nav] #bottom-nav {
+  view-transition-name: bottom-nav;
+}
+
+html[data-swipe-nav]::view-transition-group(bottom-nav),
+html[data-swipe-nav]::view-transition-new(bottom-nav) {
+  animation: none;
+}
+
+html[data-swipe-nav]::view-transition-old(bottom-nav) {
+  display: none;
 }
 
 html[data-swipe-nav='next']::view-transition-old(swipe-nav-out) {
@@ -1154,6 +1184,22 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
 }
 
+/* THE GIF PANEL TAKES THE KEYBOARD'S PLACE, SO THE COMPOSER SITS ON IT AS IT SITS ON A KEYBOARD
+   (`ComposerGifPanel`, `composerSurface.ts`). Over a keyboard the composer is 0.75rem above it and
+   the safe area is the keyboard's; over the panel the same 0.75rem is the panel's top margin and the
+   footer pads nothing - the panel itself reaches the screen's bottom edge, as the keyboard does, and
+   keeps its own content clear of the home indicator. With the margin on the panel and not on the
+   footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
+   0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
+   outranks the `!important` keyboard rule above. */
+.chat-composer-footer.has-keyboard-panel,
+.mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
+  padding-bottom: 0 !important;
+}
+.composer-gif-panel {
+  margin-top: 0.75rem;
+}
+
 /* LIQUID GLASS, AND ONLY FOR CHROME THAT STAYS PUT WHILE CONTENT MOVES UNDER IT (user, 2026-09-30:
    "only static ui element, that are apart from content, should be liquid glass"). The conversation's
    floating header pieces and the composer's "+" wear it; a bubble, a card or a panel of content never
@@ -1223,8 +1269,26 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    the document element. (A conversation open on mobile also hides the sidebar outright, so that
    half is belt and braces; the keyboard half is reached for real by focusing the search field.) */
 .keyboard-open .mobile-nav-inset,
-.mobile-convo-open .mobile-nav-inset {
+.mobile-convo-open .mobile-nav-inset,
+.fullscreen-place-open .mobile-nav-inset {
   padding-bottom: 0;
+}
+
+/* THE CAMERA IS THE WHOLE SCREEN (CanaReels, C5): the layout unmounts the bar there, so the
+   reservation the wrapper keeps for it would be a dead band under the preview - and the preview is
+   one viewport tall, so the wrapper must not scroll either. Same reasoning as the chat shell above. */
+.fullscreen-place-open .page-scroll-wrap {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+/* AND IT RUNS UNDER THE STATUS BAR (user, 2026-10-02, iPhone 12: a 47 pt black strip above the
+   preview, which reached the bottom edge but not the top). The shell pads its top by the safe-area
+   inset for every ordinary page; here that padding is the strip, so it is given back and the screen
+   paints from y = 0. The CONTROLS carry the inset themselves (`CameraScreen`, `ReelReview`,
+   `ReelPublishSheet`), which is the half that must not slide under the notch. */
+.fullscreen-place-open .app-shell {
+  padding-top: 0;
 }
 
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView

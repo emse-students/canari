@@ -54,8 +54,8 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **The date pill sits under the chrome EVERYWHERE** - a defect found on the way, on every width: the
   pill is positioned against the whole panel, header included, so at `top: 0.85rem` the header
   covered it while it showed. It now reads `--chat-header-height` too.
-- **The apps' composer is ONE "+"** (`ChatComposer`, `addMenuItems`): photos and videos, all files,
-  GIF, poll - each under its classic button's condition. No paperclip, poll or GIF button and no
+- **The apps' composer is ONE "+"** (`ChatComposer`, `addMenuItems`): the photo library, the camera,
+  all files, GIF, poll ([the one menu](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)) - each under its classic button's condition. No paperclip, poll or GIF button and no
   CHEVRON FOLD there: one button needs none. The microphone still gives way to Send while typing. The
   website keeps all of it: the paperclip (a phone browser's opens the same photos / files menu,
   `attachMenuItems`), poll, GIF and the fold.
@@ -83,13 +83,132 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
 | `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu: "Photos et vidéos" or "Tous les fichiers"** (2026-09-28, user: *"comme sur messenger"*). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
 | `MessageEmojiPicker.svelte` | Emoji reaction picker (locale-aware FR/EN i18n) |
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
+
+### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
+
+Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en
+faire qu'un"*, and the menu that *"ne se ferme pas"*; and for GIFs, *"un panneau de la taille du
+clavier qui s'ouvre a sa place"* - Messenger's, Discord's, WhatsApp's.
+
+**WHY THERE WERE TWO MENUS - READ OFF THE RECORDING, THEN OFF WEBKIT.** The "+" opened Canari's menu
+(the native UIMenu of WP-G2 on iOS); its "Photos et videos" clicked an
+`<input type="file" accept="image/*,video/*">`, and WebKit answered with its OWN sheet - Phototheque,
+Prendre une photo ou une video, Choisir les fichiers. `WKFileUploadPanel` shows that sheet for every
+file input that accepts images or videos and carries no `capture`; no `accept` a page can write skips
+it. So it was never a value to tune: on iOS a file input IS a second menu, and one menu means not
+opening a file input for the entries that sheet duplicates. The recording also shows the sheet staying
+up for fifteen seconds, anchored to an input that was `display: none`.
+
+**THE ONE MENU** (`utils/chat/attachSources.ts`, the table and the reason; `attachSources.test.ts`):
+
+| runtime | Photothèque | camera | Tous les fichiers |
+| --- | --- | --- | --- |
+| iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | input with `capture` - WebKit opens the camera directly, photo or video | **native** document picker |
+| Android app, Android browser | input `image/*,video/*` | TWO entries, inputs with `capture`: `image/*` (photo), `video/*` (video) | input, every type |
+| iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
+| desktop | no menu: the paperclip opens the file dialog | - | - |
+
+- **Android has two camera entries** because its capture intents are photo OR video: with both types
+  accepted, wry's `RustWebChromeClient.onShowFileChooser` launches the video recorder only.
+- **The iOS app's native picks come back through `take_picked_file`** (`commands/picked_files.rs`): the
+  dialog plugin COPIES each pick (PHPicker into `Library/Caches`, the document picker into `tmp/`) and
+  returns where; the command reads the copy, deletes it and returns the bytes. It reads and deletes a
+  path the page names, so it takes an ALLOWLIST - the canonical caches and temporary directories -
+  and compares the CANONICAL path, so neither `..` nor a symlink reaches outside. `nativeAttachPicker.ts`
+  names the `File` as the picker did and types it from its extension (the picker gives no MIME type);
+  a photo arrives as the library holds it, usually HEIC, which `compressImage` decodes on WebKit.
+
+**THE MENU, THE PANEL AND THE KEYBOARD ARE ONE STATE** (`utils/chat/composerSurface.ts`,
+`composerSurface.test.ts` walks every event in every state): `idle`, `menu`, `gif`, and `handoff`.
+
+- **The menu closes** on a pick, a tap outside, Escape (read on `window`, since a tap leaves focus on
+  the button), Back, the text field taking focus, and the keyboard opening. `GlassMenuButton` has a
+  CONTROLLED mode for this (`open` + `onOpenChange` with the reason); the header's menus are unchanged.
+- **Neither "+" nor an entry takes focus** (`keepsFocus`: their `mousedown` is cancelled), so a menu
+  opened over the keyboard leaves the keyboard up and the composer where it is. Without it the Mi 9T
+  measured the composer's top at 532 -> 877 -> 532 px through "+" then "Envoyer un GIF": focus moving
+  onto the button blurred the field, the keyboard fell under a menu that only floats, and the panel
+  lifted the composer back. With it, the keyboard and the panel swap in ONE frame (532 px throughout).
+- **Back is ONE history entry for the whole surface**, pushed when `menu` or `gif` begins and
+  ABANDONED (its popstate absorbed) when it ends any other way - so a pick that opens the poll modal
+  never has the modal's own entry popped by ours, and menu -> GIF keeps the one entry.
+- **`handoff`** is the panel giving its room to the keyboard after the text field is tapped: the room
+  stays reserved until the keyboard has risen into it (`keyboardOpened`), or the field blurs (a
+  hardware keyboard - none is coming). It ends on those facts, never on a timer.
+
+**THE PANEL TAKES EXACTLY THE KEYBOARD'S ROOM, AND THE COMPOSER DOES NOT MOVE.**
+
+- **Its height is the keyboard last measured on this device**, per orientation
+  (`stores/keyboardHeightMemory.ts`, written by `keyboardViewport` on every open keyboard and kept in
+  `localStorage`). `keyboardViewport`'s snapshot now carries `keyboardHeight` = baseline height minus
+  the visual viewport height while open - one number for every platform, because each shrinks the
+  visual viewport whatever else it does (iOS's native layer resizes the WebView, the Android app pads
+  its content, a browser shrinks only the visual viewport). Before any keyboard was seen the panel is
+  0.40 of the screen, bounded to 240-420 px (`gifPanelHeight`).
+- **The room under the composer is `panelSpacerPx` = reserved height minus what the keyboard covers
+  now**, recomputed on the same viewport event that moves the keyboard. As the keyboard falls under an
+  opening panel the room grows by exactly what it uncovers; as it rises into a closing one it shrinks
+  by what it takes. The panel is the footer's LAST child, so the composer sits on it as on a keyboard.
+- **The 0.75rem above the keyboard is the panel's top margin**, and the footer pads nothing while a
+  panel is reserved (`.has-keyboard-panel`, `app.css`): the panel reaches the screen's edge as a
+  keyboard does and keeps its content clear of the home indicator itself. Putting the margin on the
+  panel, not the footer, is what leaves no step when the panel unmounts at the end of `handoff`.
+- **While the panel's own search field has the keyboard up**, the panel rides above it at
+  `SEARCH_STRIP_PX` (200 px: the search row and one row of results), and keeps its full height until
+  the keyboard has risen - the composer rises by the strip, on purpose, since the results must show.
+
+**THE GRID HOLDS EVERY TILE'S SIZE BEFORE IT LOADS** (`GifGrid.svelte`, shared by the phone panel and
+the desktop dialog `GifPickerModal`). KLIPY declares `width` / `height` for each rendition;
+`mapKlipyItems` keeps them and LEAVES OUT, counting at warn level, a result that declares none - it
+could not be laid out without a shift. `gifMasonry.ts` places every tile (shortest column first) from
+those sizes alone, so the grid never reflows, and only tiles near the scrolled window are mounted -
+the virtualisation. The next page is asked for near the end. **Each tile is a
+[MediaFrame](../media-frame.md) `sizing="intrinsic"`** declared at the box the masonry placed it in,
+so the frame IS the tile before and after its GIF loads, with the frame's surface tone underneath
+(KLIPY sends no ThumbHash). The masonry takes its ratio from `normalizedAspectRatio`, the clamp the
+frame draws with, so the two stay one shape even for a GIF thinner than 1:4. **A tap sends at once,
+with the size of the rendition SENT in the URL**: `withGifSize(full.url, full.width, full.height)`
+writes `#cn-size=WxH`, and every reader's frame reserves that box before the GIF arrives. That is
+the whole of what the MediaFrame contract asks of a picker.
+
+**Verified here:** the transition table, the spacer arithmetic, the masonry, the KLIPY mapping, the
+picker table per runtime (`ChatComposer.attachMenu.svelte.test.ts`: which input or native picker each
+entry opens, with which `accept` / `capture`, and the menu closing on pick, outside, Escape, Back and
+focus), the panel (`ChatComposer.gifPanel.svelte.test.ts`: last in the footer at the remembered
+height, tiles sized from declared dimensions, send closes it, Back closes it, the hand-off), the Rust
+allowlist (`picked_files.rs` tests) and a source pin that the command is registered.
+
+### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
+
+**Two reports from the user.** *"message avec texte + image -> l'image est au dessus de la bulle,
+comme si elle etait envoyee seule avant le texte, pas dans la bulle"*, and *"video -> conserver le
+format (actuellement les videos sont crop dans le chat, il faut cliquer dessus pour tout afficher)"*.
+
+- **Bleed.** A photo or video that carries a caption (and no quoted reply, which stacks its own
+  bubble above) now fills the TOP of its bubble edge to edge, with the caption under it in the same
+  bubble - Messenger's and WhatsApp's layout. It used to sit as a framed, rounded thumbnail inside the
+  bubble's padding, which read as a card laid on the bubble. `MessageBubble` computes `bleedsMedia`,
+  adds `overflow-hidden` to the bubble (it clips the corners, so the media draws none of its own) and
+  passes `bleed` to `MessageMediaRenderer`, which cancels the padding with `-mx-3 -mt-2`.
+- **THE WIDTH IS FIXED, NOT A PERCENTAGE.** The first attempt gave the media `w-full`: the bubble is
+  `w-fit`, sized by its content, so a percentage width had nothing definite to resolve against and the
+  bubble ballooned over the whole row. The media is `w-68` (17rem) and the caption `calc(17rem - 1.5rem)`,
+  so a captioned media is always one width - the same lesson as the `w-56` note on the image branch.
+- **A video keeps its own shape.** The box reserved the clip's ratio but the video was drawn
+  `object-cover`, which cut a portrait clip down to the 16:9 fallback's crop. It is now `object-contain`
+  in a box of the clip's real aspect ratio (`mediaAspectStyle`), so past the height ceiling it
+  letterboxes on black instead of losing its edges.
+
+Verified in Chromium on the real renderer inside a bubble of the bubble's own classes (landscape and
+portrait, a caption shorter and longer than the media). `MessageMediaRenderer.image.svelte.test.ts`
+pins the ratio, `object-contain`, the bleed and the rounded frame kept when there is no caption.
 
 ### Every photo in a conversation went to a `<video>` (#1229, shipped in `v0.18.32`; fixed 2026-10-01)
 
@@ -101,6 +220,35 @@ branch is back as it was (an `<img>` in a button opening the viewer, the downloa
 the video branch is unchanged. **No test had ever mounted that branch**: the caption test passes
 `blobUrl: null` and stops at the skeleton. `MessageMediaRenderer.image.svelte.test.ts` mounts it with
 the bytes decrypted, and was red on the defect.
+
+### Editing a message happens in the composer, not in the bubble (2026-10-02)
+
+*"modification des messages -> pas dans la bulle, dans le composer de message classique"* (user,
+2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
+deleted); it now only ANNOUNCES the edit.
+
+- **`MessageBubble` takes `onBeginEdit(messageId, text)`**, not `onEdit`. The toolbar's and the mobile
+  sheet's "edit" call it for the author's own text message (`canEdit`: not deleted, own, no media, a
+  parent able to take it). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
+- **`createEditSession` (`utils/chat/editSession.svelte.ts`) holds the state.** `begin` loads the
+  message into the composer's text and keeps the DRAFT it replaced; `cancel` and `confirm` give the
+  draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
+  from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
+  changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
+  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+- **`ChatComposer` takes `editingText`, `onCancelEdit`, `onConfirmEdit`.** While `editingText` is set:
+  a banner (the reply strip's skin) names the message, Send becomes a Save check that stays disabled
+  until the text is non-empty and different, **Escape or the banner's X cancels**, and the "+", the
+  paperclip, poll, GIF and microphone step aside (`actionsHidden`). `submit()` is the one send path
+  for Enter and the button; **an edit does NOT clear the field**, because the parent hands the draft
+  back and a clear would reach it after and wipe it.
+- **Channels cannot edit**, as before: `MainChatPage` passes no `onEdit` there, so no action shows.
+
+Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
+`ChatComposer.edit.svelte.test.ts` (banner, Save rule, Enter and button, no clear, Escape and X, the
+"+" put away and present otherwise) and `editSession.svelte.test.ts` (draft kept and returned, first
+draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
+edit through `handleEditMessage` end to end on a phone.
 
 ### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
 

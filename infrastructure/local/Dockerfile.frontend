@@ -51,7 +51,16 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
 
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
-RUN printf 'server {\n\
+RUN printf '# THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
+# every request on /adminer/, and the upstream has no use for it - it is stripped, and the cookies of Adminer\n\
+# itself (adminer_sid, adminer_key ...) are left exactly as they came.\n\
+map $http_cookie $adminer_cookie {\n\
+    "~^canari_adminer=[^;]*;?\\s*(?<rest>.*)$" $rest;\n\
+    "~^(?<head>.*?);\\s*canari_adminer=[^;]*(?:;\\s*(?<tail>.*))?$" "$head; $tail";\n\
+    default $http_cookie;\n\
+}\n\
+\n\
+server {\n\
     listen 80;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
@@ -106,6 +115,64 @@ RUN printf 'server {\n\
     proxy_set_header X-Original-URI $request_uri;\n\
     proxy_set_header Authorization $http_authorization;\n\
     proxy_set_header Cookie $http_cookie;\n\
+    }\n\
+    \n\
+    # ADMINER, THE DATABASE ADMIN UI - GLOBAL ADMINS ONLY, AND CLOSED BY DEFAULT (2026-10-02).\n\
+    # A page reached by NAVIGATION carries no Authorization header, so /internal/auth/verify cannot\n\
+    # identify its caller; the gate below reads a short, signed, HttpOnly cookie that a global admin\n\
+    # is handed by POST /api/auth/adminer-session (core-service), and core-service re-checks on every\n\
+    # request that its owner is STILL an admin. Anything that is not a live session answers a bare\n\
+    # 404, so a visitor learns nothing about what lives here. Adminer then asks for the database user\n\
+    # and password itself: this block never holds or injects one. Where ADMINER_ENABLED is not set\n\
+    # (development) core-service refuses to issue the cookie and there is no adminer upstream at all.\n\
+    # docs/wiki/infrastructure/databases.md; .github/scripts/tests/adminer-route.test.mjs holds the shape.\n\
+    location = /internal/auth/adminer {\n\
+    internal;\n\
+    set $upstream_auth core-service:3012;\n\
+    proxy_pass http://$upstream_auth/api/auth/adminer-verify;\n\
+    proxy_pass_request_body off;\n\
+    proxy_set_header Content-Length "";\n\
+    proxy_set_header Cookie $http_cookie;\n\
+    }\n\
+    \n\
+    location = /adminer {\n\
+    absolute_redirect off;\n\
+    return 301 /adminer/;\n\
+    }\n\
+    \n\
+    location @adminer_hidden {\n\
+    return 404;\n\
+    }\n\
+    \n\
+    location /adminer/ {\n\
+    auth_request /internal/auth/adminer;\n\
+    error_page 401 403 =404 @adminer_hidden;\n\
+    limit_except GET HEAD POST { deny all; }\n\
+    # The upstream is addressed through a variable, so the prefix is stripped by hand. THE `set` COMES\n\
+    # FIRST, and the order is the whole point: `rewrite ... break` ends the rewrite phase, so a `set`\n\
+    # written after it never runs and proxy_pass is handed an empty host (a 500, found by running it).\n\
+    # Adminer answers its redirects RELATIVELY (?pgsql=...), which a browser resolves under /adminer/ by\n\
+    # itself, so there is no proxy_redirect: one written for absolute paths would be a guess.\n\
+    set $upstream_adminer adminer:8080;\n\
+    rewrite ^/adminer/(.*)$ /$1 break;\n\
+    proxy_pass http://$upstream_adminer;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    proxy_set_header Cookie $adminer_cookie;\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
+    proxy_read_timeout 300s;\n\
+    proxy_send_timeout 300s;\n\
+    add_header Cache-Control "no-store" always;\n\
+    add_header X-Robots-Tag "noindex, nofollow" always;\n\
+    add_header Referrer-Policy "no-referrer" always;\n\
+    add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; img-src '"'"'self'"'"' data:; connect-src '"'"'self'"'"'; form-action '"'"'self'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"'; object-src '"'"'none'"'"';" always;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     # App Links Android (assetlinks.json) + Universal Links iOS\n\

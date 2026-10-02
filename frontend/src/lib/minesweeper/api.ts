@@ -36,12 +36,35 @@ export interface MinesweeperStanding {
 }
 
 export interface LeaderboardEntry {
+  /** The score row itself - what a global admin's "remove this score" names. */
+  scoreId: string;
   rank: number;
   userId: string;
   displayName: string;
   durationMs: number;
   moveCount: number;
   verifiedAt: string;
+}
+
+/** A user banned from the ranked game, as a global admin sees them. */
+export interface MinesweeperBan {
+  userId: string;
+  displayName: string;
+  reason: string | null;
+  bannedBy: string;
+  bannedAt: string;
+}
+
+/**
+ * The server refused a ranked challenge to a user a global admin banned (403). Typed here, at the
+ * throw, so the modal can SAY so instead of dropping the player into a casual game without a word -
+ * a distinction carried in an error message is one call site's guess.
+ */
+export class MinesweeperBannedError extends Error {
+  constructor() {
+    super('banned from the ranked minesweeper');
+    this.name = 'MinesweeperBannedError';
+  }
 }
 
 /** Base path for minesweeper API on social-service (same-origin via nginx when unset). */
@@ -53,6 +76,7 @@ function minesweeperBase(): string {
 /** Starts a ranked seeded challenge (server clock begins). */
 export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeResponse> {
   const res = await apiFetch(`${minesweeperBase()}/challenges`, { method: 'POST' });
+  if (res.status === 403) throw new MinesweeperBannedError();
   if (!res.ok) {
     throw new Error(`Failed to start challenge (${res.status})`);
   }
@@ -107,6 +131,41 @@ export async function fetchMinesweeperUserStanding(userId: string): Promise<Mine
     throw new Error(`Failed to load minesweeper standing (${res.status})`);
   }
   return res.json();
+}
+
+// ---- Moderation: global admins only - the server refuses anyone else with a 403 ----
+
+/** Removes one verified score; the player keeps their others. */
+export async function removeMinesweeperScore(scoreId: string): Promise<void> {
+  const res = await apiFetch(`${minesweeperBase()}/scores/${encodeURIComponent(scoreId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Failed to remove the score (${res.status})`);
+}
+
+/** Bans a user from the ranked game. Their scores are hidden, not deleted. */
+export async function banMinesweeperUser(userId: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`${minesweeperBase()}/bans`, {
+    method: 'POST',
+    body: JSON.stringify({ userId, ...(reason ? { reason } : {}) }),
+  });
+  if (!res.ok) throw new Error(`Failed to ban the user (${res.status})`);
+}
+
+/** Lifts a ban: the player's scores and rank come back as they were. */
+export async function unbanMinesweeperUser(userId: string): Promise<void> {
+  const res = await apiFetch(`${minesweeperBase()}/bans/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Failed to lift the ban (${res.status})`);
+}
+
+/** Everyone currently banned from the ranked game. */
+export async function fetchMinesweeperBans(): Promise<MinesweeperBan[]> {
+  const res = await apiFetch(`${minesweeperBase()}/bans`);
+  if (!res.ok) throw new Error(`Failed to load the bans (${res.status})`);
+  const data = (await res.json()) as { bans: MinesweeperBan[] };
+  return data.bans ?? [];
 }
 
 /** Formats a duration for the HUD / leaderboard. */

@@ -1,9 +1,7 @@
-version: 1.0.0
+version: 1.0.2
 
-Canari passe en 1.0.0.
+Les reels arrivent : un onglet camera pour filmer 90 secondes et publier dans le fil. La camera s'ouvre sur l'objectif avant, en plein ecran.
 
-Les videos ont leur propre lecteur, tournent en boucle, et les gros fichiers se lisent pendant leur telechargement. Un media qui ne s'affiche pas dit pourquoi et se relance d'un appui.
+Les videos des conversations se lancent avec un bouton lecture, une seule joue a la fois, et reprennent ou elles en etaient en grand.
 
-Les notifications nomment l'auteur de chaque message.
-
-Les documents d'association se telechargent a nouveau. Le jour affiche en defilant est plus lisible. Le bouton d'abonnement au calendrier est de retour sur telephone.
+Le retour au fil et l'ouverture d'une conversation sont plus fluides. Le calendrier ajoute un evenement a votre agenda, et le theme Automatique suit l'appareil.

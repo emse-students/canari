@@ -58,6 +58,9 @@ function router(overrides: Partial<Record<string, unknown>> = {}): QueryHandler 
     if (sql.includes('dm_device_group_memberships m')) {
       return overrides.ghosts ?? [{ devices: '52', ghosts: '0', orphans: '0' }];
     }
+    if (sql.includes("FROM posts WHERE kind = 'reel'")) {
+      return overrides.reels ?? [{ live: '12', overdue: '0', oldest: null }];
+    }
     throw new Error(`unrouted query: ${sql.slice(0, 40)}`);
   };
 }
@@ -171,6 +174,33 @@ describe('the MLS half of the storage panel', () => {
         { prefix: 'rate', keys: 1 },
       ],
     });
+  });
+
+  it('reports the reel worker as live and overdue, and shows the zero', async () => {
+    const usage = await makeController(router()).getStorageUsage('true');
+    // Zero overdue is the expected answer and the panel says so, like the ghost count.
+    expect(usage.reels).toEqual({ live: 12, overdue: 0, oldestOverdueMs: null });
+  });
+
+  it('names how long the longest-overdue reel has waited, which is the worker stopping', async () => {
+    const controller = makeController(
+      router({ reels: [{ live: '3', overdue: '2', oldest: '7200000' }] })
+    );
+    const usage = await controller.getStorageUsage('true');
+    expect(usage.reels).toEqual({ live: 3, overdue: 2, oldestOverdueMs: 7200000 });
+  });
+
+  it('keeps the rest of the panel when the reel measurement throws', async () => {
+    const base = router();
+    const controller = makeController(async (sql, params) => {
+      if (sql.includes("FROM posts WHERE kind = 'reel'"))
+        throw new Error('relation does not exist');
+      return base(sql, params);
+    });
+    const usage = await controller.getStorageUsage('true');
+    expect(usage.reels).toBeNull();
+    expect(usage.postgresBytes).toBe(42);
+    expect(usage.mls?.queue).not.toBeNull();
   });
 
   it('refuses a caller who is not a global admin, before measuring anything', async () => {

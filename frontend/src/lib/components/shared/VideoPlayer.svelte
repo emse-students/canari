@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import { followVideoSound } from '$lib/actions/playWhileVisible';
+  import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
   import {
     CONTROLS_FADE_MS,
     bufferedFraction,
@@ -9,6 +10,7 @@
     formatVideoTime,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
+  import { resumePosition, takeVideoPosition } from '$lib/utils/videoResume';
   import VideoPoster from './VideoPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -22,8 +24,12 @@
    * every engine: play/pause, a seek bar showing what is buffered, elapsed/duration, the app's ONE
    * sound answer (`followVideoSound`) and full screen where the engine offers it.
    *
-   * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on a
-   * tap on the picture, a key, or a pause. A paused video keeps them: there is nothing to watch.
+   * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on
+   * ANY mouse movement over the player, a tap ANYWHERE on it, a key, or a pause (user, 2026-10-02:
+   * *"sur web, afficher les controles lors de tout mouvement de souris, sur mobile un appui
+   * n'importe ou sur l'ecran de la video ouverte en grand est un toggle des controles"*). Anywhere
+   * means the black around a letterboxed clip too, which a tap listener on the `<video>` alone never
+   * reached. A paused video keeps them: there is nothing to watch.
    *
    * NO NATIVE POSTER, EVER: `poster` stays `TRANSPARENT_VIDEO_POSTER` (the Android WebView would
    * otherwise draw its grey play button), and `VideoPoster` covers the box until `loadeddata` says
@@ -34,8 +40,13 @@
    * `#t=0.1` holds here by construction.
    *
    * INSIDE `MediaLightbox` the bar carries `data-video-controls`, which the viewer's swipe, pinch and
-   * pan read as "not mine" exactly as they read a `<video>` or a `<button>`: a drag on the seek bar
-   * is a seek, never a swipe to the next media.
+   * pan read as "not mine" exactly as they read a `<button>`: a drag on the seek bar is a seek, never
+   * a swipe to the next media.
+   *
+   * THE CONTROLS ARE AN OVERLAY ON A ZOOMABLE PICTURE (user, 2026-10-02): the viewer zooms and pans
+   * only the `<video>`, handing its transform down as `--lightbox-zoom`, which the element applies to
+   * itself. The bar, the play button and the poster are siblings of it, so a zoom never scales them or
+   * carries them off the screen.
    */
   interface Props {
     /** The decrypted blob URL, or a segmented stream's MSE URL. */
@@ -53,6 +64,11 @@
     class?: string;
     /** Classes of the `<video>` - how it sits in that box. */
     videoClass?: string;
+    /**
+     * Whose sound answer the bar's button gives: the app's (a feed viewer, the default) or this
+     * video's own (a conversation's) - see `VideoSoundScope`.
+     */
+    soundScope?: VideoSoundScope;
   }
 
   let {
@@ -62,7 +78,29 @@
     disableRemotePlayback = false,
     class: klass = '',
     videoClass = 'max-h-full max-w-full object-contain',
+    soundScope = 'app',
   }: Props = $props();
+
+  /**
+   * WHERE THE INLINE VIDEO THIS ONE WAS OPENED FROM HAD GOT TO (`videoResume`), taken once at mount.
+   * The seek waits for `loadedmetadata`: before it the element has no duration to seek within, and
+   * a clip that played to its end starts over rather than resuming on its last frame.
+   */
+  let resumeFrom = 0;
+  onMount(() => {
+    resumeFrom = takeVideoPosition(src);
+  });
+
+  /** Seeks to {@link resumeFrom} once, as soon as the element knows its duration. */
+  function resumeOnce() {
+    if (!video || resumeFrom <= 0) return;
+    const at = resumePosition(resumeFrom, video.duration);
+    resumeFrom = 0;
+    if (at > 0) {
+      Log.d('VideoPlayer', `resuming at ${at.toFixed(1)} s`);
+      video.currentTime = at;
+    }
+  }
 
   let root: HTMLDivElement | null = $state(null);
   let video: HTMLVideoElement | null = $state(null);
@@ -135,7 +173,7 @@
   function toggleMute() {
     if (!video) return;
     showControls();
-    // `followVideoSound` turns this element's change into the app's one answer.
+    // In the `app` scope `followVideoSound` turns this element's change into the app's one answer.
     video.muted = !video.muted;
   }
 
@@ -196,7 +234,20 @@
     if ((e.target as HTMLElement).matches(':focus-visible')) showControls();
   }
 
-  /** A tap on the picture brings the controls back, or hides them when they are up. */
+  /**
+   * A MOUSE MOVING OVER THE PLAYER BRINGS THE CONTROLS UP, wherever it is on it. Mouse only: a
+   * finger's `pointermove` is a drag - a swipe in the viewer around, a seek on the bar - and must not
+   * show anything by itself.
+   */
+  function onPointerMove(e: PointerEvent) {
+    if (e.pointerType === 'mouse') showControls();
+  }
+
+  /**
+   * A tap anywhere on the player - the picture or the black around it - brings the controls back, or
+   * hides them when they are up. Controls, the play button and the seek bar stop their own clicks, so
+   * only a tap that is nobody else's gets here.
+   */
   function onPictureTap(e: MouseEvent) {
     e.stopPropagation();
     if (controlsVisible && !paused) controlsVisible = false;
@@ -256,8 +307,11 @@
   role="group"
   aria-label={m.video_player_label()}
   tabindex="0"
+  data-video-player
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
+  onpointermove={onPointerMove}
+  onclick={onPictureTap}
 >
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -270,10 +324,13 @@
     preload="metadata"
     poster={TRANSPARENT_VIDEO_POSTER}
     disableremoteplayback={disableRemotePlayback || undefined}
-    use:followVideoSound
+    use:followVideoSound={soundScope}
     class={videoClass}
-    onclick={onPictureTap}
-    onloadedmetadata={sync}
+    style="transform: var(--lightbox-zoom, none); transform-origin: center;"
+    onloadedmetadata={() => {
+      resumeOnce();
+      sync();
+    }}
     onloadeddata={() => {
       frameReady = true;
       sync();

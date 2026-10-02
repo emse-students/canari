@@ -48,11 +48,14 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * - `'archive'` - the feed (a post, a post comment, an avatar): a permanent row cites the object.
  * - `'association'` - an association's vault document: kept for ever, and it survives the
  *   uploader's account deletion because it belongs to the association.
+ * - `'reel'` - a CanaReels video: kept by the idle sweep, deleted with its reel 30 days after
+ *   publication by social-service's reel worker, which claims the blob at publication
+ *   ([reels (server)](docs/wiki/services/reels.md)).
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
  */
-export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association';
+export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
 
 export interface MediaRef {
   type: MediaType;
@@ -70,6 +73,12 @@ export interface MediaRef {
   width?: number;
   /** Display height in px (after compression), used to reserve layout before decrypt. */
   height?: number;
+  /**
+   * A ThumbHash of the picture, base64 (`MediaMsg.placeholder`), painted in the reserved box while
+   * the blob downloads. Made by the SENDER (`mediaPlaceholder.ts`): the server holds ciphertext and
+   * can make no preview. Absent on every ref before 2026-10-02 and on non-visual media.
+   */
+  placeholder?: string;
   /**
    * Recorded by the composer's microphone rather than picked from disk.
    *
@@ -112,6 +121,8 @@ export interface PendingMediaFile {
   file: File;
   width?: number;
   height?: number;
+  /** See {@link MediaRef.placeholder}. */
+  placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
 }
@@ -138,6 +149,7 @@ import {
   writesSegmented,
 } from '$lib/mediaSegmented';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
+import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
 
@@ -176,54 +188,33 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
 }
 
 /**
- * The frame size of a video file, read from its metadata - or `null` when it has none.
- *
- * WHY A POST RECORDS IT (Mi 9T, 2026-09-29): only images carried `width`/`height`, so the feed
- * reserved every video at the default 4:3 and drew a phone's vertical clip as a narrow strip with a
- * grey band under it. The box can only take the video's own shape if the post says what it is.
- * Ends on `loadedmetadata` or `error` - both events a media element always fires - never a timer.
- */
-export async function readVideoDimensions(file: File): Promise<ImageDimensions | null> {
-  if (!file.type.startsWith('video/')) return null;
-
-  return new Promise((resolve) => {
-    const video = document.createElement('video');
-    const objectUrl = URL.createObjectURL(file);
-    const done = (dims: ImageDimensions | null) => {
-      URL.revokeObjectURL(objectUrl);
-      video.removeAttribute('src');
-      resolve(dims);
-    };
-    video.preload = 'metadata';
-    video.muted = true;
-    video.onloadedmetadata = () => {
-      const { videoWidth: width, videoHeight: height } = video;
-      done(width > 0 && height > 0 ? { width, height } : null);
-    };
-    video.onerror = () => {
-      console.warn(`[media] readVideoDimensions: ${file.type} has no readable metadata`);
-      done(null);
-    };
-    video.src = objectUrl;
-  });
-}
-
-/**
  * What a post uploads for one picked file, and the size it is drawn at: a picture compressed with
- * the `post` preset and its final size, a video as it is with its frame size, anything else as it
- * is with no size. One implementation for the composer and the editor, which each carried a copy
- * that knew only pictures.
+ * the `post` preset and its final size, a video RE-ENCODED on the device (`prepareVideoForUpload`,
+ * decision C3) with its frame size, anything else as it is with no size. One implementation for
+ * the composer and the editor, which each carried a copy that knew only pictures.
+ *
+ * WHY A POST RECORDS A VIDEO'S SIZE (Mi 9T, 2026-09-29): only images carried `width`/`height`, so
+ * the feed reserved every video at the default 4:3 and drew a phone's vertical clip as a narrow
+ * strip with a grey band under it. The size now comes from the encoder's own output, rotation
+ * already applied.
+ *
+ * @param video The bounds, progress and cancel for a video; ignored for anything else.
+ * @throws {VideoPrepareError} when a video cannot be prepared - typed, so the screen names why.
  */
 export async function preparePostMedia(
-  file: File
+  file: File,
+  video: PrepareVideoOptions = {}
 ): Promise<{ file: File; dims?: ImageDimensions }> {
   if (file.type.startsWith('image/')) {
     const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
     const compressed = await compressImage(file, maxWidth, maxHeight, quality);
     return { file: compressed.file, dims: { width: compressed.width, height: compressed.height } };
   }
-  const videoDims = await readVideoDimensions(file);
-  return { file, dims: videoDims ?? undefined };
+  if (file.type.startsWith('video/')) {
+    const prepared = await prepareVideoForUpload(file, video);
+    return { file: prepared.file, dims: { width: prepared.width, height: prepared.height } };
+  }
+  return { file };
 }
 
 /**

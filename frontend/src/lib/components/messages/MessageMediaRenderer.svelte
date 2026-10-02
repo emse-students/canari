@@ -16,7 +16,7 @@
   import { mediaFailureLabel } from '$lib/utils/mediaFailureLabel';
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
-  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -56,6 +56,13 @@
      * has exactly one whenever there is media at all.
      */
     onNear?: () => void;
+    /**
+     * The picture or video fills the top of its bubble edge to edge, and the caption sits under it
+     * in the same bubble (Messenger's and WhatsApp's). Set by `MessageBubble` for a photo or a video
+     * that carries text: the bubble clips the media's corners, so this only cancels the bubble's own
+     * padding around it and the media's own rounding.
+     */
+    bleed?: boolean;
     /** Who sent the message, for the viewer's information panel. */
     senderId?: string;
     /** When the message was sent: the viewer's title and its information panel. */
@@ -72,6 +79,7 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    bleed = false,
     senderId,
     sentAt,
   }: Props = $props();
@@ -100,8 +108,18 @@
   /** Red is unreadable on one's own amber bubble, so the failure box speaks in its ink there. */
   const failureTone = $derived(isOwn ? 'ink' : 'surface');
 
-  const imageAspectStyle = $derived(
-    mediaRef?.type === 'image' ? mediaAspectStyle(mediaRef.width, mediaRef.height) : ''
+  /**
+   * What an image or video frame shows behind its layers: the bubble-aware tone until the bytes are
+   * drawn, then a near-transparent tone under a picture and black under a clip (its letterbox).
+   */
+  const frameSurfaceClass = $derived(
+    blobUrl && mediaRef?.type === 'video'
+      ? 'bg-black shadow-sm'
+      : blobUrl
+        ? 'bg-black/5 dark:bg-white/5'
+        : isOwn
+          ? 'bg-black/10'
+          : 'bg-black/5 dark:bg-white/10'
   );
 
   const isPdf = $derived(
@@ -126,115 +144,101 @@
   <!-- THE ROW'S ONE ELEMENT THAT ALWAYS EXISTS WHEN THERE IS MEDIA, which is why the viewport
        hook lives here and the download it gates lives in `MessageBubble`: that component renders
        a dozen mutually exclusive branches and has no root of its own to observe. -->
-  <div class="overflow-hidden rounded-3xl" use:nearViewport={{ onnear: () => onNear?.() }}>
-    <!-- ================= IMAGE ================= -->
-    {#if mediaRef.type === 'image'}
-      {#if blobUrl}
-        <div class="group/media relative inline-block">
-          <!--
-            `w-56 max-w-full`, never `w-full`: the wrapper is `inline-block`, so its width comes from
-            its content, and a percentage width inside it has nothing definite to resolve against -
-            it collapses to the image's intrinsic size. Above `sm` an explicit `sm:w-56` hid that, so
-            a small picture only looked wrong on a phone: a 64 px thumbnail under a 36 px download
-            button. An explicit width at every breakpoint keeps the box constant whatever the file's
-            own dimensions are.
-          -->
-          <button
-            type="button"
-            onclick={openLightbox}
-            onpointerdown={(e) => e.stopPropagation()}
-            aria-label={m.msg_open_image_fullscreen_label()}
-            class="block w-56 max-w-full overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
-            style={imageAspectStyle}
-          >
-            <img
+  <div
+    class="overflow-hidden {bleed ? '-mx-3 -mt-2' : 'rounded-3xl'}"
+    use:nearViewport={{ onnear: () => onNear?.() }}
+  >
+    <!-- ================= IMAGE / VIDEO ================= -->
+    <!-- ONE FRAME FOR THE SKELETON, THE FAILURE AND THE MEDIA (user, 2026-10-02: "le LAYOUT SHIFTING
+         c'est tres mauvais"). Each state used to draw its own box - the skeleton `max-w-[14rem]`, the
+         failure `max-w-xs`, a video skeleton 16:9 whatever the clip - so the row moved when the bytes
+         landed. The frame is sized from what the MESSAGE declares, before a byte is downloaded, and
+         every state is a layer inside it. `w-56`, or `w-68` under a caption: an explicit width at
+         every breakpoint, because the bubble is `w-fit` and a percentage has nothing to resolve
+         against. docs/wiki/frontend/media-frame.md -->
+    {#if mediaRef.type === 'image' || mediaRef.type === 'video'}
+      <MediaFrame
+        width={mediaRef.width}
+        height={mediaRef.height}
+        measureKey={mediaRef.mediaId || undefined}
+        fallbackAspect={mediaRef.type === 'video' ? 16 / 9 : undefined}
+        placeholder={mediaRef.type === 'image' || !blobUrl ? mediaRef.placeholder : undefined}
+        class="group/media max-w-full {bleed ? 'w-68' : 'w-56 rounded-3xl'} {frameSurfaceClass}"
+      >
+        {#snippet children(frame)}
+          {#if blobUrl && mediaRef.type === 'image'}
+            <button
+              type="button"
+              onclick={openLightbox}
+              onpointerdown={(e) => e.stopPropagation()}
+              aria-label={m.msg_open_image_fullscreen_label()}
+              class="absolute inset-0 block"
+            >
+              <img
+                src={blobUrl}
+                alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
+                onload={frame.onLoad}
+                class="h-full w-full cursor-zoom-in object-cover object-center transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+              />
+            </button>
+
+            <button
+              type="button"
+              onclick={(e) => {
+                e.stopPropagation();
+                downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
+              }}
+              class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+              aria-label={m.msg_download_image_label()}
+              title={m.common_download_label()}
+            >
+              <Download size={16} strokeWidth={2.5} />
+            </button>
+          {:else if blobUrl}
+            <!-- THE FEED'S VIDEO, NOT THE ENGINE'S (2026-10-01): plays by itself while on screen,
+                 muted by the app's one sound answer, a tap opening the viewer. ITS OWN SHAPE, NEVER
+                 CROPPED (user, 2026-10-02): CONTAINED in the frame, so past the height ceiling it
+                 letterboxes on the black rather than losing its edges. -->
+            <InlineVideo
               src={blobUrl}
-              alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
-              class="h-full w-full cursor-zoom-in object-cover object-center transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+              onOpen={() => (showLightbox = true)}
+              onMetadata={frame.onLoad}
+              manualPlay
+              openLabel={m.msg_open_video_fullscreen_label()}
+              class="absolute inset-0"
+              videoClass="h-full w-full object-contain object-center"
             />
-          </button>
-
-          <button
-            type="button"
-            onclick={(e) => {
-              e.stopPropagation();
-              downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
-            }}
-            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
-            aria-label={m.msg_download_image_label()}
-            title={m.common_download_label()}
-          >
-            <Download size={16} strokeWidth={2.5} />
-          </button>
-        </div>
-      {:else if failure}
-        <div
-          class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex items-center justify-center p-4"
-          style={imageAspectStyle}
-        >
-          <MediaLoadFailure
-            cause={failure}
-            expiredLabel={m.msg_media_expired_label()}
-            otherLabel={m.msg_image_load_error()}
-            {onRetry}
-            tone={failureTone}
-          />
-        </div>
-      {:else}
-        <!-- Skeleton Image -->
-        <div
-          class="w-full max-w-[14rem] rounded-3xl sm:w-56 {isOwn
-            ? 'bg-black/10'
-            : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
-          style={imageAspectStyle}
-        >
-          <ImageIcon size={32} class="opacity-20" />
-        </div>
-      {/if}
-
-      <!-- ================= VIDEO ================= -->
-    {:else if mediaRef.type === 'video'}
-      {#if blobUrl}
-        <!-- THE FEED'S VIDEO, NOT THE ENGINE'S (2026-10-01). This was a native `controls` element
-             with a "Plein ecran" pill and a download button laid over it - the very picture the
-             feed left on 2026-09-29 (Android's grey bar over the clip). A conversation's video now
-             plays like the feed's: by itself while on screen, muted by the app's one sound answer,
-             a tap opening the viewer, whose player carries the controls and the download. -->
-        <div
-          class="w-56 max-w-full overflow-hidden rounded-3xl bg-black shadow-sm"
-          style={mediaAspectStyle(mediaRef.width, mediaRef.height, 16 / 9)}
-        >
-          <InlineVideo
-            src={blobUrl}
-            onOpen={() => (showLightbox = true)}
-            openLabel={m.msg_open_video_fullscreen_label()}
-            class="h-full w-full"
-            videoClass="h-full w-full object-cover object-center"
-          />
-        </div>
-      {:else if failure}
-        <div
-          class="aspect-video w-full max-w-[16rem] rounded-3xl border border-dashed {glassBoxClass} flex items-center justify-center p-4"
-        >
-          <MediaLoadFailure
-            cause={failure}
-            expiredLabel={m.msg_video_expired_label()}
-            otherLabel={m.msg_video_load_error()}
-            {onRetry}
-            tone={failureTone}
-          />
-        </div>
-      {:else}
-        <!-- Skeleton Video -->
-        <div
-          class="aspect-video w-full max-w-[16rem] rounded-3xl {isOwn
-            ? 'bg-black/10'
-            : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
-        >
-          <VideoIcon size={32} class="opacity-20" />
-        </div>
-      {/if}
-
+          {:else if failure}
+            <!-- `compact`: the frame of a 4:1 panorama is 56 px tall, and the failure must fit the
+                 box the picture would have had rather than re-shape the row. The frame's own
+                 `overflow-hidden` rounds this layer's corners. -->
+            <div
+              class="absolute inset-0 flex items-center justify-center border border-dashed p-2 {glassBoxClass}"
+            >
+              <MediaLoadFailure
+                cause={failure}
+                expiredLabel={mediaRef.type === 'video'
+                  ? m.msg_video_expired_label()
+                  : m.msg_media_expired_label()}
+                otherLabel={mediaRef.type === 'video'
+                  ? m.msg_video_load_error()
+                  : m.msg_image_load_error()}
+                {onRetry}
+                tone={failureTone}
+                compact
+              />
+            </div>
+          {:else}
+            <div class="absolute inset-0 flex animate-pulse items-center justify-center">
+              {#if mediaRef.type === 'video'}
+                <VideoIcon size={32} class="opacity-20" />
+              {:else}
+                <ImageIcon size={32} class="opacity-20" />
+              {/if}
+            </div>
+          {/if}
+        {/snippet}
+      </MediaFrame>
       <!-- ================= AUDIO ================= -->
     {:else if mediaRef.type === 'audio'}
       {#if blobUrl}
@@ -258,7 +262,7 @@
         </div>
       {:else if failure}
         <div
-          class="min-h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-3 py-1"
+          class="h-[5.25rem] w-[20rem] max-w-full rounded-2xl border border-dashed {glassBoxClass} flex items-center justify-center px-3 py-1"
         >
           <MediaLoadFailure
             cause={failure}
@@ -270,9 +274,13 @@
           />
         </div>
       {:else}
-        <!-- Skeleton Audio -->
+        <!-- Skeleton Audio. THE PLAYER'S BOX, NOT A SMALLER ONE (2026-10-02): it was `h-14` and
+             `w-full` - 56 px tall, and a percentage width inside a `w-fit` bubble - so the row grew
+             by 28 px when the recording decrypted. `w-[20rem] max-w-full` is the player's own width
+             below, and 5.25rem the player's height measured at 436 px (one 44 px button, the
+             timestamp line, `py-3` and the border). -->
         <div
-          class="h-14 w-full rounded-xl sm:w-56 {isOwn
+          class="h-[5.25rem] w-[20rem] max-w-full rounded-2xl {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center px-4"
         >
@@ -396,7 +404,14 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text">
+    <!-- Under a bleeding media the bubble is exactly the media's width (`w-68`, 17rem): a width in
+         PERCENT would resolve against a bubble that is itself sized by its content and balloon it
+         over the whole row, so the caption wraps at that width less the bubble's side padding. -->
+    <p
+      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text {bleed
+        ? 'mt-1.5 w-[calc(17rem-1.5rem)] max-w-full'
+        : 'mt-2'}"
+    >
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
@@ -439,7 +454,7 @@
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else}
-      <VideoPlayer src={blobUrl} class="h-full w-full" />
+      <VideoPlayer src={blobUrl} soundScope="local" class="h-full w-full" />
     {/if}
   </MediaLightbox>
 {/if}

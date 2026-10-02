@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.0.2</string>
 	<key>CFBundleVersion</key>
-	<string>100000099</string>
+	<string>100000201</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -108,11 +108,13 @@
 	     French-first) and act as the fallback; per-locale overrides live in
 	     canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10). -->
 	<key>NSCameraUsageDescription</key>
-	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.</string>
+	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations et pour filmer vos CanaReels.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Canari utilise le microphone pour enregistrer des messages vocaux.</string>
+	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son de vos CanaReels.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Canari enregistre vos CanaReels dans vos photos quand vous le demandez.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.</string>
 	<!-- KEPT YES, but nothing here depends on it any more, and that is deliberate. The proxy is

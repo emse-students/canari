@@ -9,6 +9,7 @@ import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import InlineVideo from './InlineVideo.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { takeVideoPosition } from '$lib/utils/videoResume';
 import { followVideoSound } from '$lib/actions/playWhileVisible';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 
@@ -167,4 +168,166 @@ it('pauses the video behind the viewer while it is open, and resumes it on close
   paused = true;
   action.destroy();
   expect(play).toHaveBeenCalledTimes(2);
+});
+
+/**
+ * A CONVERSATION'S VIDEO PLAYS WHEN ASKED (user, 2026-10-02, Discord's way: *"ne pas les jouer
+ * automatiquement par rapport au scroll, mettre un bouton play ... cliquer sur le bouton play les
+ * lance, et cliquer sur une autre part de la video l'ouvre en grand et la lance"*).
+ */
+function mountManual() {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const onOpen = vi.fn();
+  const component = mount(InlineVideo, {
+    target,
+    props: { src: 'blob:clip', onOpen, openLabel: 'Plein ecran', manualPlay: true },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const video = target.querySelector('video')!;
+  const play = vi.spyOn(video, 'play').mockResolvedValue();
+  const pause = vi.spyOn(video, 'pause').mockImplementation(() => {});
+  /** The first frame is in: the play button is offered from then on. */
+  const frameIn = () => {
+    video.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+  };
+  const playButton = () => target.querySelector<HTMLButtonElement>('button[aria-label="Lire"]');
+  const openButton = () =>
+    target.querySelector<HTMLButtonElement>('button[aria-label="Plein ecran"]')!;
+  return { target, video, play, pause, onOpen, frameIn, playButton, openButton };
+}
+
+it('does NOT start when it scrolls into view', () => {
+  const { play, video } = mountManual();
+  // The observer an autoplaying video would have built: a manual one builds none.
+  expect(observed).toHaveLength(0);
+  expect(play).not.toHaveBeenCalled();
+  expect(video.loop).toBe(false);
+});
+
+it('offers a play button once the first frame is in, and not before', () => {
+  const { playButton, frameIn } = mountManual();
+  expect(playButton()).toBeNull();
+  frameIn();
+  expect(playButton()).not.toBeNull();
+});
+
+it('the play button starts it where it is, with sound, and opens nothing', () => {
+  const { video, play, onOpen, frameIn, playButton } = mountManual();
+  frameIn();
+  playButton()!.click();
+  flushSync();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(video.muted).toBe(false);
+});
+
+/**
+ * A CONVERSATION'S VIDEO IS NOT THE FEED'S (user, 2026-10-02: tapping its sound button changed ALL
+ * the buttons on the page). It starts audible whatever the app-wide answer is, and never changes it.
+ */
+it('is audible while the app-wide sound is muted, and starting it leaves that answer alone', () => {
+  videoSound.setMuted(true);
+  const feed = mountVideo();
+  const { video, frameIn, playButton } = mountManual();
+  expect(video.muted).toBe(false);
+  frameIn();
+  playButton()!.click();
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(true);
+  expect(feed.video.muted).toBe(true);
+});
+
+it('does not follow the app-wide answer either way', () => {
+  const { video } = mountManual();
+  videoSound.setMuted(false);
+  flushSync();
+  videoSound.setMuted(true);
+  flushSync();
+  expect(video.muted).toBe(false);
+});
+
+it('hides the play button while it plays, and brings it back when it pauses or ends', () => {
+  const { video, frameIn, playButton } = mountManual();
+  frameIn();
+  video.dispatchEvent(new Event('play'));
+  flushSync();
+  expect(playButton()).toBeNull();
+  video.dispatchEvent(new Event('pause'));
+  flushSync();
+  expect(playButton()).not.toBeNull();
+  video.dispatchEvent(new Event('play'));
+  video.dispatchEvent(new Event('ended'));
+  flushSync();
+  expect(playButton()).not.toBeNull();
+});
+
+it('a tap on the rest of the video opens the viewer, which starts it', () => {
+  const { openButton, onOpen, play } = mountManual();
+  openButton().click();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  // The viewer's own player does the playing; the inline element is not asked to.
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('shows no app-wide sound button, playing or not', () => {
+  const { video, target, frameIn } = mountManual();
+  frameIn();
+  const sound = () => target.querySelector('button[aria-pressed]');
+  expect(sound()).toBeNull();
+  video.dispatchEvent(new Event('play'));
+  flushSync();
+  expect(sound()).toBeNull();
+});
+
+/**
+ * THEY TAKE TURNS (user, 2026-10-02, reversing #1341: *"commencer une video doit en arreter une
+ * autre"*): pressing play on a second video PAUSES the first. The whole rule is pinned in
+ * `playbackArbiter.test.ts`.
+ */
+it('pauses the first manually started video when a second one starts', () => {
+  const a = mountManual();
+  const b = mountManual();
+  // The rule pauses only a video that is really playing: make the first one report it.
+  Object.defineProperty(a.video, 'paused', { configurable: true, get: () => false });
+  a.video.dispatchEvent(new Event('play'));
+  b.video.dispatchEvent(new Event('play'));
+  expect(a.pause, 'starting the second stops the first').toHaveBeenCalledTimes(1);
+  expect(b.pause).not.toHaveBeenCalled();
+});
+
+it('pauses the one playing inline when a viewer opens, and leaves it paused when it closes', () => {
+  const a = mountManual();
+  Object.defineProperty(a.video, 'paused', { configurable: true, get: () => false });
+  a.video.dispatchEvent(new Event('play'));
+  const viewer = document.createElement('video');
+  const action = followVideoSound(viewer);
+  expect(a.pause).toHaveBeenCalledTimes(1);
+  action.destroy();
+  expect(a.play).not.toHaveBeenCalled();
+});
+
+it('an autoplaying video is unchanged: loops, plays on screen, shows its sound button', () => {
+  const { video, soundButton } = mountVideo();
+  expect(video.loop).toBe(true);
+  expect(observed).toHaveLength(1);
+  expect(soundButton).toBeDefined();
+});
+
+/** OPENING IT FULL SCREEN NOTES WHERE IT IS, for the viewer's player to resume (`videoResume`). */
+it('notes its position when the viewer is opened, so the viewer resumes there', () => {
+  const { video, openButton, onOpen } = mountVideo();
+  video.currentTime = 12;
+  openButton.click();
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(takeVideoPosition('blob:clip')).toBe(12);
+});
+
+it('notes nothing for a video that has not played', () => {
+  const { openButton } = mountVideo();
+  openButton.click();
+  expect(takeVideoPosition('blob:clip')).toBe(0);
 });

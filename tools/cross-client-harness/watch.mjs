@@ -2207,6 +2207,41 @@ export const DEVICE_PANEL_NARRATION = [
 ];
 
 /**
+ * WHAT THE CAMERA TAB AND A REEL'S PUBLISH SAY WHEN THEY WORK, forgiven by the REEL rows alone.
+ *
+ * Every line is a `console.debug` the reels code writes on its success path: the camera opening
+ * and being given back, the cap read from the server, the capture's transitions, the take, the
+ * re-encode, the upload and the publish. Measured on the Mi 9T on 2026-10-02, where they were the
+ * whole of REEL-1's and REEL-2's `unexplained`. A failure spelling - `the reel limits could not be
+ * read`, `failed at`, `cancelled by the member` after a publish - is NOT here: it is the finding.
+ * The feed the reel lands on adds two lines of its own (`[media-seg]` streaming a feed video,
+ * `[my-reels]` holding the member's list) and the caption field one (`KeyboardHeightMemory`).
+ */
+export const REEL_NARRATION = [
+  /^\[camera\] opening (environment|user)$/,
+  /^\[camera\] opened (environment|user): .+$/,
+  /^\[camera\] released$/,
+  /^\[reel-capture\] cap \d+ ms$/,
+  /^\[reel-capture\] \w+ -> \w+ on \w+$/,
+  /^\[reel-capture\] the take was dismissed$/,
+  /^\[reel-recorder\] recording \S+$/,
+  /^\[reel-recorder\] take: \d+ bytes, \S+$/,
+  /^\[reel-publish\] publish pressed$/,
+  /^\[reel-publish\] start: \w+, \S+, \d+ bytes$/,
+  /^\[reel-publish\] published \S+$/,
+  /^\[reel-publish\] the sheet was dismissed$/,
+  /^\[video-prep\] start: .+$/,
+  /^\[video-prep\] plan: \d+x\d+, \d+ kb\/s, [\d.]+ s$/,
+  /^\[video-prep\] done in \d+ ms: \d+ -> \d+ bytes, .+$/,
+  /^\[media\] encryptAndUpload: .+, \d+ bytes, .+$/,
+  /^\[media-seg\] stream \S+ \(.+\) through MediaSource$/,
+  /^\[my-reels\] \d+ live reels$/,
+  /^\[my-reels\] \S+ is newer than the list: asking again$/,
+  /^\[VIDEO\] viewer opens with (the app's|its own) sound$/,
+  /^\[KeyboardHeightMemory\] portrait: \d+px$/,
+];
+
+/**
  * NO LIST FOR THE WIPE'S OWN NARRATION, and the absence is the measurement.
  *
  * A HEAL-REVOKE row provokes three sentences by revoking a device - `[SECURITY] Revoked device

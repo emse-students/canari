@@ -4,6 +4,7 @@
  */
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
+import { rememberKeyboardHeight } from './keyboardHeightMemory';
 
 export type KeyboardViewportSnapshot = {
   isOpen: boolean;
@@ -24,6 +25,15 @@ export type KeyboardViewportSnapshot = {
    * doing so collapses the app shell (white gaps) and hides the nav bars (reframing).
    */
   zoomed: boolean;
+  /**
+   * How tall the keyboard is, measured as what it took from the screen: the baseline height (the
+   * tallest the viewport has been with no keyboard) minus the visible height. Zero while closed or
+   * zoomed - a URL bar sliding is not a keyboard. ONE NUMBER FOR EVERY PLATFORM, because each of them
+   * shrinks the VISUAL viewport whatever else it does: iOS's native layer resizes the WebView, the
+   * Android app pads its content, a phone browser shrinks only the visual viewport. The composer's
+   * GIF panel takes exactly this room (`composerSurface.ts`).
+   */
+  keyboardHeight: number;
 };
 
 /** Raw viewport measurements, injectable so the geometry stays unit-testable off-DOM. */
@@ -74,6 +84,7 @@ export function computeSnapshot(
       insetBottom: 0,
       layoutInsetBottom: 0,
       zoomed: true,
+      keyboardHeight: 0,
     };
   }
 
@@ -91,6 +102,7 @@ export function computeSnapshot(
     insetBottom,
     layoutInsetBottom,
     zoomed: false,
+    keyboardHeight: isOpen ? Math.max(0, Math.round(baselineHeight - m.vvHeight)) : 0,
   };
 }
 
@@ -132,6 +144,7 @@ let snapshot = $state<KeyboardViewportSnapshot>({
   insetBottom: 0,
   layoutInsetBottom: 0,
   zoomed: false,
+  keyboardHeight: 0,
 });
 
 /** Reactive keyboard / viewport snapshot for components. */
@@ -171,6 +184,7 @@ export function initKeyboardViewport(): () => void {
     const openedNow = next.isOpen && !keyboardWasOpen;
     snapshot = next;
     applyCssVars(next, baselineHeight);
+    if (next.keyboardHeight > 0) rememberKeyboardHeight(next.keyboardHeight);
 
     if (next.isOpen && (openedNow || document.activeElement instanceof HTMLElement)) {
       scrollFocusedFieldIntoView(openedNow ? 'auto' : 'smooth');

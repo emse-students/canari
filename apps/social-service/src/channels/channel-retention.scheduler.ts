@@ -60,12 +60,15 @@ export class ChannelRetentionScheduler {
    * @returns how many rows went
    */
   async purgeOnce(): Promise<number> {
-    const res: { rowCount?: number } = await this.messageRepo.manager.query(
+    // TypeORM's postgres `query()` answers a DELETE as `[rows, rowCount]`, never as an object with
+    // a `rowCount` - this read `res.rowCount`, got undefined, and returned 0 for every run, so the
+    // `[GC]` line below could never be written (measured against a real PostgreSQL 2026-10-02).
+    const [, rowCount]: [unknown, number] = await this.messageRepo.manager.query(
       `DELETE FROM channel_messages
         WHERE "createdAt" < NOW() - make_interval(days => $1)
           AND pinned = false`,
       [CHANNEL_MESSAGE_RETENTION_DAYS]
     );
-    return res.rowCount ?? 0;
+    return rowCount ?? 0;
   }
 }

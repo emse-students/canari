@@ -233,6 +233,10 @@ export function parseEnvelope(content: string): MessageEnvelope {
               width: typeof media.width === 'number' && media.width > 0 ? media.width : undefined,
               height:
                 typeof media.height === 'number' && media.height > 0 ? media.height : undefined,
+              // Decoration only: a non-string is dropped, and a bad string is dropped at paint time.
+              ...(typeof media.placeholder === 'string' && media.placeholder
+                ? { placeholder: media.placeholder }
+                : {}),
               // Only a literal `true` survives: an absent flag means UNKNOWN provenance, and
               // writing `false` there would claim the sender said "imported" when it said nothing.
               ...(media.voiceNote === true ? { voiceNote: true } : {}),

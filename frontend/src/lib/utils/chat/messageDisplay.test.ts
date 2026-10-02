@@ -1,9 +1,38 @@
 import {
   extractFirstUrl,
+  gifSizeFromUrl,
   isAngleBracketAutolink,
+  isGifUrl,
   splitTextWithLinks,
   splitWithHighlight,
+  withGifSize,
 } from './messageDisplay';
+
+describe('a GIF size in the URL fragment', () => {
+  const GIF = 'https://static.klipy.com/ii/abc/def.gif';
+
+  it('round-trips through the fragment', () => {
+    const sized = withGifSize(GIF, 498, 280);
+    expect(sized).toBe(`${GIF}#cn-size=498x280`);
+    expect(gifSizeFromUrl(sized)).toEqual({ width: 498, height: 280 });
+  });
+
+  it('leaves the URL an OLD client reads exactly as before', () => {
+    // The old reader asks `isGifUrl` of the path, extracts the link from the text, and hands the
+    // whole URL to an <img>, which never sends a fragment to the host.
+    const sized = withGifSize(GIF, 498, 280);
+    expect(isGifUrl(sized)).toBe(true);
+    expect(extractFirstUrl(`look ${sized}`)).toBe(sized);
+  });
+
+  it('answers nothing for an old link, a foreign fragment or a nonsense size', () => {
+    expect(gifSizeFromUrl(GIF)).toBeNull();
+    expect(gifSizeFromUrl(`${GIF}#t=3`)).toBeNull();
+    expect(gifSizeFromUrl(`${GIF}#cn-size=0x280`)).toBeNull();
+    expect(withGifSize(GIF, 0, 280)).toBe(GIF);
+    expect(withGifSize(GIF, Number.NaN, 280)).toBe(GIF);
+  });
+});
 
 describe('isAngleBracketAutolink', () => {
   it('detects <url> wrapper', () => {

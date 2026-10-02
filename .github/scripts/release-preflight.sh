@@ -73,11 +73,20 @@ case "$KIND" in
 esac
 
 # -- 2 -------------------------------------------------------------------------------------------
-step 'the released commit is on main, and the bump can still push'
+step 'the released commit is on main, and the bump can still push (a stable: main contains it)'
 # base = the released commit, head = main. `identical` or `ahead` both mean main contains it.
 ON_MAIN="$(gh api "repos/$REPO/compare/$TARGET_SHA...main" --jq '.status' 2>/dev/null)" || ON_MAIN=""
 case "$ON_MAIN" in
   identical|ahead)
+    if [ "$KIND" = 'stable' ]; then
+      # A STABLE DOES NOT PUSH TO `main` (2026-10-02). It is built on the latest pre-release's commit
+      # and pushed to `release/vX.Y.Z`; its changelog reaches `main` through a landing commit that
+      # re-reads the head and retries. `main` having moved on is therefore the ordinary case, and
+      # the question below - can a fast-forward still happen - has nobody asking it.
+      ok "it is the latest pre-release's commit and main contains it ($ON_MAIN) - main may move on freely"
+      ON_MAIN_DONE=1
+    fi
+    [ -n "${ON_MAIN_DONE:-}" ] || {
     # THE SECOND HALF OF THIS GATE, and it exists because the first half passing was not enough.
     # `main` containing the commit is what "on main" means, but the bump pushes a commit built ON
     # the released commit, and that push fast-forwards only while `main` has not moved. The
@@ -105,6 +114,7 @@ case "$ON_MAIN" in
         hint 'frontend/package.json - it is the file that decides what kind of release this is.'
         ;;
     esac
+    }
     ;;
   behind|diverged)
     refuse "main does not contain ${TARGET_SHA:0:8} - the compare says $ON_MAIN"
@@ -168,7 +178,7 @@ else
         refuse "dev is at ${DEV_SHA:0:8} and is missing ${COVER#uncovered behind } commit(s) this release carries"
         hint 'PRODUCTION CANNOT BE AHEAD OF DEV. Publish a pre-release at this commit first: it'
         hint 'deploys dev.canari-emse.fr and the tester programmes, and it moves the marker this'
-        hint 'check reads. Then publish the stable from the SAME commit, and it will be identical.'
+        hint 'check reads. Then publish the stable: it ships the latest pre-release of this version, which dev served.'
         ;;
       'uncovered diverged '*)
         refuse "dev is at ${DEV_SHA:0:8} and neither commit contains the other - ${COVER#uncovered diverged }"

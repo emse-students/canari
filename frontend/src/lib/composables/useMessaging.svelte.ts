@@ -60,7 +60,13 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
-import { encodeAppMessage, mediaEncodingProtoField, mkMedia, MediaKind } from '$lib/proto/codec';
+import {
+  encodeAppMessage,
+  mediaEncodingProtoField,
+  mediaPlaceholderProtoField,
+  mkMedia,
+  MediaKind,
+} from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
   ChatMessage,
@@ -82,6 +88,9 @@ import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/c
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
+import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
+import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
+import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -142,6 +151,10 @@ export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   let replyingTo = $state<ChatMessage | null>(null);
   let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
+  /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
+  const videoPreparation = new VideoPreparationState();
+  /** The video preparations queued behind each other - see `prepareChatVideo`. */
+  let videoPreparationChain: Promise<unknown> = Promise.resolve();
   let isUploadingMedia = $state(false);
 
   /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
@@ -1126,6 +1139,7 @@ export function useMessaging() {
                 ...(mediaRef.width && mediaRef.height
                   ? { width: mediaRef.width, height: mediaRef.height }
                   : {}),
+                ...mediaPlaceholderProtoField(entry.placeholder),
                 ...mediaEncodingProtoField(mediaRef.encoding),
               }),
               messageId,
@@ -1149,6 +1163,7 @@ export function useMessaging() {
                   fileName: entry.file.name,
                   width: entry.width,
                   height: entry.height,
+                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
                 },
                 captionForFile
@@ -1172,6 +1187,7 @@ export function useMessaging() {
                 fileName: entry.file.name,
                 width: entry.width,
                 height: entry.height,
+                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                 caption: captionForFile,
                 ...(entry.voiceNote ? { voiceNote: true } : {}),
                 fileBytes,
@@ -1259,6 +1275,14 @@ export function useMessaging() {
     // a picker that has not yet been answered has nothing to refuse.
     const limits = await mediaService.uploadLimits();
     for (const file of files) {
+      // A VIDEO IS RE-ENCODED ON THE DEVICE FIRST (decision C3), so its PICKED size says nothing
+      // about what is uploaded: a 200 MB camera clip leaves as ~30 MB. The ceiling is the encoder's
+      // budget instead, and a video that cannot fit it is refused there, by its own fault.
+      if (file.type.startsWith('video/')) {
+        const prepared = await prepareChatVideo(file, limits?.maxPlaintextBytes, ctx);
+        if (prepared) readyFiles.push(prepared);
+        continue;
+      }
       if (limits !== null && file.size > limits.maxPlaintextBytes) {
         const size = (file.size / 1024 / 1024).toFixed(1);
         // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
@@ -1295,10 +1319,70 @@ export function useMessaging() {
         } catch (e) {
           console.warn('Compression failed, using original:', e);
         }
+      } else if (file.type === 'image/gif') {
+        // A GIF IS SENT AS IT IS - but not without its size (2026-10-02). It skipped the compressor,
+        // which is the only thing that measured a picture, so every GIF file reached the receiver
+        // with no `width` / `height` and its box was a guess until the bytes landed.
+        const { readImageDimensions } = await import('$lib/media');
+        const dims = await readImageDimensions(file);
+        if (dims) entry = { file, width: dims.width, height: dims.height };
+        else ctx.log(`[MEDIA] GIF "${file.name}" has no readable size - sent without one`);
+      }
+      if (entry.file.type.startsWith('image/')) {
+        // The receiver's box shows this while the blob downloads (`MediaMsg.placeholder`).
+        const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+        const placeholder = await placeholderForImageFile(entry.file);
+        if (placeholder) entry = { ...entry, placeholder };
       }
       readyFiles.push(entry);
     }
     return readyFiles;
+  }
+
+  /**
+   * Re-encodes one picked video for the chat (`prepareVideoForUpload`), its progress and cancel
+   * drawn by the composer through {@link videoPreparation}.
+   *
+   * @returns The entry to stage, or `null` when it was refused (said on the banner) or cancelled
+   *          (nothing said: the member asked for it).
+   */
+  function prepareChatVideo(
+    file: File,
+    maxBytes: number | undefined,
+    ctx: MessagingContext
+  ): Promise<import('$lib/media').PendingMediaFile | null> {
+    // ONE AT A TIME: a second pick while a video is encoding waits for it, so the one progress
+    // line and its cancel always belong to the video actually running.
+    const run = videoPreparationChain.then(() => prepareOneChatVideo(file, maxBytes, ctx));
+    videoPreparationChain = run.catch(() => undefined);
+    return run;
+  }
+
+  async function prepareOneChatVideo(
+    file: File,
+    maxBytes: number | undefined,
+    ctx: MessagingContext
+  ): Promise<import('$lib/media').PendingMediaFile | null> {
+    try {
+      const prepared = await prepareVideoForUpload(file, videoPreparation.optionsFor(maxBytes));
+      ctx.log(
+        `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
+          `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
+      );
+      return { file: prepared.file, width: prepared.width, height: prepared.height };
+    } catch (e) {
+      if (!isVideoPrepareError(e)) throw e;
+      const message = videoPrepareFailureMessage(e);
+      if (message === null) {
+        ctx.log(`[MEDIA] video "${file.name}" not staged: cancelled`);
+        return null;
+      }
+      ctx.log(`[MEDIA] video "${file.name}" refused: ${e.fault} - ${e.message}`);
+      ctx.setSendError(message);
+      return null;
+    } finally {
+      videoPreparation.finish();
+    }
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
@@ -1600,6 +1684,7 @@ export function useMessaging() {
                 ...(env.media.width && env.media.height
                   ? { width: env.media.width, height: env.media.height }
                   : {}),
+                ...mediaPlaceholderProtoField(env.media.placeholder),
                 // A forward relays the blob as it was sealed, so it must relay how.
                 ...mediaEncodingProtoField(env.media.encoding),
               }),
@@ -1647,6 +1732,7 @@ export function useMessaging() {
             fileName: media.fileName ?? '',
             caption: env.caption,
             ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+            ...mediaPlaceholderProtoField(media.placeholder),
             ...mediaEncodingProtoField(media.encoding),
           }),
           messageId,
@@ -1688,6 +1774,7 @@ export function useMessaging() {
     get pendingMediaFiles() {
       return pendingMediaFiles;
     },
+    videoPreparation,
     /** True while a media file is being encrypted and uploaded. */
     get isUploadingMedia() {
       return isUploadingMedia;

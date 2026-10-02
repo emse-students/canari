@@ -9,6 +9,7 @@ import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import VideoPlayer from './VideoPlayer.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { rememberVideoPosition } from '$lib/utils/videoResume';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
@@ -25,12 +26,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountPlayer(src = 'blob:clip') {
+function mountPlayer(src = 'blob:clip', soundScope?: 'app' | 'local') {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const component = mount(VideoPlayer, { target, props: { src } });
+  const component = mount(VideoPlayer, { target, props: { src, soundScope } });
   mounted.push(() => unmount(component));
   flushSync();
   const root = target.querySelector('[role="group"]') as HTMLElement;
@@ -156,10 +157,189 @@ it('its sound button changes the element, which the app-wide answer follows', ()
   expect(sound.getAttribute('aria-pressed')).toBe('true');
 });
 
+/**
+ * A CONVERSATION'S VIEWER HAS ITS OWN SOUND (user, 2026-10-02): audible on open even when the feed
+ * left the app-wide answer muted, its button mutes only this video, and the feed's answer is neither
+ * read nor written.
+ */
+it("a conversation's viewer opens audible while the app-wide sound is muted", () => {
+  videoSound.setMuted(true);
+  const { video } = mountPlayer('blob:clip', 'local');
+  expect(video.muted).toBe(false);
+});
+
+it("a conversation's viewer mutes only itself and leaves the app-wide answer alone", () => {
+  videoSound.setMuted(true);
+  const { root, video } = mountPlayer('blob:clip', 'local');
+  const sound = Array.from(root.querySelectorAll('button')).find(
+    (b) => b.getAttribute('aria-label') === m.video_sound_label()
+  )!;
+  sound.click();
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(true);
+  expect(sound.getAttribute('aria-pressed')).toBe('false');
+  sound.click();
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(true);
+});
+
+it("a conversation's viewer ignores a later change of the app-wide answer", () => {
+  const { video } = mountPlayer('blob:clip', 'local');
+  videoSound.setMuted(false);
+  videoSound.setMuted(true);
+  flushSync();
+  expect(video.muted).toBe(false);
+});
+
 it('says when the engine refuses the video, instead of a black box', () => {
   const { target, video } = mountPlayer();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   video.dispatchEvent(new Event('error'));
   flushSync();
   expect(target.textContent).toContain(m.video_unplayable());
+});
+
+/** A pointer event of the given kind; happy-dom's own PointerEvent is skipped by Svelte's handlers. */
+const pointer = (type: string, pointerType: string) =>
+  Object.assign(new Event(type, { bubbles: true }), { pointerType });
+
+/**
+ * ANY MOUSE MOVEMENT SHOWS THE CONTROLS, A FINGER'S DRAG DOES NOT (user, 2026-10-02: *"sur web,
+ * afficher les controles lors de tout mouvement de souris"*). A touch `pointermove` is a swipe in the
+ * viewer or a seek on the bar and must never raise anything by itself.
+ */
+it('a mouse moving anywhere over the player brings the faded controls back', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+
+  root.dispatchEvent(pointer('pointermove', 'mouse'));
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+
+  // ... and they fade again once the mouse is still.
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+});
+
+it('keeps the controls up for as long as the mouse keeps moving', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  for (let i = 0; i < 4; i++) {
+    vi.advanceTimersByTime(CONTROLS_FADE_MS - 500);
+    root.dispatchEvent(pointer('pointermove', 'mouse'));
+    flushSync();
+  }
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('a finger moving over the player shows nothing by itself', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
+  flushSync();
+
+  root.dispatchEvent(pointer('pointermove', 'touch'));
+  root.dispatchEvent(pointer('pointermove', 'pen'));
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+});
+
+/**
+ * A TAP ANYWHERE ON THE PLAYER TOGGLES THE CONTROLS (user, 2026-10-02: *"un appui n'importe ou sur
+ * l'ecran de la video ouverte en grand"*). The listener was on the `<video>`, so a tap on the black
+ * around a letterboxed clip - most of a phone's screen for a landscape clip - did nothing.
+ */
+it('a tap on the black around the picture toggles the controls, both ways', () => {
+  vi.useFakeTimers();
+  const { root, video, bar } = mountPlayer();
+  startPlaying(video);
+  expect(bar.className).toContain('opacity-100');
+
+  root.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-0');
+
+  root.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('a tap on a control is the control s, and does not toggle the bar away', () => {
+  vi.useFakeTimers();
+  const { target, video, bar } = mountPlayer();
+  startPlaying(video);
+  target.querySelector<HTMLButtonElement>('[data-video-controls] button')!.click();
+  flushSync();
+  expect(bar.className).toContain('opacity-100');
+});
+
+it('marks its box, which is what the viewer reads to leave the tap to it', () => {
+  const { root } = mountPlayer();
+  expect(root.hasAttribute('data-video-player')).toBe(true);
+});
+
+/**
+ * THE CONTROLS ARE AN OVERLAY ON A ZOOMABLE PICTURE (user, 2026-10-02). The viewer hands the zoom
+ * down as `--lightbox-zoom` and ONLY the `<video>` applies it: the bar is a sibling, so a zoom never
+ * scales it or carries it off the screen.
+ */
+it('applies the viewer s zoom to the picture alone, never to the controls', () => {
+  const { video, bar, root } = mountPlayer();
+  expect(video.getAttribute('style')).toContain('transform: var(--lightbox-zoom, none)');
+  expect(bar.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
+  expect(root.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
+  expect(bar.contains(video)).toBe(false);
+});
+
+/**
+ * OPENING A VIDEO FULL SCREEN PICKS UP WHERE IT IS (user, 2026-10-02: *"ouvrir une video en grand
+ * devrait reprendre la ou elle en est, pas au debut"*). The inline video notes its position
+ * (`videoResume`); the player seeks to it once its metadata is in.
+ */
+function withDuration(video: HTMLVideoElement, seconds: number) {
+  Object.defineProperty(video, 'duration', { configurable: true, get: () => seconds });
+}
+
+it('resumes where the inline video was, once the duration is known', () => {
+  rememberVideoPosition('blob:clip', 12);
+  const { video } = mountPlayer('blob:clip');
+  withDuration(video, 30);
+  expect(video.currentTime, 'nothing is seeked before the metadata').toBe(0);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(12);
+});
+
+it('seeks only once: a later metadata event does not drag it back', () => {
+  rememberVideoPosition('blob:clip', 12);
+  const { video } = mountPlayer('blob:clip');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  video.currentTime = 20;
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(20);
+});
+
+it('starts a clip that played to its end from its first frame', () => {
+  rememberVideoPosition('blob:ended', 30);
+  const { video } = mountPlayer('blob:ended');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(0);
+});
+
+it('starts at 0 for a file that was not played inline', () => {
+  const { video } = mountPlayer('blob:fresh');
+  withDuration(video, 30);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(video.currentTime).toBe(0);
 });
