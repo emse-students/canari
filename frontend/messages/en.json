@@ -3124,8 +3124,7 @@
   "reels_capture_not_a_video": "This file is not a video.",
   "reels_capture_too_long": "A CanaReel lasts {seconds} seconds at most.",
   "reels_capture_limits_error": "Canari cannot be reached - tap to try again",
-  "reels_capture_limits_absent": "CanaReels are not available on this server yet",
-  "reels_capture_limits_failed": "Canari could not answer - tap to try again",
+  "reels_capture_limits_refused": "CanaReels are not answering right now - tap to try again",
   "reels_review_discard": "Discard and film again",
   "reels_review_next": "Next"
 }

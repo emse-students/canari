@@ -106,10 +106,10 @@ describe('ringFraction and formatTakeTime', () => {
 });
 
 describe('classifyLimitsFault', () => {
-  it('no status is unreachable, a 404 is a server without reels, anything else failed', () => {
+  it('no status is unreachable; any status, the 500 and 400 of an older server included, is refused', () => {
     expect(classifyLimitsFault(null)).toBe('unreachable');
-    expect(classifyLimitsFault(404)).toBe('absent');
-    expect(classifyLimitsFault(500)).toBe('failed');
-    expect(classifyLimitsFault(403)).toBe('failed');
+    expect(classifyLimitsFault(500)).toBe('refused');
+    expect(classifyLimitsFault(400)).toBe('refused');
+    expect(classifyLimitsFault(404)).toBe('refused');
   });
 });

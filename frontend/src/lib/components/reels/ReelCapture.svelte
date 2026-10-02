@@ -5,8 +5,8 @@
    *
    * THE CAP IS THE SERVER'S. `GET /api/posts/reel-limits` is the one copy of the 90 s, so the shutter
    * stays disabled until it has answered - an installed app never films to a stale number - and says
-   * why when it has not: unreachable, a server without reels (a 404, no retry), or an error
-   * (`classifyLimitsFault`).
+   * which of two things happened when it has not: nobody answered, or the server answered with an
+   * error (`classifyLimitsFault`).
    *
    * A TAKE IS A HISTORY ENTRY from its first frame to its review's end, so Android's Back (and iOS's
    * edge swipe) ends a recording or discards a review before it leaves the camera, and the tab swipe
@@ -247,14 +247,7 @@
         </div>
         <div></div>
       </div>
-      {#if limitsFault === 'absent'}
-        <!-- No retry: the server answered that it has no reels, and asking again changes nothing. -->
-        <p class="mt-3 flex justify-center" role="alert" data-reel-limits-fault="absent">
-          <span class="rounded-full bg-black/50 px-4 py-2 text-xs font-semibold">
-            {m.reels_capture_limits_absent()}
-          </span>
-        </p>
-      {:else if limitsFault}
+      {#if limitsFault}
         <div class="mt-3 flex justify-center" role="alert" data-reel-limits-fault={limitsFault}>
           <button
             type="button"
@@ -264,7 +257,7 @@
             <RefreshCcw size={14} strokeWidth={2.5} />
             {limitsFault === 'unreachable'
               ? m.reels_capture_limits_error()
-              : m.reels_capture_limits_failed()}
+              : m.reels_capture_limits_refused()}
           </button>
         </div>
       {/if}

@@ -133,22 +133,15 @@ describe('ReelCapture', () => {
     expect(shutter().disabled).toBe(false);
   });
 
-  it('a server without reels (404) is not called unreachable, and offers no retry', async () => {
+  it('a server that answers with an error is not called unreachable, and may be retried', async () => {
+    // What a server older than CanaReels answers: its `/:postId` route takes "reel-limits" (500).
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    getReelLimits.mockRejectedValueOnce(new ApiRefusalError(404, null, 'post-service 404'));
+    getReelLimits.mockRejectedValueOnce(new ApiRefusalError(500, null, 'post-service 500'));
     const { target, shutter } = await render();
     expect(shutter().disabled).toBe(true);
-    const alert = target.querySelector('[data-reel-limits-fault="absent"]')!;
-    expect(alert.textContent).toContain(m.reels_capture_limits_absent());
-    expect(alert.querySelector('button')).toBeNull();
-  });
-
-  it('a server error is not called unreachable either, and may be retried', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    getReelLimits.mockRejectedValueOnce(new ApiRefusalError(503, null, 'post-service 503'));
-    const { target } = await render();
-    const alert = target.querySelector('[data-reel-limits-fault="failed"]')!;
-    expect(alert.textContent).toContain(m.reels_capture_limits_failed());
+    const alert = target.querySelector('[data-reel-limits-fault="refused"]')!;
+    expect(alert.textContent).toContain(m.reels_capture_limits_refused());
+    expect(alert.textContent).not.toContain(m.reels_capture_limits_error());
     expect(alert.querySelector('button')).not.toBeNull();
   });
 });

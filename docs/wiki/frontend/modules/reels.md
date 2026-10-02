@@ -90,14 +90,17 @@ one copy of the 90 s, so the shutter (and the gallery) stay disabled until it ha
 line under the shutter says WHY it has not, from the error's status (`classifyLimitsFault`; the
 posts API throws an `ApiRefusalError`, never a sentence):
 
-| Fault | When | French line | Retry |
-| --- | --- | --- | --- |
-| `unreachable` | no status: nobody answered | "Canari est injoignable - toucher pour réessayer" | yes |
-| `absent` | `404`: a server older than CanaReels | "Les CanaReels ne sont pas encore disponibles sur ce serveur" | no, asking again changes nothing |
-| `failed` | any other status | "Canari n'a pas pu répondre - toucher pour réessayer" | yes |
+| Fault | When | French line |
+| --- | --- | --- |
+| `unreachable` | no status: nobody answered | "Canari est injoignable - toucher pour réessayer" |
+| `refused` | any status | "Les CanaReels ne répondent pas pour l'instant - toucher pour réessayer" |
 
-Until 2026-10-02 all three said "unreachable". Both phones showed that line for a server that was
-up and answering everything else, because the bench estate did not have the reel routes yet.
+Both lines offer a retry. Until 2026-10-02 every failure said "unreachable", and both phones showed
+it on a bench server that was up and answering everything else but did not have the reel routes.
+**There is no third "this server has no reels" line, because no status names that case.** A server
+older than CanaReels sends `GET /api/posts/reel-limits` to its `GET /api/posts/:postId` route. The
+bench log shows a `500` (Postgres refusing "reel-limits" as a UUID), and a server with #1344 answers
+`400`. Neither sends a `404`, so a line keyed on 404 would never have appeared.
 
 The deadline that ends a full take IS the product rule (C4), not a timer standing in for a fact.
 

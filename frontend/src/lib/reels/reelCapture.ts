@@ -117,19 +117,21 @@ export function ringFraction(elapsedMs: number, maxMs: number): number {
 /**
  * Why the reel limits could not be read, which decides what the capture screen says.
  *
- * - `unreachable`: nobody answered (the network, or the server is down). Trying again can help.
- * - `absent`: the server answered `404`. It is reachable but has no reel routes (it predates
- *   CanaReels), and trying again cannot help. This is what a client one release ahead of its
- *   server meets, and it used to read "Canari cannot be reached", which was false.
- * - `failed`: any other answer (a 5xx, a refusal). The server did answer, so it is not
- *   "unreachable", and a later try may still succeed.
+ * - `unreachable`: no status, so nobody answered (the network, or the server is down).
+ * - `refused`: the server answered with an error status. Canari is reachable; its reels are not.
+ *
+ * There is NO separate "server without reels" state, because no status names one. A server older
+ * than CanaReels routes `GET /api/posts/reel-limits` to `GET /api/posts/:postId`, so it answers
+ * `500` (a UUID cast failing in Postgres, measured on the bench 2026-10-01) or `400` once the id is
+ * parsed (#1344), and never `404`. A branch keyed on 404 would have named no real server. So both
+ * states offer a retry, and only `unreachable` says the server cannot be reached. It used to say
+ * that for every failure.
  */
-export type LimitsFault = 'unreachable' | 'absent' | 'failed';
+export type LimitsFault = 'unreachable' | 'refused';
 
 /** Reads a {@link LimitsFault} from the error's status. A status is an answer; its absence is not. */
 export function classifyLimitsFault(status: number | null): LimitsFault {
-  if (status === null) return 'unreachable';
-  return status === 404 ? 'absent' : 'failed';
+  return status === null ? 'unreachable' : 'refused';
 }
 
 /** `m:ss` for a duration in ms, as the timer over the shutter shows it. */

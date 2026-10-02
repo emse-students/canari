@@ -3124,8 +3124,7 @@
   "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
   "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",
   "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
-  "reels_capture_limits_absent": "Les CanaReels ne sont pas encore disponibles sur ce serveur",
-  "reels_capture_limits_failed": "Canari n'a pas pu répondre - toucher pour réessayer",
+  "reels_capture_limits_refused": "Les CanaReels ne répondent pas pour l'instant - toucher pour réessayer",
   "reels_review_discard": "Supprimer et refilmer",
   "reels_review_next": "Suivant"
 }
