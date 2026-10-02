@@ -126,6 +126,21 @@ describe('the one attachment menu - Android app', () => {
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('leaves the keyboard up: neither "+" nor an entry takes focus from the text field', () => {
+    // Mi 9T 2026-10-02: focus moving onto "+" let the keyboard fall, and the composer dropped
+    // 345 px under a menu that floats, then rose again under the GIF panel.
+    stubMatchMedia(true);
+    mountComposer();
+    const press = (el: Element) => {
+      const e = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      el.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(press(plus())).toBe(true);
+    openMenu();
+    expect(press(menuItem('Photothèque'))).toBe(true);
+  });
+
   // A fresh composer per entry: reopening a menu inside its own 180 ms outro is a test artefact
   // that happy-dom reports as an unhandled animation rejection.
   it.each([

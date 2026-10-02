@@ -50,6 +50,13 @@
      */
     open?: boolean;
     onOpenChange?: (open: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') => void;
+    /**
+     * The button and its entries never take focus: a press leaves it where it was. The composer's
+     * "+" needs it - focus moving onto the button blurs the text field, the phone's keyboard falls,
+     * and the composer drops the keyboard's height under a menu that only floats above it (measured on
+     * the Mi 9T 2026-10-02: 532 -> 877 -> 532 px through "+" then "Envoyer un GIF").
+     */
+    keepsFocus?: boolean;
   }
 
   let {
@@ -60,7 +67,13 @@
     variant = 'glass',
     open: controlledOpen,
     onOpenChange,
+    keepsFocus = false,
   }: Props = $props();
+
+  /** A press's default action is what moves focus; cancelling it keeps focus where it was. */
+  function holdFocus(e: MouseEvent) {
+    if (keepsFocus) e.preventDefault();
+  }
 
   const buttonClass = $derived(
     variant === 'glass'
@@ -125,6 +138,7 @@
     bind:this={button}
     type="button"
     onclick={toggle}
+    onmousedown={holdFocus}
     aria-label={label}
     title={label}
     aria-haspopup="menu"
@@ -151,6 +165,7 @@
           type="button"
           role={item.active === undefined ? 'menuitem' : 'menuitemcheckbox'}
           onclick={() => pick(item)}
+          onmousedown={holdFocus}
           aria-checked={item.active}
           class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-amber-500/10 {item.active
             ? 'text-amber-600 dark:text-amber-400'

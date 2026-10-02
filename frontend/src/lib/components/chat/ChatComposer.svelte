@@ -1140,6 +1140,7 @@
               items={addMenuItems}
               open={surface === 'menu'}
               onOpenChange={onMenuOpenChange}
+              keepsFocus
             />
           </span>
         {/if}
@@ -1159,6 +1160,7 @@
             items={attachMenuItems}
             open={surface === 'menu'}
             onOpenChange={onMenuOpenChange}
+            keepsFocus
           />
         {:else}
           <label class="ui-icon-button chat-composer-icon-button relative shrink-0 cursor-pointer">

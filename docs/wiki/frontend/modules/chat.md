@@ -131,6 +131,11 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 - **The menu closes** on a pick, a tap outside, Escape (read on `window`, since a tap leaves focus on
   the button), Back, the text field taking focus, and the keyboard opening. `GlassMenuButton` has a
   CONTROLLED mode for this (`open` + `onOpenChange` with the reason); the header's menus are unchanged.
+- **Neither "+" nor an entry takes focus** (`keepsFocus`: their `mousedown` is cancelled), so a menu
+  opened over the keyboard leaves the keyboard up and the composer where it is. Without it the Mi 9T
+  measured the composer's top at 532 -> 877 -> 532 px through "+" then "Envoyer un GIF": focus moving
+  onto the button blurred the field, the keyboard fell under a menu that only floats, and the panel
+  lifted the composer back. With it, the keyboard and the panel swap in ONE frame (532 px throughout).
 - **Back is ONE history entry for the whole surface**, pushed when `menu` or `gif` begins and
   ABANDONED (its popstate absorbed) when it ends any other way - so a pick that opens the poll modal
   never has the modal's own entry popped by ours, and menu -> GIF keeps the one entry.
