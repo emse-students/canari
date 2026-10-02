@@ -27,6 +27,7 @@
   import MessageTextBody from './MessageTextBody.svelte';
   import MessageMetadata from './MessageMetadata.svelte';
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
+  import { phoneViewport } from '$lib/stores/phoneViewport.svelte';
   import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
@@ -814,30 +815,36 @@
         </div>
       </div>
 
-      <MessageBubbleToolbar
-        {isOwn}
-        {isDeleted}
-        hasMedia={!!mediaRef}
-        {showEmojiPicker}
-        onReply={onReply ? () => onReply!(messageId) : undefined}
-        onForward={onForward ? () => onForward!(messageId) : undefined}
-        onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
-        userReactions={userOwnReactions}
-        onToggleEmojiPicker={!isDeleted && onReact
-          ? () => {
-              emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
-            }
-          : undefined}
-        {canModerate}
-        onEdit={canEdit ? startEdit : undefined}
-        onDelete={!isDeleted && (isOwn || canModerate) && onDelete
-          ? () => {
-              showDeleteModal = true;
-            }
-          : undefined}
-        {pinned}
-        onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
-      />
+      <!-- THE HOVER STRIP IS `hidden` BELOW `md`, so a phone never sees it - and it was mounted in
+           every bubble anyway: five buttons, a menu and their icons per message, about a third of
+           what opening a conversation cost on the Mi 9T (2026-10-02, profiled). A phone has the
+           long-press sheet (`MessageMobileActions`) instead. -->
+      {#if !phoneViewport()}
+        <MessageBubbleToolbar
+          {isOwn}
+          {isDeleted}
+          hasMedia={!!mediaRef}
+          {showEmojiPicker}
+          onReply={onReply ? () => onReply!(messageId) : undefined}
+          onForward={onForward ? () => onForward!(messageId) : undefined}
+          onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
+          userReactions={userOwnReactions}
+          onToggleEmojiPicker={!isDeleted && onReact
+            ? () => {
+                emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
+              }
+            : undefined}
+          {canModerate}
+          onEdit={canEdit ? startEdit : undefined}
+          onDelete={!isDeleted && (isOwn || canModerate) && onDelete
+            ? () => {
+                showDeleteModal = true;
+              }
+            : undefined}
+          {pinned}
+          onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
+        />
+      {/if}
     </div>
 
     <MessageReactions
