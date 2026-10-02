@@ -619,7 +619,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The SHA preflight read, never the tag: a stable moves its tag to the shipped commit, so a
+      # checkout of the tag refuses ("does not point to the expected commit") and the run reported
+      # failure for a release production HAD received (v1.0.2, 2026-10-02).
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
 
       - name: The marker production writes for itself
         env:
