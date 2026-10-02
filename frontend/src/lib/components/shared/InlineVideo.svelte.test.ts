@@ -221,7 +221,32 @@ it('the play button starts it where it is, with sound, and opens nothing', () =>
   expect(play).toHaveBeenCalledTimes(1);
   expect(onOpen).not.toHaveBeenCalled();
   expect(video.muted).toBe(false);
-  expect(videoSound.muted).toBe(false);
+});
+
+/**
+ * A CONVERSATION'S VIDEO IS NOT THE FEED'S (user, 2026-10-02: tapping its sound button changed ALL
+ * the buttons on the page). It starts audible whatever the app-wide answer is, and never changes it.
+ */
+it('is audible while the app-wide sound is muted, and starting it leaves that answer alone', () => {
+  videoSound.setMuted(true);
+  const feed = mountVideo();
+  const { video, frameIn, playButton } = mountManual();
+  expect(video.muted).toBe(false);
+  frameIn();
+  playButton()!.click();
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(true);
+  expect(feed.video.muted).toBe(true);
+});
+
+it('does not follow the app-wide answer either way', () => {
+  const { video } = mountManual();
+  videoSound.setMuted(false);
+  flushSync();
+  videoSound.setMuted(true);
+  flushSync();
+  expect(video.muted).toBe(false);
 });
 
 it('hides the play button while it plays, and brings it back when it pauses or ends', () => {
@@ -247,14 +272,14 @@ it('a tap on the rest of the video opens the viewer, which starts it', () => {
   expect(play).not.toHaveBeenCalled();
 });
 
-it('shows its sound button only while it plays', () => {
+it('shows no app-wide sound button, playing or not', () => {
   const { video, target, frameIn } = mountManual();
   frameIn();
   const sound = () => target.querySelector('button[aria-pressed]');
   expect(sound()).toBeNull();
   video.dispatchEvent(new Event('play'));
   flushSync();
-  expect(sound()).not.toBeNull();
+  expect(sound()).toBeNull();
 });
 
 /**

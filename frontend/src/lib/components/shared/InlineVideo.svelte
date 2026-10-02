@@ -4,6 +4,7 @@
   import { playWhileVisible, trackManualPlayback } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
   import VideoPoster from './VideoPoster.svelte';
 
   /**
@@ -44,7 +45,8 @@
     /**
      * Plays only when the reader presses play (a conversation's video - user, 2026-10-02: *"ne pas
      * les jouer automatiquement par rapport au scroll, mettre un bouton play ... comme sur Discord"*).
-     * The play button starts it where it is, with sound; a tap anywhere else opens the viewer, whose
+     * The play button starts it where it is, with sound of its own: it shows NO sound button and
+     * neither reads nor changes the app-wide `videoSound`, which is the feed's. A tap anywhere else opens the viewer, whose
      * player starts it too. It does not loop: it stops on its last frame and offers play again. Several
      * can play at once, as on Discord; opening a viewer pauses them.
      */
@@ -85,9 +87,11 @@
     frameReady = false;
   });
 
-  // The property, not the attribute: `muted` as an attribute is only the INITIAL state.
+  // The property, not the attribute: `muted` as an attribute is only the INITIAL state. A manual
+  // video is never muted by the app's answer: it does not read it, so it cannot open silent.
   $effect(() => {
-    if (videoEl) videoEl.muted = videoSound.muted;
+    if (!videoEl) return;
+    videoEl.muted = manualPlay ? false : videoSound.muted;
   });
 
   /** The element is playing (manual mode only: an autoplaying video has no button to show). */
@@ -95,13 +99,13 @@
 
   /**
    * The play button. A press is a gesture, so the browser allows sound - and the reader asked for
-   * the video, so it has it: the app's one sound answer is turned ON (`videoSound`), the same
-   * answer every other video follows, rather than a muted clip the reader must then un-mute.
+   * the video, so it has it, on THIS element only: the feed's `videoSound` is neither read nor
+   * changed (user, 2026-10-02: a conversation's button used to flip every button in the app).
    */
   function playNow(e: MouseEvent) {
     e.stopPropagation();
     if (!videoEl) return;
-    videoSound.setMuted(false);
+    Log.d('VIDEO', 'InlineVideo: manual play, audible, app-wide sound untouched');
     videoEl.muted = false;
     videoEl.play().catch((err: unknown) => {
       console.warn('[video] InlineVideo: play() refused', {
@@ -122,7 +126,7 @@
     bind:this={videoEl}
     src={streamed ? src : `${src}#t=0.1`}
     poster={TRANSPARENT_VIDEO_POSTER}
-    muted
+    muted={!manualPlay}
     loop={!manualPlay}
     playsinline
     preload="metadata"
@@ -164,7 +168,10 @@
       <Play size={26} strokeWidth={2.25} fill="currentColor" class="ml-1" />
     </button>
   {/if}
-  {#if !manualPlay || playing}
+  {#if !manualPlay}
+    <!-- The APP-WIDE sound button: the feed's only. A conversation's video has none - its sound is
+         its own and audible (see `manualPlay`). -->
+
     <button
       type="button"
       class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {videoSound.muted
