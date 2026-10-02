@@ -208,9 +208,10 @@
             />
           {:else if failure}
             <!-- `compact`: the frame of a 4:1 panorama is 56 px tall, and the failure must fit the
-                 box the picture would have had rather than re-shape the row. -->
+                 box the picture would have had rather than re-shape the row. The frame's own
+                 `overflow-hidden` rounds this layer's corners. -->
             <div
-              class="absolute inset-0 flex items-center justify-center rounded-[inherit] border border-dashed p-2 {glassBoxClass}"
+              class="absolute inset-0 flex items-center justify-center border border-dashed p-2 {glassBoxClass}"
             >
               <MediaLoadFailure
                 cause={failure}
