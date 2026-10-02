@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { client } from '../chat.mjs';
 import { evaluate, realClick, until } from '../cdp.mjs';
 import { errorDetail, finishObserved, mark } from '../results.mjs';
-import { logcatReport, logcatSince, watch } from '../watch.mjs';
+import { ignoringExpectedLog, logcatReport, logcatSince, report, REEL_NARRATION, watch } from '../watch.mjs';
 import * as phone from '../phone.mjs';
 import { PORTS } from '../names.mjs';
 
@@ -107,7 +107,7 @@ const observed = await watch(a1, 'A1');
 /** Records the verdict with both observers - the row's only way to write one. */
 const finish = async (id, verdict, detail) =>
   finishObserved(id, verdict, detail, {
-    A1: observed,
+    A1: ignoringExpectedLog(await report(observed), REEL_NARRATION),
     'A1-native': logcatReport(await logcatSince(nativeFrom), 'A1'),
   });
 
