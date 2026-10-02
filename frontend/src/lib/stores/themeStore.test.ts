@@ -123,6 +123,20 @@ describe('themeStore', () => {
     delete (window as any).canariTheme;
   });
 
+  it('tient les barres natives en icônes claires pour un écran plein cadre, puis les rend', () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const set = vi.fn();
+    (window as any).canariTheme = { set };
+    themeStore.setPreference('light');
+    set.mockClear();
+    const release = themeStore.holdNativeBar('dark');
+    // a theme change while held does not take the icons back from the screen holding them
+    themeStore.setPreference('light');
+    release();
+    expect(set.mock.calls).toEqual([['dark'], ['dark'], ['light']]);
+    delete (window as any).canariTheme;
+  });
+
   it('ne fait rien sans shell natif (navigateur)', () => {
     delete (window as any).webkit;
     expect(() => themeStore.setPreference('dark')).not.toThrow();

@@ -1282,6 +1282,15 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   overflow: hidden;
 }
 
+/* AND IT RUNS UNDER THE STATUS BAR (user, 2026-10-02, iPhone 12: a 47 pt black strip above the
+   preview, which reached the bottom edge but not the top). The shell pads its top by the safe-area
+   inset for every ordinary page; here that padding is the strip, so it is given back and the screen
+   paints from y = 0. The CONTROLS carry the inset themselves (`CameraScreen`, `ReelReview`,
+   `ReelPublishSheet`), which is the half that must not slide under the notch. */
+.fullscreen-place-open .app-shell {
+  padding-top: 0;
+}
+
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView
    scales font sizes and leaves lengths alone, so at 200 % avatar initials came out twice the size
    of their circle and were cut by it (Mi 9T, 2026-09-30). `--text-zoom` is that factor, measured by

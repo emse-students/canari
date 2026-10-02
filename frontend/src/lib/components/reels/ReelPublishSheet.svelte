@@ -141,10 +141,12 @@
   in:fade={{ duration: 150 }}
   data-reel-publish
 >
-  <!-- No safe-area padding of its own: the app shell already pads the whole camera place by the
-       inset, and a second one stood the title 47pt too low on the iPhone (read 2026-10-02). -->
+  <!-- THE SAFE-AREA PADDING IS ITS OWN, AND ONLY ITS OWN: the camera place is full-bleed (the shell
+       gives its top padding back there, `app.css`), so the header's surface paints under the status
+       bar and its content clears it. When the shell padded too, the title stood 47pt too low on the
+       iPhone (read 2026-10-02) - one inset, owned here, never two. -->
   <header
-    class="border-cn-border bg-cn-surface flex shrink-0 items-center gap-2 border-b px-2 py-2"
+    class="border-cn-border bg-cn-surface flex shrink-0 items-center gap-2 border-b px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-2"
   >
     <button
       type="button"

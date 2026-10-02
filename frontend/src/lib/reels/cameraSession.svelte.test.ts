@@ -36,12 +36,12 @@ function deferredOpener() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('CameraSession', () => {
-  it('starts on the back lens, then is live with the stream', async () => {
+  it('starts on the FRONT lens, then is live with the stream', async () => {
     const { open, calls } = deferredOpener();
     const session = new CameraSession(open);
     const started = session.start();
     expect(session.phase).toBe('starting');
-    expect(calls[0].facing).toBe('environment');
+    expect(calls[0].facing).toBe('user');
 
     const { stream } = fakeStream(true);
     calls[0].resolve(stream);
@@ -69,7 +69,7 @@ describe('CameraSession', () => {
     const { open, calls } = deferredOpener();
     const session = new CameraSession(open);
     const first = session.start('environment');
-    const second = session.switchFacing();
+    const second = session.switchFacing(); // environment -> user
 
     const back = fakeStream();
     const front = fakeStream();
@@ -88,13 +88,13 @@ describe('CameraSession', () => {
     const { open, calls } = deferredOpener();
     const session = new CameraSession(open);
     const started = session.start();
-    const back = fakeStream();
+    const back = fakeStream(); // the front lens here, the first one opened
     calls[0].resolve(back.stream);
     await started;
 
     void session.switchFacing();
     expect(back.stop).toHaveBeenCalled();
-    expect(calls[1].facing).toBe('user');
+    expect(calls[1].facing).toBe('environment');
   });
 
   it('turns a typed refusal into the fault the screen draws', async () => {
