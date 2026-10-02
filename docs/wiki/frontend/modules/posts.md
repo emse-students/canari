@@ -735,10 +735,19 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
 
 - **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
   Discord"*): `InlineVideo`'s `manualPlay` mode. It shows its first frame with an amber **play
-  button**; **the button starts the video where it is, with sound** (it turns the app's one sound answer,
-  `videoSound`, ON - the reader asked for this video, and every other video follows that same answer);
+  button**; **the button starts the video where it is, with sound of its own**;
   **a tap on the rest of it opens the viewer, whose player starts it too**. No `playWhileVisible`, no
-  loop (it stops on its last frame and offers play again), and the sound button shows only while it plays.
+  loop (it stops on its last frame and offers play again).
+  **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
+  2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
+  TOUS les boutons de la page changent"* - the feed's rule, one answer for every video, is right for
+  the feed and was wrong where each video is its own). The manual `InlineVideo` is audible from the
+  start (`muted = false`), neither reads nor writes the app-wide answer - so a feed that autoplays
+  muted cannot open a conversation video silent - and the chat viewer and the conversation media
+  panel mount `VideoPlayer soundScope="local"`: it opens audible and its bar button mutes that one
+  video (`followVideoSound(video, 'local')`). The feed, its viewer and the reel review keep the
+  `app` scope exactly as before. Post comments render no video, and the replied-to preview and media
+  thumbnails are muted stills, so no other surface carried the button.
   **Several can play at once, as on Discord** (user's answer to a direct question, same day): a manual
   video is only REMEMBERED (`trackManualPlayback`), never part of the one-at-a-time `playing` rule, which
   stays for the feed's autoplaying videos and the viewer. **Opening a viewer pauses them**

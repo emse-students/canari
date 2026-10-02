@@ -1,7 +1,7 @@
 <script lang="ts">
   import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
-  import { followVideoSound } from '$lib/actions/playWhileVisible';
+  import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
   import {
     CONTROLS_FADE_MS,
     bufferedFraction,
@@ -62,6 +62,11 @@
     class?: string;
     /** Classes of the `<video>` - how it sits in that box. */
     videoClass?: string;
+    /**
+     * Whose sound answer the bar's button gives: the app's (a feed viewer, the default) or this
+     * video's own (a conversation's) - see `VideoSoundScope`.
+     */
+    soundScope?: VideoSoundScope;
   }
 
   let {
@@ -71,6 +76,7 @@
     disableRemotePlayback = false,
     class: klass = '',
     videoClass = 'max-h-full max-w-full object-contain',
+    soundScope = 'app',
   }: Props = $props();
 
   let root: HTMLDivElement | null = $state(null);
@@ -144,7 +150,7 @@
   function toggleMute() {
     if (!video) return;
     showControls();
-    // `followVideoSound` turns this element's change into the app's one answer.
+    // In the `app` scope `followVideoSound` turns this element's change into the app's one answer.
     video.muted = !video.muted;
   }
 
@@ -295,7 +301,7 @@
     preload="metadata"
     poster={TRANSPARENT_VIDEO_POSTER}
     disableremoteplayback={disableRemotePlayback || undefined}
-    use:followVideoSound
+    use:followVideoSound={soundScope}
     class={videoClass}
     style="transform: var(--lightbox-zoom, none); transform-origin: center;"
     onloadedmetadata={sync}

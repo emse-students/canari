@@ -1,4 +1,5 @@
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { Log } from '$lib/utils/Log';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -101,21 +102,39 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
 }
 
 /**
- * Makes a video with its own controls - the full-screen viewer's - follow the app's sound answer.
+ * WHOSE ANSWER A VIEWER'S SOUND IS (user, 2026-10-02: the mute button should not appear in
+ * conversations - tapping it changed ALL the buttons on the page).
  *
- * It opens at `videoSound`'s answer, and a change made through its native controls BECOMES that
- * answer, so turning the sound on in the viewer leaves it on in the feed behind it: one answer for
- * every video, whichever control gave it. While it is open it is the only video playing, and
- * closing it resumes the one on screen behind it.
+ * - `app`: the feed's. Every video follows `videoSound`, and the viewer's own control changes it.
+ * - `local`: a conversation's. A video there is its own thing and nobody asked for the feed's answer:
+ *   it starts AUDIBLE (the reader pressed play or tapped it open) and its control mutes only this
+ *   element. It neither reads `videoSound` - the feed autoplays muted and may have left it muted,
+ *   which would open a conversation video silent - nor writes it.
  */
-export function followVideoSound(video: HTMLVideoElement) {
+export type VideoSoundScope = 'app' | 'local';
+
+/**
+ * Makes a video with its own controls - the full-screen viewer's - follow the sound answer of its scope.
+ *
+ * In the `app` scope (the default) it opens at `videoSound`'s answer, and a change made through its
+ * native controls BECOMES that answer, so turning the sound on in the viewer leaves it on in the feed
+ * behind it: one answer for every video, whichever control gave it. In the `local` scope see
+ * {@link VideoSoundScope}. Either way, while it is open it is the only video playing, and closing it
+ * resumes the one on screen behind it.
+ */
+export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
+  Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : 'its own'} sound`);
   openViewers += 1;
   // The viewer is the only video while it is open: the ones the reader started inline go quiet.
   for (const inline of manualInline) if (!inline.paused) inline.pause();
-  video.muted = videoSound.muted;
   const onVolumeChange = () => videoSound.setMuted(video.muted);
   const onPlay = () => claimPlayback(video);
-  video.addEventListener('volumechange', onVolumeChange);
+  if (scope === 'app') {
+    video.muted = videoSound.muted;
+    video.addEventListener('volumechange', onVolumeChange);
+  } else {
+    video.muted = false;
+  }
   video.addEventListener('play', onPlay);
   // Taking over from the video behind it at once, not on its `play`: an `autoplay` that the
   // browser delays would otherwise leave both audible for that delay.

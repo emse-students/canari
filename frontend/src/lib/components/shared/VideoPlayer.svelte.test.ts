@@ -25,12 +25,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountPlayer(src = 'blob:clip') {
+function mountPlayer(src = 'blob:clip', soundScope?: 'app' | 'local') {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const component = mount(VideoPlayer, { target, props: { src } });
+  const component = mount(VideoPlayer, { target, props: { src, soundScope } });
   mounted.push(() => unmount(component));
   flushSync();
   const root = target.querySelector('[role="group"]') as HTMLElement;
@@ -154,6 +154,43 @@ it('its sound button changes the element, which the app-wide answer follows', ()
   expect(video.muted).toBe(false);
   expect(videoSound.muted).toBe(false);
   expect(sound.getAttribute('aria-pressed')).toBe('true');
+});
+
+/**
+ * A CONVERSATION'S VIEWER HAS ITS OWN SOUND (user, 2026-10-02): audible on open even when the feed
+ * left the app-wide answer muted, its button mutes only this video, and the feed's answer is neither
+ * read nor written.
+ */
+it("a conversation's viewer opens audible while the app-wide sound is muted", () => {
+  videoSound.setMuted(true);
+  const { video } = mountPlayer('blob:clip', 'local');
+  expect(video.muted).toBe(false);
+});
+
+it("a conversation's viewer mutes only itself and leaves the app-wide answer alone", () => {
+  videoSound.setMuted(true);
+  const { root, video } = mountPlayer('blob:clip', 'local');
+  const sound = Array.from(root.querySelectorAll('button')).find(
+    (b) => b.getAttribute('aria-label') === m.video_sound_label()
+  )!;
+  sound.click();
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(true);
+  expect(sound.getAttribute('aria-pressed')).toBe('false');
+  sound.click();
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(true);
+});
+
+it("a conversation's viewer ignores a later change of the app-wide answer", () => {
+  const { video } = mountPlayer('blob:clip', 'local');
+  videoSound.setMuted(false);
+  videoSound.setMuted(true);
+  flushSync();
+  expect(video.muted).toBe(false);
 });
 
 it('says when the engine refuses the video, instead of a black box', () => {
