@@ -14,6 +14,7 @@
     type ScheduledPost,
   } from '$lib/posts/api';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
+  import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
@@ -51,6 +52,18 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
+
+  /**
+   * THE FIRST SCREEN MOUNTS FIRST, THE REST A FRAME AT A TIME (`progressiveCount`). Mounting every
+   * card at once was a 300-500 ms task inside the swipe's view-transition callback, which froze the
+   * page the member had just released (Mi 9T, 2026-10-02).
+   */
+  const mounted = progressiveCount({
+    total: () => (postsOverride ?? initialPostsResolved)?.length ?? 0,
+    resetKey: () => feedCacheKey(data.feedParams),
+    initial: 3,
+    batch: 2,
+  });
   let errorMessage = $state('');
   let lastSeenTs = $state(0);
   const elementPostTs = new SvelteMap<Element, number>();
@@ -606,7 +619,7 @@
             {/if}
           </div>
         {:else}
-          {#each resolvedPosts as post (post.id)}
+          {#each resolvedPosts.slice(0, mounted.count) as post (post.id)}
             <div class="relative" use:markPostSeen={post}>
               {#if isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
@@ -627,8 +640,11 @@
             </div>
           {/each}
 
-          <!-- Infinite-scroll sentinel -->
-          <div bind:this={sentinel} class="h-4"></div>
+          <!-- Infinite-scroll sentinel - only once every card is mounted: under the third card it
+               would sit in view and fetch the next page at once. -->
+          {#if mounted.complete}
+            <div bind:this={sentinel} class="h-4"></div>
+          {/if}
 
           {#if loadingMore}
             <div class="flex justify-center py-4">
