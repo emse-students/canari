@@ -71,6 +71,15 @@ that state.
 its own stream rather than installing it - a fact recorded at the request, never a delay
 (`reels/cameraSession.svelte.ts`, pinned by its test).
 
+**Read on both phones through a real swipe from the feed (2026-10-02).** Mi 9T, through harness row
+REEL-1: live in 1211 ms, 720x1280 from `camera 0, facing back`, 30 fps, torch offered, and the track
+ended once the swipe back reached `/posts`. iPhone 12 (iOS 27.0.1), through the WebKit bridge: live,
+720x1280 from the dual wide back camera, 30 fps, torch offered, and no `[data-camera-phase]` left
+once the swipe back reached `/posts`. On both phones the shutter stayed disabled, with the
+"unreachable" line under it, because the bench estate had no reel routes yet. That line names a
+missing ROUTE as an unreachable SERVER, and it is owed a look once the server is everywhere
+([backlog](../../backlog.md)).
+
 ## The capture screen (C4)
 
 The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`):
@@ -229,3 +238,18 @@ reads the Rust sources.
 which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,
 `UIApplication.openSettingsURLString`). The camera screen's refused state carries the same button in
 the app, since a refused camera on iOS stays refused until Settings.
+
+**Read on both phones (2026-10-02)**, each time from the app's own WebView with the calls
+`gallery.ts` makes, using an 842 KB fragmented MP4 sent in 2 chunks:
+
+| | Mi 9T (Android 16) | iPhone 12 (iOS 27.0.1) |
+| --- | --- | --- |
+| Asked | nothing | once, Photos' add-only dialog, with Canari's own sentence |
+| Saved in | 311 ms (164 ms of it staging), copied on a worker thread | 115 ms |
+| Landed | `Movies/Canari/`, 720x1280, nothing left in the cache | the camera roll |
+| Played by | the system Gallery, the full 00:02 | Photos, 0:02 |
+| Refusals | path-shaped session, out-of-order chunk and path-shaped name each answered typed | not re-run; the same Rust answers them |
+
+MediaStore's `duration` column reads `0` for a fragmented file whose `moov` holds no samples. The
+Gallery's player is not affected, but a list sorted or filtered by duration would see a 0-second
+video.
