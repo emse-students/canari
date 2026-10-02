@@ -34,6 +34,7 @@
   import GifPickerModal from './GifPickerModal.svelte';
   import ComposerGifPanel from './ComposerGifPanel.svelte';
   import { KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
+  import { withGifSize } from '$lib/utils/chat/messageDisplay';
   import {
     gifPanelHeight,
     nextComposerSurface,
@@ -92,10 +93,11 @@
     /** Optional callback emitting throttled typing start/stop signals. */
     onTyping?: (isTyping: boolean) => void;
     /**
-     * Optional callback to send a picked GIF, by direct URL, with the size the provider declared for
-     * that rendition (what the MediaFrame contract asks a picker to send). Enables the GIF entry.
+     * Optional callback to send a picked GIF by direct URL. The URL already carries the size the
+     * provider declared for the rendition sent (`withGifSize`, `#cn-size=WxH`), which is how every
+     * reader's `MediaFrame` reserves its box. Enables the GIF entry.
      */
-    onSendGif?: (url: string, size: { width: number; height: number }) => void;
+    onSendGif?: (url: string) => void;
     /** Optional callback to open the poll composer. Enables the "Sondage" button (channels only). */
     onCreatePoll?: () => void;
     /** Message being replied to, shown as a preview above the input. */
@@ -338,7 +340,8 @@
   /** A GIF was tapped: it is sent at once, with its declared size, and the panel closes. */
   function sendGif(gif: GifResult) {
     Log.d('ChatComposer', `gif sent (${gif.full.width}x${gif.full.height})`);
-    onSendGif?.(gif.full.url, { width: gif.full.width, height: gif.full.height });
+    // The size of the rendition SENT (`full`), never the tile's preview: a reader draws that file.
+    onSendGif?.(withGifSize(gif.full.url, gif.full.width, gif.full.height));
     dispatchSurface({ type: 'sent' });
   }
 

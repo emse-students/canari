@@ -364,6 +364,31 @@ read this token*. The paragraph recording it has read as though the exposure wer
 2026-09-02.
 
 
+### P3 - every keyboard rise moves the composer for a moment, on both phones, and the cause is a different stale number on each (measured 2026-10-02)
+
+Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
+via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
+with no panel involved**, so neither comes from the panel's hand-off, though both show through it.
+
+- **Mi 9T (A1, Android WebView).** The top sits at 877 px, then for 60-100 ms at **174 px**, then at
+  532 px. During that window `visualViewport.height` reads **230** while `innerHeight` is already
+  **588**. 945 - 2 x 357 = 231: the keyboard's height is taken off TWICE for one report, once by the
+  resize and once by the visual viewport. `keyboardViewport` follows the visual viewport, so the
+  composer jumps 358 px up and comes back. Measured twice (with and without the GIF panel), with the
+  same numbers both times. The remembered keyboard height is not polluted: the last write wins, and
+  it is 357.
+- **iPhone 12 (I1, iOS 27.0.1).** The top sits at 766 pt, then for ~400 ms at **465 pt**, then at
+  487 pt. `visualViewport.height` is 543 from the first frame, but `--safe-area-inset-bottom` stays at
+  **34px** for ~400 ms before it falls to 0. `.keyboard-open .chat-composer-footer` pads
+  `max(0.75rem, var(--safe-area-inset-bottom))`, so the composer stands 22 pt (34 - 12) too high
+  until the inset catches up.
+
+Neither is fixed. The Android one wants the WebView's double report recognised for what it is (a
+viewport that shrank inside a layout viewport that already shrank). The iOS one wants the footer
+not to pad a safe area the keyboard already covers. That runs against the comment on that rule ("the
+reserved space must not visibly shrink just because the keyboard opened"), which has to be read
+before changing it. Readings: [#1345](https://github.com/emse-students/canari/pull/1345#issuecomment-5943602239).
+
 ### P3 - MiConnect: one string left after the French pass, and one observation (2026-09-25)
 
 The layout, the flat pass, the French titles and prompts, the redirect to Canari and the signed-in

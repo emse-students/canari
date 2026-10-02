@@ -4,7 +4,7 @@
  *
  * What a component test can see: the panel is the last thing in the composer's footer and as tall as
  * the keyboard last measured; every tile's box comes from the size the provider DECLARED; a tap sends
- * the GIF with that size and closes the panel; Back closes it; tapping the text field hands its room
+ * the GIF with that size in its URL (`#cn-size`) and closes the panel; Back closes it; tapping the text field hands its room
  * to the keyboard. What it cannot see - the composer standing still while a real keyboard animates -
  * is `panelSpacerPx`'s arithmetic (`composerSurface.test.ts`) and a reading on the phones.
  */
@@ -17,6 +17,7 @@ import {
   resetKeyboardHeightMemoryForTests,
 } from '$lib/stores/keyboardHeightMemory';
 import { clearHistoryOverlayStack, initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
+import { gifSizeFromUrl } from '$lib/utils/chat/messageDisplay';
 
 vi.mock('$lib/mobile/glassChrome', () => ({ usesGlassChrome: () => true }));
 vi.mock('$lib/utils/chat/attachSources', async (importOriginal) => ({
@@ -123,17 +124,46 @@ describe('the GIF panel', () => {
     expect([tall.style.width, tall.style.height]).toEqual(['100px', '200px']);
   });
 
-  it('sends a tapped GIF with the size of the rendition sent, and closes', async () => {
+  it('draws each tile as a MediaFrame declared at its box, which loading does not change', async () => {
+    mountComposer();
+    openGifPanel();
+    await vi.waitFor(() => expect(tiles()).toHaveLength(2));
+    flushSync();
+
+    const frameOf = (tile: HTMLElement) => tile.querySelector<HTMLElement>('[data-media-frame]')!;
+    const geometry = () =>
+      tiles().map((t) => [
+        t.style.cssText,
+        frameOf(t).dataset.mediaFrame,
+        frameOf(t).dataset.mediaSize,
+        frameOf(t).getAttribute('style'),
+      ]);
+    const before = geometry();
+    expect(before.map((g) => [g[1], g[2]])).toEqual([
+      ['intrinsic', '100x50'],
+      ['intrinsic', '100x200'],
+    ]);
+
+    // The GIFs arrive - at their own natural size, which is not the tile's.
+    for (const img of document.querySelectorAll<HTMLImageElement>('[data-media-frame] img')) {
+      Object.defineProperty(img, 'naturalWidth', { value: 220 });
+      Object.defineProperty(img, 'naturalHeight', { value: 147 });
+      img.dispatchEvent(new Event('load'));
+    }
+    flushSync();
+    expect(geometry()).toEqual(before);
+  });
+
+  it('sends a tapped GIF carrying the size of the rendition sent (#cn-size), and closes', async () => {
     const props = mountComposer();
     openGifPanel();
     await vi.waitFor(() => expect(tiles()).toHaveLength(2));
     tiles()[1].click();
     flushSync();
 
-    expect(props.onSendGif).toHaveBeenCalledWith('https://g/tall-m.gif', {
-      width: 240,
-      height: 480,
-    });
+    // The size of the rendition SENT rides in the URL's fragment, which every reader's frame reads.
+    expect(props.onSendGif).toHaveBeenCalledWith('https://g/tall-m.gif#cn-size=240x480');
+    expect(gifSizeFromUrl(props.onSendGif.mock.calls[0][0])).toEqual({ width: 240, height: 480 });
     expect(panel()).toBeNull();
   });
 

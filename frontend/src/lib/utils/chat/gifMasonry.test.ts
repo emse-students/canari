@@ -39,6 +39,13 @@ describe('layoutMasonry', () => {
   });
 });
 
+describe('the ratio MediaFrame draws', () => {
+  it('clamps a GIF thinner than 1:4 as the frame inside the tile does, so the two are one shape', () => {
+    const { tiles } = layoutMasonry([{ width: 10, height: 100 }], 100, 1, 0);
+    expect(tiles[0].height).toBe(400); // 1:10 drawn at the 1:4 floor, as normalizedAspectRatio does
+  });
+});
+
 describe('visibleTiles', () => {
   it('mounts only the tiles near the scrolled window', () => {
     const sizes = Array.from({ length: 40 }, () => ({ width: 1, height: 1 }));

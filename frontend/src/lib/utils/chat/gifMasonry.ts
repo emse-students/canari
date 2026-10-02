@@ -8,9 +8,13 @@
  * scroll of trending GIFs keeps a few dozen `<img>` alive, not hundreds of animating decoders.
  *
  * Masonry, shortest column first, which is how Discord, WhatsApp and Messenger lay their GIF panels.
+ *
+ * The ratio is `normalizedAspectRatio`'s - the same clamp `MediaFrame` draws with - so a tile's box
+ * and the frame inside it are one shape even for a GIF thinner than the clamp allows.
  */
+import { normalizedAspectRatio } from '$lib/utils/mediaLayout';
 
-/** A GIF's declared size, in any unit - only its ratio is used. */
+/** A GIF's declared size, in any unit - only its ratio is used, clamped as every medium's is. */
 export interface DeclaredSize {
   width: number;
   height: number;
@@ -52,7 +56,7 @@ export function layoutMasonry(
   const tiles: MasonryTile[] = sizes.map((size, index) => {
     let column = 0;
     for (let c = 1; c < columns; c++) if (bottoms[c] < bottoms[column]) column = c;
-    const height = Math.round((columnWidth * size.height) / size.width);
+    const height = Math.round(columnWidth / normalizedAspectRatio(size.width, size.height));
     const tile = {
       index,
       x: Math.round(column * (columnWidth + gap)),
