@@ -301,6 +301,10 @@ services:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # NO /adminer/ ROUTE HERE: dev holds a full copy of production's data and has no adminer
+      # service (see the note where it would sit). Stated rather than left unset, so a missing line
+      # is never what keeps the door shut.
+      ADMINER_ENABLED: "false"
       # A DEDICATED OIDC CLIENT, on the SAME Authentik instance, so a real account can sign in here
       # without production's client ever seeing a dev redirect. The provider's `issuer_mode` is
       # per_provider, so a dev id token cannot be mistaken for a production one.

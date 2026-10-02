@@ -112,6 +112,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/admin/platform': () => adminTitle(m.admin_platform_label()),
   '/admin/status': () => adminTitle(m.admin_status_title()),
   '/admin/storage': () => adminTitle(m.admin_storage_label()),
+  '/admin/database': () => adminTitle(m.admin_database_label()),
   '/admin/users': () => adminTitle(m.admin_admins_label()),
   '/associations/new': () => m.assoc_new_heading(),
   '/auth/callback': () => m.seo_auth_callback_title(),

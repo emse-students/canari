@@ -58,6 +58,75 @@ class name, so most are singular unless the entity declares `@Entity('...')`).
 
 Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section).
 
+### The `/adminer/` route - the database in a browser, for global admins (2026-10-02)
+
+*"add an adminer route to canari, in a safe way"* (user). **Production only.** Adminer already ran
+there, published on the host's loopback (`127.0.0.1:8888`, reached by an ssh tunnel); the route is a
+second, GATED way in through the frontend nginx. The loopback one is unchanged.
+
+**THE PROBLEM IS THE CREDENTIAL, NOT THE PROXY.** A browser that OPENS a page sends no `Authorization`
+header, and `/internal/auth/verify` reads nothing else - and the app keeps its access token in memory on
+purpose, never in a cookie. A route reached by navigation has no identity of its own. So the gate is a
+small credential of its own, and **`/internal/auth/verify` must not be pointed at `/adminer/`**: it
+answers 200 to a signed-out caller (it decorates, the service refuses), and nginx reads any 2xx as
+permission - the route would be open to the internet.
+
+```
+ admin page (web)                    nginx                        core-service              adminer
+ POST /api/auth/adminer-session ---------------------------------> access token + role in DB
+        <-------- Set-Cookie: canari_adminer (signed, HttpOnly, Secure, Strict, path /adminer/, 15 min)
+ open /adminer/ ------------------> auth_request /internal/auth/adminer --> adminer-verify
+                                     401 -> a bare 404                     (cookie live? still admin?)
+                                     200 -> strip our cookie, clear identity headers ----------> login form
+```
+
+- **The cookie is stateless and signed** (`AdminerAccessService`): HMAC-SHA256 over the user and the
+  expiry, with a key DERIVED from `INTERNAL_SHARED_SECRET` (a domain label, so the secret that signs
+  `X-Internal-Token` does not sign a second thing the same way). 15 minutes from issue, **no renewal**.
+  `HttpOnly`, `Secure`, `SameSite=Strict`, and sent on `/adminer/` ONLY.
+- **Every request re-asks core-service whether the cookie's owner is STILL a global admin**, from the
+  database: removing the role ends the access at the next click, not at the cookie's expiry. The role is
+  also read from the database when the session is opened, never from the token's claim, which can be an
+  hour old.
+- **It fails closed.** Without `ADMINER_ENABLED=true` AND a 32+ character `INTERNAL_SHARED_SECRET`,
+  core-service issues nothing and verifies nothing (and says so at startup, at error level). Production's
+  compose sets it; the dev and local composes carry an explicit `"false"` (the wiring test requires every
+  production key to be declared in the other estates, which is also why it is not simply left unset).
+  `POST adminer-session` is a **404** there, not a 403: a stack that does not offer it does not say it
+  exists. If core-service is down the gate answers a 500 and nothing is proxied.
+- **Every refusal is a bare 404** at the edge. Only GET, HEAD and POST reach Adminer. The four identity
+  headers are cleared on the way, and **our own cookie is stripped** from the request (a `map` keeps
+  Adminer's own `adminer_*` cookies), so the upstream never holds a replayable session.
+- **The page is never cached, framed or indexed**, and carries its OWN Content-Security-Policy with no
+  third-party host - the site-wide one allows Stripe and Klipy, which a database console has no business
+  loading.
+- **It is the FIRST of two doors.** Adminer then asks for the database user and password itself; Canari
+  never holds, fills in or forwards one. Adminer's own login throttle still applies.
+- **Audit:** every session opened, every refusal, and every cookie refused for a bad signature or a lost
+  role is a `warn` line in core-service's log.
+
+**THE USER CHOSE THE EXISTING FULL-ACCESS DATABASE ACCOUNT** (asked 2026-10-02; the alternative was a
+dedicated read-only role, which was recommended and declined). So whoever passes both doors can write to
+production, and a flaw in this route is a flaw with write access. A `SELECT`-only role - one `CREATE
+ROLE`, one more secret - is the way to narrow it, and is not built.
+
+**Web only.** The session is a cookie scoped to the app's own origin; the native apps run on another, so
+the admin page shows an explanation instead of a button there.
+
+**Two defects found by RUNNING it, and the shape is now asserted** (`adminer-route.test.mjs`, in
+`make test-ci-scripts`): `rewrite ... break` ends the rewrite phase, so a `set $upstream_adminer` written
+AFTER it never ran and every request was a 500 with `invalid URL prefix in "http://"`; and
+`return 301 /adminer/` dropped the port behind a proxy (`absolute_redirect off`). The nginx image was
+built from the real `Dockerfile.frontend` (so `nginx -t` ran) and driven with two fake upstreams: no or
+a bad cookie 404; a good one proxies with the prefix stripped, the query kept, our cookie removed and a
+forged `X-User-Id` dropped; PUT and DELETE 404; `/internal/auth/adminer` is unreachable from outside.
+
+**NOT verified, and owed:** the real Adminer (PHP) behind the prefix - its relative redirects are read
+from its source, not exercised, and no `proxy_redirect` is written for the case it does not produce; the
+real core-service signing and verifying against a live database; a browser accepting a cookie with
+`Path=/adminer/` from a `fetch` response and sending it on the navigation; the admin page on a screen.
+**Owed: one use on production after the next stable, by the user.**
+
 ### Migrations
 
 NestJS services use TypeORM. In development `synchronize: true` auto-syncs the schema from the

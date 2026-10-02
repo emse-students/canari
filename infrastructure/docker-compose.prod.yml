@@ -103,8 +103,12 @@ services:
       - postgres_data_18:/var/lib/postgresql
 
   adminer:
-    # Same rule, and this was the worst of the three: `:latest`, on a database admin UI, in
-    # PRODUCTION. The image carries no version label, so the digest is the only name it has.
+    # REACHED TWO WAYS: loopback on the host (an ssh tunnel), and /adminer/ through the frontend nginx for
+    # GLOBAL ADMINS (core-service signs a short cookie; docs/wiki/infrastructure/databases.md). It publishes
+    # nothing else.
+    # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
+    # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
+    # name it has.
     image: adminer@sha256:b87a22863ed8c18437c7241a5d39ae2e05669d4d2eb9d78591d5087a09258bc8
     restart: unless-stopped
     ports:
@@ -336,6 +340,10 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
+      # does not set it, so core-service issues no session there and the route does not exist.
+      # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.
+      ADMINER_ENABLED: "true"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}

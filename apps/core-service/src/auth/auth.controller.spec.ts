@@ -126,7 +126,8 @@ describe('AuthController sessions', () => {
     controller = new AuthController(
       users as never,
       platform as never,
-      sessions as unknown as AuthSessionsService
+      sessions as unknown as AuthSessionsService,
+      { enabled: false } as never
     );
   });
 
@@ -148,7 +149,8 @@ describe('AuthController sessions', () => {
           getConfig: jest.fn().mockResolvedValue({}),
           isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
         } as never,
-        sessions as unknown as AuthSessionsService
+        sessions as unknown as AuthSessionsService,
+        { enabled: false } as never
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
