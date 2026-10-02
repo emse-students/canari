@@ -729,5 +729,5 @@
 <GifPickerModal
   open={showGifPicker}
   onClose={() => (showGifPicker = false)}
-  onSelect={handleGifSelected}
+  onSelect={(gif) => handleGifSelected(gif.full.url)}
 />

@@ -1154,6 +1154,22 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
 }
 
+/* THE GIF PANEL TAKES THE KEYBOARD'S PLACE, SO THE COMPOSER SITS ON IT AS IT SITS ON A KEYBOARD
+   (`ComposerGifPanel`, `composerSurface.ts`). Over a keyboard the composer is 0.75rem above it and
+   the safe area is the keyboard's; over the panel the same 0.75rem is the panel's top margin and the
+   footer pads nothing - the panel itself reaches the screen's bottom edge, as the keyboard does, and
+   keeps its own content clear of the home indicator. With the margin on the panel and not on the
+   footer, the hand-off (panel shrinking to 0 while the keyboard rises) leaves the composer exactly
+   0.75rem above whichever is under it, with no step when the panel unmounts. The second selector
+   outranks the `!important` keyboard rule above. */
+.chat-composer-footer.has-keyboard-panel,
+.mobile-convo-open.keyboard-open .chat-composer-footer.has-keyboard-panel {
+  padding-bottom: 0 !important;
+}
+.composer-gif-panel {
+  margin-top: 0.75rem;
+}
+
 /* LIQUID GLASS, AND ONLY FOR CHROME THAT STAYS PUT WHILE CONTENT MOVES UNDER IT (user, 2026-09-30:
    "only static ui element, that are apart from content, should be liquid glass"). The conversation's
    floating header pieces and the composer's "+" wear it; a bubble, a card or a panel of content never

@@ -43,9 +43,24 @@
      * for the website, which keeps its classic chrome (`usesGlassChrome`). One menu, two skins.
      */
     variant?: 'glass' | 'plain';
+    /**
+     * CONTROLLED MODE: the owner holds whether the menu is open (the composer, whose menu is one state
+     * of `composerSurface.ts` beside the GIF panel and the keyboard). Every way the menu asks to
+     * close or open is then REPORTED, with its reason, and decided by the owner.
+     */
+    open?: boolean;
+    onOpenChange?: (open: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') => void;
   }
 
-  let { icon: Icon, label, items, alignEnd = false, variant = 'glass' }: Props = $props();
+  let {
+    icon: Icon,
+    label,
+    items,
+    alignEnd = false,
+    variant = 'glass',
+    open: controlledOpen,
+    onOpenChange,
+  }: Props = $props();
 
   const buttonClass = $derived(
     variant === 'glass'
@@ -58,7 +73,25 @@
       : 'bg-surface-elevated border-cn-border rounded-xl border shadow-lg'
   );
 
-  let open = $state(false);
+  let ownOpen = $state(false);
+  const open = $derived(controlledOpen ?? ownOpen);
+
+  /** The one place the menu's openness changes: reported in controlled mode, held here otherwise. */
+  function setOpen(next: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') {
+    Log.d('GlassMenuButton', `${label}: ${next ? 'open' : 'closed'} (${reason})`);
+    if (onOpenChange) onOpenChange(next, reason);
+    else ownOpen = next;
+  }
+
+  // Escape closes the menu wherever focus is - a tap leaves it on the button, not in the panel.
+  $effect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false, 'escape');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   let button: HTMLButtonElement | undefined = $state();
   let panel: HTMLDivElement | undefined = $state();
 
@@ -74,18 +107,20 @@
   });
 
   function toggle() {
-    open = !open;
-    Log.d('GlassMenuButton', `${label}: ${open ? 'open' : 'closed'}`);
+    setOpen(!open, 'toggle');
   }
 
   function pick(item: GlassMenuItem) {
-    open = false;
     Log.d('GlassMenuButton', `${label}: ${item.id}`);
+    setOpen(false, 'pick');
     item.onSelect();
   }
 </script>
 
-<div class="shrink-0" use:clickOutside={{ enabled: open, callback: () => (open = false) }}>
+<div
+  class="shrink-0"
+  use:clickOutside={{ enabled: open, callback: () => setOpen(false, 'outside') }}
+>
   <button
     bind:this={button}
     type="button"
@@ -109,9 +144,6 @@
         ? 'glass-menu-end'
         : 'glass-menu-start'}"
       transition:scale={{ duration: 180, start: 0.35, easing: cubicOut }}
-      onkeydown={(e) => {
-        if (e.key === 'Escape') open = false;
-      }}
     >
       {#each items as item (item.id)}
         {@const ItemIcon = item.icon}

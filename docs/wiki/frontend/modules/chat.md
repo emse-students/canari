@@ -54,8 +54,8 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **The date pill sits under the chrome EVERYWHERE** - a defect found on the way, on every width: the
   pill is positioned against the whole panel, header included, so at `top: 0.85rem` the header
   covered it while it showed. It now reads `--chat-header-height` too.
-- **The apps' composer is ONE "+"** (`ChatComposer`, `addMenuItems`): photos and videos, all files,
-  GIF, poll - each under its classic button's condition. No paperclip, poll or GIF button and no
+- **The apps' composer is ONE "+"** (`ChatComposer`, `addMenuItems`): the photo library, the camera,
+  all files, GIF, poll ([the one menu](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)) - each under its classic button's condition. No paperclip, poll or GIF button and no
   CHEVRON FOLD there: one button needs none. The microphone still gives way to Send while typing. The
   website keeps all of it: the paperclip (a phone browser's opens the same photos / files menu,
   `attachMenuItems`), poll, GIF and the fold.
@@ -83,13 +83,100 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
 | `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu: "Photos et vidéos" or "Tous les fichiers"** (2026-09-28, user: *"comme sur messenger"*). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
 | `MessageEmojiPicker.svelte` | Emoji reaction picker (locale-aware FR/EN i18n) |
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
+
+### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
+
+Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en
+faire qu'un"*, and the menu that *"ne se ferme pas"*; and for GIFs, *"un panneau de la taille du
+clavier qui s'ouvre a sa place"* - Messenger's, Discord's, WhatsApp's.
+
+**WHY THERE WERE TWO MENUS - READ OFF THE RECORDING, THEN OFF WEBKIT.** The "+" opened Canari's menu
+(the native UIMenu of WP-G2 on iOS); its "Photos et videos" clicked an
+`<input type="file" accept="image/*,video/*">`, and WebKit answered with its OWN sheet - Phototheque,
+Prendre une photo ou une video, Choisir les fichiers. `WKFileUploadPanel` shows that sheet for every
+file input that accepts images or videos and carries no `capture`; no `accept` a page can write skips
+it. So it was never a value to tune: on iOS a file input IS a second menu, and one menu means not
+opening a file input for the entries that sheet duplicates. The recording also shows the sheet staying
+up for fifteen seconds, anchored to an input that was `display: none`.
+
+**THE ONE MENU** (`utils/chat/attachSources.ts`, the table and the reason; `attachSources.test.ts`):
+
+| runtime | Photothèque | camera | Tous les fichiers |
+| --- | --- | --- | --- |
+| iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | input with `capture` - WebKit opens the camera directly, photo or video | **native** document picker |
+| Android app, Android browser | input `image/*,video/*` | TWO entries, inputs with `capture`: `image/*` (photo), `video/*` (video) | input, every type |
+| iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
+| desktop | no menu: the paperclip opens the file dialog | - | - |
+
+- **Android has two camera entries** because its capture intents are photo OR video: with both types
+  accepted, wry's `RustWebChromeClient.onShowFileChooser` launches the video recorder only.
+- **The iOS app's native picks come back through `take_picked_file`** (`commands/picked_files.rs`): the
+  dialog plugin COPIES each pick (PHPicker into `Library/Caches`, the document picker into `tmp/`) and
+  returns where; the command reads the copy, deletes it and returns the bytes. It reads and deletes a
+  path the page names, so it takes an ALLOWLIST - the canonical caches and temporary directories -
+  and compares the CANONICAL path, so neither `..` nor a symlink reaches outside. `nativeAttachPicker.ts`
+  names the `File` as the picker did and types it from its extension (the picker gives no MIME type);
+  a photo arrives as the library holds it, usually HEIC, which `compressImage` decodes on WebKit.
+
+**THE MENU, THE PANEL AND THE KEYBOARD ARE ONE STATE** (`utils/chat/composerSurface.ts`,
+`composerSurface.test.ts` walks every event in every state): `idle`, `menu`, `gif`, and `handoff`.
+
+- **The menu closes** on a pick, a tap outside, Escape (read on `window`, since a tap leaves focus on
+  the button), Back, the text field taking focus, and the keyboard opening. `GlassMenuButton` has a
+  CONTROLLED mode for this (`open` + `onOpenChange` with the reason); the header's menus are unchanged.
+- **Back is ONE history entry for the whole surface**, pushed when `menu` or `gif` begins and
+  ABANDONED (its popstate absorbed) when it ends any other way - so a pick that opens the poll modal
+  never has the modal's own entry popped by ours, and menu -> GIF keeps the one entry.
+- **`handoff`** is the panel giving its room to the keyboard after the text field is tapped: the room
+  stays reserved until the keyboard has risen into it (`keyboardOpened`), or the field blurs (a
+  hardware keyboard - none is coming). It ends on those facts, never on a timer.
+
+**THE PANEL TAKES EXACTLY THE KEYBOARD'S ROOM, AND THE COMPOSER DOES NOT MOVE.**
+
+- **Its height is the keyboard last measured on this device**, per orientation
+  (`stores/keyboardHeightMemory.ts`, written by `keyboardViewport` on every open keyboard and kept in
+  `localStorage`). `keyboardViewport`'s snapshot now carries `keyboardHeight` = baseline height minus
+  the visual viewport height while open - one number for every platform, because each shrinks the
+  visual viewport whatever else it does (iOS's native layer resizes the WebView, the Android app pads
+  its content, a browser shrinks only the visual viewport). Before any keyboard was seen the panel is
+  0.40 of the screen, bounded to 240-420 px (`gifPanelHeight`).
+- **The room under the composer is `panelSpacerPx` = reserved height minus what the keyboard covers
+  now**, recomputed on the same viewport event that moves the keyboard. As the keyboard falls under an
+  opening panel the room grows by exactly what it uncovers; as it rises into a closing one it shrinks
+  by what it takes. The panel is the footer's LAST child, so the composer sits on it as on a keyboard.
+- **The 0.75rem above the keyboard is the panel's top margin**, and the footer pads nothing while a
+  panel is reserved (`.has-keyboard-panel`, `app.css`): the panel reaches the screen's edge as a
+  keyboard does and keeps its content clear of the home indicator itself. Putting the margin on the
+  panel, not the footer, is what leaves no step when the panel unmounts at the end of `handoff`.
+- **While the panel's own search field has the keyboard up**, the panel rides above it at
+  `SEARCH_STRIP_PX` (200 px: the search row and one row of results), and keeps its full height until
+  the keyboard has risen - the composer rises by the strip, on purpose, since the results must show.
+
+**THE GRID HOLDS EVERY TILE'S SIZE BEFORE IT LOADS** (`GifGrid.svelte`, shared by the phone panel and
+the desktop dialog `GifPickerModal`). KLIPY declares `width` / `height` for each rendition;
+`mapKlipyItems` keeps them and LEAVES OUT, counting at warn level, a result that declares none - it
+could not be laid out without a shift. `gifMasonry.ts` places every tile (shortest column first) from
+those sizes alone, so the grid never reflows, and only tiles near the scrolled window are mounted -
+the virtualisation. The next page is asked for near the end. A tile's placeholder is the flat surface
+tone: the [MediaFrame](../media-frame.md) primitive was not merged when this shipped, and the tile's box
+is already final here, so what it would add is its placeholder painting. **A tap sends at once,
+with the declared size of the rendition sent** (`onSendGif(url, { width, height })`), which is what
+the MediaFrame contract asks of a picker; the sender half that writes it into the message
+(`withGifSize`) is MediaFrame's, and `MainChatPage` ignores the size until it lands.
+
+**Verified here:** the transition table, the spacer arithmetic, the masonry, the KLIPY mapping, the
+picker table per runtime (`ChatComposer.attachMenu.svelte.test.ts`: which input or native picker each
+entry opens, with which `accept` / `capture`, and the menu closing on pick, outside, Escape, Back and
+focus), the panel (`ChatComposer.gifPanel.svelte.test.ts`: last in the footer at the remembered
+height, tiles sized from declared dimensions, send closes it, Back closes it, the hand-off), the Rust
+allowlist (`picked_files.rs` tests) and a source pin that the command is registered.
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 

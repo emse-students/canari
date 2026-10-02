@@ -17,6 +17,8 @@
     ImagePlay,
     Plus,
     Check,
+    Camera,
+    Video,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -30,6 +32,31 @@
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import GifPickerModal from './GifPickerModal.svelte';
+  import ComposerGifPanel from './ComposerGifPanel.svelte';
+  import { KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
+  import {
+    gifPanelHeight,
+    nextComposerSurface,
+    panelSpacerPx,
+    surfaceReservesPanel,
+    surfaceTakesBack,
+    type ComposerSurface,
+    type ComposerSurfaceEvent,
+  } from '$lib/utils/chat/composerSurface';
+  import {
+    acceptFor,
+    ALL_FILES_ACCEPT,
+    attachSourcesFor,
+    capturesFor,
+    currentAttachRuntime,
+    multipleFor,
+    opensNatively,
+    type AttachSource,
+  } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
+  import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+  import { rememberedKeyboardHeight } from '$lib/stores/keyboardHeightMemory';
+  import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
@@ -64,8 +91,11 @@
     onFocusChange?: (focused: boolean) => void;
     /** Optional callback emitting throttled typing start/stop signals. */
     onTyping?: (isTyping: boolean) => void;
-    /** Optional callback to send a picked GIF (by direct URL). Enables the GIF button. */
-    onSendGif?: (url: string) => void;
+    /**
+     * Optional callback to send a picked GIF, by direct URL, with the size the provider declared for
+     * that rendition (what the MediaFrame contract asks a picker to send). Enables the GIF entry.
+     */
+    onSendGif?: (url: string, size: { width: number; height: number }) => void;
     /** Optional callback to open the poll composer. Enables the "Sondage" button (channels only). */
     onCreatePoll?: () => void;
     /** Message being replied to, shown as a preview above the input. */
@@ -153,50 +183,164 @@
 
   let mentionComposer = $state<MentionComposerInput | null>(null);
   let composerFooter = $state<HTMLElement | null>(null);
-  let fileInput: HTMLInputElement | undefined = $state();
   /**
-   * The PHOTOS door, beside the all-files one (user, 2026-09-28: *"afficher une photo a
-   * selectionner (comme sur messenger), et donner l'option de regarder dans tous les fichiers"*).
-   *
-   * Two inputs because a picker is chosen by what the input ACCEPTS: asking for images, videos,
-   * audio, PDFs and archives at once is a document request, and Android answers it with the file
-   * browser. `image/*,video/*` alone is a media request - the system's photo grid where the phone
-   * has one, the photo library on iOS - and needs no gallery permission, which Google Play only
-   * grants to apps whose core purpose is photos. Offered by the phone's "+" ({@link addMenuItems}); a
-   * desktop keeps the one file dialog it always had.
+   * ONE FILE INPUT PER PICKER THE MENU CAN OPEN, each with the exact `accept` / `capture` that makes
+   * the system open THAT picker and no chooser of its own (`attachSources.ts`, where the table and the
+   * reason live). `files` is always present: it is the desktop dialog, the iOS browser's single
+   * input, and a phone's "every file" entry.
    */
-  let mediaInput: HTMLInputElement | undefined = $state();
-
-  /** Opens one of the two pickers. Synchronous: a picker opens only inside the tap that asked. */
-  function openPicker(input: HTMLInputElement | undefined, kind: 'media' | 'files') {
-    Log.d('ChatComposer', `attach: ${kind}`);
-    input?.click();
-  }
+  /** Narrow chat layout - a phone, or a narrow window (`isNarrowChatLayout`). */
+  let isMobileViewport = $state(false);
+  const pickerInputs: Partial<Record<AttachSource, HTMLInputElement>> = $state({});
   let isDragOver = $state(false);
+  /** The DESKTOP GIF dialog. A phone opens the keyboard-sized panel instead (`surface === 'gif'`). */
   let showGifPicker = $state(false);
 
   /**
    * IN THE PHONE APPS THE COMPOSER'S ACTIONS ARE ONE "+" THAT GROWS INTO THEM (user, 2026-09-30:
-   * "do the same for the composer") - photos, files, GIF, poll, each under the condition its button
-   * keeps elsewhere. One button needs no fold, so the chevron and its fold stay the website's, which
-   * keeps its classic composer at every width (`usesGlassChrome`).
+   * "do the same for the composer") - photos, camera, files, GIF, poll, each under the condition its
+   * button keeps elsewhere. One button needs no fold, so the chevron and its fold stay the website's,
+   * which keeps its classic composer at every width (`usesGlassChrome`).
    */
   const glassChrome = usesGlassChrome();
-  /** Photos, or every file - the website's phone paperclip, and the first two of the apps' "+". */
-  const attachMenuItems: GlassMenuItem[] = [
+
+  // -- The surface: nothing, the menu, or the GIF panel (`composerSurface.ts`) --
+  let surface = $state<ComposerSurface>('idle');
+  /** The panel's search field has the keyboard up: the panel then rides above it. */
+  let gifSearchFocused = $state(false);
+  /** The panel's height, fixed when it opens: the last keyboard measured here, else the first guess. */
+  let panelHeight = $state(0);
+  /** The history entry that lets Back close the menu or the panel - one for the whole surface. */
+  let historyClose: (() => void) | null = null;
+
+  /**
+   * THE ONE WAY THE SURFACE CHANGES. The transition is `nextComposerSurface`'s; this applies it and
+   * keeps the history entry in step: pushed when a state that Back closes begins, ABANDONED (with
+   * its popstate absorbed) when it ends any way but Back - so a pick that opens a modal or a picker
+   * never has its own entry popped by ours.
+   */
+  function dispatchSurface(event: ComposerSurfaceEvent) {
+    const prev = surface;
+    const next = nextComposerSurface(prev, event);
+    if (next === prev) return;
+    const why = event.type === 'dismiss' ? `dismiss:${event.reason}` : event.type;
+    Log.d('ChatComposer', `surface ${prev} -> ${next} (${why})`);
+    if (next === 'gif' && prev !== 'handoff') {
+      panelHeight = gifPanelHeight(
+        rememberedKeyboardHeight(),
+        keyboard.isOpen ? keyboard.viewportHeight + keyboard.keyboardHeight : window.innerHeight
+      );
+    }
+    if (!surfaceReservesPanel(next)) gifSearchFocused = false;
+    surface = next;
+    const takesBack = surfaceTakesBack(next);
+    if (takesBack && !historyClose) {
+      const close = () => {
+        historyClose = null;
+        dispatchSurface({ type: 'dismiss', reason: 'back' });
+      };
+      historyClose = close;
+      pushHistoryOverlay(close);
+    } else if (!takesBack && historyClose) {
+      const close = historyClose;
+      historyClose = null;
+      abandonHistoryOverlay(close);
+    }
+  }
+
+  onDestroy(() => {
+    if (historyClose) abandonHistoryOverlay(historyClose);
+    historyClose = null;
+  });
+
+  const keyboard = $derived(getKeyboardViewport());
+  const keyboardOpen = $derived(keyboard.isOpen);
+  // A keyboard rising closes the menu and completes a panel's hand-off (see the machine).
+  $effect(() => {
+    if (keyboardOpen) untrack(() => dispatchSurface({ type: 'keyboardOpened' }));
+  });
+
+  /** The room under the composer, in px - what keeps it still between keyboard and panel. */
+  const panelSpacer = $derived(
+    panelSpacerPx({
+      reserved: surfaceReservesPanel(surface),
+      panelHeight,
+      keyboardOverlap: keyboard.keyboardHeight,
+      searchFocused: gifSearchFocused,
+    })
+  );
+
+  /** Where this composer runs, as far as pickers go - decides the menu's entries. */
+  const attachRuntime = $derived(currentAttachRuntime(isMobileViewport));
+  const attachSources = $derived(attachSourcesFor(attachRuntime));
+
+  /**
+   * Opens one picker. SYNCHRONOUS for an input: a picker opens only inside the tap that asked. The
+   * iOS app's library and files go native and arrive asynchronously, through the same upload path.
+   */
+  function openSource(source: AttachSource) {
+    Log.d('ChatComposer', `attach: ${source} (${attachRuntime})`);
+    if (opensNatively(attachRuntime, source)) {
+      const kind = source === 'library' ? 'library' : 'files';
+      void pickNatively(kind)
+        .then((files) => {
+          if (files.length > 0) onFilesSelected?.(files);
+        })
+        .catch((error) => {
+          console.error(`[ChatComposer] the native ${kind} picker failed: ${String(error)}`);
+          showToast(m.chat_attach_picker_failed());
+        });
+      return;
+    }
+    const input = pickerInputs[source];
+    if (!input) {
+      console.error(
+        `[ChatComposer] no input mounted for ${source} - the menu offered a dead entry`
+      );
+      return;
+    }
+    input.click();
+  }
+
+  const SOURCE_ENTRIES: Record<AttachSource, { label: () => string; icon: GlassMenuItem['icon'] }> =
     {
-      id: 'media',
-      label: m.chat_attach_menu_media(),
-      icon: Images,
-      onSelect: () => openPicker(mediaInput, 'media'),
-    },
-    {
-      id: 'files',
-      label: m.chat_attach_menu_files(),
-      icon: FolderOpen,
-      onSelect: () => openPicker(fileInput, 'files'),
-    },
-  ];
+      library: { label: () => m.chat_attach_menu_library(), icon: Images },
+      camera: { label: () => m.chat_attach_menu_camera(), icon: Camera },
+      'camera-photo': { label: () => m.chat_attach_menu_take_photo(), icon: Camera },
+      'camera-video': { label: () => m.chat_attach_menu_record_video(), icon: Video },
+      files: { label: () => m.chat_attach_menu_files(), icon: FolderOpen },
+    };
+
+  /** The picker entries - the website's phone paperclip, and the first ones of the apps' "+". */
+  const attachMenuItems = $derived(
+    attachSources.map((source): GlassMenuItem => ({
+      id: source,
+      label: SOURCE_ENTRIES[source].label(),
+      icon: SOURCE_ENTRIES[source].icon,
+      onSelect: () => {
+        dispatchSurface({ type: 'pick', target: 'away' });
+        openSource(source);
+      },
+    }))
+  );
+
+  /** Opens the GIF picker: the keyboard-sized panel on a phone, the dialog on a desktop. */
+  function openGif() {
+    if (isMobileViewport) {
+      dispatchSurface({ type: 'pick', target: 'gif' });
+      // The panel takes the keyboard's place: the field gives the keyboard up, the panel its room.
+      mentionComposer?.getEditorElement()?.blur();
+    } else {
+      showGifPicker = true;
+    }
+  }
+
+  /** A GIF was tapped: it is sent at once, with its declared size, and the panel closes. */
+  function sendGif(gif: GifResult) {
+    Log.d('ChatComposer', `gif sent (${gif.full.width}x${gif.full.height})`);
+    onSendGif?.(gif.full.url, { width: gif.full.width, height: gif.full.height });
+    dispatchSurface({ type: 'sent' });
+  }
 
   const addMenuItems = $derived.by((): GlassMenuItem[] => {
     const items: GlassMenuItem[] = [...attachMenuItems];
@@ -205,7 +349,7 @@
         id: 'gif',
         label: m.chat_send_gif_label(),
         icon: ImagePlay,
-        onSelect: () => (showGifPicker = true),
+        onSelect: openGif,
       });
     }
     if (onCreatePoll) {
@@ -214,13 +358,23 @@
         id: 'poll',
         label: m.chat_create_poll_label(),
         icon: ChartColumn,
-        onSelect: () => create(),
+        onSelect: () => {
+          dispatchSurface({ type: 'pick', target: 'away' });
+          create();
+        },
       });
     }
     return items;
   });
+
+  /** The web menu's own reports (outside tap, Escape, its button), fed to the machine. */
+  function onMenuOpenChange(open: boolean, reason: 'toggle' | 'outside' | 'escape' | 'pick') {
+    if (reason === 'pick') return; // the entry's own `onSelect` dispatches the pick
+    if (reason === 'toggle') dispatchSurface({ type: 'menuToggle' });
+    else if (!open) dispatchSurface({ type: 'dismiss', reason });
+  }
   /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
-  const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
+  const hasGifPicker = !!KLIPY_KEY;
   let showEmojiPicker = $state(false);
   /** Anchor for the emoji popover, and the boundary `clickOutside` closes it against. */
   let emojiButtonEl = $state<HTMLElement | null>(null);
@@ -252,7 +406,6 @@
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
-  let isMobileViewport = $state(false);
   /** The phone apps' composer: one glass "+" and no fold (see `addMenuItems`). */
   const appChrome = $derived(isMobileViewport && glassChrome);
   /** True as soon as the user has typed something: used to free up composer width. */
@@ -448,6 +601,7 @@
     }
     onSend();
     mentionComposer?.clearEditor();
+    dispatchSurface({ type: 'sent' });
   }
 
   function handleComposerKeydown(e: KeyboardEvent) {
@@ -690,7 +844,11 @@
 {/snippet}
 
 <!-- Footer Container -->
-<footer class="chat-composer-footer" bind:this={composerFooter}>
+<footer
+  class="chat-composer-footer"
+  class:has-keyboard-panel={surfaceReservesPanel(surface)}
+  bind:this={composerFooter}
+>
   <!-- Edit banner: the message being edited, which the field below holds the new text of. -->
   {#if isEditing}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
@@ -976,25 +1134,50 @@
               items: addMenuItems,
             }}
           >
-            <GlassMenuButton icon={Plus} label={m.chat_composer_add_label()} items={addMenuItems} />
+            <GlassMenuButton
+              icon={Plus}
+              label={m.chat_composer_add_label()}
+              items={addMenuItems}
+              open={surface === 'menu'}
+              onOpenChange={onMenuOpenChange}
+            />
           </span>
         {/if}
       {/if}
 
-      <!-- The website's paperclip: a phone browser gets the photos / files menu (`attachMenuItems`),
-           a desktop the file dialog, directly. -->
+      <!-- The website's paperclip. An Android browser gets Canari's menu (`attachMenuItems`); an iOS
+           browser gets NO menu of ours - its one input opens WebKit's own sheet (library, camera,
+           files), which IS the menu there, so there is never a second one (`attachSources.ts`). The
+           input sits INSIDE the label so the sheet anchors to the paperclip and the tap is the
+           input's own. A desktop gets the file dialog directly, below. -->
       {#if !appChrome && isMobileViewport && !controlsCollapsed && !actionsHidden}
-        <GlassMenuButton
-          variant="plain"
-          icon={Paperclip}
-          label={m.chat_attach_file_label()}
-          items={attachMenuItems}
-        />
+        {#if attachSources.length > 0}
+          <GlassMenuButton
+            variant="plain"
+            icon={Paperclip}
+            label={m.chat_attach_file_label()}
+            items={attachMenuItems}
+            open={surface === 'menu'}
+            onOpenChange={onMenuOpenChange}
+          />
+        {:else}
+          <label class="ui-icon-button chat-composer-icon-button relative shrink-0 cursor-pointer">
+            <Paperclip size={20} strokeWidth={2} />
+            <input
+              type="file"
+              multiple
+              accept={ALL_FILES_ACCEPT}
+              aria-label={m.chat_attach_file_label()}
+              class="sr-only"
+              onchange={handleFileChange}
+            />
+          </label>
+        {/if}
       {/if}
       {#if !isMobileViewport && !controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
-            onclick={() => openPicker(fileInput, 'files')}
+            onclick={() => openSource('files')}
             disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
@@ -1029,7 +1212,7 @@
         <div class="shrink-0">
           <button
             type="button"
-            onclick={() => (showGifPicker = true)}
+            onclick={openGif}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
             class="ui-icon-button chat-composer-icon-button text-2xs font-bold tracking-tight"
@@ -1050,22 +1233,19 @@
         />
       {/if}
 
-      <input
-        bind:this={fileInput}
-        type="file"
-        multiple
-        accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip"
-        class="hidden"
-        onchange={handleFileChange}
-      />
-      <input
-        bind:this={mediaInput}
-        type="file"
-        multiple
-        accept="image/*,video/*"
-        class="hidden"
-        onchange={handleFileChange}
-      />
+      <!-- One input per picker the menu can open (`pickerInputs`); `files` always. -->
+      {#each attachSources.includes('files') ? attachSources : [...attachSources, 'files' as const] as source (source)}
+        <input
+          bind:this={pickerInputs[source]}
+          type="file"
+          multiple={multipleFor(source)}
+          accept={acceptFor(source)}
+          capture={capturesFor(source) ? 'environment' : undefined}
+          data-attach-source={source}
+          class="hidden"
+          onchange={handleFileChange}
+        />
+      {/each}
 
       <!-- Auto-expanding text field. Absent during a recording: see `isVoiceActive`. -->
       {#if !isVoiceActive}
@@ -1078,10 +1258,14 @@
           editorClass="chat-composer-textarea"
           placeholder={isEditing ? m.msg_edit_placeholder() : m.chat_message_placeholder()}
           minHeight={COMPOSER_MIN_HEIGHT}
-          onfocus={() => onFocusChange?.(true)}
+          onfocus={() => {
+            onFocusChange?.(true);
+            dispatchSurface({ type: 'textFocused' });
+          }}
           onblur={() => {
             onFocusChange?.(false);
             stopTyping();
+            dispatchSurface({ type: 'textBlurred' });
           }}
           onkeydown={handleComposerKeydown}
           onmedia={onFilesSelected}
@@ -1150,6 +1334,18 @@
       {/if}
     </div>
   </div>
+
+  <!-- The GIF panel, in the keyboard's place: last in the footer, so the composer sits on it. -->
+  {#if surfaceReservesPanel(surface)}
+    <ComposerGifPanel
+      active={surface === 'gif'}
+      spacerPx={panelSpacer}
+      contentPx={gifSearchFocused ? panelSpacer : panelHeight}
+      onPick={sendGif}
+      onSearchFocusChange={(focused) => (gifSearchFocused = focused)}
+      onKeyboard={() => mentionComposer?.focusEditor()}
+    />
+  {/if}
 </footer>
 
 {#if lightboxIndex !== null && imageEntries[lightboxIndex]}
@@ -1177,9 +1373,5 @@
 {/if}
 
 {#if onSendGif}
-  <GifPickerModal
-    open={showGifPicker}
-    onClose={() => (showGifPicker = false)}
-    onSelect={(url) => onSendGif?.(url)}
-  />
+  <GifPickerModal open={showGifPicker} onClose={() => (showGifPicker = false)} onSelect={sendGif} />
 {/if}
