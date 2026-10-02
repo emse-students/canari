@@ -96,3 +96,53 @@ describe('commentMediaOwners', () => {
     expect(commentMediaOwners({})).toEqual([]);
   });
 });
+
+/**
+ * A BACKFILL MUST NOT TAKE THE SERVICE DOWN (dev, `v1.0.1-alpha.2`, 2026-10-02).
+ *
+ * The deploy starts the containers BEFORE it applies the migrations, so on the deploy that ships
+ * migration 069 the boot queries read columns that do not exist yet. The rejection used to leave
+ * `onModuleInit`, the process exited, and the deploy - for which `Restarting` is fatal - failed.
+ */
+describe('the boot backfill when the schema is not there yet', () => {
+  const missingColumn = Object.assign(new Error('column p.kind does not exist'), { code: '42703' });
+
+  function makeFailing(failOn: RegExp) {
+    const repo = {
+      query: jest.fn((statement: string) =>
+        failOn.test(statement) ? Promise.reject(missingColumn) : Promise.resolve([])
+      ),
+    };
+    return new PostMediaRetentionService({ post: jest.fn() } as never, repo as never);
+  }
+
+  it('does not throw when BOTH passes hit a missing column, and says so twice at error level', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const service = makeFailing(/./);
+    await expect(service.onModuleInit()).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error.mock.calls[0][0]).toContain('archive pass');
+    expect(error.mock.calls[1][0]).toContain('reel pass');
+    expect(error.mock.calls[0][0]).toContain('column p.kind does not exist');
+  });
+
+  it('still runs the reel pass when the archive pass failed', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const repo = {
+      query: jest.fn((statement: string) =>
+        /UNION/.test(statement) ? Promise.reject(missingColumn) : Promise.resolve([])
+      ),
+    };
+    const service = new PostMediaRetentionService({ post: jest.fn() } as never, repo as never);
+    await service.onModuleInit();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(repo.query.mock.calls.some(([sql]) => /p\.kind = 'reel'/.test(sql))).toBe(true);
+  });
+
+  it('says nothing at error level when the schema is there', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const service = makeFailing(/NEVER-MATCHES/);
+    await service.onModuleInit();
+    expect(error).not.toHaveBeenCalled();
+  });
+});

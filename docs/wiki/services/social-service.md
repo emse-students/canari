@@ -74,6 +74,30 @@ call site anywhere in `apps/`, `frontend/src` or `libs/` and was deleted 2026-08
 unused derivation sharing the `canari-channel-e2ee-v1` info string with the live one, which is
 exactly the shape that gets mistaken for the real mechanism while reading.
 
+## A query at boot runs BEFORE the migration that adds its column (2026-10-02)
+
+**The deploy starts the containers and only THEN applies the migrations**
+(`infrastructure/deploy/deploy-environment.sh`: `up -d`, wait for PostgreSQL, `apply_migrations`, then
+require every service to be running - and for that check `Restarting` is fatal). So on the deploy that
+ships a migration, anything a service reads at BOOT runs against the OLD schema.
+
+It happened the first time a boot query read a new column: `PostMediaRetentionService.onModuleInit`
+(the `archive` and `reel` backfills) selects `p.kind` and `p."expiresAt"`, which migration 069 adds. On
+`v1.0.1-alpha.2` the rejection left `onModuleInit`, the process exited 1, `social-service` went to
+`Restarting (1)`, and the dev deploy failed - production would have failed identically on the stable.
+The restart policy had it healthy seconds later, which is why the dev estate was fine by the time it was
+looked at: **the deploy read the loop, not the outcome**. (The dev deploy cannot show the fix, either:
+its migrations are already recorded, so the query succeeds there whatever the code does.)
+
+- **A backfill is a repair, never a precondition of serving.** Each pass in `onModuleInit` now runs in its
+  own `try`: a failure is logged at ERROR, naming the pass, and the service starts; the next boot repeats
+  it. The two are independent, so a failing `archive` pass does not skip the `reel` one.
+- **The rule for the next boot-time read of a new column:** either it is best-effort and loud like these, or
+  the migration must reach the database before the service starts. The second means changing the order in
+  the deploy script and is NOT done here - it is the structural answer, and a decision for a deploy whose
+  failure costs more than a retry.
+- Tests: `post-media-retention.reels.spec.ts` (both passes failing, only one failing, a healthy schema).
+
 ## Storage and retention: a channel message costs one row, forever
 
 Two facts that decide every capacity question about communities, both verified against production:
