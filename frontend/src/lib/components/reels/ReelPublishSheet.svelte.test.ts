@@ -76,10 +76,12 @@ async function render(d: PublishReelDeps, onclose = vi.fn()) {
     })
   );
   await settle();
-  const submit = () =>
-    [...target.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === m.reels_publish_submit()
-    )!;
+  // The attribute the REEL-2 rig row presses, so a rename fails here first.
+  const submit = () => {
+    const button = target.querySelector<HTMLButtonElement>('[data-reel-publish-submit]')!;
+    expect(button.textContent?.trim()).toBe(m.reels_publish_submit());
+    return button;
+  };
   return { target, submit, onclose };
 }
 

@@ -206,6 +206,7 @@
         disabled={publishing}
         loading={publishing}
         onclick={publish}
+        data-reel-publish-submit
       >
         {m.reels_publish_submit()}
       </Button>
