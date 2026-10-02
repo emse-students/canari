@@ -29,6 +29,7 @@
    * recorder instead.
    */
   import { ChevronLeft, ChevronRight, Lock, Mic, Send, Trash2 } from '@lucide/svelte';
+  import { pausePlayback } from '$lib/actions/playbackArbiter';
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -188,6 +189,8 @@
         releaseDevice(started);
       };
 
+      // A microphone open next to a playing voice note records it: playback goes quiet first.
+      pausePlayback(undefined, false, 'voice recorder started');
       recorder.start();
       started.startedAt = Date.now();
       session = started;

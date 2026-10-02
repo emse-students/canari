@@ -1,7 +1,8 @@
 <script lang="ts">
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { Play, Volume2, VolumeX } from '@lucide/svelte';
-  import { playWhileVisible, trackManualPlayback } from '$lib/actions/playWhileVisible';
+  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
+  import { playWhileVisible } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -67,11 +68,11 @@
 
   /**
    * How the element starts: an autoplaying video plays while it is on screen (and is the only one
-   * that does), a manual one plays when asked and alongside any other manual one - it is only
-   * remembered, so that a viewer opening can pause it. Chosen once, at mount - the mode is not live.
+   * that does), a manual one plays when asked and PAUSES whatever else plays (`playbackArbiter`) - it only
+   * registers, so that it and every other media take turns. Chosen once, at mount - the mode is not live.
    */
   function autoplayAction(node: HTMLVideoElement) {
-    return manualPlay ? trackManualPlayback(node) : playWhileVisible(node);
+    return manualPlay ? arbitratePlayback(node) : playWhileVisible(node);
   }
 
   let videoEl: HTMLVideoElement | null = $state(null);

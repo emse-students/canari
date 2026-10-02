@@ -283,34 +283,30 @@ it('shows no app-wide sound button, playing or not', () => {
 });
 
 /**
- * THEY PLAY TOGETHER (user, 2026-10-02: *"elles jouent ensemble"*, Discord's way): pressing play on a
- * second video does not stop the first. Only a viewer opening silences them.
+ * THEY TAKE TURNS (user, 2026-10-02, reversing #1341: *"commencer une video doit en arreter une
+ * autre"*): pressing play on a second video PAUSES the first. The whole rule is pinned in
+ * `playbackArbiter.test.ts`.
  */
-it('lets several manually started videos play at once', () => {
+it('pauses the first manually started video when a second one starts', () => {
   const a = mountManual();
   const b = mountManual();
   // The rule pauses only a video that is really playing: make the first one report it.
   Object.defineProperty(a.video, 'paused', { configurable: true, get: () => false });
   a.video.dispatchEvent(new Event('play'));
   b.video.dispatchEvent(new Event('play'));
-  expect(a.pause, 'starting the second does not stop the first').not.toHaveBeenCalled();
+  expect(a.pause, 'starting the second stops the first').toHaveBeenCalledTimes(1);
   expect(b.pause).not.toHaveBeenCalled();
 });
 
-it('pauses the ones playing inline when a viewer opens, and leaves them paused when it closes', () => {
+it('pauses the one playing inline when a viewer opens, and leaves it paused when it closes', () => {
   const a = mountManual();
-  const b = mountManual();
-  for (const v of [a, b]) {
-    Object.defineProperty(v.video, 'paused', { configurable: true, get: () => false });
-    v.video.dispatchEvent(new Event('play'));
-  }
+  Object.defineProperty(a.video, 'paused', { configurable: true, get: () => false });
+  a.video.dispatchEvent(new Event('play'));
   const viewer = document.createElement('video');
   const action = followVideoSound(viewer);
   expect(a.pause).toHaveBeenCalledTimes(1);
-  expect(b.pause).toHaveBeenCalledTimes(1);
   action.destroy();
   expect(a.play).not.toHaveBeenCalled();
-  expect(b.play).not.toHaveBeenCalled();
 });
 
 it('an autoplaying video is unchanged: loops, plays on screen, shows its sound button', () => {
