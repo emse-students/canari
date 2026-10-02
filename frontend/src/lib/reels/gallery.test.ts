@@ -16,19 +16,27 @@ const { GALLERY_CHUNK_BYTES, GalleryError, saveVideoToGallery } = await import('
 
 afterEach(() => invoke.mockReset());
 
-/** Plays the Rust side: stages chunks, then answers the import with `status`. */
+/**
+ * Plays the Rust side: stages chunks, then answers the import with `status`. The chunks are kept as
+ * decoded buffers (Node's `Buffer`), and the test compares them with `Buffer.equals`. A per-byte
+ * array and `toEqual` over 1.5 MB took longer than the test timeout on a loaded machine
+ * (2026-10-02).
+ */
 function rust(status: string) {
-  const staged: number[] = [];
+  const staged: Buffer[] = [];
+  let size = 0;
   invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
     if (cmd === 'plugin:gallery|append_video_chunk') {
-      expect(args.offset).toBe(staged.length);
-      for (const c of atob(args.data as string)) staged.push(c.charCodeAt(0));
-      return staged.length;
+      expect(args.offset).toBe(size);
+      const chunk = Buffer.from(args.data as string, 'base64');
+      staged.push(chunk);
+      size += chunk.length;
+      return size;
     }
     if (cmd === 'plugin:gallery|save_video') return { status };
     return undefined;
   });
-  return staged;
+  return { bytes: () => Buffer.concat(staged) };
 }
 
 describe('saveVideoToGallery', () => {
@@ -36,7 +44,7 @@ describe('saveVideoToGallery', () => {
     const bytes = Uint8Array.from({ length: GALLERY_CHUNK_BYTES * 2 + 5 }, (_, i) => i % 251);
     const staged = rust('saved');
     expect(await saveVideoToGallery(new Blob([bytes]), 'r.mp4')).toBe('saved');
-    expect(new Uint8Array(staged)).toEqual(bytes);
+    expect(staged.bytes().equals(Buffer.from(bytes))).toBe(true);
     const chunks = invoke.mock.calls.filter(([c]) => c === 'plugin:gallery|append_video_chunk');
     expect(chunks).toHaveLength(3);
     const save = invoke.mock.calls.find(([c]) => c === 'plugin:gallery|save_video')!;
