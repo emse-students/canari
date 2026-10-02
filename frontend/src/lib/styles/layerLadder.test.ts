@@ -131,7 +131,7 @@ describe('the layer ladder', () => {
     // whatever it happens to be.
     //
     // MEASURED, on 2026-09-14: `routes/admin/agenda` sat at `z-50` - between `--z-page-overlay`
-    // (40) and `--z-toast` (60) - and its reject dialog opened UNDERNEATH a toast, with this file
+    // (40) and `--z-toast` (310) - and its reject dialog opened UNDERNEATH a toast, with this file
     // green. Four more full-viewport overlays carried a raw number on the same day. Lowering the
     // floor to catch them would condemn every local `z-10` in the tree; this branch condemns
     // exactly the case the floor's reasoning excludes.

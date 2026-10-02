@@ -210,8 +210,6 @@
   --z-nav-drawer-scrim: 42;
   --z-nav-drawer: 44;
 
-  --z-toast: 60;
-
   /* Window scale: the banner column in the root layout. */
   --z-banner: 120;
 
@@ -234,6 +232,13 @@
   --z-modal-popover: 290;
   /* A full-screen media viewer. Above a modal because it opens from one. */
   --z-viewer: 300;
+
+  /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
+     full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted
+     BEHIND the reel viewer's rung 300, so a save (and its refusal) answered nothing on screen
+     (iPhone 12, 2026-10-02). Non-interactive (`pointer-events-none`), so it traps no click; below
+     `--z-critical`, which a confirmation holds. */
+  --z-toast: 310;
 
   /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
   --z-critical: 320;
