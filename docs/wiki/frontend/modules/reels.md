@@ -76,9 +76,8 @@ REEL-1: live in 1211 ms, 720x1280 from `camera 0, facing back`, 30 fps, torch of
 ended once the swipe back reached `/posts`. iPhone 12 (iOS 27.0.1), through the WebKit bridge: live,
 720x1280 from the dual wide back camera, 30 fps, torch offered, and no `[data-camera-phase]` left
 once the swipe back reached `/posts`. On both phones the shutter stayed disabled, with the
-"unreachable" line under it, because the bench estate had no reel routes yet. That line names a
-missing ROUTE as an unreachable SERVER, and it is owed a look once the server is everywhere
-([backlog](../../backlog.md)).
+"unreachable" line under it, because the bench estate had no reel routes yet. That line was false
+(the server was up), and the capture screen now tells the two cases apart (see the table below).
 
 ## The capture screen (C4)
 
