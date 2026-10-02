@@ -3103,5 +3103,18 @@
   "calendar_export_reset": "Reset",
   "calendar_export_palette_hint": "Colours follow the chosen image.",
   "post_poll_max_selections_badge": "{count} answers max",
-  "post_poll_selection_full_hint": "Limit of {count} answers reached"
+  "post_poll_selection_full_hint": "Limit of {count} answers reached",
+  "reels_camera_title": "Camera",
+  "reels_camera_starting": "Opening the camera…",
+  "reels_camera_denied_title": "Canari cannot use the camera",
+  "reels_camera_denied_body": "Allow the camera and the microphone for Canari in the phone's settings, then try again.",
+  "reels_camera_unavailable_title": "No camera available",
+  "reels_camera_unavailable_body": "Canari cannot find a camera it can use on this device.",
+  "reels_camera_busy_title": "The camera is busy",
+  "reels_camera_busy_body": "Another app is using it. Close that app, then try again.",
+  "reels_camera_retry": "Try again",
+  "reels_camera_close": "Close the camera",
+  "reels_camera_switch": "Switch camera",
+  "reels_camera_torch_on": "Turn the flash on",
+  "reels_camera_torch_off": "Turn the flash off"
 }

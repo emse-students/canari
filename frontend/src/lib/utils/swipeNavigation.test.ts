@@ -1,4 +1,6 @@
+import { APP_PLACES, MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import {
+  MOBILE_SWIPE_PLACES,
   classifySwipeRelease,
   isSwipeNavArmed,
   isSwipeNavRoute,
@@ -16,6 +18,7 @@ describe('isSwipeNavRoute', () => {
     expect(isSwipeNavRoute('/posts')).toBe(true);
     expect(isSwipeNavRoute('/posts/abc')).toBe(true);
     expect(isSwipeNavRoute('/chat')).toBe(true);
+    expect(isSwipeNavRoute('/camera')).toBe(true);
   });
 
   it('blocks association and profile sub-routes', () => {
@@ -57,8 +60,16 @@ describe('swipeNavTargetHref', () => {
   });
 
   it('returns null at ends', () => {
-    expect(swipeNavTargetHref('/posts', 'prev')).toBeNull();
+    expect(swipeNavTargetHref('/camera', 'prev')).toBeNull();
     expect(swipeNavTargetHref('/dashboard', 'next')).toBeNull();
+  });
+
+  // C5 (user, 2026-09-29): the camera is a tab LEFT of the feed, so the swipe right from the feed is
+  // its `prev` - the right-hand rubber band on `/posts` became a commit - and a swipe left from the
+  // camera comes back to the feed.
+  it('puts the camera left of the feed, and the feed right of the camera', () => {
+    expect(swipeNavTargetHref('/posts', 'prev')).toBe('/camera');
+    expect(swipeNavTargetHref('/camera', 'next')).toBe('/posts');
   });
 
   it('reaches dashboard directly after chat (notifications moved to header)', () => {
@@ -152,8 +163,9 @@ describe('swipeNavSlideOriginPx', () => {
 });
 
 describe('resolveSwipeNavIndex', () => {
-  it('maps nested post route to posts index', () => {
-    expect(resolveSwipeNavIndex('/posts/x')).toBe(0);
+  it('maps nested post route to posts index, which the camera precedes', () => {
+    expect(resolveSwipeNavIndex('/camera')).toBe(0);
+    expect(resolveSwipeNavIndex('/posts/x')).toBe(1);
   });
 });
 
@@ -172,5 +184,17 @@ describe('transformTranslateXPx', () => {
     expect(transformTranslateXPx('none')).toBe(0);
     expect(transformTranslateXPx('')).toBe(0);
     expect(transformTranslateXPx('translateX(20px)')).toBe(0);
+  });
+});
+
+describe('MOBILE_SWIPE_PLACES', () => {
+  // The camera is a SWIPE place and nothing else: a `mobileNav` camera would have drawn a fifth icon
+  // in BottomNav, in the native iOS bar and - through APP_PLACES - in the desktop sidebar.
+  it('is the camera followed by exactly the bar places, and the camera is in no bar', () => {
+    expect(MOBILE_SWIPE_PLACES.map((p) => p.id)).toEqual([
+      'camera',
+      ...MOBILE_NAV_PLACES.map((p) => p.id),
+    ]);
+    expect(APP_PLACES.some((p) => p.id === 'camera' || p.href === '/camera')).toBe(false);
   });
 });

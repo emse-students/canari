@@ -23,6 +23,8 @@ export const PRIVATE_PREFIXES = [
   // was asked for, so it has no content and no canonical URL of its own.
   '/app-shell',
   '/auth',
+  // The CanaReels camera: a device, not a page.
+  '/camera',
   '/chat',
   '/communities',
   '/dashboard',
@@ -113,6 +115,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/admin/users': () => adminTitle(m.admin_admins_label()),
   '/associations/new': () => m.assoc_new_heading(),
   '/auth/callback': () => m.seo_auth_callback_title(),
+  '/camera': () => m.reels_camera_title(),
   '/login': () => m.seo_login_title(),
   '/directory': () => m.directory_heading(),
   '/documents': () => m.reviewer_docs_title(),
