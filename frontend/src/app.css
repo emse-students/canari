@@ -641,6 +641,27 @@ html[data-swipe-nav]::view-transition-new(root) {
   mix-blend-mode: normal;
 }
 
+/* THE BOTTOM BAR IS ITS OWN GROUP, ABOVE THE PAGES (Mi 9T, 2026-10-02: camera -> feed showed the feed
+   for ~270 ms with the bar missing, then the bar popped in). Named groups stack ABOVE `root`, and the
+   page wrapper's box runs under the `fixed` bar, so the incoming page's snapshot - which paints its
+   own background - covered the bar that `root` had drawn on the first frame, until the transition
+   ended and the live DOM took over. A name of its own puts the bar in a group painted after the
+   pages (paint order), where it is on top from the first frame; the old capture is hidden and the
+   new one does not animate, so the bar is never faded, morphed or left behind. Only while a swipe
+   is under way: a bar with a permanent name would become a transition group of every navigation. */
+html[data-swipe-nav] #bottom-nav {
+  view-transition-name: bottom-nav;
+}
+
+html[data-swipe-nav]::view-transition-group(bottom-nav),
+html[data-swipe-nav]::view-transition-new(bottom-nav) {
+  animation: none;
+}
+
+html[data-swipe-nav]::view-transition-old(bottom-nav) {
+  display: none;
+}
+
 html[data-swipe-nav='next']::view-transition-old(swipe-nav-out) {
   animation: swipeNavPageOutLeft 220ms ease-out both;
 }
