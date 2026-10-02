@@ -266,16 +266,9 @@ describe('updatePost - a reel', () => {
     expect(postRepo.save).not.toHaveBeenCalled();
   });
 
-  it('allows an empty caption on a reel, and still refuses one on a post', async () => {
+  it('allows an empty caption on a reel at the service (the DTO owns text-or-media for a post)', async () => {
     const { service } = makeService({ existing: { ...live } });
     await expect(service.updatePost('r1', 'alice', { markdown: '' }, false)).resolves.toBeDefined();
-
-    const post = makeService({
-      existing: { id: 'p1', authorId: 'alice', kind: 'post', markdown: 'x' } as Post,
-    });
-    await expect(
-      post.service.updatePost('p1', 'alice', { markdown: '' }, false)
-    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
