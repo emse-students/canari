@@ -137,6 +137,54 @@ describe('ReelPublishSheet', () => {
     expect(d.createPost).not.toHaveBeenCalled();
   });
 
+  it('a back during the re-encode stops it', async () => {
+    const d = deps();
+    let signal: AbortSignal | undefined;
+    vi.mocked(d.prepare).mockImplementationOnce(
+      (_file, options) =>
+        new Promise((_resolve, reject) => {
+          signal = options?.signal;
+          signal?.addEventListener('abort', () => reject(new VideoPrepareError('aborted', 'x')));
+        })
+    );
+    const { target, submit } = await render(d);
+    submit().click();
+    await settle();
+    target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();
+    await settle();
+    expect(signal?.aborted).toBe(true);
+    expect(d.createPost).not.toHaveBeenCalled();
+  });
+
+  it('a dismiss once the upload has begun cancels nothing, and does not say it did', async () => {
+    const debug = vi.spyOn(console, 'debug');
+    const d = deps();
+    let release: () => void = () => {};
+    vi.mocked(d.upload).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              type: 'video',
+              mediaId: 'm-1',
+              key: 'k',
+              iv: 'i',
+              mimeType: 'video/mp4',
+              size: 4,
+            });
+        })
+    );
+    const { target, submit } = await render(d);
+    submit().click();
+    await settle();
+    target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();
+    await settle();
+    release();
+    await settle();
+    expect(debug.mock.calls.flat().join('\n')).not.toContain('cancelled by the member');
+    expect(d.createPost).toHaveBeenCalled();
+  });
+
   it('the back arrow returns to the take', async () => {
     const { target, onclose } = await render(deps());
     target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();

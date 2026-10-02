@@ -51,8 +51,14 @@
   const overlay = bindHistoryOverlay(
     () => true,
     () => {
-      console.debug('[reel-publish] the sheet was dismissed');
-      preparation.cancel();
+      // Only a publish that has not reached the upload has anything to cancel. Cancelling after it
+      // (the landing on the feed closes this sheet too) logged "cancelled by the member" for a reel
+      // that had just been published (REEL-2 on the Mi 9T, 2026-10-02).
+      const cancellable = publishing && stage !== 'mediaUpload' && stage !== 'createPost';
+      console.debug(
+        `[reel-publish] the sheet was dismissed${cancellable ? ', publish cancelled' : ''}`
+      );
+      if (cancellable) preparation.cancel();
       onclose();
     }
   );
