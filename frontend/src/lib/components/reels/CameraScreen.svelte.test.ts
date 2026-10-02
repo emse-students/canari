@@ -181,4 +181,10 @@ describe('CameraScreen', () => {
     expect(session.phase).toBe('stopped');
     expect(s.getTracks()[0].stop).toHaveBeenCalled();
   });
+
+  it('keeps the live preview muted as a property, or the microphone echoes through the speaker', async () => {
+    const { target } = await render(() => Promise.resolve(stream(false)));
+    const video = target.querySelector('video')!;
+    expect(video.muted).toBe(true);
+  });
 });
