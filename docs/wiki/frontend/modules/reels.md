@@ -278,7 +278,7 @@ flag**: it stays `false`, a reel is uploaded as ONE prepared MP4, and `minClient
 | REEL-2 (film, review, publish, vertical card in the feed) | `PASS` clean, 2.2-2.6 s from "Publier" to the feed | filmed 4 s, reviewed, published; the vertical card is in the feed |
 | The full-screen viewer, swipe to the next reel | read; the next slide's caption and age replace the first | read; a drag up lands on the next reel |
 | Save from the member's own reel, in the UI | file written to `Movies/Canari/` | `IMG_0007.MP4` in the camera roll after one press |
-| The save confirmation | visible (after #1355's toast fix) | visible (after the fix) |
+| The save confirmation | visible (after #1354's toast fix) | visible (after the fix) |
 
 **What the readings found and fixed**: the publish step's preview had no poster (Android drew its own
 glyph), the confirmation toast of a save was painted BEHIND the viewer (`--z-toast` 60 under
