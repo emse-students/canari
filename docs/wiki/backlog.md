@@ -3915,6 +3915,20 @@ running.
 
 ## The harness itself
 
+### P3 - the iPhone rig has three gaps that cost a session an hour (found 2026-10-02)
+
+- **`attached()` read "pymobiledevice3 is not on PATH" as "no iPhone".** It swallowed the spawn failure and
+  answered `[]`, so `login.mjs --device I1` said the phone was not attached while `usbmux list` listed it. FIXED:
+  it throws, naming `PYMOBILEDEVICE3` (the executable's path) for a workstation whose Python `Scripts` directory is
+  off PATH (OXYGEN).
+- **`login.mjs` waits 60 s for a sign-in sheet that a system question is hiding.** After a REINSTALL iOS asks
+  "Canari souhaite utiliser auth.canari-emse.fr pour se connecter" (`Annuler` / `Continuer`) before
+  `ASWebAuthenticationSession` shows its page; `signInThroughSheet` does not know that screen and fails with "the
+  sheet never appeared". Tapping `Continuer` by hand (WDA, point 270,508) and re-running it signed in. OPEN: answer
+  that prompt in `signInThroughSheet`.
+- **A second `wda-daemon.py` cannot start while one holds port 8100**, and the first one gives no hint whose it is
+  (`OSError 10048` after the tunnel is up). Check `curl localhost:8100/status` before starting one.
+
 ### P3 - the phone's local debris cannot be swept, so every run ends on a line that says so (measured on A1 2026-09-08, still true 2026-09-21)
 
 `sweepDismissed` (`archive/dismiss.mjs`) clears the client-side half of a deleted throwaway group -

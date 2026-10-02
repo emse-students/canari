@@ -172,6 +172,28 @@ describe('CameraScreen', () => {
     expect(torch()).toBeNull();
   });
 
+  it('hands every stream its OWN video element - a reused one drew a letterboxed preview on iOS', async () => {
+    // WKWebView keeps an element's media layer at its first layout size: after a background and
+    // return, the same element given a second stream drew ~65 % of the screen while its CSS box was
+    // full (iPhone 12, 2026-10-02). Only the element's identity can be pinned off the device.
+    const { target, session } = await render(() => Promise.resolve(stream(false)));
+    const first = target.querySelector('video')!;
+    expect(first.srcObject).toBe(session.stream);
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    await Promise.resolve();
+    flushSync();
+
+    const second = target.querySelector('video')!;
+    expect(session.phase).toBe('live');
+    expect(second).not.toBe(first);
+    expect(second.srcObject).toBe(session.stream);
+  });
+
   it('gives the camera back when the app goes to the background', async () => {
     const s = stream(false);
     const { session } = await render(() => Promise.resolve(s));

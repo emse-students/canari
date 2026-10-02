@@ -172,22 +172,30 @@
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
-  <!-- The front lens is mirrored as every camera app shows it; the recording is not (the track is). -->
-  <video
-    bind:this={video}
-    class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
-      ? '-scale-x-100'
-      : ''} {session.phase === 'live' && frameReady
-      ? 'opacity-100'
-      : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
-    poster={TRANSPARENT_VIDEO_POSTER}
-    onloadeddata={onFrame}
-    onplaying={onFrame}
-    autoplay
-    muted
-    playsinline
-    aria-hidden="true"
-  ></video>
+  <!-- The front lens is mirrored as every camera app shows it; the recording is not (the track is).
+       THE ELEMENT IS KEYED BY THE STREAM: WKWebView keeps a <video> element's media layer at the size
+       of its FIRST layout, so an element handed a second stream after the app came back from the
+       background drew a ~65 % letterboxed rectangle while its CSS box stayed 390x844 and
+       `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
+       2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
+       is the state the engine gets right. -->
+  {#key session.stream}
+    <video
+      bind:this={video}
+      class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
+        ? '-scale-x-100'
+        : ''} {session.phase === 'live' && frameReady
+        ? 'opacity-100'
+        : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
+      poster={TRANSPARENT_VIDEO_POSTER}
+      onloadeddata={onFrame}
+      onplaying={onFrame}
+      autoplay
+      muted
+      playsinline
+      aria-hidden="true"
+    ></video>
+  {/key}
 
   <!-- Canari's stand-in for everything between the swipe and the first frame: a dark surface of the
        app's own, so the engine's placeholder is never seen. It stays mounted and fades out as the
