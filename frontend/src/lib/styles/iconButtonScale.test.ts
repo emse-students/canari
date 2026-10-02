@@ -82,8 +82,8 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'the 64px play disc centred on a paused picture - the one big target, matched to the poster glyph',
   },
   'lib/components/shared/InlineVideo.svelte': {
-    count: 1,
-    why: 'the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture; the download moved into the viewer',
+    count: 2,
+    why: "the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture, the download moved into the viewer - and a conversation video's play button, the one big target on a paused first frame (VideoPlayer's disc, 3.5rem)",
   },
   'lib/components/settings/MinesweeperModal.svelte': {
     count: 3,
