@@ -43,8 +43,32 @@ export class PostMediaRetentionService implements OnModuleInit {
    * only ever ran in a migration is a repair that is not there the day it is needed.
    */
   async onModuleInit(): Promise<void> {
-    await this.backfillArchive();
-    await this.backfillReels();
+    // EACH PASS IS A REPAIR, NEVER A PRECONDITION OF SERVING, so neither may take the process down.
+    //
+    // The deploy STARTS the containers and only THEN applies the migrations
+    // (`infrastructure/deploy/deploy-environment.sh`). On the deploy that ships migration 069 these
+    // queries therefore ran against a database with no `kind` / `expiresAt` column yet; the rejection
+    // left `onModuleInit`, the process exited 1, and the deploy - for which `Restarting` is fatal - failed
+    // on dev (`v1.0.1-alpha.2`, 2026-10-02) and would have failed production the same way. The restart
+    // policy had it healthy again within seconds, but the deploy had already read the loop.
+    //
+    // So a failure is said at ERROR level, naming the pass, and the next boot repeats it. Nothing is
+    // lost by waiting: a pass only re-applies what an index loss could have dropped.
+    for (const [name, pass] of [
+      ['archive', () => this.backfillArchive()],
+      ['reel', () => this.backfillReels()],
+    ] as const) {
+      try {
+        await pass();
+      } catch (err) {
+        this.logger.error(
+          `Media retention backfill (${name} pass) FAILED at boot and is skipped until the next boot - ` +
+            `if a migration is still being applied this is expected once: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
+    }
   }
 
   /** The `archive` pass. A reel's own blob is NOT in it - see `referencedMediaIds`. */
