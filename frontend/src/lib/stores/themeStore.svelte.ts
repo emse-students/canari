@@ -58,11 +58,14 @@ function postThemeToNative(theme: 'dark' | 'light'): void {
   w.canariTheme?.set?.(theme);
 }
 
+/** The native bars' theme while a full-bleed screen holds them (see `holdNativeBar`), else null. */
+let heldNativeTheme: 'dark' | 'light' | null = null;
+
 function applyToDocument(dark: boolean): void {
   if (typeof document === 'undefined') return;
   const theme = dark ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
-  postThemeToNative(theme);
+  postThemeToNative(heldNativeTheme ?? theme);
 }
 
 let preference = $state<ThemePreference>('system');
@@ -119,6 +122,24 @@ export const themeStore = {
       localStorage.setItem(THEME_KEY, pref);
     }
     attachOsListener();
+  },
+
+  /**
+   * Holds the native status bar (and nav bar) icons at `theme` while a screen that paints its own
+   * dark surface under them is up - the camera preview runs under the status bar, so light-theme
+   * dark icons would be unreadable on it. The page theme is untouched. Returns the release, which
+   * hands the bars back to the page's own resolved theme.
+   */
+  holdNativeBar(theme: 'dark' | 'light'): () => void {
+    console.debug(`[theme] native bars held at ${theme}`);
+    heldNativeTheme = theme;
+    postThemeToNative(theme);
+    return () => {
+      if (heldNativeTheme !== theme) return;
+      heldNativeTheme = null;
+      console.debug('[theme] native bars released');
+      postThemeToNative(isDark ? 'dark' : 'light');
+    };
   },
 
   /**

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import CameraScreen from './CameraScreen.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
-import { CameraAccessError, type CameraFault } from '$lib/reels/cameraAccess';
+import { CameraAccessError, type CameraFacing, type CameraFault } from '$lib/reels/cameraAccess';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
 
@@ -40,7 +40,7 @@ function stream(torch: boolean): MediaStream {
   return s as unknown as MediaStream;
 }
 
-async function render(open: () => Promise<MediaStream>) {
+async function render(open: (facing: CameraFacing) => Promise<MediaStream>) {
   const session = new CameraSession(open);
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -139,6 +139,37 @@ describe('CameraScreen', () => {
       expect(standIn(target).dataset.cameraStandin).toBe('gone');
       expect(preview(target).className).toContain('opacity-0');
     });
+  });
+
+  it('opens on the front lens, mirrors only the preview, and the torch follows the lens', async () => {
+    const lensOf: Record<string, MediaStream> = {
+      user: stream(false), // the front lens has no torch
+      environment: stream(true),
+    };
+    const open = vi.fn((facing: CameraFacing) => Promise.resolve(lensOf[facing]));
+    const { target, session } = await render(open);
+    const torch = () => target.querySelector(`[aria-label="${m.reels_camera_torch_on()}"]`);
+    const flip = () =>
+      target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_camera_switch()}"]`)!;
+
+    expect(open).toHaveBeenCalledWith('user');
+    expect(session.facing).toBe('user');
+    expect(target.querySelector('video')!.className).toContain('-scale-x-100');
+    expect(torch()).toBeNull();
+
+    flip().click();
+    await Promise.resolve();
+    await Promise.resolve();
+    flushSync();
+    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(target.querySelector('video')!.className).not.toContain('-scale-x-100');
+    expect(torch()).not.toBeNull();
+
+    flip().click();
+    await Promise.resolve();
+    await Promise.resolve();
+    flushSync();
+    expect(torch()).toBeNull();
   });
 
   it('gives the camera back when the app goes to the background', async () => {

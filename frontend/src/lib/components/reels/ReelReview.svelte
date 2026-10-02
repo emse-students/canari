@@ -42,7 +42,9 @@
     videoClass="h-full w-full object-contain"
   />
 
-  <div class="absolute inset-x-0 top-0 flex items-start justify-between p-3">
+  <div
+    class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+  >
     <button
       type="button"
       class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"

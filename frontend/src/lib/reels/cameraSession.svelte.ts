@@ -35,7 +35,11 @@ export type CameraOpener = (facing: CameraFacing) => Promise<MediaStream>;
 export class CameraSession {
   phase = $state<CameraPhase>('stopped');
   fault = $state<CameraFault | null>(null);
-  facing = $state<CameraFacing>('environment');
+  /**
+   * THE CAMERA OPENS ON THE FRONT LENS (user, 2026-10-02: the selfie is a reel's usual first shot).
+   * Not persisted: every session of the tab starts here, and the flip button is per take.
+   */
+  facing = $state<CameraFacing>('user');
   stream = $state.raw<MediaStream | null>(null);
   torchOn = $state(false);
   /** Read from the open track, never assumed: the front lenses measured have no torch. */

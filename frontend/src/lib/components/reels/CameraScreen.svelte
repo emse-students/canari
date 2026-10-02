@@ -20,6 +20,7 @@
   import { hasNativeGallery, openAppSettings } from '$lib/reels/gallery';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import type { CameraFault } from '$lib/reels/cameraAccess';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
 
@@ -129,6 +130,9 @@
 
   onMount(() => {
     document.addEventListener('visibilitychange', onVisibility);
+    // The preview runs under the status bar, so its icons stay light in the light theme too.
+    const releaseBar = themeStore.holdNativeBar('dark');
+    return () => releaseBar();
   });
 
   onDestroy(() => {
@@ -230,7 +234,9 @@
   <!-- The top row: close on the left, the lens controls on the right - Instagram's arrangement. -->
   <!-- No close during a take: it is a history entry of its own, so a step back would end the take,
        not leave the tab - the shutter and Back are what end it. -->
-  <div class="absolute inset-x-0 top-0 flex items-start justify-between p-3">
+  <div
+    class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+  >
     {#if lensLocked}
       <span></span>
     {:else}
