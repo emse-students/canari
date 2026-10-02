@@ -78,6 +78,14 @@ close button, the lens controls and the shutter are already in place. Pinned by
 ([design-reference section 40](../design-reference.md#40-the-bar-arrived-after-the-page-and-the-camera-showed-androids-own-glyph-mi-9t-2026-10-02)).
 The review and the publish step already carry the poster over `VideoPoster` (#1354).
 
+**ONE `<video>` PER STREAM (iPhone 12, 2026-10-02).** After the app went to the background and came back, the
+live preview was a ~65 % x 55 % letterboxed rectangle while the element's CSS box stayed 390x844, `object-fit: cover`
+(read over the Web Inspector: `getBoundingClientRect`, `videoWidth` 720x1280 and the track settings were all right;
+reproduced 5 of 5 on a home-and-return, 0 of ~40 on plain opens, flips and cold starts). WKWebView kept the reused
+element's media layer at its old size: ANY style change on the element healed it (`object-fit`, `scale`), and an element
+created fresh for the same stream drew full screen. So `CameraScreen` wraps the video in `{#key session.stream}` - an
+element only ever sees one stream. Pinned by `CameraScreen.svelte.test.ts` (identity only; the picture is the phone's).
+
 **The camera is given back** when the tab is left, when the app goes to the background
 (`visibilitychange`), and when the lens changes. The device is acquired asynchronously, so
 `CameraSession` numbers every open, and an open that returns to a session that has moved on releases

@@ -168,8 +168,11 @@ const names = () => createRequire(import.meta.url)('./names.mjs');
 export function attached() {
   try {
     return JSON.parse(io.pymd(['usbmux', 'list'])).map((d) => d.Identifier ?? d.UniqueDeviceID ?? d.SerialNumber).filter(Boolean);
-  } catch {
-    return [];
+  } catch (err) {
+    // NEVER an empty list: "no iPhone" and "pymobiledevice3 is not on PATH" are different facts, and
+    // answering [] for the second sent a session hunting a phone that was plugged in (2026-10-02).
+    // A workstation whose Scripts directory is off PATH sets PYMOBILEDEVICE3 to the executable.
+    throw new Error(`usbmux list failed - is pymobiledevice3 on PATH (or PYMOBILEDEVICE3 set)? ${err instanceof Error ? err.message : err}`, { cause: err });
   }
 }
 
