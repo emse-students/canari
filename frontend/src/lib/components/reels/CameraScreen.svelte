@@ -94,9 +94,13 @@
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.
+  // `muted` is set as a PROPERTY too: the template is cloned, and a cloned element does not take its
+  // muted STATE from the attribute, so the live microphone played through the speaker (an echo).
   $effect(() => {
     frameReady = false;
-    if (video) video.srcObject = session.stream;
+    if (!video) return;
+    video.muted = true;
+    video.srcObject = session.stream;
   });
 
   /**
