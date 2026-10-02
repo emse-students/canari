@@ -4,19 +4,18 @@
   import { Log } from '$lib/utils/Log';
   import { fetchGifPage, KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
   import { columnsFor, layoutMasonry, nearEnd, visibleTiles } from '$lib/utils/chat/gifMasonry';
+  import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
 
   /**
    * THE GIF SEARCH AND ITS GRID - one component for the phone's keyboard-sized panel
    * (`ComposerGifPanel`) and the desktop dialog (`GifPickerModal`), so the two cannot drift.
    *
    * Every tile is laid out from the size the provider DECLARED, before its picture loads
-   * (`gifMasonry.ts`): the grid never reflows as GIFs arrive, and each tile shows a flat surface tone
-   * until its own GIF covers it. Only the tiles near the scrolled window are mounted; the next page is
-   * asked for when the reader nears the end.
-   *
-   * The placeholder is the surface tone, deliberately: the shared MediaFrame primitive
-   * (`docs/wiki/frontend/media-frame.md`) is not merged yet, and a tile's box is ALREADY final here -
-   * what MediaFrame would add is its placeholder painting, a swap this component is shaped for.
+   * (`gifMasonry.ts`), and drawn as a `MediaFrame sizing="intrinsic"` declared at that size: the grid
+   * never reflows as GIFs arrive, and each tile shows the frame's surface tone until its own GIF
+   * covers it (KLIPY sends no ThumbHash). Only the tiles near the scrolled window are mounted; the
+   * next page is asked for when the reader nears the end.
+   * [media-frame](../../../../../docs/wiki/frontend/media-frame.md)
    */
   interface Props {
     /** Whether the grid is on screen: it loads only then, and starts again from trending each time. */
@@ -185,18 +184,31 @@
           <button
             type="button"
             onclick={() => onPick(gif)}
-            class="focus-visible:ring-cn-yellow absolute overflow-hidden rounded-lg bg-black/5 outline-none focus-visible:ring-2 active:opacity-80 dark:bg-white/10"
+            class="focus-visible:ring-cn-yellow absolute overflow-hidden rounded-lg outline-none focus-visible:ring-2 active:opacity-80"
             style="left: {tile.x}px; top: {tile.y}px; width: {tile.width}px; height: {tile.height}px"
             aria-label={m.chat_send_gif_action_label()}
           >
-            <img
-              src={gif.preview.url}
-              alt=""
-              width={gif.preview.width}
-              height={gif.preview.height}
-              decoding="async"
-              class="h-full w-full object-cover"
-            />
+            <!-- The tile's box as the masonry placed it - the provider's ratio, at the column's width -
+                 declared to the frame, so the frame IS the tile before and after the GIF loads. -->
+            <MediaFrame
+              sizing="intrinsic"
+              width={tile.width}
+              height={tile.height}
+              maxHeight="{tile.height}px"
+              class="bg-black/5 dark:bg-white/10"
+            >
+              {#snippet children(frame)}
+                <img
+                  src={gif.preview.url}
+                  alt=""
+                  width={gif.preview.width}
+                  height={gif.preview.height}
+                  decoding="async"
+                  onload={frame.onLoad}
+                  class="h-full w-full object-cover"
+                />
+              {/snippet}
+            </MediaFrame>
           </button>
         {/each}
       </div>

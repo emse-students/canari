@@ -169,12 +169,14 @@ the desktop dialog `GifPickerModal`). KLIPY declares `width` / `height` for each
 `mapKlipyItems` keeps them and LEAVES OUT, counting at warn level, a result that declares none - it
 could not be laid out without a shift. `gifMasonry.ts` places every tile (shortest column first) from
 those sizes alone, so the grid never reflows, and only tiles near the scrolled window are mounted -
-the virtualisation. The next page is asked for near the end. A tile's placeholder is the flat surface
-tone: the [MediaFrame](../media-frame.md) primitive was not merged when this shipped, and the tile's box
-is already final here, so what it would add is its placeholder painting. **A tap sends at once,
-with the declared size of the rendition sent** (`onSendGif(url, { width, height })`), which is what
-the MediaFrame contract asks of a picker; the sender half that writes it into the message
-(`withGifSize`) is MediaFrame's, and `MainChatPage` ignores the size until it lands.
+the virtualisation. The next page is asked for near the end. **Each tile is a
+[MediaFrame](../media-frame.md) `sizing="intrinsic"`** declared at the box the masonry placed it in,
+so the frame IS the tile before and after its GIF loads, with the frame's surface tone underneath
+(KLIPY sends no ThumbHash). The masonry takes its ratio from `normalizedAspectRatio`, the clamp the
+frame draws with, so the two stay one shape even for a GIF thinner than 1:4. **A tap sends at once,
+with the size of the rendition SENT in the URL**: `withGifSize(full.url, full.width, full.height)`
+writes `#cn-size=WxH`, and every reader's frame reserves that box before the GIF arrives. That is
+the whole of what the MediaFrame contract asks of a picker.
 
 **Verified here:** the transition table, the spacer arithmetic, the masonry, the KLIPY mapping, the
 picker table per runtime (`ChatComposer.attachMenu.svelte.test.ts`: which input or native picker each

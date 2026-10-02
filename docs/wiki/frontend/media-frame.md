@@ -213,6 +213,6 @@ message never shifts.
 | This contract and the research | #1339 | merged |
 | `MediaFrame`, the chat photo / video / GIF-link / voice renderers on it, the measured-size cache, the pane's anchor | #1346 | merged |
 | Sender side: GIF file sizes, the ThumbHash placeholder on the wire (images) | this page's third pull request | see its state on GitHub |
-| GIF URL sizes from the picker (`withGifSize`), tiles on `MediaFrame` | the GIF panel's pull request | owed by it |
+| GIF URL sizes from the picker (`withGifSize`), tiles on `MediaFrame` | the GIF panel's follow-up | see its state on GitHub |
 | Video placeholder (poster frame) | with the chat video path | owed |
 | A reading on the iPhone 12 | - | owed: Safari's first launch asks the owner to choose a default browser |
