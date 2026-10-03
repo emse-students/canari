@@ -104,12 +104,18 @@
     <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
       {m.asso_lydia_created_title()}
       <span
-        class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
+        class="{asso.lydiaOnboardingComplete
+          ? 'text-green-ok bg-green-ok/20'
+          : 'text-amber-warn bg-amber-warn/20'} text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
       >
-        {m.asso_lydia_status_pending()}
+        {asso.lydiaOnboardingComplete
+          ? m.asso_lydia_status_active()
+          : m.asso_lydia_status_pending()}
       </span>
     </p>
-    <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
+    {#if !asso.lydiaOnboardingComplete}
+      <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
+    {/if}
     <p class="text-text-muted text-xs">
       {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.lydiaAccountId}</span>
     </p>

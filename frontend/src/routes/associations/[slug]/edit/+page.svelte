@@ -13,6 +13,7 @@
     disconnectConnectAccount,
     formatConnectAccountAmount,
     isConnectAccountReady,
+    isPaymentAccountReady,
     fetchActivePaymentProvider,
     type ConnectAccountStatusResult,
     type PaymentProviderId,
@@ -75,7 +76,8 @@
   let activePaymentProvider = $state<PaymentProviderId>('stripe');
 
   let onlinePaymentsReady = $derived(
-    isConnectAccountReady(connectAccountStatus) || !!asso?.stripeOnboardingComplete
+    (activePaymentProvider === 'stripe' && isConnectAccountReady(connectAccountStatus)) ||
+      (!!asso && isPaymentAccountReady(asso, activePaymentProvider))
   );
 
   type EditSection =
