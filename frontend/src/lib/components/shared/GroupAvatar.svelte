@@ -71,17 +71,19 @@
   let currentMediaId: string | null = null;
   let acquiredMediaId: string | null = null;
 
-  async function loadImage(mediaId: string) {
+  async function loadImage(mediaId: string, signal: AbortSignal) {
     currentMediaId = mediaId;
     loadFailed = false;
+    blobUrl = null;
+    if (acquiredMediaId && acquiredMediaId !== mediaId) {
+      releaseRawMediaBlobUrl(acquiredMediaId);
+      acquiredMediaId = null;
+    }
     try {
-      const url = await mediaService.downloadRaw(mediaId);
+      const url = await mediaService.downloadRaw(mediaId, signal);
       if (currentMediaId !== mediaId) {
         releaseRawMediaBlobUrl(mediaId);
         return;
-      }
-      if (acquiredMediaId && acquiredMediaId !== mediaId) {
-        releaseRawMediaBlobUrl(acquiredMediaId);
       }
       blobUrl = url;
       acquiredMediaId = mediaId;
@@ -92,8 +94,19 @@
 
   $effect(() => {
     if (imageMediaId) {
-      loadImage(imageMediaId);
+      const mediaId = imageMediaId;
+      const abort = new AbortController();
+      void loadImage(mediaId, abort.signal);
+      return () => {
+        abort.abort();
+        if (currentMediaId === mediaId) currentMediaId = null;
+        if (acquiredMediaId === mediaId) {
+          releaseRawMediaBlobUrl(mediaId);
+          acquiredMediaId = null;
+        }
+      };
     } else {
+      currentMediaId = null;
       if (acquiredMediaId) {
         releaseRawMediaBlobUrl(acquiredMediaId);
         acquiredMediaId = null;
