@@ -29,8 +29,12 @@
 #
 # WHAT `skip` IS FOR, AND WHAT IT IS NOT FOR - corrected 2026-09-02 after the user asked why dev
 # could not test push. `skip` is for a credential whose USE would reach a third party that believes
-# it is talking to production: Stripe and Lydia move real money, and CERCLE_API_KEY makes the bar's
+# it is talking to production: Stripe moves real money, and CERCLE_API_KEY makes the bar's
 # own checks pass against a copy of the database. No guard inside this repository can undo either.
+#
+# LYDIA IS NOT THAT EITHER, SINCE 2026-10-04. The pair Lydia issued is a HOMOLOGATION pair (their
+# sandbox: no real money moves), and dev's compose pins `LYDIA_ENV=homologation` so core-service can
+# only ever address the sandbox base URL. Dev reads `DEV_LYDIA_*`, like every other dev secret.
 #
 # Push is NOT that, and the three APNs rows were `skip` by an oversight that this file made visible:
 # FIREBASE_SERVICE_ACCOUNT_JSON sat one line above them as `warn`, so Android push was provided for
@@ -81,8 +85,8 @@ APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be 
 SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
 STRIPE_SECRET_KEY	warn	skip	secret:STRIPE_SECRET_KEY	payments are unavailable
 STRIPE_WEBHOOK_SECRET	warn	skip	secret:STRIPE_WEBHOOK_SECRET	Stripe webhooks are rejected
-LYDIA_PROVIDER_TOKEN	warn	skip	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
-LYDIA_PROVIDER_PRIVATE_TOKEN	warn	skip	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
+LYDIA_PROVIDER_TOKEN	warn	warn	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
+LYDIA_PROVIDER_PRIVATE_TOKEN	warn	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
 DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable
 FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev

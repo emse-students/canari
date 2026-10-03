@@ -150,8 +150,8 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 >
 > **Which `DEV_*` secrets to create, and what each absence costs, is the manifest itself** - every row
 > whose DEV column is not `skip`, prefixed `DEV_`. Fourteen are `required` and the deploy refuses
-> without them; nine are `warn` and each degrades one named feature; three are `silent` because a
-> default answers for them. Rows marked `skip` must NOT be created: Stripe, Lydia and
+> without them; eleven are `warn` (the two `DEV_LYDIA_*` homologation tokens included) and each degrades one named feature; three are `silent` because a
+> default answers for them. Rows marked `skip` must NOT be created: Stripe and
 > `CERCLE_API_KEY` are deliberately absent from dev (decided with the user), so that a copy of
 > production's database can never charge a real card nor be answered as production by Le Cercle.
 > **Push is NOT among them** - `copy-prod-to-dev.sh` truncates `push_token`, so dev has no real
