@@ -19,6 +19,7 @@ import { PaymentService } from './payment.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { ChargeResult } from './payment.service';
 import Stripe from 'stripe';
 import axios from 'axios';
@@ -373,6 +374,53 @@ export class PaymentController {
         error?.response?.data || error?.message
       );
       throw new BadRequestException('Could not disconnect the Lydia account');
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Validates a Lydia onboarding BY HAND (global admin only).
+   *
+   * Nothing marks `lydiaOnboardingComplete` automatically: `business/create`'s callback carries no
+   * signature, so no receiver was built (see the core-service wiki page). A platform admin who has
+   * seen Lydia accept the club's file says so here. It is NOT open to the club's own managers - they
+   * would be declaring their own account ready, and releasing withheld products onto it - and it
+   * needs a linked Lydia account, so it cannot validate an onboarding that never started.
+   */
+  @Post('complete-lydia-account/:associationId')
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @HttpCode(200)
+  async completeLydiaAccount(@Param('associationId') associationId: string) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    this.logger.log(`Lydia onboarding validated by hand for association ${associationId}`);
+
+    const assoRes = await axios.get<{ lydiaAccountId?: string | null }>(
+      socialUrl(`associations/${encodeURIComponent(associationId)}`),
+      { validateStatus: () => true }
+    );
+    if (assoRes.status >= 400) {
+      throw new BadRequestException('Association not found');
+    }
+    if (!assoRes.data.lydiaAccountId?.trim()) {
+      throw new BadRequestException('No Lydia account is linked to this association');
+    }
+
+    try {
+      await axios.post(
+        socialUrl(`associations/${encodeURIComponent(associationId)}/lydia-complete`),
+        undefined,
+        internalSocialRequestConfig()
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to validate the Lydia onboarding',
+        error?.response?.data || error?.message
+      );
+      throw new BadRequestException('Could not validate the Lydia onboarding');
     }
 
     return { ok: true };

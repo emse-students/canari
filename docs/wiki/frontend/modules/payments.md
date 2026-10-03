@@ -284,3 +284,9 @@ paid-form recipient gate and the delegation tab all read it; before, they read t
 and a Lydia association whose flag was `true` in the database still showed as incomplete. The Lydia
 card shows Pending until `lydiaOnboardingComplete` is true, then Active (nothing sets it
 automatically yet - see the core-service page).
+
+**Manual validation.** A GLOBAL ADMIN sees "Valider l'onboarding" on the Lydia card while the flag is
+false (`POST /api/payments/complete-lydia-account/:associationId`, `NginxAuthGuard` +
+`GlobalAdminGuard`, refused without a linked Lydia account). It calls social-service's existing
+`lydia-complete`, which also releases withheld products. Not open to the club's own managers: they
+would be declaring their own account ready. Removal of Lydia (`disconnect`) resets it.

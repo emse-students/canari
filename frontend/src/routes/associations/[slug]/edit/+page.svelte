@@ -557,6 +557,9 @@
                 if (asso)
                   asso = { ...asso, lydiaAccountId: accountId, lydiaDashboardUrl: dashboardUrl };
               }}
+              onValidated={() => {
+                if (asso) asso = { ...asso, lydiaOnboardingComplete: true };
+              }}
               onDisconnected={() => {
                 if (asso)
                   asso = {

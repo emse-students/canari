@@ -3,11 +3,13 @@
   import {
     startLydiaOnboarding,
     disconnectLydiaConnect,
+    validateLydiaOnboarding,
     type Association,
   } from '$lib/associations/api';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
 
   interface Props {
@@ -16,11 +18,34 @@
     onAccountCreated: (accountId: string, dashboardUrl: string) => void;
     /** Called once the Lydia Business has been unlinked, so the parent can clear it locally. */
     onDisconnected: () => void;
+    /** Called once a platform admin has validated the onboarding, so the parent can mark it locally. */
+    onValidated: () => void;
   }
 
-  let { asso, onAccountCreated, onDisconnected }: Props = $props();
+  let { asso, onAccountCreated, onDisconnected, onValidated }: Props = $props();
 
   let disconnecting = $state(false);
+  let validating = $state(false);
+
+  /** A platform admin confirms Lydia accepted the file; nothing else marks the onboarding complete. */
+  async function handleValidate() {
+    if (
+      !(await showConfirm(m.asso_lydia_validate_confirm(), {
+        confirmLabel: m.asso_lydia_validate_button(),
+      }))
+    )
+      return;
+    validating = true;
+    try {
+      await validateLydiaOnboarding(asso.id);
+      onValidated();
+    } catch (err) {
+      console.error('[Lydia] Manual validation failed:', err);
+      error = m.asso_lydia_validate_error();
+    } finally {
+      validating = false;
+    }
+  }
 
   async function handleDisconnect() {
     if (
@@ -128,6 +153,16 @@
         >
           <ExternalLink size={16} />
           {m.asso_lydia_open_dashboard_button()}
+        </button>
+      {/if}
+      {#if isGlobalAdmin() && !asso.lydiaOnboardingComplete}
+        <button
+          type="button"
+          onclick={() => void handleValidate()}
+          disabled={validating}
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+        >
+          {validating ? m.asso_lydia_validate_loading() : m.asso_lydia_validate_button()}
         </button>
       {/if}
       <button

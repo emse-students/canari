@@ -2100,6 +2100,24 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
   }
 }
 
+/**
+ * Validates the association's Lydia onboarding by hand (global admin only): nothing marks it
+ * automatically, so a platform admin who has seen Lydia accept the file says so.
+ */
+export async function validateLydiaOnboarding(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/complete-lydia-account/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { message?: string })?.message || `Lydia validation failed (${res.status})`
+    );
+  }
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startConnectAccountOnboarding(
