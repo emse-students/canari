@@ -4,7 +4,7 @@ import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
-import { classifyServerStatus } from './groupLifecycle';
+import { classifyServerStatus, isDistributionGroupMeta } from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady, readNotReadySince } from './notReadyRegistry';
 import { reconcileGroup } from './historyReconcile';
 import { pendingGroupExitIds } from './pendingGroupExits';
@@ -427,6 +427,14 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // here - the branch above returns on every path - so this reads it directly.
   if (meta.deletedAt) {
     await stopRecovering(groupId, 'deleted server-side', deps);
+    return;
+  }
+
+  if (isDistributionGroupMeta(meta)) {
+    deps.mlsService.noteDistributionGroup(groupId);
+    cancelReAdd(groupId);
+    clearGroupNotReady(deps.userId, groupId);
+    deps.log(`[READD] ${groupId.slice(0, 8)}... distribution group - no conversation created`);
     return;
   }
 

@@ -44,6 +44,11 @@ export type GroupServerStatus =
   | { kind: 'absent' }
   | { kind: 'unknown' };
 
+/** Whether server metadata identifies a Graine key-distribution group rather than a conversation. */
+export function isDistributionGroupMeta(meta: GroupMeta): boolean {
+  return Boolean(meta.distributionWorkspaceId || meta.distributionChannelId);
+}
+
 /**
  * Converts the raw value of `IMlsService.getGroupServerStatus` (`'absent' | 'error' | GroupMeta`)
  * into a {@link GroupServerStatus}. A `GroupMeta` with a non-null `deletedAt` is a tombstone.
