@@ -108,4 +108,10 @@ describe('aggregateSharedContent', () => {
     const { media } = aggregateSharedContent(messages);
     expect(media).toHaveLength(0);
   });
+
+  it('skips optimistic media that has not received a server id yet', () => {
+    const pending = msg('m1', 1, serializeEnvelope(mkMediaEnvelope(mediaRef('image', ''))));
+
+    expect(aggregateSharedContent([pending])).toEqual({ media: [], files: [], links: [] });
+  });
 });

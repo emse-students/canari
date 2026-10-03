@@ -623,6 +623,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         const prepared = await prepareMedia(entry);
         proto = prepared.proto;
         mediaContent = prepared.content;
+        // The upload has completed, so the blob is readable before MLS acknowledges the message.
+        // Replace the optimistic empty ref now; waiting for sendMessage leaves media at `''` during
+        // the whole network race and a renderer that observed that state stays on its skeleton.
+        updateMessageContent(entry.id, mediaContent);
       } else {
         proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
@@ -633,8 +637,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       } finally {
         inFlight = null;
       }
-      // Swap the placeholder for the uploaded media before persisting the sent copy.
-      if (mediaContent) updateMessageContent(entry.id, mediaContent);
+      // The media envelope was installed immediately after upload, before the MLS send.
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
       // The tab that composed this may be a follower, whose own echo is still showing `pending`.
