@@ -322,7 +322,13 @@ services:
       # `stripe_customer_id`: a live-mode id with no keys behind it can only produce a misleading
       # failure.
       #
-      # Lydia is likewise absent - WP-LYDIA-1 is still waiting on credentials Lydia owes.
+      #
+      # LYDIA IS PRESENT, AND ONLY EVER THE SANDBOX (2026-10-04). The credentials Lydia issued are a
+      # homologation pair, and `LYDIA_ENV` is a LITERAL here rather than `${LYDIA_ENV:-...}`: nothing
+      # in the environment can point dev's core-service at Lydia's production base URL.
+      LYDIA_ENV: homologation
+      LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
+      LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.
