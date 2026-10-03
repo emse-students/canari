@@ -495,7 +495,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           name: 'Graine',
           messages: [],
           lifecycle: 'pending',
-        } as Conversation,
+        } as unknown as Conversation,
       ],
     ]);
     const deleteConversation = vi.fn().mockResolvedValue(undefined);
