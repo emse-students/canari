@@ -18,7 +18,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
-  import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
+  import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
@@ -221,7 +221,7 @@
         {/if}
       </div>
       {#if cropping === slot}
-        <AssociationLogoCropper onExport={onLogoExported} onCancel={() => (cropping = null)} />
+        <SquareImageCropper onExport={onLogoExported} onCancel={() => (cropping = null)} />
       {/if}
     </div>
   {/snippet}
