@@ -1,6 +1,6 @@
 [package]
 name = "call-service"
-version = "1.0.3-alpha.2"
+version = "1.0.3-alpha.3"
 edition = "2021"
 
 [dependencies]
