@@ -12,7 +12,7 @@ The media-service is the encrypted blob store. It:
   MinIO - see [docker](../infrastructure/docker.md)).
 - Exposes download endpoints (authenticated for private blobs, public for profile images).
 - Supports both single-shot uploads and chunked uploads for large files.
-- Auto-resizes public images (logos, avatars) to 512x512 WebP on upload.
+- Auto-resizes public images (logos, avatars) to 256x256 WebP on upload.
 - Never decrypts content — the client provides AES-256-GCM ciphertext; the encryption key travels inside the MLS ciphertext.
 
 ## Encryption model
@@ -55,7 +55,7 @@ a prop, but only as a signal that the session is authenticated.
 | ------ | -------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/media/limits`                    | none              | The configured upload ceiling in bytes - the client ASKS for it rather than being built with it                                                                                  |
 | POST   | `/api/media/upload`                    | JWT               | Upload encrypted blob, return `mediaId`                                                                                                                                          |
-| POST   | `/api/media/upload/public`             | JWT               | Upload small public image (logo), auto-resized to 512x512 WebP                                                                                                                   |
+| POST   | `/api/media/upload/public`             | JWT               | Upload small public image (logo), auto-resized to 256x256 WebP                                                                                                                   |
 | POST   | `/api/media/upload/chunk/init`         | JWT               | Initialize chunked upload session                                                                                                                                                |
 | POST   | `/api/media/upload/chunk/:id`          | JWT               | Append chunk (max 50 MB per chunk)                                                                                                                                               |
 | POST   | `/api/media/upload/chunk/:id/complete` | JWT               | Complete chunked upload, return `mediaId`                                                                                                                                        |
@@ -436,7 +436,7 @@ group avatar or community image was stored WITHOUT the `publicAsset` flag. The a
 link preview and the SEO head read the unauthenticated `GET /api/media/public/:id`, which refuses
 anything not flagged - and answered 404 once #507 removed the lazy fallback that had been flagging
 such blobs on first request. It now posts to `/api/media/upload/public` (JPEG/PNG/WebP, resized to
-512px WebP), which also exempts it from the idle sweep.
+256px WebP), which also exempts it from the idle sweep. `GroupAvatar` reads that public URL directly, allowing the browser's immutable HTTP cache to serve repeated mounts without an authenticated fetch or blob conversion.
 
 **Repair of the images stored before:** `POST /api/media/internal/promote-public`
 (`X-Internal-Secret`, body `{ mediaIds }`, at most the retention-class batch size). The caller names

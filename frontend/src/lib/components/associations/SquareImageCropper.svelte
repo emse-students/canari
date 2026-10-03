@@ -7,7 +7,7 @@
    * what gets exported.
    */
   interface Props {
-    /** Called with the exported 512×512 blob when the user confirms the crop. */
+    /** Called with the exported 256x256 blob when the user confirms the crop. */
     onExport: (blob: Blob) => void;
     /** Called when the user clicks Cancel. Omit to hide the cancel button. */
     onCancel?: () => void;
@@ -22,7 +22,7 @@
 
   let { onExport, onCancel, outputFormat = 'jpeg' }: Props = $props();
 
-  const OUT = 512;
+  const OUT = 256;
   const VIEWPORT_W = 440;
   const VIEWPORT_H = 300;
   const MIN_BOX = 60;
@@ -30,10 +30,13 @@
 
   let pickedName = $state('');
   let imgEl = $state<HTMLImageElement | undefined>();
+  let viewportEl = $state<HTMLDivElement | undefined>();
   let objectUrl = $state<string | null>(null);
   let loaded = $state(false);
   let naturalW = $state(0);
   let naturalH = $state(0);
+  let viewportW = $state(VIEWPORT_W);
+  let viewportH = $state(VIEWPORT_H);
 
   let zoom = $state(1);
   /** Crop square's side length in viewport pixels; the square itself always stays centered. */
@@ -41,6 +44,22 @@
   /** Pan of the displayed photo, in viewport pixels, relative to centered. */
   let offsetX = $state(0);
   let offsetY = $state(0);
+
+  $effect(() => {
+    const element = viewportEl;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+
+    const updateViewportSize = () => {
+      viewportW = element.clientWidth || VIEWPORT_W;
+      viewportH = element.clientHeight || VIEWPORT_H;
+      if (loaded) clampOffsets();
+    };
+
+    updateViewportSize();
+    const observer = new ResizeObserver(updateViewportSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  });
 
   function revoke() {
     if (objectUrl) {
@@ -81,20 +100,20 @@
    * square can never exceed that height even though the viewport itself is wider.
    */
   function computeGeometry() {
-    const containScale = Math.min(VIEWPORT_W / naturalW, VIEWPORT_H / naturalH);
+    const containScale = Math.min(viewportW / naturalW, viewportH / naturalH);
     const scale = containScale * zoom;
     const displayW = naturalW * scale;
     const displayH = naturalH * scale;
-    const maxBoxSize = Math.min(VIEWPORT_W, VIEWPORT_H, displayW, displayH);
+    const maxBoxSize = Math.min(viewportW, viewportH, displayW, displayH);
     return {
       scale,
       displayW,
       displayH,
       maxBoxSize,
-      centeredLeft: (VIEWPORT_W - displayW) / 2,
-      centeredTop: (VIEWPORT_H - displayH) / 2,
-      boxLeft: (VIEWPORT_W - boxSize) / 2,
-      boxTop: (VIEWPORT_H - boxSize) / 2,
+      centeredLeft: (viewportW - displayW) / 2,
+      centeredTop: (viewportH - displayH) / 2,
+      boxLeft: (viewportW - boxSize) / 2,
+      boxTop: (viewportH - boxSize) / 2,
     };
   }
 
@@ -203,8 +222,9 @@
 
   {#if objectUrl}
     <div
+      bind:this={viewportEl}
       class="relative mx-auto touch-none overflow-hidden rounded-2xl select-none"
-      style="width: {VIEWPORT_W}px; height: {VIEWPORT_H}px; max-width: 100%; background-color: #1f2937; background-image: linear-gradient(45deg, #4b5563 25%, transparent 25%), linear-gradient(-45deg, #4b5563 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4b5563 75%), linear-gradient(-45deg, transparent 75%, #4b5563 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;"
+      style="width: min(100%, {VIEWPORT_W}px); height: {VIEWPORT_H}px; background-color: #1f2937; background-image: linear-gradient(45deg, #4b5563 25%, transparent 25%), linear-gradient(-45deg, #4b5563 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4b5563 75%), linear-gradient(-45deg, transparent 75%, #4b5563 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;"
       role="img"
       aria-label={m.asso_logo_preview_aria()}
       onpointerdown={onImagePointerDown}

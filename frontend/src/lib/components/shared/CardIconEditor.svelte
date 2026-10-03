@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
   import type { Component } from 'svelte';
-  import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
+  import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
@@ -102,7 +102,7 @@
   {/if}
 
   {#if showCropper}
-    <AssociationLogoCropper
+    <SquareImageCropper
       onExport={handleExported}
       onCancel={() => (showCropper = false)}
       outputFormat="png"
