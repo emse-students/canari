@@ -889,6 +889,49 @@ describe('outbox flusher', () => {
     expect(conversations.get('g1')!.messages[0].status).toBe('sent');
   });
 
+  it('publishes the uploaded media before a slow MLS send completes', async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'mm',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_VIDEO,
+        mimeType: 'video/mp4',
+        size: 3,
+        fileName: 'clip.mp4',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    let releaseSend!: () => void;
+    const sendBlocked = new Promise<void>((resolve) => (releaseSend = resolve));
+    const mlsService = makeMls({ send: () => sendBlocked });
+    const uploadMedia = vi.fn().mockResolvedValue({
+      type: 'video',
+      mediaId: 'mid-1',
+      key: 'aa',
+      iv: 'bb',
+      mimeType: 'video/mp4',
+      size: 3,
+      fileName: 'clip.mp4',
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['mm'])]]);
+    const outbox = createOutbox(
+      makeDeps({ conversations, mlsService, storage, uploadMedia, isGroupHealthy: () => true })
+    );
+
+    const flush = outbox.flush();
+    await vi.waitFor(() => expect(conversations.get('g1')!.messages[0].content).toContain('mid-1'));
+    expect(conversations.get('g1')!.messages[0].status).toBe('sending');
+
+    releaseSend();
+    await flush;
+  });
+
   it('does not re-upload media on a retry once uploadedRef is stored', async () => {
     const mediaEntry: OutboxEntry = {
       id: 'mm',

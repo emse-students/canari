@@ -5,6 +5,9 @@ import { isVoiceNote } from '$lib/utils/chat/voiceNote';
 
 /**
  * Aggregates the media, files and links shared in a conversation from its full
+      // An optimistic MLS media envelope has no server id until the outbox uploads it. It is not
+      // shared content yet, and including it would make the panel request `/api/media/`.
+      if (!env.media.mediaId) continue;
  * (decrypted) local message history, for the media, links & files panel.
  * Pure over already-decrypted message content - works the same for DMs, groups
  * and community channels.
@@ -69,6 +72,9 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
     }
 
     if (env.kind === 'media') {
+      // An optimistic MLS media envelope has no server id until the outbox uploads it. It is not
+      // shared content yet, and including it would make the panel request `/api/media/`.
+      if (!env.media.mediaId) continue;
       // A VOICE NOTE IS NOT SHARED CONTENT (user, 2026-09-17: *"Les vocaux ne doivent pas
       // s'afficher dans l'onglet 'Medias' d'une discussion"*). It is a turn in the conversation,
       // like the sentence it replaces, and listing it beside the files people deliberately sent
