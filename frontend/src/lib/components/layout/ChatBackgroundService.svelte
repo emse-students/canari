@@ -1736,6 +1736,7 @@
   isFirstSetup={isFirstPinSetup}
   onForgotPinReset={handlePinReset}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
+  account={globalSession.userId}
 />
 
 <!-- PIN recovery after a cross-device PIN change -->
@@ -1747,6 +1748,7 @@
   externalError={recoverError}
   isLoading={recoverLoading}
   loadingProgress={recoverProgress}
+  account={globalSession.userId}
 />
 
 {#if showIncomingToast}

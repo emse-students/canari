@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import PinAccountField from './PinAccountField.svelte';
   import {
     LoaderCircle,
     FingerprintPattern,
@@ -64,6 +65,8 @@
      * local MLS state exists). When set, a "PIN changed elsewhere → recover" link is shown.
      */
     onRecoverPin?: () => void;
+    /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
+    account?: string;
   }
 
   let {
@@ -81,6 +84,7 @@
     loadingStep = '',
     onForgotPinReset,
     onRecoverPin,
+    account = '',
   }: Props = $props();
 
   let pin = $state('');
@@ -220,6 +224,7 @@
       onsubmit={handleSubmit}
       class="m-auto flex w-full max-w-xs flex-col items-center gap-4 py-2"
     >
+      <PinAccountField {account} />
       <header class="flex flex-col items-center gap-2 text-center">
         <div
           class="bg-cn-ink flex size-16 items-center justify-center rounded-2xl border border-white/10 shadow-lg [@media(max-height:700px)]:hidden"
