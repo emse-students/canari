@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { verifyInternalToken } from './internal-token';
 
 /**
  * NestJS guard that enforces authentication by inspecting the `x-user-logged-in`
@@ -51,24 +51,7 @@ export class HeaderAuthGuard implements CanActivate {
     if (internalSecret) {
       const userId =
         (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';
-      const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
-      if (!token) {
-        throw new UnauthorizedException('Missing X-Internal-Token header');
-      }
-      const epochMinute = Math.floor(Date.now() / 60000);
-      const valid = [epochMinute, epochMinute - 1].some((min) => {
-        const expected = createHmac('sha256', internalSecret)
-          .update(`${userId}:${min}`)
-          .digest('hex');
-        try {
-          return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
-        } catch {
-          return false;
-        }
-      });
-      if (!valid) {
-        throw new UnauthorizedException('Invalid X-Internal-Token');
-      }
+      verifyInternalToken(request.headers, userId, internalSecret);
     }
 
     return true;

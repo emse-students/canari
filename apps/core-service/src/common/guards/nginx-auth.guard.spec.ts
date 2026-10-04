@@ -2,7 +2,7 @@
 
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { createHmac } from 'crypto';
-import { NginxAuthGuard, verifyInternalToken } from './nginx-auth.guard';
+import { NginxAuthGuard } from './nginx-auth.guard';
 
 function makeContext(headers: Record<string, string>): ExecutionContext {
   return {
@@ -101,32 +101,5 @@ describe('NginxAuthGuard', () => {
       });
       expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
-  });
-});
-
-describe('verifyInternalToken', () => {
-  const SECRET = 'my-secret';
-  const userId = 'alice';
-
-  function makeReq(token: string | undefined): any {
-    return { headers: token ? { 'x-internal-token': token } : {} };
-  }
-
-  it('passes with a valid token', () => {
-    const token = makeToken(userId, SECRET);
-    expect(() => verifyInternalToken(makeReq(token), userId, SECRET)).not.toThrow();
-  });
-
-  it('throws when token header is absent', () => {
-    expect(() => verifyInternalToken(makeReq(undefined), userId, SECRET)).toThrow(
-      UnauthorizedException
-    );
-  });
-
-  it('throws when token is not a valid HMAC (malformed hex)', () => {
-    // Node.js silently skips non-hex chars when parsing, so 'zz' → empty buffer → length mismatch → false
-    expect(() => verifyInternalToken(makeReq('zzzzzz'), userId, SECRET)).toThrow(
-      UnauthorizedException
-    );
   });
 });

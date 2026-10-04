@@ -1362,9 +1362,9 @@ different POLICIES, and only the HMAC block inside them is genuinely duplicated:
 
 Picking any one of the three as "the" shared guard silently changes what the other two services
 refuse. **Whoever takes this decides, in writing and before touching a file, which refusals are
-intended**; the shared HMAC verification can be lifted out first and on its own, because that half
-really is three identical copies. `verifyInternalToken` is exported from `core-service` and imported
-by NOBODY outside its own file.
+intended.** The half that really was three identical copies, the HMAC verification, is ONE file
+since 2026-10-04 - `internal-token.ts`, copied byte for byte into the three services and held
+together by `declared-duplicates.mjs`; each guard keeps its own policy and calls it.
 
 **The bare-`/channels` vite rule and the unverified-Bearer branch it justified were DELETED
 2026-09-18** rather than given an nginx route (the premise was false - nothing requests a bare
