@@ -384,7 +384,9 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // asks "could the server have dropped something for me"; the audit asks "was this group damaged
   // before anything on this device was able to notice". A device that answers no to the first can
   // still owe the second, and it owes it exactly once per group - see `groupsOwingAudit`.
-  const owing = groupsOwingAudit(userId, deviceId, groupsNow);
+  const owing = groupsOwingAudit(userId, deviceId, groupsNow, (groupId) =>
+    mlsService.isDistributionGroup(groupId)
+  );
   const targets = sweep ? groupsNow : owing;
 
   if (targets.length > 0) {

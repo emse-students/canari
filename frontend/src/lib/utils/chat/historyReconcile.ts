@@ -314,14 +314,24 @@ function readAuditRecord(userId: string, deviceId: string): AuditRecord | null {
  * A group joined AFTER the audit ran is indistinguishable from one that was deferred, and costs
  * exactly one probe, once, ever. That is the price of not keeping a second durable record of when
  * each group was joined, and it is the cheaper of the two.
+ *
+ * **A GROUP THAT CAN NEVER BE AUDITED NEVER OWES IT** - `cannotBeAudited`, which the caller answers
+ * with `isDistributionGroup`. {@link reconcileGroup} returns `false` for a distribution group, by
+ * design and for ever, so the discharge above (which writes only groups a probe LEFT for) could
+ * never record one: observed 2026-09-05, `auditing 7 group(s) that never have been` then `0/7
+ * group(s) asked in 0 ms` on every connection of a clean device - seven groups leaving through the
+ * one SILENT `false` in that function, which is the distribution guard. Owing an audit that cannot
+ * happen is a line on every connection for the life of the device, and a line its reader learns
+ * to skip.
  */
 export function groupsOwingAudit(
   userId: string,
   deviceId: string,
-  localGroupIds: Iterable<string>
+  localGroupIds: Iterable<string>,
+  cannotBeAudited: (groupId: string) => boolean = () => false
 ): string[] {
   const done = new Set(readAuditRecord(userId, deviceId)?.groupIds ?? []);
-  return [...localGroupIds].filter((id) => !done.has(id));
+  return [...localGroupIds].filter((id) => !done.has(id) && !cannotBeAudited(id));
 }
 
 /**
