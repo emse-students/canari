@@ -18,8 +18,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
-import { getApps } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -28,12 +26,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import {
-  sanitizeEpoch,
-  sanitizeIdentityValue,
-  sanitizeQueryValue,
-  sanitizeOptionalQueryValue,
-} from '../utils/sanitize';
+import { sanitizeEpoch, sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 import { coreUrl, mediaUrl } from '../internal/service-urls';
@@ -839,90 +832,5 @@ export class PushController {
 
     this.logger.log(`[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`);
     return { status: 'sent', queued: result.queued, sent: result.sent };
-  }
-
-  /**
-   * Diagnostic route: sends a push notification test to every device that has
-   * a registered push token (online or offline).
-   */
-  @UseGuards(HeaderAuthGuard)
-  @Post('mls/push/broadcast-test')
-  async broadcastTestPush(
-    @Body() body: { title?: string; message?: string },
-    @Headers('x-user-id') requesterRaw?: string
-  ) {
-    if (getApps().length === 0) {
-      throw new BadRequestException('Firebase Admin SDK is not initialized (push disabled)');
-    }
-
-    const requester = sanitizeOptionalQueryValue(requesterRaw, 'x-user-id');
-    const traceId = `push-test-${crypto.randomUUID().slice(0, 8)}`;
-    const title = (body?.title || 'Canari - test push').trim().slice(0, 80);
-    const message = (body?.message || 'Notification de diagnostic').trim().slice(0, 180);
-
-    this.logger.log(
-      `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`
-    );
-
-    const targets = await this.pushTokenRepo.find();
-    let withToken = 0;
-    let sent = 0;
-    let failed = 0;
-
-    for (const pushToken of targets) {
-      withToken++;
-      try {
-        await getMessaging().send({
-          token: pushToken.token,
-          notification: {
-            title,
-            body: message,
-          },
-          data: {
-            type: 'push_test',
-            title,
-            message,
-            sentAt: Date.now().toString(),
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: 'canari_messages',
-            },
-          },
-          apns: {
-            payload: { aps: { sound: 'default' } },
-          },
-        });
-        sent++;
-        this.logger.log(
-          `[PUSH_TEST][${traceId}] SENT user=${pushToken.userId} device=${pushToken.deviceId}`
-        );
-      } catch (e) {
-        failed++;
-        if (this.isTerminalPushTokenError(e)) {
-          await this.pushTokenRepo.delete({ id: pushToken.id });
-          this.logger.warn(
-            `[PUSH_TEST][${traceId}] DELETED invalid token user=${pushToken.userId} device=${pushToken.deviceId}`
-          );
-        }
-        this.logger.warn(
-          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${String(e)}`
-        );
-      }
-    }
-
-    this.logger.log(
-      `[PUSH_TEST][${traceId}] DONE targeted=${targets.length} sent=${sent} failed=${failed}`
-    );
-
-    return {
-      status: 'done',
-      traceId,
-      targetedDevices: targets.length,
-      withToken,
-      sent,
-      failed,
-    };
   }
 }
