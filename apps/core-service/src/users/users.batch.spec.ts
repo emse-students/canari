@@ -4,6 +4,7 @@ import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import type { AvatarService } from './avatar.service';
 import type { UserBlocksService } from './user-blocks.service';
+import type { ProfileEditService } from './profile-edit.service';
 import { User } from './entities/user.entity';
 
 /**
@@ -31,7 +32,12 @@ describe('GET /users/batch', () => {
       invisibleUserIdsFor: jest.fn().mockResolvedValue([]),
     } as unknown as UserBlocksService;
     const service = new UsersService(userRepository, {} as DataSource, blocks);
-    const controller = new UsersController(service, {} as AvatarService, blocks);
+    const controller = new UsersController(
+      service,
+      {} as AvatarService,
+      blocks,
+      {} as ProfileEditService
+    );
     return { controller, find };
   }
 

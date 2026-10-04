@@ -29,6 +29,7 @@ PG_PASS=blueprint-test
 AUTHENTIK_SECRET_KEY=blueprint-test-$(date +%s)-0123456789abcdef0123456789abcdef
 MIGALLERY_AVATAR_SIGNING_KEY=blueprint-test
 MICONNECT_CAS_CONSUMER_SECRET=blueprint-test
+MICONNECT_EDITOR_TOKEN=blueprint-test-editor-token-0123456789abcdef
 AUTHENTIK_PUBLISH=127.0.0.1:0
 EOF
 
@@ -85,3 +86,13 @@ if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&
   exit 1
 fi
 echo "the enrolment flow lets the right people in, refuses the others, and writes the profile"
+
+# THE PROFILE EDITOR, USED. Applying 80-profile-editor.yaml proves the account, role and token exist;
+# only calling the API with the token shows what a holder of it can DO - read and change users, and
+# nothing else (infrastructure/authentik/test-profile-editor.py).
+echo "profile editor: calling the API with its token"
+if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2) | grep -qx 'PROFILE-EDITOR-OK'; then
+  echo "::error::the profile editor's token does not behave - read the assertion above"
+  exit 1
+fi
+echo "the profile editor reads and changes users, and nothing else"

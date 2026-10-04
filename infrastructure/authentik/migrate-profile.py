@@ -28,7 +28,7 @@ STUDENT = "Elève"
 # authentik's own accounts, which never sign in to an application: the placeholder for an anonymous
 # request, and the service accounts of its outposts.
 SKIPPED_USERNAMES = {"AnonymousUser"}
-SKIPPED_TYPES = {"internal_service_account"}
+SKIPPED_TYPES = {"internal_service_account", "service_account"}
 
 
 class Rollback(Exception):

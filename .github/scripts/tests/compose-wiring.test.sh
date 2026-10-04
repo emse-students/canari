@@ -427,6 +427,10 @@ DEV_ABSENT_BY_DESIGN="adminer"
 #                       the TURN credentials and has never used them.
 #   APNS_VOIP_*         a VoIP push certificate for that same held-off feature,
 #                       and no iOS client points at dev.
+#   MICONNECT_EDITOR_TOKEN
+#                       the authentik service account that edits a profile. Dev and production
+#                       share ONE MiConnect, so a dev edit would change a real person: dev holds
+#                       no token and refuses the edit with a typed error.
 #   MIGALLERY_API_*     MiGallery is production-only; dev's core-service is given
 #                       the empty string, so both readers see a falsy value and
 #                       behave identically.
@@ -434,6 +438,7 @@ DEV_ABSENT_KEYS="
   social-service:STRIPE_CANCEL_URL social-service:STRIPE_SECRET_KEY social-service:STRIPE_SUCCESS_URL
   core-service:STRIPE_SECRET_KEY core-service:STRIPE_WEBHOOK_SECRET
   core-service:SKY_API_KEY core-service:SKY_API_URL core-service:EXTERNAL_API_KEY
+  core-service:MICONNECT_EDITOR_TOKEN
   call-service:TURN_URL call-service:TURN_USERNAME call-service:TURN_CREDENTIAL
   call-service:CLOUDFLARE_CALLS_API_TOKEN call-service:CLOUDFLARE_TURN_KEY_ID
   call-service:CLOUDFLARE_TURN_TTL_SECONDS

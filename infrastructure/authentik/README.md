@@ -128,6 +128,7 @@ machine a l autre : `sha256:7421753c...` des deux cotes pour `2026.8.0`.
 | `PG_PASS` | mot de passe PostgreSQL Authentik |
 | `AUTHENTIK_SECRET_KEY` | cle secrete Authentik |
 | `MIGALLERY_AVATAR_SIGNING_KEY` | signe l URL d avatar du mapping `avatar` - la meme valeur que le secret `AVATAR_SIGNING_KEY` de MiGallery |
+| `MICONNECT_EDITOR_TOKEN` | cle API du compte de service `miconnect-canari-editor` (voir et modifier les utilisateurs, rien d autre), creee par `blueprints/80-profile-editor.yaml` ; la meme valeur est le secret GitHub `MICONNECT_EDITOR_TOKEN` de Canari |
 | `MICONNECT_CAS_CONSUMER_SECRET` | secret du client OIDC `miconnect` cree par la DSI sur le CAS, lu par `blueprints/30-sources.yaml` |
 
 Elles vivent dans le `.env` de la boite, a cote du `compose.yml`.

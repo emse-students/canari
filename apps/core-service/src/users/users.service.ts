@@ -19,7 +19,7 @@ import {
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
-import { EMPTY_PROFILE, type MiconnectProfile } from './miconnect-profile';
+import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
 import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 import { STRIPE_API_VERSION } from '../payment/stripe-api-version';
 
@@ -174,8 +174,7 @@ export class UsersService implements OnModuleInit {
     // The MiConnect profile is REPLACED wholesale, unlike the names above: it is the one thing
     // authentik owns outright, so a claim that vanished there must clear here (WP3). `promo` and
     // `formation` are the first cursus entry until every consumer reads `cursus` (WP6).
-    const promo = profile.cursus[0]?.promo ?? null;
-    const formation = profile.cursus[0]?.formation ?? null;
+    const { promo, formation } = legacyColumns(profile.cursus);
     const sameProfile = (u: User) =>
       u.miconnectUuid === profile.miconnectUuid &&
       u.campus === profile.campus &&

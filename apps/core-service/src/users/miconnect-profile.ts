@@ -79,6 +79,118 @@ export function parseProfileClaims(claims: MiconnectClaims): MiconnectProfile {
   return { miconnectUuid, campus, cursus, posts };
 }
 
+/**
+ * The `promo` / `formation` columns derived from a cursus (WP3): its FIRST entry, null for none.
+ * ONE definition, shared by the sign-in upsert and the admin edit, until WP6 moves every consumer
+ * onto `cursus` and the columns go.
+ */
+export function legacyColumns(cursus: CursusEntry[]): {
+  promo: number | null;
+  formation: string | null;
+} {
+  return { promo: cursus[0]?.promo ?? null, formation: cursus[0]?.formation ?? null };
+}
+
+/** The formations a cursus may name (D4): `Autre` is the one bucket for masters, doctorates, the rest. */
+export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'Autre'] as const;
+
+/** The oldest and newest entry year an edit accepts - a typo guard, not a school rule. */
+const PROMO_MIN = 1900;
+const PROMO_MAX = 2100;
+const NAME_MAX = 100;
+
+/**
+ * The version-1 profile as authentik stores it in `attributes.profile` and as an edit records it
+ * before and after: the five facts an admin may set, with the explicit names (D10).
+ */
+export interface ProfileSnapshot {
+  version: 1;
+  campus: Campus;
+  cursus: CursusEntry[];
+  posts: Post[];
+  firstName: string;
+  lastName: string;
+}
+
+/** One reason an edit was refused, naming the field so the form can show it where it belongs. */
+export interface ProfileEditProblem {
+  field: 'campus' | 'cursus' | 'posts' | 'firstName' | 'lastName' | 'profile';
+  reason: string;
+}
+
+/**
+ * Validates an admin's edit into the stored shape, or reports EVERY problem at once.
+ *
+ * It refuses rather than repairs: an unknown formation or post is a typo to show the admin, not a
+ * value to drop (the sign-in parser drops, because the provider is the one at fault there). D11
+ * is enforced here too - a profile needs a cursus or a post - because this write is the only one
+ * authentik's enrolment flow does not guard.
+ */
+export function validateProfileEdit(
+  input: unknown
+): { ok: true; profile: ProfileSnapshot } | { ok: false; problems: ProfileEditProblem[] } {
+  const problems: ProfileEditProblem[] = [];
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, problems: [{ field: 'profile', reason: 'not an object' }] };
+  }
+  const body = input as Record<string, unknown>;
+
+  const campus = CAMPUSES.find((c) => c === body.campus);
+  if (!campus) problems.push({ field: 'campus', reason: 'unknown campus' });
+
+  const cursus: CursusEntry[] = [];
+  if (!Array.isArray(body.cursus)) {
+    problems.push({ field: 'cursus', reason: 'not a list' });
+  } else {
+    for (const entry of body.cursus as unknown[]) {
+      const e = entry as Partial<CursusEntry> | null;
+      const formation = FORMATIONS.find((f) => f === e?.formation);
+      const promo = e?.promo;
+      if (
+        !formation ||
+        !Number.isInteger(promo) ||
+        (promo as number) < PROMO_MIN ||
+        (promo as number) > PROMO_MAX
+      ) {
+        problems.push({ field: 'cursus', reason: 'unknown formation or impossible entry year' });
+      } else {
+        cursus.push({ formation, promo: promo as number });
+      }
+    }
+  }
+
+  const posts: Post[] = [];
+  if (!Array.isArray(body.posts)) {
+    problems.push({ field: 'posts', reason: 'not a list' });
+  } else {
+    for (const p of body.posts as unknown[]) {
+      const known = POSTS.find((k) => k === p);
+      if (!known) problems.push({ field: 'posts', reason: 'unknown post' });
+      else if (!posts.includes(known)) posts.push(known);
+    }
+  }
+
+  // Only when nothing above already explains the emptiness: a list of typos is not "none".
+  if (!problems.length && !cursus.length && !posts.length) {
+    problems.push({ field: 'profile', reason: 'a profile needs a cursus or a post' });
+  }
+
+  const names: Record<'firstName' | 'lastName', string> = { firstName: '', lastName: '' };
+  for (const key of ['firstName', 'lastName'] as const) {
+    const value = typeof body[key] === 'string' ? (body[key] as string).trim() : '';
+    if (!value || value.length > NAME_MAX) {
+      problems.push({ field: key, reason: `required, at most ${NAME_MAX} characters` });
+    }
+    names[key] = value;
+  }
+
+  if (problems.length || !campus) return { ok: false, problems };
+  return {
+    ok: true,
+    profile: { version: 1, campus, cursus, posts, ...names },
+  };
+}
+
 /** The profile of an account MiConnect told us nothing about: every column empty. */
 export const EMPTY_PROFILE: MiconnectProfile = {
   miconnectUuid: null,

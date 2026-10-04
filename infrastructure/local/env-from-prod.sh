@@ -95,7 +95,10 @@ TURN_USERNAME"
 # The cost is stated rather than hidden: `isConfigured()` is false locally, so the payment routes
 # answer "Stripe not configured" instead of exercising a provider. Putting an `sk_test_` key here
 # by hand is what makes them testable, and it is the tool for it - never the live key.
-BLANK="STRIPE_SECRET_KEY"
+# MICONNECT_EDITOR_TOKEN is the same kind of key: it WRITES to the production MiConnect, and the local
+# stack signs in through that very instance, so a token here would let a local mistake edit a real
+# person. Local gets the typed "not configured" refusal instead.
+BLANK="MICONNECT_EDITOR_TOKEN STRIPE_SECRET_KEY"
 
 # Regenerated per local stack: these mint or verify credentials.
 REGENERATE="CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET"

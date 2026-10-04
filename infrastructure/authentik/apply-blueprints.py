@@ -35,7 +35,7 @@ from authentik.policies.models import PolicyBinding, PolicyBindingModel
 from authentik.tenants.models import Tenant
 
 # Compared by digest and NEVER printed - a changed secret still shows up as a change.
-SECRETS = {"client_secret", "consumer_secret"}
+SECRETS = {"client_secret", "consumer_secret", "key"}
 # Not compared at all: a cache of the CAS keys, which authentik refreshes itself from its URL.
 CACHES = {"oidc_jwks"}
 
@@ -80,6 +80,11 @@ def normalized(obj):
     out = {}
     for name, value in BlueprintEntry.from_model(obj).attrs.items():
         if name in CACHES or name == "pbm_uuid":
+            continue
+        # authentik's token serializer overwrites `expires` at every apply (the default API-token
+        # duration), and a token with `expiring: false` never reads it - so it is noise that would
+        # make a blueprint holding one report a change forever.
+        if name == "expires" and getattr(obj, "expiring", None) is False:
             continue
         if name in SECRETS:
             out[name] = "secret:" + hashlib.sha256(str(value or "").encode()).hexdigest() if value else None

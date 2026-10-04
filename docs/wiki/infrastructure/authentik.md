@@ -73,6 +73,14 @@ AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprint
 bash infrastructure/authentik/test-blueprints.sh   # or snapshot a local instance built from the files
 ```
 
+**An eighth blueprint, `80-profile-editor.yaml` (WP4, 2026-10-04)**, builds the service account Canari
+writes profiles through: a role holding `view_user` and `change_user` only, the group that carries it,
+the account `miconnect-canari-editor` and its API token, whose key is `!Env MICONNECT_EDITOR_TOKEN`.
+CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, creating or deleting a
+user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
+secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
+([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
+
 **What is NOT in the blueprints, deliberately:**
 
 - **Users and groups**: they are the population, not the configuration.

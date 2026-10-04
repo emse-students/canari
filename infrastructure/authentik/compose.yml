@@ -94,6 +94,9 @@ services:
       # l applique dans ce conteneur. Declare ici pour qu un .env qui l oublie fasse echouer le
       # demarrage, au lieu d un !Env qui se resoudrait a vide.
       MICONNECT_CAS_CONSUMER_SECRET: ${MICONNECT_CAS_CONSUMER_SECRET:?secret du client CAS requis}
+      # La cle API du compte de service qui ecrit les profils pour Canari, lue par 80-profile-editor.yaml
+      # (`!Env`). Meme principe : un .env qui l oublie fait echouer le demarrage.
+      MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:?cle du compte editeur de profils requise}
     shm_size: 512mb
     depends_on:
       postgresql:

@@ -6,11 +6,20 @@ import { AvatarService } from './avatar.service';
 import { UsersController } from './users.controller';
 import { User } from './entities/user.entity';
 import { UserBlock } from './entities/user-block.entity';
+import { ProfileChange } from './entities/profile-change.entity';
+import { ProfileEditService } from './profile-edit.service';
+import { MiconnectEditorClient } from './miconnect-editor.client';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, UserBlock])],
-  providers: [UsersService, AvatarService, UserBlocksService],
+  imports: [TypeOrmModule.forFeature([User, UserBlock, ProfileChange])],
+  providers: [
+    UsersService,
+    AvatarService,
+    UserBlocksService,
+    MiconnectEditorClient,
+    ProfileEditService,
+  ],
   controllers: [UsersController],
-  exports: [UsersService, AvatarService, UserBlocksService],
+  exports: [UsersService, AvatarService, UserBlocksService, ProfileEditService],
 })
 export class UsersModule {}

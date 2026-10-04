@@ -291,6 +291,9 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
+      # so a token here would let a local run edit a real person.
+      MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
       # WITHOUT THESE THREE, NO LOGIN CAN COMPLETE LOCALLY, AND THE FAILURE BLAMES THE SERVER.
       # `infrastructure/.env` carried all three correctly and this file forwarded none of them, so
       # the browser reached `/auth/callback?code=...` - Authentik having authenticated and redirected
