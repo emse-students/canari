@@ -2236,59 +2236,6 @@ and reads back what the server fanned out - a different instrument from the COMM
 records `pastEpochFrames` verbatim on every run, so every future run says whether it is back, and the
 cheapest next step is to read those rows rather than to build the probe.
 
-### P3 - a Welcome is repaired by kick + re-add, and nothing records which of the two causes it was
-
-Found 2026-08-25, while attributing GRP-8's `PASS-DIRTY` of 2026-08-24 (the run is on the
-[board](cross-client-testing.md); the environment half is a methodology rule and is not repeated
-here). A device of the group's creator was fanned into a new group, then sent a `welcome_request`
-for a group whose leaf was ALREADY in the MLS tree. `actions.ts:956` handles that the documented way
-- read the tree, kick the stale leaf, re-add - and logs `[KICK] Stale leaf ... removed`.
-
-**The repair is right; what is missing is which situation it repaired.** Two reach this line and they
-are not the same event:
-
-- the Welcome was **lost or never delivered**, and the device's request is the retry that recovers
-  it. The mechanism working exactly as intended.
-- the Welcome was **still in flight**, and the device asked before it arrived. Then the push and the
-  pull overlap, the repair is reconciling two paths that produced the same leaf, and the standing
-  rule applies: *a race that heals cleanly is still a defect - name what makes the two paths overlap
-  and delete the overlap; a ledger that reconciles them afterwards is a witness, never a fix.*
-
-Nothing at the kick site can tell them apart, and the client that would know is the one being
-repaired. **What would distinguish them:** the requesting device's own log - whether it had received
-and failed to process a Welcome for that group, or had never seen one - and the elapsed time between
-`sendWelcome` for that (group, device) and the `welcome_request` arriving. Neither is recorded today.
-Carry the discriminator to the decision from where it is already known, rather than learning by
-failing: the handler knows when the Welcome was sent, so the line can say which case it is.
-
-Not raised above P3 because the repair is correct either way and no user-visible loss has been
-observed - but it is the reason a group-creating check can go dirty on a device nobody touched, so
-whoever reads the next `[KICK]` needs this page.
-
-### P3 - the seam that forgets a conversation forgets it silently
-
-Found on 2026-08-25 in the same reading. `historyReconcile.ts:756` is `forgetGroupReconciliation`,
-the one seam every deletion path calls so that state describing a conversation cannot outlive one -
-`conversations.ts:193` and `:228`, `groupActions.ts:151` and `:362`. Its own doc comment says why it
-is one seam and not a line in each path: *"the old registry learnt the hard way: state describing a
-conversation may not outlive one, and three separate pieces of it once did, one of them
-user-visible."*
-
-It clears three maps - `asked`, `deferred`, `coverageStated` - and logs nothing at all. So the
-mechanism that exists BECAUSE this state once leaked past a deletion leaves no evidence that it ran,
-which is the one thing a reader would want when it leaks again. Every rule this project has about
-observation says the same: a correct mechanism with no report is found by hand, a day late.
-
-**One line at entry, naming the group and what it held** (`asked`/`deferred`/`coverageStated` all
-carry a value worth printing - a deferred reason, a peer count), plus the rule to classify it. Two
-sibling exports read the same maps and are called only by `historyReconcile.test.ts` -
-`deferredReconciliations()` and `statedCoverage()`. That is a legitimate test seam, not dead code,
-and it stays.
-
-**Why it is deferred.** Same reason as the entry above and filed with it: a product log line changes
-what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
-written in the same commit.
-
 ### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
 
 **The measured case shipped 2026-08-25** - an answer carrying seeds is now `DELIVERY.keyMaterial`,

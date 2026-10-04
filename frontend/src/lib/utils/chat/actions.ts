@@ -23,6 +23,7 @@ import {
 } from '$lib/utils/chat/historyDigestRendezvous';
 import { answerHistoryDigest, stateOurCoverage } from '$lib/utils/chat/historyDiffAnswer';
 import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
+import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
 import { retireConversation } from '$lib/utils/chat/conversations';
 import { refusalIsTemporary } from '$lib/mls-client/deviceKeyPackage';
@@ -742,9 +743,6 @@ const MAX_READD_ATTEMPTS = 3;
 /** Sliding window duration for the re-add anti-livelock guard. */
 const READD_WINDOW_MS = 3 * 60_000;
 
-/** Timestamp of the last Welcome sent, keyed by `${groupId}:${requesterDeviceId}`. */
-const lastWelcomeSentAt = new Map<string, number>();
-
 /**
  * Cooldown after which a freshly-invited device is presumed "still joining".
  * While it runs, further welcome_requests from that device are ignored: its leaf is fresh,
@@ -877,8 +875,9 @@ export async function handleWelcomeRequest(params: {
     // Post-Welcome cooldown: if we sent a Welcome to this device recently, it is almost
     // certainly still processing it (decryption + history bundle take several seconds).
     // Kicking now would evict a freshly-added leaf -> the invitee falls into
-    // UseAfterEviction on send. Let it finish joining.
-    const lastWelcome = lastWelcomeSentAt.get(attemptKey);
+    // UseAfterEviction on send. Let it finish joining. WHICHEVER PATH SENT IT - a creation fan-out,
+    // a pending invitation or an admission as much as an earlier welcome_request (`welcomeSent`).
+    const lastWelcome = welcomeSentAt(groupId, requesterDeviceId);
     if (lastWelcome && now - lastWelcome < WELCOME_COOLDOWN_MS) {
       log(
         `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... Welcome sent ${Math.round((now - lastWelcome) / 1000)}s ago - still joining, skip`
@@ -1007,7 +1006,6 @@ export async function handleWelcomeRequest(params: {
         requesterDeviceId,
         result.ratchetTree
       );
-      lastWelcomeSentAt.set(attemptKey, Date.now());
       log(`[WELCOME_REQ] Welcome -> ${requesterUserId}:${requesterDeviceId} for ${groupId}`);
     }
 
