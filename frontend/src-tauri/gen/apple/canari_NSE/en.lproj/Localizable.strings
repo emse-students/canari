@@ -5,6 +5,9 @@
 "notif.message.encrypted" = "You received an encrypted message";
 "notif.channel.message" = "New message in #%@";
 "notif.channel.unnamed" = "Channel";
+/* A mention token in a decrypted body: the one user the extension can name, and everybody else. */
+"notif.mention.you" = "you";
+"notif.mention.someone" = "someone";
 "notif.call.incoming" = "Incoming call";
 "notif.call.incoming_video" = "Incoming video call";
 

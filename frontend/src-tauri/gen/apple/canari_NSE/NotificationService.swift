@@ -748,7 +748,8 @@ class NotificationService: UNNotificationServiceExtension {
     if isGroup, !senderName.isEmpty {
       content.subtitle = senderName
     }
-    content.body = body
+    // Rendered for DISPLAY only: the mention-of-me check below reads the raw tokens.
+    content.body = Self.renderMentions(body, myUserId: ctx?.userId, locale: ctx?.locale)
     // Per-conversation stacking (WP-iOS-7): replaces the single flat thread.
     if !groupId.isEmpty {
       content.threadIdentifier = groupId
@@ -916,7 +917,8 @@ class NotificationService: UNNotificationServiceExtension {
     // `canari_push.mm`; `channelPushFields.test.ts` holds the four together.
     content.title = workspaceName.isEmpty ? "#\(channelName)" : "\(workspaceName) - #\(channelName)"
     content.body =
-      body ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
+      body.map { Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale) }
+      ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
     // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
@@ -1003,6 +1005,31 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
+  /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
+  /// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
+  ///
+  /// The extension has no name directory and no second chance to redraw, so it renders the one id it
+  /// knows for certain and says plainly that it does not know the others, rather than a hex blob on
+  /// the very banner a mention makes time-sensitive. Android twin: `renderMentions`.
+  private static func renderMentions(_ text: String, myUserId: String?, locale: String?) -> String {
+    guard text.contains("@["),
+      let regex = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]")
+    else { return text }
+    let me = myUserId?.lowercased()
+    let ns = text as NSString
+    var out = ""
+    var cursor = 0
+    for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+      out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+      let id = ns.substring(with: match.range(at: 1)).lowercased()
+      let key = (me != nil && id == me) ? "notif.mention.you" : "notif.mention.someone"
+      out += "@" + localized(key, locale: locale)
+      cursor = match.range.location + match.range.length
+    }
+    out += ns.substring(from: cursor)
+    return out.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+  }
+
   private static func refusalReason(_ json: String?) -> String? {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

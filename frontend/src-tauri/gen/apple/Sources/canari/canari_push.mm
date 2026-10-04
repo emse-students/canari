@@ -2402,6 +2402,38 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
+// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
+// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
+// No name directory reaches this process, so it names the one id it knows for certain rather than
+// show a hex blob on the banner a mention makes time-sensitive. Twins: the NSE's `renderMentions`
+// and Android's `renderMentions`.
+static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId) {
+  if (text.length == 0 || [text rangeOfString:@"@["].location == NSNotFound) {
+    return text;
+  }
+  NSRegularExpression *regex =
+      [NSRegularExpression regularExpressionWithPattern:@"@\\[([0-9a-fA-F]{64})\\]" options:0 error:nil];
+  if (regex == nil) {
+    return text;
+  }
+  NSString *me = myUserId.lowercaseString;
+  NSMutableString *out = [NSMutableString string];
+  NSUInteger cursor = 0;
+  for (NSTextCheckingResult *match in [regex matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
+    [out appendString:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)]];
+    NSString *mentioned = [[text substringWithRange:[match rangeAtIndex:1]] lowercaseString];
+    BOOL isMe = me.length > 0 && [mentioned isEqualToString:me];
+    [out appendString:@"@"];
+    [out appendString:CanariLocalized(isMe ? @"notif.mention.you" : @"notif.mention.someone")];
+    cursor = match.range.location + match.range.length;
+  }
+  [out appendString:[text substringFromIndex:cursor]];
+  return [out stringByReplacingOccurrencesOfString:@"[ \\t]{2,}"
+                                        withString:@" "
+                                           options:NSRegularExpressionSearch
+                                             range:NSMakeRange(0, out.length)];
+}
+
 // `mentionedByServer` is the channel path's answer to "does this @ me": a channel message carries a
 // cleartext `mentionedUserIds` from the sender, so the server computes it per recipient. An MLS
 // message has no such list - the server cannot read it - which is why the body scan below exists.
@@ -2454,7 +2486,9 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // Inside a group conversation, surface who spoke as a subtitle (Android: MessagingStyle.Message
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
-  CanariShowLocalNotification(title, body, deepLink, threadId, notifId, attachmentPath,
+  // Rendered for DISPLAY only, after the mention-of-me scan above has read the raw tokens.
+  NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil);
+  CanariShowLocalNotification(title, shown, deepLink, threadId, notifId, attachmentPath,
                               groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0);
 }
 

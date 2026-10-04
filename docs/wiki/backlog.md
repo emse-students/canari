@@ -3465,75 +3465,21 @@ is indistinguishable from a client asking for a user it *should* know - a roster
 identity nobody minted, which is a P1 this campaign already carries. A per-row allowlist here would
 silence the next one of those.
 
-### P2 - a mention notification shows a 64-character hex id where the name should be
+### P3 - a mention banner says "someone" where the mentioned member's NAME could be
 
-Found by the user on the phone, 2026-08-22, while the MENTION rung was running.
+**The hex is gone from every native composer** - Android since 2026-09-05 (`renderMentions`, after
+COMM-14), the iOS extension and `canari_push.mm` since 2026-10-04: a `@[<64 hex>]` token renders as
+`@vous` / `@quelqu'un`, the mention-of-me check still reads the raw token, and
+`nativeStrings.test.ts` holds the three renderers and their words. **Owed: one look on an iPhone**
+(compiled, never run).
 
-The wire format of a mention is `@[<64 lowercase hex>]` (`utils/mentions.ts`), and the WEB resolves
-it at render time - `mentions.parse.ts:44` replaces `@[id]` with `@DisplayName` for bodies, previews
-and reply quotes. **The Android notification does not.** `CanariFirebaseMessagingService` READS the
-token (line 1332, `decrypted?.text?.contains("@[$myUserId]")`) to decide whether this is a mention of
-me, and then passes the decrypted text to the notification builder unchanged. Both paths are
-affected: the MLS/DM one and `handleChannelMessage`.
-
-So the notification reads `Salut @[d82cd226…64 hex…] tu peux regarder ?`.
-
-**It is worse than cosmetic.** `canari_mentions` is `IMPORTANCE_HIGH` and asks to bypass DND
-(`CanariApplication.kt:223`): the one notification designed to interrupt someone is the one that
-cannot be read. And the check that covers the path does not see it - MENTION-2 asserts that the
-notification carries the marker, which is true of a body full of hex.
-
-**THE MLS PATH CANNOT BE FIXED SERVER-SIDE, AND THE REASON IS KNOWLEDGE, NOT PRIVACY.** A DM or
-group message reaches the server as ciphertext, so the server does not know a mention happened at all
-- which is exactly why the Kotlin scans the decrypted text for `@[<myUserId>]` rather than being told.
-No payload field can carry a name the sender of the payload cannot compute.
-
-**The privacy argument this entry used to make is FALSE, and it was worth measuring rather than
-assuming.** It said a display name in the payload would send real names of real students through FCM
-and APNs. Every message push already does: `messaging.service.ts:463` calls `resolveUserDisplayName`
-and ships the result as `senderName` in both the FCM data map and the APNs alert title
-(`push-payload.ts`). So the objection to naming a MENTIONED user is not that names may not travel -
-they already do - it is only that on the MLS path nobody server-side knows which ones to send.
-
-**The CHANNEL path is therefore a different, much cheaper problem**, and the two should not be
-bundled. `handleChannelMessage` is told `mentioned` by the server, from a cleartext
-`mentionedUserIds` the sender supplies (the documented leak, MENTION-6). The server can resolve those
-ids the same way it already resolves `senderName`, and the only real constraint is SIZE: `senderName`
-and `groupName` are already flagged as unbounded user text against the 4 KB APNs budget
-(`push-payload.ts:97`), and N mentioned names is N times that risk. Bound it - the first mention, or
-nothing.
-
-**For the MLS path the resolution belongs on the device, and this repo has TWO shapes for it.** The
-one this entry originally proposed is a network fetch: `fetchAvatar(userId)` resolves a stranger's
-avatar from `GET /api/mls/push/avatar/:targetUserId`, authenticated by `requesterId` + `deviceId` +
-the Keystore push secret, behind a 24 h file cache, and a sibling endpoint returning
-`resolveUserDisplayName` would mirror it. **The other is cheaper and better suited**, because a
-notification arrives exactly when the device may be offline: `graine_seeds.json` is an app-private
-file the FOREGROUND writes through a Tauri command (`store_graine_seed`) and the push service reads
-with no network at all (`lookupGraineSeed`). The web already keeps a resolved-display-name cache -
-`peekUserDisplayName` / `seedUserDisplayName` in `utils/users/displayName.ts` - so mirroring it is the
-same three pieces the seed mirror has: a Rust command plus its `capabilities/` grant (an ungranted
-Tauri command ships and rejects on a real device), a call site in the resolver, and a Kotlin reader.
-No new server route, no deploy, and no name that the device did not already know.
-
-**Whichever is chosen, it needs a substitution pass over the body before the notification is built.**
-
-**The degrade must be decided, not defaulted - and the web decided it on 2026-08-30.** A cache miss
-with no network is the exact case a notification arrives in, and it must not print hex. The mention
-chip and the post mention link both stopped using the id as its own fallback that day: an unresolved
-mention renders as a bare `@`, because a name that is not known YET is not the same fact as a name
-that does not exist, and only the second may be painted. The notification has no second chance to
-re-render, which argues for the same answer rather than a different one - a bare `@` is honest, and
-`@[d82cd226...]` is not. Confirm against the native side before building.
-
-**iOS is presumed to have the same gap and cannot be checked** - no iPhone in the estate
-(`device-verification.md`). `push-payload.ts` builds the APNs half from the same fields.
-
-**Cost, stated because it is why this is not a drive-by fix:** the channel half is server-only and
-small; the MLS half is native (a Tauri command and its ACL grant, Kotlin, an APK rebuild and install)
-and the rebuild re-bases A1's build for every phase of the ladder that follows it. Neither half can be
-VERIFIED without a phone - a native change is checked by compiling, which proves nothing about
-running.
+**What is left is a NAME instead of the word, and it is a design choice, not a defect.** The MLS path
+cannot be told server-side (the server never sees the text); the device already holds names
+(`peekUserDisplayName` / `seedUserDisplayName` in `utils/users/displayName.ts`), so the cheap shape is
+a mirror like `graine_seeds.json` - a Rust command plus its `capabilities/` grant, a call site in the
+resolver, a Kotlin and a Swift reader - with no network on the push path. The channel path could
+instead take the first mentioned name from the server, bounded against the 4 KB APNs budget
+(`push-payload.ts`). Either way a miss keeps today's word.
 
 ## The harness itself
 

@@ -390,3 +390,37 @@ describe('Native sources, both platforms', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('Mention tokens in a native banner', () => {
+  /**
+   * A decrypted body carries `@[<64 hex>]`, and a banner printing it raw is the backlog's "a
+   * mention notification shows a 64-character hex id". Android rendered it since 2026-09-05; both
+   * iOS composers printed it until 2026-10-04. Nothing here runs Swift or ObjC, so this holds the
+   * three renderers and their words in place - the behaviour is owed a reading on an iPhone.
+   */
+  const swift = readFileSync(join(APPLE_ROOT, 'canari_NSE', 'NotificationService.swift'), 'utf8');
+  const objc = readFileSync(join(APPLE_ROOT, 'Sources', 'canari', 'canari_push.mm'), 'utf8');
+  const kotlin =
+    kotlinFiles.find((f) => f.name === 'CanariFirebaseMessagingService.kt')?.source ?? '';
+
+  it('renders the tokens on every composer that shows a decrypted body', () => {
+    expect(kotlin).toMatch(/renderMentions\(it, myUserId/);
+    expect(swift).toMatch(/content\.body = Self\.renderMentions\(body/);
+    expect(swift).toMatch(/body\.map \{ Self\.renderMentions\(/);
+    expect(objc).toMatch(/CanariRenderMentions\(body,/);
+  });
+
+  it('names the two words in all four iOS tables and both Android ones', () => {
+    for (const bundle of BUNDLES) {
+      for (const lang of ['fr', 'en']) {
+        const table = parseLproj(bundle, lang, 'Localizable.strings');
+        expect(table.has('notif.mention.you'), `${bundle}/${lang}`).toBe(true);
+        expect(table.has('notif.mention.someone'), `${bundle}/${lang}`).toBe(true);
+      }
+    }
+    for (const table of [fr, en]) {
+      expect(table.has('notif_mention_you')).toBe(true);
+      expect(table.has('notif_mention_someone')).toBe(true);
+    }
+  });
+});
