@@ -701,6 +701,12 @@ const NOTABLE = [
   // offline recipient is a different fact and keeps its own treatment.
   /\[DevicesController\] \[DELETE_DEVICE\] user=\S+ device=\S+ groupsCleaned=\d+ /,
   /\[PubSub\] \S+ not connected to this gateway - control frame not delivered \(it has no queue row/,
+  // THE MLS SPELLING OF AN OFFLINE RECIPIENT - its own rule, never the control-frame one above. A
+  // frame for a device not on this gateway stays in its queue row and is fetched on reconnect: the
+  // designed path every row that enrols a second device crosses (measured twice, 2026-09-07), so it
+  // is reported rather than left `unexplained`. Matched only with a NON-EMPTY `queuedId`: a frame
+  // that "stays in DB queue" without a row naming it would be a frame nobody can fetch.
+  /\[PubSub\] \S+ not connected to this gateway - message stays in DB queue, will be fetched on reconnect \(queuedId=[^)\s]+\)/,
   // A signed-out browser booting asks for a refresh it cannot have: the client cannot see an
   // HttpOnly cookie, so asking is the only way to learn there is none. Every wipe produces it
   // (`newdevice.mjs`), and the refusal of a PRESENT but bad credential is another spelling.
