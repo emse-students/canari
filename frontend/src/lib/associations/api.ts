@@ -2615,11 +2615,11 @@ export interface SpaceRow {
   openedAt: string;
   bde: { id: string; name: string } | null;
   /** How many associations' audience rules reach this space. */
-  associationCount: number;
-  /** The associations whose rules reach this space, by any rule (exact or wider). */
-  reachedBy: string[];
-  /** The associations holding a rule for exactly this pair. */
-  exactBy: string[];
+}
+
+/** One audience rule of one association. */
+export interface AssociationRuleRow extends AudienceRule {
+  associationId: string;
 }
 
 /** One audience rule; `null` means "any" (every formation, or every campus). */
@@ -2628,24 +2628,14 @@ export interface AudienceRule {
   campus: Campus | null;
 }
 
-/** Lists the open spaces. Global admins only. */
+/** Lists every formation x campus space with its BDE. Global admins only. */
 export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
 }
 
-/** Opens a space (D17). Answers 409 when the pair is already open. */
-export function openSpace(formation: Formation, campus: Campus): Promise<SpaceRow> {
-  return request<SpaceRow>('/api/associations/spaces', {
-    method: 'POST',
-    body: JSON.stringify({ formation, campus }),
-  });
-}
-
-/** Closes a space. Association rules are untouched, so reopening the pair restores them. */
-export function closeSpace(spaceId: string): Promise<void> {
-  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}`, {
-    method: 'DELETE',
-  });
+/** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
+export function listAllAudiences(): Promise<AssociationRuleRow[]> {
+  return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
 }
 
 /** Designates, or clears with `null`, the BDE of a space (D22). */
@@ -2654,13 +2644,6 @@ export function setSpaceBde(spaceId: string, associationId: string | null): Prom
     method: 'PUT',
     body: JSON.stringify({ associationId }),
   });
-}
-
-/** The audience rules of an association: who it addresses (D19). */
-export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
-    `/api/associations/${encodeURIComponent(associationId)}/audiences`
-  );
 }
 
 /** Replaces the audience rules of an association; at least one rule is required. */

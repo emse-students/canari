@@ -1,3 +1,3 @@
-### Added - an admin grid for spaces and who an association addresses
+### Added - an admin grid for who each association reaches, and the BDE of each space
 
-Admins open formation x campus spaces, designate each BDE (one BDE may govern several spaces) and set who each association reaches from one grid at `/admin/spaces` ([profiles-and-access](docs/wiki/profiles-and-access.md)). Nothing a reader sees changes yet.
+All formation x campus spaces exist from the start; from `/admin/spaces` an admin ticks, per association, everyone, a whole campus or one formation, and stars its BDE (one BDE may govern several spaces) ([profiles-and-access](docs/wiki/profiles-and-access.md)). Nothing a reader sees changes yet.

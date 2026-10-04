@@ -136,6 +136,7 @@ application computed from the same profile, so no application keeps a hard-coded
   reader sees is the UNION of the spaces their affiliations open.
 - **D17 - A space exists only once an admin opens it**, and it is opened when a BDE is ready to
   govern it. Before that its members have the common modules and whatever targets them.
+  **RELAXED 2026-10-04 (user): every formation x campus pair exists from the start; nothing is opened.**
 - **D18 - Common to every valid profile, with no border between spaces: messaging, forms/ticketing,
   the directory.** The existing block is the only boundary.
 - **D19 - Feed, agenda and associations are per space, and an audience is FIXED BY THE AUTHOR, never
@@ -489,17 +490,36 @@ purpose**: `associations.type` gaining `institution` (nothing could create one y
 
 **WP6d as built (2026-10-04, on the 6a branch).** API in `social-service/src/spaces/`, all global-admin
 only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
-`associations/spaces` wins over `associations/:id`: `GET/POST /api/associations/spaces` (list with BDE
-, the number of associations whose rules reach each space, who they are (`reachedBy`) and who holds the rule for exactly that pair (`exactBy`); open a pair, 409 if already open),
-`PUT /api/associations/spaces/:id/bde` (designate or clear; only a regular association, never a list;
-**the same association may be the BDE of several spaces - user, 2026-10-04, so the migration carries NO unique index on the BDE column**), `DELETE /api/associations/spaces/:id` (close a space: its BDE designation goes, association rules stay, so reopening restores everything; 404 if not open), `GET/PUT /api/associations/:id/audiences` (replace the rules
-in one transaction, de-duplicated, at least one). Screen: `/admin/spaces` (nav entry "Espaces",
-global admins) - ONE GRID (user, 2026-10-04: "une vue globale"): associations in rows, open spaces in columns, a check per cell (the association reaches the space: adds or removes the rule for exactly that pair) and a star (BDE of the space; designating one also adds the reach, a BDE always reaches what it governs). A cell reached only by a WIDER rule (a whole campus) says so and points at the folded "advanced rules" editor, formation and campus with "all" meaning NULL, because that cell has no rule of its own to remove. Below: an "open a space" row; a space is closed from its column header.
-**Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list. **The `isBDE` toggle on
-`/admin/associations` still exists and still drives every BDE check**: 6c moves those checks onto
-the space's BDE and deletes the column, so until then the two say the same thing only because the
-seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the service (11) and CI boots
-the real module.
+`associations/spaces` wins over `associations/:id`: `GET /api/associations/spaces` (every pair with its
+BDE), `GET /api/associations/spaces/audiences` (the rules of EVERY association in one read, which is all
+the grid needs to draw itself), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
+regular association, never a list; **the same association may be the BDE of several spaces - user,
+2026-10-04, so the migration carries NO unique index on the BDE column**) and
+`GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated, at least
+one).
+
+**D17 RELAXED (user, 2026-10-04): NO ONE OPENS A SPACE.** All eight pairs (4 formations x 2 campuses)
+are seeded by migration 071, so there is no open/close route and no "open a space" form. D17's other
+half stands: a pair with no BDE has no governance yet.
+
+**The screen, `/admin/spaces` (nav entry "Espaces", global admins), is ONE GRID** (user: "une vue
+globale", then "quelque chose a la Discord"): associations in rows; columns are "everyone", then per
+campus a "whole campus" box and one box per formation. **Two levels, ticked like folders**: ticking a
+campus ticks its four formations, unticking one formation leaves the campus half-ticked. The pure logic
+is `lib/associations/audienceRules.ts`: the page reads the stored rules as a set of pairs and WRITES THE
+SMALLEST EQUIVALENT RULE SET (all pairs = one `(null,null)`, a whole campus = one `(null,campus)`, else
+pair rules), so a campus rule keeps covering a formation added later and the page always shows what is
+stored. A star in the corner of a pair box makes the association the BDE of that pair (a BDE always
+reaches what it governs, so designating one adds the reach first). A list has no star. Clearing every
+box is refused: an association that reaches nobody is invisible, and the server refuses an empty set
+too.
+
+**Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
+
+**The `isBDE` toggle on `/admin/associations` still exists and still drives every BDE check**: 6c moves
+those checks onto the space's BDE and deletes the column, so until then the two say the same thing only
+because the seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the
+service (9) and the pair logic (5), and CI boots the real module.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions

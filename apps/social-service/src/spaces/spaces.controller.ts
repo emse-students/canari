@@ -1,47 +1,38 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   Param,
   ParseUUIDPipe,
-  Post,
   Put,
   UseGuards,
 } from '@nestjs/common';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { OpenSpaceDto, SetAudiencesDto, SetSpaceBdeDto } from './dto/space.dto';
+import { SetAudiencesDto, SetSpaceBdeDto } from './dto/space.dto';
 import { SpacesService } from './spaces.service';
 
 /**
  * The spaces admin API (WP6d). Registered BEFORE `AssociationsController` in the module so its
  * literal `associations/spaces` route wins over `associations/:id`. Every route is global-admin
- * only: opening a space and choosing its BDE are cross-space rights (D24).
+ * only: choosing a BDE is a cross-space right (D24).
  */
 @Controller('associations/spaces')
 @UseGuards(NginxAuthGuard, GlobalAdminGuard)
 export class SpacesController {
   constructor(private readonly service: SpacesService) {}
 
-  /** Lists the open spaces with their BDE. */
+  /** Lists every space with its BDE. */
   @Get()
   list() {
     return this.service.list();
   }
 
-  /** Opens a space (D17). */
-  @Post()
-  open(@Body() dto: OpenSpaceDto) {
-    return this.service.open(dto.formation, dto.campus);
-  }
-
-  /** Closes a space (the inverse of opening it). Association rules are left as they are. */
-  @Delete(':id')
-  @HttpCode(204)
-  async close(@Param('id', ParseUUIDPipe) id: string) {
-    await this.service.close(id);
+  /** The audience rules of every association, for the admin grid. */
+  @Get('audiences')
+  listAudiences() {
+    return this.service.listAudiences();
   }
 
   /** Designates, or clears with `null`, the BDE of a space (D22). */

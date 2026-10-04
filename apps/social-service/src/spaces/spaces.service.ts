@@ -1,14 +1,7 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { Association } from '../associations/entities/association.entity';
-import { isUniqueViolation } from '../common/pg-errors';
 import { AssociationAudience } from './association-audience.entity';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space } from './space.entity';
@@ -21,12 +14,11 @@ export interface SpaceView {
   campus: SpaceCampus;
   openedAt: Date;
   bde: { id: string; name: string } | null;
-  /** How many associations' rules reach this space. */
-  associationCount: number;
-  /** The associations whose rules reach this space, by any rule (exact or wider). */
-  reachedBy: string[];
-  /** The associations holding a rule for exactly this pair - the ones a click can remove. */
-  exactBy: string[];
+}
+
+/** One audience rule of one association, as the admin grid reads them all at once. */
+export interface AssociationRule extends AudienceRule {
+  associationId: string;
 }
 
 /** A normalised audience rule: `null` is "any". */
@@ -60,8 +52,9 @@ export function normaliseRules(rules: AudienceRuleDto[]): AudienceRule[] {
 }
 
 /**
- * Spaces (WP6d, docs/wiki/profiles-and-access.md): opening one (D17), designating its BDE (D22) and
- * editing who an association addresses (D19). Global-admin operations, guarded by the controller.
+ * Spaces (WP6d, docs/wiki/profiles-and-access.md): designating the BDE of each pair (D22) and
+ * editing who an association addresses (D19). Every pair exists from the migration on - none is
+ * opened or closed. Global-admin operations, guarded by the controller.
  */
 @Injectable()
 export class SpacesService {
@@ -75,13 +68,12 @@ export class SpacesService {
     private readonly dataSource: DataSource
   ) {}
 
-  /** Lists every open space with its BDE and the number of associations whose rules reach it. */
+  /** Lists every space with its BDE. */
   async list(): Promise<SpaceView[]> {
-    const [spaces, rules] = await Promise.all([
-      this.spaces.find({ order: { campus: 'ASC', formation: 'ASC' } }),
-      this.audiences.find(),
-    ]);
-    const bdeIds = spaces.map((s) => s.bdeAssociationId).filter((id): id is string => !!id);
+    const spaces = await this.spaces.find({ order: { campus: 'ASC', formation: 'ASC' } });
+    const bdeIds = [...new Set(spaces.map((s) => s.bdeAssociationId))].filter(
+      (id): id is string => !!id
+    );
     const bdes = bdeIds.length
       ? await this.associations.find({
           where: { id: In(bdeIds) },
@@ -89,14 +81,6 @@ export class SpacesService {
         })
       : [];
     return spaces.map((space) => {
-      const reaching = new Set(
-        rules.filter((r) => ruleReachesSpace(r, space)).map((r) => r.associationId)
-      );
-      const exact = new Set(
-        rules
-          .filter((r) => r.formation === space.formation && r.campus === space.campus)
-          .map((r) => r.associationId)
-      );
       const bde = bdes.find((a) => a.id === space.bdeAssociationId);
       return {
         id: space.id,
@@ -104,24 +88,18 @@ export class SpacesService {
         campus: space.campus,
         openedAt: space.openedAt,
         bde: bde ? { id: bde.id, name: bde.name } : null,
-        associationCount: reaching.size,
-        reachedBy: [...reaching],
-        exactBy: [...exact],
       };
     });
   }
 
-  /** Opens a space. A pair that is already open is a conflict, not a silent no-op. */
-  async open(formation: SpaceFormation, campus: SpaceCampus): Promise<Space> {
-    this.logger.log(`[spaces] open ${formation} x ${campus}`);
-    try {
-      return await this.spaces.save(
-        this.spaces.create({ formation, campus, bdeAssociationId: null })
-      );
-    } catch (err) {
-      if (isUniqueViolation(err)) throw new ConflictException('This space is already open');
-      throw err;
-    }
+  /** The audience rules of EVERY association, in one read: the grid needs them all to draw itself. */
+  async listAudiences(): Promise<AssociationRule[]> {
+    const rows = await this.audiences.find();
+    return rows.map((r) => ({
+      associationId: r.associationId,
+      formation: r.formation,
+      campus: r.campus,
+    }));
   }
 
   /**
@@ -140,17 +118,6 @@ export class SpacesService {
     }
     this.logger.log(`[spaces] BDE of ${spaceId} -> ${associationId ?? 'none'}`);
     await this.spaces.update({ id: spaceId }, { bdeAssociationId: associationId });
-  }
-
-  /**
-   * Closes a space: the row goes, and with it its BDE designation. Nothing else is touched - an
-   * association's rules are rules, not links to this space, so reopening the same pair restores
-   * every audience exactly. 404 when it is not open.
-   */
-  async close(spaceId: string): Promise<void> {
-    const result = await this.spaces.delete({ id: spaceId });
-    if (!result.affected) throw new NotFoundException('Space not found');
-    this.logger.log(`[spaces] closed ${spaceId}`);
   }
 
   /** The audience rules of an association. */

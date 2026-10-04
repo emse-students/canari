@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import type { AssociationAudience } from './association-audience.entity';
@@ -39,12 +39,10 @@ describe('SpacesService', () => {
     rules?: Partial<AssociationAudience>[];
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
-    const del = jest.fn().mockResolvedValue({ affected: 1 });
     const save = jest.fn().mockImplementation(async (s: Partial<Space>) => s);
     const spaces = {
       findOne: jest.fn().mockResolvedValue(opts.space ?? null),
       update,
-      delete: del,
       create: jest.fn().mockImplementation((s: Partial<Space>) => s),
       save,
       find: jest.fn().mockResolvedValue(opts.spaceRows ?? []),
@@ -65,34 +63,9 @@ describe('SpacesService', () => {
       service: new SpacesService(spaces, associations, audiences, dataSource),
       save,
       update,
-      del,
       manager,
     };
   }
-
-  it('opens a space', async () => {
-    const { service, save } = make({});
-    await service.open('ICM', 'gardanne');
-    expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ formation: 'ICM', campus: 'gardanne', bdeAssociationId: null })
-    );
-  });
-
-  it('answers 409 when the pair is already open', async () => {
-    const { service, save } = make({});
-    save.mockRejectedValue({ code: '23505' });
-    await expect(service.open('ICM', 'gardanne')).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it('closes a space, and answers 404 when it is not open', async () => {
-    const closed = make({});
-    closed.del.mockResolvedValue({ affected: 1 });
-    await expect(closed.service.close('s')).resolves.toBeUndefined();
-    expect(closed.del).toHaveBeenCalledWith({ id: 's' });
-    const absent = make({});
-    absent.del.mockResolvedValue({ affected: 0 });
-    await expect(absent.service.close('s')).rejects.toBeInstanceOf(NotFoundException);
-  });
 
   it('refuses a list as a BDE and an unknown space or association', async () => {
     await expect(make({}).service.setBde('s', null)).rejects.toBeInstanceOf(NotFoundException);
@@ -125,21 +98,30 @@ describe('SpacesService', () => {
     expect(update).toHaveBeenCalledTimes(2);
   });
 
-  it('lists who reaches each space and who holds its exact rule', async () => {
+  it('lists every space with its BDE', async () => {
     const { service } = make({
       spaceRows: [
-        { id: 's1', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: null },
-        { id: 's2', formation: 'ISMIN', campus: 'gardanne', bdeAssociationId: null },
+        { id: 's1', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: 'a' },
+        { id: 's2', formation: 'ISMIN', campus: 'gardanne', bdeAssociationId: 'a' },
+        { id: 's3', formation: 'FSSS', campus: 'gardanne', bdeAssociationId: null },
       ],
+    });
+    const spaces = await service.list();
+    expect(spaces.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+    expect(spaces[2].bde).toBeNull();
+  });
+
+  it('lists the rules of every association', async () => {
+    const { service } = make({
       rules: [
         { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
         { associationId: 'b', formation: null, campus: 'saint-etienne' },
       ],
     });
-    const [icm, ismin] = await service.list();
-    expect(icm.reachedBy.sort()).toEqual(['a', 'b']);
-    expect(icm.exactBy).toEqual(['a']);
-    expect(ismin.reachedBy).toEqual([]);
+    expect(await service.listAudiences()).toEqual([
+      { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
+      { associationId: 'b', formation: null, campus: 'saint-etienne' },
+    ]);
   });
 
   it('replaces the rules in one transaction, de-duplicated, and refuses an empty set', async () => {

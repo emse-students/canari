@@ -1,7 +1,7 @@
 -- Migration 071: spaces (WP6a of the profile reform, docs/wiki/profiles-and-access.md, D16-D22).
 --
--- A SPACE is a formation x campus pair (ICM Saint-Etienne, ISMIN Gardanne, ...). It exists only once
--- an admin has opened it (D17), and has at most ONE BDE (D22, which may govern several spaces). This migration is DATA ONLY: nothing
+-- A SPACE is a formation x campus pair (ICM Saint-Etienne, ISMIN Gardanne, ...). All the pairs
+-- exist (D17, relaxed 2026-10-04: nothing is opened), and one has at most ONE BDE (D22, which may govern several spaces). This migration is DATA ONLY: nothing
 -- reads these tables yet - the readers (6b) and the admin page (6d) come next - so applying it
 -- changes nothing a user sees.
 --
@@ -72,7 +72,12 @@ CREATE TABLE IF NOT EXISTS post_audiences (
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_post_audiences_rule"
     ON post_audiences ("postId", COALESCE(formation, ''), COALESCE(campus, ''));
 
-INSERT INTO spaces (formation, campus) VALUES ('ICM', 'saint-etienne')
+-- EVERY PAIR EXISTS FROM THE START (user, 2026-10-04: no "opening" of a space - all the combinations,
+-- and each association chooses, at two levels, a whole campus or one formation). Four formations x
+-- two campuses, the pairs the CHECKs above allow.
+INSERT INTO spaces (formation, campus)
+    SELECT f, c FROM unnest(ARRAY['ICM', 'ISMIN', 'FSSS', 'Autre']) AS f
+    CROSS JOIN unnest(ARRAY['saint-etienne', 'gardanne']) AS c
     ON CONFLICT (formation, campus) DO NOTHING;
 
 -- Every association that has no rule yet addresses ICM x saint-etienne, as it does today.

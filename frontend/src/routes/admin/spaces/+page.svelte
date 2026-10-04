@@ -4,12 +4,10 @@
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
   import {
+    listAllAudiences,
     listAssociations,
     listSpaces,
-    openSpace,
-    closeSpace,
     setSpaceBde,
-    getAssociationAudiences,
     setAssociationAudiences,
     SocialApiError,
     type Association,
@@ -17,67 +15,58 @@
     type SpaceRow,
   } from '$lib/associations/api';
   import {
-    CAMPUSES,
-    FORMATIONS,
-    campusLabel,
-    formationLabel,
-    type Campus,
-    type Formation,
-  } from '$lib/profile/miconnectProfile';
-  import Picker from '$lib/components/ui/Picker.svelte';
-  import type { PickerOption } from '$lib/components/ui/picker';
-  import { Check, Layers, Plus, Star, Trash2, LoaderCircle } from '@lucide/svelte';
-  import { showConfirm } from '$lib/stores/confirm.svelte';
+    ALL_CELLS,
+    campusCells,
+    cellOf,
+    coverage,
+    reachedCells,
+    toggleGroup,
+    toRules,
+    type Cell,
+    type Coverage,
+  } from '$lib/associations/audienceRules';
+  import { CAMPUSES, FORMATIONS, campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
+  import { Check, Layers, Minus, Star } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
   let spaces = $state<SpaceRow[]>([]);
   let associations = $state<Association[]>([]);
-
-  let newFormation = $state<Formation>('ICM');
-  let newCampus = $state<Campus>('saint-etienne');
-  let opening = $state(false);
-  /** The cell or column being persisted, so a second click cannot race the first. */
+  /** The stored rules of each association, by id. */
+  let rulesById = $state<Record<string, AudienceRule[]>>({});
+  /** The cell being persisted, so a second click cannot race the first. */
   let busy = $state<string | null>(null);
 
-  let audienceFor = $state('');
-  let rules = $state<AudienceRule[]>([]);
-  let rulesLoading = $state(false);
-  let rulesSaving = $state(false);
-  let rulesMessage = $state<string | null>(null);
-  let rulesError = $state<string | null>(null);
-
-  const formationOptions: PickerOption[] = FORMATIONS.map((f) => ({
-    value: f,
-    label: formationLabel(f),
-  }));
-  const campusOptions: PickerOption[] = CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) }));
-  const ruleFormationOptions = $derived<PickerOption[]>([
-    { value: '', label: m.admin_audiences_formation_any() },
-    ...formationOptions,
-  ]);
-  const ruleCampusOptions = $derived<PickerOption[]>([
-    { value: '', label: m.admin_audiences_campus_any() },
-    ...campusOptions,
-  ]);
   const sortedAssociations = $derived(
     [...associations].sort((a, b) => a.name.localeCompare(b.name))
   );
-  const associationOptions = $derived<PickerOption[]>(
-    sortedAssociations.map((a) => ({ value: a.id, label: a.name }))
-  );
 
-  /** The column title of a space, also used in every cell's accessible name. */
-  function spaceName(space: SpaceRow): string {
-    return `${formationLabel(space.formation)} · ${campusLabel(space.campus)}`;
+  /** The pairs an association reaches, read back from its stored rules. */
+  function reachOf(association: Association): Set<Cell> {
+    return reachedCells(rulesById[association.id] ?? []);
+  }
+
+  function spaceOf(cell: Cell): SpaceRow | undefined {
+    return spaces.find((s) => cellOf(s.formation, s.campus) === cell);
   }
 
   async function load() {
     loading = true;
     error = null;
     try {
-      [spaces, associations] = await Promise.all([listSpaces(), listAssociations()]);
+      const [s, a, rules] = await Promise.all([
+        listSpaces(),
+        listAssociations(),
+        listAllAudiences(),
+      ]);
+      spaces = s;
+      associations = a;
+      const byId: Record<string, AudienceRule[]> = {};
+      for (const r of rules) {
+        (byId[r.associationId] ??= []).push({ formation: r.formation, campus: r.campus });
+      }
+      rulesById = byId;
     } catch (e) {
       Log.d('admin.spaces.load failed', e);
       error = m.admin_spaces_load_error();
@@ -86,21 +75,33 @@
     }
   }
 
-  async function open() {
-    opening = true;
+  /**
+   * Saves the pairs an association reaches, in the smallest equivalent rule set. At least one pair
+   * must stay: an association that reaches nobody is invisible, which the server refuses too.
+   */
+  async function saveReach(association: Association, cells: Set<Cell>, cellKey: string) {
+    const next = toRules(cells);
+    if (next.length === 0) {
+      error = m.admin_audiences_min_one();
+      return false;
+    }
+    busy = cellKey;
     error = null;
     try {
-      await openSpace(newFormation, newCampus);
-      spaces = await listSpaces();
+      rulesById[association.id] = await setAssociationAudiences(association.id, next);
+      return true;
     } catch (e) {
-      Log.d('admin.spaces.open failed', e);
-      error =
-        e instanceof SocialApiError && e.status === 409
-          ? m.admin_spaces_already_open()
-          : m.admin_spaces_open_error();
+      Log.d('admin.spaces.saveReach failed', e);
+      error = m.admin_audiences_save_error();
+      return false;
     } finally {
-      opening = false;
+      busy = null;
     }
+  }
+
+  /** A parent checkbox: reaches every pair of the group, or clears the group when all are in. */
+  function toggleReachGroup(association: Association, group: readonly Cell[], cellKey: string) {
+    return saveReach(association, toggleGroup(reachOf(association), group), cellKey);
   }
 
   /** The sentence for a refused BDE designation, chosen by the HTTP status (never by the message). */
@@ -113,21 +114,21 @@
   }
 
   /**
-   * Makes an association the BDE of a space, or clears it when it already is. A BDE always reaches
-   * the space it governs, so designating one that does not yet adds the rule for that pair.
+   * Makes an association the BDE of a pair, or clears it when it already is. A BDE always reaches
+   * what it governs, so designating one that does not yet reach the pair adds it first.
    */
   async function toggleBde(space: SpaceRow, association: Association) {
-    busy = `${space.id}:${association.id}`;
+    const cell = cellOf(space.formation, space.campus);
+    const cellKey = `${association.id}:${cell}`;
+    const designating = space.bde?.id !== association.id;
+    if (designating && !reachOf(association).has(cell)) {
+      const ok = await saveReach(association, new Set([...reachOf(association), cell]), cellKey);
+      if (!ok) return;
+    }
+    busy = cellKey;
     error = null;
     try {
-      if (space.bde?.id !== association.id && !space.reachedBy.includes(association.id)) {
-        const current = await getAssociationAudiences(association.id);
-        await setAssociationAudiences(association.id, [
-          ...current,
-          { formation: space.formation, campus: space.campus },
-        ]);
-      }
-      await setSpaceBde(space.id, space.bde?.id === association.id ? null : association.id);
+      await setSpaceBde(space.id, designating ? association.id : null);
     } catch (e) {
       Log.d('admin.spaces.setBde failed', e);
       error = bdeRefusal(e);
@@ -138,110 +139,6 @@
     spaces = await listSpaces().catch(() => spaces);
   }
 
-  /**
-   * Adds or removes the rule for exactly this space. A cell reached only by a WIDER rule (a whole
-   * campus) is not a rule of its own, so there is nothing to remove: say where to edit it.
-   */
-  async function toggleReach(space: SpaceRow, association: Association) {
-    const exact = space.exactBy.includes(association.id);
-    if (!exact && space.reachedBy.includes(association.id)) {
-      error = m.admin_spaces_cell_wide({ association: association.name, space: spaceName(space) });
-      return;
-    }
-    busy = `${space.id}:${association.id}`;
-    error = null;
-    try {
-      const current = await getAssociationAudiences(association.id);
-      const others = current.filter(
-        (r) => !(r.formation === space.formation && r.campus === space.campus)
-      );
-      const next = exact
-        ? others
-        : [...others, { formation: space.formation, campus: space.campus }];
-      if (next.length === 0) {
-        error = m.admin_audiences_min_one();
-        return;
-      }
-      await setAssociationAudiences(association.id, next);
-    } catch (e) {
-      Log.d('admin.spaces.toggleReach failed', e);
-      error = m.admin_audiences_save_error();
-    } finally {
-      busy = null;
-    }
-    spaces = await listSpaces().catch(() => spaces);
-  }
-
-  async function close(space: SpaceRow) {
-    if (
-      !(await showConfirm(m.admin_spaces_close_confirm({ name: spaceName(space) }), {
-        danger: true,
-        confirmLabel: m.admin_spaces_close_btn(),
-      }))
-    )
-      return;
-    busy = space.id;
-    error = null;
-    try {
-      await closeSpace(space.id);
-    } catch (e) {
-      Log.d('admin.spaces.close failed', e);
-      error = m.admin_spaces_close_error();
-    } finally {
-      busy = null;
-    }
-    spaces = await listSpaces().catch(() => spaces);
-  }
-
-  async function chooseAssociation(id: string) {
-    audienceFor = id;
-    rules = [];
-    rulesMessage = null;
-    rulesError = null;
-    if (!id) return;
-    rulesLoading = true;
-    try {
-      rules = await getAssociationAudiences(id);
-    } catch (e) {
-      Log.d('admin.spaces.getAudiences failed', e);
-      rulesError = m.admin_audiences_load_error();
-    } finally {
-      rulesLoading = false;
-    }
-  }
-
-  function addRule() {
-    rules = [...rules, { formation: null, campus: null }];
-  }
-
-  function removeRule(index: number) {
-    rules = rules.filter((_, i) => i !== index);
-  }
-
-  function patchRule(index: number, patch: Partial<AudienceRule>) {
-    rules = rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
-  }
-
-  async function saveRules() {
-    if (rules.length === 0) {
-      rulesError = m.admin_audiences_min_one();
-      return;
-    }
-    rulesSaving = true;
-    rulesMessage = null;
-    rulesError = null;
-    try {
-      rules = await setAssociationAudiences(audienceFor, rules);
-      spaces = await listSpaces();
-      rulesMessage = m.admin_audiences_saved();
-    } catch (e) {
-      Log.d('admin.spaces.setAudiences failed', e);
-      rulesError = m.admin_audiences_save_error();
-    } finally {
-      rulesSaving = false;
-    }
-  }
-
   onMount(() => {
     if (!isGlobalAdmin()) {
       void goto('/admin', { replaceState: true });
@@ -250,10 +147,15 @@
     void load();
   });
 
-  const triggerClass =
-    'border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm';
   const cellButton =
     'inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50';
+
+  /** The classes of a check box: filled when all are in, outlined when only some are. */
+  function boxClass(state: Coverage): string {
+    if (state === 'all') return 'border-cn-yellow bg-cn-yellow/20 text-cn-dark';
+    if (state === 'some') return 'border-cn-yellow/60 text-cn-dark';
+    return 'border-cn-border text-transparent hover:text-text-muted';
+  }
 </script>
 
 <div class="space-y-6">
@@ -280,223 +182,127 @@
       <p class="text-sm text-red-500" role="alert">{error}</p>
     {/if}
 
-    <section class="space-y-3">
-      <p class="text-text-muted text-xs">{m.admin_spaces_legend()}</p>
+    <p class="text-text-muted text-xs">{m.admin_spaces_legend()}</p>
 
-      {#if spaces.length === 0}
-        <p
-          class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface) px-4 py-8 text-center text-sm"
-        >
-          {m.admin_spaces_none()}
-        </p>
-      {:else}
-        <div class="border-cn-border overflow-x-auto rounded-2xl border bg-(--cn-surface)">
-          <table class="w-full border-collapse text-sm">
-            <thead>
-              <tr class="border-cn-border border-b">
-                <th class="text-text-muted px-4 py-3 text-left text-xs font-semibold">
-                  {m.admin_spaces_col_assoc()}
+    <div class="border-cn-border overflow-x-auto rounded-2xl border bg-(--cn-surface)">
+      <table class="w-full border-collapse text-sm">
+        <thead>
+          <tr class="border-cn-border border-b">
+            <th rowspan="2" class="text-text-muted px-4 py-3 text-left text-xs font-semibold">
+              {m.admin_spaces_col_assoc()}
+            </th>
+            <th rowspan="2" class="text-text-muted px-2 py-3 text-center text-xs font-semibold">
+              {m.admin_spaces_col_all()}
+            </th>
+            {#each CAMPUSES as campus (campus)}
+              <th
+                colspan={FORMATIONS.length + 1}
+                class="text-text-main border-cn-border border-l px-2 pt-3 pb-1 text-center text-xs font-bold"
+              >
+                {campusLabel(campus)}
+              </th>
+            {/each}
+          </tr>
+          <tr class="border-cn-border border-b">
+            {#each CAMPUSES as campus (campus)}
+              <th
+                class="text-text-muted border-cn-border border-l px-1.5 pb-3 text-center text-xs font-semibold"
+              >
+                {m.admin_spaces_col_campus()}
+              </th>
+              {#each FORMATIONS as formation (formation)}
+                <th class="text-text-muted px-1.5 pb-3 text-center text-xs font-semibold">
+                  {formationLabel(formation)}
                 </th>
-                {#each spaces as space (space.id)}
-                  <th class="min-w-32 px-3 py-3 text-center">
-                    <div class="flex items-center justify-center gap-1">
-                      <span class="text-text-main text-xs font-semibold">{spaceName(space)}</span>
-                      <button
-                        type="button"
-                        onclick={() => close(space)}
-                        disabled={busy === space.id}
-                        aria-label={m.admin_spaces_close_aria()}
-                        class="text-text-muted rounded-lg p-1 hover:text-red-500 disabled:opacity-50"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody class="divide-cn-border/70 divide-y">
-              {#each sortedAssociations as association (association.id)}
-                <tr>
-                  <th class="text-text-main px-4 py-2 text-left text-sm font-medium">
-                    {association.name}
-                  </th>
-                  {#each spaces as space (space.id)}
-                    {@const reaches = space.reachedBy.includes(association.id)}
-                    {@const isBde = space.bde?.id === association.id}
-                    {@const pending = busy === `${space.id}:${association.id}`}
-                    <td class="px-3 py-2 text-center">
-                      <div class="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={pending}
-                          aria-pressed={reaches}
-                          aria-label={m.admin_spaces_reach_aria({
-                            association: association.name,
-                            space: spaceName(space),
-                          })}
-                          onclick={() => toggleReach(space, association)}
-                          class="{cellButton} {reaches
-                            ? 'border-cn-yellow bg-cn-yellow/20 text-cn-dark'
-                            : 'border-cn-border hover:text-text-muted text-transparent'}"
-                        >
-                          {#if pending}
-                            <LoaderCircle size={14} class="animate-spin" />
-                          {:else}
-                            <Check size={14} />
-                          {/if}
-                        </button>
-                        {#if association.type !== 'list'}
-                          <button
-                            type="button"
-                            disabled={pending}
-                            aria-pressed={isBde}
-                            aria-label={m.admin_spaces_bde_aria({
-                              association: association.name,
-                              space: spaceName(space),
-                            })}
-                            onclick={() => toggleBde(space, association)}
-                            class="{cellButton} {isBde
-                              ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
-                              : 'border-cn-border hover:text-text-muted text-transparent'}"
-                          >
-                            <Star size={14} />
-                          </button>
-                        {:else}
-                          <span class="h-8 w-8" aria-hidden="true"></span>
-                        {/if}
-                      </div>
-                    </td>
-                  {/each}
-                </tr>
               {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-
-      <div class="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
-        <div>
-          <span class="text-text-muted mb-1 block text-xs font-semibold">
-            {m.admin_spaces_open_title()}
-          </span>
-          <Picker
-            id="new-formation"
-            value={newFormation}
-            options={formationOptions}
-            label={m.directory_label_formation()}
-            {triggerClass}
-            onValueChange={(v) => (newFormation = v as Formation)}
-          />
-        </div>
-        <Picker
-          id="new-campus"
-          value={newCampus}
-          options={campusOptions}
-          label={m.directory_label_campus()}
-          {triggerClass}
-          onValueChange={(v) => (newCampus = v as Campus)}
-        />
-        <button
-          type="button"
-          disabled={opening}
-          onclick={open}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-        >
-          {#if opening}
-            <LoaderCircle size={14} class="animate-spin" />
-          {:else}
-            <Plus size={14} />
-          {/if}
-          {m.admin_spaces_open_btn()}
-        </button>
-      </div>
-    </section>
-
-    <details class="border-cn-border rounded-2xl border bg-(--cn-surface) px-4 py-3">
-      <summary class="text-text-main cursor-pointer text-sm font-semibold">
-        {m.admin_spaces_advanced()}
-      </summary>
-      <div class="mt-3 space-y-3">
-        <p class="text-text-muted text-sm">{m.admin_audiences_hint()}</p>
-
-        <Picker
-          id="audience-association"
-          value={audienceFor}
-          options={[{ value: '', label: m.admin_audiences_pick() }, ...associationOptions]}
-          label={m.admin_audiences_pick()}
-          {triggerClass}
-          onValueChange={chooseAssociation}
-        />
-
-        {#if audienceFor}
-          {#if rulesLoading}
-            <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
-          {:else}
-            <div class="space-y-2">
-              {#each rules as rule, index (index)}
-                <div class="grid items-center gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                  <Picker
-                    id="rule-formation-{index}"
-                    value={rule.formation ?? ''}
-                    options={ruleFormationOptions}
-                    label={m.directory_label_formation()}
-                    {triggerClass}
-                    onValueChange={(v) =>
-                      patchRule(index, { formation: v === '' ? null : (v as Formation) })}
-                  />
-                  <Picker
-                    id="rule-campus-{index}"
-                    value={rule.campus ?? ''}
-                    options={ruleCampusOptions}
-                    label={m.directory_label_campus()}
-                    {triggerClass}
-                    onValueChange={(v) =>
-                      patchRule(index, { campus: v === '' ? null : (v as Campus) })}
-                  />
+            {/each}
+          </tr>
+        </thead>
+        <tbody class="divide-cn-border/70 divide-y">
+          {#each sortedAssociations as association (association.id)}
+            {@const reached = reachOf(association)}
+            {@const everyone = coverage(ALL_CELLS, reached)}
+            <tr>
+              <th class="text-text-main min-w-40 px-4 py-2 text-left text-sm font-medium">
+                {association.name}
+              </th>
+              <td class="px-1.5 py-2 text-center">
+                <button
+                  type="button"
+                  disabled={busy === `${association.id}:all`}
+                  aria-pressed={everyone === 'all'}
+                  aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
+                  onclick={() => toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
+                  class="{cellButton} {boxClass(everyone)}"
+                >
+                  {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
+                </button>
+              </td>
+              {#each CAMPUSES as campus (campus)}
+                {@const group = campusCells(campus)}
+                {@const state = coverage(group, reached)}
+                <td class="border-cn-border border-l px-1.5 py-2 text-center">
                   <button
                     type="button"
-                    onclick={() => removeRule(index)}
-                    aria-label={m.admin_audiences_remove()}
-                    class="text-text-muted rounded-xl p-2 hover:text-red-500"
+                    disabled={busy === `${association.id}:${campus}`}
+                    aria-pressed={state === 'all'}
+                    aria-label={m.admin_spaces_campus_aria({
+                      association: association.name,
+                      campus: campusLabel(campus),
+                    })}
+                    onclick={() =>
+                      toggleReachGroup(association, group, `${association.id}:${campus}`)}
+                    class="{cellButton} {boxClass(state)}"
                   >
-                    <Trash2 size={16} />
+                    {#if state === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
                   </button>
-                </div>
+                </td>
+                {#each FORMATIONS as formation (formation)}
+                  {@const cell = cellOf(formation, campus)}
+                  {@const space = spaceOf(cell)}
+                  {@const cellKey = `${association.id}:${cell}`}
+                  {@const label = `${formationLabel(formation)} · ${campusLabel(campus)}`}
+                  <td class="px-1.5 py-2 text-center">
+                    <div class="group relative inline-flex">
+                      <button
+                        type="button"
+                        disabled={busy === cellKey}
+                        aria-pressed={reached.has(cell)}
+                        aria-label={m.admin_spaces_reach_aria({
+                          association: association.name,
+                          space: label,
+                        })}
+                        onclick={() => toggleReachGroup(association, [cell], cellKey)}
+                        class="{cellButton} {boxClass(reached.has(cell) ? 'all' : 'none')}"
+                      >
+                        <Check size={14} />
+                      </button>
+                      {#if association.type !== 'list' && space}
+                        {@const isBde = space.bde?.id === association.id}
+                        <button
+                          type="button"
+                          disabled={busy === cellKey}
+                          aria-pressed={isBde}
+                          aria-label={m.admin_spaces_bde_aria({
+                            association: association.name,
+                            space: label,
+                          })}
+                          onclick={() => toggleBde(space, association)}
+                          class="absolute -top-1.5 -right-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition-opacity disabled:opacity-50 {isBde
+                            ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
+                            : 'border-cn-border text-text-muted bg-(--cn-surface) opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
+                        >
+                          <Star size={10} />
+                        </button>
+                      {/if}
+                    </div>
+                  </td>
+                {/each}
               {/each}
-            </div>
-
-            {#if rulesError}
-              <p class="text-sm text-red-500" role="alert">{rulesError}</p>
-            {/if}
-            {#if rulesMessage}
-              <p class="text-sm text-emerald-600">{rulesMessage}</p>
-            {/if}
-
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onclick={addRule}
-                class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold"
-              >
-                <Plus size={14} />
-                {m.admin_audiences_add()}
-              </button>
-              <button
-                type="button"
-                disabled={rulesSaving}
-                onclick={saveRules}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold disabled:opacity-50"
-              >
-                {#if rulesSaving}
-                  <LoaderCircle size={14} class="animate-spin" />
-                {/if}
-                {m.admin_audiences_save()}
-              </button>
-            </div>
-          {/if}
-        {/if}
-      </div>
-    </details>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </div>

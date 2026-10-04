@@ -12,15 +12,6 @@ import {
 import { SPACE_CAMPUSES, SPACE_FORMATIONS } from '../space.entity';
 import type { SpaceCampus, SpaceFormation } from '../space.entity';
 
-/** Payload to open a space: a formation x campus pair (D17). */
-export class OpenSpaceDto {
-  @IsIn(SPACE_FORMATIONS)
-  formation!: SpaceFormation;
-
-  @IsIn(SPACE_CAMPUSES)
-  campus!: SpaceCampus;
-}
-
 /** Payload to designate (or clear, with `null`) the BDE of a space (D22). */
 export class SetSpaceBdeDto {
   @ValidateIf((_, v) => v !== null)
