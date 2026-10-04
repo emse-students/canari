@@ -28,6 +28,8 @@ import {
   STALE_BASE_REPORT_TOP_N,
   SINGLE_HOLDER_REPORT_TOP_N,
   MIN_MEMBERS_FOR_HOLDER_REPORT,
+  COMMIT_RATE_WARN_PER_DEVICE_HOUR,
+  COMMIT_LOG_REPORT_TOP_N,
 } from './retention.constants';
 import { activeRevocationCutoff } from './utils/revocation';
 import {
@@ -60,6 +62,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
   private reportStaleBasesInterval: ReturnType<typeof setInterval>;
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
+  private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -247,10 +250,21 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Observe the commit log itself: how fast each group is re-keyed, and whether its log has a
+    // hole. The fifth report, and it exists because DM `7da231f8` took 129 epochs in six days and
+    // lost epoch 121 for good while no mechanism said a word - a user's impression found it, four
+    // days late. One `GROUP BY` would have named the hole the day it formed.
+    this.reportCommitLogInterval = setInterval(() => {
+      void this.reportCommitLogHealth().catch((e) =>
+        this.logger.error('[CRON] reportCommitLogHealth failed', e)
+      );
+    }, ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
-        'stale external-join base report (1h), ' +
+        'stale external-join base report (1h), single-holder report (1h), ' +
+        'commit-log rate and hole report (1h), ' +
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
@@ -289,6 +303,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportStrandedDeviceMemberships', () => this.reportStrandedDeviceMemberships()],
       ['reportStaleExternalJoinBases', () => this.reportStaleExternalJoinBases()],
       ['reportSingleHolderGroups', () => this.reportSingleHolderGroups()],
+      // After `pruneExpiredCommitLog` above, so a floor it just raised is read as a floor.
+      ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -341,6 +357,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportStrandedMembershipsInterval);
     clearInterval(this.reportStaleBasesInterval);
     clearInterval(this.reportSingleHolderInterval);
+    clearInterval(this.reportCommitLogInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -864,6 +881,199 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           `${Math.min(none.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${none.length}: ${name(none)}`
       );
     }
+  }
+
+  /**
+   * Observe the commit log: how often each group was re-keyed in the last hour, and whether any
+   * group's log has a HOLE. Purely a report - it deletes nothing, repairs nothing, and could not:
+   * a missing commit is ciphertext only its author ever held.
+   *
+   * **WHY IT EXISTS.** DM `7da231f8` went through 129 epochs in six days - sixteen commits in 48
+   * minutes from one web session - and its log lost epoch 121 for good on 2026-08-31, when the head
+   * advance and the log insert were not yet one transaction. Twelve of sixteen messages were fetched
+   * and dropped. Nothing counted commits per group, and nothing looked for a gap: a user's
+   * impression found it four days later. `getCommitsSince` now names a hole (`gapAt`), but only
+   * when a lagging device happens to ask across it; this names it the hour it exists.
+   *
+   * **TWO LINES, TWO CAUSES.** The rate is a symptom with a legitimate twin (a community growing),
+   * so its line always prints the whole distribution and WARNs only past
+   * {@link COMMIT_RATE_WARN_PER_DEVICE_HOUR} commits by ONE device. A hole has no legitimate twin -
+   * an epoch the server accepted and never recorded - so it is an ERROR. A log that merely STARTS
+   * late was trimmed by `pruneExpiredCommitLog` and is not a hole: the span checked is
+   * `[min(baseEpoch), activeEpoch - 1]`, never `[0, activeEpoch - 1]`.
+   */
+  private async reportCommitLogHealth() {
+    await this.reportCommitRate();
+    await this.reportCommitLogHoles();
+  }
+
+  /**
+   * The commit-rate half of {@link reportCommitLogHealth}: one grouped query over the last hour of
+   * the log, one LOG line carrying the distribution, one WARN naming the groups past the threshold.
+   */
+  private async reportCommitRate() {
+    const since = new Date(Date.now() - 60 * 60 * 1000);
+    // Grouped twice in SQL - by committer, then by group - so the service receives one row per group
+    // that committed this hour, never one per commit.
+    const rows: {
+      groupId: string;
+      commits: number | string;
+      committers: number | string;
+      topCommits: number | string;
+      topCommitter: string | null;
+      keyGroup: boolean;
+      activeEpoch: number;
+    }[] = await this.commitLogRepo.query(
+      `WITH per_committer AS (
+         SELECT c."groupId", c."senderDeviceId" AS committer, COUNT(*) AS n
+           FROM mls_commit_log c
+          WHERE c."createdAt" >= $1
+          GROUP BY c."groupId", c."senderDeviceId"
+       )
+       SELECT p."groupId"                                   AS "groupId",
+              SUM(p.n)                                      AS commits,
+              COUNT(*)                                      AS committers,
+              MAX(p.n)                                      AS "topCommits",
+              (ARRAY_AGG(p.committer ORDER BY p.n DESC))[1] AS "topCommitter",
+              (g."distributionWorkspaceId" IS NOT NULL
+                OR g."distributionChannelId" IS NOT NULL)   AS "keyGroup",
+              g."activeEpoch"                               AS "activeEpoch"
+         FROM per_committer p
+         JOIN dm_groups g ON g.id = p."groupId"
+        WHERE g."deletedAt" IS NULL
+        GROUP BY p."groupId", g.id
+        ORDER BY MAX(p.n) DESC, SUM(p.n) DESC`,
+      [since]
+    );
+
+    if (rows.length === 0) {
+      this.logger.log(
+        '[CRON] reportCommitLogHealth: commit rate over the last hour - no group committed'
+      );
+      return;
+    }
+
+    // THE WHOLE DISTRIBUTION, EVERY HOUR, because the threshold was set from one incident and the
+    // mechanism, not from the population it runs on. Both variables are printed - commits per group
+    // and the busiest single committer per group, which is the one the predicate reads - so the
+    // predicate can be re-measured from the log alone, without a query against production.
+    const perGroup = rows.map((r) => Number(r.commits));
+    const perTop = rows.map((r) => Number(r.topCommits));
+    const total = perGroup.reduce((a, b) => a + b, 0);
+    const busy = rows.filter((r) => Number(r.topCommits) >= COMMIT_RATE_WARN_PER_DEVICE_HOUR);
+    this.logger.log(
+      `[CRON] reportCommitLogHealth: commit rate over the last hour - ${total} commit(s) in ` +
+        `${rows.length} group(s); per group ${AppController.distribution(perGroup)}; ` +
+        `busiest single committer per group ${AppController.distribution(perTop)}; ` +
+        `${busy.length} group(s) at >= ${COMMIT_RATE_WARN_PER_DEVICE_HOUR} by one device`
+    );
+    if (busy.length === 0) return;
+
+    // The committer is named because it is the evidence: the device id says which client is
+    // re-keying, and `committers` beside it separates one device churning from a crowd joining.
+    this.logger.warn(
+      `[CRON] reportCommitLogHealth: ${busy.length} group(s) were re-keyed ` +
+        `${COMMIT_RATE_WARN_PER_DEVICE_HOUR} or more times in the last hour by ONE device - every ` +
+        `commit is an epoch each lagging device must cross, and this churn is what makes a dropped ` +
+        `frame likely. Busiest ${Math.min(busy.length, COMMIT_LOG_REPORT_TOP_N)} of ${busy.length}: ` +
+        busy
+          .slice(0, COMMIT_LOG_REPORT_TOP_N)
+          .map(
+            (r) =>
+              `${r.groupId}(${r.keyGroup ? 'key group, ' : ''}epoch ${r.activeEpoch}, ` +
+              `${Number(r.commits)} commit(s) by ${Number(r.committers)} device(s), ` +
+              `${r.topCommitter ?? 'unattributed'} x${Number(r.topCommits)})`
+          )
+          .join(' ')
+    );
+  }
+
+  /**
+   * The hole half of {@link reportCommitLogHealth}: ONE query over the whole log, grouped by group,
+   * never a loop per group.
+   *
+   * A hole is an epoch in `[min(baseEpoch), activeEpoch - 1]` with no row. `(groupId, baseEpoch)` is
+   * UNIQUE and the head advance writes its row in the same transaction since 2026-09-02, so nothing
+   * can ever refill one: a device below it cannot replay past it and owes a re-Welcome. The span
+   * starts at the oldest RETAINED commit, because `pruneExpiredCommitLog` trims from the bottom
+   * (age, then the per-group cap) and a trimmed floor is not a defect.
+   *
+   * Each group is named by its FIRST missing epoch and dated by the last commit recorded before it,
+   * newest first: the holes this estate already knows are permanent and repeat every hour, so a NEW
+   * one - the only kind that accuses current code - lands at the front of the line rather than
+   * behind them. A hole at `activeEpoch - 1` is also what `reportStaleExternalJoinBases` calls
+   * "shut"; that report reads it through a stale base, this one reads it in every group.
+   */
+  private async reportCommitLogHoles() {
+    const rows: {
+      groupId: string;
+      activeEpoch: number;
+      floorEpoch: number;
+      recorded: number | string;
+      firstHole: number;
+      holeAfter: Date;
+    }[] = await this.commitLogRepo.query(
+      `WITH log AS (
+         SELECT c."groupId", c."baseEpoch", c."createdAt", g."activeEpoch",
+                LEAD(c."baseEpoch") OVER (PARTITION BY c."groupId" ORDER BY c."baseEpoch") AS "nextEpoch"
+           FROM mls_commit_log c
+           JOIN dm_groups g ON g.id = c."groupId"
+          WHERE g."deletedAt" IS NULL
+            AND c."baseEpoch" < g."activeEpoch"
+       ), marked AS (
+         SELECT *,
+                ("nextEpoch" > "baseEpoch" + 1
+                  OR ("nextEpoch" IS NULL AND "baseEpoch" < "activeEpoch" - 1)) AS "gapAfter"
+           FROM log
+       )
+       SELECT "groupId",
+              "activeEpoch",
+              MIN("baseEpoch")                                        AS "floorEpoch",
+              COUNT(*)                                                AS recorded,
+              MIN("baseEpoch" + 1) FILTER (WHERE "gapAfter")          AS "firstHole",
+              (ARRAY_AGG("createdAt" ORDER BY "baseEpoch")
+                 FILTER (WHERE "gapAfter"))[1]                        AS "holeAfter"
+         FROM marked
+        GROUP BY "groupId", "activeEpoch"
+       HAVING BOOL_OR("gapAfter")
+        ORDER BY "holeAfter" DESC`
+    );
+
+    if (rows.length === 0) {
+      this.logger.log(
+        "[CRON] reportCommitLogHealth: every commit log is contiguous from its oldest retained commit to its group's head"
+      );
+      return;
+    }
+
+    const missing = (r: (typeof rows)[number]) => r.activeEpoch - r.floorEpoch - Number(r.recorded);
+    const totalMissing = rows.reduce((n, r) => n + missing(r), 0);
+    // AT THE LEVEL THAT ACCUSES: an epoch the server accepted and never recorded is a defect in the
+    // commit path, permanent by construction, and nothing else names it until a device asks across it.
+    this.logger.error(
+      `[CRON] reportCommitLogHealth: ${rows.length} group(s) have a HOLE in their commit log - ` +
+        `${totalMissing} epoch(s) between the oldest retained commit and the head were accepted and ` +
+        `never recorded, so no device below one can replay past it and only a re-Welcome reaches the ` +
+        `head. Newest ${Math.min(rows.length, COMMIT_LOG_REPORT_TOP_N)} of ${rows.length}: ` +
+        rows
+          .slice(0, COMMIT_LOG_REPORT_TOP_N)
+          .map(
+            (r) =>
+              `${r.groupId}(first hole at ${r.firstHole}, ${missing(r)} missing, ` +
+              `log ${r.floorEpoch}..${r.activeEpoch - 1}, after ${new Date(r.holeAfter).toISOString()})`
+          )
+          .join(' ')
+    );
+  }
+
+  /**
+   * `p50=.. p90=.. max=..` over a population, by nearest rank. Small populations are the norm here
+   * (a few dozen groups commit in an hour), and nearest rank never invents a value nobody had.
+   */
+  private static distribution(values: number[]): string {
+    const sorted = [...values].sort((a, b) => a - b);
+    const rank = (q: number) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
+    return `p50=${rank(0.5)} p90=${rank(0.9)} max=${sorted[sorted.length - 1]}`;
   }
 
   /**

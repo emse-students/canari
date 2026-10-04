@@ -708,6 +708,45 @@ before the purge erases the evidence that would explain them. `app.controller.st
 pins the partition, the threshold boundary and the shape of the WARN; as with `reportQueueDepth`, a
 mocked repository never parses SQL, so the builder's output is verified only by the deploy log.
 
+### The commit log is observed hourly: a re-key RATE and any HOLE (`reportCommitLogHealth`, 2026-10-04)
+
+The fifth hourly report, purely a report (deletes and repairs nothing, and could not: a missing
+commit is ciphertext only its author held). It exists because DM `7da231f8` took **129 epochs in six
+days** - 16 commits in 48 minutes from one web session - and lost epoch 121 for good, while nothing
+counted commits per group and nothing looked for a gap; a user's impression found it four days late
+(the four defects behind it are fixed, story in `CHANGELOG.md`). Scheduled hourly, in
+`runInitialSweep` after `pruneExpiredCommitLog`, cleared in `onModuleDestroy`; pinned by
+`app.controller.commit-log-report.spec.ts` (what it says, the threshold boundary, the SQL's span
+and that it is one grouped query - a mocked repository cannot execute the SQL itself).
+
+- **Rate.** One query over the last hour of `mls_commit_log`, grouped by `(groupId, senderDeviceId)`
+  then by group. Every hour it LOGs the whole distribution - `per group p50/p90/max` and `busiest
+  single committer per group p50/p90/max` - so the predicate can be re-measured from the log alone.
+  It WARNs, one line, only for groups where **one device** made `COMMIT_RATE_WARN_PER_DEVICE_HOUR`
+  (8) or more commits, naming the committer, how many devices committed and the epoch. **Per
+  committer, not per group**: a community taking ten newcomers records ten commits by ten devices
+  (growth); the churn this watches is one device re-keying repeatedly (the incident ran ~20/h).
+  **8 is set from the mechanism and the incident, NOT from a measured population** (no production
+  access from the session that wrote it): the first hourly distribution lines are the measurement,
+  and the constant's doc says what to compare it against. The 12-commits-in-2h14 phone of the same
+  incident stays under it on purpose.
+- **Hole.** ONE query (window `LEAD` over the log, `GROUP BY` group, `HAVING BOOL_OR(gap)`) for any
+  epoch in `[min(baseEpoch), activeEpoch - 1]` with no row, ERROR, one line, newest hole first so a
+  new one is not buried behind the known permanent ones. The floor is the oldest RETAINED commit,
+  because `pruneExpiredCommitLog` trims from the bottom and a trimmed floor is not a hole (the same
+  distinction `getCommitsSince` makes with `belowFloor`/`gapAt`). Unlike `getCommitsSince`, which only
+  names a hole when a lagging device asks across it, this names it the hour it exists.
+- **Not a counter on the fanout, and why that is covered.** The backlog also asked for a counter of
+  sends undecryptable by construction. Today the one such class the server can see - an application
+  frame from a device whose membership is not `active` - is **refused** (`403 sender_not_active`, in
+  `sendMessage`) and the refusal already logs at ERROR, `[SEND][trace] REJECT sender_not_active
+  group= device= status=`, once per refused send. A refused send writes **no row**, so its count
+  cannot be derived from durable state, and a new in-process counter would reset on every deploy -
+  a clock-and-memory stand-in for a log line that already accuses. The other half of the original
+  incident class, frames emitted between a device's own commit and its acceptance, is the client's
+  `epochSendBarrier` and the server has no fact distinguishing those frames. So the evidence for
+  both is the ERROR line plus this report's rate line (the churn that makes them fire).
+
 ### A fulfilled invitation is retired by whoever can PROVE it, and a vouch does not replay
 
 `getPendingInvitations` serves every `pending` row in the caller's groups, and the caller's first

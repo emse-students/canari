@@ -248,3 +248,28 @@ export const SINGLE_HOLDER_REPORT_TOP_N = 10;
  * whose reader learns to skip it is the one that hides the next defect.
  */
 export const MIN_MEMBERS_FOR_HOLDER_REPORT = 2;
+
+/**
+ * Commits ONE device may make in ONE group within an hour before the hourly commit-rate report
+ * names that group.
+ *
+ * **PER COMMITTER, NOT PER GROUP, and that is the discriminator.** A community key group that
+ * takes ten newcomers in an hour records ten commits, each by a DIFFERENT device joining by external
+ * commit - that is growth. The churn this report exists for is one device re-keying over and over:
+ * on 2026-08-30 a single web session advanced DM `7da231f8` sixteen times in 48 minutes (epochs 89
+ * to 104), and that rate is what made the four defects behind twelve dropped messages fire at all.
+ * A per-group count cannot tell those two apart; the busiest committer's count can.
+ *
+ * **EIGHT, set from the mechanism and the incident, NOT from a measured population** - nothing here
+ * read production, so the first hourly lines ARE the measurement. One legitimate hour for one device
+ * is its own join plus one Add per device it brings back: the largest group shape measured on
+ * production (2026-08-17, `channel-encryption.md`) held up to six device leaves for two members, so
+ * re-adding every other leaf of it once stays under eight. The incident device ran at twenty an
+ * hour. The phone that followed it (twelve commits over 2 h 14) stays UNDER this threshold,
+ * deliberately: that is the rate of a legitimate round of re-adds, and the distribution line printed
+ * every hour is what says whether the choice holds on the real population.
+ */
+export const COMMIT_RATE_WARN_PER_DEVICE_HOUR = 8;
+
+/** How many groups each commit-log report line names - one line per cause, never one per row. */
+export const COMMIT_LOG_REPORT_TOP_N = 10;
