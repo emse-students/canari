@@ -545,7 +545,12 @@
   }
 </script>
 
-<div class="mention-composer relative w-full max-w-full min-w-0 {className}">
+<div
+  class="mention-composer relative w-full max-w-full min-w-0 {className}"
+  role="group"
+  ondragover={handleEditorDragOver}
+  ondrop={handleEditorDrop}
+>
   <MentionDropdown
     open={mention.open}
     suggestions={mention.suggestions}

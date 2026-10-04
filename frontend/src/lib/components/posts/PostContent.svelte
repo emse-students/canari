@@ -11,12 +11,7 @@
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { postAuthorName } from '$lib/posts/postAuthorName';
-  import {
-    mediaAspectStyle,
-    resolveMediaType,
-    reservesAspectRatio,
-    GALLERY_MEDIA_ASPECT,
-  } from '$lib/utils/mediaLayout';
+  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { m } from '$lib/paraglide/messages';
   import { nearViewport } from '$lib/actions/nearViewport';
   import { SvelteSet } from 'svelte/reactivity';
@@ -208,7 +203,7 @@
         {/if}
       </div>
     {:else}
-      <!-- Multi-media gallery: centralized lightbox with navigation for image/video -->
+      <!-- Multi-media gallery: preserve each media's shape, like Instagram/Facebook galleries. -->
       <div
         class="grid grid-cols-2 gap-0.5 overflow-hidden rounded-lg bg-white/20 sm:gap-1 dark:bg-black/20"
       >
@@ -219,9 +214,7 @@
             class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5 {lightboxIdx === -1
               ? 'flex items-center p-2'
               : ''}"
-            style={lightboxIdx === -1
-              ? ''
-              : mediaAspectStyle(media.width, media.height, GALLERY_MEDIA_ASPECT)}
+            style={lightboxIdx === -1 ? '' : mediaAspectStyle(media.width, media.height)}
           >
             <PostMedia
               {media}

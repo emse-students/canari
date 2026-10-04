@@ -36,7 +36,9 @@ function mountEditor(props: Record<string, unknown> = {}) {
   flushSync();
   const editor = target.querySelector<HTMLDivElement>('[contenteditable="true"]');
   if (!editor) throw new Error('no editor rendered');
-  return { editor };
+  const composer = target.querySelector<HTMLElement>('.mention-composer');
+  if (!composer) throw new Error('no composer rendered');
+  return { editor, composer };
 }
 
 /** A transfer shaped like the browser's, so the code under test reads it the way it really would. */
@@ -86,6 +88,16 @@ it('hands a dropped file to the attachment owner instead of inserting it', () =>
 
   expect(onmedia).toHaveBeenCalledTimes(1);
   expect(onmedia.mock.calls[0][0]).toEqual([picture]);
+});
+
+it('hands a file dropped on the composer surface to the attachment owner', () => {
+  const onmedia = vi.fn();
+  const { composer } = mountEditor({ onmedia });
+
+  const event = dropOn(composer, transfer({ files: [picture] }));
+
+  expect(event.defaultPrevented).toBe(true);
+  expect(onmedia).toHaveBeenCalledWith([picture]);
 });
 
 it('hands a pasted file over the same way', () => {

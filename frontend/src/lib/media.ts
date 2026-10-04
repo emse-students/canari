@@ -733,8 +733,9 @@ export class MediaService {
    * Call `releaseRawMediaBlobUrl(mediaId)` when the element unmounts.
    *
    * @param mediaId    The opaque identifier returned by `uploadRaw`.
+   * @param signal     Abandons the request while it is still queued.
    */
-  async downloadRaw(mediaId: string): Promise<string> {
-    return acquireRawMediaBlobUrl(mediaId, this.baseUrl);
+  async downloadRaw(mediaId: string, signal?: AbortSignal): Promise<string> {
+    return acquireRawMediaBlobUrl(mediaId, this.baseUrl, signal);
   }
 }
