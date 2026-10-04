@@ -999,9 +999,6 @@ The user's words: *"Il va falloir rapidement régler tous les problèmes de comm
 
 What is still open:
 
-- **P3, OPEN - the settings panel's tabs are plain buttons**, with no `role="tablist"` /
-  `role="tab"`, so nothing announces the strip as a tab set (seen on the Mi 9T 2026-09-17, still
-  true of the tree on 2026-10-01).
 - **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
   `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
   commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,

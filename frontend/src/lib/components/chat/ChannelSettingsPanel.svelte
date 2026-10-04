@@ -409,8 +409,10 @@
   behind a query: a panel 352px wide can never satisfy it, so it would have been dead markup.
 -->
 <div class="flex h-full min-h-0 flex-col">
-  <!-- Tab strip -->
+  <!-- Tab strip: a real tab set, so a screen reader announces it as one (seen on the Mi 9T). -->
   <div
+    role="tablist"
+    aria-label={m.chat_channel_settings_title()}
     class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
   >
     <h3
@@ -422,6 +424,9 @@
     </h3>
 
     <button
+      type="button"
+      role="tab"
+      aria-selected={activeTab === 'general'}
       onclick={() => (activeTab = 'general')}
       class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
       'general'
@@ -433,6 +438,9 @@
     </button>
 
     <button
+      type="button"
+      role="tab"
+      aria-selected={activeTab === 'access'}
       onclick={() => (activeTab = 'access')}
       class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
       'access'

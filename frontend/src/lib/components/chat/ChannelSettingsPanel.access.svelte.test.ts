@@ -247,3 +247,15 @@ describe('ChannelSettingsPanel - a member without channel.manage', () => {
     expect((document.getElementById('channel-name') as HTMLInputElement).readOnly).toBe(true);
   });
 });
+
+describe('ChannelSettingsPanel - the tab strip', () => {
+  it('is announced as a tab set, with the open tab selected', async () => {
+    await mountOnAccessTab('salon-a');
+
+    const strip = document.querySelector('[role=tablist]');
+    expect(strip).not.toBeNull();
+    const tabs = [...strip!.querySelectorAll('[role=tab]')];
+    expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true']);
+    expect(tabs[1].textContent).toContain(m.chat_channel_access_tab());
+  });
+});
