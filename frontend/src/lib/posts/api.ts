@@ -333,6 +333,14 @@ export async function listPosts(
   return request<PostEntity[]>(`/api/posts${q}`);
 }
 
+/**
+ * Whether the signed-in reader may use the feed at all - the very SQL `FeedAudienceGuard` refuses
+ * with (WP6b). Read through `$lib/posts/feedAudience`, never directly.
+ */
+export async function fetchFeedAudience(): Promise<{ inAudience: boolean }> {
+  return request<{ inAudience: boolean }>('/api/posts/audience');
+}
+
 /** The server's reel numbers (`ReelLimits`). */
 export async function getReelLimits(): Promise<ReelLimits> {
   return request<ReelLimits>('/api/posts/reel-limits');
