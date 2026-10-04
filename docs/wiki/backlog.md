@@ -2224,29 +2224,6 @@ minutes over a blip that the reconnection listener already handles.
 
 ## Communities and permissions
 
-### P3 - three server line families are the routine consequence of enrolling a device, and nothing has ever classified them (measured twice, 2026-09-07)
-
-Every `roster.mjs` row that enrols a second web device ends `SERVER NOT CLEAN`, and the same three
-sentences are why. All three were read and none is a defect:
-
-| Line | What it is |
-| --- | --- |
-| `[DEVICE_MEMBERSHIPS] user=… count=5 stranded=4 → 3 → 2` | the convergence the row exists to watch, printed as it happens - and going the RIGHT way |
-| `[PubSub] …:… not connected to this gateway - message stays in DB queue, will be fetched on reconnect` | the designed queueing path for a device that is offline |
-| `Refresh refused: no canari_refresh cookie. cookies=[] x-canari-refresh=absent` (DEBUG) | a browser seconds old, before it has one |
-
-**`notable` is the right home for all three and `BENIGN` is not.** A notable line is printed and does
-not break `clean`; a benign one is dropped, and dropping `Refresh refused` would silence on the
-LOCAL estate a sentence that is a real signal on production - it is what named the iOS session
-defect. Surfaced rather than judged is exactly the distinction that bucket exists for.
-
-**Not done inline**: `srvlog.mjs`'s four rule lists are shared by every phase, and
-`srvclassify-selftest.mjs` exists precisely so a rule is proven to fire on the line it claims and on
-nothing else. Adding three rules without their three cases would be the drift that selftest was
-written to prevent. It blocks no row verdict today - a row is judged on its client reports and its
-logcat half - so it is P3, and the cost of leaving it is that the next genuinely new server line
-arrives among five a reader has learnt to skip.
-
 ### P3 - an epoch-0 seed frame is delivered on every rotation, and nobody can open it (observed 2026-08-21, did not reproduce)
 
 **COMM-22, six cycles, six of these** - one per cycle, both clients seeing the same frame at the same

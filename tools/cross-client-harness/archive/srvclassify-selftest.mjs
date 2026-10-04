@@ -862,6 +862,21 @@ check(
 );
 check(
   'the MLS spelling of an offline recipient is NOT forgiven by that rule',
+  NOTABLE_RULES.find((r) => r.source.includes('control frame not delivered')).test(
+    '2026-09-27T20:44:24Z  INFO chat_gateway::subscribers: [PubSub] abc:web-abc not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId=7e2a91c0).'
+  ),
+  false
+);
+check(
+  'the MLS spelling of an offline recipient is reported by its own rule',
+  matches(
+    NOTABLE_RULES,
+    '2026-09-27T20:44:24Z  INFO chat_gateway::subscribers: [PubSub] abc:web-abc not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId=7e2a91c0).'
+  ),
+  true
+);
+check(
+  'the same spelling naming NO queue row is NOT',
   matches(
     NOTABLE_RULES,
     '2026-09-27T20:44:24Z  INFO chat_gateway::subscribers: [PubSub] abc:web-abc not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId=).'
