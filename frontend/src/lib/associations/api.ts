@@ -810,6 +810,11 @@ export async function ensureContentModerator(force = false): Promise<boolean> {
   return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MODERATE);
 }
 
+/** Determines whether the current user may validate pending calendar events. */
+export async function ensureEventValidator(force = false): Promise<boolean> {
+  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.VALIDATE_EVENTS);
+}
+
 export async function listMyFollowedAssociations(): Promise<
   Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
 > {

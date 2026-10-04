@@ -19,27 +19,23 @@ and which items appear; every page repeats its own check, because a route is rea
 | Platform administrator | `isGlobalAdmin()` | `X-Global-Admin`, injected by nginx from `auth_request` |
 | BDE super-admin | `isAssociationSuperAdmin()` | `MANAGE_ASSO` in a BDE association |
 | Content moderator | `isContentModerator()` | `MODERATE` in a BDE association |
-| Association admin | any membership with `isAdmin` (at least one flag) | `GET /api/associations/me/list` |
 
-The last three all come from **one** membership request, `ensureMyAssociations()`, which publishes
-both BDE tiers as a side effect. It is awaited rather than probed in the background wherever it
-decides a REDIRECT: a background probe bounces the very user it was meant to admit whenever it loses
-the race.
+The BDE-derived capabilities all come from **one** membership request, `ensureMyAssociations()`,
+which publishes their flags as a side effect. It is awaited rather than probed in the background
+wherever it decides a REDIRECT: a background probe bounces the very user it was meant to admit
+whenever it loses the race.
 
-**WHO MAY OPEN `/admin` IS ONE PREDICATE, `ensureMayOpenAdmin()` in `lib/admin/access.ts`.** It was
-two, and they disagreed: the layout admitted an association admin OR a content moderator, while the
-dashboard offered the tile on `mine.some((a) => a.isAdmin)` alone and used `listMyAssociations()`,
-which publishes no flag. A BDE content moderator holding no association admin role could therefore
-reach the console by typing the URL and was never shown the way in - **a right nobody can find is a
-right nobody has**, which is the same failure the `/admin/moderation` paragraph below records, one
-layer out. `access.test.ts` pins the four answers, that case named.
+**WHO MAY OPEN `/admin` IS ONE PREDICATE, `ensureMayOpenAdmin()` in `lib/admin/access.ts`.** It
+admits only accounts with at least one actionable admin panel: platform admin, BDE super-admin,
+content moderator, or event validator. A plain association admin no longer gets a read-only pending
+agenda route, so the shell refuses that account as well. `access.test.ts` pins these cases.
 
 ## Routes, and who reaches them
 
 | Route | Section | Who |
 | --- | --- | --- |
-| `/admin` | Home (cards) | Any association admin, any content moderator, any platform admin |
-| `/admin/agenda` | Pending agenda events | Any association admin |
+| `/admin` | Home (cards) | Any BDE super-admin, content moderator, event validator, or platform admin |
+| `/admin/agenda` | Pending agenda events | BDE event validator (`VALIDATE_EVENTS`) or platform admin |
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
 | `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
@@ -51,13 +47,13 @@ layer out. `access.test.ts` pins the four answers, that case named.
 | `/admin/storage` | Storage usage | Platform admin |
 
 **The way in is the dashboard's tile**, shown on exactly the predicate the layout admits on, plus a
-direct link to `/admin/agenda` from the calendar. Nothing else links into this tree.
+direct link to `/admin/agenda` from the calendar for users who can validate events. Nothing else
+links into this tree.
 
 **AND IT IS NOT CALLED "ADMINISTRATION" FOR EVERYONE.** For anyone who is not a platform admin,
-`/admin` is where "Agenda en attente" lives and nothing more - the server agrees and enforces it:
-the pending listing accepts an association admin, `canValidate` comes back false for them, and
-validate/reject refuse anyone who is not BDE or platform admin. There was never an access defect in
-that name, only a promise of a platform console that the page does not deliver.
+`/admin` contains only panels the current account can act on. The pending listing and its calendar
+entry are limited to BDE event validators or platform admins; ordinary association admins are not
+given a read-only queue whose validation actions they cannot execute.
 
 `adminScopeLabels(isGlobalAdmin())` returns the heading **and** the sentence under it, together,
 from one predicate - a heading and its subtitle that branch separately are two places to change and

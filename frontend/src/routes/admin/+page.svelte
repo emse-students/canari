@@ -1,21 +1,23 @@
 <script lang="ts">
-  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
-  import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
+  import {
+    isGlobalAdmin,
+    isAssociationSuperAdmin,
+    isContentModerator,
+    isEventValidator,
+  } from '$lib/stores/user';
   import {
     listPendingCalendarEvents,
     ensureAssociationSuperAdmin,
     ensureContentModerator,
+    ensureEventValidator,
   } from '$lib/associations/api';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { deliveryUrl } from '$lib/utils/apiUrl';
   import {
     CalendarClock,
     Activity,
     Users,
     CalendarDays,
     CirclePlus,
-    Bell,
     ChevronRight,
     ShieldAlert,
     UserCog,
@@ -28,68 +30,43 @@
     History,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   let isGlobalAdminUser = $state(false);
   let isSuperAdminUser = $state(false);
   let isModeratorUser = $state(false);
+  let isEventValidatorUser = $state(false);
   let pendingCount = $state<number | null>(null);
-  let isPushTestRunning = $state(false);
-  let pushTestResult = $state('');
 
-  onMount(async () => {
-    isGlobalAdminUser = isGlobalAdmin();
-    isSuperAdminUser = isGlobalAdminUser || isAssociationSuperAdmin();
-    isModeratorUser = isGlobalAdminUser || isContentModerator();
-    // Both tiers resolve from ONE membership request, already warm if the layout asked first.
-    if (!isGlobalAdminUser) {
-      void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
-      void ensureContentModerator().then((v) => (isModeratorUser = v));
-    }
+  async function loadPendingCount() {
+    if (!isEventValidatorUser) return;
     try {
       const pending = await listPendingCalendarEvents();
       pendingCount = pending.events.length;
     } catch {
       pendingCount = null;
     }
-  });
-
-  async function handleBroadcastPushTest() {
-    if (isPushTestRunning || !isGlobalAdminUser) return;
-    isPushTestRunning = true;
-    pushTestResult = '';
-    try {
-      const response = await apiFetch(`${deliveryUrl()}/api/mls/push/broadcast-test`, {
-        method: 'POST',
-        body: JSON.stringify({
-          title: m.admin_push_test_title(),
-          message: m.admin_push_test_diagnostic_label({
-            time: new Date().toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
-          }),
-        }),
-      });
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}${text ? `: ${text}` : ''}`);
-      }
-      const data = (await response.json()) as {
-        traceId: string;
-        targetedDevices: number;
-        sent: number;
-        failed: number;
-      };
-      pushTestResult = m.admin_push_test_result_label({
-        traceId: data.traceId,
-        sent: data.sent,
-        targetedDevices: data.targetedDevices,
-      });
-    } catch (e) {
-      Log.d('admin.handleBroadcastPushTest failed', e);
-      pushTestResult = m.common_generic_error_label();
-    } finally {
-      isPushTestRunning = false;
-    }
   }
+
+  onMount(async () => {
+    isGlobalAdminUser = isGlobalAdmin();
+    isSuperAdminUser = isGlobalAdminUser || isAssociationSuperAdmin();
+    isModeratorUser = isGlobalAdminUser || isContentModerator();
+    isEventValidatorUser = isGlobalAdminUser || isEventValidator();
+    // Both tiers resolve from ONE membership request, already warm if the layout asked first.
+    if (!isGlobalAdminUser) {
+      void Promise.all([
+        ensureAssociationSuperAdmin(),
+        ensureContentModerator(),
+        ensureEventValidator(),
+      ]).then(([superAdmin, moderator, eventValidator]) => {
+        isSuperAdminUser = superAdmin;
+        isModeratorUser = moderator;
+        isEventValidatorUser = eventValidator;
+        void loadPendingCount();
+      });
+    }
+    await loadPendingCount();
+  });
 
   type AdminCardKind =
     | 'agenda'
@@ -121,19 +98,21 @@
   const cards = $derived.by((): AdminCard[] => {
     const list: AdminCard[] = [
       {
-        href: '/admin/agenda',
-        kind: 'agenda',
-        label: m.admin_pending_agenda_label(),
-        description: m.admin_card_agenda_desc(),
-        badge: pendingCount !== null && pendingCount > 0 ? `${pendingCount}` : undefined,
-      },
-      {
         href: '/directory',
         kind: 'directory',
         label: m.directory_heading(),
         description: m.directory_subtitle(),
       },
     ];
+    if (isEventValidatorUser) {
+      list.unshift({
+        href: '/admin/agenda',
+        kind: 'agenda',
+        label: m.admin_pending_agenda_label(),
+        description: m.admin_card_agenda_desc(),
+        badge: pendingCount !== null && pendingCount > 0 ? `${pendingCount}` : undefined,
+      });
+    }
     // Moderation is the moderator tier's card, not the platform administrator's alone.
     if (isModeratorUser) {
       list.push({
@@ -277,29 +256,6 @@
       {/if}
     {/each}
   </div>
-
-  {#if isGlobalAdminUser}
-    <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-      <div class="flex items-center gap-2">
-        <Bell size={18} class="text-cn-dark" />
-        <h2 class="text-text-main text-sm font-bold">{m.admin_push_test_heading()}</h2>
-      </div>
-      <p class="text-text-muted text-xs">
-        {m.admin_push_test_description()}
-      </p>
-      <button
-        type="button"
-        onclick={() => void handleBroadcastPushTest()}
-        disabled={isPushTestRunning}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-      >
-        {isPushTestRunning ? m.common_sending_label() : m.admin_push_test_button_label()}
-      </button>
-      {#if pushTestResult}
-        <p class="text-text-muted text-xs">{pushTestResult}</p>
-      {/if}
-    </div>
-  {/if}
 
   <p class="text-text-muted text-xs">
     {m.admin_payments_connect_hint()}

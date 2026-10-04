@@ -13,6 +13,7 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { goto } from '$app/navigation';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { m } from '$lib/paraglide/messages';
   import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
@@ -43,6 +44,10 @@
     error = '';
     try {
       const res = await listPendingCalendarEvents();
+      if (!res.canValidate) {
+        void goto('/dashboard', { replaceState: true });
+        return;
+      }
       events = res.events;
       canValidate = res.canValidate;
     } catch (e) {

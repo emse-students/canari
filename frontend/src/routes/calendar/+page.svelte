@@ -145,13 +145,13 @@
         canDepositEvent = false;
         proposeAssocIds = new Set();
       } else {
-        canModerateAgenda = mine.some((a) => a.isAdmin);
         // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
         // any association; we keep their BDE association as the authorisation :id.
         const authority = findBdeAssociationWithFlag(
           mine,
           AssociationPermissionFlag.VALIDATE_EVENTS
         );
+        canModerateAgenda = !!authority;
         depositAuthorityAssoId = authority?.id ?? '';
         canDepositEvent = !!authority;
         proposeAssocIds = new Set(

@@ -12,17 +12,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ensureMyAssociations = vi.fn();
 const isGlobalAdmin = vi.fn();
+const isAssociationSuperAdmin = vi.fn();
 const isContentModerator = vi.fn();
+const isEventValidator = vi.fn();
 
 vi.mock('$lib/associations/api', () => ({ ensureMyAssociations }));
-vi.mock('$lib/stores/user', () => ({ isGlobalAdmin, isContentModerator }));
+vi.mock('$lib/stores/user', () => ({
+  isGlobalAdmin,
+  isAssociationSuperAdmin,
+  isContentModerator,
+  isEventValidator,
+}));
 
 const { adminScopeLabels, ensureMayOpenAdmin } = await import('./access');
 
 beforeEach(() => {
   vi.clearAllMocks();
   isGlobalAdmin.mockReturnValue(false);
+  isAssociationSuperAdmin.mockReturnValue(false);
   isContentModerator.mockReturnValue(false);
+  isEventValidator.mockReturnValue(false);
   ensureMyAssociations.mockResolvedValue([]);
 });
 
@@ -35,11 +44,23 @@ describe('ensureMayOpenAdmin', () => {
     expect(ensureMyAssociations).not.toHaveBeenCalled();
   });
 
-  it('admits an association admin', async () => {
+  it('refuses an association admin without an admin-panel capability', async () => {
     ensureMyAssociations.mockResolvedValue([
       { id: 'a', isAdmin: false },
       { id: 'b', isAdmin: true },
     ]);
+
+    expect(await ensureMayOpenAdmin()).toBe(false);
+  });
+
+  it('admits a BDE super-admin', async () => {
+    isAssociationSuperAdmin.mockReturnValue(true);
+
+    expect(await ensureMayOpenAdmin()).toBe(true);
+  });
+
+  it('admits an event validator', async () => {
+    isEventValidator.mockReturnValue(true);
 
     expect(await ensureMayOpenAdmin()).toBe(true);
   });
