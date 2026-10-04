@@ -1,13 +1,21 @@
 -- Migration 071: spaces (WP6a of the profile reform, docs/wiki/profiles-and-access.md, D16-D22).
 --
 -- A SPACE is a formation x campus pair (ICM Saint-Etienne, ISMIN Gardanne, ...). It exists only once
--- an admin has opened it (D17), and has at most ONE BDE (D22). An association belongs to one or more
--- spaces (D19) and a post may be widened to extra spaces (D19, nominative). This migration is DATA
--- ONLY: nothing reads these tables yet - the readers (6b) and the admin page (6d) come next - so
--- applying it changes nothing a user sees.
+-- an admin has opened it (D17), and has at most ONE BDE (D22). This migration is DATA ONLY: nothing
+-- reads these tables yet - the readers (6b) and the admin page (6d) come next - so applying it
+-- changes nothing a user sees.
+--
+-- WHO AN ASSOCIATION ADDRESSES IS A RULE, NOT A LIST OF SPACES (user, 2026-10-04: the ME of
+-- Saint-Etienne and the School's Saint-Etienne pole address the Saint-Etienne campus ONLY). An
+-- `association_audiences` row is (formation, campus) where NULL means "any": (ICM, saint-etienne) is
+-- one space, (NULL, saint-etienne) is every formation on that campus, (NULL, NULL) is everyone. An
+-- association has one or more rows (an ICM Saint-Etienne association that also addresses FSSS has
+-- two - D19). The rule is resolved against the OPEN spaces at read time (6b), so a space opened
+-- later is reached with no edit to any association. Same table for associations, lists and the
+-- institutions of 6e.
 --
 -- THE SEED IS THE WORLD AS IT IS TODAY: one space, ICM x saint-etienne, every existing association
--- and list attached to it, and today's `isBDE` association as its BDE. The BDE is set ONLY when
+-- and list addressing it, and today's `isBDE` association as its BDE. The BDE is set ONLY when
 -- exactly one association carries `isBDE`: with zero or several there is no honest choice to make,
 -- so the column stays NULL and a notice says so - an admin designates it on the 6d page. The
 -- `isBDE` column stays until 6c deletes it; it is never kept beside the new model for good.
@@ -31,12 +39,19 @@ CREATE TABLE IF NOT EXISTS spaces (
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_spaces_bdeAssociationId"
     ON spaces ("bdeAssociationId") WHERE "bdeAssociationId" IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS association_spaces (
+CREATE TABLE IF NOT EXISTS association_audiences (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     "associationId" UUID NOT NULL REFERENCES associations (id) ON DELETE CASCADE,
-    "spaceId"       UUID NOT NULL REFERENCES spaces (id) ON DELETE CASCADE,
-    PRIMARY KEY ("associationId", "spaceId")
+    formation       VARCHAR(16) NULL,
+    campus          VARCHAR(32) NULL,
+    CONSTRAINT "CHK_association_audiences_formation"
+        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'Autre')),
+    CONSTRAINT "CHK_association_audiences_campus"
+        CHECK (campus IS NULL OR campus IN ('saint-etienne', 'gardanne'))
 );
-CREATE INDEX IF NOT EXISTS "IDX_association_spaces_space" ON association_spaces ("spaceId");
+-- A rule appears once per association; COALESCE makes NULL ("any") comparable.
+CREATE UNIQUE INDEX IF NOT EXISTS "UQ_association_audiences_rule"
+    ON association_audiences ("associationId", COALESCE(formation, ''), COALESCE(campus, ''));
 
 CREATE TABLE IF NOT EXISTS post_extra_spaces (
     "postId"  UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
@@ -48,10 +63,10 @@ CREATE INDEX IF NOT EXISTS "IDX_post_extra_spaces_space" ON post_extra_spaces ("
 INSERT INTO spaces (formation, campus) VALUES ('ICM', 'saint-etienne')
     ON CONFLICT (formation, campus) DO NOTHING;
 
-INSERT INTO association_spaces ("associationId", "spaceId")
-    SELECT a.id, s.id FROM associations a
-    CROSS JOIN spaces s WHERE s.formation = 'ICM' AND s.campus = 'saint-etienne'
-    ON CONFLICT DO NOTHING;
+-- Every association that has no rule yet addresses ICM x saint-etienne, as it does today.
+INSERT INTO association_audiences ("associationId", formation, campus)
+    SELECT a.id, 'ICM', 'saint-etienne' FROM associations a
+    WHERE NOT EXISTS (SELECT 1 FROM association_audiences r WHERE r."associationId" = a.id);
 
 UPDATE spaces SET "bdeAssociationId" = (SELECT id FROM associations WHERE "isBDE" = true)
     WHERE formation = 'ICM' AND campus = 'saint-etienne' AND "bdeAssociationId" IS NULL

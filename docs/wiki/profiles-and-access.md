@@ -446,7 +446,7 @@ migration), and its UI stops assuming them.
 **WP6 - Spaces in Canari (D16 to D22), five pull requests.**
 
 - **6a, data.** `spaces(id, formation, campus, opened_at, bde_association_id)`,
-  `association_spaces(association, space)`, `post_extra_spaces(post, space)`, and
+  `association_audiences(association, formation NULL, campus NULL)` (rules, see 6a as built), `post_extra_spaces(post, space)`, and
   `associations.type` gains `institution`. Migration: open `ICM x saint-etienne`, attach every
   existing association and list to it, make today's `isBDE` association its BDE. The `isBDE` column
   is deleted at the end of 6c, never kept beside the new model.
@@ -463,14 +463,24 @@ migration), and its UI stops assuming them.
 - **6e, institutions.** Created by a global admin, members added nominatively (D20); they publish and
   propose events like an association.
 
-**WP6a as built (2026-10-04).** Migration `apps/social-service/src/migrations/071_spaces.sql`: `spaces`
-(formation, campus, `openedAt`, `bdeAssociationId`; unique pair, CHECKs on the D4/D6 values, one BDE
-per space and one space per BDE), `association_spaces`, `post_extra_spaces`; entities in
-`social-service/src/spaces/`. Seed: ICM x saint-etienne, every association and list attached, and
-the BDE set ONLY if exactly one association carries `isBDE` (zero or several: left NULL with a
+**WP6a as built (2026-10-04), with one decision the user took that day.** *"La ME de Saint-Etienne ne va
+s'adresser qu'au Campus de Saint-Etienne, idem pour le pole Saint-Etienne de l'ecole"* - so who an
+association (or list, or institution) addresses is a RULE, not a list of spaces. Migration
+`apps/social-service/src/migrations/071_spaces.sql`: `spaces` (formation, campus, `openedAt`,
+`bdeAssociationId`; unique pair, CHECKs on the D4/D6 values, one BDE per space and one space per
+BDE), `association_audiences` (one row per rule, `formation`/`campus` where NULL means "any":
+(ICM, saint-etienne) one space, (NULL, saint-etienne) the whole campus - the ME and the School's
+pole there - and (NULL, NULL) everyone; an association has one or more rows, D19), `post_extra_spaces`;
+entities in `social-service/src/spaces/`. The rules are resolved against the OPEN spaces at read
+time (6b), so a space opened later is reached with no edit to any association; a plan with explicit
+association-to-space links would have left it unreached until an admin added it to each. Seed: ICM x
+saint-etienne, every association and list addressing it, and the BDE set ONLY if exactly one
+association carries `isBDE` (production has one, user 2026-10-04; zero or several: left NULL with a
 notice - an admin designates it on the 6d page). Tried on a throwaway Postgres with one, zero and
-two `isBDE`, replayed, cascade and CHECK. **Deferred to 6e on purpose**: `associations.type` gaining
-`institution` (nothing could create one yet). Nothing reads these tables until 6b.
+two `isBDE`, replayed, a duplicate rule refused, a bad value refused, cascade. **Deferred to 6e on
+purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Open for
+6e**: the ME and the School exist per campus, so each is probably TWO institutions (one per campus),
+each with its campus rule - to confirm with the user. Nothing reads these tables until 6b.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions

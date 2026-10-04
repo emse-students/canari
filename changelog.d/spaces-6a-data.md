@@ -1,5 +1,5 @@
 ### Added - spaces: the data model (nothing reads it yet)
 
-Tables for formation x campus spaces, the associations attached to them and the extra spaces of a
-post, seeded with today's world: ICM x Saint-Etienne, every association in it, the current BDE as
+Tables for formation x campus spaces, the audience rules of associations and the extra spaces of a
+post, seeded with today's world: ICM x Saint-Etienne, every association addressing it, the current BDE as
 its BDE ([profiles-and-access](docs/wiki/profiles-and-access.md)).
