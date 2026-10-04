@@ -15,6 +15,9 @@ import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
 import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
+import { Space } from '../spaces/space.entity';
+import { AssociationSpace } from '../spaces/association-space.entity';
+import { PostExtraSpace } from '../spaces/post-extra-space.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
@@ -60,6 +63,9 @@ import { PricingModule } from '../pricing/pricing.module';
       Post,
       Form,
       PostNotification,
+      Space,
+      AssociationSpace,
+      PostExtraSpace,
     ]),
     FollowsModule,
     UserTagModule,

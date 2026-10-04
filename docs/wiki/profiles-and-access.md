@@ -463,6 +463,15 @@ migration), and its UI stops assuming them.
 - **6e, institutions.** Created by a global admin, members added nominatively (D20); they publish and
   propose events like an association.
 
+**WP6a as built (2026-10-04).** Migration `apps/social-service/src/migrations/071_spaces.sql`: `spaces`
+(formation, campus, `openedAt`, `bdeAssociationId`; unique pair, CHECKs on the D4/D6 values, one BDE
+per space and one space per BDE), `association_spaces`, `post_extra_spaces`; entities in
+`social-service/src/spaces/`. Seed: ICM x saint-etienne, every association and list attached, and
+the BDE set ONLY if exactly one association carries `isBDE` (zero or several: left NULL with a
+notice - an admin designates it on the 6d page). Tried on a throwaway Postgres with one, zero and
+two `isBDE`, replayed, cascade and CHECK. **Deferred to 6e on purpose**: `associations.type` gaining
+`institution` (nothing could create one yet). Nothing reads these tables until 6b.
+
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions
 page. A BDE grants within its space; cross-space capabilities (widening a post, institutions,
