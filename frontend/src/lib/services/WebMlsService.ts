@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -1080,11 +1081,11 @@ export class WebMlsService extends BaseMlsService {
 
   /**
    * WASM client wrapper - stages an Add commit WITHOUT merging via `this.client.add_members_bulk`.
-   * Returns `[commit, welcome, added_indices, skipped_indices]`. `added_indices` are the positions
+   * Returns `[commit, welcome, added_indices, skipped]`. `added_indices` are the positions
    * in `keyPackages` actually included in the commit - WASM silently skips invalid key packages and
    * ones already belonging to an existing member, so a bare count would misalign whenever a skip
-   * isn't the very last entry. `skipped_indices` are positions dropped for an INVALID/undeserializable
-   * KeyPackage (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
+   * isn't the very last entry. `skipped` lists `{ index, reason }` for every INVALID/undeserializable
+   * KeyPackage (not the already-member dedup), the reason typed in Rust, surfaced so the loss is not silent. [[C5]]
    */
   protected async stageAddMembers(
     groupId: string,
@@ -1093,7 +1094,7 @@ export class WebMlsService extends BaseMlsService {
     commit: Uint8Array;
     welcome?: Uint8Array;
     addedIndices: number[];
-    skippedIndices: number[];
+    skipped: SkippedKeyPackage[];
   }> {
     const jsArray = keyPackages.reduce((arr, kp) => {
       arr.push(kp);
@@ -1104,7 +1105,7 @@ export class WebMlsService extends BaseMlsService {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
       addedIndices: res[2] as number[],
-      skippedIndices: (res[3] as number[] | undefined) ?? [],
+      skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
     };
   }
 

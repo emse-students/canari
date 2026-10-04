@@ -2,7 +2,9 @@ use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::state::MlsManager;
-use crate::{AddMemberResult, AddMembersBulkResult, MlsError};
+use crate::{
+    AddMemberResult, AddMembersBulkResult, MlsError, SkippedKeyPackage, SkippedKeyPackageReason,
+};
 
 /// The identity a credential carries, as the UTF-8 string it was built from.
 ///
@@ -226,11 +228,11 @@ impl MlsManager {
     }
 
     /// Add multiple members in a single commit so all new members share the same epoch.
-    /// Returns `(commit, welcome, added_indices, ratchet_tree, skipped_indices)` (see
+    /// Returns `(commit, welcome, added_indices, skipped)` (see
     /// [`AddMembersBulkResult`]). Key packages that fail validation/deserialisation are skipped
-    /// and reported via `skipped_indices` so the caller can surface them ([[C5]]) instead of a
+    /// and reported via `skipped`, each with its typed reason, so the caller can surface them ([[C5]]) instead of a
     /// silent member loss. Key packages whose identity is already present in the group's tree are
-    /// also skipped but NOT reported in `skipped_indices` (re-adding one would make OpenMLS reject
+    /// also skipped but NOT reported in `skipped` (re-adding one would make OpenMLS reject
     /// the *entire* commit with `ProposalValidationError(DuplicateSignatureKey)`); this happens
     /// when a previous add attempt merged its commit locally but failed to deliver the
     /// Welcome/commit over the network, leaving a "ghost" member that the caller should detect via
@@ -261,15 +263,25 @@ impl MlsManager {
         let mut added_indices: Vec<u32> = Vec::new();
         // Positions of invalid/unreadable KeyPackages, reported back to the caller (not the
         // already-members, which are a benign dedup). [[C5]]
-        let mut skipped_indices: Vec<u32> = Vec::new();
+        // Each carries its typed reason, classified HERE - the only place the openmls error exists.
+        let mut skipped: Vec<SkippedKeyPackage> = Vec::new();
         let mut any_already_member = false;
         for (idx, kp_bytes) in key_packages_bytes.iter().enumerate() {
             let kp = match KeyPackageIn::tls_deserialize(&mut &kp_bytes[..]) {
                 Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
                     Ok(kp) => kp,
                     Err(e) => {
-                        log::warn!("Skipping invalid KeyPackage at index {}: {:?}", idx, e);
-                        skipped_indices.push(idx as u32);
+                        let reason = SkippedKeyPackageReason::from_verify(&e);
+                        log::warn!(
+                            "Skipping invalid KeyPackage at index {} ({}): {:?}",
+                            idx,
+                            reason.as_str(),
+                            e
+                        );
+                        skipped.push(SkippedKeyPackage {
+                            index: idx as u32,
+                            reason,
+                        });
                         continue;
                     }
                 },
@@ -279,7 +291,10 @@ impl MlsManager {
                         idx,
                         e
                     );
-                    skipped_indices.push(idx as u32);
+                    skipped.push(SkippedKeyPackage {
+                        index: idx as u32,
+                        reason: SkippedKeyPackageReason::Undecodable,
+                    });
                     continue;
                 }
             };
@@ -306,7 +321,16 @@ impl MlsManager {
                     "All KeyPackages already belong to existing group members".to_string(),
                 ));
             }
-            return Err(MlsError::OpenMls("No valid KeyPackages to add".to_string()));
+            // Every package was refused: the reasons travel in the error text, for the log only -
+            // nothing branches on it (the typed reasons exist only when a commit was staged).
+            let reasons: Vec<String> = skipped
+                .iter()
+                .map(|s| format!("{}={}", s.index, s.reason.as_str()))
+                .collect();
+            return Err(MlsError::OpenMls(format!(
+                "No valid KeyPackages to add (skipped: {})",
+                reasons.join(", ")
+            )));
         }
 
         let (commit_msg_out, welcome_msg_out, _group_info) = group
@@ -326,11 +350,6 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
         self.mark_state_dirty();
-        Ok((
-            commit_bytes,
-            Some(welcome_bytes),
-            added_indices,
-            skipped_indices,
-        ))
+        Ok((commit_bytes, Some(welcome_bytes), added_indices, skipped))
     }
 }

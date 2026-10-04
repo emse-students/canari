@@ -21,7 +21,7 @@
 //! THE CLOCK IS PART OF THE SUBJECT HERE, so it is read rather than asserted on: the test chooses
 //! a lifetime that ends a known number of seconds after the add, and waits for exactly that. The
 //! only wall-clock claim made is the one openmls itself makes.
-use mls_core::MlsManager;
+use mls_core::{MlsManager, SkippedKeyPackage, SkippedKeyPackageReason};
 use openmls::prelude::tls_codec::Serialize as _;
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
@@ -181,12 +181,43 @@ fn admission_still_refuses_an_already_elapsed_key_package() {
 
     assert_eq!(
         skipped,
-        vec![0u32],
-        "an expired KeyPackage must still be refused at admission"
+        vec![SkippedKeyPackage {
+            index: 0,
+            reason: SkippedKeyPackageReason::Expired,
+        }],
+        "an expired KeyPackage must still be refused at admission, and named as expired"
     );
     assert_eq!(
         added,
         vec![1u32],
         "and the refusal is that package's alone - the good one beside it still joins"
     );
+}
+
+#[test]
+fn admission_names_a_key_package_from_the_future_apart_from_an_expired_one() {
+    // The other end of the lifetime: a minter whose clock runs ahead hands out a package that is
+    // not valid YET. It is refused like an expired one, but it wants the opposite fix (wait, or
+    // repair the clock) - so the reason must keep the two apart.
+    let gid = "g-future-admission";
+    let mut alice = make_device("alice", "dev3");
+    alice.create_group(gid.to_string()).expect("create_group");
+
+    let now = unix_now();
+    let future = ghost_key_package("future:dev1", now + 3600, now + 7200);
+    let erin = make_device("erin", "dev2");
+    let kp_erin = erin.generate_key_package().expect("kp erin");
+
+    let (_c, _welcome, added, skipped) = alice
+        .add_members_bulk(gid, &[&future, &kp_erin])
+        .expect("the batch reports the refusal rather than failing");
+
+    assert_eq!(
+        skipped,
+        vec![SkippedKeyPackage {
+            index: 0,
+            reason: SkippedKeyPackageReason::NotYetValid,
+        }]
+    );
+    assert_eq!(added, vec![1u32]);
 }

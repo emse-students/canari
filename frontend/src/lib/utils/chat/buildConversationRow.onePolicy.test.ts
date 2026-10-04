@@ -96,7 +96,7 @@ function mls(overrides: Record<string, unknown> = {}) {
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: [],
-      skippedDeviceIds: [],
+      skipped: [],
       welcome: null,
     })),
     persistCheckpoint: vi.fn(async () => {}),

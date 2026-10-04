@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { DatedKeyPackage } from './keyPackages';
+import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
@@ -525,8 +526,9 @@ export interface IMlsService {
    * with an error whose message contains `ALREADY_MEMBER` - callers should detect this and
    * recover (e.g. remove then re-add the affected user) instead of surfacing a raw crypto error.
    * Devices dropped because their KeyPackage was **invalid/undeserializable** (expired, wrong
-   * ciphersuite, lost private key, corrupted bytes) are reported in `skippedDeviceIds` so the
-   * caller can surface a non-silent member loss instead of letting them disappear. [[C5]]
+   * ciphersuite, lost private key, corrupted bytes) are reported in `skipped` WITH a typed reason
+   * (`SkippedKeyPackageReason`, classified in Rust) so the caller can surface a non-silent member
+   * loss and say why instead of letting them disappear. [[C5]]
    */
   addMembersBulk(
     groupId: string,
@@ -536,7 +538,7 @@ export interface IMlsService {
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
-    skippedDeviceIds: string[];
+    skipped: SkippedDevice[];
   }>;
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;

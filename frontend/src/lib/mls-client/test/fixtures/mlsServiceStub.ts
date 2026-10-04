@@ -16,7 +16,7 @@ export function createMlsServiceStub(
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
-      skippedDeviceIds: [],
+      skipped: [],
     }),
     processWelcome: vi.fn().mockResolvedValue('gid'),
     sendMessage: vi.fn().mockResolvedValue(new Uint8Array()),
