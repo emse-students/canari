@@ -65,7 +65,15 @@ import {
   holdsBdeFlagOverSql,
   isBdeAssociationSql,
 } from '../spaces/bde';
-import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  associationRulesReachSpaceMatchingSql,
+  associationVisibleToViewerSql,
+  READER_SPACES_SQL,
+  type SpacePair,
+} from '../spaces/reader-spaces';
+import { AssociationAudience } from '../spaces/association-audience.entity';
+import { smallestRules } from '../spaces/spaces.service';
+import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -255,7 +263,16 @@ export class AssociationsService {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  /** Creates a new association. Throws if the slug is already taken or has an invalid format. */
+  /**
+   * Creates a new association (or list). Throws if the slug is already taken or has an invalid
+   * format.
+   *
+   * IT REACHES ITS CREATOR'S SPACES BY DEFAULT (D36, user 2026-10-04): in the SAME transaction as
+   * the row, the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) are written as
+   * the smallest equivalent rule set - so it is never visible for a moment with no rule, and the
+   * grid at `/admin/spaces` reads it back as ticked boxes a global admin then edits. A creator with
+   * no space (no campus or no cursus) gives it no rule: it reaches its members only.
+   */
   async create(dto: CreateAssociationDto, userId: string) {
     if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
       throw new BadRequestException(
@@ -275,20 +292,71 @@ export class AssociationsService {
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,
     });
-    const saved = await this.assoRepo.save(asso);
-
-    return saved;
+    return this.assoRepo.manager.transaction(async (manager) => {
+      const saved = await manager.save(asso);
+      const creatorSpaces = (await manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
+      const rules = smallestRules(creatorSpaces);
+      if (rules.length === 0) {
+        this.logger.log(
+          `[spaces] ${saved.id} created by ${userId.slice(0, 8)}, who has no space: no default rule`
+        );
+        return saved;
+      }
+      this.logger.log(
+        `[spaces] ${saved.id} reaches its creator's spaces: ${rules
+          .map((r) => `${r.formation ?? '*'} x ${r.campus ?? '*'}`)
+          .join(', ')}`
+      );
+      await manager.insert(
+        AssociationAudience,
+        rules.map((r) => ({ associationId: saved.id, formation: r.formation, campus: r.campus }))
+      );
+      return saved;
+    });
   }
 
   /**
    * Returns associations alphabetically with a memberCount field attached to each.
    * Pass `type` to restrict to regular associations or promo lists; omit for both.
+   *
+   * `opts.viewerId` makes it THE DIRECTORY of that reader (D37): an association is kept when its
+   * rules reach one of the reader's spaces or the reader is a member of it -
+   * `associationVisibleToViewerSql`, the agenda's predicate, so the two never disagree. A global
+   * admin is an ordinary reader here. No viewer is the whole catalogue (the public listing and
+   * `?scope=all`). `opts.campus` / `opts.formation` keep the associations whose OWN rules reach a
+   * space matching them (the association map).
    */
-  async list(type?: 'association' | 'list') {
-    const associations = await this.assoRepo.find({
-      where: type ? { type } : {},
-      order: { name: 'ASC' },
-    });
+  async list(
+    type?: 'association' | 'list',
+    opts: {
+      viewerId?: string;
+      campus?: SpaceCampus | null;
+      formation?: SpaceFormation | null;
+    } = {}
+  ) {
+    const qb = this.assoRepo.createQueryBuilder('a').orderBy('a.name', 'ASC');
+    if (type) qb.andWhere('a.type = :directoryType', { directoryType: type });
+    if (opts.viewerId) {
+      this.logger.debug(`[DIRECTORY] restricted to the spaces of ${opts.viewerId.slice(0, 8)}`);
+      qb.andWhere(associationVisibleToViewerSql('a.id', ':directoryViewerId'), {
+        directoryViewerId: opts.viewerId,
+      });
+    }
+    const campus = opts.campus ?? null;
+    const formation = opts.formation ?? null;
+    if (campus !== null || formation !== null) {
+      this.logger.debug(
+        `[DIRECTORY] narrowed to rules reaching ${formation ?? '*'} x ${campus ?? '*'}`
+      );
+      qb.andWhere(
+        associationRulesReachSpaceMatchingSql('a.id', {
+          campus: campus === null ? null : ':directoryCampus',
+          formation: formation === null ? null : ':directoryFormation',
+        }),
+        { directoryCampus: campus, directoryFormation: formation }
+      );
+    }
+    const associations = await qb.getMany();
 
     // Attach member count
     const counts = await this.memberRepo

@@ -4,7 +4,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
-    listAssociations,
+    listAssociationDirectory,
     listMyAssociations,
     AssociationPermissionFlag,
     holdsBdeFlag,
@@ -29,7 +29,7 @@
   onMount(async () => {
     try {
       const [all, mine] = await Promise.all([
-        listAssociations('association'),
+        listAssociationDirectory('association'),
         isLoggedIn ? listMyAssociations() : Promise.resolve([]),
       ]);
       associations = all;
