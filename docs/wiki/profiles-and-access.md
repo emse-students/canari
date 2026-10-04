@@ -733,5 +733,12 @@ box no longer defines anything.
 
 | Item | Decision |
 | --- | --- |
+| Republish a post one's association already sees | immediate, by those who may publish in its name; only a PROPOSAL to ANOTHER association needs acceptance |
+| Who accepts a proposal (post or co-organisation) | those who may publish in the receiving association's name; no new grant |
+| Pending proposals | a notification to the acceptors and a "pending" queue on the association's management page; NO expiry (no clock decides a refusal); the sender may withdraw |
+| A co-organiser refuses or leaves | the event stays with its organiser, the audience union is recomputed without it |
+
+| Item | Decision |
+| --- | --- |
 | Republished card | "Republished by X, Y" line, reactions and comments on the original, notification only for those who newly see the post |
 | Personnel | declared; spaces add up with a cursus; publishing as an institution needs membership of its instance |
