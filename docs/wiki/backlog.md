@@ -232,6 +232,13 @@ reads its `load` data (`data.feedParams`) and binds pull-to-refresh to the FIRST
 in the document, and `app.css` keys the chat layout on `.page-scroll-wrap:has(.app-layout)` - one
 wrapper for every page.
 
+## After the 1.0.2 release - what the user asked for on 2026-10-02, and what is owed a reading
+
+- **"Seen by" avatars on every author's messages (user, 2026-10-02, "exactement ton premier point").** In groups and communities of more than one person, each member's head sits under the LAST message they read, whoever wrote it, as Messenger does - today it appears only under your own messages. Not sized yet: the salon read-receipt settings (#1228) must keep deciding who shows, and past three heads a "+N" is needed. Not in 1.0.2.
+- **The iPhone camera letterbox fix shipped UNVERIFIED (user, 2026-10-02, "pas le temps").** One `<video>` per stream (#1370): the agent measured 5 of 5 bad after a home-and-return and 0 of 40 without. Owed ONE loop of 20+ opens on both lenses on the iPhone, with a home-and-return in it.
+- **iPhone rig gaps.** `pin.mjs --device I1` and `login.mjs --device I1` could not see the phone (`attached()` read a missing `pymobiledevice3` as no phone; fixed to throw in #1370, set `PYMOBILEDEVICE3` to the executable). Starting WDA brings its runner to the foreground, so Canari goes to the background and relocks on the PIN screen - every WDA session ends on the PIN, and a tap on "Deverrouiller" can land on a logout control when the keyboard shifts the layout (screenshot before each tap).
+- **Android fluidity.** Feed progressive mount (#1361), no hover toolbar on phones (#1362) and a cancelable-only `touchmove` claim (#1363) shipped; owed a re-measure of `open_conversation` (first open 662 ms before) and a read on the Mi 9T. Lucide `Icon` is about 1 ms per icon on that phone: 100-150 ms per heavy screen is the hardware.
+
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 
 **The rule, verbatim from the user:** *"only static ui element, that are apart from content, should
