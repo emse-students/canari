@@ -419,8 +419,15 @@ export async function getOidcReturnTo(): Promise<string> {
 /**
  * Rotate the access token using the HttpOnly refresh cookie.
  * The browser sends the cookie automatically with `credentials: 'include'`.
+ *
+ * `fetchImpl` is for ONE caller: the root layout's `load`, which hands over `event.fetch`. SvelteKit
+ * warns on every navigation when a `load` reaches `window.fetch` (`Loading .../api/auth/refresh
+ * using window.fetch`), and a line printed on every navigation is one its reader learns to skip.
+ * Both of the warning's reasons are moot here (`ssr = false`), so this buys nothing but the silence -
+ * which is the point. Every other caller uses the global `fetch`. A refresh already in flight is
+ * joined whatever `fetch` the joiner brought, since the question and its answer are the same.
  */
-export async function refresh(): Promise<string> {
+export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> {
   // The server already answered this question about this exact cookie. Repeating the request is a
   // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
   if (_refreshCredentialProvenDead) {
@@ -429,13 +436,13 @@ export async function refresh(): Promise<string> {
     throw new SessionExpiredError();
   }
   if (_pendingRefresh) return _pendingRefresh;
-  _pendingRefresh = _doRefresh().finally(() => {
+  _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
     _pendingRefresh = null;
   });
   return _pendingRefresh;
 }
 
-async function _doRefresh(): Promise<string> {
+async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // The build doing the asking, carried the way `users/me/announcement` already carries it: as a
   // query parameter, because nothing in a request states a client's version. It is here for the
   // server's REPORT, not for any decision. A refused refresh has causes that only the version tells
@@ -464,7 +471,7 @@ async function _doRefresh(): Promise<string> {
   // what lets an offline launch unlock instead of being reported as an expired session.
   let res: Response;
   try {
-    res = await fetch(endpoint, {
+    res = await fetchImpl(endpoint, {
       method: 'POST',
       // `credentials` still says `include` on every platform: where the cookie works it IS the
       // credential, and where it does not the header carries it and the flag costs nothing.

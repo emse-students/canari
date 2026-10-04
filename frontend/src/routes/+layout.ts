@@ -33,7 +33,8 @@ export const load = async (event: LoadEvent) => {
     // launch after OIDC, or a store cleared by the system.
     // Attempt a silent refresh - _doRefresh restores userId from the JWT sub claim.
     try {
-      await refresh();
+      // `event.fetch`, so SvelteKit does not warn on every navigation - see `refresh`.
+      await refresh(event.fetch);
       userId = currentUserId();
     } catch {
       // refresh failed - session truly expired

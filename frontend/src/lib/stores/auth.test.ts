@@ -148,3 +148,21 @@ describe('the dead-credential latch, as a fact a caller can read', () => {
     expect(isRefreshCredentialProvenDead()).toBe(false);
   });
 });
+
+describe('the fetch a refresh is made with', () => {
+  it("uses the caller's fetch when one is handed over - the root load's `event.fetch`", async () => {
+    // Runs after the latch was lifted above. SvelteKit warns on every navigation when a `load`
+    // reaches `window.fetch`; the root layout passes its own, and it must be the one used.
+    const loadFetch = vi.fn<typeof fetch>().mockResolvedValue(answer(200));
+    await expect(refresh(loadFetch)).resolves.toMatch(/^h\./);
+    expect(loadFetch).toHaveBeenCalledTimes(1);
+    expect(String(loadFetch.mock.calls[0][0])).toContain('/api/auth/refresh');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the global fetch otherwise', async () => {
+    fetchMock.mockResolvedValue(answer(200));
+    await expect(refresh()).resolves.toMatch(/^h\./);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
