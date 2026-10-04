@@ -494,6 +494,11 @@ export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/posts/notifications/read-all', { method: 'POST' });
 }
 
+/** Marks notifications about one post as read. */
+export async function markPostNotificationsReadForPost(postId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/${postId}/notifications/read`, { method: 'POST' });
+}
+
 // ── User follows ──────────────────────────────────────────────────────────────
 
 export async function followUser(userId: string): Promise<{ ok: boolean }> {

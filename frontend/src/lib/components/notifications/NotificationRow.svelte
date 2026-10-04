@@ -32,9 +32,12 @@
     unread: boolean;
     /** Called when the row is activated. */
     onOpen: () => void;
+    /** Actor names merged into this row, newest first. */
+    actorNames?: string[];
   }
 
-  let { notif, unread, onOpen }: Props = $props();
+  let { notif, unread, onOpen, actorNames = [notif.actorName] }: Props = $props();
+  const otherActorCount = $derived(Math.max(0, actorNames.length - 1));
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -207,8 +210,13 @@
     -->
     <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
       <span class="font-semibold"
-        ><EmojiText text={notif.actorName || m.notif_actor_unknown()} /></span
+        ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
       >
+      {#if otherActorCount === 1}
+        {m.notif_grouped_one_other()}
+      {:else if otherActorCount > 1}
+        {m.notif_grouped_many_others({ count: otherActorCount })}
+      {/if}
       {#if notif.type === 'reaction'}
         {m.notif_reaction_text()}
       {:else if notif.type === 'mention'}

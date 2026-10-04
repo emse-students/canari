@@ -23,6 +23,7 @@ import type { PushContent } from '../push/push-content';
  */
 describe('PostNotificationsService.createNotifications', () => {
   const saved: unknown[] = [];
+  const updates: unknown[] = [];
   const pushes: { userId: string; content: PushContent }[] = [];
   let warn: jest.SpyInstance;
 
@@ -32,6 +33,10 @@ describe('PostNotificationsService.createNotifications', () => {
       save: (rows: unknown) => {
         saved.push(...(Array.isArray(rows) ? rows : [rows]));
         return Promise.resolve(rows);
+      },
+      update: (criteria: unknown, values: unknown) => {
+        updates.push({ criteria, values });
+        return Promise.resolve();
       },
       // `resolveActorName` reaches the users table through the repository's query runner.
       manager: { query: () => Promise.resolve([{ displayName: 'Claire' }]) },
@@ -47,6 +52,7 @@ describe('PostNotificationsService.createNotifications', () => {
 
   beforeEach(() => {
     saved.length = 0;
+    updates.length = 0;
     pushes.length = 0;
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
@@ -256,5 +262,16 @@ describe('PostNotificationsService.createNotifications', () => {
 
     expect(pushes[0].content.icon).toEqual({ kind: 'user', userId: 'someone' });
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('marks only the current user notifications for the opened post as read', async () => {
+    await service().markPostRead('reader', 'post-1');
+
+    expect(updates).toEqual([
+      {
+        criteria: { recipientId: 'reader', postId: 'post-1' },
+        values: { read: true },
+      },
+    ]);
   });
 });

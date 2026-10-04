@@ -6,7 +6,11 @@
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { groupNotifications, type NotificationBucket } from '$lib/utils/notifications/grouping';
+  import {
+    groupNotifications,
+    groupNotificationsByPost,
+    type NotificationBucket,
+  } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
   import { notificationHref } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
@@ -56,7 +60,9 @@
       : postNotifStore.notifications
   );
 
-  const groups = $derived(groupNotifications(visible, unreadAtOpen, openedAt));
+  const groups = $derived(
+    groupNotifications(groupNotificationsByPost(visible), unreadAtOpen, openedAt)
+  );
 
   /** The heading for a band. A map rather than a chain: the buckets are a closed set. */
   const BUCKET_LABEL: Record<NotificationBucket, () => string> = {
@@ -130,7 +136,8 @@
           <li>
             <NotificationRow
               {notif}
-              unread={unreadAtOpen.has(notif.id)}
+              actorNames={notif.actorNames}
+              unread={notif.notificationIds.some((id) => unreadAtOpen.has(id))}
               onOpen={() => openNotification(notif)}
             />
           </li>
