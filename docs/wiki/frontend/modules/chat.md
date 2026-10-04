@@ -904,13 +904,16 @@ Every place a message mutation is written was found by grepping the writes thems
 | `systemMessageHandler` live path | `editSupersedes` | refuses an edit of a deleted row |
 | `historySystemEvents` replay | `editSupersedes`, plus the deletes seen earlier in the page | same |
 | `history.ts` post-save pass | last edit in the page | `if (deletion) ... else if (edit)` - always had it |
-| `systemMessageHandler` `history_bundle` merge | n/a - never writes a body | replaces the body with the tombstone (D5) |
+| `systemMessageHandler` `history_bundle` merge | `editSupersedes`, body taken ONLY from the author's own bundle | replaces the body with the tombstone (D5) |
 
-The bundle merge is the interesting row: it takes the `isEdited` FLAG and the `editedAt`, never the
-body, so it cannot diverge two bodies - and it can leave a device showing a pre-edit body marked
-"edited". That is narrower than the other three on purpose (trusting a peer's copy of somebody else's
-message content is a different question), so it is recorded in [backlog](../../backlog.md) rather
-than changed.
+The bundle merge is the interesting row. Any member's bundle may set the `isEdited` FLAG and fill a
+missing `editedAt`, but the edited BODY is taken only when the peer that answered the history request
+IS the message's author - the check the live path makes with `mutationIsAuthorised` - and then
+ordered with `editSupersedes`. Taking any peer's body on a date comparison would let one member
+rewrite another's message on the receiving device: `editSupersedes` decides which edit wins, never
+who may edit (2026-10-04, `systemMessageHandler.bundleEdit.test.ts`). A device handed the edit by a
+NON-author still shows the pre-edit body marked "edited"; closing that needs the author's own signed
+edit on the wire.
 
 `pinStore.supersedes` is the same pattern for the pin register, and predates this: the argument was
 written down there before it was applied here. Covered by `editPrecedence.test.ts` and
