@@ -5111,8 +5111,7 @@ public association and post pages, and the calendar feed.
 
 **Two `3xx` sitemaps and a missing canonical are defects in their own right**, not SEO polish: a
 crawler that is redirected away from `sitemap.xml` reads no sitemap, and a page with no canonical lets
-the engine pick one. **MiGallery is a private gallery**, so its default is `noindex` rather than
-ranking - that is the user's to confirm before anyone optimises it.
+the engine pick one. **MiGallery IS TO BE INDEXED (user, 2026-10-04)**, against the default of `noindex` for a private gallery: its pass is owed like every other project's, once its name is final, and what may rank is its public surface only.
 
 ### P2 - SKY MOVES ONTO THE SCHOOL HOST, THEN TAKES `sky.emse.fr` (user, 2026-09-25)
 
