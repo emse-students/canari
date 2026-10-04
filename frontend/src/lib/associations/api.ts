@@ -11,6 +11,7 @@ import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
+import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 
 /**
  * Permission flags for association members (mirrors the backend enum).
@@ -2602,4 +2603,62 @@ export function eventIcsAbsoluteUrl(eventId: string, startsAt: string | Date): s
     to: new Date(start.getTime() + DAY_MS).toISOString(),
     eventId,
   });
+}
+
+// ── Spaces (WP6d) ─────────────────────────────────────────────────────────
+
+/** An open space: a formation x campus pair governed by at most one BDE. */
+export interface SpaceRow {
+  id: string;
+  formation: Formation;
+  campus: Campus;
+  openedAt: string;
+  bde: { id: string; name: string } | null;
+  /** How many associations' audience rules reach this space. */
+  associationCount: number;
+}
+
+/** One audience rule; `null` means "any" (every formation, or every campus). */
+export interface AudienceRule {
+  formation: Formation | null;
+  campus: Campus | null;
+}
+
+/** Lists the open spaces. Global admins only. */
+export function listSpaces(): Promise<SpaceRow[]> {
+  return request<SpaceRow[]>('/api/associations/spaces');
+}
+
+/** Opens a space (D17). Answers 409 when the pair is already open. */
+export function openSpace(formation: Formation, campus: Campus): Promise<SpaceRow> {
+  return request<SpaceRow>('/api/associations/spaces', {
+    method: 'POST',
+    body: JSON.stringify({ formation, campus }),
+  });
+}
+
+/** Designates, or clears with `null`, the BDE of a space (D22). */
+export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
+  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
+    method: 'PUT',
+    body: JSON.stringify({ associationId }),
+  });
+}
+
+/** The audience rules of an association: who it addresses (D19). */
+export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
+  return request<AudienceRule[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/audiences`
+  );
+}
+
+/** Replaces the audience rules of an association; at least one rule is required. */
+export function setAssociationAudiences(
+  associationId: string,
+  rules: AudienceRule[]
+): Promise<AudienceRule[]> {
+  return request<AudienceRule[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/audiences`,
+    { method: 'PUT', body: JSON.stringify({ rules }) }
+  );
 }

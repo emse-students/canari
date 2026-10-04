@@ -487,6 +487,20 @@ two `isBDE`, replayed, a duplicate rule refused, a bad value refused, cascade. *
 purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Settled the same day
 (D33)**: there is ONE School, which may share with one campus or the other, and TWO MEs (one per campus). Nothing reads these tables until 6b.
 
+**WP6d as built (2026-10-04, on the 6a branch).** API in `social-service/src/spaces/`, all global-admin
+only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
+`associations/spaces` wins over `associations/:id`: `GET/POST /api/associations/spaces` (list with BDE
+and the number of associations whose rules reach each space; open a pair, 409 if already open),
+`PUT /api/associations/spaces/:id/bde` (designate or clear; only a regular association, never a list;
+409 if it already governs another space), `GET/PUT /api/associations/:id/audiences` (replace the rules
+in one transaction, de-duplicated, at least one). Screen: `/admin/spaces` (nav entry "Espaces",
+global admins) - the open spaces with a BDE picker each, an "open a space" row, and a rules editor
+per association (formation and campus, "all" meaning NULL). **The `isBDE` toggle on
+`/admin/associations` still exists and still drives every BDE check**: 6c moves those checks onto
+the space's BDE and deletes the column, so until then the two say the same thing only because the
+seed made them agree. Not seen in a browser yet; the unit tests cover the service (9) and CI boots
+the real module.
+
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions
 page. A BDE grants within its space; cross-space capabilities (widening a post, institutions,
