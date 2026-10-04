@@ -674,6 +674,12 @@ const NOTABLE = [
   // and those lines are the entire reason the reports were written.
   /\[CRON\] reportStrandedDeviceMemberships: no pending membership older than /,
   /\[CRON\] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree/,
+  // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`), same rule: match the lines that say "nothing
+  // to report" and never the tag. The rate line is a LOG carrying the distribution whatever the
+  // verdict, and the clean hole sentence is the other; the WARN (`were re-keyed`) and the ERROR
+  // (`HOLE in their commit log`) are the findings and stay unclassified on purpose.
+  /\[CRON\] reportCommitLogHealth: commit rate over the last hour - (no group committed|\d+ commit\(s\) in \d+ group\(s\); .*, 0 group\(s\) at >= \d+ by one device)/,
+  /\[CRON\] reportCommitLogHealth: every commit log is contiguous /,
   // A DEVICE ASKING WHICH GROUPS IT STILL BELONGS TO, AND THE NUMBER THAT DECIDES WHETHER IT IS NEWS.
   //
   // `[DEVICE_MEMBERSHIPS]` was matched by NOTHING and landed in `unexplained` every time a device

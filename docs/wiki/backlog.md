@@ -2913,32 +2913,9 @@ these twelve. Still open:
   here is gone: [ChatGroupPanel](../../frontend/src/lib/components/chat/ChatGroupPanel.svelte) now
   says only "Chiffré de bout en bout", unconditionally, by the user's choice to stop exposing the
   machinery. Whether a device that dropped a frame should say so anywhere is NOT decided.
-- **The report that would have named it without a user's impression** is the next entry.
 
 Nothing was modified on prod. On 2026-09-02 one web session (`web-...-mtd1d1fc-m84y`) sat 96 commits
 behind, stuck below the hole (re-measure before acting on it).
-
----
-
-### P2 - nothing measures a RE-KEY RATE, and nothing would ever report a HOLE in a commit log (2026-09-02)
-
-**129 epochs in six days on a TWO-PERSON DM, and no mechanism said a word.** Group `7da231f8` above:
-
-| Window | Epochs | Committer |
-| --- | --- | --- |
-| 30/08 02:43 -> 03:31 | 89 -> 104, **16 commits in 48 minutes** | one web session |
-| 30/08 04:22 -> 06:36 | 105 -> 116, 12 commits | the Android phone |
-| 31/08 -> 02/09 | 118 -> 129, 12 commits | both peers |
-
-Every commit is a re-key, every re-key is an epoch a lagging device must cross, and this churn is what
-makes the P1's four defects fire at all. Nothing counts commits per group per hour; nothing counts
-sends that are undecryptable by construction (defect C produced thirty such rows in 24 seconds); and
-nothing detects a gap in a commit log - one `GROUP BY` would have named epoch 121 on 31/08.
-
-**Owed:** a counter on the fanout for undecryptable-by-construction sends, and two lines in the hourly
-report - commits per group per hour, and any hole between `min(baseEpoch)` and `activeEpoch - 1`. A
-correct mechanism with no report is found by hand a day late; this one was found by a user's
-impression, four days late.
 
 ---
 
