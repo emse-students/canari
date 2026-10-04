@@ -1,13 +1,12 @@
 /**
  * THE PUBLISHED EXTERNAL-JOIN BASE, AND WHO REPAIRS IT WHEN IT FALLS BEHIND.
  *
- * WHAT IS BROKEN, AND FOR WHICH COMMITS. `runCommitTransaction` ends with
- * `void this.refreshGroupInfo(groupId)`, and for a STAGED add or remove that call is the only thing
- * that mints the successor base: the commit is unapplied at submit time, so the device cannot carry
- * the new epoch's base inside the submission the way an external join does. Lose it and the
- * published base stays one epoch behind for ever. (This paragraph used to quote that comment as
- * *"the ONLY thing that mints a base"* flatly; the comment itself was corrected in #571, and the
- * distinction it drew is the one that decides whether a group can fall behind at all.)
+ * WHAT IS BROKEN, AND FOR WHICH COMMITS. Until COMM-22 was closed, `runCommitTransaction` ended
+ * with `void this.refreshGroupInfo(groupId)`, and for a STAGED add or remove that call was the only
+ * thing that minted the successor base. Every commit now carries the base for the epoch it creates
+ * inside its own submission, so that follow-up is gone; what is left here is the repair for a base
+ * that is behind for any OTHER cause (a legacy client's commit, a failed server write). The
+ * measurement below is of the old follow-up, and is why the repair exists.
  *
  * **THE MEASUREMENT SAYS SO.** Production, 2026-09-04: four of the forty-three groups holding a base
  * were stale, and every single one by **exactly one epoch** - which is the signature of one lost

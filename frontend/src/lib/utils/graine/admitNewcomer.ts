@@ -98,7 +98,7 @@ export function devicesToAdmit(input: {
  * - the one ordering the epoch gate does not decide is a newcomer who reads the NEW base after this
  *   commit and joins on top of it. That base cannot exist before their `pending` seat does: the
  *   commit carries the devices it adds (`admits`, written in the SAME transaction as the epoch
- *   advance), and the base is minted only after it by `refreshGroupInfo`. From then until the
+ *   advance), and the base for that epoch is stored in that same transaction. From then until the
  *   lock is released below - after every Welcome - `ensureDistributionGroupFor` reads that seat
  *   with `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining.
  *

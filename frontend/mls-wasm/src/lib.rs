@@ -480,7 +480,10 @@ impl WasmMlsClient {
     /// post-merge ratchet tree via `export_ratchet_tree`.
     /// `key_packages` is a JS Array of Uint8Array.
     /// Returns [commit: Uint8Array, welcome: Uint8Array, added_indices: number[],
-    /// skipped: {index: number, reason: string}[]].
+    /// skipped: {index: number, reason: string}[], group_info: Uint8Array]. `group_info` is the
+    /// external-join base for the epoch the staged commit CREATES: the caller submits it WITH the
+    /// commit so the server stores it atomically with the epoch advance (COMM-22), and never
+    /// publishes it alone.
     /// `added_indices` lists, in order, the positions within the input `key_packages` array that
     /// were actually included in the commit - positions skipped (invalid, or already a member of
     /// the group) are omitted rather than collapsing to a bare count, so the caller can correctly
@@ -515,9 +518,9 @@ impl WasmMlsClient {
 
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
 
-        let (commit, welcome, added_indices, skipped) = self
+        let ((commit, welcome, added_indices, skipped), group_info) = self
             .manager
-            .add_members_bulk(&group_id, &kp_slices)
+            .add_members_bulk_with_base(&group_id, &kp_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let array = js_sys::Array::new();
@@ -550,6 +553,7 @@ impl WasmMlsClient {
             skipped_array.push(&obj);
         }
         array.push(&skipped_array);
+        array.push(&js_sys::Uint8Array::from(&group_info[..]));
         Ok(array)
     }
 
@@ -739,29 +743,33 @@ impl WasmMlsClient {
 
     /// Remove all devices of one or more users from a group.
     /// `user_ids` is a JS Array of strings (usernames/identities).
-    /// Returns the serialized commit bytes to broadcast to remaining group members.
+    /// Returns [commit: Uint8Array, group_info: Uint8Array]: the commit to broadcast to remaining
+    /// group members, and the external-join base for the epoch it creates (submitted with it).
     #[wasm_bindgen]
     pub fn remove_members(
         &mut self,
         group_id: String,
         user_ids: js_sys::Array,
-    ) -> Result<Vec<u8>, JsValue> {
+    ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = user_ids.iter().filter_map(|v| v.as_string()).collect();
         log::info!("remove_members from group: {} (users: {:?})", group_id, ids);
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        self.manager
+        let (commit, group_info) = self
+            .manager
             .remove_members_for_users(&group_id, &id_slices)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(commit_and_base(&commit, &group_info))
     }
 
     /// Remove specific device leaves by their `userId:deviceId` identity string.
     /// Only removes the targeted leaves, leaving other devices of the same user intact.
+    /// Returns [commit, group_info] like `remove_members`.
     #[wasm_bindgen]
     pub fn remove_members_by_device(
         &mut self,
         group_id: String,
         device_identities: js_sys::Array,
-    ) -> Result<Vec<u8>, JsValue> {
+    ) -> Result<js_sys::Array, JsValue> {
         let ids: Vec<String> = device_identities
             .iter()
             .filter_map(|v| v.as_string())
@@ -772,9 +780,11 @@ impl WasmMlsClient {
             ids
         );
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        self.manager
+        let (commit, group_info) = self
+            .manager
             .remove_members_for_devices(&group_id, &id_slices)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(commit_and_base(&commit, &group_info))
     }
 
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
@@ -835,4 +845,12 @@ impl WasmMlsClient {
         array.push(&js_sys::Uint8Array::from(&commit[..]));
         Ok(array)
     }
+}
+
+/// The `[commit, group_info]` pair a staged removal hands back across the WASM boundary.
+fn commit_and_base(commit: &[u8], group_info: &[u8]) -> js_sys::Array {
+    let array = js_sys::Array::new();
+    array.push(&js_sys::Uint8Array::from(commit));
+    array.push(&js_sys::Uint8Array::from(group_info));
+    array
 }
