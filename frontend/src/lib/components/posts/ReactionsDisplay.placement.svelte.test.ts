@@ -103,6 +103,13 @@ describe('ReactionsDisplay - the "who reacted" panel', () => {
     expect(target.contains(p!)).toBe(false);
   });
 
+  it('names the reactors on hover instead of naming the reaction type', async () => {
+    const { badge } = await render();
+
+    expect(badge.getAttribute('title')).toBe('Camille, u2');
+    expect(badge.getAttribute('title')).not.toBe('like');
+  });
+
   /**
    * THE COMPONENT MUST NOT WRITE ITS OWN COORDINATES, which is what made it run off the screen:
    * `left` was the badge's left with nothing clamping it. 384 + a 160 px minimum is 544 on a 436 px

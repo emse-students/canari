@@ -73,6 +73,16 @@ export class PostsController {
     return this.notifications.markAllRead(xUserId);
   }
 
+  /** Marks notifications about one post as read when the post is opened. */
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/notifications/read')
+  markPostRead(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
+  ) {
+    return this.notifications.markPostRead(xUserId, postId);
+  }
+
   /** Returns all scheduled posts authored by the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get('my-scheduled')
