@@ -873,7 +873,11 @@ export async function handleSystemEvent(
             ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
             ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
           });
-          await saveConversation?.(convoKey).catch(() => {});
+          await saveConversation?.(convoKey).catch((e: unknown) => {
+            log(
+              `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
+            );
+          });
         }
       }
 
@@ -936,6 +940,8 @@ export async function handleSystemEvent(
         const c = conversations.get(convoKey);
         if (c) {
           const changedIds = new Set<string>();
+          // The rows whose BODY the author's own bundle replaced - written at rest below.
+          const bodyEditedIds = new Set<string>();
           const nextMessages = c.messages.map((existing) => {
             const b = bundleById.get(existing.id);
             if (!b) return existing;
@@ -959,6 +965,34 @@ export async function handleSystemEvent(
             // supposed to be the only thing left of it (D5).
             if (b.isDeleted === true && !next.isDeleted) {
               next = { ...next, isDeleted: true, content: m.chat_system_message_deleted() };
+              changedIds.add(existing.id);
+            }
+            // THE EDITED BODY, AND ONLY FROM ITS AUTHOR. A device that missed an `edit_message`
+            // frame used to keep the PRE-EDIT text under an "edited" marker, because this merge
+            // never wrote a body. Taking ANY peer's body on a date comparison would let one member
+            // rewrite another's message here: `editSupersedes` decides which of two edits wins,
+            // never who may edit, and a bundle's sender is whoever answered the history request.
+            // So the body is taken only when the answering peer IS the message's author - the same
+            // check the live `edit_message` path makes with `mutationIsAuthorised` - and ordered by
+            // `editSupersedes` exactly as that path orders it. Every other case stays as narrow as
+            // it was; anything wider needs the author's own signed edit on the wire.
+            if (
+              b.isEdited === true &&
+              !next.isDeleted &&
+              typeof b.content === 'string' &&
+              b.content !== next.content &&
+              typeof b.editedAt === 'number' &&
+              b.editedAt > 0 &&
+              (existing.senderId ?? '').toLowerCase() === senderNorm.toLowerCase() &&
+              editSupersedes({ editedAt: b.editedAt, content: b.content }, next)
+            ) {
+              next = {
+                ...next,
+                content: b.content,
+                isEdited: true,
+                editedAt: new Date(b.editedAt),
+              };
+              bodyEditedIds.add(existing.id);
               changedIds.add(existing.id);
             }
             if (b.isEdited === true && !next.isEdited) {
@@ -1000,28 +1034,39 @@ export async function handleSystemEvent(
                 try {
                   // The metadata the merge above may have moved. The body is left alone EXCEPT on
                   // a deletion, which must purge it at rest: the tombstone is meant to be all that
-                  // survives, and writing the row without it put the original text back on disk.
+                  // survives, and writing the row without it put the original text back on disk -
+                  // and on an edit the AUTHOR's own bundle carried, which supersedes it.
                   await storage.updateMessage(
                     msg.id,
                     {
                       reactions: messageReactions.get(msg.id) ?? msg.reactions,
                       serverTimestamp: msg.serverTimestamp,
                       ...(msg.isDeleted ? { isDeleted: true, content: msg.content } : {}),
+                      ...(!msg.isDeleted && bodyEditedIds.has(msg.id)
+                        ? { content: msg.content }
+                        : {}),
                       ...(msg.isEdited ? { isEdited: true } : {}),
                       ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
                     },
                     deviceKeyB64
                   );
-                } catch {
-                  // Non-blocking
+                } catch (e) {
+                  // Non-blocking: memory already holds the merge, the next bundle restates it.
+                  log(
+                    `[HISTORY_BUNDLE] merged state of ${msg.id.slice(0, 8)} not persisted: ${String(e)}`
+                  );
                 }
               }
             }
           }
         }
       }
-    } catch {
-      /* malformed bundle - ignore silently */
+    } catch (e) {
+      // A malformed bundle is ignored, never silently: it is the only trace of a peer that
+      // answered a history request with something this device could not apply.
+      log(
+        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} not applied: ${String(e)}`
+      );
     }
     return true;
   }
