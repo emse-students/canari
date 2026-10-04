@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { verifyInternalToken } from './internal-token';
 
 /**
  * Validates that the `X-User-Id` header is present on the request.
@@ -57,24 +57,7 @@ export class NginxAuthGuard implements CanActivate {
       }
 
       // HMAC token validation: proves the request came through nginx with a valid JWT.
-      const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
-      if (!token) {
-        throw new UnauthorizedException('Missing X-Internal-Token header');
-      }
-      const epochMinute = Math.floor(Date.now() / 60000);
-      const valid = [epochMinute, epochMinute - 1].some((min) => {
-        const expected = createHmac('sha256', internalSecret)
-          .update(`${userId}:${min}`)
-          .digest('hex');
-        try {
-          return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
-        } catch {
-          return false;
-        }
-      });
-      if (!valid) {
-        throw new UnauthorizedException('Invalid X-Internal-Token');
-      }
+      verifyInternalToken(request.headers, userId, internalSecret);
       return true;
     }
 

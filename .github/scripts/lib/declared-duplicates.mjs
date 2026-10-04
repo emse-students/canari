@@ -61,6 +61,26 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the per-user X-Internal-Token HMAC nginx mints, as each auth guard verifies it',
+    compare: 'exact',
+    why: 'three guards with three DIFFERENT refusal policies (backlog, "THREE SERVICES REFUSE AN UNSIGNED CALLER") share one signature check, and no shared TS package exists to hold it; the policies stay in each guard, only the HMAC is this file',
+    files: [
+      'apps/chat-delivery-service/src/guards/internal-token.ts',
+      'apps/core-service/src/common/guards/internal-token.ts',
+      'apps/social-service/src/common/guards/internal-token.ts',
+    ],
+  },
+  {
+    what: 'the test that guards it',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the others only inherit the file',
+    files: [
+      'apps/chat-delivery-service/src/guards/internal-token.spec.ts',
+      'apps/core-service/src/common/guards/internal-token.spec.ts',
+      'apps/social-service/src/common/guards/internal-token.spec.ts',
+    ],
+  },
+  {
     what: 'the block check that refuses to pull a blocker into a shared space',
     compare: 'code',
     why: 'the same refusal at two different mutations - a group add and a salon invitation - so each copy names its own call site in prose and must decide identically',
