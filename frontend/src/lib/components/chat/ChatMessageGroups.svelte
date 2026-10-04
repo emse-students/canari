@@ -3,6 +3,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
+  import SeenByHeads from '../messages/SeenByHeads.svelte';
   import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
   import { readersOf } from '$lib/utils/chat/readState';
   import {
@@ -62,6 +63,12 @@
      * DERIVED from it here rather than stored on the message, so there is one copy of the fact.
      */
     readWatermarks?: ReadWatermarks;
+    /**
+     * Groups and salons: message id -> the members whose head sits under it (`seenByAnchors`, over
+     * the WHOLE conversation). When given, it replaces the DM receipt under the sender's own last
+     * read message, so the two shapes never draw together.
+     */
+    seenBy?: Map<string, string[]>;
   }
 
   let {
@@ -87,6 +94,7 @@
     isDirect = false,
     isMobile = false,
     readWatermarks,
+    seenBy,
   }: Props = $props();
 
   /** Everyone who has read `msg`, its author excluded. */
@@ -108,15 +116,17 @@
 
   // Last sent message read by at least one recipient (Read indicator).
   const lastReadOwnMessageId = $derived(
-    [...visibleMessageGroups]
-      .reverse()
-      .find(
-        (g): g is MessageGroupMessageRow =>
-          isMessageGroupRow(g) &&
-          g.message.isOwn &&
-          !g.message.isSystem &&
-          readersOfMessage(g.message).length > 0
-      )?.message.id ?? null
+    seenBy
+      ? null
+      : ([...visibleMessageGroups]
+          .reverse()
+          .find(
+            (g): g is MessageGroupMessageRow =>
+              isMessageGroupRow(g) &&
+              g.message.isOwn &&
+              !g.message.isSystem &&
+              readersOfMessage(g.message).length > 0
+          )?.message.id ?? null)
   );
 
   function firstNameOnly(value: string): string {
@@ -319,6 +329,13 @@
             />
           </div>
         </div>
+        {#if seenBy?.has(msg.id)}
+          <!-- Who stopped reading HERE, whoever wrote it: the Messenger placement, right-aligned
+               under the row whichever side the bubble is on. -->
+          <div data-seen-by={msg.id} class="flex w-full justify-end px-0.5">
+            <SeenByHeads readers={seenBy.get(msg.id) ?? []} />
+          </div>
+        {/if}
       {/if}
     {/if}
   {/each}

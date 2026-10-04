@@ -2331,7 +2331,16 @@ can attribute.
   shows one more button than a received one (Edit), which was enough to overflow a narrow phone
   screen on your own messages specifically - fixed with `max-w-[calc(100vw-2rem)] flex-wrap`
   instead of a fixed-width, single-line row.
-- **Read receipts**: three states — sent / delivered / read — with distinct icons.
+- **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
+  reader's head and a double check sit under the sender's own last read message. **In a group or a
+  salon, each member's head sits under the LAST message THEY read, whoever wrote it** (user,
+  2026-10-02, the Messenger placement): `seenByAnchors` in `utils/chat/readState.ts` places them over
+  the WHOLE sorted conversation (a render window ending above a reader's anchor would pin the head
+  to its last row), never draws the viewer, counts an author's own message as read by them, and
+  draws no head on its owner's message. Who can appear is what `readWatermarks` holds - for a salon
+  the server's `read-marks`, restricted to who may read it now
+  ([social-service](../../services/social-service.md#read-receipts-in-a-salon)). One drawing,
+  `SeenByHeads.svelte`, serves both: three heads, then `+N`.
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.

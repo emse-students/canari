@@ -130,6 +130,71 @@ export function readersOf(
 }
 
 /**
+ * Where each participant's "seen" head sits in a group or a salon: under the LAST message they
+ * have read, whoever wrote it - the Messenger placement (user, 2026-10-02). A DM keeps the older
+ * shape (readers under the sender's own last read message), so this is only called for the rest.
+ *
+ * - **Who appears is decided upstream, by what `watermarks` holds.** For a salon that map is the
+ *   server's `read-marks`, already restricted to the members who may read the salon NOW; nothing
+ *   here widens it.
+ * - **The viewer never sees their own head**, and a system notice never carries one.
+ * - **A participant's own message counts as read by them**, even when their watermark lags it
+ *   (a sender's watermark moves when they READ, not when they write). Without that, an author
+ *   whose watermark is older than their own reply would be drawn ABOVE the reply, claiming they
+ *   had not seen it. And a head that would land on its owner's own message is not drawn: the
+ *   message already says it.
+ *
+ * @param messages The conversation in DISPLAY order - `compareMessageOrder`, whose primary key is
+ *                 the same `readOrderKey`, so the keys are non-decreasing and a binary search holds.
+ *                 The WHOLE list, never a render window: a window ending above a reader's true
+ *                 anchor would pin the head to the window's last row.
+ * @returns message id -> the participants anchored there, sorted; messages with none are absent.
+ */
+export function seenByAnchors(
+  messages: ReadonlyArray<Pick<ChatMessage, 'id' | 'timestamp' | 'senderId' | 'isSystem'>>,
+  watermarks: ReadWatermarks | undefined,
+  viewerId: string
+): Map<string, string[]> {
+  const anchors = new Map<string, string[]>();
+  if (!watermarks) return anchors;
+  const viewerNorm = viewerId.trim().toLowerCase();
+
+  const rows = messages.filter((msg) => !msg.isSystem && msg.senderId !== 'system');
+  const keys = rows.map((msg) => readOrderKey(msg));
+  const lastOwnKey = new Map<string, number>();
+  rows.forEach((msg, i) => {
+    const author = msg.senderId.toLowerCase();
+    lastOwnKey.set(author, Math.max(lastOwnKey.get(author) ?? 0, keys[i]));
+  });
+
+  for (const [userNorm, at] of Object.entries(watermarks)) {
+    if (userNorm === viewerNorm) continue;
+    const position = Math.max(at, lastOwnKey.get(userNorm) ?? 0);
+    // The last row whose key is <= position.
+    let lo = 0;
+    let hi = rows.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (keys[mid] <= position) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (found < 0) continue;
+    const anchor = rows[found];
+    if (anchor.senderId.toLowerCase() === userNorm) continue;
+    const heads = anchors.get(anchor.id);
+    if (heads) heads.push(userNorm);
+    else anchors.set(anchor.id, [userNorm]);
+  }
+  for (const heads of anchors.values()) heads.sort();
+  return anchors;
+}
+
+/**
  * Whether `msg` should still raise the unread badge for the user whose watermark is `watermark`.
  *
  * Own and system messages never count. Both recompute sites used to infer "unseen" from "arrived
