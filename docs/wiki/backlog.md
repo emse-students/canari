@@ -3020,7 +3020,7 @@ would hide the duplication rather than remove it.
 
 ### P2 - two COMM rows could not ARM, and the re-run has to say whether that was the debris (measured 2026-08-27)
 
-`f21502e1` left three `VACUOUS` cells. COMM-22 is the entry below. **The runner half is FIXED for COMM-9/10**
+`f21502e1` left three `VACUOUS` cells. COMM-22 is closed (its story is in `changelog.d`, its mechanism in [mls-protocol](protocols/mls-protocol.md#the-base-travels-inside-every-commit-submission-comm-22)). **The runner half is FIXED for COMM-9/10**
 (`comm910.mjs` puts each unmet arming conjunct into `failures[]` through `armingFailures`, so an unarmed
 row says why). What is owed is RIG RE-RUNS, nothing in code:
 
@@ -3033,96 +3033,6 @@ row says why). What is owed is RIG RE-RUNS, nothing in code:
   device and a peer that cannot exchange a message in a fresh salon is the forked-group signature COMM-8
   turned out to be, so **re-run on a build carrying that fix BEFORE calling it a runner defect**; read the
   ledger record first. Still `VACUOUS` on `cb967b6c`, the first build with the same-epoch ACK.
-
-### P2 - a STAGED commit cannot export a base at submit time, and keeps a repair where the external path needs none (COMM-22)
-
-**Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`
-(2026-08-26T17:45Z), `armed: true`, six grant/join/send/revoke/send cycles both times. It is NOT the
-wreckage path `ea8266b2` removed: that commit landed at 20:25Z, before both.
-
-The signature is narrow, and that is what makes it a defect rather than a slow window:
-
-| | value |
-| --- | --- |
-| sender reads | 12 of 12, 6 837 ms |
-| peer reads WARM | **11 of 12** |
-| peer reads COLD, after reload + PIN | **11 of 12** - the same eleven |
-| seeds the peer holds | **11**, for 12 sessions |
-| `nothingStaysUnreadable` | true |
-
-**WARM AND COLD ARE IDENTICAL, WHICH IS THE WHOLE FINDING.** A repair that had not finished yet would
-differ across a reload; the same eleven on both sides means the twelfth seed is not late, it is
-absent, and no reload will fetch it. The row it belongs to renders as explicitly unreadable
-(`no seed for session ... (repairable)`) - so the product is honest about it and the reader still
-never sees the message.
-
-**THE SENDER DID ANSWER.** `repair.senderAnswered` holds nine answers summing to twelve seeds and
-`senderWithheld` is empty, while `peerAbsorbed` records four lines summing to seven. So the loss is
-on the receiving or the requesting side, not a sender that refused.
-
-**THE CAUSE, FROM THE RUN LOG OF `2a4297cb`.** The peer is not slow and it is not refused a seed: it
-is not IN the salon's distribution group at all, and it is its OWN earlier commit that put it out.
-
-    19:36:12  W1  no base published for salon 58afab93 - creating group 9e46429d
-    19:36:12  W1  POST .../distribution-group/group-info        <- base published at epoch 0
-    19:36:21  W1  Processing Commit group=9e46429d sender=<peer>  <- the peer's external join, epoch -> 1
-                  ... and NO group-info POST from the peer, ever
-    19:36:26  W2  externalJoin STALE base for 9e46429d (published 0, group at 1) - not attempting
-    19:36:31  W2  undecryptable frame on 9e46429d - not acknowledged: Group not found
-    19:36:34  W2  could not ask for 1 missing seed(s) in channel 58afab93: Group not found
-    19:36:40  W1  the published base is at epoch 0 while the group is at 1 - republishing   <- 14 s too late
-
-**AN EXTERNAL JOIN ADVANCES THE GROUP AND LEAVES THE BASE BEHIND IT.** `externalJoin` publishes the
-new base with `void this.refreshGroupInfo(joined.groupId)` (`BaseMlsService.ts:2288`) - fire-and-forget,
-by the same deliberate choice as the one after `submitCommit` (`:1912`), so a commit that succeeded is
-never reported as failed because a follow-up did not land. The check reloads the peer moments later on
-a CLEAN state, so that follow-up never lands AND the tree that could mint the base is gone with it. The
-joiner has locked itself out, and every stateless joiner after it: the commit gate accepts a base equal
-to the active epoch and nothing else, and a distribution group has no peer-Welcome fallback.
-
-**THE REPAIR EXISTS AND IS 14 SECONDS LATE, WHICH IS WHY THE LOSS IS PERMANENT.** `republishStaleBase`
-did fire, three times across the run (base 0->1, 6->7, 12->13), from the one holder with a current
-tree - but its trigger is that holder's *ordinary read* of the salon, not the epoch change, so it
-always lands after the refused peer has already given up. And the peer's giving-up is terminal twice
-over: `stale_base` is treated as a fact for the session, and the seed repair on top of it deletes its
-`outstanding` entry before the send it then loses (`repair.ts:124-160`), with `asked` never set
-(`:303-321`) and all three re-arm paths driven by an arriving answer that cannot come.
-
-**Two standing rules name it.** *Never learn by failing what a fact could have told you* - the repair
-hands the ask to a layer certain to refuse it, to discover a group it is not in, eight seconds after
-`stale_base` established exactly that. And *a race that heals cleanly is still a defect* - here it
-does not heal at all.
-
-**The external-join half is shipped and is not restated here** - story in `CHANGELOG.md`, mechanism
-on [mls-protocol](protocols/mls-protocol.md). What matters for the half below is only its shape: the
-window was DELETED rather than narrowed, because an external commit is applied at once and the
-joiner can export the base its own commit created before merging. Narrowing was considered and
-rejected - a two-member salon whose other member is offline still has nobody to mint the base, and
-a shorter race is still a race.
-
-**THE HALF THAT REMAINS, and why it is separate.** An ordinary staged commit (add/remove) cannot
-export a base at submit time: its commit is unapplied, so the device is still at the OLD epoch and
-`export_group_info` would describe the base the joiner already has. Those paths keep
-`void this.refreshGroupInfo(groupId)` after the merge (`BaseMlsService.ts:1912`) and a holder's
-`republishStaleBase` as their repair - the same window, one round-trip wide, on a device that stays a
-holder and is far less likely to reload mid-flight. Closing it needs the GroupInfo openmls already
-builds and all four call sites discard (`mls-core/src/members.rs:85,121,273`, `welcome.rs:86`, each
-destructuring `_group_info`); the groups use `use_ratchet_tree_extension(true)`, so it carries the
-tree exactly as `export_group_info(.., true)` does. Layers: `mls-core` -> `mls-wasm` (a third slot on
-the returned array) -> `BaseMlsService` -> the already-widened `submitCommit`, plus `npm run
-generate`. The server side is done and takes it unchanged.
-
-**ONE HYPOTHESIS ALREADY REFUTED, recorded so it is not re-run:** the missing session was
-`R3jf6bcWThQ2oUnLKLaKvi--`, the only one of the twelve whose id ends in `-`, which in SQL would open
-a comment. It does not: `getGraineHistoryFloors` binds the ids as an array
-(`IN (:...sessionIds)`, `channel.service.ts:1318`), so nothing is interpolated. The trailing dashes
-are a coincidence of base64url.
-
-**THE RECORD WAS INCONSISTENT ACROSS THREE FILES before this**, which is why the FAIL survived two
-sessions unnoticed: the board said `VACUOUS`, [cross-client-campaign](cross-client-campaign.md) said
-a believed `PASS-DIRTY`, and `results.ndjson` said `FAIL` twice. All three now say `FAIL`. The
-believed pass was real but on an OLDER runner, and its shape differed where it matters: the peer
-missed seven sessions there and absorbed all seven.
 
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (measured 2026-08-26)
 
