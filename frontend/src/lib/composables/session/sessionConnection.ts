@@ -11,7 +11,11 @@ import {
   syncConnectionAfterWsOpen,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
-import { requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import {
+  requestReAdd,
+  recoverRosterDisagreement,
+  RECOVERY_TIMEOUT_MS,
+} from '$lib/utils/chat/recovery';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
@@ -155,6 +159,8 @@ export async function attemptReconnectImpl(
       processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
       log: cb.log,
       onGroupMissing: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
+      onStrandedSeat: (groupId: string) =>
+        recoverRosterDisagreement(groupId, makeRecoveryDeps(ctx, cb)),
       onGroupDeletedRemotely: (groupId: string) =>
         markConversationDeletedRemotely(
           cb.conversations,

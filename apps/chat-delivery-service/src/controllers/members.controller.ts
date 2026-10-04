@@ -21,6 +21,8 @@ import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
+import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   sanitizeQueryValue,
@@ -49,6 +51,8 @@ export class MembersController {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
+    @InjectRepository(QueuedMessage)
+    private queuedMessageRepo: Repository<QueuedMessage>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -145,7 +149,8 @@ export class MembersController {
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-canari-device') headerDeviceId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     assertCallerOwnsUserId(
@@ -209,6 +214,20 @@ export class MembersController {
       where: { groupId: In(activeGroups.map((g) => g.id)) },
     });
     const baseOf = new Map(bases.map((b) => [b.groupId, b.baseEpoch]));
+    // THIS DEVICE'S OWN SEAT IN EACH GROUP, so a device that only ever READS can learn it was given
+    // a roster seat nobody honoured. `recoverRosterDisagreement` closes that case for a device that
+    // tries to SEND (the refusal is its proof); a silent reader produces no evidence at all, yet
+    // every frame the group makes is sealed to a tree its leaf is absent from. The fact is already
+    // authoritative server-side, and this is the one read every device makes on every connection,
+    // so it needs no timer and no new trigger. ADDITIVE: the device is the caller's own
+    // `X-Canari-Device` (self-asserted, only ever used to read ITS OWN rows of the caller's own
+    // user), and without it - an older client - the field is `null` for every row, which a client
+    // reads as "the server did not say", never as "nothing owed".
+    const deviceMembershipOf = await this.readDeviceMemberships(
+      safeUserId,
+      headerDeviceId,
+      activeGroups.map((g) => g.id)
+    );
     // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
     // asking other members for a past that never existed.
     //
@@ -232,7 +251,73 @@ export class MembersController {
       createdAt: g.createdAt ?? null,
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
+      deviceMembership: deviceMembershipOf.get(g.id) ?? null,
     }));
+  }
+
+  /**
+   * This device's membership row per group, each carrying the two facts that say which kind of
+   * `pending` it is (the one partition is {@link readPendingMembershipFacts}). Empty without a
+   * device header, and a group the device has no row for is simply absent from the map.
+   */
+  private async readDeviceMemberships(
+    userId: string,
+    deviceId: string | undefined,
+    groupIds: string[]
+  ): Promise<
+    Map<
+      string,
+      {
+        status: 'pending' | 'active';
+        welcomeQueued: boolean;
+        addInFlight: boolean;
+        admitted: boolean;
+      }
+    >
+  > {
+    const out = new Map<
+      string,
+      {
+        status: 'pending' | 'active';
+        welcomeQueued: boolean;
+        addInFlight: boolean;
+        admitted: boolean;
+      }
+    >();
+    if (!deviceId || groupIds.length === 0) return out;
+    const safeDeviceId = sanitizeOptionalQueryValue(deviceId, 'x-canari-device');
+    if (!safeDeviceId) return out;
+    const rows = await this.deviceGroupRepo.find({
+      where: { userId, deviceId: safeDeviceId, groupId: In(groupIds) },
+    });
+    const pending = rows.filter((r) => r.status === 'pending').map((r) => r.groupId);
+    const { welcomed, locked } = await readPendingMembershipFacts(
+      this.queuedMessageRepo,
+      this.redis,
+      safeDeviceId,
+      pending,
+      this.logger
+    );
+    for (const r of rows) {
+      out.set(r.groupId, {
+        status: r.status,
+        welcomeQueued: welcomed.has(r.groupId),
+        addInFlight: locked.has(r.groupId),
+        // A commit admitted this device at an epoch and its Welcome is owed (`admittedAtEpoch` is
+        // cleared by every transition): the window between the commit and the Welcome, which the
+        // add lock does not cover on every path.
+        admitted: r.admittedAtEpoch !== null && r.admittedAtEpoch !== undefined,
+      });
+    }
+    const stranded = [...out.entries()].filter(
+      ([, v]) => v.status === 'pending' && !v.welcomeQueued && !v.addInFlight && !v.admitted
+    ).length;
+    if (stranded > 0) {
+      this.logger.log(
+        `[USER_GROUPS] user=${userId} device=${safeDeviceId} stranded=${stranded} (pending, no Welcome queued, no add in flight, not admitted)`
+      );
+    }
+    return out;
   }
 
   @UseGuards(HeaderAuthGuard)

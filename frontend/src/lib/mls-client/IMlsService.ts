@@ -272,6 +272,23 @@ export type UserGroupRow = {
    * somebody acts on it, which is what `republishBaseIfStale` is for.
    */
   baseEpoch?: number | null;
+  /**
+   * THIS device's own seat in the group, as the server holds it - `null` from a server that predates
+   * the field (and for a group the device has no row for), which reads as "the server did not say",
+   * never as "nothing is owed".
+   *
+   * It exists for the device that HOLDS the group's tree and never sends: `recoverRosterDisagreement`
+   * is entered by a refused send, and a silent reader is refused nothing while every frame the group
+   * produces is sealed to a tree its leaf is absent from. The partition is the one
+   * {@link DeviceMembershipRow} carries (`welcomeQueued`, `addInFlight`), plus `admitted`: a commit
+   * admitted this device and its Welcome is owed, so it is not a seat nothing follows.
+   */
+  deviceMembership?: {
+    status: 'pending' | 'active';
+    welcomeQueued: boolean;
+    addInFlight: boolean;
+    admitted: boolean;
+  } | null;
 };
 
 /** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */

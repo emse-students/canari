@@ -747,6 +747,21 @@ and that it is one grouped query - a mocked repository cannot execute the SQL it
   `epochSendBarrier` and the server has no fact distinguishing those frames. So the evidence for
   both is the ERROR line plus this report's rate line (the churn that makes them fire).
 
+### A silent reader learns its seat from the groups list (additive, 2026-10-04)
+
+`reportStrandedDeviceMemberships` names the population; `recoverRosterDisagreement` repairs the
+device that tries to SEND (the refusal is its proof). A device that holds the tree and never sends
+produces no evidence, so the fact travels on the read every device already makes on every connection:
+`GET /api/mls/users/:userId/groups` carries `deviceMembership` on each row - `{ status, welcomeQueued,
+addInFlight, admitted }` for the device named by the `X-Canari-Device` header (the same self-asserted
+header the other device-scoped reads use), or `null` when the header is absent (an older client) or
+the device has no row. `welcomeQueued` / `addInFlight` are the two facts of
+`GET /device-memberships/...`, read by ONE helper (`utils/pending-membership-facts.ts`, two queries
+for the whole set); `admitted` is `admittedAtEpoch IS NOT NULL` - a commit admitted the device and its
+Welcome is owed, a window the add lock does not cover on every path. The row is `[USER_GROUPS] ...
+stranded=N` on the log when any seat is pending with all three false. Client side:
+[mls-recovery-ladder](../protocols/mls-recovery-ladder.md#a-silent-reader-is-handed-to-the-roster-repair-by-the-groups-list).
+
 ### A fulfilled invitation is retired by whoever can PROVE it, and a vouch does not replay
 
 `getPendingInvitations` serves every `pending` row in the caller's groups, and the caller's first

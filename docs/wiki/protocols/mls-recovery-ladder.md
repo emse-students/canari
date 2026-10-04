@@ -184,6 +184,23 @@ first pass and one that has been waiting five days no longer read identically - 
 stranded population `reportStrandedDeviceMemberships` names hourly on the server, and nothing said it
 client-side.
 
+### A silent reader is handed to the roster repair by the groups list
+
+`recoverRosterDisagreement` is entered by a refused send, so a device that holds the tree and never
+sends was never repaired while every frame the group produced was sealed to a tree its leaf is absent
+from (25 such seats on prod, 2026-09-04, oldest since 08-27). `syncConnectionAfterWsOpen` now reads it
+off the groups list it already fetches: when `isStrandedSeat(row, holdsTree)` (`welcomeOwed.ts`) - the
+group's `deviceMembership` is `pending` with `welcomeQueued`, `addInFlight` and `admitted` all
+EXPLICITLY `false` - it calls `onStrandedSeat`, which is `recoverRosterDisagreement` itself (forget the
+tree, `requestReAdd`, whose own `readWelcomeOwed` re-reads the same facts before serving itself).
+No timer, no new trigger, no change to the sender-side seam. A missing or partial field is "the server
+did not say", never stranded; a device without the tree stays on `onGroupMissing`; a device in its
+first seconds after a legitimate add has a Welcome queued, the lock held, or `admitted` set. The one
+residual window is a Welcome processed whose activation call has not landed and whose queue row is
+already acked, on an adder that predates `admits`: the repair then costs one self-served external
+join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
+`initializeConnection.sync.test.ts`.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |

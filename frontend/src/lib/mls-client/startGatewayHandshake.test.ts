@@ -52,6 +52,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
     log: vi.fn(),
     onGroupMissing: vi.fn().mockResolvedValue(undefined),
+    onStrandedSeat: vi.fn().mockResolvedValue(undefined),
   } as unknown as ConnectionDeps;
   return { deps, mlsService, setIsWsConnected, setReconnectAttempts };
 };

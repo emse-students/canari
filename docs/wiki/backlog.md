@@ -2982,34 +2982,7 @@ KeyPackage dying at its first Welcome (`last_resort`, 2026-09-06,
   of anything, a defect on sight by the repo's own rule. (verify: not re-audited against `main` since
   2026-09-01)
 
-The cause of the skipped Add itself is the P2 immediately below, and the two want reading together.
-
-### P2 - a device stranded on a roster seat is only discovered by TRYING TO SEND, so a silent reader stays stranded (measured 2026-09-04, alongside the fix above)
-
-`recoverRosterDisagreement` closes the case where a device holding a group tree the server has no
-leaf for **attempts to send**: the refusal is the proof, the outbox holds it, and the repair follows
-in about three seconds. **Nothing detects the same device if it never sends.** It holds a
-well-formed tree, shows a normal-looking conversation, and is refused nothing, because it asks for
-nothing - while every frame the group produces is encrypted to a tree its leaf is absent from.
-
-**The population is real and the server already counts it.** `reportStrandedDeviceMemberships` named
-70 pending memberships past its window on this estate, 25 of them holding a roster seat with no
-Welcome ever queued and no kick recorded, the oldest since 2026-08-27. The report says *"they
-receive nothing and notify nothing"* - which is exactly the half a sender-side repair cannot reach.
-
-**What would close it, and what would not.** A client-side timer that periodically re-asks is the
-shape the durable rules refuse: termination would come from a clock, and the ask would be made by
-the device least able to answer it. The fact is ALREADY authoritative server-side and already read
-on a call every device makes on every connection - `GET /mls/users/:id/groups`, the same read
-`staleBase.ts` repairs a stale base on. **Carrying the membership status on that row is the shape
-that needs no new trigger**, and it is the move [durable-rules](durable-rules.md) names for the
-sibling defect: *never let a repair need a trigger the mechanism does not already have*. That makes
-this a server contract change plus one branch in the sync loop, which is why it is not inlined into
-the session that found it.
-
-**Do not close it by widening the sender-side seam.** The sender-side repair is correct and
-sufficient for what it can see; the gap is a device that produces no evidence at all, and no amount
-of classification at the send site can observe a send that never happens.
+The cause of the skipped Add itself is the P2 immediately below.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 
