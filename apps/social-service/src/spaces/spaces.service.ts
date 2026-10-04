@@ -23,6 +23,10 @@ export interface SpaceView {
   bde: { id: string; name: string } | null;
   /** How many associations' rules reach this space. */
   associationCount: number;
+  /** The associations whose rules reach this space, by any rule (exact or wider). */
+  reachedBy: string[];
+  /** The associations holding a rule for exactly this pair - the ones a click can remove. */
+  exactBy: string[];
 }
 
 /** A normalised audience rule: `null` is "any". */
@@ -88,6 +92,11 @@ export class SpacesService {
       const reaching = new Set(
         rules.filter((r) => ruleReachesSpace(r, space)).map((r) => r.associationId)
       );
+      const exact = new Set(
+        rules
+          .filter((r) => r.formation === space.formation && r.campus === space.campus)
+          .map((r) => r.associationId)
+      );
       const bde = bdes.find((a) => a.id === space.bdeAssociationId);
       return {
         id: space.id,
@@ -96,6 +105,8 @@ export class SpacesService {
         openedAt: space.openedAt,
         bde: bde ? { id: bde.id, name: bde.name } : null,
         associationCount: reaching.size,
+        reachedBy: [...reaching],
+        exactBy: [...exact],
       };
     });
   }
@@ -115,7 +126,7 @@ export class SpacesService {
 
   /**
    * Designates the BDE of a space, or clears it with `null`. The BDE must be an association (a list
-   * is not one), and one association is the BDE of at most one space.
+   * is not one); the same association may be the BDE of several spaces.
    */
   async setBde(spaceId: string, associationId: string | null): Promise<void> {
     const space = await this.spaces.findOne({ where: { id: spaceId } });
@@ -128,14 +139,7 @@ export class SpacesService {
       }
     }
     this.logger.log(`[spaces] BDE of ${spaceId} -> ${associationId ?? 'none'}`);
-    try {
-      await this.spaces.update({ id: spaceId }, { bdeAssociationId: associationId });
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        throw new ConflictException('This association is already the BDE of another space');
-      }
-      throw err;
-    }
+    await this.spaces.update({ id: spaceId }, { bdeAssociationId: associationId });
   }
 
   /**

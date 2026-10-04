@@ -35,6 +35,8 @@ describe('SpacesService', () => {
   function make(opts: {
     space?: Partial<Space> | null;
     association?: Partial<Association> | null;
+    spaceRows?: Partial<Space>[];
+    rules?: Partial<AssociationAudience>[];
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
     const del = jest.fn().mockResolvedValue({ affected: 1 });
@@ -45,7 +47,7 @@ describe('SpacesService', () => {
       delete: del,
       create: jest.fn().mockImplementation((s: Partial<Space>) => s),
       save,
-      find: jest.fn().mockResolvedValue([]),
+      find: jest.fn().mockResolvedValue(opts.spaceRows ?? []),
     } as unknown as Repository<Space>;
     const associations = {
       findOne: jest.fn().mockResolvedValue(opts.association ?? null),
@@ -53,7 +55,7 @@ describe('SpacesService', () => {
       find: jest.fn().mockResolvedValue([]),
     } as unknown as Repository<Association>;
     const audiences = {
-      find: jest.fn().mockResolvedValue([]),
+      find: jest.fn().mockResolvedValue(opts.rules ?? []),
     } as unknown as Repository<AssociationAudience>;
     const manager = { delete: jest.fn(), insert: jest.fn() };
     const dataSource = {
@@ -113,13 +115,31 @@ describe('SpacesService', () => {
     expect(update).toHaveBeenLastCalledWith({ id: 's' }, { bdeAssociationId: null });
   });
 
-  it('answers 409 when the association already governs another space', async () => {
+  it('lets one association be the BDE of several spaces', async () => {
     const { service, update } = make({
       space: { id: 's' },
       association: { id: 'a', type: 'association' },
     });
-    update.mockRejectedValue({ code: '23505' });
-    await expect(service.setBde('s', 'a')).rejects.toBeInstanceOf(ConflictException);
+    await service.setBde('s1', 'a');
+    await service.setBde('s2', 'a');
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists who reaches each space and who holds its exact rule', async () => {
+    const { service } = make({
+      spaceRows: [
+        { id: 's1', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: null },
+        { id: 's2', formation: 'ISMIN', campus: 'gardanne', bdeAssociationId: null },
+      ],
+      rules: [
+        { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
+        { associationId: 'b', formation: null, campus: 'saint-etienne' },
+      ],
+    });
+    const [icm, ismin] = await service.list();
+    expect(icm.reachedBy.sort()).toEqual(['a', 'b']);
+    expect(icm.exactBy).toEqual(['a']);
+    expect(ismin.reachedBy).toEqual([]);
   });
 
   it('replaces the rules in one transaction, de-duplicated, and refuses an empty set', async () => {

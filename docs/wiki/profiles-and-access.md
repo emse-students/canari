@@ -490,15 +490,15 @@ purpose**: `associations.type` gaining `institution` (nothing could create one y
 **WP6d as built (2026-10-04, on the 6a branch).** API in `social-service/src/spaces/`, all global-admin
 only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
 `associations/spaces` wins over `associations/:id`: `GET/POST /api/associations/spaces` (list with BDE
-and the number of associations whose rules reach each space; open a pair, 409 if already open),
+, the number of associations whose rules reach each space, who they are (`reachedBy`) and who holds the rule for exactly that pair (`exactBy`); open a pair, 409 if already open),
 `PUT /api/associations/spaces/:id/bde` (designate or clear; only a regular association, never a list;
-409 if it already governs another space), `DELETE /api/associations/spaces/:id` (close a space: its BDE designation goes, association rules stay, so reopening restores everything; 404 if not open), `GET/PUT /api/associations/:id/audiences` (replace the rules
+**the same association may be the BDE of several spaces - user, 2026-10-04, so the migration carries NO unique index on the BDE column**), `DELETE /api/associations/spaces/:id` (close a space: its BDE designation goes, association rules stay, so reopening restores everything; 404 if not open), `GET/PUT /api/associations/:id/audiences` (replace the rules
 in one transaction, de-duplicated, at least one). Screen: `/admin/spaces` (nav entry "Espaces",
-global admins) - the open spaces with a BDE picker each, an "open a space" row, and a rules editor
-per association (formation and campus, "all" meaning NULL). **The `isBDE` toggle on
+global admins) - ONE GRID (user, 2026-10-04: "une vue globale"): associations in rows, open spaces in columns, a check per cell (the association reaches the space: adds or removes the rule for exactly that pair) and a star (BDE of the space; designating one also adds the reach, a BDE always reaches what it governs). A cell reached only by a WIDER rule (a whole campus) says so and points at the folded "advanced rules" editor, formation and campus with "all" meaning NULL, because that cell has no rule of its own to remove. Below: an "open a space" row; a space is closed from its column header.
+**Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list. **The `isBDE` toggle on
 `/admin/associations` still exists and still drives every BDE check**: 6c moves those checks onto
 the space's BDE and deletes the column, so until then the two say the same thing only because the
-seed made them agree. Not seen in a browser yet; the unit tests cover the service (9) and CI boots
+seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the service (11) and CI boots
 the real module.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;

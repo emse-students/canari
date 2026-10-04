@@ -2616,6 +2616,10 @@ export interface SpaceRow {
   bde: { id: string; name: string } | null;
   /** How many associations' audience rules reach this space. */
   associationCount: number;
+  /** The associations whose rules reach this space, by any rule (exact or wider). */
+  reachedBy: string[];
+  /** The associations holding a rule for exactly this pair. */
+  exactBy: string[];
 }
 
 /** One audience rule; `null` means "any" (every formation, or every campus). */

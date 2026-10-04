@@ -1,7 +1,7 @@
 -- Migration 071: spaces (WP6a of the profile reform, docs/wiki/profiles-and-access.md, D16-D22).
 --
 -- A SPACE is a formation x campus pair (ICM Saint-Etienne, ISMIN Gardanne, ...). It exists only once
--- an admin has opened it (D17), and has at most ONE BDE (D22). This migration is DATA ONLY: nothing
+-- an admin has opened it (D17), and has at most ONE BDE (D22, which may govern several spaces). This migration is DATA ONLY: nothing
 -- reads these tables yet - the readers (6b) and the admin page (6d) come next - so applying it
 -- changes nothing a user sees.
 --
@@ -36,9 +36,8 @@ CREATE TABLE IF NOT EXISTS spaces (
     CONSTRAINT "CHK_spaces_campus" CHECK (campus IN ('saint-etienne', 'gardanne'))
 );
 
--- One BDE governs one space, and an association is the BDE of at most one (D22).
-CREATE UNIQUE INDEX IF NOT EXISTS "UQ_spaces_bdeAssociationId"
-    ON spaces ("bdeAssociationId") WHERE "bdeAssociationId" IS NOT NULL;
+-- NO unique index on "bdeAssociationId": a space has one BDE, but an association may be the BDE of
+-- several spaces (user, 2026-10-04: one BDE can govern ICM and ISMIN).
 
 CREATE TABLE IF NOT EXISTS association_audiences (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

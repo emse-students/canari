@@ -26,7 +26,7 @@
   } from '$lib/profile/miconnectProfile';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Layers, Plus, Trash2, LoaderCircle } from '@lucide/svelte';
+  import { Check, Layers, Plus, Star, Trash2, LoaderCircle } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -38,8 +38,8 @@
   let newFormation = $state<Formation>('ICM');
   let newCampus = $state<Campus>('saint-etienne');
   let opening = $state(false);
-  /** The space whose BDE is being persisted. */
-  let savingBdeFor = $state<string | null>(null);
+  /** The cell or column being persisted, so a second click cannot race the first. */
+  let busy = $state<string | null>(null);
 
   let audienceFor = $state('');
   let rules = $state<AudienceRule[]>([]);
@@ -61,19 +61,17 @@
     { value: '', label: m.admin_audiences_campus_any() },
     ...campusOptions,
   ]);
-  /** Only a regular association can be a BDE: a list is not one (the server refuses it too). */
-  const bdeCandidates = $derived(
-    [...associations].filter((a) => a.type !== 'list').sort((a, b) => a.name.localeCompare(b.name))
+  const sortedAssociations = $derived(
+    [...associations].sort((a, b) => a.name.localeCompare(b.name))
   );
-  const bdeOptions = $derived<PickerOption[]>([
-    { value: '', label: m.admin_spaces_bde_none() },
-    ...bdeCandidates.map((a) => ({ value: a.id, label: a.name })),
-  ]);
   const associationOptions = $derived<PickerOption[]>(
-    [...associations]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((a) => ({ value: a.id, label: a.name }))
+    sortedAssociations.map((a) => ({ value: a.id, label: a.name }))
   );
+
+  /** The column title of a space, also used in every cell's accessible name. */
+  function spaceName(space: SpaceRow): string {
+    return `${formationLabel(space.formation)} · ${campusLabel(space.campus)}`;
+  }
 
   async function load() {
     loading = true;
@@ -105,42 +103,84 @@
     }
   }
 
-  async function designateBde(space: SpaceRow, associationId: string) {
-    savingBdeFor = space.id;
-    error = null;
-    try {
-      await setSpaceBde(space.id, associationId || null);
-      spaces = await listSpaces();
-    } catch (e) {
-      Log.d('admin.spaces.setBde failed', e);
-      error = bdeRefusal(e);
-      // The picker shows what the user chose, not what the server kept: reload so it never lies.
-      spaces = await listSpaces().catch(() => spaces);
-    } finally {
-      savingBdeFor = null;
-    }
-  }
-
   /** The sentence for a refused BDE designation, chosen by the HTTP status (never by the message). */
   function bdeRefusal(e: unknown): string {
     if (e instanceof SocialApiError) {
-      if (e.status === 409) return m.admin_spaces_bde_taken();
       if (e.status === 400) return m.admin_spaces_bde_not_association();
       if (e.status === 404) return m.admin_spaces_bde_missing();
     }
     return m.admin_spaces_bde_error();
   }
 
+  /**
+   * Makes an association the BDE of a space, or clears it when it already is. A BDE always reaches
+   * the space it governs, so designating one that does not yet adds the rule for that pair.
+   */
+  async function toggleBde(space: SpaceRow, association: Association) {
+    busy = `${space.id}:${association.id}`;
+    error = null;
+    try {
+      if (space.bde?.id !== association.id && !space.reachedBy.includes(association.id)) {
+        const current = await getAssociationAudiences(association.id);
+        await setAssociationAudiences(association.id, [
+          ...current,
+          { formation: space.formation, campus: space.campus },
+        ]);
+      }
+      await setSpaceBde(space.id, space.bde?.id === association.id ? null : association.id);
+    } catch (e) {
+      Log.d('admin.spaces.setBde failed', e);
+      error = bdeRefusal(e);
+    } finally {
+      busy = null;
+    }
+    // The grid shows what the server kept, not what was clicked.
+    spaces = await listSpaces().catch(() => spaces);
+  }
+
+  /**
+   * Adds or removes the rule for exactly this space. A cell reached only by a WIDER rule (a whole
+   * campus) is not a rule of its own, so there is nothing to remove: say where to edit it.
+   */
+  async function toggleReach(space: SpaceRow, association: Association) {
+    const exact = space.exactBy.includes(association.id);
+    if (!exact && space.reachedBy.includes(association.id)) {
+      error = m.admin_spaces_cell_wide({ association: association.name, space: spaceName(space) });
+      return;
+    }
+    busy = `${space.id}:${association.id}`;
+    error = null;
+    try {
+      const current = await getAssociationAudiences(association.id);
+      const others = current.filter(
+        (r) => !(r.formation === space.formation && r.campus === space.campus)
+      );
+      const next = exact
+        ? others
+        : [...others, { formation: space.formation, campus: space.campus }];
+      if (next.length === 0) {
+        error = m.admin_audiences_min_one();
+        return;
+      }
+      await setAssociationAudiences(association.id, next);
+    } catch (e) {
+      Log.d('admin.spaces.toggleReach failed', e);
+      error = m.admin_audiences_save_error();
+    } finally {
+      busy = null;
+    }
+    spaces = await listSpaces().catch(() => spaces);
+  }
+
   async function close(space: SpaceRow) {
-    const name = `${formationLabel(space.formation)} · ${campusLabel(space.campus)}`;
     if (
-      !(await showConfirm(m.admin_spaces_close_confirm({ name }), {
+      !(await showConfirm(m.admin_spaces_close_confirm({ name: spaceName(space) }), {
         danger: true,
         confirmLabel: m.admin_spaces_close_btn(),
       }))
     )
       return;
-    savingBdeFor = space.id;
+    busy = space.id;
     error = null;
     try {
       await closeSpace(space.id);
@@ -148,7 +188,7 @@
       Log.d('admin.spaces.close failed', e);
       error = m.admin_spaces_close_error();
     } finally {
-      savingBdeFor = null;
+      busy = null;
     }
     spaces = await listSpaces().catch(() => spaces);
   }
@@ -212,6 +252,8 @@
 
   const triggerClass =
     'border-cn-border text-text-main flex w-full items-center justify-between gap-2 rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-left text-sm';
+  const cellButton =
+    'inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50';
 </script>
 
 <div class="space-y-6">
@@ -239,50 +281,99 @@
     {/if}
 
     <section class="space-y-3">
-      <div
-        class="border-cn-border divide-cn-border/70 divide-y overflow-hidden rounded-2xl border bg-(--cn-surface)"
-      >
-        {#if spaces.length === 0}
-          <p class="text-text-muted px-4 py-8 text-center text-sm">{m.admin_spaces_none()}</p>
-        {:else}
-          {#each spaces as space (space.id)}
-            <div class="grid gap-3 px-4 py-3 sm:grid-cols-2 sm:items-center">
-              <div class="min-w-0">
-                <span class="text-text-main block text-sm font-semibold">
-                  {formationLabel(space.formation)} · {campusLabel(space.campus)}
-                </span>
-                <span class="text-text-muted block text-xs">
-                  {m.admin_spaces_assoc_count({ count: space.associationCount })}
-                </span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="min-w-0 flex-1">
-                  <Picker
-                    id="bde-{space.id}"
-                    value={space.bde?.id ?? ''}
-                    options={bdeOptions}
-                    label={m.admin_spaces_bde_label()}
-                    {triggerClass}
-                    onValueChange={(v) => designateBde(space, v)}
-                  />
-                </div>
-                {#if savingBdeFor === space.id}
-                  <LoaderCircle size={14} class="text-cn-yellow animate-spin" />
-                {/if}
-                <button
-                  type="button"
-                  onclick={() => close(space)}
-                  disabled={savingBdeFor === space.id}
-                  aria-label={m.admin_spaces_close_aria()}
-                  class="text-text-muted rounded-xl p-2 hover:text-red-500 disabled:opacity-50"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-          {/each}
-        {/if}
-      </div>
+      <p class="text-text-muted text-xs">{m.admin_spaces_legend()}</p>
+
+      {#if spaces.length === 0}
+        <p
+          class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface) px-4 py-8 text-center text-sm"
+        >
+          {m.admin_spaces_none()}
+        </p>
+      {:else}
+        <div class="border-cn-border overflow-x-auto rounded-2xl border bg-(--cn-surface)">
+          <table class="w-full border-collapse text-sm">
+            <thead>
+              <tr class="border-cn-border border-b">
+                <th class="text-text-muted px-4 py-3 text-left text-xs font-semibold">
+                  {m.admin_spaces_col_assoc()}
+                </th>
+                {#each spaces as space (space.id)}
+                  <th class="min-w-32 px-3 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                      <span class="text-text-main text-xs font-semibold">{spaceName(space)}</span>
+                      <button
+                        type="button"
+                        onclick={() => close(space)}
+                        disabled={busy === space.id}
+                        aria-label={m.admin_spaces_close_aria()}
+                        class="text-text-muted rounded-lg p-1 hover:text-red-500 disabled:opacity-50"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody class="divide-cn-border/70 divide-y">
+              {#each sortedAssociations as association (association.id)}
+                <tr>
+                  <th class="text-text-main px-4 py-2 text-left text-sm font-medium">
+                    {association.name}
+                  </th>
+                  {#each spaces as space (space.id)}
+                    {@const reaches = space.reachedBy.includes(association.id)}
+                    {@const isBde = space.bde?.id === association.id}
+                    {@const pending = busy === `${space.id}:${association.id}`}
+                    <td class="px-3 py-2 text-center">
+                      <div class="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={pending}
+                          aria-pressed={reaches}
+                          aria-label={m.admin_spaces_reach_aria({
+                            association: association.name,
+                            space: spaceName(space),
+                          })}
+                          onclick={() => toggleReach(space, association)}
+                          class="{cellButton} {reaches
+                            ? 'border-cn-yellow bg-cn-yellow/20 text-cn-dark'
+                            : 'border-cn-border hover:text-text-muted text-transparent'}"
+                        >
+                          {#if pending}
+                            <LoaderCircle size={14} class="animate-spin" />
+                          {:else}
+                            <Check size={14} />
+                          {/if}
+                        </button>
+                        {#if association.type !== 'list'}
+                          <button
+                            type="button"
+                            disabled={pending}
+                            aria-pressed={isBde}
+                            aria-label={m.admin_spaces_bde_aria({
+                              association: association.name,
+                              space: spaceName(space),
+                            })}
+                            onclick={() => toggleBde(space, association)}
+                            class="{cellButton} {isBde
+                              ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
+                              : 'border-cn-border hover:text-text-muted text-transparent'}"
+                          >
+                            <Star size={14} />
+                          </button>
+                        {:else}
+                          <span class="h-8 w-8" aria-hidden="true"></span>
+                        {/if}
+                      </div>
+                    </td>
+                  {/each}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
 
       <div class="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <div>
@@ -322,88 +413,90 @@
       </div>
     </section>
 
-    <section class="space-y-3">
-      <div>
-        <h3 class="text-text-main text-base font-bold">{m.admin_audiences_title()}</h3>
-        <p class="text-text-muted mt-0.5 text-sm">{m.admin_audiences_hint()}</p>
-      </div>
+    <details class="border-cn-border rounded-2xl border bg-(--cn-surface) px-4 py-3">
+      <summary class="text-text-main cursor-pointer text-sm font-semibold">
+        {m.admin_spaces_advanced()}
+      </summary>
+      <div class="mt-3 space-y-3">
+        <p class="text-text-muted text-sm">{m.admin_audiences_hint()}</p>
 
-      <Picker
-        id="audience-association"
-        value={audienceFor}
-        options={[{ value: '', label: m.admin_audiences_pick() }, ...associationOptions]}
-        label={m.admin_audiences_pick()}
-        {triggerClass}
-        onValueChange={chooseAssociation}
-      />
+        <Picker
+          id="audience-association"
+          value={audienceFor}
+          options={[{ value: '', label: m.admin_audiences_pick() }, ...associationOptions]}
+          label={m.admin_audiences_pick()}
+          {triggerClass}
+          onValueChange={chooseAssociation}
+        />
 
-      {#if audienceFor}
-        {#if rulesLoading}
-          <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
-        {:else}
-          <div class="space-y-2">
-            {#each rules as rule, index (index)}
-              <div class="grid items-center gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                <Picker
-                  id="rule-formation-{index}"
-                  value={rule.formation ?? ''}
-                  options={ruleFormationOptions}
-                  label={m.directory_label_formation()}
-                  {triggerClass}
-                  onValueChange={(v) =>
-                    patchRule(index, { formation: v === '' ? null : (v as Formation) })}
-                />
-                <Picker
-                  id="rule-campus-{index}"
-                  value={rule.campus ?? ''}
-                  options={ruleCampusOptions}
-                  label={m.directory_label_campus()}
-                  {triggerClass}
-                  onValueChange={(v) =>
-                    patchRule(index, { campus: v === '' ? null : (v as Campus) })}
-                />
-                <button
-                  type="button"
-                  onclick={() => removeRule(index)}
-                  aria-label={m.admin_audiences_remove()}
-                  class="text-text-muted rounded-xl p-2 hover:text-red-500"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            {/each}
-          </div>
+        {#if audienceFor}
+          {#if rulesLoading}
+            <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
+          {:else}
+            <div class="space-y-2">
+              {#each rules as rule, index (index)}
+                <div class="grid items-center gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <Picker
+                    id="rule-formation-{index}"
+                    value={rule.formation ?? ''}
+                    options={ruleFormationOptions}
+                    label={m.directory_label_formation()}
+                    {triggerClass}
+                    onValueChange={(v) =>
+                      patchRule(index, { formation: v === '' ? null : (v as Formation) })}
+                  />
+                  <Picker
+                    id="rule-campus-{index}"
+                    value={rule.campus ?? ''}
+                    options={ruleCampusOptions}
+                    label={m.directory_label_campus()}
+                    {triggerClass}
+                    onValueChange={(v) =>
+                      patchRule(index, { campus: v === '' ? null : (v as Campus) })}
+                  />
+                  <button
+                    type="button"
+                    onclick={() => removeRule(index)}
+                    aria-label={m.admin_audiences_remove()}
+                    class="text-text-muted rounded-xl p-2 hover:text-red-500"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              {/each}
+            </div>
 
-          {#if rulesError}
-            <p class="text-sm text-red-500" role="alert">{rulesError}</p>
+            {#if rulesError}
+              <p class="text-sm text-red-500" role="alert">{rulesError}</p>
+            {/if}
+            {#if rulesMessage}
+              <p class="text-sm text-emerald-600">{rulesMessage}</p>
+            {/if}
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onclick={addRule}
+                class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold"
+              >
+                <Plus size={14} />
+                {m.admin_audiences_add()}
+              </button>
+              <button
+                type="button"
+                disabled={rulesSaving}
+                onclick={saveRules}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold disabled:opacity-50"
+              >
+                {#if rulesSaving}
+                  <LoaderCircle size={14} class="animate-spin" />
+                {/if}
+                {m.admin_audiences_save()}
+              </button>
+            </div>
           {/if}
-          {#if rulesMessage}
-            <p class="text-sm text-emerald-600">{rulesMessage}</p>
-          {/if}
-
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onclick={addRule}
-              class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold"
-            >
-              <Plus size={14} />
-              {m.admin_audiences_add()}
-            </button>
-            <button
-              type="button"
-              disabled={rulesSaving}
-              onclick={saveRules}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold disabled:opacity-50"
-            >
-              {#if rulesSaving}
-                <LoaderCircle size={14} class="animate-spin" />
-              {/if}
-              {m.admin_audiences_save()}
-            </button>
-          </div>
         {/if}
-      {/if}
-    </section>
+      </div>
+    </details>
   {/if}
 </div>
