@@ -2839,22 +2839,19 @@ behind, stuck below the hole (re-measure before acting on it).
 
 ---
 
-### P3 - the phone prints eight warning lines a minute that mean nothing, and polls presence every ten seconds (measured by logcat 2026-09-02)
+### P3 - the phone polls presence every ten seconds over a live WebSocket (measured by logcat 2026-09-02)
 
-Read off the Pixel 6a with `adb logcat` - 147 app lines over seven minutes of an otherwise idle
-session:
+Read off the Pixel 6a with `adb logcat`: **45 `GET /api/presence` in seven minutes** - one every ten
+seconds (`presenceStore.ts`, `createPausableInterval(checkPresenceNow, 10_000)`, still so on
+2026-10-04), on a mobile client that already holds a live WebSocket. A clock where a push belongs,
+and it costs battery and data on every phone. (The other half of this entry, the `pong` WARN line,
+is fixed: `isHeartbeatFrame` in `channelEventTypes.ts`.)
 
-- **56 occurrences of `[WS RCV] frame type "pong" reached no handler - the server is sending
-  something this client does not route (see channelEventTypes)`**, at **W** level. A keepalive pong is
-  expected and needs no handler, so the line is the visible end of either a server routing it as a
-  payload frame or a client that should consume it silently. At WARN it pollutes exactly the level a
-  reader scans for real defects.
-- **45 `GET /api/presence` in seven minutes** - one every ten seconds, on a mobile client that already
-  holds a live WebSocket. A clock where a push belongs, and it costs battery and data on every phone.
-
-Both fall under the rule that noise is never acceptable: a line is either expected AND necessary, or
-it is the visible end of something upstream. The first is also part of why the P1's 13:10 window was
-no longer in the buffer when it was needed.
+**Why it is not simply built: a push needs a DESIGN DECISION first.** The gateway would have to send
+presence changes to the users allowed to see them, and who may watch whose presence is the open
+question `get_presence` in `apps/chat-gateway/src/presence.rs` already names (today any authenticated
+caller may ask about any user id). Decide that, then the push is a gateway subscription plus a
+client listener that replaces the interval.
 
 ---
 
@@ -3020,25 +3017,10 @@ real device rows. Two things are open, and neither is a database question.
    server line separates them.
    **Do not assert the guards fixed it.** MULTI-8 and MULTI-9 on
    [cross-client-testing](cross-client-testing.md) are the rows that answer it.
-3. **A report for the stranded state.** `No active membership` is logged at `LOG` and is also the
-   normal answer for a device in its first seconds, so a working system and a broken one print the
-   same thing twenty-one times - the same shape as the push token no row reported. The age of the
-   row is already in the table, so the predicate is a `WHERE`, not a new column, and it must be
-   measured against the whole population before its name is believed.
 
-**THE POPULATION, RE-MEASURED 2026-08-30 BECAUSE THE FIRST MEASUREMENT NO LONGER DESCRIBES IT**
-(`GROUP BY status`): **125 `active`, 17 `pending`** - against 150 / 10 on 2026-08-28. The stranded
-count did not shrink after the guards, it **grew by seven**, so whatever produces a long-lived
-`pending` is not the placeholder defect and is not fixed. Of the 17: **12 are `web-`, all older than
-an hour, the oldest since 2026-08-25**; 5 are `tauri-`, 3 of them older than an hour. **Still mostly
-Chrome, still not an iOS defect and not a mobile one** - but the predicate in (3) must be aimed at
-this population, not at the one that named the incident.
-
-**One thing was checked and is NOT a defect, so it is not re-derived**: nine of those ten have an
-undelivered Welcome sitting in `queued_message`, which looks like a deadlock and is not.
-`MSG_FETCH` filters on group tombstones, never on membership status, so those Welcomes are
-retrievable the moment the device comes back - they are abandoned browser profiles, debris. The
-tenth, the device that lost the user's messages, has **no queued row at all**: nobody ever added it.
+The report for the stranded state this entry also asked for EXISTS: `reportStrandedDeviceMemberships`
+names every `pending` seat past its window hourly, partitioned into *awaiting a queued Welcome*,
+*never added* and *kicked with no re-add* ([chat-delivery](services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)).
 
 ### P3 - openmls 0.8.1 PANICS on a corrupted PrivateMessage body instead of returning an error (found 2026-08-27)
 
