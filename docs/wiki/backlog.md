@@ -1541,17 +1541,6 @@ reachable**, and an auto-merge armed by a session that has since gone quiet merg
 the other end. Which is the argument for the design above: the window is not a coordination problem
 between sessions, it is a gate that reads a sha a human chose instead of the head the machine sees.
 
-### P3 - WHICH NAME IS PRODUCTION IS ASSERTED THREE TIMES, AND ONE COPY STOPPED A STABLE (2026-09-25)
-
-`build.yml`, `android.yml` and `ios.yml` each classify the baked backend URL as dev, production or
-unknown, with their own lists; the rename moved two and missed the third, and `v0.18.24` reached both
-stores but not the site ([estate-migration](infrastructure/estate-migration.md)). They even disagree
-now: the native two accept both apexes, the web build only the canonical one. One function in
-`.github/scripts/lib/`, sourced by all three and covered by a test that feeds it each name, is the
-shape; until then, a change to what production is called is a change to three files.
-Re-read 2026-10-01: still three copies (`android.yml` and `ios.yml` each carry their own `case`,
-`build.yml` its own `PROD_DOMAIN`), so the rename did not unify them.
-
 ### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
 **The Android half of this closed on 2026-09-22** and is on
@@ -5414,21 +5403,6 @@ of service was queued behind a TestFlight upload.** Whatever the fix is - a lane
 estate work is done, cancelling a superseded pre-release's store arms, or simply knowing to cancel by
 hand - the thing to keep is that the serialisation is correct and only its GRANULARITY is wrong: the
 estate and the stores do not need the same lock.
-
-## Code scanning
-
-### P3 - no gate lists a STANDING code-scanning alert, so one sits until somebody lists them by hand
-
-The `CodeQL` check refuses only a pull request that introduces a NEW alert, so a standing one is
-invisible to every run. Alert 2521 (`js/user-controlled-bypass` on the refresh endpoint's own 401, a
-false positive) stood four weeks that way, named by no page until it was found by listing the open
-alerts by hand; the user dismissed it on 2026-10-01. **A correct mechanism with no report is found
-by hand, a day late.**
-
-**It is not hypothetical today**: re-read 2026-10-01, alert **2544** (`js/incomplete-multi-character-sanitization`,
-high, `frontend/src/lib/components/auth/LoginForm.flat.test.ts:14`, opened by #1278's merge) is open
-and fails nothing. `gh api repos/emse-students/canari/code-scanning/alerts?state=open` is the whole
-measurement; whether `scheduled.yml` should carry it, and against what threshold, is not settled here.
 
 ## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE STILL OWED A READING
 

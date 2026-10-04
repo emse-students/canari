@@ -1548,8 +1548,12 @@ GHSA-7gcf-g7xr-8hxj (serde_with, in `frontend/src-tauri/Cargo.lock`) was invisib
 the mechanisms meant to catch it - Dependabot could not open the pull request, `cargo audit` exited
 0 because the advisory is GHSA-only, and no gate read the alert list.
 
-`.github/scripts/dependabot-alerts-report.sh` is that third reader, in the nightly pass on the same
-02:00 cron. **It is not on the pull-request path and must not go there**: the alert list is a
+`.github/scripts/github-alerts-report.sh dependabot` is that third reader, in the nightly pass on
+the same 02:00 cron. **The same script reads the CODE SCANNING list too** (`... code-scanning`,
+2026-10-04), because the pull-request `CodeQL` check refuses only a NEW alert: a standing one failed
+nothing, and alert 2521 stood four weeks until somebody listed the alerts by hand. Every open code
+scanning alert now makes the nightly red; a false positive is closed by dismissing it on GitHub, the
+one place that records why. **It is not on the pull-request path and must not go there**: the alert list is a
 property of the DEFAULT BRANCH, so a pull request can neither be blamed for an open alert nor
 sensibly blocked by one, and putting it there would wall every merge on a fact about `main`.
 

@@ -186,12 +186,13 @@ jobs:
   # something landed against code nobody touched", the answer only changes once a day, and a fifth
   # schedule line would be a fifth thing to reason about for no extra resolution.
   #
-  # `security-events: read` is what lets the job's `GITHUB_TOKEN` list Dependabot alerts. A refusal
+  # The Dependabot list needs `secrets.DEPENDABOT_ALERTS_TOKEN` (no `permissions:` key covers it);
+  # the CODE SCANNING list, read by the second step, needs only `security-events: read`. A refusal
   # is REPORTED rather than tolerated - the script's whole design is that an empty list and a refused
-  # request must not look alike - so if this permission is ever narrowed the run goes red saying so.
+  # request must not look alike - so if either credential is ever narrowed the run goes red saying so.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   alerts:
-    name: Dependabot alerts on the default branch
+    name: Dependabot and code scanning alerts on the default branch
     if: >
       github.event.schedule == '0 2 * * *' ||
       (github.event_name == 'workflow_dispatch' &&
@@ -200,6 +201,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      # FOR THE CODE SCANNING STEP ONLY, and here the key does exactly what it says: code scanning
+      # alerts are the resource `security-events` governs. The pull-request `CodeQL` check refuses
+      # only a NEW alert, so a standing one failed nothing - 2521 stood four weeks, found by hand.
+      security-events: read
       # NO `permissions:` KEY GRANTS THIS, WHICH IS WHY THE JOB HAD NEVER PASSED. It declared
       # `security-events: read` and failed 403 on every nightly run since it was written: that
       # permission covers code scanning and secret scanning, and Dependabot alerts are a separate
@@ -216,7 +221,15 @@ jobs:
           # credential to mint. It is deliberately NOT a silent skip - an alert list nobody reads
           # looks exactly like an empty one, which is the defect this report exists to end.
           GH_TOKEN: ${{ secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/dependabot-alerts-report.sh
+        run: bash .github/scripts/github-alerts-report.sh dependabot
+
+      # Runs whatever the step above found: the two lists are independent, and a red Dependabot
+      # half must not hide a standing code scanning alert behind it.
+      - name: Read GitHub's code scanning alert list and judge it
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/github-alerts-report.sh code-scanning
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE ACTIONS CACHE QUOTA IS 10 GB, AND BUILDKIT NEVER EVICTS
