@@ -774,7 +774,7 @@
         use:portalWhile={isFullPage}
         use:coversScreen={isFullPage}
         class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
-          ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5'
+          ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5 pt-[max(1.25rem,var(--safe-area-inset-top,0px))]'
           : ''}"
       >
         <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->

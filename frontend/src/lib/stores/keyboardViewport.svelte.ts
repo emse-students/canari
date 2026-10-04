@@ -106,9 +106,26 @@ export function computeSnapshot(
   };
 }
 
+/**
+ * Whether this OS can have an on-screen keyboard at all. A desktop window has none, so a window
+ * made shorter than its tallest size is a RESIZE, never a keyboard: it used to read as one past
+ * 160px and hid the top bar and the bottom bar while the fixed rail kept its offset, leaving a gap
+ * above it (user, 2026-10-04).
+ */
+export function hasVirtualKeyboard(os: string): boolean {
+  return os !== 'windows' && os !== 'macos' && os !== 'linux';
+}
+
 function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
   const vv = window.visualViewport;
   const winH = window.innerHeight;
+  if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
+    return computeSnapshot(
+      { winH, vvHeight: winH, offsetTop: 0, scale: 1 },
+      winH,
+      keyboardOpenThresholdPx()
+    );
+  }
   return computeSnapshot(
     {
       winH,

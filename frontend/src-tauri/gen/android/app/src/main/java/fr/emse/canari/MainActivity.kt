@@ -10,6 +10,7 @@ import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.graphics.Insets
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -67,7 +68,17 @@ class MainActivity : TauriActivity() {
         // edge-to-edge on Android 15+ targetSdk 35+; below that, or on OEMs that don't apply it
         // consistently (seen on a Xiaomi/HyperOS device), the nav bar sits outside the window and
         // the insets read back as zero, leaving the composer flush against the nav bar.
-        enableEdgeToEdge()
+        //
+        // THE NAVIGATION BAR HAS NO SCRIM OF ITS OWN: the default style paints a 90 % white one over
+        // a 3-button bar (and the system adds another while contrast is enforced), so the strip
+        // under the composer was white on a page whose ground is grey (user, 2026-10-04). The page
+        // paints that strip itself, through the bottom inset, in its own colour.
+        enableEdgeToEdge(
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         // A phone stays in portrait; a tablet is a PC here and keeps its rotation. The threshold
         // is a resource qualifier rather than a manifest attribute because
         // `android:screenOrientation` takes one literal value, which cannot serve both.

@@ -1,4 +1,18 @@
-import { computeSnapshot, type ViewportMeasurement } from './keyboardViewport.svelte';
+import {
+  computeSnapshot,
+  hasVirtualKeyboard,
+  type ViewportMeasurement,
+} from './keyboardViewport.svelte';
+
+describe('hasVirtualKeyboard', () => {
+  it('is false on desktop, where a shorter window is a resize and not a keyboard', () => {
+    for (const os of ['windows', 'macos', 'linux']) expect(hasVirtualKeyboard(os)).toBe(false);
+  });
+
+  it('is true on phones and tablets', () => {
+    for (const os of ['android', 'ios']) expect(hasVirtualKeyboard(os)).toBe(true);
+  });
+});
 
 const IOS_THRESHOLD = 100;
 const baseline = 800;
