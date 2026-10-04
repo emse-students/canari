@@ -76,17 +76,11 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. Inferred from the measured `Invalid APNs credential` on sandbox tokens only; the agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
-| **decide whether the two photo bubbles stuck at the notification's caption are worth recovering** - the 2026-09-23 fix stops any NEW one, and cannot repair those: the frame was acked, the server deleted its copy and the replay's consumed ledger is durable, so the only copy left anywhere is a peer's. Recovering them means asking a member who still holds the envelope for a history bundle, which is a product call about reaching into someone else's device, not a repair an agent should improvise | 1 decision | [mobile](frontend/mobile.md#fcm-message-cache) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list itself (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing. **2026-09-18: five of eight answered** - credentials (in GitHub secrets), the fee (10 centimes + 1%, confirmed), the balance question (no generic endpoint, `transaction/list` is the only path), and both webhook signature questions (`request/do`'s callback signs with the provider's token; `business/create`'s has none, confirming the decision not to build that receiver) | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
-| **verify `canari.emse.fr` in Google Search Console, then declare `canari-emse.fr` -> `canari.emse.fr`** ("Change of address") - the redirect is a `301` (measured 2026-10-01) and the ownership file `googlea035227b58453615.html` is on `main` (#1296), served once a STABLE carries it; both names verified in one account | 2 clicks, after the next stable | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
-| **say whether MiGallery should be indexed at all** - a private gallery, whose default is `noindex` | decision | [SEO](#p2---every-project-owes-an-seo-pass-and-each-one-is-due-when-its-name-is-final-user-2026-09-25) |
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
-| **decide whether a reader is ever TOLD that a conversation rests on their device alone, and on which channel** - and, with it, whether a client may refuse to forget a group it is the last holder of. The measurement is done and the population is ONE (production, 2026-09-22); what is missing is a product call, and a destructive control gated on a server's count is a fallback path, so it is not one an agent should take unasked | 1 decision, or two | [P2 - ONE conversation rests on one holder](#p2---one-conversation-rests-on-one-holder-and-the-only-thing-left-is-a-decision-nobody-has-taken-re-measured-on-production-2026-09-22) |
-| **send the DSI the one request that carries every name at once - IT IS WRITTEN OUT, copy it** - three records to create, `canari.emse.fr` to reassign, the certificates, the INBOUND firewall confirmation, the OUTBOUND opening of port 7844 that a Cloudflare tunnel needs and that is measured BLOCKED upstream, and the account question. The certificate question that used to block it was ANSWERED by measurement on 2026-09-24 and removed from the request. Every name costs a ticket, so a second request is a second wait | 1 message | [estate-migration](infrastructure/estate-migration.md#the-request-written-out---copy-it-do-not-rewrite-it) |
-| **decide how a member ever clears the dead rows a deleted group leaves - a bulk action, an age-out once the banner has been seen, or nothing at all.** The retention is deliberate and right; what has no answer is the ACCUMULATION, and that the only exit is per-row. Any bulk control's one honest allowlist is "already marked `removed`" - precisely the set whose purpose is to have been SEEN first - so a control that clears them wholesale re-introduces, by the owner's own hand, the silent removal the banner exists to prevent. That trade is a UX call, not an agent's | 1 decision | [P3 - a deleted group leaves every OTHER member a dead row](#p3---a-deleted-group-leaves-every-other-member-a-dead-row-for-ever-clearable-only-one-at-a-time) |
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none. (verify: phase 1 completed for all three estates on 2026-09-24 without it, estate-migration section 10 - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
-| **rotate the Cloudflare run token on both boxes, after moving it out of the unit's command line** - any local user reads it today through `systemctl show -p ExecStart`, on `canari` and on `miconnect`, whatever the file mode. The unit shape that closes it is written down; what needs the user is that the rotation drops the public path to production for the minute between invalidating the old token and restarting the daemon | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
+| **the Cloudflare run token: it was ROTATED (user, 2026-10-04) and is STILL on the command line of both boxes** - `systemctl show cloudflared -p ExecStart` still contains `--token` on `canari` and on `miconnect` (measured 2026-10-04, boolean only). Move it to an `EnvironmentFile` (`600 root:root`, `TUNNEL_TOKEN=`) with `ExecStart` reduced to `tunnel run`, then rotate AGAIN: the public path to production is down for the minute between invalidating the old token and restarting the daemon, so it is done with the user present | 1 rotation, together | [P1 - the Cloudflare run token is readable by any local user](#p1---the-cloudflare-run-token-is-readable-by-any-local-user-on-both-production-boxes-and-the-fix-that-was-believed-to-close-it-never-touched-the-reader-measured-2026-09-24) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala`, a repository that now answers `404`; the repository that looks like its successor does not contain that commit. Nothing runs from it and nothing points at it, so this is not a technical question but somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -482,32 +476,9 @@ refusals):
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
 
-### P2 - ONE conversation rests on one holder, and the only thing left is a decision nobody has taken (re-measured on production 2026-09-22)
+### ONE conversation rests on one holder - DECIDED 2026-10-04: NOTHING IS BUILT
 
-**THE PARKED QUESTION IS ANSWERED AND THE LEVER WORKED.** This entry said *"nothing here is to be
-built before the next report is read"*, and named which lever to read first. Ten hourly reports were
-read on 2026-09-22 and the figure re-derived directly with the report's own query: **five real
-one-holder conversations became one, while the estate grew from 58 live groups to 100**, and the
-epoch-284 DM with six pending devices is gone from the list - its Welcomes landed. Zero-holder has
-no population at all and no ERROR line has ever been emitted. Every measurement, the sweep for seats
-with no client behind them, and the queue figures that refuted a second worry are in
-[the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked).
-
-**What is left is TWO DECISIONS AND NO WORK**, unchanged in substance since 2026-09-12 and now
-resting on a population of one. Both are on
-[the user's list](#owed-to-the-user---decisions-rotations-and-one-off-clicks) since 2026-09-22 -
-they had been waiting on a decision for ten days without appearing on the one page that says what
-is waiting on the user:
-
-- **Tell somebody.** A conversation with one holder is a fact about a USER's own account and nothing
-  surfaces it to them. What channel, and whether it is worth surfacing at all, is undecided.
-- **Refuse the last exit.** A client could decline to forget a group it is the last holder of
-  without warning. This needs care: a destructive control gated on a server's count is a fallback
-  path, and the count is a proxy.
-
-**DO NOT re-open the repair question.** DE2 is terminal by RFC 9420 construction - every way into a
-group requires a party holding the group secrets and this server holds only ciphertext - so the
-report names and cannot repair, deliberately.
+The user decided on 2026-10-04 to neither tell a reader nor refuse the last exit: one conversation on the whole of production (measured 2026-09-22) does not pay for a mechanism, and a destructive control gated on a server count would be a fallback path. The hourly report keeps naming the conversations and repairs nothing; **reopen only if its count rises**. DE2 stays terminal by RFC 9420 construction ([the state machine](protocols/mls-graine-state-machine.md#the-report-was-read-ten-days-on-2026-09-22-and-it-says-the-lever-worked)).
 
 ### P3 - one seat on production has no client behind it, and removing it is not the server's to do (measured 2026-09-22)
 
@@ -3721,39 +3692,9 @@ Anything wider needs the bundle to carry the author's own signed edit, which is 
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
-### P3 - a deleted group leaves every OTHER member a dead row, for ever, clearable only one at a time
+### A deleted group leaves every OTHER member a dead row - DECIDED 2026-10-04: NOTHING IS BUILT
 
-Found on 2026-08-24 while clearing the campaign's own debris off W2, and the retention itself is NOT
-the finding - it is deliberate and right. `initializeConnection.ts:171` forgets the member's WASM
-state, so she can no longer send, and then calls `onGroupDeletedRemotely` so the conversation is
-marked `removed` and shown with a banner "instead of removing it silently". `decideAbsentGroupFate`'s
-first guard then makes that state unreachable by any later reconciliation, because it records what
-its owner was TOLD. Removing a conversation from under someone without telling them would be the
-worse behaviour, and the design says so.
-
-**What has no answer is the ACCUMULATION, and the fact that the only exit is per-row.** "Supprimer
-localement" acts on the OPEN conversation, so N dead rows cost N navigations and N clicks; there is
-no bulk gesture, no "clear the deleted ones", and nothing ages them out - a `removed` row is
-permanent by construction. The rig measured the extreme: W2 held **189** of them, from one phase of
-one campaign, and clearing them needed a purpose-built sweep (`dismiss.mjs`) driving the button 189
-times. A real user's number is not 189, but it is not zero either and it only ever grows: a promo
-with a group per project, deleted at the end of each year, accumulates a dozen dead rows that no
-gesture can clear together.
-
-**Why it is a product decision rather than a bug to fix.** Any bulk control has to decide what it may
-touch, and the only honest allowlist is "conversations already marked `removed`" - which is
-exactly the set whose whole purpose is to have been SEEN by its owner first. A control that clears
-them wholesale re-introduces, by the owner's own hand, the silent removal the banner exists to
-prevent. So the question is a UX one and belongs to the user: is the exit a bulk action, an
-age-out for a row whose banner has been seen, or nothing at all. **It is on
-[the user's list](#owed-to-the-user---decisions-rotations-and-one-off-clicks) since 2026-09-24** -
-it said "belongs to the user" for a month and was on no list, which is the one thing that table
-exists to make impossible.
-
-**What would tell us it matters:** no board row covers it, and no rung would ever notice - every
-runner either creates and deletes its own group (so it is the CREATOR, whose copy `deleteGroup`
-purges) or leaves the debris behind for the next run to inherit. That asymmetry is why it went
-unseen for the whole campaign: W1 measured clean at 9 conversations on the same day W2 held 189.
+The retention is deliberate (a banner instead of a silent removal) and the user chose to keep the per-row exit only. No bulk action and no age-out; the rig's `dismiss.mjs` stays the way to sweep its own debris.
 
 ### P1 - a REVOKED device kept its local store, restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
 
@@ -5170,8 +5111,7 @@ public association and post pages, and the calendar feed.
 
 **Two `3xx` sitemaps and a missing canonical are defects in their own right**, not SEO polish: a
 crawler that is redirected away from `sitemap.xml` reads no sitemap, and a page with no canonical lets
-the engine pick one. **MiGallery is a private gallery**, so its default is `noindex` rather than
-ranking - that is the user's to confirm before anyone optimises it.
+the engine pick one. **MiGallery IS TO BE INDEXED (user, 2026-10-04)**, against the default of `noindex` for a private gallery: its pass is owed like every other project's, once its name is final, and what may rank is its public surface only.
 
 ### P2 - SKY MOVES ONTO THE SCHOOL HOST, THEN TAKES `sky.emse.fr` (user, 2026-09-25)
 
