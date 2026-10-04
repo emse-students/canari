@@ -223,6 +223,17 @@ viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or ever
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
 carry the three too, or saving an edit removes the control that started it.
 
+## The search stops where the feed stops (2026-10-04)
+
+`/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned
+then newest first, 20 rows - and it owes every exclusion the feed applies, because a hit renders
+the same card as a feed row: report-hidden posts, the store-review account, live reels, blocked
+authors, **and the viewer's promo cutoff** (`promo-visibility.ts`: nothing before the August their
+promo opens on, no limit for a global admin or a row with no promo). The cutoff was the one missed,
+and the user found it (2026-08-23: *"la recherche desactive les filtres ?"*). It is a RELEVANCE
+limit, not a confidentiality one, so its absence was an inconsistency and not a leak. The tab and
+kind chips are a reader's choice and are hidden while a query is typed, so they do not apply.
+
 ## A body made of Markdown cannot hold an image, so nothing but text is ever put in it
 
 `MentionComposerInput` is the ONE `contenteditable` in this repository - the post composer, the post

@@ -4250,33 +4250,6 @@ reader PRINT the absolute path it resolved, so a wrong edit is visible in the fi
 rather than in a value that refuses to change. Note that `STATE_DIR` is already exported and has
 three consumers, so the resolved path is available and simply never shown.
 
-## Search
-
-### P2 - the posts search escapes the feed's filters, and scans the whole base before it answers anything
-
-Reported by the user 2026-08-23, verbatim: *"La recherche dans les posts permet d'acceder a des posts
-apres notre arrivee a l'EMSE (la recherche desactive les filtres ?)"*. Three distinct things, and
-they are not the same severity.
-
-1. **The filters appear not to apply to the search.** The feed is scoped, the search is not, so the
-   search surfaces posts the scoped feed would never show. **The first task is to establish what that
-   scope IS**, because it decides everything: a scope that is a VISIBILITY rule makes this a P1
-   (search reads what the reader may not read), a scope that is only a convenience narrowing makes it
-   a P2 surprise. Do not write code before that question has an answer - `## Open questions` is where
-   an unanswered one belongs, and this entry moves there rather than growing a fix if the answer is
-   not immediate.
-2. **The order is backwards: filter, THEN search.** Filtering downstream means the search spends its
-   whole cost on rows that were never going to be displayed. Correctness aside, it is the same work
-   done against a corpus several times larger than the reachable one.
-3. **It loads everything before it answers.** A post from this week should not wait on a scan of the
-   entire base. The search should walk backwards in time and stream what it finds, so a recent hit is
-   returned early and the long tail keeps arriving - the standing requirement is that the mechanism
-   works for a corpus of ANY size, and a single up-front load is the shape that cannot.
-
-Related but NOT the same item: in-conversation (chat) search is the entry above; this one is the
-social feed. MiGallery's `fuzzyScore`/`fuzzySearch` is the reference implementation the standing
-search requirement points at.
-
 ## The graphical pass - every page at 100 % (user, 2026-09-13)
 
 **The mandate, verbatim:** *"il faudra (re)faire une passe graphique aussi (tester toutes les pages,
