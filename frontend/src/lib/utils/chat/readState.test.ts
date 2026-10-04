@@ -6,6 +6,7 @@ import {
   mergeReadWatermark,
   mergeReadWatermarks,
   readersOf,
+  seenByAnchors,
   watermarkAfterReading,
   watermarkFor,
 } from './readState';
@@ -206,5 +207,56 @@ describe('the watermark reading a conversation produces', () => {
     const messages = [msg('a', 1000), msg('sys', 9000, 'system')];
 
     expect(watermarkAfterReading(messages, 0)).toBe(1000);
+  });
+});
+
+describe('where each head sits in a group (seen by)', () => {
+  const ALICE = 'alice';
+  const BOB = 'bob';
+
+  it('puts a head under the last message its owner read, whoever wrote it', () => {
+    const messages = [msg('a', 1000, ME), msg('b', 2000, PEER), msg('c', 3000, PEER)];
+    const anchors = seenByAnchors(messages, { [ALICE]: 2000, [BOB]: 3000 }, ME);
+
+    expect(anchors.get('b')).toEqual([ALICE]);
+    expect(anchors.get('c')).toEqual([BOB]);
+    expect(anchors.has('a')).toBe(false);
+  });
+
+  it('never draws the viewer', () => {
+    const anchors = seenByAnchors([msg('a', 1000, PEER)], { [ME]: 1000 }, 'ME');
+
+    expect(anchors.size).toBe(0);
+  });
+
+  it('gathers every head anchored on one message, sorted', () => {
+    const anchors = seenByAnchors(
+      [msg('a', 1000, ME)],
+      { [BOB]: 1000, [ALICE]: 1500, d: 1000, e: 1000 },
+      ME
+    );
+
+    expect(anchors.get('a')).toEqual([ALICE, BOB, 'd', 'e']);
+  });
+
+  it('counts an author as having read their own message, and draws no head on it', () => {
+    // Alice replied at 3000 while her watermark still says 1000: she has obviously seen her reply,
+    // so her head must not sit ABOVE it - and on her own message it says nothing.
+    const messages = [msg('a', 1000, ME), msg('b', 3000, ALICE)];
+    const anchors = seenByAnchors(messages, { [ALICE]: 1000 }, ME);
+
+    expect(anchors.size).toBe(0);
+  });
+
+  it('skips system notices', () => {
+    const messages = [msg('a', 1000, PEER), msg('sys', 2000, 'system', { isSystem: true })];
+    const anchors = seenByAnchors(messages, { [ALICE]: 5000 }, ME);
+
+    expect(anchors.get('a')).toEqual([ALICE]);
+  });
+
+  it('draws nobody who has read nothing on the list', () => {
+    expect(seenByAnchors([msg('a', 5000, PEER)], { [ALICE]: 1000 }, ME).size).toBe(0);
+    expect(seenByAnchors([msg('a', 5000, PEER)], undefined, ME).size).toBe(0);
   });
 });

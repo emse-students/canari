@@ -29,7 +29,7 @@
   import { isPinnedToBottom, respondToNewMessage } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
+  import { countUnreadForUser, seenByAnchors, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -582,6 +582,20 @@
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
+  /**
+   * In a group or a salon, each member's head sits under the last message THEY read (user,
+   * 2026-10-02). Computed over every group, sorted, never the render window: a window ending above
+   * a reader's true anchor would pin the head to its last row. A DM keeps its own receipt shape.
+   */
+  let seenBy = $derived(
+    chatView && !chatView.isDirect
+      ? seenByAnchors(
+          messageGroups.filter(isMessageGroupRow).map((g) => g.message),
+          chatView.conversation.readWatermarks,
+          currentUserId
+        )
+      : undefined
+  );
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
   /**
@@ -1323,6 +1337,7 @@
             {messageReactions}
             {currentUserId}
             readWatermarks={conversation?.readWatermarks}
+            {seenBy}
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}

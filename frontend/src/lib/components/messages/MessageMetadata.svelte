@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert, Check, CheckCheck, Clock } from '@lucide/svelte';
-  import Avatar from '../shared/Avatar.svelte';
+  import { LoaderCircle, TriangleAlert, Check, Clock } from '@lucide/svelte';
+  import SeenByHeads from './SeenByHeads.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -95,32 +95,7 @@
       </span>
     {:else if showRead}
       <!-- Reader avatars + double-check (tap bubble for names/time detail) -->
-      <span class="msg-status msg-status-read inline-flex items-center gap-0.5" role="status">
-        <span class="inline-flex items-center gap-0.5" aria-hidden="true">
-          {#each readBy.slice(0, 3) as userId (userId)}
-            <Avatar {userId} size="xs" shape="circle" />
-          {/each}
-          {#if readBy.length > 3}
-            <span class="text-2xs font-bold opacity-70">+{readBy.length - 3}</span>
-          {/if}
-          <CheckCheck
-            size={12}
-            strokeWidth={2.5}
-            class="ml-0.5 text-emerald-500 dark:text-emerald-400"
-          />
-        </span>
-        <!--
-          One key per arity, which is this codebase's convention for counted strings (see
-          `chat_typing_one_person` / `_two_people` / `_multiple_people`). The inlang project has no
-          ICU plural support, and a single `{count, plural, ...}` message compiles to an input the
-          generated type does not carry.
-        -->
-        <span class="sr-only">
-          {readBy.length === 1
-            ? m.msg_statut_lu_une_personne()
-            : m.msg_statut_lu_plusieurs({ count: readBy.length })}
-        </span>
-      </span>
+      <SeenByHeads readers={readBy} withCheck />
     {/if}
   </div>
 {/if}
