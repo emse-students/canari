@@ -13,7 +13,7 @@
    * stands down meanwhile (`isSwipeNavActive` reads the overlay depth).
    */
   import { onDestroy, onMount } from 'svelte';
-  import { Images, RefreshCcw } from '@lucide/svelte';
+  import { Camera, Images, RefreshCcw } from '@lucide/svelte';
   import CameraScreen from './CameraScreen.svelte';
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
@@ -37,6 +37,7 @@
   import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
+  import ReelEditor from './ReelEditor.svelte';
 
   interface Props {
     /** The session, injectable for tests. */
@@ -60,6 +61,7 @@
   /** The history entry a take holds; its close discards whatever the take has become. */
   let takeEntry: (() => void) | null = null;
   let picker = $state<HTMLInputElement | null>(null);
+  let editorOpen = $state(false);
 
   const ios = isIosTauriRuntime();
 
@@ -218,7 +220,7 @@
     paused={capture.kind === 'review'}
     {onBeforeRelease}
   >
-    {#snippet controls()}
+    {#snippet controls(capturePhoto)}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">
           {#if !recording}
@@ -242,7 +244,20 @@
             />
           {/if}
         </div>
-        <div class="flex justify-center">
+        <div class="flex flex-col items-center gap-3">
+          <button
+            type="button"
+            class="flex h-9 items-center gap-2 rounded-full border border-white/70 bg-black/35 px-3 text-xs font-semibold outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+            disabled={recording}
+            data-swipe-nav-ignore
+            onclick={async () => {
+              const blob = await capturePhoto();
+              if (blob) send({ type: 'picked', clip: { blob, source: 'camera' } });
+            }}
+          >
+            <Camera size={16} strokeWidth={2.25} />
+            {m.reels_capture_photo()}
+          </button>
           <ReelShutter
             {recording}
             {fraction}
@@ -279,8 +294,21 @@
       <ReelReview
         {clip}
         ondiscard={() => send({ type: 'discard' })}
+        onedit={() => (editorOpen = true)}
         onnext={() => (publishOpen = true)}
       />
     {/if}
+  {/if}
+
+  {#if editorOpen && capture.kind === 'review'}
+    <ReelEditor
+      clip={capture.clip}
+      oncancel={() => (editorOpen = false)}
+      onapply={(blob) => {
+        if (capture.kind !== 'review') return;
+        capture = { kind: 'review', clip: { ...capture.clip, blob } };
+        editorOpen = false;
+      }}
+    />
   {/if}
 </div>

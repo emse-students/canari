@@ -31,6 +31,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     isDistributionGroup: vi.fn().mockReturnValue(false),
+    noteDistributionGroup: vi.fn(),
     // Creating a placeholder ANNOUNCES it: a frame already buffered `absent-conversation` for this
     // group becomes routable at exactly this instant. Stubbed here rather than per test because
     // every path through `ensureConversationForServerGroup` that creates a row calls it.
@@ -482,6 +483,45 @@ describe('discoverMissingGroups orphan cleanup', () => {
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
+  });
+
+  it('purges a conversation row that the server identifies as a Graine distribution group', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'graine-group',
+        {
+          id: 'graine-group',
+          contactName: 'Graine',
+          name: 'Graine',
+          messages: [],
+          lifecycle: 'pending',
+          mlsStateHex: null,
+        } as Conversation,
+      ],
+    ]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'live-elsewhere', name: 'x' }]),
+      getGroupServerStatus: vi.fn().mockResolvedValue({
+        groupId: 'graine-group',
+        isGroup: true,
+        deletedAt: null,
+        distributionWorkspaceId: 'workspace-1',
+      }),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      deleteConversation,
+      log: vi.fn(),
+    });
+
+    expect(conversations.has('graine-group')).toBe(false);
+    expect(deleteConversation).toHaveBeenCalledWith('graine-group');
+    expect(mlsService.noteDistributionGroup).toHaveBeenCalledWith('graine-group');
   });
 
   it('purges nothing when the list is EMPTY while this device holds trees', async () => {

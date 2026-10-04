@@ -2008,11 +2008,29 @@ export function isConnectAccountReady(
 }
 
 /**
- * True when an association may be selected as recipient for paid forms.
- * Requires Stripe Connect onboarding complete (not merely a linked account id).
+ * True when the association's account at ONE provider is ready - the flag of that provider, since
+ * Stripe and Lydia keep independent account ids and flags (migration 037). Reading the Stripe
+ * flag while Lydia is active showed every Lydia association as incomplete for ever (2026-10-03).
+ * `null` is a provider not yet known, which is never ready.
  */
-export function canAssociationReceiveFormPayments(asso: Association): boolean {
-  return asso.stripeOnboardingComplete === true;
+export function isPaymentAccountReady(
+  asso: Pick<Association, 'stripeOnboardingComplete' | 'lydiaOnboardingComplete'>,
+  provider: PaymentProviderId | null
+): boolean {
+  if (provider === 'lydia') return asso.lydiaOnboardingComplete === true;
+  if (provider === 'stripe') return asso.stripeOnboardingComplete === true;
+  return false;
+}
+
+/**
+ * True when an association may be selected as recipient for paid forms.
+ * Requires onboarding complete at the ACTIVE provider (not merely a linked account id).
+ */
+export function canAssociationReceiveFormPayments(
+  asso: Association,
+  provider: PaymentProviderId | null
+): boolean {
+  return isPaymentAccountReady(asso, provider);
 }
 
 /** Fetches live Stripe Connect status (requires MANAGE_STRIPE_CONNECT). */
@@ -2083,6 +2101,24 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
     const body = await res.json().catch(() => ({}));
     throw new Error(
       (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    );
+  }
+}
+
+/**
+ * Validates the association's Lydia onboarding by hand (global admin only): nothing marks it
+ * automatically, so a platform admin who has seen Lydia accept the file says so.
+ */
+export async function validateLydiaOnboarding(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/complete-lydia-account/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { message?: string })?.message || `Lydia validation failed (${res.status})`
     );
   }
 }

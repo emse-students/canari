@@ -163,6 +163,10 @@ jobs:
           # real member is the copy's `TRUNCATE TABLE push_token`, not an absent key, so a dev estate
           # can only reach a phone that has itself signed into dev. Absent, iOS falls back to an FCM
           # banner and the deploy says so.
+          # Lydia's HOMOLOGATION pair (their sandbox), so a Lydia onboarding or checkout can be tried
+          # on dev. `LYDIA_ENV=homologation` is pinned in docker-compose.dev.yml, not read from here.
+          DEV_LYDIA_PROVIDER_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_TOKEN }}
+          DEV_LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_PRIVATE_TOKEN }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}

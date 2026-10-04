@@ -20,7 +20,7 @@
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
-  import AssociationLogoCropper from '../associations/AssociationLogoCropper.svelte';
+  import SquareImageCropper from '../associations/SquareImageCropper.svelte';
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -557,7 +557,7 @@
   title={m.chat_group_change_photo_label()}
   maxWidth="max-w-lg"
 >
-  <AssociationLogoCropper
+  <SquareImageCropper
     onExport={handlePhotoCropExport}
     onCancel={() => (showPhotoCropper = false)}
     outputFormat="jpeg"

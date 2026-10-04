@@ -29,6 +29,7 @@ import { refusalIsTemporary } from '$lib/mls-client/deviceKeyPackage';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
+  isDistributionGroupMeta,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
 import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
@@ -524,6 +525,24 @@ export async function discoverMissingGroups(params: {
             isStillUserMember =
               userMembers === null ? null : userMembers.some((m) => m.userId === userId);
           }
+        }
+
+        if (
+          (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') &&
+          isDistributionGroupMeta(serverStatus.meta)
+        ) {
+          mlsService.noteDistributionGroup(convo.id);
+          log(
+            `[DISCOVERY] UI group "${convo.name || convo.id}" is a Graine distribution group - removing conversation row`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            deleteConversation,
+            log,
+          });
+          continue;
         }
 
         const fate = decideAbsentGroupFate({
