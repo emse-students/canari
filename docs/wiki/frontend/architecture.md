@@ -354,7 +354,7 @@ Graph card's gap, but for a different reason. The OG card is unauthenticated and
 still client-side CEK-encrypted (`key`/`iv` on `PostMediaRef`, same shape as `PostMedia.svelte`
 already decrypts for a post's own feed rendering), so an external crawler genuinely cannot show it -
 that one keeps the association-logo fallback, on purpose. But `LinkPreviewCard` runs client-side, to
-an ALREADY-AUTHENTICATED viewer with the same feed-audience access `getPost(postId)` already checks,
+an ALREADY-AUTHENTICATED viewer whose access `getPost(postId)` already checks (the per-post visibility of WP6b),
 so nothing stops it from decrypting the photo exactly as the post itself does.
 
 The small logo slot (`CanariLinkPreviewMedia`) is left alone; the post's own photo, when it has one,
