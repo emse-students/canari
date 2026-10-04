@@ -371,6 +371,9 @@ services:
       SKY_API_KEY: ${SKY_API_KEY:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # PRODUCTION ONLY (WP4): the authentik service account that writes a person's profile. Dev holds
+      # none and refuses the edit with a typed error, because both estates share ONE MiConnect.
+      MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:-}
       # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
       # delivered it. `render-env.sh` computes it for dev, the manifest declares it,
       # `deploy-build.ts` parses it and `version.service.spec.ts` tests it - and no compose file

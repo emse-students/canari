@@ -1,0 +1,55 @@
+# The account Canari writes a person's profile through (WP4 of the profile reform,
+# docs/wiki/profiles-and-access.md, decision D9): a SERVICE ACCOUNT that may view and change users and
+# do nothing else, and its API token.
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md.
+#
+# WHY A ROLE AND A GROUP. authentik grants a global permission to a ROLE, and a role reaches a user
+# only through a group. The role carries exactly `view_user` and `change_user`: enough to read a user
+# by uuid and PATCH its attributes, and not enough to create or delete an account, touch a flow, a
+# provider or another role. It is deliberately NOT a superuser group.
+#
+# THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
+# environment (`MICONNECT_EDITOR_TOKEN`, declared with `:?` in compose.yml), and the same value is the
+# GitHub secret of that name that production's core-service reads. The applier refuses a missing
+# value before it commits, so a release cannot blank the token.
+version: 1
+metadata:
+  name: miconnect-profile-editor
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_rbac.role
+    identifiers:
+      name: "miconnect-profile-editor"
+    attrs:
+      permissions:
+        - authentik_core.view_user
+        - authentik_core.change_user
+  - model: authentik_core.group
+    identifiers:
+      name: "miconnect-profile-editors"
+    attrs:
+      is_superuser: false
+      roles:
+        - !Find [authentik_rbac.role, [name, "miconnect-profile-editor"]]
+  - model: authentik_core.user
+    identifiers:
+      username: "miconnect-canari-editor"
+    attrs:
+      name: "Canari - profile editor"
+      type: "service_account"
+      is_active: true
+      path: "goauthentik.io/service-accounts"
+      groups:
+        - !Find [authentik_core.group, [name, "miconnect-profile-editors"]]
+  - model: authentik_core.token
+    identifiers:
+      identifier: "miconnect-canari-editor"
+    attrs:
+      user: !Find [authentik_core.user, [username, "miconnect-canari-editor"]]
+      intent: "api"
+      expiring: false
+      description: "Canari core-service - writes attributes.profile (WP4)"
+      key: !Env MICONNECT_EDITOR_TOKEN

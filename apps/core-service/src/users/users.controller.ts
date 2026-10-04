@@ -21,6 +21,7 @@ import type { Response } from 'express';
 import { UsersService } from './users.service';
 import { UserBlocksService } from './user-blocks.service';
 import { AvatarService } from './avatar.service';
+import { ProfileEditService } from './profile-edit.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -72,7 +73,8 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly avatarService: AvatarService,
-    private readonly blocksService: UserBlocksService
+    private readonly blocksService: UserBlocksService,
+    private readonly profileEdit: ProfileEditService
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -349,6 +351,23 @@ export class UsersController {
   @Get('admin/list')
   listAll() {
     return this.usersService.listAll();
+  }
+
+  /**
+   * Replaces a person's WHOLE MiConnect profile (campus, cursus, posts, names); global admin only
+   * (D10). Written to authentik first, then Canari's row, then the audit trail - see
+   * `ProfileEditService`. Production only: on dev it answers 403 `PROFILE_EDIT_DEV_ESTATE`, because
+   * both estates share one MiConnect. Every refusal carries a stable `code` in its body.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Put(':id/profile')
+  async setProfile(
+    @Param('id') targetId: string,
+    @Headers('x-user-id') actorId: string,
+    @Body() body: unknown
+  ) {
+    const { user, changed, changeId } = await this.profileEdit.applyEdit(targetId, actorId, body);
+    return { user: this.usersService.toPublicDto(user), changed, changeId };
   }
 
   /**

@@ -3,6 +3,7 @@ import { UsersController } from './users.controller';
 import type { AvatarOutcome, AvatarService } from './avatar.service';
 import type { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
+import type { ProfileEditService } from './profile-edit.service';
 
 /**
  * `GET /users/:id/avatar` - ONE `[AVATAR]` line per request, whatever the outcome. Status codes are
@@ -27,7 +28,8 @@ describe('GET /users/:id/avatar logging', () => {
     const controller = new UsersController(
       {} as UsersService,
       { fetchUserAvatar } as unknown as AvatarService,
-      {} as UserBlocksService
+      {} as UserBlocksService,
+      {} as ProfileEditService
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);

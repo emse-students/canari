@@ -14,9 +14,23 @@
  * built from a tag. The dev environment is deployed from `main` on every push, so its version is
  * whatever the last release said and only the commit distinguishes two deployments of it.
  *
- * NOTHING MAY DECIDE ON THIS VALUE, which is why it is a plain string rather than a parsed shape.
+ * NO CLIENT MAY DECIDE ON THIS VALUE, which is why it is a plain string rather than a parsed shape.
+ * The one server-side decision is {@link isDevEstate}, which only ever REFUSES something.
  */
 export function deployBuild(): string | null {
   const raw = process.env.DEPLOY_BUILD?.trim();
   return raw ? raw : null;
+}
+
+/**
+ * Whether this process is the DEV estate - the one fact the deployment already delivers: production
+ * renders no `DEPLOY_BUILD` by decision, so a non-null build IS dev (see `docker-compose.dev.yml`).
+ *
+ * It exists for refusals that must hold on dev whatever else is configured, the profile edit above
+ * all: dev and production share ONE MiConnect, so a dev write would change a real person. It is used
+ * ONLY to refuse, and never alone - dev also holds no token, so losing this variable degrades to
+ * "not configured" rather than to an edit.
+ */
+export function isDevEstate(): boolean {
+  return deployBuild() !== null;
 }

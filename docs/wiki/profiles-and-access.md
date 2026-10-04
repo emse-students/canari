@@ -443,6 +443,49 @@ filters.
 - The correction request (D10): a button on the profile, a queue in `/admin`, a notification when it
   is applied or refused. Every string through Paraglide.
 
+**WP4 as built (2026-10-04), in two pull requests.**
+
+**4a - the editor account, the endpoint, the audit.**
+
+- **The account is code**: `infrastructure/authentik/blueprints/80-profile-editor.yaml` builds the
+  service account `miconnect-canari-editor`, the role `miconnect-profile-editor` (global permissions
+  `view_user` and `change_user`, nothing else), the group `miconnect-profile-editors` that carries the
+  role to the account, and its API token (`expiring: false`). The token key is `!Env
+  MICONNECT_EDITOR_TOKEN` from `/srv/miconnect/.env`, declared with `:?` in the stack's `compose.yml`,
+  so a `.env` that forgets it fails the start and the applier refuses an unresolved `!Env` before it
+  commits. **The same value is the GitHub secret `MICONNECT_EDITOR_TOKEN`** that production's
+  core-service reads ([MIGRATION](../../infrastructure/MIGRATION.md)).
+- **Proven by USING the token**, not by listing permissions: `test-profile-editor.py` runs in CI after
+  the blueprints' idempotence check and calls authentik's real API with the token. It reads a user by
+  `uuid`, PATCHes `attributes`, and sees `403` on creating a user, deleting one and changing a flow.
+  Two things it found: authentik's token serializer overwrites `expires` at every apply, which made a
+  second apply report a change forever (the applier now ignores `expires` on a non-expiring token),
+  and the token `key` must be digest-compared, never printed (`SECRETS`).
+- **`PUT /users/:id/profile`** (global admin, `ProfileEditService`): validates the whole profile
+  (campus, cursus entries of ICM / ISMIN / FSSS / Autre with a plausible year, posts, both names;
+  D11 enforced), reads the authentik user by the person's `miconnectUuid`, writes
+  `attributes.profile` as a read-modify-write of the WHOLE `attributes` (authentik's PATCH replaces it)
+  plus the user's `name`, then in ONE transaction Canari's row (the four columns, `promo` and
+  `formation` derived from the first cursus, the names, `displayName`) and the audit row
+  `profile_changes(userId, actorId, before, after, at)` (migration `009`). `before` is what authentik
+  held. An edit that changes nothing writes nothing at authentik and leaves no audit row. A failure at
+  authentik stops everything; a failure after it is logged at `error` as the two sources disagreeing
+  until the person's next sign-in re-reads the profile into Canari.
+- **Refusals are TYPES with a stable `code` in the body**, never prose to branch on
+  (`profile-edit.errors.ts`): `PROFILE_EDIT_DEV_ESTATE` (403), `PROFILE_EDIT_NOT_CONFIGURED` (503),
+  `PROFILE_EDIT_NOT_LINKED` (409, no `miconnectUuid` yet), `PROFILE_EDIT_UPSTREAM` (502),
+  `PROFILE_EDIT_INVALID` (400, with the problems per field).
+- **How Canari knows it is dev**: `DEPLOY_BUILD`, which the dev deploy renders and production
+  deliberately does not (`platform/deploy-build.ts`, `isDevEstate`). It is used only to REFUSE, and
+  never alone: dev also holds no token (`env-manifest.tsv`: `warn` on production, `skip` on dev;
+  absent from `docker-compose.dev.yml`, asserted by `compose-wiring.test.sh`). Losing the variable on
+  dev would degrade to `NOT_CONFIGURED`, never to an edit of a real person. On production, a missing
+  token is logged at `error`, the refusal being a deployment fault.
+- **Not observed**: a real edit against production's authentik. The first one is the observation.
+- **To do by the user, before the first edit**: create the secret value, put it in the MiConnect
+  stack's `.env` AND in the GitHub secret `MICONNECT_EDITOR_TOKEN`; the next stable applies the
+  blueprint (creating the account and token) and deploys core-service with it.
+
 **WP5 - Access to each application, decided by MiConnect (D15).** Expression policies bound to the
 applications, engine mode `any`: `profile-valid` on all of them except Sky, which gets `cursus-icm`;
 and on each application a group `acces-<app>` for nominative exceptions (Sky's non-ICM admins,
