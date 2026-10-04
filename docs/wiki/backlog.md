@@ -2213,29 +2213,6 @@ minutes over a blip that the reconnection listener already handles.
 
 ## Communities and permissions
 
-### P3 - an epoch-0 seed frame is delivered on every rotation, and nobody can open it (observed 2026-08-21, did not reproduce)
-
-**COMM-22, six cycles, six of these** - one per cycle, both clients seeing the same frame at the same
-second, `group_epoch` 3/5/7/9/11/13 and `msg_epoch` **0 every time**. So a frame sealed at the group's
-first epoch is presented again on every rotation.
-
-**Not a loss, and the product says so:** the frame is acknowledged and the seed arrives through the
-history request instead - 12 markers of 12 warm AND cold. What is unexplained is why an epoch-0 frame is
-delivered at all: `queued_message` held no publish matching it, which points at a REPLAY rather than a
-sender sealing under a stale handle, and "points at" is not a finding.
-
-**AND IT DID NOT REPRODUCE** - the next run on the same build, after `cleanup.mjs` swept three debris
-communities, recorded `pastEpochFrames: []` over six cycles. The other half of the original observation
-WAS real and is closed (a deleted community's seed carrier held for ever - see
-[graine](protocols/channel-encryption.md#a-community-deleted-left-its-seed-carrier-held-for-ever---fixed-2026-08-21)),
-and it accounts for the redelivery bursts but not for these frames, which appeared on a salon whose
-community was alive.
-
-**P3 and not higher because it may already be gone.** Settling it needs ONE probe that publishes a seed
-and reads back what the server fanned out - a different instrument from the COMM runners. `comm22.mjs`
-records `pastEpochFrames` verbatim on every run, so every future run says whether it is back, and the
-cheapest next step is to read those rows rather than to build the probe.
-
 ### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
 
 **The measured case shipped 2026-08-25** - an answer carrying seeds is now `DELIVERY.keyMaterial`,
@@ -4138,6 +4115,15 @@ one-day-old alpha runtime is refused on those grounds, not deferred for lack of 
 later, this closes with a lockfile bump and nothing else, and the `url::Url` residue closes with it.
 Separately and with no bearing on this, the pinned `tauri` here is `2.11.1` and the stable line has
 reached `2.11.5`.
+
+**RE-CHECKED 2026-10-04: THE CONDITION ABOVE IS NOW MET, AND IT IS NO LONGER A LOCKFILE BUMP.**
+Stable `tauri-runtime-wry 2.12.0` (2026-09-26) and `2.12.1` (2026-09-30) require `wry ^0.57.0` -
+past the fix - but also `tao ^0.37.0`, and this app builds against the VENDORED `tao` fork in
+`frontend/src-tauri/patches/tao`, which is `0.35.0` (the Android `intent.getType()` null guard,
+`[patch.crates-io]` in `Cargo.toml`). So moving to tauri 2.12 means **rebasing that fork onto
+`tao 0.37` by hand** (Dependabot cannot, see `.github/dependabot.yml`), then a deep link
+(`fr.emse.canari://callback`) and `sweep.mjs --route /posts` on A1 - the fork guards a crash a
+compile cannot see. A native work package owed hardware, not an unattended bump.
 
 **Do not "fix" the remaining question by changing the instrument.** `sweep.mjs` found a line that
 aborts the process on bad input; changing how it navigates would hide it. Run it as
