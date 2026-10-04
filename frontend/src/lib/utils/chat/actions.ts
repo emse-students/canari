@@ -477,8 +477,13 @@ export async function discoverMissingGroups(params: {
     const serverGroupIds = snapshot.serverGroupIds;
     // Groups dismissed by THIS user (manual deletion/leave on one device): must be purged
     // on ALL their devices (rules 3 & 5), not shown with the banner.
-    // Best-effort (`[]` on error -> never purge on doubt).
-    const dismissedGroupIds = new Set(await mlsService.getDismissedGroups().catch(() => []));
+    // Best-effort (`[]` on error -> never purge on doubt; `getDismissedGroups` logs the failure).
+    //
+    // NOT CONSULTED BY THE PLACEHOLDER LOOP BELOW, AND THAT IS CONSISTENT RATHER THAN A GAP: that
+    // loop only builds rows for groups the server still lists this user in, and "dismissed AND a
+    // member" is the RE-INVITE case, which this loop answers by lifting the dismiss and KEEPING the
+    // conversation. A device with no row ends in the same state as one with a row.
+    const dismissedGroupIds = new Set(await mlsService.getDismissedGroups());
 
     if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log)) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -507,7 +512,11 @@ export async function discoverMissingGroups(params: {
         log(
           `[DISCOVERY] "${convo.name || convo.id}" dismissed but we are a member again - dismiss lifted`
         );
-        void mlsService.undismissGroup(convo.id).catch(() => {});
+        void mlsService.undismissGroup(convo.id).catch((e: unknown) => {
+          log(
+            `[DISCOVERY] undismissGroup(${convo.id}) failed - other devices keep purging it: ${String(e)}`
+          );
+        });
         // Let normal processing continue (active group).
       }
 

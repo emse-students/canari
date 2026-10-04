@@ -3157,42 +3157,6 @@ undelivered Welcome sitting in `queued_message`, which looks like a deadlock and
 retrievable the moment the device comes back - they are abandoned browser profiles, debris. The
 tenth, the device that lost the user's messages, has **no queued row at all**: nobody ever added it.
 
-### P3 - discovery honours a dismissal only for a row it ALREADY has, and a new device has none (measured 2026-08-27, population EMPTY today)
-
-`discoverMissingGroups` (`frontend/src/lib/utils/chat/actions.ts`) fetches the dismiss set once and
-uses it in exactly ONE place: the loop over `conversations.entries()`. The second loop - the one that
-CREATES placeholder rows out of `activeServerGroups` - filters two things, a local row already
-existing and an owed exit, and never consults the dismiss set at all. So a group in
-`dismissed AND still a member server-side` is purged on a device that has the row, and re-created as
-a `pending` placeholder wearing the Sync badge on a device that does not. **A device with an empty
-store is precisely the case where the dismiss set is load-bearing, and precisely the case where it is
-not read.** The server does not close the gap either: `getUserGroups` (`members.controller.ts`)
-filters distribution groups and `deletedAt` tombstones, never dismissals.
-
-**IT IS NOT THE CAUSE OF THE USER'S SYMPTOM, AND THAT WAS MEASURED, NOT ASSUMED.** Read from the
-owner's own session on 2026-08-27 (`bun syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
-**876** dismissed-group rows, and `dismissedStillMember: 0`. The intersection is EMPTY, so the branch
-cannot currently fire - which is why this is a P3 latent gap and not the explanation for the Sync
-rows the user reported. A predicate that names an incident has to be re-measured against the
-population it will run on, and this one was.
-
-**Two swallowed branches sit on the same seam**, both in `exitGroupAndCleanup`
-(`useConversations.svelte.ts`): `await mlsService.dismissGroup(convo.id).catch(() => {})`, twice, with
-no log. That call is the ONLY thing that propagates a manual delete to the user's other devices, so a
-silent failure means the group comes back on the next new device with nothing anywhere saying why.
-`mlsDeliveryApi.dismissGroup` swallows its own transport error too, for the stated reason that the
-local purge already happened - which is true and does not make the loss unloggable. Every swallowed
-branch logs; in a best-effort path that is all a loss leaves.
-
-**The 876 is worth a second look on its own**: `user_dismissed_group` grows one row per manual delete
-per user, for ever, and the campaign is what put 876 there. Nothing reads it in bulk, so it is not an
-incident - but it is an unbounded table nobody has decided about.
-
-Reached by `HEAL-NEW-7` on the board, which is written to tell this cause apart from the two that can
-actually fire today - a server tombstone, and an exit still owed in the DELETING device's own
-IndexedDB.
-
-
 ### P3 - openmls 0.8.1 PANICS on a corrupted PrivateMessage body instead of returning an error (found 2026-08-27)
 
 Found while writing a producer for the same-epoch refusal test: tampering with the AEAD-protected

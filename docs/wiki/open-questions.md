@@ -237,6 +237,10 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 
 **Raised 2026-09-29, when the defect it caused was closed.** Rejoining a key group with the same key pair removes the device's own first leaf. That is how the PC's salon went blank ([channel-encryption §22.2](protocols/channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)). Since `v0.18.30`, a device in that state re-joins as soon as it loads, so the consequence is repaired. The cause of the double join is not. The candidates are the "externalJoin FAILED to checkpoint - a reload before the next write would rejoin" warning, or two tabs joining before the leader lock settled. **What would settle it**: a second commit from one device on one key group within minutes, read from `mls_commit_log` (`senderDeviceId`, `baseEpoch`, `createdAt`), together with that device's console from the same load.
 
+### DECISION OWED - `user_dismissed_group` grows one row per manual delete, for ever
+
+**Raised 2026-08-27** (876 rows for one account, put there by the campaign). Nothing reads it in bulk, so it is no incident, but it is an unbounded table nobody has decided about. A row may only go once no device of that user can still hold the group: the group's own purge (`cleanupSoftDeletedGroups`) is the natural moment, and whether it should take the dismissals with it is the decision.
+
 ### Is a Remove meant to be durable against a later re-add?
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
