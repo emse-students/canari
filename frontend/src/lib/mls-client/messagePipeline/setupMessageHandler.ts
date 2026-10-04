@@ -1418,9 +1418,16 @@ async function upsertConversation(
     );
   }
 
-  await saveConversation(newConvoKey).catch(() => {});
+  await saveConversation(newConvoKey).catch((e: unknown) => {
+    deps.log(`[WELCOME] conversation ${newConvoKey} not persisted after the join: ${String(e)}`);
+  });
 
   // Effective re-add: lift any per-user server-side dismiss so the conversation also
-  // reappears on the user's OTHER devices (re-add rule). Best-effort.
-  void deps.mlsService.undismissGroup(joinedGroupId).catch(() => {});
+  // reappears on the user's OTHER devices (re-add rule). Best-effort, and a failure is LOGGED:
+  // it is the only trace of why another device of this account keeps purging the conversation.
+  void deps.mlsService.undismissGroup(joinedGroupId).catch((e: unknown) => {
+    deps.log(
+      `[WELCOME] undismissGroup(${joinedGroupId}) failed - other devices keep purging it: ${String(e)}`
+    );
+  });
 }

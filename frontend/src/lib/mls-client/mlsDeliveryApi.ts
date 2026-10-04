@@ -1314,43 +1314,50 @@ export class MlsDeliveryApi {
         `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
         { headers: await this.auth() }
       );
-      if (!res.ok) return [];
+      if (!res.ok) {
+        console.warn(`[MLS] dismissed-groups read answered ${res.status} - treated as none`);
+        return [];
+      }
       const arr = await res.json();
       return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
-    } catch {
+    } catch (e) {
+      console.warn('[MLS] dismissed-groups read did not reach the server - treated as none:', e);
       return [];
     }
   }
 
   /**
    * Marks a group as dismissed by this user - a manual delete or leave, propagated to their other
-   * devices. Best-effort: the local purge has already happened, so a failure costs nothing here.
+   * devices.
+   *
+   * THROWS on a refusal or a transport failure, and every caller catches and LOGS it. The call is
+   * best-effort - the local purge has already happened - but it is the ONLY thing that propagates a
+   * manual delete to the user's other devices, so a silent failure meant the group came back on the
+   * next new device with nothing anywhere saying why. Best-effort is a reason not to block, never a
+   * reason not to say.
    */
   async dismissGroup(groupId: string): Promise<void> {
-    try {
-      await this.f(
-        `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
-        {
-          method: 'POST',
-          headers: await this.auth({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ groupId }),
-        }
-      );
-    } catch {
-      /* non-blocking: the local purge already happened and the other devices will retry */
-    }
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId }),
+      }
+    );
+    if (!res.ok) throw new Error(`dismissGroup refused: HTTP ${res.status}`);
   }
 
-  /** Lifts a group's dismiss (re-add via Welcome: the user wants the conversation back). Best-effort. */
+  /**
+   * Lifts a group's dismiss (re-add via Welcome: the user wants the conversation back).
+   * THROWS like {@link dismissGroup}, for the same reason: every caller catches and logs.
+   */
   async undismissGroup(groupId: string): Promise<void> {
-    try {
-      await this.f(
-        `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups/${encodeURIComponent(groupId)}`,
-        { method: 'DELETE', headers: await this.auth() }
-      );
-    } catch {
-      /* non-blocking */
-    }
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups/${encodeURIComponent(groupId)}`,
+      { method: 'DELETE', headers: await this.auth() }
+    );
+    if (!res.ok) throw new Error(`undismissGroup refused: HTTP ${res.status}`);
   }
 
   /**
