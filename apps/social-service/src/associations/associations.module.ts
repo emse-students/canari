@@ -17,7 +17,7 @@ import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { PostExtraSpace } from '../spaces/post-extra-space.entity';
+import { PostAudience } from '../spaces/post-audience.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
@@ -65,7 +65,7 @@ import { PricingModule } from '../pricing/pricing.module';
       PostNotification,
       Space,
       AssociationAudience,
-      PostExtraSpace,
+      PostAudience,
     ]),
     FollowsModule,
     UserTagModule,

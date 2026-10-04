@@ -12,7 +12,8 @@
 -- association has one or more rows (an ICM Saint-Etienne association that also addresses FSSS has
 -- two - D19). The rule is resolved against the OPEN spaces at read time (6b), so a space opened
 -- later is reached with no edit to any association. Same table for associations, lists and the
--- institutions of 6e.
+-- institutions of 6e (the School: everything; each ME: its campus). These rules are the entity's
+-- CEILING - the post table below lets an author choose within it.
 --
 -- THE SEED IS THE WORLD AS IT IS TODAY: one space, ICM x saint-etienne, every existing association
 -- and list addressing it, and today's `isBDE` association as its BDE. The BDE is set ONLY when
@@ -53,12 +54,24 @@ CREATE TABLE IF NOT EXISTS association_audiences (
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_association_audiences_rule"
     ON association_audiences ("associationId", COALESCE(formation, ''), COALESCE(campus, ''));
 
-CREATE TABLE IF NOT EXISTS post_extra_spaces (
-    "postId"  UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-    "spaceId" UUID NOT NULL REFERENCES spaces (id) ON DELETE CASCADE,
-    PRIMARY KEY ("postId", "spaceId")
+-- A POST CHOOSES ITS OWN VISIBILITY (user, 2026-10-04: there is ONE School that may share with one
+-- campus or the other, and TWO MEs - so the author picks per post, not a fixed audience per entity).
+-- The association's rules above are its CEILING: what it may address. A post with no row here
+-- inherits them; a post with rows is visible to those rules instead, and the server refuses rules
+-- outside the ceiling - going beyond it is a nominative grant (D24). Same shape as the entity's
+-- rules, so one reader resolves both (6b).
+CREATE TABLE IF NOT EXISTS post_audiences (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "postId"    UUID NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
+    formation   VARCHAR(16) NULL,
+    campus      VARCHAR(32) NULL,
+    CONSTRAINT "CHK_post_audiences_formation"
+        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'Autre')),
+    CONSTRAINT "CHK_post_audiences_campus"
+        CHECK (campus IS NULL OR campus IN ('saint-etienne', 'gardanne'))
 );
-CREATE INDEX IF NOT EXISTS "IDX_post_extra_spaces_space" ON post_extra_spaces ("spaceId");
+CREATE UNIQUE INDEX IF NOT EXISTS "UQ_post_audiences_rule"
+    ON post_audiences ("postId", COALESCE(formation, ''), COALESCE(campus, ''));
 
 INSERT INTO spaces (formation, campus) VALUES ('ICM', 'saint-etienne')
     ON CONFLICT (formation, campus) DO NOTHING;

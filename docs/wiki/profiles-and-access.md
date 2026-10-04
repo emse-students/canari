@@ -181,6 +181,12 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
+- **D33 - A post chooses its own visibility (user, 2026-10-04), amending D19's "fixed by the author".**
+  An entity's audience rules are its CEILING - what it may address: the School everything, each of
+  the two MEs its campus, an association its own. A post with no rule inherits them; an author may
+  give it rules of its own, and the server refuses any outside the ceiling. Going beyond is the
+  nominative grant of D24. One mechanism for associations, lists and institutions alike, so no
+  entity needs a special case.
 
 ## 3. Found on the way
 
@@ -446,15 +452,15 @@ migration), and its UI stops assuming them.
 **WP6 - Spaces in Canari (D16 to D22), five pull requests.**
 
 - **6a, data.** `spaces(id, formation, campus, opened_at, bde_association_id)`,
-  `association_audiences(association, formation NULL, campus NULL)` (rules, see 6a as built), `post_extra_spaces(post, space)`, and
+  `association_audiences(association, formation NULL, campus NULL)` (rules, see 6a as built), `post_audiences(post, formation NULL, campus NULL)`, and
   `associations.type` gains `institution`. Migration: open `ICM x saint-etienne`, attach every
   existing association and list to it, make today's `isBDE` association its BDE. The `isBDE` column
   is deleted at the end of 6c, never kept beside the new model.
 - **6b, readers.** ONE function, `readerSpaces(user)`: the open spaces matching (a cursus's
   formation, the person's campus), plus the content of the associations they belong to (D21). It
   replaces `feed-audience.ts`, its client twin `feedAudience.ts`, the announce scheduler's audience
-  and the agenda filter. A post is visible when its association's spaces, or its extra spaces, meet
-  the reader's.
+  and the agenda filter. A post is visible when its own rules (else its publisher's) reach an open space
+  the reader belongs to.
 - **6c, governance.** Validating an event is VALIDATE_EVENTS in the BDE of the event association's
   space, and only those people are notified; the BDE's MANAGE_ASSO powers are scoped the same way;
   MODERATE stays global (D23).
@@ -470,7 +476,7 @@ association (or list, or institution) addresses is a RULE, not a list of spaces.
 `bdeAssociationId`; unique pair, CHECKs on the D4/D6 values, one BDE per space and one space per
 BDE), `association_audiences` (one row per rule, `formation`/`campus` where NULL means "any":
 (ICM, saint-etienne) one space, (NULL, saint-etienne) the whole campus - the ME and the School's
-pole there - and (NULL, NULL) everyone; an association has one or more rows, D19), `post_extra_spaces`;
+pole there - and (NULL, NULL) everyone; an association has one or more rows, D19), `post_audiences` (the same rule shape, chosen by a post's author - see D33);
 entities in `social-service/src/spaces/`. The rules are resolved against the OPEN spaces at read
 time (6b), so a space opened later is reached with no edit to any association; a plan with explicit
 association-to-space links would have left it unreached until an admin added it to each. Seed: ICM x
@@ -478,9 +484,8 @@ saint-etienne, every association and list addressing it, and the BDE set ONLY if
 association carries `isBDE` (production has one, user 2026-10-04; zero or several: left NULL with a
 notice - an admin designates it on the 6d page). Tried on a throwaway Postgres with one, zero and
 two `isBDE`, replayed, a duplicate rule refused, a bad value refused, cascade. **Deferred to 6e on
-purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Open for
-6e**: the ME and the School exist per campus, so each is probably TWO institutions (one per campus),
-each with its campus rule - to confirm with the user. Nothing reads these tables until 6b.
+purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Settled the same day
+(D33)**: there is ONE School, which may share with one campus or the other, and TWO MEs (one per campus). Nothing reads these tables until 6b.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions
