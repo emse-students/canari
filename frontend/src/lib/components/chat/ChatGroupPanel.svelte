@@ -407,7 +407,11 @@
                   {/if}
                 </div>
 
-                {#if onRemoveMember}
+                {#if onRemoveMember && !(currentUserId && member.toLowerCase() === currentUserId.toLowerCase())}
+                  <!--
+                          Never offered on your own row: removing yourself is leaving the group, not
+                          an admin action on a member.
+                        -->
                   <!--
                           THE ACCESSIBLE NAME IS THE ONE SURFACE THAT EXISTS TO BE READ ALOUD, and it
                           was the only one saying the id: every other cell of this row renders a

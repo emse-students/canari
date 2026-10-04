@@ -371,6 +371,15 @@
   );
 }
 
+/* THE BAR IS NOT RENDERED WHILE THE KEYBOARD IS OPEN (`+layout.svelte` drops `Navbar`), and the
+   token has to say so: the rail and the drawers are `fixed` against the window and read this one
+   number, so with the bar gone they still hung 4.5rem down - a gap above the rail while the page
+   beside it started at the top (user, 2026-10-04). The same two-coordinate-systems defect as
+   `--app-banner-height` above, for the one bar whose presence was never published. */
+:root.keyboard-open {
+  --app-top-bar-height: 0px;
+}
+
 :root[data-theme='dark'] {
   /* THE MEASURED THEME. Every value marked "measured" was read off a live Messenger thread with
      `getComputedStyle`; the Facebook group page independently uses the same ramp one step lighter
@@ -1470,6 +1479,20 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
      full-bleed tab strip whose bottom border must reach both edges of the panel; padding the shell's
      scroll wrapper would inset that border by 16px and leave a notch at each end. */
   --side-panel-inset: 1rem;
+}
+
+/* THE PHONE DRAWER IS `top: 0`, so its header starts UNDER the status bar and the clock was drawn
+   on the title (user, 2026-10-04). The header owns the inset, as `.app-top-bar` does. From 768px the
+   drawer is placed below the top bar and the column is an ordinary flex sibling, so neither sits
+   under the status bar and the plain rhythm is restored there. */
+.side-panel-header {
+  padding-top: max(0.75rem, var(--safe-area-inset-top, 0px));
+}
+
+@media (min-width: 768px) {
+  .side-panel-header {
+    padding-top: 0.75rem;
+  }
 }
 
 /* WHERE A PAGE COLUMN STARTS, AND WHERE A STICKY ASIDE BESIDE IT PINS - ONE NUMBER.

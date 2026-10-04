@@ -41,8 +41,12 @@ describe('Android window layout (anti-regression)', () => {
     // edge to edge. Android 15 enforces it for targetSdk >= 35, which is why losing this call
     // would look harmless on a recent phone - and put the composer back under the navigation bar
     // on every Android 9-14 device, and on the OEM builds that never applied it consistently.
-    expect(mainActivity).toContain('enableEdgeToEdge()');
+    expect(mainActivity).toContain('enableEdgeToEdge(');
     expect(mainActivity).toContain('import androidx.activity.enableEdgeToEdge');
+    // A 3-button bar gets a 90 % white scrim by default, which showed as a white strip under a grey
+    // page. Both halves are needed: a transparent style, and the system's own contrast scrim off.
+    expect(mainActivity).toContain('SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)');
+    expect(mainActivity).toContain('window.isNavigationBarContrastEnforced = false');
     const appHtml = readFileSync(resolve(here, '../../app.html'), 'utf8');
     expect(appHtml).toContain('viewport-fit=cover');
   });
