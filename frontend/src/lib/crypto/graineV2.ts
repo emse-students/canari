@@ -42,6 +42,8 @@ export type GraineSignatureVerdict =
 
 /** The Ed25519 operations v2 needs, supplied by the platform's MLS engine. */
 export interface GraineSignatureEngine {
+  /** Mints a v2 session key pair (Ed25519): the secret stays with the minter, the public half travels. */
+  newSessionKeyPair(): Promise<{ secret: Uint8Array; publicKey: Uint8Array }>;
   /** Signs with a session secret (Ed25519, deterministic). */
   signWithSessionKey(secret: Uint8Array, message: Uint8Array): Promise<Uint8Array>;
   /** Verifies a session's or a device's signature; ONE verifier, since only the key's origin differs. */

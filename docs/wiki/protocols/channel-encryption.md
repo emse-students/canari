@@ -2890,6 +2890,36 @@ temporary mirror, with each refusal falsified. `background.rs` covers the sender
 three endorsement cases (endorsed, forged by another member, minted by a device the tree does not
 hold). `channelPushFields.test.ts` now expects `signature` in the inline group on all three readers.
 
+### 21.6 The writer (WP-G2-5)
+
+Every send is v2 from this release on. It ships only once `minClientVersion` is R1 (the G2-4
+reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04). This is the
+reader-then-writer order of CORRUPT ([durable-rules](../durable-rules.md)).
+
+**Minting endorses first** (`reserveOutboundSlot` in `utils/graine/sessionManager.ts`). A new
+session is drafted, then `endorse` (`utils/graine/endorseSession.ts`) runs, then it is distributed,
+then persisted:
+
+- `endorse` mints the session pair through the engine (`newSessionKeyPair`: `mls-core`, over WASM
+  or Tauri);
+- it signs `D` with this device's MLS credential key (`IMlsService.signWithDeviceCredential`), and
+  the seed commitment inside `D` binds the pair to these seed bytes;
+- the distributed session already carries its `v2` half. A v2 seed without its endorsement is
+  refused by every reader, so the order is load-bearing;
+- a failed endorsement distributes and persists NOTHING, exactly like a failed distribution.
+
+**Rotation** (`shouldRotateGraineSession`) adds one cause: a session with no signing secret. That
+covers every v1 session (one rotation per salon and sender, at the first send after the upgrade) and
+a v2 session restored somewhere its secret is not.
+
+**Sealing** is `sealWithGraineV2` under `H = (salon, session, minter, index)`, signed by the
+session secret. The `signature` travels in the send body. The server stores it and relays it in
+`listMessages`, the live event and the push inline group (§21.3, §21.5).
+
+**The v1 writer is deleted.** `sealWithGraine` survives only as a test fixture
+(`crypto/graine.testSeal.ts`), because the v1 reader's tests still need v1 rows. What remains of v1
+is the reader, and its removal condition is in [legacy-compatibility](../legacy-compatibility.md).
+
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 
 **Measured on the user's PC, production `v0.18.28`, 2026-09-28.** Mineurchestre -> `#general` was

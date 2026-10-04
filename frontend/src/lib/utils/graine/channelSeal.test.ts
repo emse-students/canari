@@ -1,7 +1,12 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { byNewestSession } from '$lib/db/graineCodec';
-import { openWithGraine } from '$lib/crypto/graine';
-import { GraineSignatureError, sealWithGraineV2 } from '$lib/crypto/graineV2';
+import {
+  GraineSignatureError,
+  encodeGraineEndorsementV2,
+  graineSeedCommitment,
+  openWithGraineV2,
+  sealWithGraineV2,
+} from '$lib/crypto/graineV2';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
@@ -55,6 +60,9 @@ function fakeStorage(seed: StoredGraineSession[] = []) {
  * community would let a seal meant for a private salon fall back to the community's group and the
  * test would still pass, which is exactly the defect.
  */
+/** The stand-in for this device's MLS credential key. */
+const DEVICE_SECRET = new Uint8Array(32).fill(3);
+
 function fakeMls(epoch: number | null) {
   const sent: { groupId: string; bytes: Uint8Array }[] = [];
   return {
@@ -70,6 +78,11 @@ function fakeMls(epoch: number | null) {
       isDistributionBaseSettled: () => true,
       getEpoch: () => epoch ?? 0,
       graineSignatureEngine: () => webCryptoEngine,
+      // The endorsement of a minted session (WP-G2-5): a fixed device key stands in for the MLS
+      // credential, whose own signing is `mls-core`'s and tested there.
+      getDeviceId: () => 'dev-a',
+      signWithDeviceCredential: (message: Uint8Array) =>
+        webCryptoEngine.signWithSessionKey(DEVICE_SECRET, message),
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
         // What MLS would hand back: the sealed frame, which the session keeps (section 19).
@@ -149,15 +162,48 @@ describe('sealing', () => {
     const sealed = await sealChannelMessage(CHANNEL, new Uint8Array([7, 7, 7]));
     const session = rows.get(sealed.senderSessionId)!;
 
-    // Against `openWithGraine` itself, not against a mirror of the seal: a round trip through one
+    // Against `openWithGraineV2` itself, not against a mirror of the seal: a round trip through one
     // implementation proves it agrees with itself and nothing more.
-    const opened = await openWithGraine(
+    const opened = await openWithGraineV2(
       fromBase64(session.seedB64),
-      sealed.senderSessionId,
-      sealed.messageIndex,
-      { ciphertext: sealed.ciphertext, nonce: sealed.nonce }
+      {
+        channelId: CHANNEL,
+        sessionId: sealed.senderSessionId,
+        minterUserId: 'alice',
+        index: sealed.messageIndex,
+      },
+      { ciphertext: sealed.ciphertext, nonce: sealed.nonce, signature: sealed.signature },
+      fromBase64(session.v2!.signingPublicKeyB64),
+      webCryptoEngine
     );
     expect([...opened]).toEqual([7, 7, 7]);
+  });
+
+  it('endorses the session it mints with this device, so a relayed seed still names its minter', async () => {
+    const { storage, rows } = fakeStorage();
+    const { mls } = fakeMls(4);
+    wire(storage, mls);
+
+    const sealed = await sealChannelMessage(CHANNEL, new Uint8Array([1]));
+    const session = rows.get(sealed.senderSessionId)!;
+
+    expect(session.v2?.minterDeviceId).toBe('dev-a');
+    // The secret stays on this device, sealed in its store; the wire copy never carries it.
+    expect(session.v2?.signingSecretKeyB64).toBeTruthy();
+    const verdict = await webCryptoEngine.verifySignature(
+      await ed25519PublicKeyOf(DEVICE_SECRET),
+      encodeGraineEndorsementV2({
+        channelId: CHANNEL,
+        sessionId: session.sessionId,
+        minterUserId: 'alice',
+        minterDeviceId: 'dev-a',
+        signingPublicKey: fromBase64(session.v2!.signingPublicKeyB64),
+        seedCommitment: await graineSeedCommitment(fromBase64(session.seedB64)),
+        createdAt: session.createdAt,
+      }),
+      fromBase64(session.v2!.endorsementB64)
+    );
+    expect(verdict).toBe('valid');
   });
 });
 
@@ -238,9 +284,10 @@ describe('opening', () => {
 
     const opened = await openChannelMessage(CHANNEL, {
       id: 'row-1',
-      senderId: 'bob',
+      senderId: 'alice',
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
+      signature: sealed.signature,
       senderSessionId: sealed.senderSessionId,
       messageIndex: sealed.messageIndex,
     });

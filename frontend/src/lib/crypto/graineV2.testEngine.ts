@@ -23,6 +23,10 @@ function importSecret(secret: Uint8Array, extractable: boolean): Promise<CryptoK
 
 /** The engine seam, answered by WebCrypto. */
 export const webCryptoEngine: GraineSignatureEngine = {
+  async newSessionKeyPair() {
+    const secret = crypto.getRandomValues(new Uint8Array(32));
+    return { secret, publicKey: await ed25519PublicKeyOf(secret) };
+  },
   async signWithSessionKey(secret, message) {
     const key = await importSecret(secret, false);
     return new Uint8Array(await crypto.subtle.sign('Ed25519', key, message as BufferSource));

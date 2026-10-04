@@ -198,6 +198,11 @@ export async function loadAndInitWasm(
  */
 export function wasmGraineSignatureEngine(): GraineSignatureEngine {
   return {
+    async newSessionKeyPair() {
+      const wasm = await loadMlsWasmModule();
+      const pair = wasm.graine_session_keypair() as { secret: Uint8Array; public: Uint8Array };
+      return { secret: pair.secret, publicKey: pair.public };
+    },
     async signWithSessionKey(secret, message) {
       const wasm = await loadMlsWasmModule();
       return wasm.graine_sign_with_session_key(secret, message) as Uint8Array;
