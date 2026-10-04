@@ -160,9 +160,46 @@ dc() {
 
 export REGISTRY IMAGE_PREFIX TAG
 
+# ── The registry is OBSERVED, never owned ────────────────────────────────────
+# A deploy can fail for a reason it OWNS - a migration refused, a container that will not start,
+# `/api/version` unanswered - or for one it merely OBSERVED: the registry. Run 33633156004
+# (2026-09-02) failed in 16 s on `TLS handshake timeout` to ghcr.io, after every image had been
+# built and pushed, and reported the same red run as a broken change. On dev that means the
+# pre-release silently did not reach the estate; on production, a release that did not happen.
+#
+# So the two registry steps - login and pull - go through this, which does two things and no more:
+# re-attempts a transport hiccup a bounded number of times (the delays are the list below, so it
+# terminates by construction), and when the registry still does not answer, says THAT, in its own
+# annotation title and with its own exit code, 75 (EX_TEMPFAIL) - so a reader, or the run summary,
+# tells "the registry was unreachable" from "the change is broken" without opening the log. A pull
+# of an image that does not exist fails the same way after the same attempts; the title says
+# "registry or image" because only the log line separates the two, and this never parses it.
+REGISTRY_RETRY_DELAYS="${REGISTRY_RETRY_DELAYS:-5 15 45}"
+
+# with_registry_retry <what> <command...> - runs the command, re-attempting after each delay.
+with_registry_retry() {
+  local what="$1" attempt=1 delay
+  shift
+  if "$@"; then return 0; fi
+  for delay in $REGISTRY_RETRY_DELAYS; do
+    printf '%s failed (attempt %s) - the registry is observed, not owned; retrying in %ss\n' \
+      "$what" "$attempt" "$delay" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    if "$@"; then return 0; fi
+  done
+  printf '::error title=Registry unreachable - not a broken change::%s failed %s times against %s. Nothing about this release was deployed or changed; re-run the deploy once the registry answers.\n' \
+    "$what" "$attempt" "$REGISTRY" >&2
+  exit 75
+}
+
+ghcr_login() {
+  printf '%s' "$GHCR_TOKEN" | $DOCKER_CLI login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+}
+
 # ── GHCR ─────────────────────────────────────────────────────────────────────
 if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
-  printf '%s' "$GHCR_TOKEN" | $DOCKER_CLI login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+  with_registry_retry "docker login" ghcr_login
   printf 'authenticated to %s\n' "$REGISTRY"
 else
   printf 'no GHCR credentials passed - assuming the daemon is already authenticated to %s\n' "$REGISTRY"
@@ -180,7 +217,7 @@ printf 'frontend host port: %s\n' "$FRONTEND_HOST_PORT"
 if [ -n "$PULL_SERVICES" ]; then
   printf '\npulling changed images: %s\n' "$PULL_SERVICES"
   # shellcheck disable=SC2086 # deliberate word splitting: the caller passes a service list
-  dc pull $PULL_SERVICES
+  with_registry_retry "image pull" dc pull $PULL_SERVICES
 else
   printf '\nno service image changes were reported - not pulling\n'
 fi

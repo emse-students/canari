@@ -1552,50 +1552,6 @@ and nothing here has measured whether an equivalent suite even exists. **The And
 shape to copy, not a precedent to argue from**: what made it cheap was that the ladder needed no
 platform, and whether any Swift here is in that position has not been looked at.
 
-### P2 - a dev deploy still cannot tell a broken CHANGE from an unreachable REGISTRY, and the conflation MOVED rather than went away (measured 2026-09-02, first day it ran)
-
-**The original measurement.** `deploy-to-server` used to need `deploy-dev` to be `success` or
-`skipped`, and the hazard written into the comment above that clause the day it was added - *"a dev
-estate broken for a reason of its own would hold production's releases hostage"* - materialised
-within hours. Run `33633156004` (workflow_dispatch, 13:00, 17m38s): everything built, every image
-pushed, and `Deploy to dev.canari-emse.fr` failed in 16 s on
-
-```
-Image ghcr.io/emse-students/***/frontend:dev Error failed to resolve reference ...
-  net/http: TLS handshake timeout
-```
-
-A TLS handshake to ghcr.io. Production was not deployed because the other estate could not reach a
-registry - nothing about the change, nothing about the data, nothing a second environment exists to
-catch.
-
-**WHAT THE WORKFLOW MIGRATION CHANGED, AND WHAT IT DID NOT (2026-09-03).** `deploy-to-server` no
-longer names `deploy-dev` in its `needs:` at all, and this time that is not a re-routing: **a run
-deploys exactly one estate.** A pre-release runs `deploy-dev` and stops; a stable runs
-`deploy-to-server` and never touches dev. So a registry timeout on the dev deploy can no longer
-block, delay or silently cancel anything production-bound, which is the whole of what the branch
-split had merely MOVED.
-
-**The conflation itself survives, one estate smaller.** A `deploy-dev` that fails on a TLS handshake
-to ghcr.io still reports the same red run as a `deploy-dev` that fails because the change is broken,
-and the cost is now precise: **the dev estate silently did not receive that pre-release**, so the
-next alpha tester is measuring the previous build and nothing says so. That is smaller than "a
-release that did not happen" and it is the same defect.
-
-**Owed, unchanged in substance:** the dev deploy separates the failures it OWNS (a migration refused,
-a container that will not start, `/api/version` unanswered) from the ones it merely observed (a
-registry timeout, an SSH drop), and only the first stops the promotion; an observed failure is
-re-attempted rather than reported. A retry on the pull is not the fix - it narrows the window and
-leaves the conflation - though the pull should retry too.
-
-**And the second half, which the split made newly visible:** nothing reports *"`dev` is green and
-`main` was not advanced"*. A correct mechanism with no report is found by hand, a day late. Until
-then the escape is still one visible variable:
-`gh variable set DEV_ENVIRONMENT_ENABLED --body false`, which skips the dev arm and sends releases
-by the emergency path, a push straight to `main`.
-
----
-
 ### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
 
 **Reported by the user, again** (*"il ne faut surtout pas que la prod soit down"*, then *"Il y a des

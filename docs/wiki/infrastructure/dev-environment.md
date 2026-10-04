@@ -448,6 +448,15 @@ anonymous. `/api/version` reads the database, so it is the cheapest end-to-end s
 estate is really serving - the exact statement missing during the 33-minute outage of 2026-09-01,
 throughout which the frontend answered 200.
 
+**A REGISTRY THAT DOES NOT ANSWER IS NOT A BROKEN CHANGE, AND THE RUN SAYS WHICH (2026-10-04).** Run
+`33633156004` failed in 16 s on `TLS handshake timeout` to ghcr.io after every image was built and
+pushed, and read exactly like a broken release - on dev, a pre-release that silently never reached
+the estate. The login and the pull go through `with_registry_retry`: three re-attempts (5, 15, 45 s,
+so it terminates by construction), then an annotation titled `Registry unreachable - not a broken
+change` and exit code **75**, where everything the deploy OWNS (a migration, a container, a health
+check) still exits 1. `deploy-registry-retry.test.sh` drives the real function against stubs. It
+serves both estates: the same script deploys production.
+
 **THE FIRST BOOTSTRAP CREATED AN EMPTY DATABASE, AND THE MIGRATION STEP REPORTED SUCCESS.** Measured
 2026-09-02. `apply_migrations` walks `apps/*/src/migrations/*.sql` from a here-string and asks the
 `schema_migrations` ledger about each file before applying it - and `psql` in this script is
