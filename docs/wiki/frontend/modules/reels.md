@@ -324,8 +324,13 @@ phones lie on a desk), so no frame of real content was judged; the pretty-or-not
 is the user's look.
 
 **Owed**: one real-content take on each phone (the user's eye); the iOS frame timing of the viewer
-swipe; the intermittent console line `Ignored attempt to cancel a touchmove event with
-cancelable=false`, seen ONCE in six REEL-2 runs on the Mi 9T and not reproduced with a hook on
-`preventDefault` (the feed's pull-to-refresh is already guarded by #1350, so the caller is another
-non-passive `touchmove` listener); and the publish step's own "Visible 30 jours..." note, which the
-user may want gone with the chip.
+swipe; and the publish step's own "Visible 30 jours..." note, which the user may want gone with the
+chip.
+
+**The intermittent console line `Ignored attempt to cancel a touchmove event with
+cancelable=false`**, seen ONCE in six REEL-2 runs on the Mi 9T, is closed by construction: every
+non-passive `touchmove` that prevents a single-finger move now claims it through `claimTouchMove`
+(`lib/utils/touchClaim.ts`) - the tab swipe since #1363 (the likeliest caller: it was found there on
+the same phone the same day), the pull-to-refresh since #1350, and the reel viewer and the media
+lightbox since 2026-10-04, which stand their drag down instead of half-claiming it
+(`ReelViewer.svelte.test.ts` dispatches an uncancelable move and asserts it is never prevented).

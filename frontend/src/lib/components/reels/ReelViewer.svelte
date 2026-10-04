@@ -36,6 +36,7 @@
   } from '$lib/utils/viewerGestures';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { claimTouchMove } from '$lib/utils/touchClaim';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -203,7 +204,12 @@
         gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
         if (gesture === 'pending') return;
       }
-      e.preventDefault();
+      // A move the engine is already scrolling is not ours: the drag stands down and springs back.
+      if (!claimTouchMove(e)) {
+        gesture = null;
+        settle(0, 0);
+        return;
+      }
       const o = reelDragOffset(gesture, dx, dy, index > 0, index < reels.length - 1);
       offsetX = o.x;
       offsetY = o.y;
