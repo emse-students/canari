@@ -6,7 +6,7 @@
 /// with `ProposalValidationError(DuplicateSignatureKey)` on the OpenMLS side, blocking the other
 /// invitees of the same batch too. `add_members_bulk` must now filter those duplicates up front and
 /// report the "every member of the batch is already in" case via `MlsError::AlreadyMember`.
-use mls_core::{MlsError, MlsManager};
+use mls_core::{MlsError, MlsManager, SkippedKeyPackage, SkippedKeyPackageReason};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -82,10 +82,10 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
 }
 
 /// [[C5]] An invalid/unreadable KeyPackage must not vanish silently: its index must be reported in
-/// `skipped_indices` (and NOT in `added_indices`), while the valid KeyPackages of the same batch
-/// are added normally.
+/// `skipped` WITH its typed reason (and NOT in `added_indices`), while the valid KeyPackages of the
+/// same batch are added normally.
 #[test]
-fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
+fn add_members_bulk_reports_invalid_keypackage_in_skipped() {
     let mut alice = make_device("alice", "dev1");
     let mut bob = make_device("bob", "dev1");
     let gid = "g-skip-1";
@@ -104,8 +104,11 @@ fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
     assert_eq!(added, vec![1], "only bob (index 1) must be added");
     assert_eq!(
         skipped,
-        vec![0],
-        "the corrupted KeyPackage (index 0) must be reported in skipped_indices"
+        vec![SkippedKeyPackage {
+            index: 0,
+            reason: SkippedKeyPackageReason::Undecodable,
+        }],
+        "the corrupted KeyPackage (index 0) must be reported in skipped, as undecodable"
     );
 
     // The valid member does join despite the invalid KP in the batch.
@@ -113,4 +116,53 @@ fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
     let rt = alice.export_ratchet_tree_for(gid).expect("tree");
     bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins despite the skipped invalid KP");
+}
+
+/// A KeyPackage that DECODES but whose signature does not verify is refused as
+/// `invalid-signature`, not lumped in with undecodable bytes: the two want different fixes, and
+/// the reason is classified from the openmls variant where it is thrown.
+#[test]
+fn add_members_bulk_classifies_a_tampered_signature() {
+    let mut alice = make_device("alice", "dev1");
+    let bob = make_device("bob", "dev1");
+    let carol = make_device("carol", "dev1");
+    let gid = "g-skip-sig";
+
+    alice.create_group(gid.to_string()).expect("create_group");
+
+    // The signature is the last field of the TLS encoding: flipping its final byte keeps the
+    // package decodable and makes its signature fail.
+    let mut tampered = bob.generate_key_package().expect("kp bob");
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x01;
+    let kp_carol = carol.generate_key_package().expect("kp carol");
+
+    let (_, _welcome, added, skipped) = alice
+        .add_members_bulk(gid, &[&tampered, &kp_carol])
+        .expect("carol is still added");
+
+    assert_eq!(added, vec![1]);
+    assert_eq!(
+        skipped,
+        vec![SkippedKeyPackage {
+            index: 0,
+            reason: SkippedKeyPackageReason::InvalidSignature,
+        }]
+    );
+}
+
+/// When EVERY package is refused, the error text still names each position and reason, so the
+/// log line says why nothing was added.
+#[test]
+fn add_members_bulk_names_the_reasons_when_nothing_is_valid() {
+    let mut alice = make_device("alice", "dev1");
+    let gid = "g-skip-none";
+    alice.create_group(gid.to_string()).expect("create_group");
+
+    let err = alice
+        .add_members_bulk(gid, &[&[], &[0xde, 0xad]])
+        .expect_err("nothing valid to add");
+    let text = err.to_string();
+    assert!(text.contains("0=undecodable"), "{text}");
+    assert!(text.contains("1=undecodable"), "{text}");
 }

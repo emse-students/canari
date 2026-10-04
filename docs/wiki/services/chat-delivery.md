@@ -650,7 +650,7 @@ once the queue has drained. Silent when there is nothing to say.
 `addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
 device of the invited user that holds a `KeyPackage` in the retention window. The Welcome, on the
 other hand, only reaches the devices the inviter's `addMembersBulk` actually managed to add - a
-device whose KeyPackage the WASM layer rejects lands in `skippedDeviceIds` and is dropped there. The
+device whose KeyPackage the WASM layer rejects lands in `skipped` (device + typed reason) and is dropped there. The
 two counts are written by different actors and nothing compared them, so a device could hold a seat
 on a group's roster it had never been given the keys for: present in the roster, receiving nothing,
 notifying nothing. `warnSkippedKeyPackages` logged it in the **inviter's** console and nowhere else,
@@ -685,6 +685,22 @@ Welcome actually queued for this device AND this group**.
 
   Both halves name the oldest `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because
   a count cannot be chased and a device id can.
+
+**THE SKIP NOW NAMES ITS OWN CAUSE, IN THE INVITER'S LOG (2026-10-04).** `add_members_bulk` returns
+`skipped: { index, reason }[]` and `reason` is `SkippedKeyPackageReason` (`mls-core/src/lib.rs`),
+classified at the throw from the openmls `KeyPackageVerifyError` variant by an EXHAUSTIVE match -
+never from a message: `undecodable`, `expired`, `not-yet-valid` (the minter's clock is ahead),
+`missing-lifetime`, `invalid-signature`, `unsupported-protocol-version`, `malformed`, `internal`
+(openmls or THIS device's clock). It crosses the WASM boundary as `{ index, reason }` objects and
+Tauri serialises the same struct; `addMembersBulk` maps it to `skipped: { deviceId, reason }[]`
+(the old `skippedDeviceIds` is gone, every consumer migrated: `groupCreation.ts` x3 through
+`warnSkippedKeyPackages`, and `admitNewcomer.ts`), and both print ONE line per reason.
+**Last-resort vs one-time is NOT knowable on the client**: the `LastResort` extension sits in the
+payload `KeyPackageIn` keeps private until `validate` succeeds, and a refused package never does -
+and the server hands over a bare `keyPackage` string. The server's own `[KP] one-time pool EMPTY`
+line (it chose the row) is the witness for that half. **What is still missing is the SERVER half**:
+the hourly report partitions on the queue, not on the reason, because nothing sends the reason
+there - that is a new write path and a table, so it stays in the [backlog](../backlog.md).
 
 `kickedAt` is what makes that split possible, and it is a column written to answer exactly that one
 question - never a second `updatedAt`, which moves for every write and would read an invitation, a

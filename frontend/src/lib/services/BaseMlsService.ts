@@ -37,6 +37,7 @@ import type {
   BaseRefreshOutcome,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
+import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
   SenderMismatchError,
   setSenderMismatchReporter,
@@ -2794,7 +2795,7 @@ export abstract class BaseMlsService implements IMlsService {
     commit: Uint8Array;
     welcome?: Uint8Array;
     addedIndices: number[];
-    skippedIndices: number[];
+    skipped: SkippedKeyPackage[];
   }>;
   /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit. */
   protected abstract stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array>;
@@ -2832,14 +2833,14 @@ export abstract class BaseMlsService implements IMlsService {
       commit: Uint8Array;
       welcome?: Uint8Array;
       addedDeviceIds?: string[];
-      skippedDeviceIds?: string[];
+      skipped?: SkippedDevice[];
     }>,
     opts: { excludeDeviceIds?: string[]; exportTree?: boolean } = {}
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
-    skippedDeviceIds: string[];
+    skipped: SkippedDevice[];
   }> {
     const out = await this.runUnderMlsLock(async () =>
       // RAISED UNDER THE MLS MUTEX, WHICH IS WHAT MAKES IT DEADLOCK-FREE: a send that sees this
@@ -2893,7 +2894,7 @@ export abstract class BaseMlsService implements IMlsService {
           welcome: staged.welcome,
           ratchetTree,
           addedDeviceIds: staged.addedDeviceIds ?? [],
-          skippedDeviceIds: staged.skippedDeviceIds ?? [],
+          skipped: staged.skipped ?? [],
         };
       })
     );
@@ -4064,7 +4065,7 @@ export abstract class BaseMlsService implements IMlsService {
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
     addedDeviceIds: string[];
-    skippedDeviceIds: string[];
+    skipped: SkippedDevice[];
   }> {
     return this.runCommitTransaction(
       groupId,
@@ -4077,7 +4078,10 @@ export abstract class BaseMlsService implements IMlsService {
           commit: staged.commit,
           welcome: staged.welcome,
           addedDeviceIds: staged.addedIndices.map((i) => devices[i].deviceId),
-          skippedDeviceIds: staged.skippedIndices.map((i) => devices[i].deviceId),
+          skipped: staged.skipped.map((s) => ({
+            deviceId: devices[s.index].deviceId,
+            reason: s.reason,
+          })),
         };
       },
       { excludeDeviceIds, exportTree: true }

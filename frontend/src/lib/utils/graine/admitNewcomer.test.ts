@@ -40,7 +40,7 @@ beforeEach(() => {
       welcome: new Uint8Array([9]),
       ratchetTree: new Uint8Array([8]),
       addedDeviceIds: ['phone', 'web'],
-      skippedDeviceIds: [],
+      skipped: [],
     }),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(5),
@@ -158,7 +158,7 @@ describe('admitNewcomerToDistributionGroup', () => {
     mls.addMembersBulk.mockResolvedValue({
       welcome: new Uint8Array([9]),
       addedDeviceIds: ['phone'],
-      skippedDeviceIds: [],
+      skipped: [],
     });
 
     await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
@@ -198,7 +198,7 @@ describe('admitNewcomerToDistributionGroup', () => {
         welcome: new Uint8Array([9]),
         ratchetTree: new Uint8Array([8]),
         addedDeviceIds: ['phone'],
-        skippedDeviceIds: [],
+        skipped: [],
       });
 
     const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);

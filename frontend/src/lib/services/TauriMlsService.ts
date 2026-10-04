@@ -16,6 +16,7 @@ import {
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -962,10 +963,10 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * Tauri-native `invoke` wrapper - stages an Add commit WITHOUT merging via `ajouter_membres_bulk`
    * (all key packages in one OpenMLS commit, one shared Welcome). Returns
-   * (commit, welcome?, addedIndices, skippedIndices). `addedIndices` are positions in `keyPackages`
+   * (commit, welcome?, addedIndices, skipped). `addedIndices` are positions in `keyPackages`
    * actually included - entries skipped (invalid, or already a member) are omitted rather than
-   * collapsing to a bare count. `skippedIndices` are positions dropped for an INVALID/undeserializable
-   * KeyPackage (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
+   * collapsing to a bare count. `skipped` is `{ index, reason }` per INVALID/undeserializable
+   * KeyPackage, the reason typed in Rust (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
    */
   protected async stageAddMembers(
     groupId: string,
@@ -974,10 +975,10 @@ export class TauriMlsService extends BaseMlsService {
     commit: Uint8Array;
     welcome?: Uint8Array;
     addedIndices: number[];
-    skippedIndices: number[];
+    skipped: SkippedKeyPackage[];
   }> {
     const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
-    const result = await invoke<[number[], number[] | null, number[], number[]]>(
+    const result = await invoke<[number[], number[] | null, number[], SkippedKeyPackage[]]>(
       'ajouter_membres_bulk',
       { groupId, keyPackagesBytes }
     );
@@ -985,7 +986,7 @@ export class TauriMlsService extends BaseMlsService {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
       addedIndices: result[2],
-      skippedIndices: result[3] ?? [],
+      skipped: result[3] ?? [],
     };
   }
 

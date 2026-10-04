@@ -9,6 +9,7 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { groupSkippedByReason } from '$lib/mls-client/skippedKeyPackage';
 
 /**
  * Whoever admits a newcomer Welcomes them - channel-encryption section 20, decided by the user
@@ -228,9 +229,9 @@ export async function admitNewcomerToDistributionGroup(
       }
     }
 
-    if (result.skippedDeviceIds.length > 0) {
+    for (const { reason, deviceIds } of groupSkippedByReason(result.skipped)) {
       log(
-        `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: ${result.skippedDeviceIds.length} device(s) skipped - their KeyPackage could not be used: ${result.skippedDeviceIds.join(',')}`
+        `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: ${deviceIds.length} device(s) skipped - their KeyPackage could not be used (${reason}): ${deviceIds.join(',')}`
       );
     }
 

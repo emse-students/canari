@@ -190,7 +190,7 @@ export async function createNewGroup(
         log(
           `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
-        warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[GROUP]', log);
+        warnSkippedKeyPackages(bulk.skipped, groupId, '[GROUP]', log);
 
         // All added devices belong to the current user; deliveries run in parallel.
         await deliverWelcomes({
@@ -374,7 +374,7 @@ async function processBulkAddition(
         })
         .filter((s): s is string => s !== null);
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices, excludeIds);
-      warnSkippedKeyPackages(bulk.skippedDeviceIds, conversation.id, '[SYNC]', log);
+      warnSkippedKeyPackages(bulk.skipped, conversation.id, '[SYNC]', log);
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
@@ -464,7 +464,7 @@ async function performDirectAdd(
     });
     const bulk = await mlsService.addMembersBulk(groupId, allDevices, excludeIds);
     log(`[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}`);
-    warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[ADD]', log);
+    warnSkippedKeyPackages(bulk.skipped, groupId, '[ADD]', log);
 
     // registerMember is user-level (upsert GroupMember): one call per userId is enough.
     // Calling once per device generates N-1 redundant transactions for a multi-device user.

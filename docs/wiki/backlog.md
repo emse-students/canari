@@ -3035,53 +3035,20 @@ the session that found it.
 sufficient for what it can see; the gap is a device that produces no evidence at all, and no amount
 of classification at the send site can observe a send that never happens.
 
-### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
+### P2 - a device was given a roster seat and never a Welcome: THE REASON IS NOW TYPED ON THE CLIENT, THE SERVER REPORT CANNOT PARTITION ON IT YET (measured on prod 2026-09-01)
 
-**The report is in; the CAUSE is not.** `reportStrandedDeviceMemberships` (hourly, chat-delivery)
-now names every `pending` device membership older than an hour with no `queued_message` carrying
-`isWelcome = true` for that device AND that group - see
-[chat-delivery](services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)
-for the mechanism and the measurement. What it cannot say is why the inviter's `addMembersBulk`
-dropped the device into `skippedDeviceIds` in the first place.
-
-The sighting: a new DM on 2026-09-01, group `ab47add3`. The peer's phone
-(`tauri-...mtd1qgu3-vnde`) got its pending row at `20:45:47.420` and no Welcome, while the account's
-four other devices each got one. It stayed stranded **3 h 41**, healed itself by external join at
-`00:26:54`, and republished its key package at `00:53` with 39 one-time key packages. The user
-received the message on a web session (`mthfj460`, active at `20:45:48.309`) and got **no
-notification on his phone** - which is the only reason anyone noticed.
-
-**What has to be named before a fix is written**, and all of it is knowable:
-
-- Which KeyPackage the inviter was handed for that device, and why WASM rejected it. `addMembersBulk`
-  currently discards the reason with the device - `skippedDeviceIds` is a list of ids and nothing
-  else, so the one fact that would classify this is thrown away at the only place it exists.
-- Whether it is the last-resort KeyPackage or a one-time one. **All four of the peer's web devices
-  showed 0 one-time key packages remaining** at the time, which makes a spent OTK pool the first
-  hypothesis to test, not the conclusion - the phone's own pool is the number that matters and it was
-  not read before the device healed.
-- Whether the 3 h 41 is the external-join ladder's ordinary latency for a device in this state or a
-  device that only healed because it happened to be opened. Nothing here paces that heal.
-
-**THE 3 H 41 IS NOW BOUNDED, AND THAT CHANGES WHAT THIS ENTRY IS FOR (2026-09-04).** The heal at
-`00:26:54` happened because the device was opened; nothing paced it, and its sibling P1 explains why a
-device in that state could go 20 hours instead. With (A) fixed, a device holding a roster seat that
-nothing follows joins on its next poll rather than when a human touches it - so the stranding is no
-longer a user-visible outage and this entry loses its user-facing half. **What it keeps is the whole
-of its question**: a skip that cannot name its own cause. The heal being fast does not make the Add
-correct, and a device that external-joins every time is a device whose KeyPackage is being rejected
-every time with nobody counting.
-
-**THE POPULATION IS NOW EXACTLY THIS ENTRY'S, 2026-09-04.** The hourly report used to lump this
-cause together with a device whose leaf a member kicked and failed to re-add - same footprint,
-different fix. `kickedAt` separates them, so the WARN arm named *never added* is now this entry's
-population and nothing else's, and its count is the number a fix has to move.
-
-**Until the reason is typed, the skip is a count.** The rule that a skip printing a count cannot name
-its own cause applies exactly: `warnSkippedKeyPackages` prints ids, and the two causes it collapses -
-a genuinely unusable KeyPackage and a device whose pool is momentarily empty - want opposite fixes
-(reject and re-mint, versus wait and retry). Carry the reason out of the WASM boundary alongside the
-id, then the server report can partition on it instead of on the queue.
+The inviter now carries a typed reason per skipped KeyPackage and prints it per cause (`skipped`,
+`SkippedKeyPackageReason`; mechanism in
+[chat-delivery](services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)).
+**What remains is the half that needs a design**: the hourly `reportStrandedDeviceMemberships` still
+partitions on the queue, because the reason lives only in the INVITER's console and nothing sends it
+to the server. Closing it means a client-to-server write (an endpoint, and a column or table keyed
+by device and group so the report can join it), i.e. a migration - not inlined. Two facts to settle
+with it: the client CANNOT say last-resort vs one-time (the extension is unreadable on a refused
+package; the server, which chose the row, would have to record which it served), and the first
+`skipped` lines from real inviters are the measurement that says whether a spent OTK pool (the
+original hypothesis: all four of the peer's web devices showed 0 one-time packages) or a rejected
+package is the cause. Read those before designing the write.
 
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 

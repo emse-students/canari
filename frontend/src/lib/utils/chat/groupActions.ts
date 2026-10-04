@@ -19,29 +19,36 @@ import {
   type HistoryEntry,
 } from './historyManifest';
 import { holdsGroupState } from './groupUsability';
+import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
  * was invalid/unreadable. Without this, a skipped device would vanish silently: never invited,
- * never retried. The remedy (republish a fresh KeyPackage then re-add) is deferred;
+ * never retried. Last-resort vs one-time is NOT knowable here (the `LastResort` extension is
+ * unreadable until a package validates); the server's `[KP] one-time pool EMPTY` line is its witness.
+ * The remedy (republish a fresh KeyPackage then re-add) is deferred;
  * here we at least ensure visibility. [[C5]]
  *
  * @param tag Log prefix of the caller (e.g. `[ADD]`, `[SYNC]`, `[GROUP]`, `[REBOOT]`).
  */
 export function warnSkippedKeyPackages(
-  skippedDeviceIds: string[],
+  skipped: readonly SkippedDevice[],
   groupId: string,
   tag: string,
   log: (msg: string) => void
 ): void {
-  if (skippedDeviceIds.length === 0) return;
-  log(
-    `${tag} ${skippedDeviceIds.length} device(s) skipped (invalid KeyPackage): ${skippedDeviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
-  );
-  console.warn(
-    `${tag}[C5] Invalid KeyPackage for ${skippedDeviceIds.length} device(s) on ${groupId}:`,
-    skippedDeviceIds
-  );
+  if (skipped.length === 0) return;
+  // ONE LINE PER CAUSE: an expired package (wait for its owner to reconnect) and a bad signature
+  // (a defect) want opposite fixes, and a count collapsed them.
+  for (const { reason, deviceIds } of groupSkippedByReason(skipped)) {
+    log(
+      `${tag} ${deviceIds.length} device(s) skipped (KeyPackage ${reason}): ${deviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
+    );
+    console.warn(
+      `${tag}[C5] KeyPackage ${reason} for ${deviceIds.length} device(s) on ${groupId}:`,
+      deviceIds
+    );
+  }
 }
 
 /**

@@ -165,7 +165,7 @@ function dmDeps() {
     // would refuse.
     addMembersBulk: vi.fn(async (): Promise<BulkAddResult> => ({
       addedDeviceIds: ['peer-dev'],
-      skippedDeviceIds: [],
+      skipped: [],
       welcome: new Uint8Array([1]),
     })),
     sendWelcome: vi.fn(async () => {}),
@@ -225,7 +225,7 @@ describe('startNewConversation - a new DM must not be recoverable before it is r
     const d = dmDeps();
     d.mlsService.addMembersBulk = vi.fn(async () => {
       d.local.delete('g-dm');
-      return { addedDeviceIds: [], skippedDeviceIds: [], welcome: undefined };
+      return { addedDeviceIds: [], skipped: [], welcome: undefined };
     });
 
     await startNewConversation('peer', d.args as never);

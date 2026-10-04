@@ -22,6 +22,8 @@ pub use state::PersistedState;
 pub use keystore::DeviceKeyStore;
 pub use keystore::NoopDeviceKeyStore;
 
+use openmls::prelude::KeyPackageVerifyError;
+use openmls::treesync::errors::LifetimeError;
 use thiserror::Error;
 
 /// Maximum size for incoming MLS messages (1 MiB).
@@ -240,7 +242,7 @@ impl MlsError {
 }
 
 /// Result of `add_members_bulk` (stage-only, C7-A unified):
-/// `(commit, welcome, added_indices, skipped_indices)`.
+/// `(commit, welcome, added_indices, skipped)`.
 ///
 /// The commit is *staged* (not merged): the caller validates it server-side THEN calls
 /// `merge_pending_commit_for` (accepted) or `clear_pending_commit_for` (rejected), so a rejected
@@ -250,14 +252,181 @@ impl MlsError {
 ///
 /// - `added_indices` gives, in order, the positions (within the input slice `key_packages_bytes`)
 ///   of the KeyPackages actually included in the commit.
-/// - `skipped_indices` gives the positions of KeyPackages that are **invalid or unreadable**
-///   (expired, wrong ciphersuite, private key lost on the peer, corrupted bytes). These are
-///   potentially recoverable losses (republish a fresh KeyPackage) that the caller must surface
-///   instead of letting them disappear silently. [[C5]]
+/// - `skipped` gives, for every KeyPackage that is **invalid or unreadable**, its position AND the
+///   typed reason it was refused ([`SkippedKeyPackage`]). These are potentially recoverable losses
+///   that the caller must surface instead of letting them disappear silently. [[C5]]
 ///   Positions matching an **already-present** member are NOT counted here: that is intentional
 ///   deduplication (the device is already - or ghosted - in the tree), reported globally via
 ///   `MlsError::AlreadyMember` when nothing else was added.
-pub type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>);
+pub type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<SkippedKeyPackage>);
+
+/// Why `add_members_bulk` refused one KeyPackage - a closed set, classified at the throw from the
+/// openmls error variant, never from its message.
+///
+/// THE REASON IS THE WHOLE POINT OF THE SKIP. A skip that carries only an id collapses causes that
+/// want opposite fixes: a package that is genuinely unusable (re-mint it) and one that is only
+/// stale (wait for the owner to reconnect). The match in [`SkippedKeyPackageReason::from_verify`]
+/// is exhaustive on purpose, so an openmls upgrade that adds a refusal fails to compile here rather
+/// than landing in a catch-all nobody reads.
+///
+/// What this CANNOT say: whether the refused package was the owner's last-resort one or a one-time
+/// one. The `LastResort` extension lives in the payload `KeyPackageIn` keeps private until it
+/// validates, and a refused package never validates; the server, which chose which row to serve,
+/// logs `[KP] one-time pool EMPTY` when it fell back to the last-resort one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SkippedKeyPackageReason {
+    /// The bytes are not a TLS-encoded KeyPackage at all (empty, truncated, corrupted).
+    Undecodable,
+    /// Its leaf lifetime ended before now (`LifetimeError::Expired`).
+    Expired,
+    /// Its leaf lifetime starts after now - the minting device's clock is ahead of ours.
+    NotYetValid,
+    /// The leaf carries no lifetime at all, which a KeyPackage leaf must.
+    MissingLifetime,
+    /// The KeyPackage or its leaf node signature does not verify against the key it names.
+    InvalidSignature,
+    /// It is not an MLS 1.0 KeyPackage.
+    UnsupportedProtocolVersion,
+    /// Structurally invalid in a way no client of ours mints: a non-KeyPackage leaf source, an init
+    /// key equal to the encryption key, or an extension the leaf does not declare or a KeyPackage
+    /// may not carry.
+    Malformed,
+    /// openmls failed internally (`LibraryError`), or the local clock is before the UNIX epoch -
+    /// a fault of THIS device, not of the package.
+    Internal,
+}
+
+impl SkippedKeyPackageReason {
+    /// The stable wire name, identical in WASM, Tauri (serde) and TypeScript. Kebab-case.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Undecodable => "undecodable",
+            Self::Expired => "expired",
+            Self::NotYetValid => "not-yet-valid",
+            Self::MissingLifetime => "missing-lifetime",
+            Self::InvalidSignature => "invalid-signature",
+            Self::UnsupportedProtocolVersion => "unsupported-protocol-version",
+            Self::Malformed => "malformed",
+            Self::Internal => "internal",
+        }
+    }
+
+    /// Classifies a refusal of `KeyPackageIn::validate` by its variant.
+    pub fn from_verify(error: &KeyPackageVerifyError) -> Self {
+        match error {
+            KeyPackageVerifyError::LifetimeError(LifetimeError::Expired { .. }) => Self::Expired,
+            KeyPackageVerifyError::LifetimeError(LifetimeError::NotValidYet { .. }) => {
+                Self::NotYetValid
+            }
+            KeyPackageVerifyError::LifetimeError(LifetimeError::SystemTimeBeforeUnixEpoch)
+            | KeyPackageVerifyError::LibraryError(_) => Self::Internal,
+            KeyPackageVerifyError::MissingLifetime => Self::MissingLifetime,
+            KeyPackageVerifyError::InvalidSignature
+            | KeyPackageVerifyError::InvalidLeafNodeSignature => Self::InvalidSignature,
+            KeyPackageVerifyError::InvalidProtocolVersion => Self::UnsupportedProtocolVersion,
+            KeyPackageVerifyError::InvalidLeafNodeSourceType
+            | KeyPackageVerifyError::InitKeyEqualsEncryptionKey
+            | KeyPackageVerifyError::UnsupportedExtension
+            | KeyPackageVerifyError::ExtensionTypeNotValidInKeyPackage(_) => Self::Malformed,
+        }
+    }
+}
+
+/// Serialised as its [`SkippedKeyPackageReason::as_str`] name, so the Tauri command and the WASM
+/// binding hand TypeScript the same string from one table.
+impl serde::Serialize for SkippedKeyPackageReason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// One KeyPackage `add_members_bulk` refused: its position in the input slice and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SkippedKeyPackage {
+    /// Position within the `key_packages_bytes` slice the caller passed.
+    pub index: u32,
+    /// The typed cause, classified where openmls refused the package.
+    pub reason: SkippedKeyPackageReason,
+}
 
 /// Result of `add_member`: `(commit, welcome)`. Staged like [`AddMembersBulkResult`].
 pub type AddMemberResult = (Vec<u8>, Option<Vec<u8>>);
+
+#[cfg(test)]
+mod skipped_key_package_tests {
+    use super::*;
+
+    /// Each reachable openmls refusal lands in its own reason; the two lifetime ends in particular
+    /// stay apart, because "expired" and "the minter's clock is ahead" want different fixes.
+    #[test]
+    fn every_verify_error_is_classified_by_its_variant() {
+        let cases = [
+            (
+                KeyPackageVerifyError::LifetimeError(LifetimeError::Expired {
+                    not_after: 1,
+                    now: 2,
+                }),
+                SkippedKeyPackageReason::Expired,
+            ),
+            (
+                KeyPackageVerifyError::LifetimeError(LifetimeError::NotValidYet {
+                    not_before: 2,
+                    now: 1,
+                }),
+                SkippedKeyPackageReason::NotYetValid,
+            ),
+            (
+                KeyPackageVerifyError::LifetimeError(LifetimeError::SystemTimeBeforeUnixEpoch),
+                SkippedKeyPackageReason::Internal,
+            ),
+            (
+                KeyPackageVerifyError::MissingLifetime,
+                SkippedKeyPackageReason::MissingLifetime,
+            ),
+            (
+                KeyPackageVerifyError::InvalidSignature,
+                SkippedKeyPackageReason::InvalidSignature,
+            ),
+            (
+                KeyPackageVerifyError::InvalidLeafNodeSignature,
+                SkippedKeyPackageReason::InvalidSignature,
+            ),
+            (
+                KeyPackageVerifyError::InvalidProtocolVersion,
+                SkippedKeyPackageReason::UnsupportedProtocolVersion,
+            ),
+            (
+                KeyPackageVerifyError::InvalidLeafNodeSourceType,
+                SkippedKeyPackageReason::Malformed,
+            ),
+            (
+                KeyPackageVerifyError::InitKeyEqualsEncryptionKey,
+                SkippedKeyPackageReason::Malformed,
+            ),
+            (
+                KeyPackageVerifyError::UnsupportedExtension,
+                SkippedKeyPackageReason::Malformed,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                SkippedKeyPackageReason::from_verify(&error),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    /// The serde form IS the wire name, so the Tauri command and the WASM binding cannot drift.
+    #[test]
+    fn serialises_as_its_wire_name() {
+        let skipped = SkippedKeyPackage {
+            index: 3,
+            reason: SkippedKeyPackageReason::NotYetValid,
+        };
+        assert_eq!(
+            serde_json::to_string(&skipped).unwrap(),
+            r#"{"index":3,"reason":"not-yet-valid"}"#
+        );
+    }
+}
