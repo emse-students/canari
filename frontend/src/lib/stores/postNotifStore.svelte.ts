@@ -5,7 +5,11 @@
  * mobile notifications page (/notifications), so both always show the same
  * unread count and list without a second network fetch.
  */
-import { getPostNotifications, markPostNotificationsRead } from '$lib/posts/api';
+import {
+  getPostNotifications,
+  markPostNotificationsRead,
+  markPostNotificationsReadForPost,
+} from '$lib/posts/api';
 import type { PostNotification } from '$lib/posts/api';
 
 let notifications = $state<PostNotification[]>([]);
@@ -43,6 +47,15 @@ export const postNotifStore = {
       notifications = notifications.map((n) => ({ ...n, read: true }));
     } catch (e) {
       console.warn('[postNotifStore] markAllRead failed:', e);
+    }
+  },
+  /** Marks notifications for one post as read in the backend and locally. */
+  async markPostRead(postId: string): Promise<void> {
+    try {
+      await markPostNotificationsReadForPost(postId);
+      notifications = notifications.map((n) => (n.postId === postId ? { ...n, read: true } : n));
+    } catch (e) {
+      console.warn('[postNotifStore] mark post read failed:', e);
     }
   },
 };

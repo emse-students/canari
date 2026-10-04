@@ -2,6 +2,7 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
   import { reactorsTrigger } from '$lib/actions/reactorsTrigger';
+  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
 
   interface Props {
     /** Aggregated count of each reaction type across all users. */
@@ -26,6 +27,8 @@
       .filter(([, type]) => type === popupReactionType)
       .map(([uid]) => uid)
   );
+  const allReactorIds = $derived(Object.keys(reactions));
+  const reactorNames = userDisplayNames(() => allReactorIds);
 
   function openPopup(reactionType: string, anchor: HTMLElement) {
     anchorEl = anchor;
@@ -56,6 +59,9 @@
   <div class="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden">
     {#each Object.entries(reactionCounts) as [reactionType, count] (reactionType)}
       {@const reaction = reactionList.find((r) => r.type === reactionType)}
+      {@const reactorIds = Object.entries(reactions)
+        .filter(([, type]) => type === reactionType)
+        .map(([uid]) => uid)}
       <button
         type="button"
         onclick={() => onReactionClick(reactionType)}
@@ -66,7 +72,7 @@
         reactionType
           ? 'bg-cn-yellow/15'
           : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
-        title={reaction?.type}
+        title={reactorIds.map((id) => reactorNames.get(id) ?? id).join(', ') || undefined}
       >
         <span class="text-lg"><EmojiText text={reaction?.emoji ?? '😊'} /></span>
         <span class="text-text-main text-sm font-bold">{count}</span>

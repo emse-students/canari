@@ -10,6 +10,7 @@
   import { FileX, Link, Check } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { m } from '$lib/paraglide/messages';
+  import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
 
   let { data }: { data: { post: PostEntity | null } } = $props();
 
@@ -26,6 +27,7 @@
   }
 
   onMount(() => {
+    if (data.post) void postNotifStore.markPostRead(data.post.id);
     getToken()
       .then((t) => {
         authToken = t;

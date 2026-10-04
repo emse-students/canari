@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { bucketOf, groupNotifications, NOTIFICATION_BUCKETS } from './grouping';
+import {
+  bucketOf,
+  groupNotifications,
+  groupNotificationsByPost,
+  NOTIFICATION_BUCKETS,
+} from './grouping';
 import type { PostNotification } from '$lib/posts/api';
 
 /** The reference instant every case is measured against - never `new Date()`. */
@@ -77,5 +82,29 @@ describe('groupNotifications', () => {
     for (const g of groupNotifications(list, new Set(['a']), NOW)) {
       expect(NOTIFICATION_BUCKETS).toContain(g.bucket);
     }
+  });
+});
+
+describe('groupNotificationsByPost', () => {
+  it('groups actors for the same post and notification type', () => {
+    const first = { ...notif('a', NOW), actorId: 'u1', actorName: 'Alice', type: 'reaction' };
+    const second = {
+      ...notif('b', new Date(2026, 8, 8, 13, 0)),
+      actorId: 'u2',
+      actorName: 'Bob',
+      type: 'reaction',
+    };
+    const comment = { ...notif('c', NOW), actorId: 'u3', actorName: 'Chloe', type: 'comment' };
+
+    expect(groupNotificationsByPost([first, second, comment])).toMatchObject([
+      { id: 'a', actorNames: ['Alice', 'Bob'], notificationIds: ['a', 'b'] },
+      { id: 'c', actorNames: ['Chloe'], notificationIds: ['c'] },
+    ]);
+  });
+
+  it('keeps a repeated actor from appearing twice', () => {
+    const first = { ...notif('a', NOW), actorName: 'Alice' };
+    const second = { ...notif('b', NOW), actorName: 'Alice' };
+    expect(groupNotificationsByPost([first, second])[0].actorNames).toEqual(['Alice']);
   });
 });

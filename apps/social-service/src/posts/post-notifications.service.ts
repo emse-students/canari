@@ -317,4 +317,10 @@ export class PostNotificationsService {
     await this.notifRepo.update({ recipientId: userId }, { read: true });
     return { ok: true };
   }
+
+  /** Marks every notification about one post as read for a user. */
+  async markPostRead(userId: string, postId: string) {
+    await this.notifRepo.update({ recipientId: userId, postId }, { read: true });
+    return { ok: true };
+  }
 }

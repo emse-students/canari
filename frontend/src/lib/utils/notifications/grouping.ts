@@ -18,9 +18,39 @@ export const NOTIFICATION_BUCKETS: readonly NotificationBucket[] = [
 ] as const;
 
 /** One band of the list: a bucket and the notifications that fell in it, in the given order. */
-export interface NotificationGroup {
+export interface NotificationGroup<T extends PostNotification = PostNotification> {
   bucket: NotificationBucket;
-  items: PostNotification[];
+  items: T[];
+}
+
+/** A row representing notifications of the same type about the same post. */
+export type GroupedNotification = PostNotification & {
+  actorNames: string[];
+  notificationIds: string[];
+};
+
+/** Merges adjacent notification concepts without merging different notification types. */
+export function groupNotificationsByPost(
+  notifications: readonly PostNotification[]
+): GroupedNotification[] {
+  const groups = new Map<string, GroupedNotification>();
+  for (const notification of notifications) {
+    const key = `${notification.postId}:${notification.type}`;
+    const existing = groups.get(key);
+    if (existing) {
+      if (!existing.actorNames.includes(notification.actorName)) {
+        existing.actorNames.push(notification.actorName);
+      }
+      existing.notificationIds.push(notification.id);
+      continue;
+    }
+    groups.set(key, {
+      ...notification,
+      actorNames: [notification.actorName],
+      notificationIds: [notification.id],
+    });
+  }
+  return [...groups.values()];
 }
 
 /**
@@ -62,12 +92,12 @@ export function bucketOf(
  * @param unreadIds - ids that were unread when the view opened
  * @param now - the reference instant, injected so a test never asserts a wall clock
  */
-export function groupNotifications(
-  notifications: readonly PostNotification[],
+export function groupNotifications<T extends PostNotification>(
+  notifications: readonly T[],
   unreadIds: ReadonlySet<string>,
   now: Date
-): NotificationGroup[] {
-  const byBucket = new Map<NotificationBucket, PostNotification[]>();
+): NotificationGroup<T>[] {
+  const byBucket = new Map<NotificationBucket, T[]>();
   for (const notif of notifications) {
     const bucket = bucketOf(notif, unreadIds, now);
     const items = byBucket.get(bucket);
@@ -76,6 +106,6 @@ export function groupNotifications(
   }
   return NOTIFICATION_BUCKETS.filter((b) => byBucket.has(b)).map((bucket) => ({
     bucket,
-    items: byBucket.get(bucket) as PostNotification[],
+    items: byBucket.get(bucket) as T[],
   }));
 }
