@@ -10,6 +10,7 @@ import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -24,6 +25,9 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
   let groupMemberRepo: { find: jest.Mock };
   let groupRepo: { find: jest.Mock };
   let groupInfoRepo: { find: jest.Mock };
+  let deviceGroupRepo: { find: jest.Mock };
+  let queuedRepo: { find: jest.Mock };
+  let redis: { mget: jest.Mock };
   let warn: jest.SpyInstance;
 
   const ORDINARY = {
@@ -69,6 +73,9 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupMemberRepo = { find: jest.fn() };
     groupRepo = { find: jest.fn() };
     groupInfoRepo = { find: jest.fn().mockResolvedValue([]) };
+    deviceGroupRepo = { find: jest.fn().mockResolvedValue([]) };
+    queuedRepo = { find: jest.fn().mockResolvedValue([]) };
+    redis = { mget: jest.fn().mockResolvedValue([]) };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
@@ -77,9 +84,10 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         { provide: getRepositoryToken(UserDismissedGroup), useValue: {} },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: {} },
-        { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
+        { provide: getRepositoryToken(QueuedMessage), useValue: queuedRepo },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
-        { provide: 'REDIS_CLIENT', useValue: {} },
+        { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: {} },
       ],
     })
@@ -256,5 +264,75 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
 
     const where = groupInfoRepo.find.mock.calls[0][0].where;
     expect(where.groupId._value ?? where.groupId.value).toEqual(['g-ordinary']);
+  });
+
+  describe("this device's own seat (deviceMembership)", () => {
+    const seat = (status: 'pending' | 'active', admittedAtEpoch: number | null = null) => ({
+      userId: 'u1',
+      deviceId: 'dev-1',
+      groupId: 'g-ordinary',
+      status,
+      admittedAtEpoch,
+    });
+
+    beforeEach(() => {
+      groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
+      groupRepo.find.mockResolvedValue([ORDINARY]);
+    });
+
+    it('is null on every row, and reads nothing, when the caller names no device', async () => {
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+      expect(row.deviceMembership).toBeNull();
+      expect(deviceGroupRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('carries an unhonoured seat: pending, no Welcome queued, no add in flight', async () => {
+      deviceGroupRepo.find.mockResolvedValue([seat('pending')]);
+      queuedRepo.find.mockResolvedValue([]);
+      redis.mget.mockResolvedValue([null]);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+      expect(row.deviceMembership).toEqual({
+        status: 'pending',
+        welcomeQueued: false,
+        addInFlight: false,
+        admitted: false,
+      });
+    });
+
+    it('carries a queued Welcome, a held add lock and an admitting commit as owed facts', async () => {
+      deviceGroupRepo.find.mockResolvedValue([seat('pending', 8)]);
+      queuedRepo.find.mockResolvedValue([{ groupId: 'g-ordinary' }]);
+      redis.mget.mockResolvedValue(['u2:dev-9']);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+      expect(row.deviceMembership).toEqual({
+        status: 'pending',
+        welcomeQueued: true,
+        addInFlight: true,
+        admitted: true,
+      });
+    });
+
+    it('asks nothing about Welcomes or locks for an active seat', async () => {
+      deviceGroupRepo.find.mockResolvedValue([seat('active')]);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+      expect(row.deviceMembership).toMatchObject({ status: 'active', welcomeQueued: false });
+      expect(queuedRepo.find).not.toHaveBeenCalled();
+      expect(redis.mget).not.toHaveBeenCalled();
+    });
+
+    it('is null for a group the device holds no row for', async () => {
+      deviceGroupRepo.find.mockResolvedValue([]);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+      expect(row.deviceMembership).toBeNull();
+    });
   });
 });

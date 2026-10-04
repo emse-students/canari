@@ -63,6 +63,7 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -108,6 +109,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
     await done;
@@ -144,6 +146,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
     });
     await done;
 
@@ -172,6 +175,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
     await done;
@@ -209,6 +213,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -240,6 +245,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -289,6 +295,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
     });
 
@@ -318,6 +325,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
     });
 
@@ -360,6 +368,7 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -378,6 +387,7 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -385,5 +395,69 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
     expect(lines.some((l) => l.includes('deferred to next connection'))).toBe(true);
     // Nothing for the user to do about a 502, so nothing is said to them.
     expect(showToastMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncConnectionAfterWsOpen - a stranded roster seat is repaired by the reader', () => {
+  /**
+   * The silent-reader half of `recoverRosterDisagreement`: the device holds the tree, never sends,
+   * and the server's row for ITS OWN seat is the only evidence there is.
+   */
+  async function syncWith(deviceMembership: unknown) {
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-held', name: 'Held', isGroup: true, deviceMembership }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-held']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['u1:dev-1']),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'u1' }]),
+      getEpoch: vi.fn().mockReturnValue(3),
+      ...forgetPair(),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+    const onStrandedSeat = vi.fn().mockResolvedValue(undefined);
+    const onGroupMissing = vi.fn().mockResolvedValue(undefined);
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing,
+      onStrandedSeat,
+      log: vi.fn(),
+    });
+    return { onStrandedSeat, onGroupMissing };
+  }
+
+  const seat = (over: Record<string, unknown> = {}) => ({
+    status: 'pending',
+    welcomeQueued: false,
+    addInFlight: false,
+    admitted: false,
+    ...over,
+  });
+
+  it('hands a held group with an unhonoured seat to the repair, exactly once', async () => {
+    const { onStrandedSeat, onGroupMissing } = await syncWith(seat());
+
+    expect(onStrandedSeat).toHaveBeenCalledExactlyOnceWith('g-held');
+    expect(onGroupMissing).not.toHaveBeenCalled();
+  });
+
+  it('leaves a device whose Welcome is queued, whose add is in flight, or that was admitted', async () => {
+    for (const over of [{ welcomeQueued: true }, { addInFlight: true }, { admitted: true }]) {
+      const { onStrandedSeat } = await syncWith(seat(over));
+      expect(onStrandedSeat).not.toHaveBeenCalled();
+    }
+  });
+
+  it('leaves an active seat, and a server that does not say, untouched', async () => {
+    expect((await syncWith(seat({ status: 'active' }))).onStrandedSeat).not.toHaveBeenCalled();
+    expect((await syncWith(undefined)).onStrandedSeat).not.toHaveBeenCalled();
   });
 });

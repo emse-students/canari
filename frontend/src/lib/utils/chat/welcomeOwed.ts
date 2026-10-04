@@ -1,4 +1,4 @@
-import type { DeviceMembershipRow } from '$lib/mls-client/IMlsService';
+import type { DeviceMembershipRow, UserGroupRow } from '$lib/mls-client/IMlsService';
 
 /**
  * What this device's membership row says about the ONE question that picks a door into a group:
@@ -28,4 +28,23 @@ export function readWelcomeOwedFromRow(row: DeviceMembershipRow | undefined): We
   if (row?.status !== 'pending') return 'not-pending';
   if (row.welcomeQueued === undefined && row.addInFlight === undefined) return 'owed';
   return row.welcomeQueued === true || row.addInFlight === true ? 'owed' : 'unhonoured-seat';
+}
+
+/**
+ * Whether a group this device HOLDS the tree for is one the server has given it only a roster seat
+ * for - `pending` with no Welcome queued, no add in flight and no admitting commit - read off the row
+ * `GET /mls/users/:id/groups` already returned.
+ *
+ * THE SILENT-READER HALF OF `recoverRosterDisagreement`, which is entered by a refused send. Every
+ * fact must be an explicit `false`: a server that does not say (`deviceMembership` absent or a field
+ * undefined) is not a server saying nobody owes this device anything, and a device in its first
+ * seconds after a legitimate add has a Welcome queued, the add lock held, or `admitted` set - so it
+ * is never mistaken for stranded. A device that does NOT hold the tree is the other seam's
+ * (`onGroupMissing`). PURE.
+ */
+export function isStrandedSeat(row: UserGroupRow, holdsTree: boolean): boolean {
+  if (!holdsTree) return false;
+  const seat = row.deviceMembership;
+  if (!seat || seat.status !== 'pending') return false;
+  return seat.welcomeQueued === false && seat.addInFlight === false && seat.admitted === false;
 }

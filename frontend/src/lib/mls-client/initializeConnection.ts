@@ -1,5 +1,6 @@
 import type { IMlsService } from './IMlsService';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
+import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -39,6 +40,13 @@ export interface ConnectionDeps {
    */
   onGroupMissing: (groupId: string) => Promise<void>;
   /**
+   * Called for a group this device HOLDS the tree of while the server says its own seat is a
+   * `pending` roster seat nothing follows (`isStrandedSeat`). Drives `recoverRosterDisagreement` -
+   * the same repair a refused send reaches, for the device that never sends. REQUIRED, for the
+   * reason `onGroupMissing` is: an optional seam is a path that silently does less.
+   */
+  onStrandedSeat: (groupId: string) => Promise<void>;
+  /**
    * Called when sync detects that a group was deleted server-side (deletedAt set). Lets the UI
    * mark the conversation `deletedRemotely` instead of removing it silently.
    */
@@ -53,6 +61,7 @@ export type SyncAfterConnectDeps = Pick<
   | 'processDeviceInvitationsLocally'
   | 'log'
   | 'onGroupMissing'
+  | 'onStrandedSeat'
 > & {
   /**
    * Called when sync detects that a group was deleted server-side (deletedAt set) and the
@@ -272,6 +281,26 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       }
       // requestReAdd handles its own logging, based on the actual outcome.
       await deps.onGroupMissing(g.groupId).catch(() => {});
+      continue;
+    }
+
+    // THE THIRD CASE: HOLDS THE TREE, AND THE SERVER HOLDS NO LEAF FOR IT. A device given a roster
+    // seat nobody honoured that never SENDS is refused nothing, so `recoverRosterDisagreement` (entered
+    // by a refused send) never sees it, while every frame the group produces is sealed to a tree its
+    // leaf is absent from. The row says so on the read made here - no timer, no new trigger. Only
+    // when no Welcome is queued, no add is in flight and no commit admitted it, so a device in its
+    // first seconds after a legitimate add is left alone; the repair is self-throttled and re-reads
+    // the same facts before it serves itself. `continue`: the repair checkpoints its own forget, and a tree being forgotten has no base to mint.
+    if (isStrandedSeat(g, true)) {
+      log(
+        `[ROSTER] ${g.groupId.slice(0, 8)}... this device holds the tree but the server holds only a ` +
+          'pending roster seat for it (no Welcome queued, no add in flight) - handing it to the repair'
+      );
+      await deps
+        .onStrandedSeat(g.groupId)
+        .catch((e) =>
+          log(`[ROSTER] ${g.groupId.slice(0, 8)}... repair failed: ${String(e).slice(0, 120)}`)
+        );
       continue;
     }
 

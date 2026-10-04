@@ -36,6 +36,7 @@ import { In } from 'typeorm';
 import { MessagingService } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
+import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -353,30 +354,13 @@ export class InvitationsController {
     });
 
     const pendingGroupIds = memberships.filter((m) => m.status === 'pending').map((m) => m.groupId);
-    const welcomed = new Set<string>();
-    const locked = new Set<string>();
-    if (pendingGroupIds.length > 0) {
-      const queued = await this.queuedMessageRepo.find({
-        select: { groupId: true },
-        where: {
-          deviceId: safeDeviceId,
-          isWelcome: true,
-          groupId: In(pendingGroupIds),
-        },
-      });
-      for (const q of queued) if (q.groupId) welcomed.add(q.groupId);
-
-      // ONE ROUND TRIP FOR THE WHOLE SET. `mget` answers null per absent key, so a group nobody is
-      // adding into costs nothing and a Redis that is down answers for none of them - which is the
-      // conservative direction: `addInFlight` false only ever makes the client ask a member, and
-      // asking a member is what it does today.
-      const held = await this.redis
-        .mget(pendingGroupIds.map((g) => `mls:addlock:${g}`))
-        .catch(() => pendingGroupIds.map(() => null));
-      pendingGroupIds.forEach((g, i) => {
-        if (held[i] !== null && held[i] !== undefined) locked.add(g);
-      });
-    }
+    const { welcomed, locked } = await readPendingMembershipFacts(
+      this.queuedMessageRepo,
+      this.redis,
+      safeDeviceId,
+      pendingGroupIds,
+      this.logger
+    );
 
     const answer = memberships.map((m) => ({
       ...m,

@@ -181,6 +181,8 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
     log: cb.log,
     onGroupMissing: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
+    onStrandedSeat: (groupId: string) =>
+      recoverRosterDisagreement(groupId, makeRecoveryDeps(ctx, cb)),
     onGroupDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(
         cb.conversations,
