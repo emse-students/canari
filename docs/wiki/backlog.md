@@ -1164,9 +1164,8 @@ Two things outlive it:
    handles `push`, or a component reaching for `new Notification` because it is two lines.
    `useNotifications.singleBuilder.test.ts` walks `src/` and `static/` and fails unless the ONE file
    that raises a banner is `useNotifications.svelte.ts` - verified by dropping a four-line service
-   worker into `static/` and watching it name the file. **The TRIGGER half rests on a `cfg` nothing
-   watches**: were `commands/push.rs` to grow a desktop branch, no test here would say so, and the
-   gate that would lift that is one reading those `#[cfg]` attributes out of the Rust source.
+   worker into `static/` and watching it name the file. The TRIGGER half is held by the same file
+   since 2026-10-04 ([mobile](frontend/mobile.md#one-builder-two-triggers)).
 
    **WHAT NONE OF IT SETTLES** is the wording: desktop still RENDERS the same event a third way, and
    nobody has read a desktop banner to see what it says or where a tap lands. That is a different

@@ -1147,6 +1147,12 @@ of the pair on 2026-09-18.
 paths post under `getStableNotifId(groupId)`, and Android replaces by id whoever posted - so the
 second arrival is an UPDATE of the first.
 
+**The web and the desktop cannot have the doubling, and one test holds both halves of why.**
+`useNotifications.singleBuilder.test.ts` fails unless `useNotifications.svelte.ts` is the ONE file
+that raises a banner (a service worker handling `push` would be a second builder), and reads
+`commands/push.rs` to assert that `get_fcm_token` and `get_voip_token` answer `None` off a phone (a
+desktop branch there would be a second trigger).
+
 That needed a call in the direction this app had never made, **Rust into Kotlin**, and the obstacle
 is documented where it bites: a thread attached from native code has no Java frames on its stack, so
 `FindClass` falls back to the system class loader and finds only the boot classpath. The app's own
