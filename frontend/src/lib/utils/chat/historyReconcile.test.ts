@@ -783,6 +783,15 @@ describe('the one-shot audit', () => {
     expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toContain('g-3');
   });
 
+  it('never owes it for a group that can never be audited - a distribution group', () => {
+    // `reconcileGroup` returns false for a distribution group for ever, so a pass can never
+    // discharge one: owing it was "auditing N group(s)" then "0/N asked" on every connection.
+    const isDistribution = (id: string) => id === 'g-2';
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, isDistribution)).toEqual(['g-1', 'g-3']);
+    noteGroupsAudited(USER, DEVICE, ['g-1', 'g-3']);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, isDistribution)).toEqual([]);
+  });
+
   it('accumulates across connections rather than replacing the record', () => {
     noteGroupsAudited(USER, DEVICE, ['g-1']);
     noteGroupsAudited(USER, DEVICE, ['g-2']);

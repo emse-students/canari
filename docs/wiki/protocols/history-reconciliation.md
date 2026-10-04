@@ -1144,6 +1144,11 @@ Two properties it is held to, both learnt above:
   good, which is step 3 of the failure above wearing a different hat. Recording the OUTPUT means a
   group that could not be compared comes back alone on the next connection instead of dragging the
   whole store with it.
+- **A group that can never be audited never owes it.** A distribution group (community seed
+  carrier, private salon scope) leaves `reconcileGroup` through its one SILENT `false`, for ever, so
+  the discharge above could never record one: a clean device logged `auditing 7 group(s) that never
+  have been` then `0/7 group(s) asked in 0 ms` on every connection (PIN-9, 2026-09-05).
+  `groupsOwingAudit` now takes `isDistributionGroup` as the predicate of what cannot be owed.
 - **Idempotence from durable state, termination from a proof.** Nothing is scheduled and nothing
   fires on an interval. A group joined after the audit ran is indistinguishable from one deferred
   during it, and costs exactly one probe, once, ever - cheaper than a second durable record of when

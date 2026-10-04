@@ -198,6 +198,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue(['g-deleted']),
       forgetGroup: vi.fn(),
+      // Asked by the audit, which never owes one for a distribution group.
+      isDistributionGroup: vi.fn().mockReturnValue(false),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       getUserGroups: vi.fn().mockResolvedValue([
         {
