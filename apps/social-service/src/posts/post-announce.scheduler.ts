@@ -5,7 +5,7 @@ import { Repository, IsNull, LessThanOrEqual } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { previewOf } from '../push/push-content';
-import { FEED_AUDIENCE_IDS_SQL } from './feed-audience';
+import { announceRecipientsSql } from '../spaces/reader-spaces';
 
 /**
  * HOW MANY UNANNOUNCED POSTS ONE TICK TAKES.
@@ -24,14 +24,14 @@ const ANNOUNCE_BATCH = 25;
  * Reported by the user on 2026-09-10 as two asks in one breath - *"Les gens doivent avoir une
  * notif pour tous les posts d'associations"* and *"...pour tous les posts de gens ou d'assos
  * qu'ils suivent"*. They are ONE mechanism with TWO recipient derivations, which is why they are
- * one sweeper: an association's post goes to everyone who can see the feed, a person's post goes
- * to that person's followers.
+ * one sweeper: an association's post goes to everyone who can SEE THAT POST, a person's post goes
+ * to those of that person's followers who can see it.
  *
- * NOTE THAT THE FIRST ASK SUBSUMES HALF OF THE SECOND. If every association post reaches the whole
- * feed audience, then FOLLOWING an association adds nothing to what you are told, and
- * `association_follows` is deliberately not consulted here. It would become the opt-in the moment
- * the first rule is ever narrowed - which is the one change that would make this file need a third
- * derivation rather than a different one.
+ * WHO CAN SEE A POST IS `postVisibleToUserSql` (WP6b, `spaces/reader-spaces.ts`) - the same
+ * predicate every read applies, so a notification never points at a post its recipient would get
+ * a 404 for. Until WP6b it was "everyone who can see the feed", because every post went to all of
+ * it. FOLLOWING an association still adds nothing to what you are told: everyone the association
+ * reaches is told already, and `association_follows` is deliberately not consulted here.
  *
  * WHY A SWEEPER AND NOT A CALL IN `createPost`. Two reasons, and the second is the real one.
  * `scheduledAt` exists on `posts` and **nothing has ever published a scheduled post** - the column
@@ -98,7 +98,7 @@ export class PostAnnounceScheduler {
   }
 
   /**
-   * An association published: everyone who can see the feed is told.
+   * An association published: everyone who can see this post is told.
    *
    * The actor NAME is the association's, while the actor ID stays the member who pressed publish -
    * `createNotifications` excludes the actor from its own recipients, and an officer being told
@@ -116,7 +116,7 @@ export class PostAnnounceScheduler {
       // announcing it as "quelqu'un" would hide that. The post stays stamped and nobody is told.
       throw new Error(`association ${post.associationId} has no name`);
     }
-    const recipientIds = await this.audienceIds();
+    const recipientIds = await this.recipientIds(post, false);
     return this.notifications.createNotifications({
       recipientIds,
       type: 'association_post',
@@ -149,13 +149,7 @@ export class PostAnnounceScheduler {
    */
   private async announcePersonalPost(post: Post): Promise<number> {
     if (post.anonymous) return 0;
-    const rows: unknown = await this.postRepo.manager.query(
-      `SELECT "followerUserId" FROM user_follows WHERE "followedUserId" = $1`,
-      [post.authorId]
-    );
-    const recipientIds = Array.isArray(rows)
-      ? rows.map((r) => String(r.followerUserId)).filter((id) => id !== post.authorId)
-      : [];
+    const recipientIds = await this.recipientIds(post, true);
     if (recipientIds.length === 0) return 0;
     return this.notifications.createNotifications({
       recipientIds,
@@ -167,9 +161,14 @@ export class PostAnnounceScheduler {
     });
   }
 
-  /** Everyone the feed is visible to. The rule itself is in `feed-audience.ts`, stated once. */
-  private async audienceIds(): Promise<string[]> {
-    const rows: unknown = await this.postRepo.manager.query(FEED_AUDIENCE_IDS_SQL);
+  /**
+   * Everyone who can see `post`, minus its author - narrowed to the author's followers for a
+   * personal post. The rule itself is in `spaces/reader-spaces.ts`, stated once.
+   */
+  private async recipientIds(post: Post, followersOnly: boolean): Promise<string[]> {
+    const rows: unknown = await this.postRepo.manager.query(announceRecipientsSql(followersOnly), [
+      post.id,
+    ]);
     return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
   }
 }

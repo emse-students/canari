@@ -11,7 +11,7 @@ import {
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, type EntityManager } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
@@ -40,6 +40,15 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
+import {
+  postVisibleToViewerSql,
+  readInFeedAudience,
+  rulesOutsideCeiling,
+  type SpacePair,
+} from '../spaces/reader-spaces';
+import { PostAudience } from '../spaces/post-audience.entity';
+import { normaliseRules, type AudienceRule } from '../spaces/spaces.service';
+import type { AudienceRuleDto } from '../spaces/dto/space.dto';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -478,7 +487,108 @@ export class PostsService {
     }
   }
 
+  /**
+   * The rules a post's author submitted, checked against the publisher's CEILING (D33), or
+   * `undefined` when none were submitted (an edit then leaves the stored ones alone).
+   *
+   * An empty list is valid and means "inherit the association's rules". A personal post has no
+   * publisher rules to narrow - it inherits its author's spaces - so it may not carry any. A rule is
+   * inside the ceiling when every pair it covers is covered by one of the association's own rules;
+   * a global admin is held to the same ceiling, going beyond it being the nominative grant of WP7.
+   */
+  private async resolvePostAudiences(
+    associationId: string | null,
+    submitted: AudienceRuleDto[] | undefined
+  ): Promise<AudienceRule[] | undefined> {
+    if (submitted === undefined) return undefined;
+    const rules = normaliseRules(submitted);
+    if (rules.length === 0) return [];
+    if (!associationId) {
+      this.logger.debug(`[AUDIENCE] refused: ${rules.length} rule(s) on a personal post`);
+      throw new BadRequestException('A personal post cannot choose its audience');
+    }
+    const [ceiling, spaces] = await Promise.all([
+      this.postRepo.manager.query(
+        `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
+        [associationId]
+      ) as Promise<AudienceRule[]>,
+      this.postRepo.manager.query(`SELECT formation, campus FROM spaces`) as Promise<SpacePair[]>,
+    ]);
+    const outside = rulesOutsideCeiling(rules, ceiling, spaces);
+    if (outside.length > 0) {
+      this.logger.debug(
+        `[AUDIENCE] refused for ${associationId.slice(0, 8)}: ${outside.length} rule(s) outside its ceiling`
+      );
+      throw new BadRequestException("A post's audience must stay within its association's");
+    }
+    this.logger.debug(
+      `[AUDIENCE] ${rules.length} rule(s) accepted for ${associationId.slice(0, 8)}`
+    );
+    return rules;
+  }
+
+  /**
+   * Replaces a post's own rules, inside the caller's transaction. `undefined` leaves them alone;
+   * an empty list removes them (the post inherits its association's rules again).
+   */
+  private async writePostAudiences(
+    manager: EntityManager,
+    postId: string,
+    rules: AudienceRule[] | undefined
+  ): Promise<void> {
+    if (rules === undefined) return;
+    await manager.delete(PostAudience, { postId });
+    if (rules.length > 0) {
+      await manager.insert(
+        PostAudience,
+        rules.map((r) => ({ postId, formation: r.formation, campus: r.campus }))
+      );
+    }
+  }
+
+  /**
+   * Saves a post and, when rules were submitted, replaces its own rules IN THE SAME TRANSACTION:
+   * the announce sweeper reads both, and a post committed a moment before its rules would be
+   * announced to its publisher's whole ceiling. With no rules submitted there is nothing to keep
+   * atomic, and the save is the plain one it always was.
+   */
+  private async savePost(post: Post, audiences: AudienceRule[] | undefined): Promise<Post> {
+    if (audiences === undefined) return this.postRepo.save(post);
+    return this.postRepo.manager.transaction(async (manager) => {
+      const row = await manager.save(post);
+      await this.writePostAudiences(manager, row.id, audiences);
+      return row;
+    });
+  }
+
+  /** Whether `userId` may use the feed at all - the gate's question, for `GET /posts/audience`. */
+  async isInFeedAudience(userId: string): Promise<boolean> {
+    const inAudience = await readInFeedAudience(this.postRepo.manager, userId);
+    this.logger.debug(`[FEED_GATE] audience of ${userId.slice(0, 8)}: ${inAudience}`);
+    return inAudience;
+  }
+
+  /**
+   * Refuses with 404 a post `viewerId` may not see (WP6b decision 3) - `postVisibleToViewerSql`,
+   * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
+   * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing.
+   */
+  async assertVisible(postId: string, viewerId: string | undefined): Promise<void> {
+    const rows: { visible: boolean }[] = await this.postRepo.manager.query(
+      `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible FROM posts WHERE posts.id = $1`,
+      [postId, viewerId ?? null]
+    );
+    if (rows[0]?.visible !== true) {
+      this.logger.debug(`[VISIBILITY] post ${postId} withheld from ${viewerId?.slice(0, 8)}`);
+      throw new NotFoundException('Post not found');
+    }
+  }
+
   async createPost(data: any, isGlobalAdmin: boolean) {
+    // Decided FIRST, before anything is claimed or written: a rule outside the ceiling is a 400
+    // with no reel blob claimed and no row stored.
+    const audiences = await this.resolvePostAudiences(data.associationId ?? null, data.audiences);
+    delete data.audiences;
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
         data.associationId,
@@ -519,10 +629,10 @@ export class PostsService {
       delete data.durationMs;
     }
 
-    const post = this.postRepo.create(data);
-    let saved;
+    const post = this.postRepo.create(data) as unknown as Post;
+    let entity: Post;
     try {
-      saved = await this.postRepo.save(post);
+      entity = await this.savePost(post, audiences);
     } catch (e) {
       // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
       // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
@@ -530,7 +640,6 @@ export class PostsService {
       throw e;
     }
     await this.invalidateListCache();
-    const entity = Array.isArray(saved) ? saved[0] : saved;
 
     // Fire-and-forget mention notifications
     if (mentionedIds.length > 0 && entity.id) {
@@ -619,6 +728,7 @@ export class PostsService {
       ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${params.push(promoCutoff)}::timestamptz`
       : '';
     const bp = blockedIds.length > 0 ? params.push(blockedIds) : null;
+    const viewerParam = params.push(viewer?.viewerUserId ?? null);
 
     const rawPosts: any[] = await this.postRepo.manager.query(
       `SELECT ${this.postSelectBody(bp)}
@@ -631,6 +741,7 @@ export class PostsService {
          ${this.liveReelFilterSql()}
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
+         AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
       params
@@ -870,6 +981,11 @@ export class PostsService {
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
     const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind)}`;
     const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
+    // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
+    // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
+    const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
+    const viewerParam = viewerUserId ?? null;
+    const visibleAt = (index: number) => `AND ${postVisibleToViewerSql('posts', `$${index}`)}`;
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -887,9 +1003,10 @@ export class PostsService {
          ${reelFilters}
          ${serviceAccountFilter}
          ${promoSql(3)}
+         ${visibleAt(3 + tail.length)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
+        [limit, offset, ...tail, viewerParam]
       );
     } else if (feed === 'all') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -904,9 +1021,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
+         ${visibleAt(3 + tail.length)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
+        [limit, offset, ...tail, viewerParam]
       );
     } else if (feed === 'followed') {
       // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional),
@@ -930,16 +1048,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
+         ${visibleAt(5 + tail.length)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [
-          limit,
-          offset,
-          followedAssocIds,
-          followedUserIds,
-          ...(promoCutoff ? [promoCutoff] : []),
-          ...blockedParams,
-        ]
+        [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
     } else {
       // $1=limit, $2=offset, $3=promoParam, $4=formationParam, $5=promoCutoff (optional),
@@ -959,16 +1071,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
+         ${visibleAt(5 + tail.length)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [
-          limit,
-          offset,
-          promoParam,
-          formationParam,
-          ...(promoCutoff ? [promoCutoff] : []),
-          ...blockedParams,
-        ]
+        [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );
     }
 
@@ -1138,9 +1244,10 @@ export class PostsService {
          AND NOT COALESCE(posts."hiddenByModeration", false)
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
+         AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
        ORDER BY posts."createdAt" DESC
        LIMIT 1`,
-      [eventId, ...(blockedIds.length > 0 ? [blockedIds] : [])]
+      [eventId, ...(blockedIds.length > 0 ? [blockedIds] : []), viewerId ?? null]
     );
     const post = rows[0];
     if (!post) return null;
@@ -1160,6 +1267,9 @@ export class PostsService {
       this.logger.debug(`getById ${id} withheld: reel expired at ${String(post.expiresAt)}`);
       throw new NotFoundException('Post not found');
     }
+    // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
+    // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
+    await this.assertVisible(id, opts?.viewerId);
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
     }
@@ -1237,19 +1347,23 @@ export class PostsService {
       attachedFormId?: string | null;
       linkedCalendarEventId?: string | null;
       scheduledAt?: string | null;
+      /** The post's own rules (D33); absent leaves them alone, empty inherits the association's. */
+      audiences?: AudienceRuleDto[];
     },
     isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayManage(post, userId, isGlobalAdmin);
+    // Who sees it is not content, so a reel's rules are edited like a post's.
+    const audiences = await this.resolvePostAudiences(post.associationId ?? null, data.audiences);
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
       if (isExpiredReel(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
-      const saved = await this.postRepo.save(post);
+      const saved = await this.savePost(post, audiences);
       await this.invalidateListCache();
       return this.toPublicPostFromEntity(
         saved,
@@ -1291,7 +1405,7 @@ export class PostsService {
       : [];
     post.mentions = mentionedIds;
 
-    const saved = await this.postRepo.save(post);
+    const saved = await this.savePost(post, audiences);
     await this.invalidateListCache();
     return this.toPublicPostFromEntity(
       saved,

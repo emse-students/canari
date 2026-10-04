@@ -10,7 +10,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
-import { In, Not, Repository } from 'typeorm';
+import { In, Not, Repository, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -58,6 +58,7 @@ import {
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -236,8 +237,9 @@ export class AssociationsService {
   private async invalidatePostListCaches(): Promise<void> {
     try {
       await invalidatePostListCache(this.redis);
-    } catch {
-      /* non-fatal */
+    } catch (e: unknown) {
+      // Non-fatal, and logged: a sweep that failed leaves pages stale for up to their TTL.
+      this.logger.warn('[CACHE] feed cache sweep failed - pages stay stale until their TTL', e);
     }
   }
 
@@ -757,7 +759,11 @@ export class AssociationsService {
       permissions,
       sortOrder,
     });
-    return this.memberRepo.save(membership);
+    const saved = await this.memberRepo.save(membership);
+    // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
+    // every cached feed page of that reader depends on.
+    await this.invalidatePostListCaches();
+    return saved;
   }
 
   /** Updates `sortOrder` for each member in the list, preserving the given array order. */
@@ -821,6 +827,8 @@ export class AssociationsService {
     }
 
     await this.memberRepo.delete(membership.id);
+    // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
+    await this.invalidatePostListCaches();
     return { ok: true };
   }
 
@@ -1155,6 +1163,7 @@ export class AssociationsService {
     if (promoCutoff) {
       qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
     }
+    this.restrictToViewerSpaces(qb, opts?.viewer);
     if (fromIso?.trim()) {
       // Include multi-day events that started before `from` but end within or after the window.
       qb.andWhere('COALESCE(e.endsAt, e.startsAt) >= :from', { from: new Date(fromIso) });
@@ -1196,6 +1205,26 @@ export class AssociationsService {
       select: { id: true, name: true, slug: true, color: true, logoUrl: true },
     });
     return new Map(owners.map((a) => [a.id, a]));
+  }
+
+  /**
+   * A SIGNED-IN READER'S AGENDA IS THEIR SPACES' (WP6b): an event is kept when the rules of its
+   * association reach one of the reader's spaces, when the reader is a member of that association
+   * (D21), or when the reader is a global admin - `associationVisibleToViewerSql`, the predicate the
+   * feed uses for an association post. An anonymous read (the public agenda and its `.ics`, D30)
+   * passes no viewer and is left whole, exactly as the promo cutoff leaves it: like that cutoff,
+   * this is relevance and not confidentiality.
+   */
+  private restrictToViewerSpaces(
+    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+    viewer: CalendarViewer | undefined
+  ): void {
+    const viewerId = viewer?.userId?.trim();
+    if (!viewerId) return;
+    this.logger.debug(`[AGENDA] restricted to the spaces of ${viewerId.slice(0, 8)}`);
+    qb.andWhere(associationVisibleToViewerSql('e."associationId"', ':agendaViewerId'), {
+      agendaViewerId: viewerId,
+    });
   }
 
   /** Max span for aggregated calendar queries (abuse guard). */
@@ -1556,6 +1585,7 @@ export class AssociationsService {
     if (promoCutoff) {
       qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
     }
+    this.restrictToViewerSpaces(qb, opts?.viewer);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {
