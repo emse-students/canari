@@ -27,6 +27,10 @@
 "notif.social.association_post.body" = "New post";
 "notif.social.followed_post.title" = "%@ posted";
 "notif.social.followed_post.body" = "New post";
+"notif.social.association_repost.title" = "%@ shared a post";
+"notif.social.association_repost.body" = "New post";
+"notif.social.repost_proposed.title" = "%@ proposes a post to share";
+"notif.social.repost_proposed.body" = "A post to share";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";

@@ -1,6 +1,5 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -22,7 +21,6 @@ import {
   type ValidationArguments,
   type ValidatorConstraintInterface,
 } from 'class-validator';
-import { AudienceRuleDto } from '../../spaces/dto/space.dto';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -314,19 +312,6 @@ export class CreatePostDto {
   @IsDateString()
   @IsOptional()
   scheduledAt?: string;
-
-  /**
-   * The post's OWN audience rules (D33, docs/wiki/profiles-and-access.md): `null`/absent sides
-   * mean "any". Absent or empty inherits the publishing association's rules. Every rule must stay
-   * inside that association's own rules (its ceiling) - the server answers 400 otherwise - and a
-   * personal post cannot carry any.
-   */
-  @IsArray()
-  @IsOptional()
-  @ArrayMaxSize(16)
-  @ValidateNested({ each: true })
-  @Type(() => AudienceRuleDto)
-  audiences?: AudienceRuleDto[];
 }
 
 export class ListPostsQueryDto {
@@ -456,17 +441,13 @@ export class UpdatePostDto {
   @ValidateIf((_, v) => v != null && v !== '')
   @IsDateString()
   scheduledAt?: string | null;
+}
 
-  /**
-   * The post's OWN audience rules (D33, docs/wiki/profiles-and-access.md): `null`/absent sides
-   * mean "any". Absent or empty inherits the publishing association's rules. Every rule must stay
-   * inside that association's own rules (its ceiling) - the server answers 400 otherwise - and a
-   * personal post cannot carry any.
-   */
-  @IsArray()
-  @IsOptional()
-  @ArrayMaxSize(16)
-  @ValidateNested({ each: true })
-  @Type(() => AudienceRuleDto)
-  audiences?: AudienceRuleDto[];
+/**
+ * The association a post is republished AS, or proposed TO (D38). One field for both routes: who
+ * acts and what it means is the route's, never a flag in the body.
+ */
+export class RepublicationTargetDto {
+  @IsUUID()
+  associationId: string;
 }

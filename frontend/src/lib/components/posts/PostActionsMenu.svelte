@@ -1,5 +1,17 @@
 <script lang="ts">
-  import { Pin, PinOff, Pencil, Trash2, Flag, Link, Ellipsis, VenetianMask } from '@lucide/svelte';
+  import {
+    Pin,
+    PinOff,
+    Pencil,
+    Trash2,
+    Flag,
+    Link,
+    Ellipsis,
+    VenetianMask,
+    Repeat2,
+    Send,
+    Undo2,
+  } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -34,7 +46,8 @@
    * `onReport` now opens the shared dialog and this component holds no report state at all.
    *
    * Every gate below is a boolean the SERVER answered for this reader (`canManage`, `canPin`,
-   * `canReport`); nothing here is derived from the post's contents. A card cannot tell its own
+   * `canReport`, `canRepublish`, `canProposeRepublication`, and the `canUnrepublishAs` list);
+   * nothing here is derived from the post's contents. A card cannot tell its own
    * association's posts from anyone else's - their author is stripped on purpose - nor whether its
    * reader moderates the feed.
    */
@@ -67,6 +80,18 @@
     onUnmaskAnonymous: () => void;
     /** Post id used for the public share link. */
     postId: string;
+    /** May republish this post as one of their associations at once (D38). */
+    canRepublish?: boolean;
+    /** May propose this post to another association, which decides (D38). */
+    canProposeRepublication?: boolean;
+    /** The republications this reader may withdraw - one entry per republishing association. */
+    unrepublishAs?: { id: string; name: string }[];
+    /** Called when the reader picks "Republier": the card opens `RepublishDialog`. */
+    onRepublish?: () => void;
+    /** Called when the reader picks "Proposer a une association". */
+    onProposeRepublication?: () => void;
+    /** Called with the association whose republication the reader withdraws. */
+    onUnrepublish?: (associationId: string) => void;
   }
 
   let {
@@ -82,6 +107,12 @@
     onReport,
     onUnmaskAnonymous,
     postId,
+    canRepublish = false,
+    canProposeRepublication = false,
+    unrepublishAs = [],
+    onRepublish = () => {},
+    onProposeRepublication = () => {},
+    onUnrepublish = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -176,6 +207,42 @@
           <Link size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
+
+        {#if canRepublish}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(onRepublish)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Repeat2 size={16} strokeWidth={2.5} />
+            {m.post_republish_action()}
+          </button>
+        {/if}
+
+        {#if canProposeRepublication}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(onProposeRepublication)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Send size={16} strokeWidth={2.5} />
+            {m.post_propose_republication_action()}
+          </button>
+        {/if}
+
+        {#each unrepublishAs as republisher (republisher.id)}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(() => onUnrepublish(republisher.id))}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Undo2 size={16} strokeWidth={2.5} />
+            <span class="truncate">{m.post_unrepublish_action({ name: republisher.name })}</span>
+          </button>
+        {/each}
 
         {#if canPin}
           <button

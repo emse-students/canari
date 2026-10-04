@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
 import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
+import { dropRepublicationsOf } from '../posts/republication-sql';
 
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
@@ -78,12 +79,16 @@ export class ModerationService {
         where: { contentId: data.contentId, status: 'pending' },
       });
       if (pendingCount >= AUTO_HIDE_THRESHOLD) {
-        await this.reportRepo.manager.query(
-          `UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`,
-          [data.contentId]
-        );
+        const dropped = await this.reportRepo.manager.transaction(async (manager) => {
+          await manager.query(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [
+            data.contentId,
+          ]);
+          // D38: a hidden post loses every republication and pending repost proposal.
+          return dropRepublicationsOf(manager, data.contentId);
+        });
         this.logger.log(
-          `Post ${sanitizeLog(data.contentId)} auto-hidden after ${pendingCount} pending reports`
+          `Post ${sanitizeLog(data.contentId)} auto-hidden after ${pendingCount} pending reports ` +
+            `(${dropped.republications} republication(s), ${dropped.proposals} pending proposal(s) removed)`
         );
       }
     }

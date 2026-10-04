@@ -1,5 +1,5 @@
 /**
- * Rule row `rule` (an `association_audiences` or `post_audiences` row: formation/campus, NULL =
+ * Rule row `rule` (an `association_audiences` row: formation/campus, NULL =
  * any) reaches space row `space` - the SQL twin of `ruleReachesSpace` in `spaces.service.ts`.
  *
  * Its own module, importing nothing, because two places splice it: the readers

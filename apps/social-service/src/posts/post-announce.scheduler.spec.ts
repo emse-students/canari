@@ -28,6 +28,10 @@ describe('PostAnnounceScheduler', () => {
 
   /** A scheduler over `rows`, with the three tables it reads answered by `answer`. */
   function scheduler(rows: Row[], answer: (sql: string) => unknown[] = () => []) {
+    const query = (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return Promise.resolve(answer(sql));
+    };
     const postRepo = {
       find: () => Promise.resolve(rows),
       update: (id: string, patch: Record<string, unknown>) => {
@@ -35,10 +39,15 @@ describe('PostAnnounceScheduler', () => {
         return Promise.resolve({});
       },
       manager: {
-        query: (sql: string, params?: unknown[]) => {
-          queries.push({ sql, params });
-          return Promise.resolve(answer(sql));
-        },
+        query,
+        // The stamp and the recipient read share ONE transaction (the row lock a republication
+        // waits on); its manager writes through `postRepo.update` so a test can wrap that.
+        transaction: (fn: (m: unknown) => Promise<unknown>) =>
+          fn({
+            update: (_entity: unknown, id: string, patch: Record<string, unknown>) =>
+              postRepo.update(id, patch),
+            query,
+          }),
       },
     };
     const notifications = {

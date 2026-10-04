@@ -77,10 +77,10 @@ export class PostAnnounceScheduler {
     for (const post of pending) {
       try {
         // BEFORE the send. See the class docblock.
-        await this.postRepo.update(post.id, { feedNotifiedAt: new Date() });
+        const recipientIds = await this.stampAndReadRecipients(post);
         const count = post.associationId
-          ? await this.announceAssociationPost(post)
-          : await this.announcePersonalPost(post);
+          ? await this.announceAssociationPost(post, recipientIds)
+          : await this.announcePersonalPost(post, recipientIds);
         announced++;
         reached += count;
         this.logger.log(
@@ -104,7 +104,7 @@ export class PostAnnounceScheduler {
    * `createNotifications` excludes the actor from its own recipients, and an officer being told
    * about their own association's post is exactly what that exclusion is for.
    */
-  private async announceAssociationPost(post: Post): Promise<number> {
+  private async announceAssociationPost(post: Post, recipientIds: string[]): Promise<number> {
     const rows: unknown = await this.postRepo.manager.query(
       `SELECT name, "logoUrl", "logoMediaId" FROM associations WHERE id = $1`,
       [post.associationId]
@@ -116,7 +116,6 @@ export class PostAnnounceScheduler {
       // announcing it as "quelqu'un" would hide that. The post stays stamped and nobody is told.
       throw new Error(`association ${post.associationId} has no name`);
     }
-    const recipientIds = await this.recipientIds(post, false);
     return this.notifications.createNotifications({
       recipientIds,
       type: 'association_post',
@@ -147,9 +146,8 @@ export class PostAnnounceScheduler {
    * by exactly the fact this notification carries, whatever name is on it. The only fix that
    * removes the signal is to never announce it.
    */
-  private async announcePersonalPost(post: Post): Promise<number> {
+  private async announcePersonalPost(post: Post, recipientIds: string[]): Promise<number> {
     if (post.anonymous) return 0;
-    const recipientIds = await this.recipientIds(post, true);
     if (recipientIds.length === 0) return 0;
     return this.notifications.createNotifications({
       recipientIds,
@@ -162,13 +160,26 @@ export class PostAnnounceScheduler {
   }
 
   /**
-   * Everyone who can see `post`, minus its author - narrowed to the author's followers for a
-   * personal post. The rule itself is in `spaces/reader-spaces.ts`, stated once.
+   * Stamps `post` and reads who to tell - everyone who can see it, minus its author, narrowed to
+   * the author's followers for a personal post (the rule is in `spaces/reader-spaces.ts`) - IN ONE
+   * TRANSACTION, so the post row stays locked from the stamp to the read.
+   *
+   * A republication (`republications.service.ts`) takes the same row lock before it decides
+   * whether the post was already announced. Either it commits first, and this read already counts
+   * its audience, or it waits for this one, sees the stamp, and tells the readers it newly reaches
+   * itself. Without the lock a republication landing between the stamp and the read would be
+   * announced twice to the same reader.
+   *
+   * An anonymous personal post is stamped and nobody is asked about: see `announcePersonalPost`.
    */
-  private async recipientIds(post: Post, followersOnly: boolean): Promise<string[]> {
-    const rows: unknown = await this.postRepo.manager.query(announceRecipientsSql(followersOnly), [
-      post.id,
-    ]);
-    return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
+  private stampAndReadRecipients(post: Post): Promise<string[]> {
+    return this.postRepo.manager.transaction(async (manager) => {
+      await manager.update(Post, post.id, { feedNotifiedAt: new Date() });
+      if (!post.associationId && post.anonymous) return [];
+      const rows: unknown = await manager.query(announceRecipientsSql(!post.associationId), [
+        post.id,
+      ]);
+      return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
+    });
   }
 }

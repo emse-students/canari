@@ -41,12 +41,10 @@ function service(
     slug: 'bde',
     logoUrl: '/api/media/public/logo-1',
     archived: false,
-  },
-  ownRules = 0
+  }
 ) {
   const postRepo = {
     findOne: jest.fn(() => Promise.resolve(row)),
-    manager: { query: jest.fn(() => Promise.resolve([{ n: ownRules }])) },
   } as unknown as Repository<Post>;
   const associations = {
     findById: jest.fn(() =>
@@ -87,11 +85,6 @@ describe('PostPreviewService.getSharePreview - the one predicate', () => {
   it('refuses a post whose association is archived', async () => {
     const archived = { name: 'BDE', slug: 'bde', logoUrl: null, archived: true };
     expect(await service(post(), archived).getSharePreview(UUID)).toBeNull();
-  });
-
-  it('refuses a post whose author gave it an audience of its own (D33)', async () => {
-    // Choosing who sees a post is not choosing "anyone holding the link".
-    expect(await service(post(), undefined, 2).getSharePreview(UUID)).toBeNull();
   });
 
   it('refuses when the association lookup throws rather than propagating a 404', async () => {

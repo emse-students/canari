@@ -11,7 +11,7 @@ import {
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, type EntityManager } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
@@ -40,15 +40,13 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
+import { postVisibleToViewerSql, readInFeedAudience } from '../spaces/reader-spaces';
 import {
-  postVisibleToViewerSql,
-  readInFeedAudience,
-  rulesOutsideCeiling,
-  type SpacePair,
-} from '../spaces/reader-spaces';
-import { PostAudience } from '../spaces/post-audience.entity';
-import { normaliseRules, type AudienceRule } from '../spaces/spaces.service';
-import type { AudienceRuleDto } from '../spaces/dto/space.dto';
+  REPUBLISHING_ASSOCIATION_TYPES,
+  dropRepublicationsOf,
+  republishersOf,
+  type Republisher,
+} from './republication-sql';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -63,6 +61,12 @@ interface PostViewerContext {
   isModerator: boolean;
   /** Associations where the reader holds `POST_AS_ASSO`, hence may manage what was said in their name. */
   managedAssociationIds: Set<string>;
+  /**
+   * Every association, of a kind that republishes, in whose name the reader may publish - the
+   * associations they could republish a post AS (D38). Empty for a global admin, who may republish
+   * as any (`isGlobalAdmin` decides that).
+   */
+  republishAsIds: Set<string>;
 }
 
 /**
@@ -81,6 +85,18 @@ interface PostCapabilities {
   canReport: boolean;
   /** Clears an anonymous post's flag, revealing its author. Same tier as `canPin`. */
   canUnmaskAnonymous: boolean;
+  /**
+   * "Republier" (D38): an association post, and the reader may publish as at least one OTHER
+   * association that has not republished it yet. The server checks the chosen one again.
+   */
+  canRepublish: boolean;
+  /** "Proposer a une association": an association post its reader may publish in the name of. */
+  canProposeRepublication: boolean;
+  /**
+   * The republishers (ids among `republishedBy`) whose republication this reader may withdraw - an
+   * association removes its OWN (D38), so these are the ones the reader may publish as.
+   */
+  canUnrepublishAs: string[];
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -179,6 +195,7 @@ export class PostsService {
     isGlobalAdmin: false,
     isModerator: false,
     managedAssociationIds: new Set(),
+    republishAsIds: new Set(),
   };
 
   /**
@@ -200,18 +217,52 @@ export class PostsService {
         isGlobalAdmin: true,
         isModerator: true,
         managedAssociationIds: new Set(),
+        republishAsIds: new Set(),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator] = await Promise.all([
+    const [managedAssociationIds, isModerator, republishAsIds] = await Promise.all([
       this.associationsService.mayActOnAny(
         viewerId,
         associationIds,
         AssociationPermissionFlag.POST_AS_ASSO
       ),
       this.associationsService.isContentModerator(viewerId),
+      this.republishAsIdsOf(viewerId),
     ]);
-    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds };
+    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds, republishAsIds };
+  }
+
+  /**
+   * The associations `viewerId` could republish a post AS: membership rows holding `POST_AS_ASSO`,
+   * of a type that republishes. Membership alone is exact here because `POST_AS_ASSO` is in
+   * `SUPER_ADMIN_EXCLUDED_FLAGS` - no BDE tier borrows another association's voice.
+   */
+  private async republishAsIdsOf(viewerId: string): Promise<Set<string>> {
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT am."associationId" FROM association_members am
+         JOIN associations a ON a.id = am."associationId"
+        WHERE am."userId" = $1 AND (am.permissions & $2) <> 0 AND a.type = ANY($3::text[])`,
+      [viewerId, AssociationPermissionFlag.POST_AS_ASSO, REPUBLISHING_ASSOCIATION_TYPES]
+    );
+    return new Set(
+      Array.isArray(rows) ? rows.map((r: { associationId: string }) => r.associationId) : []
+    );
+  }
+
+  /**
+   * Stamps `republishedBy` (D38: "Republie par X, Y") onto each association post of a page, in
+   * ONE query, BEFORE the rows are shaped - `canRepublish` reads it to leave out the associations
+   * that already did.
+   */
+  private async attachRepublishers(
+    rows: { id: string; associationId?: string | null; republishedBy?: Republisher[] }[]
+  ): Promise<void> {
+    const ids = rows.filter((r) => r.associationId).map((r) => r.id);
+    const byPost = await republishersOf(this.postRepo.manager, ids);
+    for (const row of rows) {
+      if (row.associationId) row.republishedBy = byPost.get(row.id) ?? [];
+    }
   }
 
   /**
@@ -252,7 +303,12 @@ export class PostsService {
    * corrects and withdraws its own words and pins nothing.
    */
   private viewerCapabilities(
-    post: { authorId?: string | null; associationId?: string | null; anonymous?: boolean },
+    post: {
+      authorId?: string | null;
+      associationId?: string | null;
+      anonymous?: boolean;
+      republishedBy?: Republisher[];
+    },
     viewer: PostViewerContext
   ): PostCapabilities {
     const isPublisher = this.viewerIsPublisher(post, viewer);
@@ -262,7 +318,26 @@ export class PostsService {
       canPin: isModeratorTier,
       canReport: !!viewer.viewerId && !isPublisher,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
+      canRepublish: this.viewerMayRepublish(post, viewer),
+      canProposeRepublication:
+        !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
+      canUnrepublishAs: viewer.viewerId
+        ? (post.republishedBy ?? [])
+            .map((r) => r.id)
+            .filter((id) => viewer.isGlobalAdmin || viewer.republishAsIds.has(id))
+        : [],
     };
+  }
+
+  /** `canRepublish`: see `PostCapabilities`. A personal post is never republished (D38). */
+  private viewerMayRepublish(
+    post: { associationId?: string | null; republishedBy?: Republisher[] },
+    viewer: PostViewerContext
+  ): boolean {
+    if (!viewer.viewerId || !post.associationId) return false;
+    if (viewer.isGlobalAdmin) return true;
+    const already = new Set((post.republishedBy ?? []).map((r) => r.id));
+    return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
 
   /**
@@ -329,7 +404,8 @@ export class PostsService {
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
     }
-    Object.assign(raw, this.viewerCapabilities(post, viewer));
+    await this.attachRepublishers([raw]);
+    Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (!raw.associationId) {
       if (this.mustHideAnonymousAuthor(post, viewer)) {
@@ -487,80 +563,6 @@ export class PostsService {
     }
   }
 
-  /**
-   * The rules a post's author submitted, checked against the publisher's CEILING (D33), or
-   * `undefined` when none were submitted (an edit then leaves the stored ones alone).
-   *
-   * An empty list is valid and means "inherit the association's rules". A personal post has no
-   * publisher rules to narrow - it inherits its author's spaces - so it may not carry any. A rule is
-   * inside the ceiling when every pair it covers is covered by one of the association's own rules;
-   * a global admin is held to the same ceiling, going beyond it being the nominative grant of WP7.
-   */
-  private async resolvePostAudiences(
-    associationId: string | null,
-    submitted: AudienceRuleDto[] | undefined
-  ): Promise<AudienceRule[] | undefined> {
-    if (submitted === undefined) return undefined;
-    const rules = normaliseRules(submitted);
-    if (rules.length === 0) return [];
-    if (!associationId) {
-      this.logger.debug(`[AUDIENCE] refused: ${rules.length} rule(s) on a personal post`);
-      throw new BadRequestException('A personal post cannot choose its audience');
-    }
-    const [ceiling, spaces] = await Promise.all([
-      this.postRepo.manager.query(
-        `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
-        [associationId]
-      ) as Promise<AudienceRule[]>,
-      this.postRepo.manager.query(`SELECT formation, campus FROM spaces`) as Promise<SpacePair[]>,
-    ]);
-    const outside = rulesOutsideCeiling(rules, ceiling, spaces);
-    if (outside.length > 0) {
-      this.logger.debug(
-        `[AUDIENCE] refused for ${associationId.slice(0, 8)}: ${outside.length} rule(s) outside its ceiling`
-      );
-      throw new BadRequestException("A post's audience must stay within its association's");
-    }
-    this.logger.debug(
-      `[AUDIENCE] ${rules.length} rule(s) accepted for ${associationId.slice(0, 8)}`
-    );
-    return rules;
-  }
-
-  /**
-   * Replaces a post's own rules, inside the caller's transaction. `undefined` leaves them alone;
-   * an empty list removes them (the post inherits its association's rules again).
-   */
-  private async writePostAudiences(
-    manager: EntityManager,
-    postId: string,
-    rules: AudienceRule[] | undefined
-  ): Promise<void> {
-    if (rules === undefined) return;
-    await manager.delete(PostAudience, { postId });
-    if (rules.length > 0) {
-      await manager.insert(
-        PostAudience,
-        rules.map((r) => ({ postId, formation: r.formation, campus: r.campus }))
-      );
-    }
-  }
-
-  /**
-   * Saves a post and, when rules were submitted, replaces its own rules IN THE SAME TRANSACTION:
-   * the announce sweeper reads both, and a post committed a moment before its rules would be
-   * announced to its publisher's whole ceiling. With no rules submitted there is nothing to keep
-   * atomic, and the save is the plain one it always was.
-   */
-  private async savePost(post: Post, audiences: AudienceRule[] | undefined): Promise<Post> {
-    if (audiences === undefined) return this.postRepo.save(post);
-    return this.postRepo.manager.transaction(async (manager) => {
-      const row = await manager.save(post);
-      await this.writePostAudiences(manager, row.id, audiences);
-      return row;
-    });
-  }
-
   /** Whether `userId` may use the feed at all - the gate's question, for `GET /posts/audience`. */
   async isInFeedAudience(userId: string): Promise<boolean> {
     const inAudience = await readInFeedAudience(this.postRepo.manager, userId);
@@ -586,10 +588,6 @@ export class PostsService {
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
-    // Decided FIRST, before anything is claimed or written: a rule outside the ceiling is a 400
-    // with no reel blob claimed and no row stored.
-    const audiences = await this.resolvePostAudiences(data.associationId ?? null, data.audiences);
-    delete data.audiences;
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
         data.associationId,
@@ -633,7 +631,7 @@ export class PostsService {
     const post = this.postRepo.create(data) as unknown as Post;
     let entity: Post;
     try {
-      entity = await this.savePost(post, audiences);
+      entity = await this.postRepo.save(post);
     } catch (e) {
       // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
       // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
@@ -785,6 +783,7 @@ export class PostsService {
       );
     }
 
+    await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
@@ -1116,6 +1115,7 @@ export class PostsService {
       );
     }
 
+    await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
@@ -1173,7 +1173,15 @@ export class PostsService {
     if (!post) throw new NotFoundException('Post not found');
     if (!post.hiddenByModeration) {
       post.hiddenByModeration = true;
-      await this.postRepo.save(post);
+      await this.postRepo.manager.transaction(async (manager) => {
+        await manager.save(post);
+        // D38: a hidden post loses every republication and pending repost proposal.
+        const dropped = await dropRepublicationsOf(manager, postId);
+        this.logger.log(
+          `[MODERATION] post ${postId} hidden: ${dropped.republications} republication(s), ` +
+            `${dropped.proposals} pending proposal(s) removed`
+        );
+      });
       await this.invalidateListCache();
     }
     return { ok: true };
@@ -1252,6 +1260,7 @@ export class PostsService {
     );
     const post = rows[0];
     if (!post) return null;
+    await this.attachRepublishers([post]);
     const viewerCtx = await this.viewerContext([post], viewerId, isGlobalAdmin);
     return this.stripBigIntForJson(this.shapeListRow(post, viewerCtx));
   }
@@ -1348,23 +1357,19 @@ export class PostsService {
       attachedFormId?: string | null;
       linkedCalendarEventId?: string | null;
       scheduledAt?: string | null;
-      /** The post's own rules (D33); absent leaves them alone, empty inherits the association's. */
-      audiences?: AudienceRuleDto[];
     },
     isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayManage(post, userId, isGlobalAdmin);
-    // Who sees it is not content, so a reel's rules are edited like a post's.
-    const audiences = await this.resolvePostAudiences(post.associationId ?? null, data.audiences);
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
       if (isExpiredReel(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
-      const saved = await this.savePost(post, audiences);
+      const saved = await this.postRepo.save(post);
       await this.invalidateListCache();
       return this.toPublicPostFromEntity(
         saved,
@@ -1406,7 +1411,7 @@ export class PostsService {
       : [];
     post.mentions = mentionedIds;
 
-    const saved = await this.savePost(post, audiences);
+    const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
     return this.toPublicPostFromEntity(
       saved,

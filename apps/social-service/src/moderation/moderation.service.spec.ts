@@ -17,7 +17,7 @@ describe('ModerationService - reports', () => {
     create: jest.Mock;
     save: jest.Mock;
     count: jest.Mock;
-    manager: { query: jest.Mock };
+    manager: { query: jest.Mock; transaction: jest.Mock };
   };
   let muteRepo: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock; find: jest.Mock };
 
@@ -28,8 +28,12 @@ describe('ModerationService - reports', () => {
       create: jest.fn().mockImplementation((row) => row),
       save: jest.fn().mockImplementation((row) => Promise.resolve({ id: 'r1', ...row })),
       count: jest.fn().mockResolvedValue(1),
-      manager: { query: jest.fn().mockResolvedValue([]) },
+      manager: { query: jest.fn().mockResolvedValue([]), transaction: jest.fn() },
     };
+    // The hide and the republications it drops are one transaction, run on the same query mock.
+    reportRepo.manager.transaction.mockImplementation((fn: (m: unknown) => unknown) =>
+      fn(reportRepo.manager)
+    );
     muteRepo = { findOne: jest.fn(), save: jest.fn(), create: jest.fn(), find: jest.fn() };
     service = new ModerationService(
       reportRepo as unknown as Repository<ContentReport>,
@@ -114,6 +118,11 @@ describe('ModerationService - reports', () => {
       });
       expect(reportRepo.manager.query).toHaveBeenCalledWith(
         expect.stringContaining('hiddenByModeration'),
+        ['p1']
+      );
+      // D38: hiding the original removes every republication, in the same transaction.
+      expect(reportRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM post_republications'),
         ['p1']
       );
     });

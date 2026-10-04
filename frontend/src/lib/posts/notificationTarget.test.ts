@@ -6,8 +6,8 @@
  * the queue where they can ACT, and a proposer goes to the agenda where the answer is already
  * applied. Sending either to the other's page is a reader looking at a screen with nothing to do.
  */
-import { describe, it, expect } from 'vitest';
-import { notificationHref } from './notificationTarget';
+import { describe, it, expect, vi } from 'vitest';
+import { notificationHref, resolveNotificationHref } from './notificationTarget';
 
 describe('notificationHref', () => {
   it('sends a post notification to its post', () => {
@@ -35,5 +35,32 @@ describe('notificationHref', () => {
     // Deliberately not an error: a server that ships a new type before a client knows it must not
     // produce a row that does nothing when tapped.
     expect(notificationHref({ type: 'something_new', postId: 'x' })).toBe('/posts/x');
+  });
+});
+
+describe('resolveNotificationHref', () => {
+  it('sends a republication proposal to the receiving association queue, by slug', async () => {
+    // `postId` is the RECEIVING association's id (D38); its page is reached by slug.
+    const lookup = vi.fn(async (id: string) => (id === 'assoc-1' ? 'bde' : 'other'));
+    await expect(
+      resolveNotificationHref({ type: 'repost_proposed', postId: 'assoc-1' }, lookup)
+    ).resolves.toBe('/associations/bde/edit?section=republications');
+  });
+
+  it('sends a republication to the post, with no lookup', async () => {
+    const lookup = vi.fn(async () => 'never');
+    await expect(
+      resolveNotificationHref({ type: 'association_repost', postId: 'p1' }, lookup)
+    ).resolves.toBe('/posts/p1');
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the association cannot be found, rather than guessing a page', async () => {
+    const lookup = vi.fn(async () => {
+      throw new Error('404');
+    });
+    await expect(
+      resolveNotificationHref({ type: 'repost_proposed', postId: 'gone' }, lookup)
+    ).rejects.toThrow('404');
   });
 });

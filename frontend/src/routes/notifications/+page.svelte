@@ -12,7 +12,10 @@
     type NotificationBucket,
   } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
-  import { notificationHref } from '$lib/posts/notificationTarget';
+  import { resolveNotificationHref } from '$lib/posts/notificationTarget';
+  import { getAssociation } from '$lib/associations/api';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -72,9 +75,18 @@
     earlier: () => m.notif_group_earlier(),
   };
 
-  function openNotification(notif: PostNotification) {
-    const url = notificationHref(notif);
-    void goto(url);
+  /** Resolves where the row goes (a slug lookup for an association's queue), then goes there. */
+  async function openNotification(notif: PostNotification) {
+    try {
+      const url = await resolveNotificationHref(
+        notif,
+        async (id) => (await getAssociation(id)).slug
+      );
+      await goto(url);
+    } catch (e: unknown) {
+      Log.d('notifications', `open ${notif.type} failed: ${String(e)}`);
+      showToast(m.notif_open_error());
+    }
   }
 </script>
 

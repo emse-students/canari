@@ -52,6 +52,10 @@
     <string name="notif_social_association_post_body">New post</string>
     <string name="notif_social_followed_post_title">%1$s posted</string>
     <string name="notif_social_followed_post_body">New post</string>
+    <string name="notif_social_association_repost_title">%1$s shared a post</string>
+    <string name="notif_social_association_repost_body">New post</string>
+    <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
+    <string name="notif_social_repost_proposed_body">A post to share</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>

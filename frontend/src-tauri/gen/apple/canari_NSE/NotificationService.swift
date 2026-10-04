@@ -149,6 +149,9 @@ class NotificationService: UNNotificationServiceExtension {
     // opening is the body, or a fixed sentence when the post carries only images.
     case "social_association_post": composed = actorTitled("association_post")
     case "social_followed_post": composed = actorTitled("followed_post")
+    // Republication (D38): the republishing, then the proposing, association names the title.
+    case "social_association_repost": composed = actorTitled("association_repost")
+    case "social_repost_proposed": composed = actorTitled("repost_proposed")
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),

@@ -21,10 +21,12 @@ import { join } from 'path';
 import { Client } from 'pg';
 import {
   IN_FEED_AUDIENCE_SQL,
+  NEWLY_REACHED_BY_REPUBLICATION_SQL,
   READER_SPACES_SQL,
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
   type SpacePair,
@@ -37,6 +39,11 @@ const maybe = URL ? describe : describe.skip;
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '071_spaces.sql'), 'utf8');
 const MIGRATION_072 = readFileSync(
   join(__dirname, '..', 'migrations', '072_drop_is_bde.sql'),
+  'utf8'
+);
+// Republication (D38): `post_republications`, `proposals`, and `post_audiences` dropped.
+const MIGRATION_073 = readFileSync(
+  join(__dirname, '..', 'migrations', '073_republications.sql'),
   'utf8'
 );
 
@@ -54,21 +61,23 @@ const USERS = {
   // Campus but no cursus, and no membership: the one reader the gate refuses.
   outsider: { campus: 'saint-etienne', cursus: [] },
   // A profile not backfilled yet (WP3): what production users look like before the backfill.
+  // Member of A3, which reaches nobody by rule - so a member and nothing else.
   notBackfilled: { campus: null, cursus: [] },
 } as const;
 type UserId = keyof typeof USERS;
 
 const A1 = '00000000-0000-4000-8000-0000000000a1'; // (ICM, saint-etienne), member: staff
 const A2 = '00000000-0000-4000-8000-0000000000a2'; // (NULL, gardanne): the whole campus
+const A3 = '00000000-0000-4000-8000-0000000000a3'; // created after 071: no rule, member notBackfilled
 
-/** Posts, with who must see each - the whole matrix of decision 3. */
+/** Posts, with who must see each - the whole matrix of decision 3, and of republication (D38). */
 const POSTS: {
   id: string;
   label: string;
   authorId: UserId;
   associationId: string | null;
   anonymous?: boolean;
-  ownRules?: { formation: string | null; campus: string | null }[];
+  republishedBy?: string[];
   seenBy: UserId[];
 }[] = [
   {
@@ -87,19 +96,19 @@ const POSTS: {
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
-    label: 'an A2 post narrowed by its own rule to ICM x gardanne (nobody in the cast)',
+    label: 'an A2 post republished by A1: Gardanne, plus everyone A1 reaches and its member staff',
     authorId: 'admin',
     associationId: A2,
-    ownRules: [{ formation: 'ICM', campus: 'gardanne' }],
-    seenBy: ['admin'],
+    republishedBy: [A1],
+    seenBy: ['isminGa', 'admin', 'icmSe', 'icmSe2', 'adminIcm', 'staff'],
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
-    label: 'an A1 post whose stored rule is OUTSIDE the ceiling (ISMIN x gardanne): held at read',
+    label: 'an A1 post republished by A3, which reaches nobody by rule: plus its member only (D21)',
     authorId: 'staff',
     associationId: A1,
-    ownRules: [{ formation: 'ISMIN', campus: 'gardanne' }],
-    seenBy: ['staff'],
+    republishedBy: [A3],
+    seenBy: ['icmSe', 'icmSe2', 'adminIcm', 'staff', 'notBackfilled'],
   },
   {
     id: '00000000-0000-4000-8000-000000000005',
@@ -156,6 +165,9 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(MIGRATION);
     // 071 reads `isBDE`, which 072 then drops: the shape production goes through (WP6c).
     await client.query(MIGRATION_072);
+    await client.query(MIGRATION_073);
+    // A3 is created after 071, so it has no rule: it reaches its members and nobody else.
+    await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'A3')`, [A3]);
     // Then the grid: A2 addresses the whole Gardanne campus instead.
     await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A2]);
     await client.query(
@@ -171,8 +183,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       ]);
     }
     await client.query(
-      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'staff')`,
-      [A1]
+      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'staff'), ($2, 'notBackfilled')`,
+      [A1, A3]
     );
     await client.query(
       `INSERT INTO user_follows VALUES ('icmSe2', 'icmSe'), ('isminGa', 'icmSe'), ('outsider', 'icmSe')`
@@ -182,10 +194,10 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         `INSERT INTO posts (id, "authorId", "associationId", anonymous) VALUES ($1, $2, $3, $4)`,
         [p.id, p.authorId, p.associationId, p.anonymous ?? false]
       );
-      for (const r of p.ownRules ?? []) {
+      for (const by of p.republishedBy ?? []) {
         await client.query(
-          `INSERT INTO post_audiences ("postId", formation, campus) VALUES ($1, $2, $3)`,
-          [p.id, r.formation, r.campus]
+          `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'it')`,
+          [p.id, by]
         );
       }
     }
@@ -221,7 +233,15 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       const { rows } = await client.query(IN_FEED_AUDIENCE_SQL, [id]);
       if (rows[0].inAudience === true) admitted.push(id);
     }
-    expect(admitted.sort()).toEqual(['admin', 'adminIcm', 'icmSe', 'icmSe2', 'isminGa', 'staff']);
+    expect(admitted.sort()).toEqual([
+      'admin',
+      'adminIcm',
+      'icmSe',
+      'icmSe2',
+      'isminGa',
+      'notBackfilled',
+      'staff',
+    ]);
   });
 
   it.each(POSTS.map((p) => [p.label, p] as const))('%s', async (_label, post) => {
@@ -285,6 +305,60 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
   it('announces a post to everyone who can see it, minus its author', async () => {
     const { rows } = await client.query(announceRecipientsSql(false), [POSTS[0].id]);
     expect(rows.map((r) => r.id as string).sort()).toEqual(['adminIcm', 'icmSe', 'icmSe2']);
+  });
+
+  it('a republication newly reaches exactly who sees the post AFTER and not BEFORE (D38)', async () => {
+    // POSTS[0] is A1's, seen by the ICM Saint-Etienne readers and staff. A2 reaching Gardanne would
+    // add isminGa; nobody else gains it, and the author is never counted.
+    const newly = await client.query(NEWLY_REACHED_BY_REPUBLICATION_SQL, [POSTS[0].id, A2]);
+    expect(newly.rows.map((r) => r.id as string)).toEqual(['isminGa']);
+
+    // Checked against the state itself: write the row, compare after with before, roll back.
+    const visibleTo = async () =>
+      (
+        await client.query(
+          `SELECT u.id FROM users u, posts WHERE posts.id = $1
+             AND ${postVisibleToUserSql('posts', 'u')} ORDER BY u.id`,
+          [POSTS[0].id]
+        )
+      ).rows.map((r) => r.id as string);
+    const before = await visibleTo();
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'it')`,
+        [POSTS[0].id, A2]
+      );
+      const after = await visibleTo();
+      expect(after.filter((id) => !before.includes(id))).toEqual(['isminGa']);
+      expect(before.every((id) => after.includes(id))).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+
+    // Republished by its own audience's association again: nobody new.
+    const none = await client.query(NEWLY_REACHED_BY_REPUBLICATION_SQL, [POSTS[3].id, A1]);
+    expect(none.rows).toEqual([]);
+  });
+
+  it('a deleted post takes its republications and its repost proposals with it', async () => {
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toAssociationId", "proposedBy")
+           VALUES ('repost', $1, $2, $3, 'staff')`,
+        [POSTS[3].id, A1, A2]
+      );
+      await client.query(`DELETE FROM posts WHERE id = $1`, [POSTS[3].id]);
+      const left = await client.query(
+        `SELECT (SELECT count(*)::int FROM post_republications WHERE "postId" = $1) AS reps,
+                (SELECT count(*)::int FROM proposals WHERE "subjectId" = $1) AS props`,
+        [POSTS[3].id]
+      );
+      expect(left.rows[0]).toEqual({ reps: 0, props: 0 });
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it("announces a personal post to its author's followers who can see it, and no other", async () => {

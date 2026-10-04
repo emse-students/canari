@@ -36,3 +36,29 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
       return `/posts/${notif.postId}`;
   }
 }
+
+/**
+ * The notification types whose `postId` names an ASSOCIATION BY ID, and whose page is reached by
+ * slug - so the destination needs one lookup `notificationHref` cannot make synchronously.
+ * `repost_proposed` (D38) sends its acceptors to the queue where they accept or refuse it.
+ */
+const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
+  repost_proposed: 'republications',
+};
+
+/**
+ * WHERE A NOTIFICATION GOES, including the types that need the association's slug first.
+ *
+ * `lookupSlug` resolves an association id to its slug (`getAssociation`); it is a parameter so the
+ * routing stays testable without a network. A lookup that fails REJECTS - the caller says the
+ * notification could not be opened, rather than sending the reader somewhere else.
+ */
+export async function resolveNotificationHref(
+  notif: Pick<PostNotification, 'type' | 'postId'>,
+  lookupSlug: (associationId: string) => Promise<string>
+): Promise<string> {
+  const section = ASSOCIATION_QUEUE_TYPES[notif.type];
+  if (!section) return notificationHref(notif);
+  const slug = await lookupSlug(notif.postId);
+  return `/associations/${encodeURIComponent(slug)}/edit?section=${section}`;
+}

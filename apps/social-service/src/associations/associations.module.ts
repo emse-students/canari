@@ -17,7 +17,6 @@ import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { PostAudience } from '../spaces/post-audience.entity';
 import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
 import { SpacesService } from '../spaces/spaces.service';
 import { Post } from '../posts/entities/post.entity';
@@ -67,7 +66,6 @@ import { PricingModule } from '../pricing/pricing.module';
       PostNotification,
       Space,
       AssociationAudience,
-      PostAudience,
     ]),
     FollowsModule,
     UserTagModule,
