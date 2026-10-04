@@ -36,11 +36,13 @@ describe('SpacesService', () => {
     space?: Partial<Space> | null;
     association?: Partial<Association> | null;
   }) {
+    const update = jest.fn().mockResolvedValue(undefined);
+    const save = jest.fn().mockImplementation(async (s: Partial<Space>) => s);
     const spaces = {
       findOne: jest.fn().mockResolvedValue(opts.space ?? null),
-      update: jest.fn().mockResolvedValue(undefined),
+      update,
       create: jest.fn().mockImplementation((s: Partial<Space>) => s),
-      save: jest.fn().mockImplementation(async (s: Partial<Space>) => s),
+      save,
       find: jest.fn().mockResolvedValue([]),
     } as unknown as Repository<Space>;
     const associations = {
@@ -57,22 +59,23 @@ describe('SpacesService', () => {
     } as unknown as DataSource;
     return {
       service: new SpacesService(spaces, associations, audiences, dataSource),
-      spaces,
+      save,
+      update,
       manager,
     };
   }
 
   it('opens a space', async () => {
-    const { service, spaces } = make({});
+    const { service, save } = make({});
     await service.open('ICM', 'gardanne');
-    expect(spaces.save).toHaveBeenCalledWith(
+    expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ formation: 'ICM', campus: 'gardanne', bdeAssociationId: null })
     );
   });
 
   it('answers 409 when the pair is already open', async () => {
-    const { service, spaces } = make({});
-    (spaces.save as jest.Mock).mockRejectedValue({ code: '23505' });
+    const { service, save } = make({});
+    save.mockRejectedValue({ code: '23505' });
     await expect(service.open('ICM', 'gardanne')).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -87,22 +90,22 @@ describe('SpacesService', () => {
   });
 
   it('designates and clears a BDE', async () => {
-    const { service, spaces } = make({
+    const { service, update } = make({
       space: { id: 's' },
       association: { id: 'a', type: 'association' },
     });
     await service.setBde('s', 'a');
-    expect(spaces.update).toHaveBeenCalledWith({ id: 's' }, { bdeAssociationId: 'a' });
+    expect(update).toHaveBeenCalledWith({ id: 's' }, { bdeAssociationId: 'a' });
     await service.setBde('s', null);
-    expect(spaces.update).toHaveBeenLastCalledWith({ id: 's' }, { bdeAssociationId: null });
+    expect(update).toHaveBeenLastCalledWith({ id: 's' }, { bdeAssociationId: null });
   });
 
   it('answers 409 when the association already governs another space', async () => {
-    const { service, spaces } = make({
+    const { service, update } = make({
       space: { id: 's' },
       association: { id: 'a', type: 'association' },
     });
-    (spaces.update as jest.Mock).mockRejectedValue({ code: '23505' });
+    update.mockRejectedValue({ code: '23505' });
     await expect(service.setBde('s', 'a')).rejects.toBeInstanceOf(ConflictException);
   });
 
