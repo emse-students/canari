@@ -1,5 +1,6 @@
 import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { totalUnreadMessages } from '$lib/utils/unreadTotal';
 
 /**
@@ -9,13 +10,23 @@ import { totalUnreadMessages } from '$lib/utils/unreadTotal';
  * (`NativeTabBar`), so a dot cannot light up on one and not the other. The place you are on
  * carries none: you are already looking at what it would announce.
  *
- * `chat` is the only one of the four bar places that can carry a badge - which is why the web
- * dot's `aria-label` is the unread-MESSAGES sentence. The notifications branch is the rule for a
- * place that is not currently in the bar; giving it a badge there means giving it a sentence too.
+ * `chat` and `communities` each carry the unread messages belonging to that place. Keeping the
+ * channel split here means a salon message cannot light up Discussions, while both web and native
+ * bars still ask the same question.
  */
 export function placeBadge(placeId: string, isActive: boolean): number {
   if (isActive || !globalSession.isLoggedIn) return 0;
-  if (placeId === 'chat') return totalUnreadMessages(globalConvs.conversations.values());
+  if (placeId === 'chat') {
+    return totalUnreadMessages(
+      globalConvs.conversations.values(),
+      (conversation) => !isChannelConversationId(conversation.id ?? '')
+    );
+  }
+  if (placeId === 'communities') {
+    return totalUnreadMessages(globalConvs.conversations.values(), (conversation) =>
+      isChannelConversationId(conversation.id ?? '')
+    );
+  }
   if (placeId === 'notifications') return postNotifStore.unread;
   return 0;
 }

@@ -15,6 +15,7 @@
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
@@ -42,7 +43,19 @@
   }
 
   const totalUnread = $derived(
-    globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    globalSession.isLoggedIn
+      ? totalUnreadMessages(
+          globalConvs.conversations.values(),
+          (conversation) => !isChannelConversationId(conversation.id ?? '')
+        )
+      : 0
+  );
+  const totalUnreadCommunities = $derived(
+    globalSession.isLoggedIn
+      ? totalUnreadMessages(globalConvs.conversations.values(), (conversation) =>
+          isChannelConversationId(conversation.id ?? '')
+        )
+      : 0
   );
 
   // Hover intent: short delay before expanding to avoid accidental opens when the cursor crosses the bar.
@@ -142,6 +155,7 @@
       {@const unread = (() => {
         if (isActive) return 0;
         if (place.id === 'chat') return totalUnread;
+        if (place.id === 'communities') return totalUnreadCommunities;
         if (place.id === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
         return 0;
       })()}

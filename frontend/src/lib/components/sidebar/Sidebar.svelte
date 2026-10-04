@@ -628,6 +628,8 @@
           <div class="px-2 py-2">
             {#each currentWorkspace.channels as channel (channel.id)}
               {@const unjoined = channel.hasAccess === false}
+              {@const unreadCount =
+                conversations.get(channel.id)?.unreadCount ?? channel.unreadCount ?? 0}
               <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
                    name, a badge - and only the middle one was ever exposed: the icon is decorative
                    markup and the badge announced a bare number, so "general 3" was all a screen
@@ -658,9 +660,7 @@
                         ? `${m.chat_channel_private_label()} ${channel.name}`
                         : channel.name
                     }${
-                      channel.unreadCount
-                        ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
-                        : ''
+                      unreadCount ? `, ${m.chat_unread_messages_label({ count: unreadCount })}` : ''
                     }`}
                 class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
                 channel.id
@@ -688,12 +688,12 @@
                     {m.chat_channel_join_as_admin_label()}
                   </span>
                 {/if}
-                {#if channel.unreadCount}
+                {#if unreadCount}
                   <span
                     aria-hidden="true"
                     class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                   >
-                    {channel.unreadCount}
+                    {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
                 {/if}
               </button>

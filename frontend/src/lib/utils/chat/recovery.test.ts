@@ -61,6 +61,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // No distribution group here: `reconcileGroup` asks this before anything else,
     // because a seed carrier has no history to reconcile.
     isDistributionGroup: vi.fn().mockReturnValue(false),
+    noteDistributionGroup: vi.fn(),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
     externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
@@ -330,6 +331,26 @@ describe('requestReAdd', () => {
     await requestReAdd('tomb', deps);
 
     expect(deps.conversations.get('tomb')?.lifecycle).toBe('removed');
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('distribution group metadata -> registers it without creating a conversation', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getGroupMeta: vi.fn().mockResolvedValue({
+          groupId: 'graine-group',
+          isGroup: true,
+          deletedAt: null,
+          distributionWorkspaceId: 'workspace-1',
+        }),
+      }),
+    });
+
+    await requestReAdd('graine-group', deps);
+
+    expect(deps.mlsService.noteDistributionGroup).toHaveBeenCalledWith('graine-group');
+    expect(deps.conversations.has('graine-group')).toBe(false);
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
   });
