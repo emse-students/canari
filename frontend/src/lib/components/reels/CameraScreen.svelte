@@ -33,7 +33,7 @@
      */
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
-    controls?: Snippet;
+    controls?: Snippet<[capturePhoto: () => Promise<Blob | null>]>;
     /**
      * Holds the camera OFF while true - a take under review needs no preview, and an open camera
      * would keep the phone's privacy dot lit for nothing. Turning it false opens the camera again.
@@ -73,6 +73,24 @@
     if (!video || video.videoWidth === 0 || frameReady) return;
     console.debug(`[camera] first frame ${video.videoWidth}x${video.videoHeight}`);
     frameReady = true;
+  }
+
+  /** Captures the current live frame without mirroring the stored photo. */
+  async function capturePhoto(): Promise<Blob | null> {
+    if (!video || !frameReady) {
+      console.warn('[camera] photo asked for before the first frame');
+      return null;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      console.error('[camera] photo capture has no canvas context');
+      return null;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.94));
   }
 
   /** Whether this tab was reached from inside the app - then closing it is a step back. */
@@ -298,7 +316,7 @@
 
   {#if controls && session.phase === 'live'}
     <div class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
-      {@render controls()}
+      {@render controls(capturePhoto)}
     </div>
   {/if}
 </section>

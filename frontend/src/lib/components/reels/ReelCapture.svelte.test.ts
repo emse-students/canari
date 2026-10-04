@@ -125,7 +125,9 @@ describe('ReelCapture', () => {
     pointer('pointerdown', 1000);
     pointer('pointerup', 4000);
     await settle();
-    const discard = target.querySelector<HTMLButtonElement>('[data-reel-review] button')!;
+    const discard = target.querySelector<HTMLButtonElement>(
+      `[data-reel-review] button[aria-label="${m.reels_review_discard()}"]`
+    )!;
     discard.click();
     await settle();
     expect(target.querySelector('[data-reel-review]')).toBeNull();

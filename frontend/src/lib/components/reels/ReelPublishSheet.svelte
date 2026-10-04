@@ -22,7 +22,12 @@
   import { listPostAsAssociations } from '$lib/posts/postIdentity';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import type { ReelClip } from '$lib/reels/reelCapture';
-  import { publishReel, ReelPublishError, type PublishReelDeps } from '$lib/reels/publishReel';
+  import {
+    publishCameraPhoto,
+    publishReel,
+    ReelPublishError,
+    type PublishReelDeps,
+  } from '$lib/reels/publishReel';
   import { showToast } from '$lib/stores/toast.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
@@ -98,21 +103,26 @@
     caption = trimComposerText(caption);
     const options = preparation.optionsFor(undefined);
     try {
-      await publishReel(
-        {
-          clip,
-          caption,
-          identity,
-          maxDurationMs: limits.maxDurationMs,
-          video: { onProgress: options.onProgress, signal: options.signal },
-          onStage: (next) => {
-            stage = next;
-            // The re-encode is over once the upload starts: its line comes down, its cancel with it.
-            if (next === 'mediaUpload') preparation.finish();
+      const onStage = (next: PublishStage) => {
+        stage = next;
+        // The re-encode is over once the upload starts: its line comes down, its cancel with it.
+        if (next === 'mediaUpload') preparation.finish();
+      };
+      if (clip.blob.type.startsWith('image/')) {
+        await publishCameraPhoto({ clip, caption, identity, onStage });
+      } else {
+        await publishReel(
+          {
+            clip,
+            caption,
+            identity,
+            maxDurationMs: limits.maxDurationMs,
+            video: { onProgress: options.onProgress, signal: options.signal },
+            onStage,
           },
-        },
-        deps
-      );
+          deps
+        );
+      }
       showToast(m.reels_publish_done(), 'info');
       await goto('/posts', { replaceState: true });
     } catch (err) {
@@ -172,19 +182,23 @@
         class="relative aspect-9/16 w-24 shrink-0 overflow-hidden rounded-lg bg-black"
         data-reel-publish-preview
       >
-        <video
-          {src}
-          class="h-full w-full object-cover"
-          poster={TRANSPARENT_VIDEO_POSTER}
-          autoplay
-          muted
-          loop
-          playsinline
-          aria-hidden="true"
-          onloadeddata={() => (previewReady = true)}
-        ></video>
-        {#if !previewReady}
-          <VideoPoster compact />
+        {#if clip.blob.type.startsWith('image/')}
+          <img {src} alt="" class="h-full w-full object-cover" />
+        {:else}
+          <video
+            {src}
+            class="h-full w-full object-cover"
+            poster={TRANSPARENT_VIDEO_POSTER}
+            autoplay
+            muted
+            loop
+            playsinline
+            aria-hidden="true"
+            onloadeddata={() => (previewReady = true)}
+          ></video>
+          {#if !previewReady}
+            <VideoPoster compact />
+          {/if}
         {/if}
       </div>
       <label class="flex min-w-0 flex-1 flex-col">
