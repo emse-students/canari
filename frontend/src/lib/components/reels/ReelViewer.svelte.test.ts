@@ -146,6 +146,30 @@ describe('ReelViewer', () => {
     expect(document.querySelector('[data-reel-slide="b"] [data-reel-save]')).not.toBeNull();
   });
 
+  it('claims a drag only while the move is cancelable, and stands it down otherwise', async () => {
+    const { playing } = await render();
+    const frame = document.querySelector('[data-reel-viewer] .touch-none')!;
+    const touch = (type: string, y: number, cancelable: boolean) => {
+      const e = new Event(type, { bubbles: true, cancelable });
+      const t = [{ clientX: 100, clientY: y }];
+      Object.defineProperty(e, 'touches', { value: type === 'touchend' ? [] : t });
+      Object.defineProperty(e, 'changedTouches', { value: t });
+      const prevent = vi.spyOn(e, 'preventDefault');
+      frame.dispatchEvent(e);
+      return prevent;
+    };
+    touch('touchstart', 400, true);
+    // An uncancelable move belongs to the scroller: never prevented, so the engine logs nothing.
+    expect(touch('touchmove', 200, false)).not.toHaveBeenCalled();
+    touch('touchend', 100, true);
+    await settle();
+    // The stood-down drag did not page.
+    expect(playing()).toEqual(['m-b']);
+
+    touch('touchstart', 400, true);
+    expect(touch('touchmove', 200, true)).toHaveBeenCalled();
+  });
+
   it('shows each reel its age, the same relative time as a post header, and no deletion countdown', async () => {
     await render();
     const slide = document.querySelector('[data-reel-slide]')!;

@@ -55,6 +55,7 @@
   import { formatFileSize } from '$lib/utils/fileSize';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { Log } from '$lib/utils/Log';
+  import { claimTouchMove } from '$lib/utils/touchClaim';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import FullScreenViewer from './FullScreenViewer.svelte';
@@ -489,7 +490,14 @@
         gesture = classifyMove({ dx, dy, zoomed: isZoomed, touches: 1 });
         if (gesture === 'pending') return;
       }
-      e.preventDefault();
+      // A move the engine is already scrolling is not ours: the gesture stands down, a swipe springs
+      // back, and a pan stays where it is.
+      if (!claimTouchMove(e)) {
+        const kind = gesture;
+        gesture = null;
+        if (kind === 'swipe-h' || kind === 'swipe-down') settle({ swipeDx: 0, dismissDy: 0 });
+        return;
+      }
 
       if (gesture === 'pan') panTo(dragStartTx + dx, dragStartTy + dy);
       else if (gesture === 'swipe-h') swipeDx = dragOffset(dx, canPrev, canNext);
