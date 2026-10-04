@@ -607,8 +607,18 @@ export class PostsService {
     // It carried NONE of them: a post auto-hidden by the report threshold, which `listPosts` drops
     // from every feed, was reachable by anyone who typed a word of it - and so was the store-review
     // service account's. Whatever a feed refuses to show, a search over the same table refuses too.
+    //
+    // AND THE PROMO CUTOFF IS ONE OF THEM, which the first pass missed (user, 2026-08-23: "la
+    // recherche desactive les filtres ?"): a search reached posts from before the viewer's arrival
+    // that the feed stops at. It is a relevance limit, not a confidentiality one
+    // (`promo-visibility.ts`), so this is consistency with the feed rather than a leak closed.
+    const promoCutoff = await promoCutoffFor(this.postRepo.manager, viewer?.viewerUserId, isAdmin);
     const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewer?.viewerUserId);
-    const bp = blockedIds.length > 0 ? 4 : null;
+    const params: unknown[] = [limit, offset, `%${term}%`];
+    const promoSql = promoCutoff
+      ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${params.push(promoCutoff)}::timestamptz`
+      : '';
+    const bp = blockedIds.length > 0 ? params.push(blockedIds) : null;
 
     const rawPosts: any[] = await this.postRepo.manager.query(
       `SELECT ${this.postSelectBody(bp)}
@@ -616,13 +626,14 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts.markdown ILIKE $3 OR assoc.name ILIKE $3)
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${promoSql}
          ${this.hiddenFilterSql(isAdmin)}
          ${this.liveReelFilterSql()}
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset, `%${term}%`, ...(blockedIds.length > 0 ? [blockedIds] : [])]
+      params
     );
 
     for (const post of rawPosts) {
