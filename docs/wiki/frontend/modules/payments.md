@@ -272,3 +272,21 @@ dashboard or balance.
 - [associations.md](associations.md) - association model, permission flags, admin panel tabs.
 - [../../cotisations.md](../../cotisations.md) - membership dues (also routed through Stripe Connect).
 - [admin.md](admin.md) - platform admin surfaces (Cercle top-ups).
+
+## Which onboarding flag a screen reads (2026-10-03)
+
+Stripe and Lydia keep independent account ids and `*OnboardingComplete` flags (migration 037), so
+"is this association ready" is a question about the ACTIVE provider. `isPaymentAccountReady(asso,
+provider)` in `lib/associations/api.ts` is the one answer; the provider comes from
+`activePaymentProvider.svelte.ts` (fetched once, `null` until known and on failure - which reads as
+not ready and logs at error level, never as Stripe). The edit page's boutique/forms warnings, the
+paid-form recipient gate and the delegation tab all read it; before, they read the Stripe flag only
+and a Lydia association whose flag was `true` in the database still showed as incomplete. The Lydia
+card shows Pending until `lydiaOnboardingComplete` is true, then Active (nothing sets it
+automatically yet - see the core-service page).
+
+**Manual validation.** A GLOBAL ADMIN sees "Valider l'onboarding" on the Lydia card while the flag is
+false (`POST /api/payments/complete-lydia-account/:associationId`, `NginxAuthGuard` +
+`GlobalAdminGuard`, refused without a linked Lydia account). It calls social-service's existing
+`lydia-complete`, which also releases withheld products. Not open to the club's own managers: they
+would be declaring their own account ready. Removal of Lydia (`disconnect`) resets it.

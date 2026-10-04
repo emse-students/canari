@@ -2,6 +2,10 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
@@ -81,7 +85,8 @@
   let associations = $state<Association[]>([]);
   const selectedAssociation = $derived(associations.find((a) => a.id === associationId));
   const associationCanBePaid = $derived(
-    !!selectedAssociation && canAssociationReceiveFormPayments(selectedAssociation)
+    !!selectedAssociation &&
+      canAssociationReceiveFormPayments(selectedAssociation, activePaymentProvider.current)
   );
 
   // The chosen association's tiers, and whether this user may grant one. Reloaded on every change.
@@ -108,6 +113,7 @@
   );
 
   onMount(async () => {
+    void loadActivePaymentProvider();
     const draft = loadPostComposerDraft();
     if (draft?.scheduledAt && !opensAt) {
       opensAt = draft.scheduledAt;

@@ -51,3 +51,22 @@ it("shows Canari's poster and no native one until the take's first frame", () =>
   flushSync();
   expect(target.querySelector('[aria-hidden="true"].bg-linear-to-br')).toBeNull();
 });
+
+it('shows a captured photo as an image in the review', () => {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  mounted.push(
+    mount(ReelReview, {
+      target,
+      props: {
+        clip: { blob: new Blob(['x'], { type: 'image/webp' }), source: 'camera' },
+        ondiscard: () => {},
+        onedit: () => {},
+        onnext: () => {},
+      },
+    })
+  );
+  flushSync();
+  expect(target.querySelector('img')).not.toBeNull();
+  expect(target.querySelector('video')).toBeNull();
+});

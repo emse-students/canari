@@ -101,7 +101,12 @@ jobs:
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       target_sha: ${{ steps.resolve.outputs.target_sha }}
     steps:
+      # BY SHA, NOT BY THE TAG: a stable's tag is MOVED to the shipped commit by the bump, and a
+      # checkout of the tag verifies it still points where the event said - so a re-run of the whole
+      # workflow would be refused here (v1.0.2, 2026-10-02; the `shipped` job had the same defect).
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       # BUN, NEVER NODE (user, 2026-09-04: "Jamais node, toujours bun"), and pinned by the ONE
       # file that names a bun version. `submit.mjs` is the single implementation of the notes
@@ -619,7 +624,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The SHA preflight read, never the tag: a stable moves its tag to the shipped commit, so a
+      # checkout of the tag refuses ("does not point to the expected commit") and the run reported
+      # failure for a release production HAD received (v1.0.2, 2026-10-02).
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
 
       - name: The marker production writes for itself
         env:

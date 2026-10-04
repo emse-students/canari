@@ -1,4 +1,5 @@
 import { PaymentController, SESSION_ID_RE } from './payment.controller';
+import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
 import type { UsersService } from '../users/users.service';
@@ -85,6 +86,10 @@ describe('PaymentController - every money route is guarded', () => {
       expect(guardsOn(handler)).toContain(NginxAuthGuard);
     }
   );
+
+  it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
+    expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
 });
 
 describe('PaymentController.createOnboarding - the check is not conditional on the field', () => {

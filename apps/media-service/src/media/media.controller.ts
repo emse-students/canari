@@ -241,9 +241,9 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    // Resize to max 512×512, convert to WebP 90% - logos are always public/unencrypted.
+    // Resize to max 256x256, convert to WebP 90% - logos and avatars are public/unencrypted.
     const compressed = await sharp(upload.buffer)
-      .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+      .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 90 })
       .toBuffer();
 

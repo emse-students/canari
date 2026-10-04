@@ -14,6 +14,48 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-02
+
+### Fixed - social-service no longer exits at boot when a migration has not been applied yet
+
+The media backfills ran before the deploy applied the migration they read, which failed the dev deploy of `v1.0.1-alpha.2` ([social-service](docs/wiki/services/social-service.md#a-query-at-boot-runs-before-the-migration-that-adds-its-column-2026-10-02)).
+
+### Fixed - opening a conversation no longer mounts a hover toolbar nobody can see on a phone
+
+Each message bubble mounted a hover-only strip, about 155 ms of the first open on the Mi 9T.
+
+### Changed - the camera opens on the front lens and its preview goes under the status bar
+
+The preview is mirrored, the recording is not; the status-bar icons stay light while the camera is up.
+
+### Fixed - the iPhone camera preview no longer comes back as a small letterboxed rectangle after the app was in the background
+
+Each camera stream now gets its own video element. See [reels](docs/wiki/frontend/modules/reels.md).
+
+### Fixed - the camera preview no longer plays the microphone through the speaker
+
+The preview was muted by an attribute a cloned template does not honour; it is set as a property now.
+
+### Fixed - the community and group image was blank on the invite card; an invite link can now be shared as a QR code
+
+Avatars were stored behind the JWT route, so the unauthenticated `/api/media/public/:id` the invite card, the link preview and the SEO head read answered 404 once #507 removed the lazy fallback that used to hide it. They are now uploaded as public assets, and existing ones are promoted by `POST /media/internal/promote-public` ([media-service](docs/wiki/services/media-service.md#group-and-community-images-are-public-assets-2026-10-02)).
+
+### Fixed - the swipe back to the feed starts at once on a slow phone
+
+The feed mounts 3 cards, then 2 per frame, instead of 20 inside the view-transition callback (worst long frame 347-470 ms down to 143-221 ms on the Mi 9T).
+
+### Changed - a stable release ships the latest pre-release's commit
+
+**A stable release ships the latest pre-release's commit**, built on `release/vX.Y.Z`, so `main` can keep merging while it runs; its changelog lands on `main` afterwards. See [cicd](docs/wiki/cicd.md#a-stable-ships-the-latest-pre-release-and-main-may-move-on-2026-10-02).
+
+### Fixed - "Ignored attempt to cancel a touchmove event" after a fling
+
+The swipe claims a move only when it is cancelable; a refused claim ends the gesture cleanly.
+
+### Changed - the store notes for 1.0.2
+
+The 1.0.1 tag was cut and refused at a34898f (nothing deployed); the next version is 1.0.2.
+
 ## [1.0.1] - 2026-10-02
 
 ### Added - a gated `/adminer/` route: the database in a browser, for global admins, in production only
