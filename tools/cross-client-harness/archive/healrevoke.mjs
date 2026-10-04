@@ -1003,15 +1003,25 @@ note(
     pinOk: seeded.pinOk,
   })}`,
 );
-if (!seeded.enrolled || !seeded.pinOk) {
+// A REFUSED MINT HAS NO CLIENT. The primitive refuses a full account BEFORE the wipe and hands back
+// `refused` with no `cx`, so the reason it measured is recorded here and the close is optional -
+// `seeded.cx.close()` on that path was a TypeError in place of the verdict.
+if (seeded.refused || !seeded.enrolled || !seeded.pinOk) {
   record(row.id, "INVALID", {
-    unobservable:
-      "the victim could not be brought to an enrolled starting point, so there is nothing to revoke",
-    seed: { enrolled: seeded.enrolled, pinOk: seeded.pinOk, login: seeded.landedWithoutAHumanStep },
+    unobservable: seeded.refused
+      ? `the victim could not be minted: ${seeded.refused}`
+      : "the victim could not be brought to an enrolled starting point, so there is nothing to revoke",
+    seed: {
+      refused: seeded.refused ?? null,
+      spent: seeded.spent ?? null,
+      enrolled: seeded.enrolled ?? null,
+      pinOk: seeded.pinOk ?? null,
+      login: seeded.landedWithoutAHumanStep ?? null,
+    },
     what: row.what,
     timeline,
   });
-  seeded.cx.close();
+  seeded.cx?.close();
   // The row is on disk by now - `record` is synchronous - so a kill during the restore
   // costs the fleet and never the measurement.
   await restoreTheFleet();
@@ -1734,6 +1744,26 @@ if (row.stopsAtTheReturn) {
 // ---------------------------------------------------------------------------------------------
 note("minting a fresh device as the reference the returned device must equal");
 const fresh = await becomeANewDeviceAndConfirm({ report: (s) => note(`reference: ${s}`) });
+// A REFERENCE THE ACCOUNT HAD NO ROOM FOR IS A BLOCKED SETUP, NOT A COMPARISON. The primitive refuses
+// before the wipe and hands back no `cx`, so reading `fresh.cx` below died on a TypeError and lost
+// the return the row had just measured. The return's state travels with the refusal instead.
+if (fresh.refused) {
+  record(row.id, "INVALID", {
+    unobservable: `the reference device could not be minted, so the returned device has nothing to equal: ${fresh.refused}`,
+    reference: { refused: fresh.refused, spent: fresh.spent ?? null },
+    what: row.what,
+    order,
+    revocation,
+    wipe,
+    returned: { state: returnedState, amber: returnedAmber },
+    timeline,
+  });
+  actorCx.close();
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
+  process.exit(1);
+}
 const freshTarget = await whatTheWorldCanServe("the reference");
 const freshSettle = await watchRows(fresh.cx, {
   timeoutMs: SETTLE_MS,

@@ -58,13 +58,32 @@ export function takeServerWindow(read, since, subjects = []) {
 }
 
 /**
- * Fold a server window into a gated verdict: a PASS over a dirty server window is `PASS-DIRTY`, and
- * nothing else is rewritten. Same demotion `gate()` applies to a dirty client, for the same reason.
+ * Fold a server window into what `gate()` returned, so the server counts EXACTLY as a client does.
  *
- * @returns {{verdict: string, detail: object}} the verdict and the fields to add to the row
+ * A PASS over a dirty server window is `PASS-DIRTY`; nothing else is rewritten. And the row's
+ * `clean` - the one field every reader of a gated row reads - is the conjunction of the clients AND
+ * the server, with the server's dirt under `dirt_server` beside each `dirt_<client>`. Until
+ * 2026-10-04 the fold demoted the verdict but left `clean: true` on a row whose server was dirty, so
+ * the row contradicted itself and a reader of `clean` saw two observers out of three.
+ *
+ * NO WINDOW LEAVES THE ROW EXACTLY AS `gate()` MADE IT - in particular with no `serverClean` key.
+ * That absence is what `rows.mjs` reads as "the server was not observed": a row recorded before the
+ * window reached the ledger carries no `serverClean`, and must never read as a clean server.
+ *
+ * @param {{verdict: string, detail: object}} gated what `gate()` returned for the clients
+ * @param {object|null} serverWindow a {@link takeServerWindow} result, or null when the row took none
+ * @returns {{verdict: string, detail: object}} the verdict and the whole gated detail
  */
-export function foldServerWindow(verdict, serverWindow) {
-  if (!serverWindow) return { verdict, detail: {} };
-  const detail = { serverWindow, serverClean: serverWindow.clean };
-  return { verdict: verdict === 'PASS' && !serverWindow.clean ? 'PASS-DIRTY' : verdict, detail };
+export function foldServerWindow(gated, serverWindow) {
+  if (!serverWindow) return gated;
+  const { dirt, ...window } = serverWindow;
+  const detail = {
+    ...gated.detail,
+    clean: gated.detail.clean === true && serverWindow.clean === true,
+    serverWindow: window,
+    serverClean: serverWindow.clean === true,
+  };
+  if (!detail.serverClean) detail.dirt_server = dirt ?? { unreachable: serverWindow.unreachable ?? 'no reason recorded' };
+  const verdict = gated.verdict === 'PASS' && !detail.serverClean ? 'PASS-DIRTY' : gated.verdict;
+  return { verdict, detail };
 }

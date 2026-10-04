@@ -536,16 +536,22 @@ note("enrolling a second device of the owner while the peer is absent");
 const minted = await becomeANewDeviceAndConfirm({ report: (s) => note(`newdevice: ${s}`) });
 const newDeviceId = minted.now?.deviceId ?? null;
 note(`the new device is ${newDeviceId ? installTag(newDeviceId) : "(none)"}`);
-if (!newDeviceId || !minted.enrolled) {
+// A REFUSED MINT HAS NO CLIENT: the primitive refuses a full account before the wipe and hands back
+// `refused` with no `cx`. Its measured reason is the INVALID's reason, and the close is optional.
+if (minted.refused || !newDeviceId || !minted.enrolled) {
   record(row.id, "INVALID", {
-    unobservable: "the second device did not enrol, so there is no membership row to watch",
-    enrolled: minted.enrolled,
-    pinOk: minted.pinOk,
+    unobservable: minted.refused
+      ? `the second device could not be minted: ${minted.refused}`
+      : "the second device did not enrol, so there is no membership row to watch",
+    refused: minted.refused ?? null,
+    spent: minted.spent ?? null,
+    enrolled: minted.enrolled ?? null,
+    pinOk: minted.pinOk ?? null,
     what: row.what,
     timeline,
     peerRestored: await restorePeer(),
   });
-  minted.cx.close();
+  minted.cx?.close();
   ownerCx.close();
   process.exit(1);
 }

@@ -328,6 +328,9 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         a1BuildDirty: r.a1BuildDirty,
         a1BuildDiffSha: r.a1BuildDiffSha,
         a1BuildUnstamped: r.a1BuildUnstamped,
+        // THE SERVER AS AN OBSERVER. Absent means the row was recorded before `serverWindow` reached
+        // the ledger (or its runner never takes one): "not observed", NEVER "clean" - see below.
+        serverClean: r.serverClean,
       });
     }
     // build AND checkSha AND instrumentSha: a runner EDITED between two runs is the ordinary way a
@@ -665,6 +668,30 @@ if (unstamped.length) {
   for (const r of unstamped) {
     console.log('  ' + r.padEnd(14) + String(latest.get(r).verdict).padEnd(12) + latest.get(r).at);
   }
+}
+
+// THE SERVER IS THE THIRD OBSERVER, AND A HEAL VERDICT ONLY CARRIES IT SINCE 2026-10-04.
+//
+// `healnew.mjs` and `healrevoke.mjs` write `serverClean` (and `serverWindow`) beside the clients' dirt,
+// and a dirty server demotes a PASS exactly as a dirty client does. A record from before that has no
+// `serverClean` at all, which is NOT a clean server - it is a server nobody looked at, so it is listed
+// by name instead of being counted green. `serverClean: false` on a row means its `dirt_server` names
+// what the window held.
+const HEAL_SERVER_OBSERVED = /^HEAL-(NEW|REVOKE)-/;
+const serverUnobserved = rows.filter(
+  (r) => latest.has(r) && HEAL_SERVER_OBSERVED.test(r) && typeof latest.get(r).serverClean !== 'boolean'
+);
+if (serverUnobserved.length) {
+  console.log(
+    `\n[rows] ${serverUnobserved.length} HEAL verdict(s) carry NO server window - recorded before the ` +
+      `server reached the ledger, so "clean" on them means the web client only; re-run to observe it:`
+  );
+  console.log('  ' + serverUnobserved.join(' '));
+}
+const serverDirty = rows.filter((r) => latest.has(r) && latest.get(r).serverClean === false);
+if (serverDirty.length) {
+  console.log(`\n[rows] ${serverDirty.length} verdict(s) whose SERVER window was not clean (see dirt_server):`);
+  for (const r of serverDirty) console.log('  ' + r.padEnd(14) + String(latest.get(r).verdict));
 }
 
 // A ROW WHOSE `a1Build` NAMES A COMMIT THAT DOES NOT CONTAIN THE CODE IT MEASURED.

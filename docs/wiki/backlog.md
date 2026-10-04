@@ -3083,36 +3083,6 @@ a genuinely unusable KeyPackage and a device whose pool is momentarily empty - w
 (reject and re-mint, versus wait and retry). Carry the reason out of the WASM boundary alongside the
 id, then the server report can partition on it instead of on the queue.
 
-### P2 - a HEAL verdict says "clean on the web client" and never "clean on the server" (measured 2026-08-29)
-
-**Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
-`healrevoke.mjs` record `observers: { w3 }` and nothing else. The server window IS taken - `run.mjs`
-does it per pass and `srvlog.mjs` classifies it - but it is PRINTED, never written to the ledger row,
-so `gate()` never sees it, `bun rows.mjs` cannot report it, and no cell on the board can say
-anything about it either way.
-
-**It is not hypothetical: both windows of the 2/12 pair were NOT clean**, and the `no_key_package`
-refusal in the entry above was found by reading a run's stdout rather than by any mechanism the
-campaign owns. A `PASS-DIRTY` on a HEAL row today means "the web console was dirty"; whether the
-server's was is simply unrecorded.
-
-**The campaign's own rule is that a pass is a pass only if its window is clean on web, on the phone
-and on the server** - so until the third window reaches the ledger, every HEAL-NEW and HEAL-REVOKE
-cell is carrying two thirds of a gate. It is the same class as the pre-gate re-runs owed by
-HEAL-NEW-1 and -3, and it should be paid before the post-ladder sweep rather than during it.
-
-### P3 - the mint's own refusal is not a verdict, so a full account throws instead of recording (measured 2026-08-29)
-
-`becomeANewDevice` returns `{ refused: ... }` when the account is at the per-user device cap - the
-guard added on 2026-08-28 so nothing is destroyed that cannot be rebuilt. `healnew.mjs` never reads
-`minted.refused`: it goes straight on to use `minted.cx`, which is not there, and the row dies with
-a TypeError instead of recording `INVALID` with the reason the primitive had already measured and
-handed it.
-
-**A blocked job is not a crashed one**, and this turns the one refusal the rig knows how to explain
-into the least legible failure it can produce. Every HEAL-NEW row is affected, and it costs nothing
-today only because the owner sits at 3 of 15 slots.
-
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
 **The defect, its cause, the guards of 2026-08-28 and the hand cleanup of 2026-08-30 - with every
@@ -3306,37 +3276,19 @@ would hide the duplication rather than remove it.
 
 ### P2 - two COMM rows could not ARM, and the re-run has to say whether that was the debris (measured 2026-08-27)
 
-`f21502e1` left three `VACUOUS` cells. COMM-22 is the entry below. The other two are open:
+`f21502e1` left three `VACUOUS` cells. COMM-22 is the entry below. **The runner half is FIXED for COMM-9/10**
+(`comm910.mjs` puts each unmet arming conjunct into `failures[]` through `armingFailures`, so an unarmed
+row says why). What is owed is RIG RE-RUNS, nothing in code:
 
-- **COMM-9/10** - `failures: []`, and yet nothing to judge: `keptArrived:false`,
-  `keptLatencyMs:null`, `deniedLatencyMs:null`, `keptCopiesAfterRemoval:0`. The message the row
-  removes a member around never arrived, so the removal raced nothing. An empty `failures[]` beside
-  an unarmed check is itself a runner defect - the row knew it could not ask its question and said
-  nothing about why.
-- **COMM-21** - `the peer posts while it may: COMM21-... never appeared in 30000ms`, and
-  `probeBefore` answered **HTTP 400 `senderSessionId is required for channel messages`**.
-  **CORRECTED 2026-08-27: THAT 400 IS THE DESIGN, NOT A DEFECT.** `comm21.mjs`'s own header states
-  it - the probe is deliberately session-less so the SAME request is refused for two different
-  reasons, 400 while the peer is still a member and 403 once it is not, "without the 400 the 403
-  could equally be a malformed probe". The arm condition at `comm21.mjs:196` REQUIRES
-  `probeBefore?.status === 400`. So the 400 is a satisfied conjunct and the row failed on a
-  DIFFERENT one - and the real cause is named right there in the same verdict line, which was read
-  past: **`the peer posts while it may: COMM21-... never appeared in 30000ms`, i.e.
-  `peerWroteBefore !== true`.** The peer could not send in the salon it was still a member of.
-  **Read the ledger record before touching the probe** - and note the shape: the granting device
-  and the peer failing to exchange a message in a fresh salon is EXACTLY the forked-group signature
-  COMM-8 turned out to be, so re-run this row on a build carrying that fix BEFORE calling it a
-  runner defect at all.
-
-**ADJUDICATED 2026-08-27 on `cb967b6c`, the first build carrying the same-epoch ACK.** Both
-survived the debris being cleared, so both causes are real and neither was the redelivery:
-
-- **COMM-9/10 still `VACUOUS`**, identically: `keptArrived:false` with `failures: []`. The runner
-  defect stands as written - a row that cannot ask its question must say so in `failures[]`, and
-  this one still says nothing.
-- **COMM-21 still `VACUOUS`** with the same `probeBefore` 400 - which the correction above shows is
-  the design. Its blocker is `peerWroteBefore`, and the first thing owed to it is a re-run on the
-  COMM-8 fix, not a runner change.
+- **COMM-9/10** - re-run on the current build: it was `VACUOUS` twice with `keptArrived:false` (the first
+  message never reached the peer, so the removal raced nothing), and the cause of THAT is still unread.
+  The record now names it in `failures[]`; read it before touching anything.
+- **COMM-21** - `the peer posts while it may: COMM21-... never appeared in 30000ms`
+  (`peerWroteBefore !== true`). The `probeBefore` HTTP 400 is the DESIGN (a session-less probe, answered 400
+  while the peer is a member and 403 once it is not) and a satisfied conjunct, not the failure. A granting
+  device and a peer that cannot exchange a message in a fresh salon is the forked-group signature COMM-8
+  turned out to be, so **re-run on a build carrying that fix BEFORE calling it a runner defect**; read the
+  ledger record first. Still `VACUOUS` on `cb967b6c`, the first build with the same-epoch ACK.
 
 ### P2 - a STAGED commit cannot export a base at submit time, and keeps a repair where the external path needs none (COMM-22)
 
