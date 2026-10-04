@@ -1,5 +1,6 @@
 import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from './actions';
+import { recordWelcomeSent, resetWelcomeSent } from './welcomeSent';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 
 vi.mock('$lib/utils/hex', () => ({
@@ -127,10 +128,11 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
   /**
    * EVERY TEST BELOW USES ITS OWN GROUP ID, AND THAT IS NOT COSMETIC. The post-Welcome cooldown
-   * (`lastWelcomeSentAt`) is module state keyed by `groupId:deviceId` and nothing resets it between
-   * tests, so a second case reusing a group that already received a Welcome hits the cooldown and
-   * skips - passing or failing for a reason that has nothing to do with what it asserts.
+   * (`welcomeSent`) is module state keyed by `groupId:deviceId`, so a second case reusing a group
+   * that already received a Welcome hits the cooldown and skips - passing or failing for a reason
+   * that has nothing to do with what it asserts. It is reset before each case as well.
    */
+  beforeEach(() => resetWelcomeSent());
   const run = (
     groupId: string,
     mlsService: ReturnType<typeof createMlsServiceStub>,
@@ -162,6 +164,46 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('leaf in MLS tree - kick + re-add'));
     expect(mlsService.getGroupMembers).not.toHaveBeenCalled();
+  });
+
+  // A WELCOME SENT BY ANOTHER PATH IS STILL IN FLIGHT. A creation fan-out welcomed this device
+  // seconds ago and it asked before the Welcome landed: its leaf is fresh, so the push and the pull
+  // must not overlap into a kick + re-add. Only the welcome_request path used to be remembered.
+  it('does not kick a device another path welcomed seconds ago', async () => {
+    const mlsService = admissible({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
+    });
+    const log = vi.fn();
+    recordWelcomeSent('g-kick-in-flight', 'dev-1');
+
+    await run('g-kick-in-flight', mlsService, log);
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('still joining, skip'));
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
+  // AND PAST THE COOLDOWN THE KICK NAMES WHICH CAUSE IT REPAIRS: a Welcome sent here and lost, not
+  // a leaf from another session.
+  it('names the Welcome another path sent when the repair comes after the cooldown', async () => {
+    const mlsService = admissible({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
+    });
+    const log = vi.fn();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now - 45_000);
+    recordWelcomeSent('g-kick-lost', 'dev-1');
+    clock.mockReturnValue(now);
+
+    try {
+      await run('g-kick-lost', mlsService, log);
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('kick + re-add (last Welcome sent here 45s ago)')
+    );
   });
 
   // AND THE OTHER DIRECTION, WHICH IS WHY THIS IS NOT MERELY A TIDY-UP: the routing table listing a

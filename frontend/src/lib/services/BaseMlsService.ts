@@ -95,6 +95,7 @@ import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
@@ -2107,7 +2108,10 @@ export abstract class BaseMlsService implements IMlsService {
     };
   }
 
-  /** Delivers a Welcome message to the target user/device. */
+  /**
+   * Delivers a Welcome message to the target user/device, and records it once delivered: every
+   * path that welcomes a device goes through here, so `welcomeSentAt` is true for all of them.
+   */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -2115,13 +2119,14 @@ export abstract class BaseMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    return this.delivery.sendWelcome(
+    await this.delivery.sendWelcome(
       welcomeBytes,
       targetUserId,
       groupId,
       targetDeviceId,
       ratchetTreeBytes
     );
+    if (targetDeviceId) recordWelcomeSent(groupId, targetDeviceId);
   }
 
   getDeviceId(): string {

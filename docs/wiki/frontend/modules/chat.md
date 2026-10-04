@@ -1985,6 +1985,22 @@ them one by one. The queue records WHO is waiting, and a device waiting twice is
 A table drives both entrances over the same not-ready group and the same failure, and a source check
 refuses a third entrance that builds its own parameters.
 
+### The post-Welcome cooldown knows every Welcome this tab sent, not only its own (2026-10-04)
+
+A `welcome_request` for a device whose leaf is already in the tree is answered by kick + re-add,
+and two different events reach that branch: the Welcome was **lost**, and the request is the retry
+that recovers it; or it was **still in flight**, and the push and the pull overlapped. The 30 s
+cooldown is what tells them apart, and it used to remember only Welcomes the `welcome_request`
+handler had sent itself. A group's creation fan-out, a pending invitation and a Graine admission
+send them too, so a device asking seconds after a creation fan-out (GRP-8, 2026-08-24) had its
+fresh leaf kicked, and the kick line said *no Welcome sent from here*.
+
+The record now lives in `welcomeSent.ts` and is written by `BaseMlsService.sendWelcome`, the one
+call all four paths go through, once the delivery succeeded. So an ask inside the cooldown is
+skipped whatever path welcomed the device - the overlap no longer exists - and a kick past it
+says how long ago this tab's Welcome left. In memory on purpose, and reset at logout: a Welcome
+sent before a reload is one the requester has had time to lose.
+
 ### A DM has two keys, depending on which side created it
 
 `conversations` is keyed by `groupId` for a DM created on this device, and by the PEER'S USER ID for

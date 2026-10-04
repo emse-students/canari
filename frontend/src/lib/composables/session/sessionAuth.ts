@@ -46,6 +46,7 @@ import {
   retryDeferredReconciliations,
   setHistoryProbeSender,
 } from '$lib/utils/chat/historyReconcile';
+import { resetWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
@@ -1933,6 +1934,8 @@ export function tearDownLiveSession(
   // one's token. The row survives in storage, and that user's next login replays it.
   unregisterPendingGroupExitDrain();
   resetHistoryReconciliation();
+  // A Welcome this session sent says nothing about the next user's requests.
+  resetWelcomeSent();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);
