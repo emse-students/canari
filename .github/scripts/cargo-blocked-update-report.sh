@@ -14,7 +14,7 @@
 # script is the remembering.
 #
 # WHY THE REPORT IS AN ISSUE AND NOT A RED RUN, which is a deliberate departure from its neighbour
-# `dependabot-alerts-report.sh`. An open security alert is an anomaly, so it makes that run red. A
+# `github-alerts-report.sh`. An open security alert is an anomaly, so it makes that run red. A
 # cargo dependency being one patch behind is the NORMAL state of any Rust tree: a red nightly for it
 # would be red every night, and *a line its reader learns to skip is the one that hides the next
 # defect*. So the split is by meaning - **the issue says there is work, a red run says this reporter

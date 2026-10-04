@@ -17,7 +17,7 @@ set -uo pipefail
 
 # shellcheck source-path=SCRIPTDIR
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPORT="$HERE/../dependabot-alerts-report.sh"
+REPORT="$HERE/../github-alerts-report.sh"
 
 PASS=0
 FAIL=0
@@ -169,6 +169,78 @@ if [ "$(code_of "$f")" = "1" ]; then
   pass "an alert that cannot be described still fails, and accuses this reader"
 else
   fail "a described-nothing response must fail"
+fi
+
+printf '\nand the CODE SCANNING list is read by the same judgement:\n'
+
+# `cs_facts <name> <transport> [alerts-json]` - a facts file `gather` would write for code scanning.
+cs_facts() {
+  local f
+  f="$(facts "$@")"
+  printf 'alert_source=%s\n' 'code-scanning' >>"$f"
+  printf '%s' "$f"
+}
+
+# Alert 2544 as GitHub listed it on 2026-10-01 - the standing alert no pull request ever named.
+CS_ALERT='[{"number":2544,"state":"open",
+  "rule":{"id":"js/incomplete-multi-character-sanitization","severity":"warning","security_severity_level":"high"},
+  "tool":{"name":"CodeQL"},
+  "most_recent_instance":{"location":{"path":"frontend/src/lib/components/auth/LoginForm.flat.test.ts","start_line":14}}}]'
+
+f="$(cs_facts csclean ok '[]')"
+if [ "$(code_of "$f")" = "0" ]; then
+  pass "an empty code scanning list from a request that SUCCEEDED is clean"
+else
+  fail "a genuinely empty code scanning list should pass"
+fi
+case "$(text_of "$f")" in
+  *'no open code scanning alert'*) pass "and the clean line names the list that was read" ;;
+  *) fail "the clean line must say it was the code scanning list" ;;
+esac
+
+f="$(cs_facts csone ok "$CS_ALERT")"
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "one STANDING code scanning alert fails the run"
+else
+  fail "a standing code scanning alert must fail - the pull-request check never will"
+fi
+out="$(text_of "$f")"
+for needle in '#2544' 'high' 'js/incomplete-multi-character-sanitization' 'LoginForm.flat.test.ts:14' 'CodeQL'; do
+  case "$out" in
+    *"$needle"*) pass "the code scanning finding carries $needle" ;;
+    *) fail "the code scanning finding does not carry $needle" ;;
+  esac
+done
+
+f="$(cs_facts csforbidden forbidden)"
+case "$(text_of "$f")" in
+  *'security-events: read'*) pass "a code scanning 403 names the permission, which IS its remedy" ;;
+  *) fail "a code scanning 403 must name security-events: read" ;;
+esac
+case "$(text_of "$f")" in
+  *DEPENDABOT_ALERTS_TOKEN*) fail "a code scanning 403 must not send its reader to the Dependabot token" ;;
+  *) pass "and it does not send its reader to the Dependabot token" ;;
+esac
+
+f="$(cs_facts csshifted ok '[{"number":1,"state":"open"}]')"
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "a code scanning alert that cannot be described still fails"
+else
+  fail "a described-nothing code scanning response must fail"
+fi
+
+f="$WORK/unknown"
+printf 'alert_source=%s\ntransport=%s\nalerts=%q\n' 'secret-scanning' 'ok' '[]' >"$f"
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "an unknown alert source fails rather than reporting on a list nobody read"
+else
+  fail "an unknown alert source must fail"
+fi
+
+if (main nonsense >/dev/null 2>&1); then
+  fail "main must refuse an unknown source before asking GitHub anything"
+else
+  pass "main refuses an unknown source before asking GitHub anything"
 fi
 
 printf '\n'
