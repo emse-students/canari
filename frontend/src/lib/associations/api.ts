@@ -216,8 +216,6 @@ export interface UpdateAssociationPayload {
   description?: string | null;
   bioMarkdown?: string | null;
   logoUrl?: string;
-  /** Global admin only - marks this association as the BDE. */
-  isBDE?: boolean;
   /** Global admin only - sets the document vault quota in bytes. */
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */

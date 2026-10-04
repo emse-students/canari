@@ -571,10 +571,16 @@ has no star.
 
 **Post-level targeting (asked 2026-10-04; its SERVER half - rules on a post, held to the ceiling - shipped with 6b, the composer menu and the filters are a later PR):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
 
-**The `isBDE` toggle on `/admin/associations` still exists and still drives every BDE check**: 6c moves
-those checks onto the space's BDE and deletes the column, so until then the two say the same thing only
-because the seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the
-service (9) and the pair logic (5), and CI boots the real module.
+**WP6c, step 1 (2026-10-04): `isBDE` IS GONE.** `spaces/bde.ts` `isBdeAssociationSql` is the ONE
+definition: an association is a BDE exactly when it is the BDE of at least one space. The three BDE
+queries (`isUserBdeAdmin`, `callerHasAnyBdeFlag`, the proposal notification) use it; the entity's `isBDE`
+is a read-only `VirtualColumn` derived from it, so every API and the frontend keep reading the same
+field; the toggle on `/admin/associations` is now a read-only badge. Migration `072_drop_is_bde.sql`
+drops the column and REFUSES while a flagged association governs no space (071 seeds a BDE only when
+exactly one was flagged), so no one silently loses VALIDATE_EVENTS / MANAGE_ASSO / MODERATE. Tried on a
+throwaway Postgres: drop, replay, refusal; the virtual column read against real rows. **STEP 2, NOT
+BUILT: scope validation and MANAGE_ASSO to the BDE of the event association's space** (today any BDE
+validates any event); MODERATE stays global (D23).
 
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
 read that serves a post, an event or an announcement asks ONE module,
@@ -678,3 +684,54 @@ attribute keys, once nothing reads them - each removal measured, per
 
 **Dependencies.** WP0 whenever. WPA -> WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 waits
 for the SSO; WP9 last.
+
+## The access plan - who sees what (decided with the user, 2026-10-04)
+
+Answered one question at a time on 2026-10-04. It removes the per-post space rules WP6b built (D38).
+State: **built** = in a draft PR, **next** = decided, not built, **open** = to settle.
+
+### D34-D36 - Who is who
+
+| Population | Space | Sees student content | State |
+| --- | --- | --- | --- |
+| Student or alumnus (no distinction) | formation x campus (an alumnus keeps the former one) | what their spaces and memberships reach | built |
+| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post | next |
+
+Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
+spaces by default (D36, next). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
+and a personnel: the spaces add up. Being personnel gives NO right to publish as the School: that takes
+membership of the institution's own instance, exactly as for an association. Everyone ticks `EMSE`, so that
+box no longer defines anything.
+
+### D37-D41 - What each surface shows
+
+| Surface | Who sees it | State |
+| --- | --- | --- |
+| Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built, republication next |
+| Personal post | author and people sharing a space; never an institution; an admin only by id | built |
+| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | next |
+| Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | next (today a co-organiser is added without consent) |
+| Agenda signed in | as events above | built (organiser only) |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
+| Association directory (D37) | associations reaching one's spaces, or one belongs to | next (today: all) |
+| Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
+| Association map | filters to show or hide associations and to select them by campus, formation | next |
+| Feed (the gate) | admin, or one space, or one membership | built |
+| Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
+| Messaging, forms, people directory | any valid profile, no border | built |
+
+### Filters and rights
+
+| Item | Rule |
+| --- | --- |
+| Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader |
+| Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38) |
+| Join an association | its admins add the member; following opens nothing |
+| Moderation | global (D23) |
+
+### Decided last (user, 2026-10-04)
+
+| Item | Decision |
+| --- | --- |
+| Republished card | "Republished by X, Y" line, reactions and comments on the original, notification only for those who newly see the post |
+| Personnel | declared; spaces add up with a cursus; publishing as an institution needs membership of its instance |

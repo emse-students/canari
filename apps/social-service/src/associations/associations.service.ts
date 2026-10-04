@@ -58,6 +58,7 @@ import {
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
+import { isBdeAssociationSql } from '../spaces/bde';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -1276,7 +1277,7 @@ export class AssociationsService {
       .createQueryBuilder('m')
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
-      .andWhere('a.isBDE = true')
+      .andWhere(isBdeAssociationSql('a'))
       .andWhere('(m.permissions & :flag) <> 0', {
         flag: AssociationPermissionFlag.VALIDATE_EVENTS,
       })
@@ -1346,7 +1347,7 @@ export class AssociationsService {
       .createQueryBuilder('m')
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
-      .andWhere('a.isBDE = true')
+      .andWhere(isBdeAssociationSql('a'))
       .andWhere('(m.permissions & :flag) <> 0', { flag })
       .getCount();
     return n > 0;
@@ -1733,7 +1734,7 @@ ${rejectionReason}`
     const validators = await this.memberRepo
       .createQueryBuilder('m')
       .innerJoin(Association, 'a', 'a.id = m.associationId')
-      .where('a.isBDE = true')
+      .where(isBdeAssociationSql('a'))
       .andWhere('(m.permissions & :flag) <> 0', {
         flag: AssociationPermissionFlag.VALIDATE_EVENTS,
       })

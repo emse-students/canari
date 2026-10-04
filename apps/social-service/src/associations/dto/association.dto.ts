@@ -112,11 +112,6 @@ export class UpdateAssociationDto {
   @IsOptional()
   logoUrl?: string;
 
-  /** Only global admins may toggle this. */
-  @IsBoolean()
-  @IsOptional()
-  isBDE?: boolean;
-
   /** Only global admins may change this. Default 500 MiB. */
   @IsInt()
   @Min(0)
