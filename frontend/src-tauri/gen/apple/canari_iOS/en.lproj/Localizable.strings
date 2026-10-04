@@ -7,6 +7,9 @@
 "notif.channel.message" = "New message in #%@";
 "notif.outbox.pending" = "You may have messages waiting to be sent - open the app to send them.";
 "notif.channel.unnamed" = "Channel";
+/* A mention token in a decrypted body: the one user the app can name, and everybody else. */
+"notif.mention.you" = "you";
+"notif.mention.someone" = "someone";
 "notif.action.reply" = "Reply";
 "notif.action.send" = "Send";
 "notif.action.mark_read" = "Mark as read";

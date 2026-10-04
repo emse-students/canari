@@ -15,6 +15,9 @@
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";
 "notif.channel.unnamed" = "Salon";
+/* A mention token in a decrypted body: the one user the app can name, and everybody else. */
+"notif.mention.you" = "vous";
+"notif.mention.someone" = "quelqu'un";
 /* Quick-action titles (CanariRegisterNotificationCategories). A UNNotificationCategory is REPLACED
    by setNotificationCategories, so unlike an Android channel name these follow a language change -
    CanariRefreshNotificationCategories re-registers them when the mirrored locale moves.
