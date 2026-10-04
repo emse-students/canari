@@ -39,7 +39,10 @@ const USERS = {
   icmSe: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2023 }] },
   icmSe2: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2024 }] },
   isminGa: { campus: 'gardanne', cursus: [{ formation: 'ISMIN', promo: 2023 }] },
+  // A global admin with no space: browsing shows them only what they wrote.
   admin: { campus: null, cursus: [], admin: true },
+  // An admin who is also an ICM student: sees what an ICM student sees, no more.
+  adminIcm: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2022 }], admin: true },
   // Staff: a post at the School, no cursus - so no space at all. Member of A1.
   staff: { campus: 'saint-etienne', cursus: [] },
   // Campus but no cursus, and no membership: the one reader the gate refuses.
@@ -67,7 +70,7 @@ const POSTS: {
     label: 'an A1 post (its rules reach ICM x saint-etienne; staff is a member AND the author)',
     authorId: 'staff',
     associationId: A1,
-    seenBy: ['icmSe', 'icmSe2', 'admin', 'staff'],
+    seenBy: ['icmSe', 'icmSe2', 'adminIcm', 'staff'],
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
@@ -90,14 +93,14 @@ const POSTS: {
     authorId: 'staff',
     associationId: A1,
     ownRules: [{ formation: 'ISMIN', campus: 'gardanne' }],
-    seenBy: ['admin', 'staff'],
+    seenBy: ['staff'],
   },
   {
     id: '00000000-0000-4000-8000-000000000005',
     label: 'a personal post (its author shares ICM x saint-etienne)',
     authorId: 'icmSe',
     associationId: null,
-    seenBy: ['icmSe', 'icmSe2', 'admin'],
+    seenBy: ['icmSe', 'icmSe2', 'adminIcm'],
   },
   {
     id: '00000000-0000-4000-8000-000000000006',
@@ -105,14 +108,14 @@ const POSTS: {
     authorId: 'isminGa',
     associationId: null,
     anonymous: true,
-    seenBy: ['isminGa', 'admin'],
+    seenBy: ['isminGa'],
   },
   {
     id: '00000000-0000-4000-8000-000000000007',
     label: 'a personal post by staff, who has no space (D31): only its author',
     authorId: 'staff',
     associationId: null,
-    seenBy: ['staff', 'admin'],
+    seenBy: ['staff'],
   },
 ];
 
@@ -210,7 +213,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       const { rows } = await client.query(IN_FEED_AUDIENCE_SQL, [id]);
       if (rows[0].inAudience === true) admitted.push(id);
     }
-    expect(admitted.sort()).toEqual(['admin', 'icmSe', 'icmSe2', 'isminGa', 'staff']);
+    expect(admitted.sort()).toEqual(['admin', 'adminIcm', 'icmSe', 'icmSe2', 'isminGa', 'staff']);
   });
 
   it.each(POSTS.map((p) => [p.label, p] as const))('%s', async (_label, post) => {
@@ -236,6 +239,33 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     }
   });
 
+  it('a global admin may open ANY post by its id, but browsing never shows it to them', async () => {
+    for (const post of POSTS) {
+      const { rows } = await client.query(
+        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
+        [post.id, 'admin']
+      );
+      expect({ post: post.label, openByIdAsAdmin: rows[0].visible }).toEqual({
+        post: post.label,
+        openByIdAsAdmin: true,
+      });
+    }
+    const { rows } = await client.query(
+      `SELECT posts.id FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')} ORDER BY posts.id`,
+      ['admin']
+    );
+    // Only what the admin wrote themselves: the posts of the two A2 rows.
+    expect(rows.map((r) => r.id as string)).toEqual(
+      POSTS.filter((p) => p.authorId === 'admin').map((p) => p.id)
+    );
+    // A non-admin never gets the opening by id.
+    const outsider = await client.query(
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
+      [POSTS[4].id, 'isminGa']
+    );
+    expect(outsider.rows[0].visible).toBe(false);
+  });
+
   it('an absent viewer (NULL) sees nothing at all', async () => {
     const { rows } = await client.query(
       `SELECT count(*)::int AS n FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')}`,
@@ -246,7 +276,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
 
   it('announces a post to everyone who can see it, minus its author', async () => {
     const { rows } = await client.query(announceRecipientsSql(false), [POSTS[0].id]);
-    expect(rows.map((r) => r.id as string).sort()).toEqual(['admin', 'icmSe', 'icmSe2']);
+    expect(rows.map((r) => r.id as string).sort()).toEqual(['adminIcm', 'icmSe', 'icmSe2']);
   });
 
   it("announces a personal post to its author's followers who can see it, and no other", async () => {
@@ -269,7 +299,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       icmSe: ['A1'],
       icmSe2: ['A1'],
       isminGa: ['A2'],
-      admin: ['A1', 'A2'],
+      admin: [],
+      adminIcm: ['A1'],
       staff: ['A1'],
       outsider: [],
       notBackfilled: [],

@@ -571,11 +571,12 @@ export class PostsService {
   /**
    * Refuses with 404 a post `viewerId` may not see (WP6b decision 3) - `postVisibleToViewerSql`,
    * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
-   * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing.
+   * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing. A global
+   * admin may open any post BY ITS ID (a report or moderation link) but is not shown it by browsing.
    */
   async assertVisible(postId: string, viewerId: string | undefined): Promise<void> {
     const rows: { visible: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible FROM posts WHERE posts.id = $1`,
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
       [postId, viewerId ?? null]
     );
     if (rows[0]?.visible !== true) {

@@ -112,16 +112,21 @@ function isAdminSql(user: string): string {
 }
 
 /**
- * Association `association` is visible to user row `user`: an admin, a member (D21), or its rules
- * reach one of the user's spaces. The agenda's predicate.
+ * Association `association` is visible to user row `user`: a member (D21), or its rules reach one of
+ * the user's spaces. The agenda's predicate. A global admin is a reader like any other here (user,
+ * 2026-10-04): browsing is not a moderation power, so an admin who is an ICM student sees what an
+ * ICM student sees.
  */
 export function associationVisibleToUserSql(association: string, user: string): string {
-  return `(${isAdminSql(user)} OR ${isMemberSql(association, user)} OR ${associationRulesReachUserSql(association, user)})`;
+  return `(${isMemberSql(association, user)} OR ${associationRulesReachUserSql(association, user)})`;
 }
 
 /**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b):
- * - a global admin, or the post's author;
+ * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
+ *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
+ *   announcements show an admin what they would show an ordinary reader (user, 2026-10-04: an admin
+ *   reading everyone's personal posts would be a mess, and a wrong thing to be able to do);
  * - an association post: a member of that association, or the post's OWN rules if it has any,
  *   else the association's, reach one of the user's spaces. Own rules are held to the ceiling HERE
  *   too, not only when they are written: a space reached by a post rule is visible only if one of
@@ -129,10 +134,14 @@ export function associationVisibleToUserSql(association: string, user: string): 
  *   narrows its posts that were written inside the old ceiling;
  * - a personal post (anonymous included): the user shares at least one space with its AUTHOR.
  */
-export function postVisibleToUserSql(post: string, user: string): string {
+export function postVisibleToUserSql(
+  post: string,
+  user: string,
+  opts: { adminSeesAll?: boolean } = {}
+): string {
+  const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
   const ownRules = `SELECT 1 FROM post_audiences vis_prule WHERE vis_prule."postId" = ${post}.id`;
-  return `(${isAdminSql(user)}
-    OR ${post}."authorId" = ${user}.id
+  return `(${adminClause}${post}."authorId" = ${user}.id
     OR (${post}."associationId" IS NULL AND EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
       WHERE vis_author.id = ${post}."authorId" AND ${isReaderSpaceSql('vis_shared', user)}))
@@ -152,8 +161,12 @@ export function postVisibleToUserSql(post: string, user: string): string {
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM
  * `:name`). An absent viewer (NULL) matches no `users` row, so it sees nothing.
  */
-export function postVisibleToViewerSql(post: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer')})`;
+export function postVisibleToViewerSql(
+  post: string,
+  viewer: string,
+  opts: { adminSeesAll?: boolean } = {}
+): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', opts)})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */

@@ -585,8 +585,13 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   formation is one of their `cursus` formations AND whose campus is their `campus`. No campus or
   no cursus is no space. The SQL uses jsonb containment, so a malformed `cursus` matches nothing
   rather than failing every reader's query.
-- **A post is visible** (`postVisibleToUserSql`) to a global admin (`users.admin`, the column,
-  never the header - one source), to its author, to a member of its association (D21: any
+- **AN ADMIN BROWSES AS AN ORDINARY READER (user, 2026-10-04: "ce serait un peu le bordel sinon").**
+  The feed, the search, the announcements and the agenda give a global admin exactly what their own
+  spaces and memberships give: an admin who is an ICM Saint-Etienne student sees what an ICM
+  Saint-Etienne student sees, and an admin with no space sees only what they wrote. What an admin
+  keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
+  `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
+- **A post is visible** (`postVisibleToUserSql`) to its author, to a member of its association (D21: any
   `association_members` row - there is no pending state), and otherwise when its own
   `post_audiences` rules if it has any, else its association's rules, reach one of the reader's
   spaces. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
@@ -600,7 +605,8 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
 - **Announce**: the recipients of a post are everyone who can see THAT post, minus its author
   (`announceRecipientsSql`); a personal post's followers are told only if they can see it.
 - **Agenda**: a SIGNED-IN reader's aggregated feed and per-association `/events` keep an event
-  when its association reaches one of their spaces, they are a member, or they are an admin. The
+  when its association reaches one of their spaces, or they are a member (an admin is an ordinary
+  reader here, see above). The
   anonymous agenda and its `.ics` (D30) are unchanged: like the promo cutoff, this is relevance.
 - **Post-level rules, server only**: `CreatePostDto` and `UpdatePostDto` accept
   `audiences: [{formation?, campus?}]`. Each rule must be INSIDE the association's ceiling (every
