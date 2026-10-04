@@ -8,12 +8,23 @@ import { ANONYMOUS_POST_IDENTITY } from '$lib/posts/postComposerDraft';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import {
   declaredReelDurationMs,
+  publishCameraPhoto,
   publishReel,
   ReelPublishError,
   type PublishReelDeps,
 } from './publishReel';
 
 vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false }));
+vi.mock('$lib/media', async (importOriginal) => {
+  const original = await importOriginal<typeof import('$lib/media')>();
+  return {
+    ...original,
+    preparePostMedia: vi.fn(async () => ({
+      file: new File([new Uint8Array(4)], 'camera.webp', { type: 'image/webp' }),
+      dims: { width: 640, height: 480 },
+    })),
+  };
+});
 
 const ref = {
   type: 'video' as const,
@@ -126,6 +137,35 @@ describe('publishReel', () => {
     const err = await publishReel(input(), d).catch((e: unknown) => e);
     expect((err as ReelPublishError).stage).toBe('moderation');
     expect(d.prepare).not.toHaveBeenCalled();
+  });
+});
+
+describe('publishCameraPhoto', () => {
+  it('uploads the edited photo as an archive post, never as a reel', async () => {
+    const createPost = vi.fn(async () => ({ id: 'p-photo' }) as never);
+    const upload = vi.fn(async () => ({
+      ...ref,
+      type: 'image' as const,
+      mimeType: 'image/webp',
+    }));
+    await publishCameraPhoto(
+      {
+        clip: { blob: new Blob(['photo'], { type: 'image/jpeg' }), source: 'camera' },
+        caption: 'a photo',
+        identity: '',
+      },
+      {
+        assertNotMuted: vi.fn(async () => {}),
+        getToken: vi.fn(async () => 'tok'),
+        upload,
+        createPost,
+      }
+    );
+    expect(upload).toHaveBeenCalledWith(expect.any(File), 'tok', { width: 640, height: 480 });
+    expect(createPost).toHaveBeenCalledWith({
+      markdown: 'a photo',
+      media: [expect.objectContaining({ type: 'image' })],
+    });
   });
 });
 

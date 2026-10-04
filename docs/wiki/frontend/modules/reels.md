@@ -154,6 +154,13 @@ only to draw a picture. The tile opens the system picker instead, which needs ne
 the cap is refused the moment it is picked (`reels/videoDuration.ts`), and one whose header has no
 duration is left to the preparation's own `too-long`.
 
+**The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
+be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those
+decorations into a WebP before the normal archive-media upload. It deliberately publishes the result
+as an ordinary post: the server contract defines a reel as exactly one video with a duration, so a
+photo must not be disguised as a reel. Video decorations use the same editor and are rendered into a
+local MediaRecorder stream before the existing H.264/AAC preparation path.
+
 ## Publishing (R3, on C2 and C3)
 
 "Suivant" on the review opens the publish step (`components/reels/ReelPublishSheet.svelte`) IN

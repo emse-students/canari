@@ -7,7 +7,7 @@
    * the way the member left every other video.
    */
   import { onDestroy } from 'svelte';
-  import { ArrowRight, X } from '@lucide/svelte';
+  import { ArrowRight, Pencil, X } from '@lucide/svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import { m } from '$lib/paraglide/messages';
@@ -15,11 +15,12 @@
   interface Props {
     clip: ReelClip;
     ondiscard: () => void;
+    onedit?: () => void;
     /** On to the publish step. */
     onnext: () => void;
   }
 
-  let { clip, ondiscard, onnext }: Props = $props();
+  let { clip, ondiscard, onedit, onnext }: Props = $props();
 
   // One URL per clip, revoked with it: the take is tens of megabytes.
   const src = $derived(URL.createObjectURL(clip.blob));
@@ -34,26 +35,41 @@
 </script>
 
 <div class="absolute inset-0 z-10 bg-black text-white" data-reel-review>
-  <VideoPlayer
-    {src}
-    autoplay
-    loop
-    class="h-full w-full"
-    videoClass="h-full w-full object-contain"
-  />
+  {#if clip.blob.type.startsWith('image/')}
+    <img {src} alt="" class="h-full w-full object-contain" />
+  {:else}
+    <VideoPlayer
+      {src}
+      autoplay
+      loop
+      class="h-full w-full"
+      videoClass="h-full w-full object-contain"
+    />
+  {/if}
 
   <div
     class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
   >
-    <button
-      type="button"
-      class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-label={m.reels_review_discard()}
-      title={m.reels_review_discard()}
-      onclick={ondiscard}
-    >
-      <X size={24} strokeWidth={2.5} />
-    </button>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={m.reels_review_edit()}
+        title={m.reels_review_edit()}
+        onclick={() => onedit?.()}
+      >
+        <Pencil size={22} strokeWidth={2.5} />
+      </button>
+      <button
+        type="button"
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={m.reels_review_discard()}
+        title={m.reels_review_discard()}
+        onclick={ondiscard}
+      >
+        <X size={24} strokeWidth={2.5} />
+      </button>
+    </div>
   </div>
 
   <div class="absolute right-0 bottom-0 p-4 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
