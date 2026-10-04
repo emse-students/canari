@@ -11,7 +11,7 @@
  * error as its cause - typed at the throw, so the screen names where it stopped without reading a
  * message (`publishFailureMessage` reads the cause).
  */
-import { MediaService, type ImageDimensions, type MediaRef } from '$lib/media';
+import { MediaService, preparePostMedia, type ImageDimensions, type MediaRef } from '$lib/media';
 import { createPost, type CreatePostPayload, type PostEntity } from '$lib/posts/api';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
 import type { PublishStage } from '$lib/posts/publishFailure';
@@ -47,6 +47,25 @@ export function defaultPublishReelDeps(): PublishReelDeps {
   };
 }
 
+/** Dependencies for publishing a camera photo as a normal archive post. */
+export interface PublishPhotoDeps {
+  assertNotMuted: () => Promise<void>;
+  getToken: () => Promise<string>;
+  upload: (file: File, token: string, dims: ImageDimensions) => Promise<MediaRef>;
+  createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
+}
+
+/** The production services for a camera photo, whose media is retained with ordinary posts. */
+export function defaultPublishPhotoDeps(): PublishPhotoDeps {
+  const media = new MediaService();
+  return {
+    assertNotMuted,
+    getToken,
+    upload: (file, token, dims) => media.encryptAndUpload(file, token, dims, 'archive'),
+    createPost,
+  };
+}
+
 export interface PublishReelInput {
   clip: ReelClip;
   /** The caption, already trimmed; may be empty (a reel's caption is optional on the server). */
@@ -58,6 +77,14 @@ export interface PublishReelInput {
   /** Progress and cancel for the re-encode (`VideoPreparationState.optionsFor`). */
   video: Pick<PrepareVideoOptions, 'onProgress' | 'signal'>;
   /** Told each step as it starts, so the screen can name it. */
+  onStage?: (stage: PublishStage) => void;
+}
+
+/** Input for publishing a camera photo without pretending it is a time-based reel. */
+export interface PublishPhotoInput {
+  clip: ReelClip;
+  caption: string;
+  identity: string;
   onStage?: (stage: PublishStage) => void;
 }
 
@@ -133,6 +160,40 @@ export async function publishReel(
     });
     console.debug(`[reel-publish] published ${post.id}`);
     return post;
+  } catch (err) {
+    throw new ReelPublishError(stage, { cause: err });
+  }
+}
+
+/** Publishes an edited camera photo as a normal archive post. @throws {ReelPublishError} */
+export async function publishCameraPhoto(
+  input: PublishPhotoInput,
+  deps: PublishPhotoDeps = defaultPublishPhotoDeps()
+): Promise<PostEntity> {
+  const { clip, caption, identity, onStage } = input;
+  let stage: PublishStage = 'moderation';
+  const enter = (next: PublishStage) => {
+    stage = next;
+    onStage?.(next);
+  };
+  try {
+    enter('moderation');
+    await deps.assertNotMuted();
+    enter('mediaToken');
+    const token = await deps.getToken();
+    enter('mediaPrepare');
+    const prepared = await preparePostMedia(
+      new File([clip.blob], 'camera-photo.jpg', { type: clip.blob.type || 'image/jpeg' })
+    );
+    if (!prepared.dims) throw new Error('camera photo has no dimensions');
+    enter('mediaUpload');
+    const ref = await deps.upload(prepared.file, token, prepared.dims);
+    enter('createPost');
+    return await deps.createPost({
+      markdown: caption,
+      media: [ref],
+      ...postIdentityFields(identity),
+    });
   } catch (err) {
     throw new ReelPublishError(stage, { cause: err });
   }

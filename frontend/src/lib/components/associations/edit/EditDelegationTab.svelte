@@ -8,6 +8,7 @@
     getPaymentDelegation,
     requestPaymentDelegation,
     cancelPaymentDelegation,
+    isPaymentAccountReady,
     listDelegatedChildren,
     approveDelegatedChild,
     rejectDelegatedChild,
@@ -18,6 +19,10 @@
     type DelegatedChild,
     type AssociationPurchase,
   } from '$lib/associations/api';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import {
     Share2,
     Inbox,
@@ -61,12 +66,15 @@
   /** True when this association already receives delegated payments and so cannot delegate its own. */
   const isParent = $derived(children.length > 0);
   /** Parent-side approvals require this association's own Stripe Connect to be ready. */
-  const canReceiveDelegation = $derived(asso.stripeOnboardingComplete === true);
+  const canReceiveDelegation = $derived(isPaymentAccountReady(asso, activePaymentProvider.current));
   /** Candidate parents: every other regular association (server enforces chain/parent rules). */
   const parentCandidates = $derived(associations.filter((a) => a.id !== asso.id));
   const parentPickerOptions = $derived<PickerOption[]>(associationPickerOptions(parentCandidates));
 
-  onMount(loadAll);
+  onMount(() => {
+    void loadActivePaymentProvider();
+    void loadAll();
+  });
 
   async function loadAll() {
     loading = true;

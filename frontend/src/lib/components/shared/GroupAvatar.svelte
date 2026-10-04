@@ -1,9 +1,7 @@
 <script lang="ts">
   import { Users } from '@lucide/svelte';
-  import { onDestroy } from 'svelte';
-  import { MediaService } from '$lib/media';
+  import { mediaUrl } from '$lib/utils/apiUrl';
   import { getInitials } from '$lib/utils/avatar';
-  import { releaseRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -30,10 +28,11 @@
     shape = 'soft',
   }: Props = $props();
 
-  let blobUrl = $state<string | null>(null);
   let loadFailed = $state(false);
 
-  const mediaService = new MediaService();
+  const imageSrc = $derived(
+    imageMediaId ? `${mediaUrl()}/api/media/public/${encodeURIComponent(imageMediaId)}` : null
+  );
 
   const sizeClasses = $derived(
     fill
@@ -68,52 +67,20 @@
    */
   const initials = $derived(name.trim() ? getInitials(name) : '');
 
-  let currentMediaId: string | null = null;
-  let acquiredMediaId: string | null = null;
-
-  async function loadImage(mediaId: string) {
-    currentMediaId = mediaId;
-    loadFailed = false;
-    try {
-      const url = await mediaService.downloadRaw(mediaId);
-      if (currentMediaId !== mediaId) {
-        releaseRawMediaBlobUrl(mediaId);
-        return;
-      }
-      if (acquiredMediaId && acquiredMediaId !== mediaId) {
-        releaseRawMediaBlobUrl(acquiredMediaId);
-      }
-      blobUrl = url;
-      acquiredMediaId = mediaId;
-    } catch {
-      if (currentMediaId === mediaId) loadFailed = true;
-    }
-  }
-
   $effect(() => {
-    if (imageMediaId) {
-      loadImage(imageMediaId);
-    } else {
-      if (acquiredMediaId) {
-        releaseRawMediaBlobUrl(acquiredMediaId);
-        acquiredMediaId = null;
-      }
-      blobUrl = null;
-      loadFailed = false;
-    }
-  });
-
-  onDestroy(() => {
-    if (acquiredMediaId) releaseRawMediaBlobUrl(acquiredMediaId);
+    void imageMediaId;
+    loadFailed = false;
   });
 </script>
 
-{#if blobUrl && !loadFailed}
+{#if imageSrc && !loadFailed}
   <img
-    src={blobUrl}
+    src={imageSrc}
     alt={name || m.group_avatar_fallback_alt()}
+    loading="lazy"
     decoding="async"
     class="{shapeClasses} shrink-0 object-cover shadow-sm select-none {sizeClasses}"
+    onerror={() => (loadFailed = true)}
   />
 {:else}
   <div

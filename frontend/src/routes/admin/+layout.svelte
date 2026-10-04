@@ -4,7 +4,12 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { Component } from 'svelte';
-  import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
+  import {
+    isGlobalAdmin,
+    isAssociationSuperAdmin,
+    isContentModerator,
+    isEventValidator,
+  } from '$lib/stores/user';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
   import AdminNavGroup from '$lib/components/admin/AdminNavGroup.svelte';
   import {
@@ -43,6 +48,7 @@
   let isGlobalAdminUser = $state(false);
   let isSuperAdminUser = $state(false);
   let isModeratorUser = $state(false);
+  let isEventValidatorUser = $state(false);
 
   const path = $derived(page.url.pathname);
   // The heading and the sentence under it, chosen together - see `adminScopeLabels`.
@@ -59,9 +65,11 @@
       // A platform administrator holds every tier by definition; nothing to ask anyone.
       isSuperAdminUser = true;
       isModeratorUser = true;
+      isEventValidatorUser = true;
     } else {
       isSuperAdminUser = isAssociationSuperAdmin();
       isModeratorUser = isContentModerator();
+      isEventValidatorUser = isEventValidator();
     }
     ready = true;
     if (!mayOpen) {
@@ -73,9 +81,14 @@
   // if at least one of its items is visible to the current user, so a plain association admin
   // (not global, not BDE super-admin) still sees just "Moderation" (containing only Agenda).
   const navGroups = $derived.by((): NavGroup[] => {
-    const moderationItems: NavItem[] = [
-      { href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: CalendarClock },
-    ];
+    const moderationItems: NavItem[] = [];
+    if (isEventValidatorUser) {
+      moderationItems.push({
+        href: '/admin/agenda',
+        label: m.admin_pending_agenda_label(),
+        icon: CalendarClock,
+      });
+    }
     // Reports, hidden posts and mutes: the same tier the server's `isContentModerator` accepts.
     // Gating this on `isGlobalAdminUser` alone is what left a BDE holding MODERATE with a right
     // and no way in.

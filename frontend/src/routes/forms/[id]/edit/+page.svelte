@@ -2,6 +2,10 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
@@ -84,7 +88,7 @@
    */
   let association = $state<Association | null>(null);
   const associationCanBePaid = $derived(
-    !!association && canAssociationReceiveFormPayments(association)
+    !!association && canAssociationReceiveFormPayments(association, activePaymentProvider.current)
   );
 
   // Image
@@ -120,6 +124,7 @@
   }
 
   onMount(async () => {
+    void loadActivePaymentProvider();
     const id = formId;
     if (!id) {
       loadError = m.form_edit_load_error();

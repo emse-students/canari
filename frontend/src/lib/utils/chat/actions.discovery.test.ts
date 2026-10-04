@@ -495,6 +495,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           name: 'Graine',
           messages: [],
           lifecycle: 'pending',
+          mlsStateHex: null,
         } as unknown as Conversation,
       ],
     ]);

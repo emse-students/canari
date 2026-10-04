@@ -33,7 +33,7 @@
      */
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
-    controls?: Snippet;
+    controls?: Snippet<[capturePhoto: () => Promise<Blob | null>]>;
     /**
      * Holds the camera OFF while true - a take under review needs no preview, and an open camera
      * would keep the phone's privacy dot lit for nothing. Turning it false opens the camera again.
@@ -73,6 +73,24 @@
     if (!video || video.videoWidth === 0 || frameReady) return;
     console.debug(`[camera] first frame ${video.videoWidth}x${video.videoHeight}`);
     frameReady = true;
+  }
+
+  /** Captures the current live frame without mirroring the stored photo. */
+  async function capturePhoto(): Promise<Blob | null> {
+    if (!video || !frameReady) {
+      console.warn('[camera] photo asked for before the first frame');
+      return null;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      console.error('[camera] photo capture has no canvas context');
+      return null;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.94));
   }
 
   /** Whether this tab was reached from inside the app - then closing it is a step back. */
@@ -172,22 +190,30 @@
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
-  <!-- The front lens is mirrored as every camera app shows it; the recording is not (the track is). -->
-  <video
-    bind:this={video}
-    class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
-      ? '-scale-x-100'
-      : ''} {session.phase === 'live' && frameReady
-      ? 'opacity-100'
-      : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
-    poster={TRANSPARENT_VIDEO_POSTER}
-    onloadeddata={onFrame}
-    onplaying={onFrame}
-    autoplay
-    muted
-    playsinline
-    aria-hidden="true"
-  ></video>
+  <!-- The front lens is mirrored as every camera app shows it; the recording is not (the track is).
+       THE ELEMENT IS KEYED BY THE STREAM: WKWebView keeps a <video> element's media layer at the size
+       of its FIRST layout, so an element handed a second stream after the app came back from the
+       background drew a ~65 % letterboxed rectangle while its CSS box stayed 390x844 and
+       `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
+       2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
+       is the state the engine gets right. -->
+  {#key session.stream}
+    <video
+      bind:this={video}
+      class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
+        ? '-scale-x-100'
+        : ''} {session.phase === 'live' && frameReady
+        ? 'opacity-100'
+        : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
+      poster={TRANSPARENT_VIDEO_POSTER}
+      onloadeddata={onFrame}
+      onplaying={onFrame}
+      autoplay
+      muted
+      playsinline
+      aria-hidden="true"
+    ></video>
+  {/key}
 
   <!-- Canari's stand-in for everything between the swipe and the first frame: a dark surface of the
        app's own, so the engine's placeholder is never seen. It stays mounted and fades out as the
@@ -290,7 +316,7 @@
 
   {#if controls && session.phase === 'live'}
     <div class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
-      {@render controls()}
+      {@render controls(capturePhoto)}
     </div>
   {/if}
 </section>

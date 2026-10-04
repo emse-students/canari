@@ -80,8 +80,8 @@
     void getReviewerAccess()
       .then((v) => (hasReviewerAccess = v))
       .catch(() => (hasReviewerAccess = false));
-    // The SAME predicate `/admin` admits on. Offering the card on `mine.some((a) => a.isAdmin)`
-    // alone left a BDE content moderator with a console they could reach by URL and never find.
+    // The SAME predicate `/admin` admits on, so the dashboard cannot offer a console that has no
+    // actionable panel for the current account.
     showAdminSection = await ensureMayOpenAdmin();
   });
 
