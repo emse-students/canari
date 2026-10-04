@@ -170,6 +170,14 @@ application computed from the same profile, so no application keeps a hard-coded
   stage for promo N-1 (N the current year) as soon as the Alumni SSO works; from a date the user
   sets, the MiConnect stage blocks until the link is made.
 
+**The 2026-09-05 direction this model replaces.** The user had asked to separate ICM and ISMIN
+*"comme si on avait deux instances de Canari. Seule la partie admin et la messagerie/communautes
+doivent etre en commun"*, parked on three questions the code could not answer. D16-D23 answer all
+three: a person may hold both (D1, union of spaces), administration and moderation are global (D23,
+D24), and a member sees another space's associations only by joining one (D19, D21). The
+cartography and the portal follow the association's spaces (WP6), so no separate per-school flag is
+built.
+
 **Answered while writing the plan (second round, same day).**
 
 - **D29 - WP0 builds a keyless avatar URL FIRST**, then switches MinoWiki and Archives to it, then

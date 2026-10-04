@@ -5270,42 +5270,6 @@ the estate, and the `after=start` fraction, now also per DEVICE rather than per 
 
 ## Post-campaign projects - decided, not scheduled
 
-### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)
-
-**A direction, decided and not scheduled.** Verbatim: *"Dans la perspective d'avoir des ismin,
-separer associations et listes ICM/ISMIN (notamment la possibilite de faire apparaitre ou non une
-association sur la cartographie des associations, et pouvoir n'afficher que les associations ICM sur
-le portail ICM). Meme plus largement, tout doit pouvoir etre separe, comme si on avait deux instances
-de Canari. Seule la partie admin et la messagerie/communautes doivent etre en commun."*
-
-**THE SHAPE, IN THE USER'S OWN TERMS**: two instances that share exactly two things - administration,
-and messaging/communities. Everything else - associations, the association cartography, the lists -
-is per-school and must be able to be shown to one school and not the other.
-
-**IT IS TWO PIECES OF WORK WITH DIFFERENT MATURITY, AND CONFLATING THEM IS HOW THE NARROW ONE NEVER
-SHIPS.**
-
-- **The narrow half is already actionable and is a feature**: a per-association flag deciding whether
-  it appears on the cartography, and a school attribute the portal filters on. It is additive,
-  reversible, and does not commit the second half to any shape.
-- **The broad half - "as if we had two instances" - is a PARTITIONING DECISION and must be designed
-  before anything is built.** The question it has to answer first is not which tables gain a column;
-  it is what a shared object means when the two halves disagree. Messaging and communities are
-  explicitly COMMON, so a community can hold members of both schools while an association may be
-  visible to only one - which means the boundary does not fall between two databases, it falls
-  through the middle of the object graph. A migration that assumed otherwise would be very hard to
-  reverse.
-
-**WHAT MUST BE SETTLED BEFORE ANY SCHEMA CHANGES**, none of which the code can answer: whether a
-person belongs to exactly one school or can hold both; whether an administrator is global or
-per-school (the user says admin is COMMON, which suggests global, and that has to be confirmed
-because it decides every permission check); and whether a member of one school may see the other's
-associations at all, or merely does not by default. **These are the user's decisions, and the first
-task here is to obtain them - not to write code against a guess.**
-
-Not scheduled. It belongs after the campaign for the reason everything in this section does: it is
-large, it is not a defect, and it changes a schema the campaign is currently measuring.
-
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
 
 **Asked for earlier, deferred on one question: who reads it.** Three audiences were offered and the
