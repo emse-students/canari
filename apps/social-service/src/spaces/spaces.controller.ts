@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -34,6 +35,13 @@ export class SpacesController {
   @Post()
   open(@Body() dto: OpenSpaceDto) {
     return this.service.open(dto.formation, dto.campus);
+  }
+
+  /** Closes a space (the inverse of opening it). Association rules are left as they are. */
+  @Delete(':id')
+  @HttpCode(204)
+  async close(@Param('id', ParseUUIDPipe) id: string) {
+    await this.service.close(id);
   }
 
   /** Designates, or clears with `null`, the BDE of a space (D22). */

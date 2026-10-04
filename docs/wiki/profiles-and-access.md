@@ -492,7 +492,7 @@ only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsCon
 `associations/spaces` wins over `associations/:id`: `GET/POST /api/associations/spaces` (list with BDE
 and the number of associations whose rules reach each space; open a pair, 409 if already open),
 `PUT /api/associations/spaces/:id/bde` (designate or clear; only a regular association, never a list;
-409 if it already governs another space), `GET/PUT /api/associations/:id/audiences` (replace the rules
+409 if it already governs another space), `DELETE /api/associations/spaces/:id` (close a space: its BDE designation goes, association rules stay, so reopening restores everything; 404 if not open), `GET/PUT /api/associations/:id/audiences` (replace the rules
 in one transaction, de-duplicated, at least one). Screen: `/admin/spaces` (nav entry "Espaces",
 global admins) - the open spaces with a BDE picker each, an "open a space" row, and a rules editor
 per association (formation and campus, "all" meaning NULL). **The `isBDE` toggle on

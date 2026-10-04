@@ -2637,6 +2637,13 @@ export function openSpace(formation: Formation, campus: Campus): Promise<SpaceRo
   });
 }
 
+/** Closes a space. Association rules are untouched, so reopening the pair restores them. */
+export function closeSpace(spaceId: string): Promise<void> {
+  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}`, {
+    method: 'DELETE',
+  });
+}
+
 /** Designates, or clears with `null`, the BDE of a space (D22). */
 export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
   return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {

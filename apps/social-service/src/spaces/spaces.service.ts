@@ -138,6 +138,17 @@ export class SpacesService {
     }
   }
 
+  /**
+   * Closes a space: the row goes, and with it its BDE designation. Nothing else is touched - an
+   * association's rules are rules, not links to this space, so reopening the same pair restores
+   * every audience exactly. 404 when it is not open.
+   */
+  async close(spaceId: string): Promise<void> {
+    const result = await this.spaces.delete({ id: spaceId });
+    if (!result.affected) throw new NotFoundException('Space not found');
+    this.logger.log(`[spaces] closed ${spaceId}`);
+  }
+
   /** The audience rules of an association. */
   async getAudiences(associationId: string): Promise<AudienceRule[]> {
     await this.requireAssociation(associationId);

@@ -37,10 +37,12 @@ describe('SpacesService', () => {
     association?: Partial<Association> | null;
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
+    const del = jest.fn().mockResolvedValue({ affected: 1 });
     const save = jest.fn().mockImplementation(async (s: Partial<Space>) => s);
     const spaces = {
       findOne: jest.fn().mockResolvedValue(opts.space ?? null),
       update,
+      delete: del,
       create: jest.fn().mockImplementation((s: Partial<Space>) => s),
       save,
       find: jest.fn().mockResolvedValue([]),
@@ -61,6 +63,7 @@ describe('SpacesService', () => {
       service: new SpacesService(spaces, associations, audiences, dataSource),
       save,
       update,
+      del,
       manager,
     };
   }
@@ -77,6 +80,16 @@ describe('SpacesService', () => {
     const { service, save } = make({});
     save.mockRejectedValue({ code: '23505' });
     await expect(service.open('ICM', 'gardanne')).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('closes a space, and answers 404 when it is not open', async () => {
+    const closed = make({});
+    closed.del.mockResolvedValue({ affected: 1 });
+    await expect(closed.service.close('s')).resolves.toBeUndefined();
+    expect(closed.del).toHaveBeenCalledWith({ id: 's' });
+    const absent = make({});
+    absent.del.mockResolvedValue({ affected: 0 });
+    await expect(absent.service.close('s')).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('refuses a list as a BDE and an unknown space or association', async () => {

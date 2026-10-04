@@ -7,6 +7,7 @@
     listAssociations,
     listSpaces,
     openSpace,
+    closeSpace,
     setSpaceBde,
     getAssociationAudiences,
     setAssociationAudiences,
@@ -26,6 +27,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { Layers, Plus, Trash2, LoaderCircle } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
 
   let loading = $state(true);
@@ -111,13 +113,44 @@
       spaces = await listSpaces();
     } catch (e) {
       Log.d('admin.spaces.setBde failed', e);
-      error =
-        e instanceof SocialApiError && e.status === 409
-          ? m.admin_spaces_bde_taken()
-          : m.admin_spaces_bde_error();
+      error = bdeRefusal(e);
+      // The picker shows what the user chose, not what the server kept: reload so it never lies.
+      spaces = await listSpaces().catch(() => spaces);
     } finally {
       savingBdeFor = null;
     }
+  }
+
+  /** The sentence for a refused BDE designation, chosen by the HTTP status (never by the message). */
+  function bdeRefusal(e: unknown): string {
+    if (e instanceof SocialApiError) {
+      if (e.status === 409) return m.admin_spaces_bde_taken();
+      if (e.status === 400) return m.admin_spaces_bde_not_association();
+      if (e.status === 404) return m.admin_spaces_bde_missing();
+    }
+    return m.admin_spaces_bde_error();
+  }
+
+  async function close(space: SpaceRow) {
+    const name = `${formationLabel(space.formation)} · ${campusLabel(space.campus)}`;
+    if (
+      !(await showConfirm(m.admin_spaces_close_confirm({ name }), {
+        danger: true,
+        confirmLabel: m.admin_spaces_close_btn(),
+      }))
+    )
+      return;
+    savingBdeFor = space.id;
+    error = null;
+    try {
+      await closeSpace(space.id);
+    } catch (e) {
+      Log.d('admin.spaces.close failed', e);
+      error = m.admin_spaces_close_error();
+    } finally {
+      savingBdeFor = null;
+    }
+    spaces = await listSpaces().catch(() => spaces);
   }
 
   async function chooseAssociation(id: string) {
@@ -236,6 +269,15 @@
                 {#if savingBdeFor === space.id}
                   <LoaderCircle size={14} class="text-cn-yellow animate-spin" />
                 {/if}
+                <button
+                  type="button"
+                  onclick={() => close(space)}
+                  disabled={savingBdeFor === space.id}
+                  aria-label={m.admin_spaces_close_aria()}
+                  class="text-text-muted rounded-xl p-2 hover:text-red-500 disabled:opacity-50"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
             </div>
           {/each}
