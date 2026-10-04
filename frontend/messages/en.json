@@ -1074,7 +1074,6 @@
   "admin_spaces_bde_not_association": "Only a club (not a list) can be the BDE of a space.",
   "admin_spaces_bde_missing": "This space or club no longer exists: reload the page.",
   "admin_audiences_save_error": "Could not save the rules",
-  "admin_audiences_min_one": "At least one rule is required.",
   "profile_formation_other": "Other",
   "admin_assoc_mark_bde_aria_label": "Mark {name} as BDE",
   "admin_cercle_title": "Cercle - Account top-up",

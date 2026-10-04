@@ -495,8 +495,8 @@ BDE), `GET /api/associations/spaces/audiences` (the rules of EVERY association i
 the grid needs to draw itself), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
 regular association, never a list; **the same association may be the BDE of several spaces - user,
 2026-10-04, so the migration carries NO unique index on the BDE column**) and
-`GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated, at least
-one).
+`GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated; **an
+empty set is allowed - the association then reaches nobody, user 2026-10-04**).
 
 **D17 RELAXED (user, 2026-10-04): NO ONE OPENS A SPACE.** All eight pairs (4 formations x 2 campuses)
 are seeded by migration 071, so there is no open/close route and no "open a space" form. D17's other
@@ -509,10 +509,11 @@ campus ticks its four formations, unticking one formation leaves the campus half
 is `lib/associations/audienceRules.ts`: the page reads the stored rules as a set of pairs and WRITES THE
 SMALLEST EQUIVALENT RULE SET (all pairs = one `(null,null)`, a whole campus = one `(null,campus)`, else
 pair rules), so a campus rule keeps covering a formation added later and the page always shows what is
-stored. A star in the corner of a pair box makes the association the BDE of that pair (a BDE always
-reaches what it governs, so designating one adds the reach first). A list has no star. Clearing every
-box is refused: an association that reaches nobody is invisible, and the server refuses an empty set
-too.
+stored. A star in the corner of a pair box makes the association the BDE of that pair. **A BDE always
+reaches what it governs, and the SERVER holds that, not the page**: designating one adds the pair's
+rule in the same transaction when its rules do not cover it, and a rule set submitted without a
+governed pair gets it put back. The page shows that box ticked and locked until the star goes. A list
+has no star.
 
 **Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
 

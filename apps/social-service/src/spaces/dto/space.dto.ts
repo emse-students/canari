@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   IsArray,
   IsIn,
   IsOptional,
@@ -30,10 +29,9 @@ export class AudienceRuleDto {
   campus?: SpaceCampus | null;
 }
 
-/** Payload replacing the audience rules of an association: at least one, at most sixteen. */
+/** Payload replacing the audience rules of an association: none (it reaches nobody) to sixteen. */
 export class SetAudiencesDto {
   @IsArray()
-  @ArrayMinSize(1)
   @ArrayMaxSize(16)
   @ValidateNested({ each: true })
   @Type(() => AudienceRuleDto)

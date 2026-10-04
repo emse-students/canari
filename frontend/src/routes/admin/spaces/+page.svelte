@@ -51,22 +51,21 @@
     return spaces.find((s) => cellOf(s.formation, s.campus) === cell);
   }
 
+  /** Reads the rules of every association, in one call. */
+  async function loadRules() {
+    const byId: Record<string, AudienceRule[]> = {};
+    for (const r of await listAllAudiences()) {
+      (byId[r.associationId] ??= []).push({ formation: r.formation, campus: r.campus });
+    }
+    rulesById = byId;
+  }
+
   async function load() {
     loading = true;
     error = null;
     try {
-      const [s, a, rules] = await Promise.all([
-        listSpaces(),
-        listAssociations(),
-        listAllAudiences(),
-      ]);
-      spaces = s;
-      associations = a;
-      const byId: Record<string, AudienceRule[]> = {};
-      for (const r of rules) {
-        (byId[r.associationId] ??= []).push({ formation: r.formation, campus: r.campus });
-      }
-      rulesById = byId;
+      [spaces, associations] = await Promise.all([listSpaces(), listAssociations()]);
+      await loadRules();
     } catch (e) {
       Log.d('admin.spaces.load failed', e);
       error = m.admin_spaces_load_error();
@@ -76,19 +75,15 @@
   }
 
   /**
-   * Saves the pairs an association reaches, in the smallest equivalent rule set. At least one pair
-   * must stay: an association that reaches nobody is invisible, which the server refuses too.
+   * Saves the pairs an association reaches, in the smallest equivalent rule set. None is allowed
+   * (it then reaches nobody); the server puts back the pairs it governs as BDE, and what it answers
+   * is what the grid shows.
    */
   async function saveReach(association: Association, cells: Set<Cell>, cellKey: string) {
-    const next = toRules(cells);
-    if (next.length === 0) {
-      error = m.admin_audiences_min_one();
-      return false;
-    }
     busy = cellKey;
     error = null;
     try {
-      rulesById[association.id] = await setAssociationAudiences(association.id, next);
+      rulesById[association.id] = await setAssociationAudiences(association.id, toRules(cells));
       return true;
     } catch (e) {
       Log.d('admin.spaces.saveReach failed', e);
@@ -115,20 +110,15 @@
 
   /**
    * Makes an association the BDE of a pair, or clears it when it already is. A BDE always reaches
-   * what it governs, so designating one that does not yet reach the pair adds it first.
+   * what it governs: the server adds that reach with the designation, so the rules are read back.
    */
   async function toggleBde(space: SpaceRow, association: Association) {
-    const cell = cellOf(space.formation, space.campus);
-    const cellKey = `${association.id}:${cell}`;
-    const designating = space.bde?.id !== association.id;
-    if (designating && !reachOf(association).has(cell)) {
-      const ok = await saveReach(association, new Set([...reachOf(association), cell]), cellKey);
-      if (!ok) return;
-    }
+    const cellKey = `${association.id}:${cellOf(space.formation, space.campus)}`;
     busy = cellKey;
     error = null;
     try {
-      await setSpaceBde(space.id, designating ? association.id : null);
+      await setSpaceBde(space.id, space.bde?.id === association.id ? null : association.id);
+      await loadRules();
     } catch (e) {
       Log.d('admin.spaces.setBde failed', e);
       error = bdeRefusal(e);
@@ -262,23 +252,29 @@
                   {@const space = spaceOf(cell)}
                   {@const cellKey = `${association.id}:${cell}`}
                   {@const label = `${formationLabel(formation)} · ${campusLabel(campus)}`}
+                  {@const isBde = space?.bde?.id === association.id}
                   <td class="px-1.5 py-2 text-center">
                     <div class="group relative inline-flex">
+                      <!-- A BDE reaches the pair it governs: the box stays ticked until the star goes. -->
                       <button
                         type="button"
                         disabled={busy === cellKey}
                         aria-pressed={reached.has(cell)}
+                        aria-disabled={isBde}
                         aria-label={m.admin_spaces_reach_aria({
                           association: association.name,
                           space: label,
                         })}
-                        onclick={() => toggleReachGroup(association, [cell], cellKey)}
-                        class="{cellButton} {boxClass(reached.has(cell) ? 'all' : 'none')}"
+                        onclick={() => {
+                          if (!isBde) void toggleReachGroup(association, [cell], cellKey);
+                        }}
+                        class="{cellButton} {isBde ? 'cursor-default' : ''} {boxClass(
+                          reached.has(cell) ? 'all' : 'none'
+                        )}"
                       >
                         <Check size={14} />
                       </button>
                       {#if association.type !== 'list' && space}
-                        {@const isBde = space.bde?.id === association.id}
                         <button
                           type="button"
                           disabled={busy === cellKey}

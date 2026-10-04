@@ -1099,7 +1099,6 @@
   "admin_spaces_bde_not_association": "Seule une association (pas une liste) peut être le BDE d'un espace.",
   "admin_spaces_bde_missing": "Cet espace ou cette association n'existe plus : rechargez la page.",
   "admin_audiences_save_error": "Impossible d'enregistrer les règles",
-  "admin_audiences_min_one": "Il faut au moins une règle.",
   "profile_formation_other": "Autre",
   "admin_assoc_mark_bde_aria_label": "Marquer {name} comme BDE",
   "admin_cercle_title": "Cercle - Recharge du compte",

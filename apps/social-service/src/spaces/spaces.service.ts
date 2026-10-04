@@ -104,7 +104,9 @@ export class SpacesService {
 
   /**
    * Designates the BDE of a space, or clears it with `null`. The BDE must be an association (a list
-   * is not one); the same association may be the BDE of several spaces.
+   * is not one); the same association may be the BDE of several spaces. A BDE always reaches the
+   * space it governs (user, 2026-10-04), so designating one adds the rule for that pair when its
+   * rules do not already cover it - in the SAME transaction, so the two never disagree.
    */
   async setBde(spaceId: string, associationId: string | null): Promise<void> {
     const space = await this.spaces.findOne({ where: { id: spaceId } });
@@ -117,7 +119,21 @@ export class SpacesService {
       }
     }
     this.logger.log(`[spaces] BDE of ${spaceId} -> ${associationId ?? 'none'}`);
-    await this.spaces.update({ id: spaceId }, { bdeAssociationId: associationId });
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Space, { id: spaceId }, { bdeAssociationId: associationId });
+      if (associationId === null) return;
+      const rules = await manager.find(AssociationAudience, { where: { associationId } });
+      if (!rules.some((r) => ruleReachesSpace(r, space))) {
+        this.logger.log(
+          `[spaces] ${associationId} now reaches ${space.formation} x ${space.campus}`
+        );
+        await manager.insert(AssociationAudience, {
+          associationId,
+          formation: space.formation,
+          campus: space.campus,
+        });
+      }
+    });
   }
 
   /** The audience rules of an association. */
@@ -127,20 +143,31 @@ export class SpacesService {
     return rows.map((r) => ({ formation: r.formation, campus: r.campus }));
   }
 
-  /** Replaces the audience rules of an association, atomically. At least one rule is required. */
+  /**
+   * Replaces the audience rules of an association, atomically. An empty set is allowed: the
+   * association then reaches nobody. The one thing that cannot be taken away is a pair it governs
+   * as BDE - those are added back, so "a BDE reaches its space" holds whatever is submitted.
+   */
   async setAudiences(associationId: string, submitted: AudienceRuleDto[]): Promise<AudienceRule[]> {
     await this.requireAssociation(associationId);
     const rules = normaliseRules(submitted);
-    if (rules.length === 0) throw new BadRequestException('At least one rule is required');
     this.logger.log(`[spaces] audiences of ${associationId}: ${rules.length} rule(s)`);
-    await this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction(async (manager) => {
+      const governed = await manager.find(Space, { where: { bdeAssociationId: associationId } });
+      for (const space of governed) {
+        if (!rules.some((r) => ruleReachesSpace(r, space))) {
+          rules.push({ formation: space.formation, campus: space.campus });
+        }
+      }
       await manager.delete(AssociationAudience, { associationId });
-      await manager.insert(
-        AssociationAudience,
-        rules.map((r) => ({ associationId, formation: r.formation, campus: r.campus }))
-      );
+      if (rules.length > 0) {
+        await manager.insert(
+          AssociationAudience,
+          rules.map((r) => ({ associationId, formation: r.formation, campus: r.campus }))
+        );
+      }
+      return rules;
     });
-    return rules;
   }
 
   private async requireAssociation(id: string): Promise<void> {
