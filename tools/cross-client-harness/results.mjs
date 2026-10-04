@@ -638,15 +638,15 @@ export async function recordObserved(id, verdict, detail, observers) {
   for (const [label, o] of Object.entries(observers))
     if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
   const gated = gate(verdict, reports, { bundles });
-  // THE SERVER'S WINDOW, written beside the clients' dirt. A row opts in by naming where its own
-  // window began (`serverWindowSince`); see `serverwindow.mjs` for why a HEAL verdict never said
-  // "clean on the server" before.
+  // THE SERVER'S WINDOW, the third observer, counted the way a client is: it demotes a PASS and it
+  // enters `clean`. A row opts in by naming where its own window began (`serverWindowSince`); see
+  // `serverwindow.mjs` for why a HEAL verdict never said "clean on the server" before.
   const { serverWindowSince, ...rowDetail } = detail ?? {};
   const folded = foldServerWindow(
-    gated.verdict,
+    gated,
     serverWindowSince ? takeServerWindow(srvLines, serverWindowSince) : null
   );
-  return record(id, folded.verdict, { ...gated.detail, ...folded.detail, ...rowDetail });
+  return record(id, folded.verdict, { ...folded.detail, ...rowDetail });
 }
 
 /**

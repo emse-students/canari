@@ -29,9 +29,14 @@
  * Run: `bun tools/cross-client-harness/checks-selftest.mjs`
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
+
+/** The harness root, one level above this self-test. */
+const HARNESS = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * Every LITERAL spelling by which a runner reaches A1.
@@ -281,6 +286,25 @@ for (const c of cases) {
     problems.push(
       `devicesFor(${label}) -> ${got.devices.join(" ")}; both browsers are always owed.`,
     );
+  }
+}
+
+// ------------------------------------------------------------- the mint's refusal, read by its callers
+//
+// `becomeANewDevice` refuses a full account BEFORE the wipe and returns `{ refused }` with no `cx` and
+// no `observer`. A caller that goes straight to `minted.cx` dies on a TypeError instead of recording
+// the INVALID the primitive had already measured - HEAL-NEW did, and on 2026-10-04 three more call
+// sites (both HEAL-REVOKE mints and MULTI-8/9) still did. A FILE THAT MINTS AND NEVER SPELLS
+// `.refused` IN CODE cannot be reading it; that is a source fact, so it is asserted here.
+const MINT_CALL = /\bbecomeANewDevice(?:AndConfirm)?\s*\(/;
+for (const dir of [HARNESS, join(HARNESS, "archive")]) {
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".mjs") && !x.endsWith("-selftest.mjs"))) {
+    const src = codeOnly(readFileSync(join(dir, f), "utf8"));
+    // The primitive's own module defines the call and is its own HEAL-NEW-0 caller; it is held to the
+    // same rule, since its direct invocation reads `r.refused` too.
+    if (MINT_CALL.test(src) && !/\.refused\b/.test(src)) {
+      problems.push(`${f} mints a device and never reads \`.refused\` - a full account becomes a TypeError, not an INVALID.`);
+    }
   }
 }
 
