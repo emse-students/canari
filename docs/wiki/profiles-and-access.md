@@ -90,8 +90,11 @@ criterion, hard-coded three times, and every admin flag is local:
   **Alumni association**.
 - **D3 - No graduated/current distinction.** A student and an alumnus are the same thing in the model:
   someone with a cursus. Any time filter goes through the promo.
-- **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), Autre** - one bucket for
-  masters, doctorates and the rest, no sub-values.
+- **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), PDIS, Autre** - one bucket for
+  masters, doctorates and the rest, no sub-values. **PDIS added 2026-10-04 (user), same shape as the
+  others and nobody in it yet**: the list lives in `SPACE_FORMATIONS` + migration 071 (social-service),
+  `FORMATIONS` (frontend) and the enrolment prompt of `20-enrollment.yaml` (authentik); core-service
+  stores a formation as free text and needs no change.
 - **D5 - Promo is the ENTRY year**, the School's and the alumni network's convention alike.
 - **D6 - ONE campus per person**, Gardanne or Saint-Etienne, staff included.
 - **D7 - The provider is only a way in.** CAS and Alumni SSO both give a name, a first name and an
@@ -498,14 +501,14 @@ regular association, never a list; **the same association may be the BDE of seve
 `GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated; **an
 empty set is allowed - the association then reaches nobody, user 2026-10-04**).
 
-**D17 RELAXED (user, 2026-10-04): NO ONE OPENS A SPACE.** All eight pairs (4 formations x 2 campuses)
+**D17 RELAXED (user, 2026-10-04): NO ONE OPENS A SPACE.** All ten pairs (5 formations x 2 campuses)
 are seeded by migration 071, so there is no open/close route and no "open a space" form. D17's other
 half stands: a pair with no BDE has no governance yet.
 
 **The screen, `/admin/spaces` (nav entry "Espaces", global admins), is ONE GRID** (user: "une vue
 globale", then "quelque chose a la Discord"): associations in rows; columns are "everyone", then per
 campus a "whole campus" box and one box per formation. **Two levels, ticked like folders**: ticking a
-campus ticks its four formations, unticking one formation leaves the campus half-ticked. The pure logic
+campus ticks its five formations, unticking one formation leaves the campus half-ticked. The pure logic
 is `lib/associations/audienceRules.ts`: the page reads the stored rules as a set of pairs and WRITES THE
 SMALLEST EQUIVALENT RULE SET (all pairs = one `(null,null)`, a whole campus = one `(null,campus)`, else
 pair rules), so a campus rule keeps covering a formation added later and the page always shows what is

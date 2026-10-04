@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 /** The formations a space may be about (D4). Mirrors the MiConnect profile. */
-export const SPACE_FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'Autre'] as const;
+export const SPACE_FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 /** The campuses a space may be about (D6). Mirrors the MiConnect profile. */
 export const SPACE_CAMPUSES = ['saint-etienne', 'gardanne'] as const;
 

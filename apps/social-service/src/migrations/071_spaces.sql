@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS spaces (
     "openedAt"          TIMESTAMPTZ NOT NULL DEFAULT now(),
     "bdeAssociationId"  UUID NULL REFERENCES associations (id) ON DELETE SET NULL,
     CONSTRAINT "UQ_spaces_formation_campus" UNIQUE (formation, campus),
-    CONSTRAINT "CHK_spaces_formation" CHECK (formation IN ('ICM', 'ISMIN', 'FSSS', 'Autre')),
+    CONSTRAINT "CHK_spaces_formation" CHECK (formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')),
     CONSTRAINT "CHK_spaces_campus" CHECK (campus IN ('saint-etienne', 'gardanne'))
 );
 
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS association_audiences (
     formation       VARCHAR(16) NULL,
     campus          VARCHAR(32) NULL,
     CONSTRAINT "CHK_association_audiences_formation"
-        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'Autre')),
+        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')),
     CONSTRAINT "CHK_association_audiences_campus"
         CHECK (campus IS NULL OR campus IN ('saint-etienne', 'gardanne'))
 );
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS post_audiences (
     formation   VARCHAR(16) NULL,
     campus      VARCHAR(32) NULL,
     CONSTRAINT "CHK_post_audiences_formation"
-        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'Autre')),
+        CHECK (formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')),
     CONSTRAINT "CHK_post_audiences_campus"
         CHECK (campus IS NULL OR campus IN ('saint-etienne', 'gardanne'))
 );
@@ -73,10 +73,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "UQ_post_audiences_rule"
     ON post_audiences ("postId", COALESCE(formation, ''), COALESCE(campus, ''));
 
 -- EVERY PAIR EXISTS FROM THE START (user, 2026-10-04: no "opening" of a space - all the combinations,
--- and each association chooses, at two levels, a whole campus or one formation). Four formations x
+-- and each association chooses, at two levels, a whole campus or one formation). Five formations x
 -- two campuses, the pairs the CHECKs above allow.
 INSERT INTO spaces (formation, campus)
-    SELECT f, c FROM unnest(ARRAY['ICM', 'ISMIN', 'FSSS', 'Autre']) AS f
+    SELECT f, c FROM unnest(ARRAY['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre']) AS f
     CROSS JOIN unnest(ARRAY['saint-etienne', 'gardanne']) AS c
     ON CONFLICT (formation, campus) DO NOTHING;
 

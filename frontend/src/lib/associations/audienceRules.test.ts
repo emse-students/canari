@@ -46,6 +46,7 @@ describe('audience rules as pairs', () => {
     expect(toRules(reached)).toEqual([
       { formation: 'ICM', campus: 'saint-etienne' },
       { formation: 'ISMIN', campus: 'saint-etienne' },
+      { formation: 'PDIS', campus: 'saint-etienne' },
       { formation: 'Autre', campus: 'saint-etienne' },
     ]);
   });
