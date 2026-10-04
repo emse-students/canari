@@ -2430,21 +2430,6 @@ the server never pushes, and one early return in the client refused to notify on
 LIFE-2 measured a DIRECT conversation only; a salon is another key path, owed its own cells in the
 community entry below.
 
-### P3 - a same-epoch refusal still costs a backend round trip and a worker enqueue, per message
-
-The discriminator EXISTS and is thrown away one layer up. `mls-core` names it exactly -
-`DecryptErrorKind::SecretReuse`, a spent ratchet generation, distinct from an epoch gap - and
-`CanariFirebaseMessagingService.kt` collapses every failure into a single `PushDecrypt.Refused`
-(one `object`, reached from six sites). The ladder then answers with a commit catch-up whose own
-comment says it is for "an epoch gap (a commit arrived while the app was closed)". **For a
-same-epoch refusal a catch-up cannot help by construction** - the log says so itself, `catchup: no
-commit to catch up (epoch=12) -> fallback` - and it costs `fetchCommitsFromBackend` plus an
-`MlsBackgroundWorker` enqueue that does nothing but `background cleanup`, on every such message.
-
-*Never learn by failing what a fact could have told you.* The fix is to carry the kind as a TYPE
-the whole way - `Refused` splitting into the case a catch-up can answer and the case it cannot -
-**never by matching the error text**, which is the rule this project already paid for.
-
 ### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
 
 **Reported by the user, who has seen it**, and asked in the same breath for the question the campaign

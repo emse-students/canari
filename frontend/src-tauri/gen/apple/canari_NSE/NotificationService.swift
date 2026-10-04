@@ -440,8 +440,17 @@ class NotificationService: UNNotificationServiceExtension {
       return nil
     }
 
-    var decrypted = decryptProto(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state)
+    let directJson = decryptProtoJson(
+      ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state)
+    var decrypted = Self.parseDecrypted(directJson)
     guard decrypted == nil, !groupId.isEmpty else { return decrypted }
+
+    // REFUSED AT AN EPOCH THIS DEVICE HOLDS: a catch-up builds the NEXT epoch and cannot read it, so
+    // none is fetched (`background.rs` `refused_by_mls`). Android twin: `PushDecrypt.RefusedForGood`.
+    if Self.refusalReason(directJson) == "mls-refused-for-good" {
+      NSLog("[CanariNSE] MLS refused it at an epoch this device holds group=\(groupId.prefix(8)) -> generic fallback, no catch-up")
+      return nil
+    }
 
     let locality = groupLocality(groupId: groupId, ctx: ctx)
     NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) locality=\(locality)")
@@ -550,17 +559,9 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  /// Decrypts the ciphertext directly against the persisted state. Read-only.
-  private func decryptProto(
-    ctx: PushContext, groupId: String, senderId: String, protoB64: String, state: Data
-  ) -> DecryptResult? {
-    Self.parseDecrypted(
-      decryptProtoJson(
-        ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state))
-  }
-
-  /// The raw JSON of a direct decrypt - a message, or a refusal carrying its `reason` - or nil
-  /// when nothing could be attempted. Split out for the seed frame, whose answer is a refusal.
+  /// The raw JSON of a direct decrypt against the persisted state, read-only - a message, or a
+  /// refusal carrying its `reason` - or nil when nothing could be attempted. The ladder reads the
+  /// reason to skip a catch-up that cannot help; the seed frame reads it because its answer IS one.
   private func decryptProtoJson(
     ctx: PushContext, groupId: String, senderId: String, protoB64: String, state: Data
   ) -> String? {

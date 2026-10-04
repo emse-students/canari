@@ -48,6 +48,38 @@ fn refused(reason: &str) -> serde_json::Value {
     serde_json::json!({ "ok": false, "reason": reason })
 }
 
+/// The refusal an MLS decrypt error becomes, split by the one question the native callers ask of
+/// it: can a LATER state of this group read the same bytes?
+///
+/// `mls-refused` - perhaps: the frame names an epoch ahead of ours (`SenderRatchetGap` carries the
+/// gap fast-fail), or nothing classified it. The commit catch-up and the worker are answers to that.
+///
+/// `mls-refused-for-good` - no: the frame was refused at an epoch this device already holds, so
+/// applying commits builds the NEXT epoch and leaves this one's secrets exactly as they were. It
+/// used to come back as `mls-refused` too, and the phone paid `fetchCommitsFromBackend` and a
+/// `MlsBackgroundWorker` enqueue per message to learn `catchup: no commit to catch up` - learning
+/// by failing what `mls-core` had already said (backlog, 2026-09-05).
+///
+/// The match is exhaustive on purpose: a new kind must be placed on one side, never defaulted.
+fn refused_by_mls(error: &mls_core::MlsError) -> serde_json::Value {
+    use mls_core::DecryptErrorKind as K;
+    let kind = error.decrypt_kind();
+    let reason = match kind {
+        K::SenderRatchetGap | K::Other => "mls-refused",
+        K::SecretReuse
+        | K::GenerationTooFarAhead
+        | K::PastEpochApplication
+        | K::OwnMessage
+        | K::Evicted
+        | K::SameEpochRefusal
+        | K::Unrecoverable => "mls-refused-for-good",
+    };
+    log::debug!("[PushBG] MLS refusal kind={kind:?} -> {reason}");
+    let mut out = refused(reason);
+    out["kind"] = serde_json::Value::String(format!("{kind:?}"));
+    out
+}
+
 fn load_manager_for_push(
     state_bytes: &[u8],
     key_b64: &str,
@@ -599,7 +631,7 @@ pub fn decrypt_push_message_with_key(
         }
         Err(e) => {
             log::error!("[PushBG] key-based: process_incoming_message Err({e})");
-            return refused("mls-refused");
+            return refused_by_mls(&e);
         }
     };
 
@@ -815,7 +847,7 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
         Err(e) => {
             log::error!("[PushBG] key-based catch-up decrypt failed: {e}");
-            return refused("mls-refused");
+            return refused_by_mls(&e);
         }
     };
 
@@ -1202,6 +1234,51 @@ mod tests {
         assert_eq!(open("mallory")["reason"], "sender-mismatch");
         // The case of an id is not a disagreement: the web compares lowercased too.
         assert_eq!(open("SENDER-ALICE")["ok"], true);
+    }
+
+    /// A frame whose generation the saved state already spent is refused FOR GOOD, and says so:
+    /// the native callers skip the commit catch-up and the worker on that token, because no later
+    /// epoch can read bytes refused at an epoch this device holds. An epoch gap keeps the old
+    /// `mls-refused` - see `a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up`.
+    #[test]
+    fn a_spent_generation_is_refused_for_good_and_not_handed_to_the_catch_up() {
+        let tag = "spent";
+        let (alice, mut bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(19)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let out = send_messages_background_with_key(
+            &temp_dir(tag),
+            &alice_state,
+            &key_b64(19),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("frame-1", &group_id, &frame)],
+        )
+        .expect("alice encrypts");
+        let ciphertext = ciphertexts_of(&out)[0].clone();
+
+        // The foreground read it first: the generation is consumed in the state the push loads.
+        bob.process_incoming_message(&group_id, &ciphertext)
+            .expect("bob reads it in the foreground")
+            .expect("application message");
+        let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        let info = decrypt_push_message_with_key(
+            &bob_state,
+            &key_b64(19),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertext,
+            },
+        );
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["reason"], "mls-refused-for-good");
+        assert_eq!(info["kind"], "SecretReuse");
     }
 
     /// A v2 seed reaches the mirror only once its minter's leaf endorses it (channel-encryption
