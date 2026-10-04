@@ -76,7 +76,10 @@ export class PostsController {
   /** Marks notifications about one post as read when the post is opened. */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/notifications/read')
-  markPostRead(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
+  markPostRead(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
+  ) {
     return this.notifications.markPostRead(xUserId, postId);
   }
 
