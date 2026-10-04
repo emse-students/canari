@@ -21,6 +21,7 @@
     type AssociationCalendarFeedEvent,
     type Association,
     ensureAssociationSuperAdmin,
+    getMyBdeReach,
   } from '$lib/associations/api';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -135,25 +136,29 @@
     } else {
       // The two probes read the same endpoint and no longer chain: `ensureAssociationSuperAdmin`
       // derives its flag from the very list beside it, which `listMyAssociations` holds for both.
-      const [superAdmin, mine] = await Promise.all([
+      const [superAdmin, mine, reach] = await Promise.all([
         canExportPdf ? Promise.resolve(true) : ensureAssociationSuperAdmin().catch(() => false),
         listMyAssociations().catch(() => null),
+        getMyBdeReach(),
       ]);
       canExportPdf = superAdmin;
       if (mine === null) {
         canModerateAgenda = false;
         canDepositEvent = false;
         proposeAssocIds = new Set();
+        validatedAssocIds = new Set();
       } else {
-        // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
-        // any association; we keep their BDE association as the authorisation :id.
+        // A BDE validator may deposit on behalf of the associations ITS SPACES reach - the
+        // server's own list (WP6c step 2), never "every association because I am a BDE". The
+        // deposit is routed through their BDE association, kept as the authorisation :id.
+        validatedAssocIds = new Set(reach.validateEvents);
         const authority = findBdeAssociationWithFlag(
           mine,
           AssociationPermissionFlag.VALIDATE_EVENTS
         );
-        canModerateAgenda = !!authority;
+        canModerateAgenda = validatedAssocIds.size > 0;
         depositAuthorityAssoId = authority?.id ?? '';
-        canDepositEvent = !!authority;
+        canDepositEvent = !!authority && validatedAssocIds.size > 0;
         proposeAssocIds = new Set(
           mine
             .filter((a) =>
@@ -226,15 +231,23 @@
 
   // ── Editing from the global agenda ────────────────────────────────────────
   // Mirrors the server rule on PATCH/DELETE `/associations/:id/events/:eventId`: a global admin
-  // or a BDE VALIDATE_EVENTS holder may touch any association's event, anyone else needs
-  // PROPOSE_EVENT in the association that owns it. Without this the buttons only existed on the
-  // owning association's page, so touching an event meant first finding who filed it.
+  // may touch any association's event, a BDE VALIDATE_EVENTS holder the events of the associations
+  // its spaces reach (WP6c step 2), anyone else needs PROPOSE_EVENT in the association that owns
+  // it. Without this the buttons only existed on the owning association's page, so touching an
+  // event meant first finding who filed it.
 
   /** Associations where the user holds PROPOSE_EVENT (empty for a global admin - they bypass it). */
   let proposeAssocIds = $state<Set<string>>(new Set());
+  /** Associations whose events the user validates as a BDE - the server's `me/bde-reach`. */
+  let validatedAssocIds = $state<Set<string>>(new Set());
+
+  /** May the viewer validate - and so edit, deposit on, declare a break for - `associationId`? */
+  function mayValidateFor(associationId: string): boolean {
+    return isGlobalAdmin() || validatedAssocIds.has(associationId);
+  }
 
   function canEditEvent(ev: AssociationCalendarFeedEvent): boolean {
-    return canDepositEvent || proposeAssocIds.has(ev.associationId);
+    return mayValidateFor(ev.associationId) || proposeAssocIds.has(ev.associationId);
   }
 
   const canEditDetailEvent = $derived(
@@ -268,13 +281,17 @@
   }
 
   // ── Event deposit (global admins + BDE validators) ────────────────────────
-  // What these users can do is deposit an event on ANY association's calendar - not publish one.
+  // What these users can do is deposit an event on ANOTHER association's calendar (a BDE: the ones
+  // its spaces reach) - not publish one.
   // Since 2026-09-14 no creation path validates, theirs included, so a deposit lands in the same
   // pending queue every proposal does and the badge above counts it. A global admin and a PROPOSE_EVENT
   // holder both post directly on the target association, because that is where their right lives; a
   // BDE validator posts via their BDE association and redirects with `targetAssocId`.
 
-  /** Whether the current user may deposit an event on any association's calendar. */
+  /**
+   * Whether the current user may deposit an event on ANOTHER association's calendar: a global admin
+   * (any), or a BDE validator (the associations of `validatedAssocIds`).
+   */
   let canDepositEvent = $state(false);
   /** BDE association id (with VALIDATE_EVENTS) used as the URL :id for non-global-admins. */
   let depositAuthorityAssoId = $state('');
@@ -282,7 +299,7 @@
   /**
    * WHO MAY REACH THIS FORM AT ALL, which is a WIDER question than `canDepositEvent`.
    *
-   * `canDepositEvent` means "may deposit on ANY association" - a global admin, or a BDE holder of
+   * `canDepositEvent` means "may deposit on ANOTHER association" - a global admin, or a BDE holder of
    * VALIDATE_EVENTS. Gating the button on it sent everyone else to their association's page to do
    * a thing the server would have accepted here: `POST :id/events` asks for PROPOSE_EVENT on `:id`
    * and nothing more, and the association section has always posted exactly that request. So the
@@ -294,11 +311,15 @@
    * The associations the picker may offer - everyone's, or only the user's own.
    *
    * A proposer may create FOR their own associations and no others, so the list is narrowed here
-   * rather than left whole and refused by the server. Deposit authority sees all of them, which is
-   * what that grant is.
+   * rather than left whole and refused by the server. A global admin sees all of them and a BDE
+   * validator those its spaces reach, which is what that grant is.
    */
   const depositableAssociations = $derived(
-    canDepositEvent ? associations : associations.filter((a) => proposeAssocIds.has(a.id))
+    isGlobalAdmin()
+      ? associations
+      : associations.filter(
+          (a) => proposeAssocIds.has(a.id) || (canDepositEvent && validatedAssocIds.has(a.id))
+        )
   );
 
   let depositModalOpen = $state(false);
@@ -316,9 +337,9 @@
   /**
    * WHAT THIS SURFACE MAY DECIDE - and it was granting itself the least of the three.
    *
-   * `canSetKind` follows `canDepositEvent`, which is exactly `mayValidate` on the server
-   * (`assertMayDecideKind`): a global admin or a BDE `VALIDATE_EVENTS` holder. Anyone else reaching
-   * this form is a proposer EDITING their own association's event, and the server would refuse the
+   * `canSetKind` follows `mayValidateFor(target)`, which is exactly `mayValidate` on the server
+   * (`assertMayDecideKind`): a global admin, or VALIDATE_EVENTS in the BDE governing the TARGET
+   * association (WP6c step 2). Anyone else reaching this form for that target would be refused the
    * field - so it is not offered, rather than offered and refused.
    *
    * `canLinkForm` needs the forms of the TARGET association, and `GET :id/link-candidates` wants
@@ -327,7 +348,7 @@
    */
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
-    canSetKind: canDepositEvent,
+    canSetKind: mayValidateFor(depositValues.targetAssociationId),
     canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
   });
 

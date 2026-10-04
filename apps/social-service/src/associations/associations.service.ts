@@ -58,7 +58,13 @@ import {
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
-import { isBdeAssociationSql } from '../spaces/bde';
+import {
+  ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
+  BDE_FLAG_HOLDERS_OVER_SQL,
+  HOLDS_BDE_FLAG_OVER_SQL,
+  holdsBdeFlagOverSql,
+  isBdeAssociationSql,
+} from '../spaces/bde';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -134,11 +140,14 @@ function toMillis(value: Date | string | null): number | null {
  */
 /**
  * The tier a caller writing to an existing event was established at, by the controller's single
- * `assertMayWriteEvent`. BDE admins and global admins act across associations; everybody else was
- * checked against the association in the URL and may act only on events it owns or co-owns.
+ * `assertMayWriteEvent`. Global admins act across associations, and so does a caller whose `isBde`
+ * is set - which since WP6c step 2 means "may validate THIS event" (`mayValidateEvent`: the BDE of
+ * a space the event association reaches), never "is a BDE somewhere". Everybody else was checked
+ * against the association in the URL and may act only on events it owns or co-owns.
  */
 export interface EventWriteTier {
   isGlobalAdmin: boolean;
+  /** VALIDATE_EVENTS in a BDE governing the event's association - scoped by the controller. */
   isBde: boolean;
 }
 
@@ -1271,7 +1280,13 @@ export class AssociationsService {
     return n > 0;
   }
 
-  /** Returns true if the user holds VALIDATE_EVENTS in a BDE association. */
+  /**
+   * Returns true if the user holds VALIDATE_EVENTS in the BDE of AT LEAST ONE space.
+   *
+   * Not a right on any event (WP6c step 2): it answers "is a validator somewhere", which opens the
+   * pending queue and the greyed pending events on the agenda. Validating, rejecting and writing a
+   * given event ask `mayValidateEvent` / `mayValidateEventsOf`, scoped to the event association.
+   */
   async isUserBdeAdmin(userId: string): Promise<boolean> {
     const n = await this.memberRepo
       .createQueryBuilder('m')
@@ -1283,6 +1298,83 @@ export class AssociationsService {
       })
       .getCount();
     return n > 0;
+  }
+
+  /**
+   * THE SCOPED BDE QUESTION (WP6c step 2): does `userId` hold `flag` in the BDE of a space that
+   * association `associationId` reaches? `holdsBdeFlagOverSql` is the one definition; this asks it
+   * for one pair. An association reaching no space is governed by no BDE, so this is false and only
+   * a global admin (whom the callers check first) acts on it.
+   */
+  async holdsBdeFlagOver(
+    userId: string,
+    associationId: string,
+    flag: AssociationPermissionFlag
+  ): Promise<boolean> {
+    if (!userId || !associationId) return false;
+    const rows: { holds: boolean }[] = await this.memberRepo.query(HOLDS_BDE_FLAG_OVER_SQL, [
+      userId,
+      associationId,
+      flag,
+    ]);
+    const holds = rows[0]?.holds === true;
+    this.logger.debug(
+      `[PERM] bde scope user=${sanitizeLog(userId.slice(0, 8))} flag=${flag} assoc=${sanitizeLog(associationId.slice(0, 8))} -> ${holds}`
+    );
+    return holds;
+  }
+
+  /**
+   * The ids of every association whose BDE grants `userId` `flag` - what the client needs to draw
+   * per-association controls (the calendar's edit buttons, an association's management entry)
+   * without asking once per association. A global admin is not in it: the client knows that tier.
+   */
+  async associationsUnderBdeFlag(
+    userId: string,
+    flag: AssociationPermissionFlag
+  ): Promise<string[]> {
+    if (!userId) return [];
+    const rows: { id: string }[] = await this.memberRepo.query(ASSOCIATIONS_UNDER_BDE_FLAG_SQL, [
+      userId,
+      flag,
+    ]);
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * May `userId` validate (and, through it, write, reject, deposit on, declare a break for) the
+   * events of association `associationId`? A global admin always; otherwise VALIDATE_EVENTS in the
+   * BDE of a space that association reaches (user, 2026-10-04, D23).
+   */
+  async mayValidateEventsOf(
+    userId: string,
+    associationId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.VALIDATE_EVENTS);
+  }
+
+  /**
+   * `mayValidateEventsOf` for the association that OWNS event `eventId` - read from the row, never
+   * from the URL, which names whatever association the client routed through. A missing event is
+   * false: the route that loads it answers 404 itself.
+   */
+  async mayValidateEvent(
+    userId: string,
+    eventId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId },
+      select: { id: true, associationId: true },
+    });
+    if (!ev) {
+      this.logger.debug(`[PERM] mayValidateEvent: event ${sanitizeLog(eventId)} not found`);
+      return false;
+    }
+    return this.mayValidateEventsOf(userId, ev.associationId);
   }
 
   /**
@@ -1354,13 +1446,23 @@ export class AssociationsService {
   }
 
   /**
-   * Returns true if userId is a cross-association super-admin: a member of a BDE
-   * association holding `MANAGE_ASSO`. Such a user may administer any association
-   * (members, documents, forms, products) as if a full local admin, mirroring the
-   * `X-Global-Admin` escape hatch.
+   * Returns true if userId holds `MANAGE_ASSO` in the BDE of AT LEAST ONE space.
+   *
+   * ONLY FOR THE ROUTES THAT NAME NO ASSOCIATION (creating one, the categories, the carte, the
+   * document-reviewer grants): there is no association to scope them to. Administering a GIVEN
+   * association asks `isAssociationSuperAdminOf`, scoped to the spaces it reaches (WP6c step 2).
    */
   async isAssociationSuperAdmin(userId: string): Promise<boolean> {
     return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO);
+  }
+
+  /**
+   * Is `userId` a super-admin OF association `associationId`: `MANAGE_ASSO` in the BDE of a space
+   * that association reaches? Such a user administers it (members, documents, forms, products) as
+   * if a full local admin, minus `SUPER_ADMIN_EXCLUDED_FLAGS`. A BDE of another space does not.
+   */
+  async isAssociationSuperAdminOf(userId: string, associationId: string): Promise<boolean> {
+    return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.MANAGE_ASSO);
   }
 
   /**
@@ -1384,8 +1486,9 @@ export class AssociationsService {
    * `associationId`?
    *
    * Three tiers, widest first: the platform administrator, who holds every association right
-   * whether or not they are a member; the cross-association super-admin (`MANAGE_ASSO` in a BDE),
-   * minus `SUPER_ADMIN_EXCLUDED_FLAGS`; then the association's own member bitmask.
+   * whether or not they are a member; the super-admin OF THIS association (`MANAGE_ASSO` in the BDE
+   * of a space it reaches - `isAssociationSuperAdminOf`), minus `SUPER_ADMIN_EXCLUDED_FLAGS`; then
+   * the association's own member bitmask.
    *
    * It exists because the same question had four different answers in this codebase - the guard
    * granted the super-admin everything, two inline checks forgot them entirely, and the calendar
@@ -1403,7 +1506,10 @@ export class AssociationsService {
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
-    if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
+    if (
+      (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 &&
+      (await this.isAssociationSuperAdminOf(userId, associationId))
+    ) {
       this.logger.debug(
         `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} assoc=${associationId.slice(0, 8)}`
       );
@@ -1435,20 +1541,30 @@ export class AssociationsService {
     if (opts?.isGlobalAdmin) return new Set(unique);
     if (!userId) return new Set();
 
-    if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
+    // The super-admin tier is scoped per association too: the associations among `unique` that a BDE
+    // where the caller holds MANAGE_ASSO governs - never all of them because it governs some.
+    const governed =
+      (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0
+        ? new Set(
+            await this.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO)
+          )
+        : new Set<string>();
+    const rest = unique.filter((id) => !governed.has(id));
+    const granted = new Set(unique.filter((id) => governed.has(id)));
+    if (granted.size > 0) {
       this.logger.debug(
-        `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${unique.length} assocs`
+        `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${granted.size}/${unique.length} assocs`
       );
-      return new Set(unique);
     }
+    if (rest.length === 0) return granted;
 
     const rows = await this.memberRepo.find({
-      where: { userId, associationId: In(unique) },
+      where: { userId, associationId: In(rest) },
       select: { associationId: true, permissions: true },
     });
-    const granted = new Set(
-      rows.filter((row) => (row.permissions & flag) !== 0).map((row) => row.associationId)
-    );
+    for (const row of rows) {
+      if ((row.permissions & flag) !== 0) granted.add(row.associationId);
+    }
     this.logger.debug(
       `[PERM] user=${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
     );
@@ -1456,8 +1572,13 @@ export class AssociationsService {
   }
 
   /**
-   * Pending calendar rows the caller may see (global admin / BDE admin: all; else own assos).
-   * Any member of an association (permissions > 0) sees pending events of their own asso.
+   * Pending calendar rows the caller may see, each carrying `canValidate` - computed HERE, per
+   * event, so the client never guesses which rows its validate button may sit on.
+   *
+   * A global admin sees and validates all. Anyone else sees the pending events of the associations
+   * they are an admin of (permissions > 0), plus those of every association a BDE where they hold
+   * VALIDATE_EVENTS governs (WP6c step 2: the BDE of the event association's space, never every
+   * BDE) - and may validate only the latter.
    */
   async listPendingCalendarEvents(userId: string, opts?: { isGlobalAdmin?: boolean }) {
     const qb = this.calendarRepo
@@ -1466,23 +1587,23 @@ export class AssociationsService {
       .where('e.status = :pending', { pending: AssociationCalendarEventStatus.Pending })
       .orderBy('e.startsAt', 'ASC');
 
+    const governs = holdsBdeFlagOverSql(':pendingViewer', 'e."associationId"', ':validateFlag');
     if (!opts?.isGlobalAdmin) {
-      // BDE admins (VALIDATE_EVENTS) see all pending events
-      const isBde = await this.isUserBdeAdmin(userId);
-      if (!isBde) {
-        // Regular asso admins (any flag) see only their own asso's pending events
-        const myMemberships = await this.memberRepo.find({
-          where: { userId },
-          select: { associationId: true, permissions: true },
-        });
-        const adminAssoIds = myMemberships
-          .filter((m) => m.permissions > 0)
-          .map((m) => m.associationId);
-        if (adminAssoIds.length === 0) {
-          return [];
-        }
-        qb.andWhere('e.associationId IN (:...adminAssoIds)', { adminAssoIds });
-      }
+      const myMemberships = await this.memberRepo.find({
+        where: { userId },
+        select: { associationId: true, permissions: true },
+      });
+      const adminAssoIds = myMemberships
+        .filter((m) => m.permissions > 0)
+        .map((m) => m.associationId);
+      qb.setParameters({
+        pendingViewer: userId,
+        validateFlag: AssociationPermissionFlag.VALIDATE_EVENTS,
+      });
+      qb.andWhere(
+        adminAssoIds.length > 0 ? `(e.associationId IN (:...adminAssoIds) OR ${governs})` : governs,
+        { adminAssoIds }
+      );
     }
 
     const rows = await qb
@@ -1508,6 +1629,7 @@ export class AssociationsService {
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
+      .addSelect(opts?.isGlobalAdmin ? 'true' : governs, 'canValidate')
       .getRawMany();
 
     return rows.map((r: Record<string, unknown>) => {
@@ -1538,6 +1660,8 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        // `=== true` and nothing looser: a driver answering 't' must not widen the button.
+        canValidate: r.canValidate === true,
       };
     });
   }
@@ -1722,25 +1846,21 @@ ${rejectionReason}`
    * mechanism with no report is found by hand, a day late*. The user asked for this to be tested on
    * 2026-09-09; testing it found it absent.
    *
-   * Recipients are every holder of `VALIDATE_EVENTS` in a BDE association - the same predicate
-   * `isUserBdeAdmin` uses to decide who MAY validate, so the people told are exactly the people who
-   * can act on it. Telling anyone else would be noise.
+   * Recipients are the holders of `VALIDATE_EVENTS` in the BDE of a space the event association
+   * reaches - the same predicate (`holdsBdeFlagOverSql`) `mayValidateEvent` uses to decide who MAY
+   * validate it, so the people told are exactly the people who can act on it (WP6c step 2). A BDE
+   * of another space is not told: telling it would be noise about something it cannot touch. An
+   * association reaching no space has no BDE validator, and the warning below says so.
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
     actorId: string,
     eventTitle: string
   ): Promise<void> {
-    const validators = await this.memberRepo
-      .createQueryBuilder('m')
-      .innerJoin(Association, 'a', 'a.id = m.associationId')
-      .where(isBdeAssociationSql('a'))
-      .andWhere('(m.permissions & :flag) <> 0', {
-        flag: AssociationPermissionFlag.VALIDATE_EVENTS,
-      })
-      .select('m.userId', 'userId')
-      .distinct(true)
-      .getRawMany<{ userId: string }>();
+    const validators: { userId: string }[] = await this.memberRepo.query(
+      BDE_FLAG_HOLDERS_OVER_SQL,
+      [associationId, AssociationPermissionFlag.VALIDATE_EVENTS]
+    );
 
     const written = await this.notifications.createNotifications({
       recipientIds: validators.map((v) => v.userId),
@@ -1751,10 +1871,11 @@ ${rejectionReason}`
       pushData: { associationId, action: 'proposed' },
     });
     if (written === 0) {
-      // Not an error - an estate can legitimately have no BDE yet - but a proposal that told nobody
-      // is the exact shape of the defect this method was written for, so it says so.
+      // Not an error - a space can legitimately have no BDE yet, and an association may reach no
+      // space - but a proposal that told nobody is the exact shape of the defect this method was
+      // written for, so it says so: only a global admin can validate it now.
       this.logger.warn(
-        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder was told`
+        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder in a BDE governing it was told`
       );
     }
   }
@@ -1782,7 +1903,8 @@ ${rejectionReason}`
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean }
   ) {
     const isValidator = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
-    // BDE / global admin may create on behalf of another association
+    // A global admin, or a BDE governing the TARGET (the controller scoped `isBde` to it), may
+    // create on behalf of another association.
     const targetId = isValidator && dto.targetAssocId ? dto.targetAssocId : associationId;
     await this.findById(targetId);
     const startsAt = new Date(dto.startsAt);
@@ -1843,7 +1965,8 @@ ${rejectionReason}`
 
   /**
    * Updates an existing calendar event.
-   * BDE admins and global admins may update events from any association.
+   * Global admins, and a BDE governing the event association (`isBde`, scoped by the controller),
+   * may update an event owned by another association.
    */
   async updateCalendarEvent(
     associationId: string,
@@ -2032,7 +2155,8 @@ ${rejectionReason}`
 
   /**
    * Deletes a calendar event.
-   * BDE admins and global admins may delete events from any association.
+   * Global admins, and a BDE governing the event association (`isBde`, scoped by the controller),
+   * may delete an event owned by another association.
    */
   async deleteCalendarEvent(
     associationId: string,

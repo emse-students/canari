@@ -33,6 +33,10 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '071_spaces.sql'), 'utf8');
+const MIGRATION_072 = readFileSync(
+  join(__dirname, '..', 'migrations', '072_drop_is_bde.sql'),
+  'utf8'
+);
 
 /** The cast. Ids are readable on purpose: a failure names a person, not a uuid. */
 const USERS = {
@@ -133,7 +137,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
-      CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL);
+      CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
+        "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
@@ -147,6 +152,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     ]);
     // The migration as it ships: seeds the ten pairs and gives EVERY association (ICM, SE).
     await client.query(MIGRATION);
+    // 071 reads `isBDE`, which 072 then drops: the shape production goes through (WP6c).
+    await client.query(MIGRATION_072);
     // Then the grid: A2 addresses the whole Gardanne campus instead.
     await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A2]);
     await client.query(

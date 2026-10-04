@@ -78,7 +78,8 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
  *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
  *   manage Stripe onboarding must be explicitly granted this flag.
  * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in
- *   non-BDE associations (guarded by `a.isBDE = true` in service queries).
+ *   non-BDE associations (read through `spaces/bde.ts`: the BDE of a space, scoped to the
+ *   associations reaching that space - MODERATE excepted, which is global).
  */
 export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.POST_AS_ASSO |

@@ -23,6 +23,12 @@ import {
  * **It guards BOTH directions.** Turning a BDE's holiday band back into an association card
  * rewrites the same school-wide statement. One rule with no hole beats two rules with one.
  *
+ * **`isBde` is SCOPED since WP6c step 2**: the controller sets it only for a BDE governing the
+ * event's (or the deposit target's) association - a BDE of another space arrives here with it unset
+ * and is refused the band like any proposer. That scoping is pinned in
+ * `associations.controller.spec.ts` and `spaces/bde.integration.spec.ts`; this file pins what the
+ * service does with the verdict.
+ *
  * The service's private collaborators are replaced rather than mocked through repositories: what is
  * under test is the refusal, and routing it through `findById` and `syncCoOwners` would assert
  * those instead.

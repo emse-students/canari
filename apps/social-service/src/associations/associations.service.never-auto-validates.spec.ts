@@ -17,7 +17,10 @@ import {
  * **THE CALLER SHAPES ARE THE TEST, NOT THE HAPPY PATH.** A rule with no exception is only proven
  * by the cases that used to be exceptions, so every shape `createCalendarEvent` accepts gets a case
  * here: ordinary proposer, BDE admin, global admin, and a BDE admin depositing on ANOTHER
- * association - the one path that additionally used to notify the target as `validated`.
+ * association - the one path that additionally used to notify the target as `validated`. "BDE
+ * admin" here is the controller's SCOPED verdict since WP6c step 2 (the BDE governing the target's
+ * space); who gets it is pinned in `associations.controller.spec.ts`, and who is TOLD of the
+ * proposal in `associations.service.may-act.spec.ts` and `spaces/bde.integration.spec.ts`.
  *
  * **THE THREE COLUMNS MOVE TOGETHER OR NOT AT ALL.** `status`, `validatedAt` and `validatedBy` are
  * one fact in three columns, and a row that is `pending` with a `validatedBy` would read as

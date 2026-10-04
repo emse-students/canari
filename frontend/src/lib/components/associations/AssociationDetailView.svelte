@@ -10,7 +10,8 @@
     unfollowAssociation,
     getAssociationFollowStatus,
     hasPermissionFlag,
-    ensureMyAssociations,
+    getMyBdeReach,
+    type BdeReach,
     AssociationPermissionFlag,
     listAssociationProducts,
     listAssociationPartnerships,
@@ -28,12 +29,7 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
-  import {
-    currentUserId,
-    isGlobalAdmin,
-    isAssociationSuperAdmin,
-    isEventValidator,
-  } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
     Bell,
@@ -96,8 +92,16 @@
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
+  /**
+   * The associations whose BDE grants the viewer a scoped power - the server's own answer. A BDE
+   * governs the associations reaching its spaces, not every association (WP6c step 2), so the two
+   * BDE-derived controls below read THIS association out of it.
+   */
+  let bdeReach = $state<BdeReach>({ validateEvents: [], manageAsso: [] });
   let canManage = $derived(
-    isGlobalAdmin() || isAssociationSuperAdmin() || (!!myMembership && myMembership.isAdmin)
+    isGlobalAdmin() ||
+      (!!asso && bdeReach.manageAsso.includes(asso.id)) ||
+      (!!myMembership && myMembership.isAdmin)
   );
   /** Whether the current user can propose / edit events (PROPOSE_EVENT flag or global admin). */
   let canProposeEvent = $derived(
@@ -110,7 +114,9 @@
    * server's `assertMayDecideKind`: a band is a statement about the school, so the control belongs
    * to the authority that speaks for it, and nobody else is offered a field the API will refuse.
    */
-  let canDeclareBreak = $derived(isGlobalAdmin() || isEventValidator());
+  let canDeclareBreak = $derived(
+    isGlobalAdmin() || (!!asso && bdeReach.validateEvents.includes(asso.id))
+  );
 
   let following = $state(false);
   let followLoading = $state(false);
@@ -150,10 +156,10 @@
   async function loadData() {
     loading = true;
     error = '';
-    // Resolve the BDE-derived flags so the management entry appears on associations the user
-    // does not belong to, and so the school-wide `break` control appears for a validator. One
-    // probe publishes all of them.
-    void ensureMyAssociations();
+    // Resolve the BDE reach so the management entry appears on associations the user does not
+    // belong to but whose BDE they sit in, and so the `break` control appears for that BDE's
+    // validators. Not awaited: the page is the association, not these two controls.
+    void getMyBdeReach().then((reach) => (bdeReach = reach));
     try {
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.

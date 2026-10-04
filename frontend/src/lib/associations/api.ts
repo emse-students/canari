@@ -657,11 +657,23 @@ export async function deleteCalendarEventImage(
   );
 }
 
+/** A row of the pending queue: the event, and whether THIS caller may decide it. */
+export interface PendingCalendarEvent extends AssociationCalendarFeedEvent {
+  /**
+   * Computed by the server per event: a global admin, or VALIDATE_EVENTS in the BDE of a space the
+   * event's association reaches (WP6c step 2). The validate and reject buttons follow it alone.
+   */
+  canValidate: boolean;
+}
+
 /** Response shape for the pending-events queue. */
 export interface PendingCalendarEventsResponse {
-  /** True when the caller has VALIDATE_EVENTS in a BDE association, or is global admin. */
+  /**
+   * True when the caller validates SOMETHING - a global admin, or VALIDATE_EVENTS in the BDE of at
+   * least one space. It opens the queue; which rows it may decide is each event's `canValidate`.
+   */
   canValidate: boolean;
-  events: AssociationCalendarFeedEvent[];
+  events: PendingCalendarEvent[];
 }
 
 /** Pending events the caller may see, plus a flag indicating whether they can validate them. */
@@ -731,6 +743,9 @@ export async function getPostLinkedToCalendarEvent(eventId: string): Promise<{
  */
 const myMemberships = new SharedCache<Association[]>(5 * 60_000, { perReader: true });
 
+/** The caller's BDE reach (`getMyBdeReach`), cleared WITH the memberships: they move together. */
+const myBdeReach = new SharedCache<BdeReach>(5 * 60_000, { perReader: true });
+
 export async function listMyAssociations(): Promise<Association[]> {
   return myMemberships.load('me', () => request<Association[]>('/api/associations/me/list'));
 }
@@ -743,7 +758,33 @@ export async function listMyAssociations(): Promise<Association[]> {
  */
 export function invalidateMyAssociations(): void {
   myMemberships.invalidate();
+  myBdeReach.invalidate();
   myAssociationsProbe = null;
+}
+
+/**
+ * The associations whose BDE grants the caller each SCOPED power (WP6c step 2), as the server's
+ * own predicate computes them: `validateEvents` (validate, edit, deposit on, declare a break for)
+ * and `manageAsso` (administer as a super-admin). A BDE governs the associations reaching its
+ * space, never all of them, so "is a BDE somewhere" (`holdsBdeFlag`) cannot draw a control on ONE
+ * association. A global admin holds every power and is not in these lists - callers OR that tier.
+ */
+export interface BdeReach {
+  validateEvents: string[];
+  manageAsso: string[];
+}
+
+/**
+ * The caller's BDE reach, cached per reader. A failure is an EMPTY reach, logged: it hides the
+ * per-association BDE controls, which the server would have refused anyway, and the log says why.
+ */
+export async function getMyBdeReach(): Promise<BdeReach> {
+  try {
+    return await myBdeReach.load('me', () => request<BdeReach>('/api/associations/me/bde-reach'));
+  } catch (err) {
+    console.error('[associations] BDE reach probe failed, every scoped BDE control hidden', err);
+    return { validateEvents: [], manageAsso: [] };
+  }
 }
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */

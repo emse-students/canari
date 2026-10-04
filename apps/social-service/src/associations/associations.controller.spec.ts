@@ -176,21 +176,11 @@ describe('AssociationsController read guards', () => {
  * AND.
  */
 describe('AssociationsController delete tier', () => {
-  it('admits a global admin OR a BDE MANAGE_ASSO holder, and nothing narrower', () => {
-    // Indexed rather than dotted, like the read-guard block above: a bare `prototype.remove` is an
-    // unbound method reference and the linter is right to say so, even though nothing calls it.
-    const guards = Reflect.getMetadata(
-      GUARDS_METADATA,
-      AssociationsController.prototype['remove']
-    ) as unknown[] | undefined;
-
-    expect(guards).toContain(NginxAuthGuard);
-    expect(guards).toContain(GlobalAdminOrBdeSuperAdminGuard);
-    expect(guards).not.toContain(GlobalAdminGuard);
-  });
-
-  it('hands the caller down, because the service line that records the deletion needs a name', () => {
-    const service = { remove: jest.fn(() => Promise.resolve({ ok: true })) };
+  function makeController(governs: boolean) {
+    const service = {
+      remove: jest.fn(() => Promise.resolve({ ok: true })),
+      isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
+    };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
@@ -199,10 +189,48 @@ describe('AssociationsController delete tier', () => {
       {} as UserTagService,
       {} as UserProfileService
     );
+    return { controller, service };
+  }
 
-    void controller.remove('asso1', 'user-42');
+  it('is a signed-in route whose tier is checked in the handler, never a narrower guard', () => {
+    // Indexed rather than dotted, like the read-guard block above: a bare `prototype.remove` is an
+    // unbound method reference and the linter is right to say so, even though nothing calls it.
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AssociationsController.prototype['remove']
+    ) as unknown[] | undefined;
 
+    expect(guards).toContain(NginxAuthGuard);
+    // The unscoped guard would admit a BDE of ANOTHER space (WP6c step 2).
+    expect(guards).not.toContain(GlobalAdminOrBdeSuperAdminGuard);
+    expect(guards).not.toContain(GlobalAdminGuard);
+  });
+
+  it('hands the caller down, because the service line that records the deletion needs a name', async () => {
+    const { controller, service } = makeController(true);
+
+    await controller.remove('asso1', 'user-42', undefined);
+
+    expect(service.isAssociationSuperAdminOf).toHaveBeenCalledWith('user-42', 'asso1');
     expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+  });
+
+  it('refuses MANAGE_ASSO in the BDE of a space the association does not reach', async () => {
+    const { controller, service } = makeController(false);
+
+    await expect(controller.remove('asso1', 'user-42', undefined)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(service.remove).not.toHaveBeenCalled();
+  });
+
+  it('lets a global admin delete without consulting any BDE', async () => {
+    const { controller, service } = makeController(false);
+
+    await controller.remove('asso1', 'admin', 'true');
+
+    expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
   });
 });
 
@@ -219,7 +247,7 @@ describe('AssociationsController calendar event writes', () => {
   function makeController(mayAct: boolean, isBde = false) {
     const service = {
       mayAct: jest.fn(() => Promise.resolve(mayAct)),
-      isUserBdeAdmin: jest.fn(() => Promise.resolve(isBde)),
+      mayValidateEvent: jest.fn(() => Promise.resolve(isBde)),
       updateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
       setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
@@ -283,6 +311,111 @@ describe('AssociationsController calendar event writes', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(service.updateCalendarEvent).not.toHaveBeenCalled();
     expect(service.deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it('crosses associations for a BDE governing THE EVENT, judged on the event id', async () => {
+    const { controller, service } = makeController(false, true);
+    await controller.updateCalendarEvent('user1', undefined, 'other-asso', 'ev1', {} as never);
+    expect(service.mayValidateEvent).toHaveBeenCalledWith('user1', 'ev1');
+    expect(service.updateCalendarEvent).toHaveBeenCalledWith(
+      'other-asso',
+      'ev1',
+      {},
+      {
+        isGlobalAdmin: false,
+        isBde: true,
+        callerUserId: 'user1',
+      }
+    );
+  });
+});
+
+/**
+ * WP6c STEP 2: A VERDICT ON AN EVENT BELONGS TO THE BDE OF THE EVENT ASSOCIATION'S SPACE.
+ *
+ * The controller asks `mayValidateEvent(user, eventId)` - the event's own association, never the
+ * one in the URL - and the SQL behind it is proven against PostgreSQL in `bde.integration.spec.ts`.
+ */
+describe('AssociationsController event verdicts and deposits (WP6c step 2)', () => {
+  function makeController(governsEvent: boolean, governsTarget = governsEvent) {
+    const service = {
+      mayValidateEvent: jest.fn(() => Promise.resolve(governsEvent)),
+      mayValidateEventsOf: jest.fn(() => Promise.resolve(governsTarget)),
+      validateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      rejectCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      createCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev2' })),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    return { controller, service };
+  }
+
+  it('lets the BDE of the event association space validate and reject', async () => {
+    const { controller, service } = makeController(true);
+    await controller.validateCalendarEvent('bde1', undefined, 'asso1', 'ev1');
+    await controller.rejectCalendarEvent('bde1', undefined, 'asso1', 'ev1', { reason: 'no' });
+    expect(service.mayValidateEvent).toHaveBeenCalledWith('bde1', 'ev1');
+    expect(service.validateCalendarEvent).toHaveBeenCalledWith('asso1', 'ev1', 'bde1');
+    expect(service.rejectCalendarEvent).toHaveBeenCalledWith('asso1', 'ev1', 'bde1', 'no');
+  });
+
+  it('refuses the BDE of another space, on both verdicts', async () => {
+    const { controller, service } = makeController(false);
+    await expect(
+      controller.validateCalendarEvent('bde2', undefined, 'asso1', 'ev1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      controller.rejectCalendarEvent('bde2', undefined, 'asso1', 'ev1', {})
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.validateCalendarEvent).not.toHaveBeenCalled();
+    expect(service.rejectCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it('lets a global admin decide without asking any BDE', async () => {
+    const { controller, service } = makeController(false);
+    await controller.validateCalendarEvent('admin', 'true', 'asso1', 'ev1');
+    expect(service.mayValidateEvent).not.toHaveBeenCalled();
+    expect(service.validateCalendarEvent).toHaveBeenCalled();
+  });
+
+  it('reads the deposit grant on the TARGET association, not the one routed through', async () => {
+    const { controller, service } = makeController(false, true);
+    await controller.createCalendarEvent('bde1', undefined, 'bde-asso', {
+      targetAssocId: 'club',
+    } as never);
+    expect(service.mayValidateEventsOf).toHaveBeenCalledWith('bde1', 'club');
+    expect(service.createCalendarEvent).toHaveBeenCalledWith(
+      'bde-asso',
+      { targetAssocId: 'club' },
+      'bde1',
+      { isGlobalAdmin: false, isBde: true }
+    );
+  });
+
+  it('refuses a deposit on an association the caller BDE does not govern, instead of filing it on :id', async () => {
+    const { controller, service } = makeController(false, false);
+    await expect(
+      controller.createCalendarEvent('bde2', undefined, 'bde-asso', {
+        targetAssocId: 'club',
+      } as never)
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.createCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it('files a plain proposal on :id with the grant read on :id', async () => {
+    const { controller, service } = makeController(false, false);
+    await controller.createCalendarEvent('member', undefined, 'club', {} as never);
+    expect(service.mayValidateEventsOf).toHaveBeenCalledWith('member', 'club');
+    expect(service.createCalendarEvent).toHaveBeenCalledWith('club', {}, 'member', {
+      isGlobalAdmin: false,
+      isBde: false,
+    });
   });
 });
 

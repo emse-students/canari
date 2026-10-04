@@ -18,12 +18,12 @@
     type ConnectAccountStatusResult,
     type PaymentProviderId,
     mayActOnAssociation,
-    ensureAssociationSuperAdmin,
+    getMyBdeReach,
     AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -64,8 +64,12 @@
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((mb) => mb.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
-  /** BDE super-admin (MANAGE_ASSO): may administer this association without being a member. */
-  let isSuperAdminUser = $derived(isAssociationSuperAdmin());
+  /**
+   * BDE super-admin OF THIS association (MANAGE_ASSO in the BDE of a space it reaches, WP6c step
+   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`.
+   */
+  let superAdminOf = $state<string[]>([]);
+  let isSuperAdminUser = $derived(!!asso && superAdminOf.includes(asso.id));
 
   let onboardingLoading = $state(false);
   let dashboardLoading = $state(false);
@@ -174,9 +178,10 @@
    *
    * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
    * exactly what CREATE has always admitted: a global admin, or a BDE member holding
-   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because it is not a flag on THIS
-   * association at all - a BDE super-admin holds it everywhere and an association's own admin
-   * never holds it, however many flags they have.
+   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because an association's own
+   * admin never holds it, however many flags they have. Since WP6c step 2 the server checks it in
+   * the handler, scoped: the BDE must govern THIS association (a space it reaches), which is what
+   * `isSuperAdminUser` already reads.
    */
   let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
 
@@ -222,9 +227,10 @@
       }
       const uid = currentUserId();
       const mine = members.find((mb) => mb.userId === uid);
-      // Await the BDE super-admin probe so the access decision is deterministic.
-      const superAdmin = await ensureAssociationSuperAdmin();
-      const canEdit = isGlobalAdmin() || superAdmin || (!!mine && mine.isAdmin);
+      // Await the BDE reach so the access decision is deterministic. It is THIS association's
+      // super-admin tier (WP6c step 2): MANAGE_ASSO in the BDE of a space it reaches.
+      superAdminOf = (await getMyBdeReach()).manageAsso;
+      const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
       if (!canEdit) {
         await goto(`/associations/${encodeURIComponent(slug)}`);
         return;
