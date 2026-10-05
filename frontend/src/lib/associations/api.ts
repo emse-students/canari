@@ -448,16 +448,60 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
  * is, called by every write below that can change what this returns. The TTL is the floor under a
  * change made somewhere this client cannot see (another member's browser, a moderator), which is
  * the only case it has to cover.
+ *
+ * PER READER SINCE D37: the directory scope depends on WHO asks (their spaces, their memberships),
+ * so a list held across a sign-in would show the previous account's directory.
  */
-const associationDirectory = new SharedCache<Association[]>(5 * 60_000);
+const associationDirectory = new SharedCache<Association[]>(5 * 60_000, { perReader: true });
 
-const directoryKey = (type?: 'association' | 'list') => type ?? 'all';
+/** What the server lists (D37): the reader's directory, or the whole catalogue. */
+type DirectoryScope = 'directory' | 'all';
 
-export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
-  return associationDirectory.load(directoryKey(type), () => {
-    const qs = type ? `?type=${type}` : '';
-    return request<Association[]>(`/api/associations${qs}`);
+/** The association map's filter: associations whose rules reach a space matching it. */
+export interface AssociationDirectoryFilter {
+  campus?: Campus;
+  formation?: Formation;
+}
+
+const directoryKey = (
+  scope: DirectoryScope,
+  type?: 'association' | 'list',
+  filter: AssociationDirectoryFilter = {}
+) => `${scope}|${type ?? 'all'}|${filter.campus ?? '*'}|${filter.formation ?? '*'}`;
+
+function loadDirectory(
+  scope: DirectoryScope,
+  type?: 'association' | 'list',
+  filter: AssociationDirectoryFilter = {}
+): Promise<Association[]> {
+  return associationDirectory.load(directoryKey(scope, type, filter), () => {
+    const qs = new URLSearchParams({ scope });
+    if (type) qs.set('type', type);
+    if (filter.campus) qs.set('campus', filter.campus);
+    if (filter.formation) qs.set('formation', filter.formation);
+    return request<Association[]>(`/api/associations?${qs.toString()}`);
   });
+}
+
+/**
+ * THE WHOLE CATALOGUE, for every screen that PICKS an association rather than browsing them - a
+ * co-organiser, a list's parent, a delegation, a past role, the shop's names, the admin pages. It
+ * asks `scope=all` by name: the server's default is the reader's directory (D37).
+ */
+export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
+  return loadDirectory('all', type);
+}
+
+/**
+ * THE READER'S DIRECTORY (D37): the associations whose audience reaches one of the reader's spaces,
+ * plus the ones they belong to. Only the two directory pages (`/associations`, `/lists`) read it -
+ * a hidden association is not listed there, and its page stays reachable by its link.
+ */
+export async function listAssociationDirectory(
+  type?: 'association' | 'list',
+  filter: AssociationDirectoryFilter = {}
+): Promise<Association[]> {
+  return loadDirectory('directory', type, filter);
 }
 
 /**

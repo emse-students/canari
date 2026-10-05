@@ -117,6 +117,24 @@ export function associationVisibleToUserSql(association: string, user: string): 
 }
 
 /**
+ * The directory's map filter (D37): association `association`'s OWN rules reach at least one space
+ * matching `filter`, whose sides are SQL expressions (placeholders) or `null` for "any side". Rules
+ * only - a membership does not put an association on a campus it does not address. Both sides
+ * `null` is "reaches any space at all", which an association with no rule does not.
+ */
+export function associationRulesReachSpaceMatchingSql(
+  association: string,
+  filter: { formation: string | null; campus: string | null }
+): string {
+  const formation =
+    filter.formation === null ? '' : ` AND dir_space.formation = ${filter.formation}`;
+  const campus = filter.campus === null ? '' : ` AND dir_space.campus = ${filter.campus}`;
+  return `EXISTS (SELECT 1 FROM association_audiences dir_rule
+    JOIN spaces dir_space ON ${ruleReachesSpaceSql('dir_rule', 'dir_space')}
+    WHERE dir_rule."associationId" = ${association}${formation}${campus})`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the

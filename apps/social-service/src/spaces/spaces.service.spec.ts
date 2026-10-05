@@ -2,8 +2,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
-import { Space } from './space.entity';
-import { SpacesService, normaliseRules, ruleReachesSpace } from './spaces.service';
+import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
+import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
 
 const space = { formation: 'ICM', campus: 'saint-etienne' } as const;
 
@@ -28,6 +28,50 @@ describe('normaliseRules', () => {
       { formation: null, campus: 'gardanne' },
       { formation: null, campus: null },
     ]);
+  });
+});
+
+/** D36: a new association's default reach, written the way the admin grid writes it. */
+describe('smallestRules', () => {
+  const pairs = (formations: readonly string[], campus: string) =>
+    formations.map((formation) => ({ formation, campus }) as Space);
+
+  it('gives no rule for no space', () => {
+    expect(smallestRules([])).toEqual([]);
+  });
+
+  it('writes one pair rule per space short of a whole campus', () => {
+    expect(smallestRules(pairs(['ICM', 'ISMIN'], 'saint-etienne'))).toEqual([
+      { formation: 'ICM', campus: 'saint-etienne' },
+      { formation: 'ISMIN', campus: 'saint-etienne' },
+    ]);
+  });
+
+  it('collapses a whole campus into one campus rule', () => {
+    expect(smallestRules(pairs(SPACE_FORMATIONS, 'gardanne'))).toEqual([
+      { formation: null, campus: 'gardanne' },
+    ]);
+  });
+
+  it('collapses every pair into the one everyone rule, duplicates ignored', () => {
+    const all = [
+      ...pairs(SPACE_FORMATIONS, 'saint-etienne'),
+      ...pairs(SPACE_FORMATIONS, 'gardanne'),
+      ...pairs(['ICM'], 'gardanne'),
+    ];
+    expect(smallestRules(all)).toEqual([{ formation: null, campus: null }]);
+  });
+
+  it('reaches exactly the pairs it was given', () => {
+    const given = pairs(['FSSS', 'PDIS'], 'gardanne');
+    const rules = smallestRules(given);
+    for (const campus of SPACE_CAMPUSES) {
+      for (const formation of SPACE_FORMATIONS) {
+        const reached = rules.some((r) => ruleReachesSpace(r, { formation, campus }));
+        const wanted = given.some((p) => p.formation === formation && p.campus === campus);
+        expect(reached).toBe(wanted);
+      }
+    }
   });
 });
 

@@ -6,7 +6,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import { AssociationAudience } from './association-audience.entity';
 import type { AudienceRuleDto } from './dto/space.dto';
-import { Space } from './space.entity';
+import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
 /** A space as the admin page shows it. */
@@ -51,6 +51,33 @@ export function normaliseRules(rules: AudienceRuleDto[]): AudienceRule[] {
     seen.set(`${rule.formation ?? '*'}|${rule.campus ?? '*'}`, rule);
   }
   return [...seen.values()];
+}
+
+/**
+ * The SMALLEST rule set reaching exactly `pairs`: everyone when every pair is in, a campus rule
+ * when a whole campus is in, a pair rule otherwise - the server twin of the admin grid's `toRules`
+ * (`frontend/src/lib/associations/audienceRules.ts`), so a default written here reads back in the
+ * grid exactly as if an admin had ticked it. Every pair of D4 x D6 exists (D17 relaxed), so the
+ * constants are the universe. Pairs outside it are ignored.
+ */
+export function smallestRules(
+  pairs: readonly Pick<Space, 'formation' | 'campus'>[]
+): AudienceRule[] {
+  const has = (formation: SpaceFormation, campus: SpaceCampus) =>
+    pairs.some((p) => p.formation === formation && p.campus === campus);
+  const wholeCampus = (campus: SpaceCampus) => SPACE_FORMATIONS.every((f) => has(f, campus));
+  if (SPACE_CAMPUSES.every(wholeCampus)) return [{ formation: null, campus: null }];
+  const rules: AudienceRule[] = [];
+  for (const campus of SPACE_CAMPUSES) {
+    if (wholeCampus(campus)) {
+      rules.push({ formation: null, campus });
+      continue;
+    }
+    for (const formation of SPACE_FORMATIONS) {
+      if (has(formation, campus)) rules.push({ formation, campus });
+    }
+  }
+  return normaliseRules(rules);
 }
 
 /**

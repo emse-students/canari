@@ -23,11 +23,13 @@ import {
   IN_FEED_AUDIENCE_SQL,
   READER_SPACES_SQL,
   announceRecipientsSql,
+  associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
   postVisibleToViewerSql,
   readerSpaces,
   type SpacePair,
 } from './reader-spaces';
+import { smallestRules } from './spaces.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -311,6 +313,102 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       outsider: [],
       notBackfilled: [],
     });
+  });
+
+  it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
+    const seen: Record<string, string[]> = {};
+    for (const id of EVERYONE) {
+      const { rows } = await client.query(
+        `SELECT a.name FROM associations a
+          WHERE true AND ${associationVisibleToViewerSql('a.id', '$1')} ORDER BY a.name`,
+        [id]
+      );
+      seen[id] = rows.map((r) => r.name as string);
+    }
+    expect(seen).toEqual({
+      icmSe: ['A1'],
+      icmSe2: ['A1'],
+      isminGa: ['A2'],
+      admin: [],
+      adminIcm: ['A1'],
+      staff: ['A1'],
+      outsider: [],
+      notBackfilled: [],
+    });
+  });
+
+  it.each([
+    [{ campus: 'gardanne', formation: null }, ['A2']],
+    [{ campus: 'saint-etienne', formation: null }, ['A1']],
+    [{ campus: null, formation: 'ICM' }, ['A1', 'A2']],
+    [{ campus: null, formation: 'ISMIN' }, ['A2']],
+    [{ campus: 'saint-etienne', formation: 'ISMIN' }, []],
+    [{ campus: null, formation: null }, ['A1', 'A2']],
+  ] as const)('the map filter %j keeps %j', async (filter, expected) => {
+    const params: string[] = [];
+    const slot = (v: string | null) => (v === null ? null : `$${params.push(v)}`);
+    const sql = associationRulesReachSpaceMatchingSql('a.id', {
+      campus: slot(filter.campus),
+      formation: slot(filter.formation),
+    });
+    const { rows } = await client.query(
+      `SELECT a.name FROM associations a WHERE ${sql} ORDER BY a.name`,
+      params
+    );
+    expect(rows.map((r) => r.name as string)).toEqual(expected);
+  });
+
+  it('an association with no rule is on no campus of the map', async () => {
+    const lone = '00000000-0000-4000-8000-0000000000a9';
+    await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'lone')`, [lone]);
+    try {
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM associations a WHERE a.id = $1 AND ${associationRulesReachSpaceMatchingSql(
+          'a.id',
+          { campus: null, formation: null }
+        )}`,
+        [lone]
+      );
+      expect(rows[0].n).toBe(0);
+    } finally {
+      await client.query(`DELETE FROM associations WHERE id = $1`, [lone]);
+    }
+  });
+
+  it("a new association reaches exactly its creator's spaces (D36)", async () => {
+    const created = '00000000-0000-4000-8000-0000000000a8';
+    await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'new')`, [created]);
+    try {
+      // What `AssociationsService.create` writes, from the same two functions.
+      for (const creator of ['isminGa', 'admin'] as const) {
+        await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [
+          created,
+        ]);
+        const spaces = (await client.query(READER_SPACES_SQL, [creator])).rows as SpacePair[];
+        for (const r of smallestRules(spaces)) {
+          await client.query(
+            `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, $2, $3)`,
+            [created, r.formation, r.campus]
+          );
+        }
+        const reached: string[] = [];
+        for (const id of EVERYONE) {
+          const { rows } = await client.query(
+            `SELECT ${associationVisibleToViewerSql('$2', '$1')} AS v`,
+            [id, created]
+          );
+          if (rows[0].v === true) reached.push(id);
+        }
+        // isminGa's spaces are ISMIN x gardanne; an admin with no space writes no rule at all.
+        expect({ creator, reached }).toEqual({
+          creator,
+          reached: creator === 'isminGa' ? ['isminGa'] : [],
+        });
+      }
+    } finally {
+      await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [created]);
+      await client.query(`DELETE FROM associations WHERE id = $1`, [created]);
+    }
   });
 
   it('a cursus that is not an array matches nothing instead of failing every reader', async () => {

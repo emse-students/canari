@@ -664,8 +664,8 @@ the announce sweep's recipient counts.
 - **The public share preview and the sitemap skip a post with rules of its own**: an author who
   chose who sees a post did not choose "anyone holding the link". Association posts without own
   rules keep their preview, as before.
-- **An association created after migration 071 has NO rule**, so it reaches only its members until
-  an admin gives it one in the grid. Nothing adds a default rule.
+- ~~An association created after migration 071 has NO rule.~~ Superseded by D36 (below): it
+  reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
   columns; they only narrow, after visibility.
 
@@ -712,7 +712,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post | next |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
-spaces by default (D36, next). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
+spaces by default (D36, built - see below). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
 and a personnel: the spaces add up. Being personnel gives NO right to publish as the School: that takes
 membership of the institution's own instance, exactly as for an association. Everyone ticks `EMSE`, so that
 box no longer defines anything.
@@ -727,9 +727,9 @@ box no longer defines anything.
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | next (today a co-organiser is added without consent) |
 | Agenda signed in | as events above | built (organiser only) |
 | Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
-| Association directory (D37) | associations reaching one's spaces, or one belongs to | next (today: all) |
+| Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
-| Association map | filters to show or hide associations and to select them by campus, formation | next |
+| Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
 | Messaging, forms, people directory | any valid profile, no border | built |
@@ -756,3 +756,52 @@ box no longer defines anything.
 | --- | --- |
 | Republished card | "Republished by X, Y" line, reactions and comments on the original, notification only for those who newly see the post |
 | Personnel | declared; spaces add up with a cursus; publishing as an institution needs membership of its instance |
+
+### D36 and D37 as built (2026-10-04)
+
+**D36 - a new association reaches its creator's spaces.** `AssociationsService.create` (the one path
+for an association AND a list, `POST /api/associations`) writes, in the SAME transaction as the row,
+the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) as the smallest equivalent
+rule set (`smallestRules` in `spaces/spaces.service.ts`, the server twin of the grid's `toRules`: a
+whole campus is one `(null, campus)` rule, every pair one `(null, null)`). The grid then shows them
+as ticked boxes. A creator with no space (no campus or no cursus - a global admin who is not a
+student, typically) writes NO rule: the association reaches its members only until an admin ticks
+the grid. The creator is the caller, who need not become a member.
+
+**D37 - the directory.** `GET /api/associations` takes `scope`:
+
+| `scope` | Lists | Read by |
+| --- | --- | --- |
+| `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/associations`, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+
+**`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
+pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one
+is not reached by), and a hidden association is not a secret - D37 is relevance, its page stays
+reachable by its link and the public listing already names every association. An admin-only switch
+would have emptied those pickers for the people who use them.
+
+`?campus=` and `?formation=` (either scope, D4/D6 values, anything else a 400 like an unknown
+`scope`) keep the associations whose OWN rules reach at least one space matching them -
+`associationRulesReachSpaceMatchingSql`; a membership does not put an association on a campus it
+does not address, and an association with no rule is on no campus. This is the server half of the
+association map. The frontend's directory cache is now per reader (the answer depends on who asks).
+
+**Unchanged, read in the code:** `GET /api/associations/slug/:slug` and `/:id` (the page by its
+link), `/:id/members`, `/me/list`, and the PUBLIC `GET /api/public/associations` (anonymous, read by
+the sitemap): it still lists every association - an anonymous caller has no space to filter by, as
+for the anonymous agenda (D40 decides that one later).
+
+**Old clients.** An installed app embeds its frontend, so an app older than this change calls
+`/api/associations` with no `scope` and gets the DIRECTORY on every screen, its pickers and admin
+pages included, until it updates. Nothing breaks or is lost (the grid writes per association), but
+a picker on an old app may miss an association the user is not reached by.
+
+**Proof.** `reader-spaces.integration.spec.ts` (real PostgreSQL, migration 071): every reader's
+directory, six map filters, an association with no rule on no campus, and D36's rules for a creator
+with a space and one without; a control (the campus clause removed from the map filter) failed 3 of
+them. `associations.service.create-default-audience.spec.ts` holds the transaction and the rule set,
+`associations.controller.spec.ts` the scope wiring and the 400s, `directoryScope.test.ts` the
+frontend's two requests and their separate cache keys. `AssociationsService.list` and `create` were
+also run through TypeORM against a copy of a local estate (directory per reader, a membership
+adding one, the map filter, creation with and without a space).

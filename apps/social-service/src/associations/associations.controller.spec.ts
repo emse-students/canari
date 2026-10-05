@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -129,7 +129,7 @@ describe('AssociationsController secret stripping', () => {
   }
 
   it.each([
-    ['list', async (c: AssociationsController) => (await c.list())[0]],
+    ['list', async (c: AssociationsController) => (await c.list('u1'))[0]],
     ['findBySlug', (c: AssociationsController) => c.findBySlug('bde')],
     ['findOne', (c: AssociationsController) => c.findOne('asso1')],
   ])('never lets %s answer with the vault key or the private notes', async (_name, read) => {
@@ -139,6 +139,59 @@ describe('AssociationsController secret stripping', () => {
     expect(result.notesCiphertext).toBeNull();
     // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
     expect(result).toMatchObject({ id: 'asso1', name: 'BDE', stripeOnboardingComplete: true });
+  });
+});
+
+/**
+ * THE DIRECTORY (D37) IS THE DEFAULT, THE CATALOGUE IS ASKED FOR BY NAME. The listing hands the
+ * service a viewer only in the directory scope - that viewer is what narrows the SQL - and passes
+ * the map filters through in either scope. A typo in a new parameter is a 400, never a silent
+ * widening.
+ */
+describe('AssociationsController directory scope (D37)', () => {
+  function makeController() {
+    const service = { list: jest.fn(() => Promise.resolve([])) };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    return { controller, service };
+  }
+
+  it('lists the caller directory by default', async () => {
+    const { controller, service } = makeController();
+    await controller.list('u1', 'list');
+    expect(service.list).toHaveBeenCalledWith('list', {
+      viewerId: 'u1',
+      campus: null,
+      formation: null,
+    });
+  });
+
+  it('lists the whole catalogue with scope=all, filters kept', async () => {
+    const { controller, service } = makeController();
+    await controller.list('u1', undefined, 'all', 'gardanne', 'ISMIN');
+    expect(service.list).toHaveBeenCalledWith(undefined, {
+      viewerId: undefined,
+      campus: 'gardanne',
+      formation: 'ISMIN',
+    });
+  });
+
+  it.each([
+    ['scope', ['u1', undefined, 'everything']],
+    ['campus', ['u1', undefined, undefined, 'paris']],
+    ['formation', ['u1', undefined, undefined, undefined, 'MBA']],
+  ] as const)('refuses an unknown %s', async (_name, args) => {
+    const { controller, service } = makeController();
+    await expect(
+      controller.list(...(args as unknown as Parameters<typeof controller.list>))
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(service.list).not.toHaveBeenCalled();
   });
 });
 

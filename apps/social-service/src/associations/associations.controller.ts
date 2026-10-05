@@ -65,6 +65,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import { parseDirectoryQuery } from './directory-query';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -150,12 +151,33 @@ export class AssociationsController {
   // `/api/public/associations*` (`PublicController`, `toPublic`), which is also what the SSR head
   // reads. Adding a field there is a deliberate act; adding a column to the entity must not be.
 
-  /** Returns associations. Pass `?type=association|list` to restrict; omit for both. */
+  /**
+   * Returns associations. `?type=association|list` restricts; omit for both.
+   *
+   * THE DIRECTORY (D37) BY DEFAULT: only the associations whose rules reach one of the caller's
+   * spaces, plus those the caller is a member of - a global admin included, as in the feed.
+   * `?scope=all` is the whole catalogue, for screens that PICK an association (see
+   * `directory-query.ts`); it is open to any signed-in caller because a hidden association is not
+   * a secret - its page stays reachable by its link. `?campus=` / `?formation=` keep only the
+   * associations whose rules reach a space matching them (the association map), in either scope.
+   */
   @UseGuards(NginxAuthGuard)
   @Get()
-  async list(@Query('type') type?: string) {
-    const filter = type === 'association' || type === 'list' ? type : undefined;
-    return (await this.service.list(filter)).map(toSafeAssociation);
+  async list(
+    @Headers('x-user-id') userId: string,
+    @Query('type') type?: string,
+    @Query('scope') scope?: string,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string
+  ) {
+    const query = parseDirectoryQuery({ type, scope, campus, formation });
+    return (
+      await this.service.list(query.type, {
+        viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
+        campus: query.campus,
+        formation: query.formation,
+      })
+    ).map(toSafeAssociation);
   }
 
   /** Returns an association looked up by its URL slug. */
