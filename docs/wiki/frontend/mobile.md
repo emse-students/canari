@@ -37,6 +37,24 @@ real one.
 bundle's platform and the runtime disagree - the one case a build-time choice can still get wrong
 is a Tauri shell pointed at a dev server started outside the Tauri CLI.
 
+### A native build carries the WASM binary, for the backup envelope (2026-10-04)
+
+A `mls-wasm-stub` Vite plugin was meant to replace `mlsWasmLoader` in native builds and keep the
+binary out. It was deleted on 2026-10-04 because it did nothing. The iOS bundle built with and
+without it had the same 365 JavaScript files with the same sizes, the real loader in both. The
+backlog had called widening it to Android "the whole WASM payload on Android". That prize did not
+exist:
+
+- once `platformMlsService()` has picked the native implementation, the only importer of the loader
+  left in a native graph is `wasmPrefetch.ts`, whose call `hooks.client.ts` skips under Tauri. The
+  loader chunk is 1 309 B, shipped and never called;
+- what keeps `mls_wasm_bg.wasm` (2 084 950 B) in BOTH native bundles is `backup.ts`, which imports
+  the bindings directly for the backup envelope (`encrypt_with_key` / `decrypt_with_key`). That code
+  runs on every platform, so the binary is used there.
+
+Taking the 2 MB out of a native build would mean a Tauri command for the backup envelope that writes
+the same bytes, since a `.canari` file moves between web and native devices.
+
 ## Native MLS
 
 `TauriMlsService` calls Rust functions via `invoke()` instead of WASM:

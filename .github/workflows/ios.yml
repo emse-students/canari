@@ -494,9 +494,9 @@ jobs:
           # enabled there, `generate_context!()` embeds `frontendDist` (../build) at compile
           # time and panics if the directory doesn't exist yet - it only skips that check in
           # dev mode (tauri-codegen's context.rs: `dev && dev_url.is_some()`), which is no
-          # longer what this build compiles as. TAURI_TARGET activates the Vite mlsWasmStub
-          # plugin, excluding WASM modules from the Tauri build (MLS is handled by native Rust
-          # code on iOS).
+          # longer what this build compiles as. TAURI_TARGET is what `isNativeBuild()` in
+          # vite.config.js reads here, so the bundle ships TauriMlsService (MLS runs in native
+          # Rust on iOS) and not the web implementation.
           TAURI_TARGET=aarch64-apple-ios bun run build
 
       - name: Prebuild Rust static lib (libapp.a)
