@@ -154,6 +154,18 @@
      carrying the grouping with no separator, no repeated avatar and no repeated name. */
   --radius-bubble: 1.125rem;
   --radius-bubble-tail: 0.25rem;
+  /* The avatar corner (2026-10-05): a RATIO, so one token fits a 24px chip and a 56px header photo.
+     Read by the `squircle` utility below. */
+  --radius-squircle: 32%;
+}
+
+/* THE SQUIRCLE - ONE MECHANISM FOR EVERY NON-ROUND AVATAR (user, 2026-10-05). `corner-shape` turns the
+   rounded corner into a continuous curve; where it is unsupported the declaration is ignored and the
+   plain `border-radius` stays. That is progressive enhancement of ONE property, not a second code
+   path: every browser runs the same rule. `overflow-hidden` clips to the curve. */
+@utility squircle {
+  border-radius: var(--radius-squircle);
+  corner-shape: squircle;
 }
 
 /* ==========================================================================================

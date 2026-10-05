@@ -104,7 +104,7 @@
             ? 'w-12 h-12 text-base'
             : 'w-8 h-8 text-sm'
   );
-  const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
+  const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
 </script>
 
 {#if imageFailed || display?.kind === 'none'}
