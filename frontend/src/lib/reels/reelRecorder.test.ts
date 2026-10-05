@@ -3,7 +3,8 @@
  * failure a typed fault.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { REEL_RECORD_BITRATE, ReelRecorder, ReelRecorderError } from './reelRecorder';
+import { REEL_RECORD_BITRATE_MAX } from './framedCapture';
+import { ReelRecorder, ReelRecorderError } from './reelRecorder';
 import { installFakeMediaRecorder } from './fakeMediaRecorder.test-helper';
 
 const stream = {} as MediaStream;
@@ -17,12 +18,13 @@ describe('ReelRecorder', () => {
   it('records the platform container at the take bitrate, in one-second chunks', () => {
     const Fake = installFakeMediaRecorder();
     ReelRecorder.start(stream, false);
-    ReelRecorder.start(stream, true);
+    ReelRecorder.start(stream, true, 1_500_000);
     expect(Fake.instances[0].options).toEqual({
       mimeType: 'video/webm;codecs=vp9,opus',
-      videoBitsPerSecond: REEL_RECORD_BITRATE,
+      videoBitsPerSecond: REEL_RECORD_BITRATE_MAX,
     });
     expect(Fake.instances[1].mimeType).toBe('video/mp4;codecs=avc1,mp4a');
+    expect(Fake.instances[1].options.videoBitsPerSecond).toBe(1_500_000);
     expect(Fake.instances[0].start).toHaveBeenCalledWith(1000);
   });
 
