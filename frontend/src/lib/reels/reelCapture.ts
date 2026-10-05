@@ -2,27 +2,20 @@
  * The capture screen's rules, as pure functions (CanaReels R3, decision C4): which container the
  * recorder writes, what a press on the shutter MEANS, and the states a capture goes through.
  *
- * THE SHUTTER IS HOLD-TO-RECORD **AND** TAP-TO-TOGGLE, decided on the phone's terms:
- * - Holding is Instagram's gesture and the one the user named ("hold the shutter to record"): press,
- *   film, let go. It suits a few seconds.
- * - But a reel runs to 90 s, and holding a button for a minute and a half on glass shakes the frame,
- *   tires the thumb and makes the front/back switch unreachable mid-take. So a SHORT press - a tap -
- *   starts a recording that keeps going after the finger lifts, and a second tap ends it.
- * - What separates them is how long the finger stayed down, measured from the press to the release:
- *   a gesture's classification, never a clock deciding a correctness question. A recording that has
- *   started never depends on it - only whether the release also ends it.
+ * ONE SHUTTER, TWO GESTURES (user, 2026-10-05, replacing the separate photo button and the tap-toggle):
+ * - a TAP takes a photo, on the release;
+ * - a LONG PRESS records a video from the moment it is recognised as one, and its release ends it.
+ * Whether a press is long is decided WHILE the finger is down - the recording must start under the
+ * finger, not at the lift - so the screen arms a timer of {@link SHUTTER_HOLD_THRESHOLD_MS} on the
+ * press and sends `hold` when it fires. The threshold classifies a gesture; it never decides whether
+ * a recording that has started exists (the release, the cap or a cancel end it).
  */
 
-/** A press shorter than this is a tap (toggle); a longer one is a hold (records while held). */
-export const SHUTTER_HOLD_THRESHOLD_MS = 300;
-
-/** What a released shutter press was. */
-export type ShutterPress = 'tap' | 'hold';
-
-/** Classifies a press by how long the finger stayed down. */
-export function classifyShutterPress(heldMs: number): ShutterPress {
-  return heldMs < SHUTTER_HOLD_THRESHOLD_MS ? 'tap' : 'hold';
-}
+/**
+ * How long a finger must stay down before the press is a video: ~300-400 ms is where phone camera
+ * apps put it - shorter turns a shaky thumb's tap into a take, longer feels like lag.
+ */
+export const SHUTTER_HOLD_THRESHOLD_MS = 350;
 
 /**
  * The recorder's container, in order of preference, per platform - read on the phones 2026-10-01:
@@ -55,48 +48,59 @@ export interface ReelClip {
 /** Where a capture stands. */
 export type CaptureState =
   | { kind: 'ready' }
-  /**
-   * `mode`: `pending` while the finger is down - a hold ends at its release - and `toggle` once a
-   * tap has started it, which only the next press ends.
-   */
-  | { kind: 'recording'; pressedAt: number; mode: 'pending' | 'toggle' }
+  /** The finger is down and has not yet stayed down long enough to be a video. */
+  | { kind: 'pressing'; pressedAt: number }
+  /** A tap was released: the frame is being kept as a photo. */
+  | { kind: 'photo' }
+  /** Recording, from the moment the press became a hold; the release ends it. */
+  | { kind: 'recording'; pressedAt: number }
   /** Stop asked for; the recorder's last chunk has not arrived yet. */
   | { kind: 'finishing' }
   | { kind: 'review'; clip: ReelClip };
 
 export type CaptureEvent =
   | { type: 'press'; at: number }
+  /** The press stayed down for {@link SHUTTER_HOLD_THRESHOLD_MS}: it is a video. */
+  | { type: 'hold' }
   | { type: 'release'; at: number }
+  /** The pointer was cancelled (a system gesture took the touch): nothing was decided by the member. */
+  | { type: 'cancel' }
   /** The 90 s cap (C4) - the ring is full. */
   | { type: 'limit' }
-  /** The recorder could not start or failed mid-take: back to the preview. */
+  /** The recorder or the photo could not be made: back to the preview. */
   | { type: 'failed' }
   | { type: 'stopped'; clip: ReelClip }
+  /** A photo taken, or a video picked from the gallery. */
   | { type: 'picked'; clip: ReelClip }
   | { type: 'discard' };
 
 /**
  * The capture's transitions. Anything not listed leaves the state as it is - a release with no
- * recording, a press while the last chunk is still arriving - because those are touches, not
- * decisions.
+ * press, a press while the last chunk is still arriving - because those are touches, not decisions.
  */
 export function captureReducer(state: CaptureState, event: CaptureEvent): CaptureState {
   switch (state.kind) {
     case 'ready':
-      if (event.type === 'press')
-        return { kind: 'recording', pressedAt: event.at, mode: 'pending' };
+      if (event.type === 'press') return { kind: 'pressing', pressedAt: event.at };
       if (event.type === 'picked') return { kind: 'review', clip: event.clip };
       return state;
-    case 'recording':
-      if (event.type === 'limit') return { kind: 'finishing' };
+    case 'pressing':
+      if (event.type === 'hold') return { kind: 'recording', pressedAt: state.pressedAt };
+      // Released before the threshold fired: a tap.
+      if (event.type === 'release') return { kind: 'photo' };
+      // A cancelled touch is not a tap: no photo nobody asked for.
+      if (event.type === 'cancel' || event.type === 'failed') return { kind: 'ready' };
+      return state;
+    case 'photo':
+      if (event.type === 'picked') return { kind: 'review', clip: event.clip };
       if (event.type === 'failed') return { kind: 'ready' };
-      if (event.type === 'release' && state.mode === 'pending') {
-        return classifyShutterPress(event.at - state.pressedAt) === 'tap'
-          ? { ...state, mode: 'toggle' }
-          : { kind: 'finishing' };
+      return state;
+    case 'recording':
+      if (event.type === 'failed') return { kind: 'ready' };
+      // The cap, the release and a cancelled touch all END the take and KEEP it: the member filmed.
+      if (event.type === 'limit' || event.type === 'release' || event.type === 'cancel') {
+        return { kind: 'finishing' };
       }
-      // The second tap of a toggle ends it on the PRESS, which is when the member meant it.
-      if (event.type === 'press' && state.mode === 'toggle') return { kind: 'finishing' };
       return state;
     case 'finishing':
       if (event.type === 'stopped') return { kind: 'review', clip: event.clip };

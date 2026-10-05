@@ -45,14 +45,21 @@ describe('classifyCameraError', () => {
 });
 
 describe('openReelCamera', () => {
-  it('asks for both tracks, the lens and 720p, and hands back the stream', async () => {
+  it('asks for both tracks, the lens and the SCREEN-sized frame, and hands back the stream', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    vi.stubGlobal('devicePixelRatio', 2.75);
     const stream = { getVideoTracks: () => [{ label: 'camera 0, facing back' }] };
     const getUserMedia = vi.fn().mockResolvedValue(stream);
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
 
     await expect(openReelCamera('environment')).resolves.toBe(stream);
     expect(getUserMedia).toHaveBeenCalledWith({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 590 },
+        frameRate: { ideal: 30 },
+      },
       audio: true,
     });
   });

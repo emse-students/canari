@@ -1,12 +1,13 @@
 <script lang="ts">
   /**
-   * The CanaReels shutter: a ring that fills to the 90 s cap (C4) around a button that is held to
-   * record or tapped to toggle (`reelCapture.ts` says why both).
+   * The CanaReels shutter: ONE button, a tap for a photo and a long press for a video, inside a ring
+   * that fills to the 90 s cap (C4) (`reelCapture.ts` says how a press is told apart).
    *
-   * It reports PRESS and RELEASE with their instants and decides nothing itself - the capture's
-   * reducer reads them. It opts out of the tab swipe (`data-swipe-nav-ignore`), so a held take whose
-   * finger drifts does not turn the page, and it captures the pointer so a finger sliding off the
-   * button still ends a hold where it lifts.
+   * It reports PRESS, RELEASE and CANCEL and decides nothing itself - the capture's reducer reads
+   * them. It opts out of the tab swipe (`data-swipe-nav-ignore`), so a held take whose finger drifts
+   * does not turn the page, and it captures the pointer so a finger sliding off the button still ends
+   * a hold where it lifts. A long press must not raise the system's context menu, a text selection or
+   * iOS's callout, so all three are switched off here.
    */
   import { m } from '$lib/paraglide/messages';
 
@@ -19,9 +20,19 @@
     disabled?: boolean;
     onpress: (at: number) => void;
     onrelease: (at: number) => void;
+    /** The touch was taken away (a system gesture): neither a tap nor a release. */
+    oncancel: () => void;
   }
 
-  let { recording, fraction, timeLabel, disabled = false, onpress, onrelease }: Props = $props();
+  let {
+    recording,
+    fraction,
+    timeLabel,
+    disabled = false,
+    onpress,
+    onrelease,
+    oncancel,
+  }: Props = $props();
 
   /** The pointer this button is following, so a second finger is not a second press. */
   let pointerId: number | null = null;
@@ -43,7 +54,14 @@
     onrelease(event.timeStamp);
   }
 
-  /** The keyboard's press is a tap: Enter or Space down and up at once toggles a take. */
+  function cancel(event: PointerEvent) {
+    if (event.pointerId !== pointerId) return;
+    pointerId = null;
+    console.debug('[reel-shutter] pointer cancelled');
+    oncancel();
+  }
+
+  /** The keyboard's press is a tap: Enter or Space down and up at once takes a photo. */
   function key(event: KeyboardEvent) {
     if (disabled || (event.key !== 'Enter' && event.key !== ' ')) return;
     event.preventDefault();
@@ -64,14 +82,14 @@
   </span>
   <button
     type="button"
-    class="relative h-20 w-20 touch-none rounded-full outline-none select-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
-    aria-label={recording ? m.reels_shutter_stop() : m.reels_shutter_record()}
+    class="relative h-20 w-20 touch-none rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+    aria-label={recording ? m.reels_shutter_stop() : m.reels_shutter_capture()}
     aria-pressed={recording}
     data-reel-shutter
     {disabled}
     onpointerdown={down}
     onpointerup={up}
-    onpointercancel={up}
+    onpointercancel={cancel}
     onkeydown={key}
     oncontextmenu={(e) => e.preventDefault()}
   >

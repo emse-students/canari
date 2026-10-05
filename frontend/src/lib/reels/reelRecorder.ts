@@ -11,13 +11,7 @@
 
 import { pausePlayback } from '$lib/actions/playbackArbiter';
 import { pickReelRecorderMime } from './reelCapture';
-
-/**
- * The bitrate the TAKE is recorded at. Above the 2.5 Mb/s the upload is prepared to (C3) on purpose:
- * the take is re-encoded once on the phone, and recording at the target would compress twice.
- * 90 s at this rate is ~45 MB in memory, held only until the preparation reads it.
- */
-export const REEL_RECORD_BITRATE = 4_000_000;
+import { REEL_RECORD_BITRATE_MAX } from './framedCapture';
 
 /** How often the recorder hands over a chunk, so a long take is not one buffer at the end. */
 const CHUNK_MS = 1000;
@@ -72,9 +66,15 @@ export class ReelRecorder {
    * Starts recording `stream`.
    *
    * @param ios Whether this is the iOS app, which records MP4 (`reelRecorderMimeCandidates`).
+   * @param bitrate Bits per second for the frame size actually recorded (`videoBitrateFor`); at most
+   *   the cap above the 2.5 Mb/s upload target, so the preparation compresses once.
    * @throws {ReelRecorderError} `unsupported` or `start`.
    */
-  static start(stream: MediaStream, ios: boolean): ReelRecorder {
+  static start(
+    stream: MediaStream,
+    ios: boolean,
+    bitrate: number = REEL_RECORD_BITRATE_MAX
+  ): ReelRecorder {
     const supported =
       typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function';
     const mime = supported
@@ -87,9 +87,9 @@ export class ReelRecorder {
     try {
       const recorder = new MediaRecorder(stream, {
         mimeType: mime,
-        videoBitsPerSecond: REEL_RECORD_BITRATE,
+        videoBitsPerSecond: bitrate,
       });
-      console.debug(`[reel-recorder] recording ${mime}`);
+      console.debug(`[reel-recorder] recording ${mime} at ${bitrate} b/s`);
       return new ReelRecorder(recorder, mime);
     } catch (err) {
       console.error('[reel-recorder] could not start', err);
